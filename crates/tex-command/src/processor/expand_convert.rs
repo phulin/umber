@@ -50,7 +50,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         if target != Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NumExpr) {
             return Err(CommandError::input_invariant());
         }
-        let character = command.character_token();
+        let character = command.character_value();
         let is_space = command.character_catcode() == Some(tex_state::token::Catcode::Space);
         let digit = character
             .filter(|character| character.is_ascii_digit())
@@ -230,7 +230,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             return Err(CommandError::input_invariant());
         }
 
-        let character = command.character_token();
+        let character = command.character_value();
         let is_space = command.character_catcode() == Some(tex_state::token::Catcode::Space);
         let is_relax = matches!(
             command.resolved_meaning(),
@@ -530,7 +530,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         else {
             return Err(CommandError::input_invariant());
         };
-        let character = command.character_token();
+        let character = command.character_value();
         let is_space = command.character_catcode() == Some(tex_state::token::Catcode::Space);
         let digit = character
             .filter(|character| character.is_ascii_digit())
@@ -962,7 +962,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .top_number_control()
             .map_err(crate::scan_toks::scratch_command_error)?
             .ok_or_else(CommandError::input_invariant)?;
-        let character = command.character_token();
+        let character = command.character_value();
         let is_space = command.character_catcode() == Some(tex_state::token::Catcode::Space);
         let digit = character
             .filter(|ch| ch.is_ascii_digit())

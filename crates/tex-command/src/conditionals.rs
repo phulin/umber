@@ -642,7 +642,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .top_if_dimension_control()
             .map_err(crate::scan_toks::scratch_command_error)?
             .ok_or_else(CommandError::input_invariant)?;
-        let character = command.character_token();
+        let character = command.character_value();
         let category = command.character_catcode();
         let is_space = category == Some(tex_state::token::Catcode::Space);
         let digit = character
@@ -1102,7 +1102,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .top_if_number_control()
             .map_err(crate::scan_toks::scratch_command_error)?
             .ok_or_else(CommandError::input_invariant)?;
-        let character = command.character_token();
+        let character = command.character_value();
         let category = command.character_catcode();
         let is_space = category == Some(tex_state::token::Catcode::Space);
         let digit = character

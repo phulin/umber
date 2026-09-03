@@ -173,6 +173,34 @@ impl<G> CommandWord<G> {
         }
     }
 
+    /// Returns the character value carried by either TeX character command.
+    ///
+    /// TeX82 §26 accepts both a literal character token and a `\chardef`
+    /// (`char_given`) wherever a numeric scanner reads an internal integer.
+    /// Keep that value projection separate from [`Self::character_token`],
+    /// whose callers need to distinguish a literal token from a character
+    /// value defined by a control sequence.
+    pub(crate) fn character_value(self) -> Option<char> {
+        if !matches!(self.code, CommandClass::Character) {
+            return None;
+        }
+        match Meaning::from_runtime_word(self.operand.scalar_value()) {
+            Meaning::CharGiven(ch) | Meaning::CharToken { ch, .. } => Some(ch),
+            _ => None,
+        }
+    }
+
+    /// Returns only a literal character token, never a `\chardef` value.
+    pub(crate) fn character_token(self) -> Option<char> {
+        if !matches!(self.code, CommandClass::Character) {
+            return None;
+        }
+        match Meaning::from_runtime_word(self.operand.scalar_value()) {
+            Meaning::CharToken { ch, .. } => Some(ch),
+            _ => None,
+        }
+    }
+
     /// Whether TeX82 section 1038 can continue its main-loop character run.
     pub(crate) fn is_main_loop_character(self) -> bool {
         if !matches!(self.code, CommandClass::Character) {
@@ -676,16 +704,21 @@ impl<G> HotCommand<G> {
         self.token.origin
     }
 
-    /// Returns the character represented by a compact character command. The
-    /// expanded driver uses this for `\csname` without materializing a rich
-    /// `CurrentCommand` on every collected character.
+    /// Returns a literal character token represented by a compact character
+    /// command. The expanded `\csname` and `\ifcsname` drivers use this
+    /// without materializing a rich `CurrentCommand` on every collected
+    /// character. A `\chardef` value deliberately returns `None`, allowing
+    /// the caller to enter TeX82 §25's missing-`\endcsname` recovery.
     pub(crate) fn character_token(&self) -> Option<char> {
-        matches!(self.command.class(), CommandClass::Character).then(|| {
-            match Meaning::from_runtime_word(self.command.operand.scalar_value()) {
-                Meaning::CharToken { ch, .. } => ch,
-                _ => unreachable!("character command carries a character meaning"),
-            }
-        })
+        self.command.character_token()
+    }
+
+    /// Returns the character value carried by either a literal token or a
+    /// `\chardef` command. Numeric, dimension, numeric-conditional, and PDF
+    /// hot scanners use this TeX82 §26 projection; they must not use the
+    /// literal-token-only `character_token` projection above.
+    pub(crate) fn character_value(&self) -> Option<char> {
+        self.command.character_value()
     }
 
     /// Returns the category attached to a compact character command.  Scalar

@@ -91,6 +91,26 @@ fn packed_main_loop_character_class_excludes_structural_catcodes() {
     );
 }
 
+#[test]
+fn compact_character_projections_distinguish_tokens_from_chardef_values() {
+    let literal = CommandWord::<()>::from_meaning(ResolvedMeaning::Static(Meaning::CharToken {
+        ch: 'x',
+        cat: Catcode::Letter,
+    }))
+    .0;
+    assert_eq!(literal.character_token(), Some('x'));
+    assert_eq!(literal.character_value(), Some('x'));
+
+    let defined =
+        CommandWord::<()>::from_meaning(ResolvedMeaning::Static(Meaning::CharGiven('A'))).0;
+    assert_eq!(defined.character_token(), None);
+    assert_eq!(defined.character_value(), Some('A'));
+
+    let relax = CommandWord::<()>::from_meaning(ResolvedMeaning::Static(Meaning::Relax)).0;
+    assert_eq!(relax.character_token(), None);
+    assert_eq!(relax.character_value(), None);
+}
+
 fn resolved<G>(universe: &mut tex_state::Universe<G>, token: Token) -> CurrentCommand<G> {
     CurrentCommand::resolve(
         TracedTokenWord::pack(token, OriginId::UNKNOWN),
