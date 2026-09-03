@@ -20,7 +20,7 @@ use crate::attempt::AttemptTokenListId;
 /// input future represented by the row. Its packed value is interpreted by
 /// the generation-owned input history.
 #[derive(Clone, Copy, Debug, Default)]
-pub(super) struct RowRollbackMarker(pub(super) u64);
+pub(crate) struct RowRollbackMarker(pub(super) u64);
 
 impl PartialEq for RowRollbackMarker {
     fn eq(&self, _other: &Self) -> bool {
@@ -145,7 +145,7 @@ pub(crate) struct SourceLevel<G> {
     /// contains only its checked key and reversible cursor/owner values.
     pub(crate) slot: SourceSlotKey,
     pub(crate) generation: PhantomData<fn() -> G>,
-    pub(super) rollback: RowRollbackMarker,
+    pub(crate) rollback: RowRollbackMarker,
 }
 
 impl<G> SourceLevel<G> {
@@ -232,7 +232,7 @@ pub(crate) enum SourceRetirement {
 pub(crate) struct TokenRowHeader<G> {
     pub(crate) frame: PackedInputFrame,
     generation: PhantomData<fn() -> G>,
-    pub(super) rollback: RowRollbackMarker,
+    pub(crate) rollback: RowRollbackMarker,
 }
 
 #[derive(Debug, Eq, Hash, PartialEq)]
@@ -298,7 +298,7 @@ impl<G> MacroArgumentCursor<G> {
     }
 
     #[inline(always)]
-    pub(super) fn advance_delivery(
+    pub(crate) fn advance_delivery(
         &mut self,
         position: u32,
         scratch: &crate::execution_scratch::ExecutionScratch<G>,

@@ -406,15 +406,13 @@ mutable borrow across ordinary resident retries, classification, and return.
 Every concrete resident arm advances its existing storage-domain cursor and
 ends that borrow with only the packed word, origin, position, and source
 scalars. One branch-independent `EmptyCommand::write_resolved_delivery` call
-then writes only that caller-owned slot, so no command reference crosses the
-input-top transition. `CommandState` reclaims its original destination,
-consumes the resolver's already-decoded literal catcode for
-required brace handling and applies one-delivery suppression. Its always-inlined
-row transition exposes only the scalar outer-validity fact to the surrounding
-delivery loop. The input row passes its
+then writes only that caller-owned slot. The frame-owned processor loop keeps
+that destination, consumes the resolver's already-decoded literal catcode for
+required brace handling, and applies one-delivery suppression before it makes
+the expansion-or-return decision. The input row passes its
 already-resident `TokenWord` to the dense meaning lookup, which writes the
 final meaning and control-sequence fields before returning; warm resident
-delivery has no command/interception result enum. Attempt-list storage is
+delivery has no command/interception result handoff. Attempt-list storage is
 authenticated with its exact extent when the row is admitted, so a resident
 word read does not repeat the attempt key/row validation or recreate a list
 view. A successful safe storage read advances the common frame once without a
@@ -974,9 +972,8 @@ redo preserve both transitions without constructing a complete token frame on
 every word. Each input checkpoint retains the exact total
 for direct rollback and candidate redo. Buffer high-water queries never walk
 the input rows and no prefix ledger or shadow stack is retained.
-The source first-touch inverse is at most 48 bytes. One `CommandState`-owned
-resident kernel, always inlined into the canonical processor loop, reads the
-`InputStack` top index once and matches the
+The source first-touch inverse is at most 48 bytes. One processor-owned
+resident frame loop reads the `InputStack` top index once and matches the
 authoritative `InputLevel` row directly. It constructs no universal resident-
 top enum, repeats no row discrimination, and returns no cursor carrier. Its
 source branch lends the row and resident slot together; its one resident branch
@@ -1055,15 +1052,15 @@ concrete replay, attempt, or durable input-row variant; stored delivery
 dispatches from that top-row tag and projects the resident packed word into final
 meaning and spelling fields, and advance their packed frame in place. Source
 levels write the same destination after tokenization. Parameter interception
-remains a local status before resolution and may push a literal argument level
-before the resident transition returns. The reference-only empty-slot proof
+is a direct frame-loop exit before resolution and may push a literal argument
+level before the loop reselects the new top. The reference-only empty-slot proof
 retains no backing handle or cursor, needs no rollback record, and is never
 moved into a typed suspension; cold input transitions return only copy-small
 facts after its reborrow has ended.
 
 Resolution consumes the empty-slot reborrow and returns only packed scalar
-facts. The resident transition then borrows the same caller-owned command slot
-directly. One settlement applies noexpand, outer validity,
+facts to the same loop. It then borrows the caller-owned command slot directly.
+One settlement applies noexpand, outer validity,
 alignment classification, and optional observation in canonical order;
 the singular command-state transition first-touches the `align_state` rollback
 scalar only for a literal brace, immediately before its adjustment, and stores
@@ -1076,8 +1073,8 @@ create no returned command envelope.
 The physical processor split follows those same transitions without splitting
 ownership: `processor/expand.rs` owns one raw/expanded fetch, resolve, classify,
 and dispatch state machine, while `processor/next.rs` owns the public raw
-policy entries and resident-command observation; the `CommandState` resident
-transition owns ordinary token/macro retirement and immediate retry;
+policy entries and resident-command observation; that processor loop owns
+ordinary token/macro retirement and immediate retry;
 `end_input.rs` owns cold source acquisition/EOF, terminal/v-template
 retirement, and explicit stack conservation;
 `outer_recovery.rs` owns scanner-status interception; `backup.rs` and

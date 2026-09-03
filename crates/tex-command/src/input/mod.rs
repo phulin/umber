@@ -14,7 +14,9 @@ mod tokenizer;
 mod tests;
 
 pub(crate) use history::{
-    InputStack, InputStackContextCoordinate, InputStackMark, observed_retirement_reason,
+    InputStack, InputStackContextCoordinate, InputStackMark, ResidentSourceAdvance,
+    ResidentSourceCharacterRun, ResidentSourceTop, append_resident_inline_inverse,
+    observed_retirement_reason,
 };
 #[cfg(any(test, feature = "profiling"))]
 pub(crate) use history::{input_source_context_counters, reset_input_source_context_counters};

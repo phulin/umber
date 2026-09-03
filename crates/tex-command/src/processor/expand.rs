@@ -5,7 +5,11 @@ use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
 use crate::command::DeliveryStamp;
 use crate::execution_scratch::ArgumentSetId;
-use crate::input::{InputLevelId, ResidentBoundary, SourceNameClass};
+use crate::input::{
+    InputLevel, InputLevelId, InputLevelInlineState, ResidentBoundary, ResidentSourceAdvance,
+    ResidentSourceCharacterRun, ResidentSourceTop, ResidentTokenStorage, SourceLocation,
+    SourceNameClass, TokenBehavior, append_resident_inline_inverse,
+};
 use crate::{CommandError, CommandReplayDelivery, CurrentCommand};
 
 use super::end_input::{RetirementHandoff, SourceExhaustionStatus};
@@ -221,6 +225,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             FirstCommandPolicy::Ordinary,
             ReplayCompletionPolicy::Surface,
             AlignmentInterceptionPolicy::Scalar,
+            None,
             destination,
         )?;
         debug_assert!(matches!(
@@ -244,6 +249,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             FirstCommandPolicy::Ordinary,
             ReplayCompletionPolicy::Consume,
             AlignmentInterceptionPolicy::Scalar,
+            None,
             &mut destination,
         )?;
         match result {
@@ -276,6 +282,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             FirstCommandPolicy::Ordinary,
             ReplayCompletionPolicy::Consume,
             AlignmentInterceptionPolicy::Scalar,
+            None,
             destination,
         )?;
         debug_assert!(matches!(
@@ -444,6 +451,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 FirstCommandPolicy::Ordinary,
                 ReplayCompletionPolicy::Consume,
                 AlignmentInterceptionPolicy::Scalar,
+                None,
                 &mut destination,
             );
             let lookahead = match result? {
@@ -536,6 +544,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             FirstCommandPolicy::Ordinary,
             ReplayCompletionPolicy::Surface,
             AlignmentInterceptionPolicy::Scalar,
+            None,
             destination,
         )?;
         debug_assert!(matches!(
@@ -562,6 +571,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             FirstCommandPolicy::PreflightRaw,
             ReplayCompletionPolicy::Surface,
             AlignmentInterceptionPolicy::Scalar,
+            None,
             destination,
         )?;
         debug_assert!(matches!(
@@ -595,6 +605,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             },
             ReplayCompletionPolicy::Surface,
             AlignmentInterceptionPolicy::Scalar,
+            None,
             destination,
         )
     }
@@ -642,6 +653,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             FirstCommandPolicy::MainLoopCharacter,
             ReplayCompletionPolicy::Surface,
             AlignmentInterceptionPolicy::Scalar,
+            None,
             destination,
         )?;
         debug_assert!(matches!(
@@ -667,66 +679,17 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<DeliveryStatus, CommandError> {
         debug_assert!(destination.is_none());
         debug_assert!(!self.is_observed());
-        self.invalidate_delivery_freshness();
-        *destination = Some(CurrentCommand::empty());
-        loop {
-            let command = destination
-                .as_mut()
-                .expect("character-run delivery owns its tail destination");
-            let advance = {
-                let diagnostic_effects = &mut *self.diagnostic_effects;
-                let mut consume_character = |state: &mut tex_state::CommandContext<'_, G>,
-                                             fuel: &mut crate::CommandFuel,
-                                             ch,
-                                             origin| {
-                    consume(state, fuel, diagnostic_effects, ch, origin)
-                };
-                self.command.advance_resident_row_into(
-                    self.state,
-                    self.fuel,
-                    self.create_source_control_sequences,
-                    command.empty_for_raw_delivery(),
-                    &mut self.observer,
-                    &mut self.immediate_write_retirement,
-                    Some(&mut consume_character),
-                )
-            };
-            let interception = match advance {
-                Ok(interception) => interception,
-                Err(ResidentBoundary::CharacterRunEnd) => {
-                    destination.take();
-                    self.invalidate_delivery_freshness();
-                    return Ok(DeliveryStatus::CharacterRun);
-                }
-                Err(ResidentBoundary::CharacterRunFailure(error)) => {
-                    destination.take();
-                    self.invalidate_delivery_freshness();
-                    return Err(error);
-                }
-                Err(cold) => match self.settle_resident_cold_transition(cold, command)? {
-                    ResidentColdOutcome::Retry => continue,
-                    ResidentColdOutcome::End => {
-                        destination.take();
-                        return Ok(DeliveryStatus::End);
-                    }
-                    ResidentColdOutcome::ReplayCompleted(episode) => {
-                        destination.take();
-                        return Ok(DeliveryStatus::ReplayCompleted(episode));
-                    }
-                    ResidentColdOutcome::SyntheticCommand(interception) => interception,
-                },
-            };
-            self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
-            if command.is_direct_source_delivery() {
-                self.readmit_delivery_stamp(command.delivery_stamp());
-            } else {
-                self.publish_resident_delivery();
-            }
-            if interception {
-                Self::check_outer_validity_entry(self, command)?;
-            }
-            return Ok(DeliveryStatus::CharacterRunBoundary);
-        }
+        self.command_delivery_entry(
+            ExpandedFetch::GetXToken,
+            ProtectedMacroHandling::Expand,
+            UndefinedHandling::Diagnose,
+            ExpandedObservationPolicy::RawOnly,
+            FirstCommandPolicy::Raw,
+            ReplayCompletionPolicy::Surface,
+            AlignmentInterceptionPolicy::Scalar,
+            Some(consume),
+            destination,
+        )
     }
 
     #[cold]
@@ -971,6 +934,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         first_command: FirstCommandPolicy,
         replay_completion: ReplayCompletionPolicy,
         alignment_interception: AlignmentInterceptionPolicy,
+        mut character_run: Option<&mut super::MainLoopCharacterConsumer<'_, G>>,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
         self.invalidate_delivery_freshness();
@@ -1013,26 +977,23 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.command.transient.active_expansion_depth = active_depth;
         let mut first = true;
         let mut suppress_first_expansion_trace = delivery_expanded;
+        let mut charge_raw = fetch;
         let status = 'delivery: loop {
             if fetch {
                 self.invalidate_delivery_freshness();
-                if let Err(failure) = self.charge_command_action() {
-                    return self.fail_expanded_delivery(destination, depth, failure);
+                if charge_raw {
+                    if let Err(failure) = self.charge_command_action() {
+                        return self.fail_expanded_delivery(destination, depth, failure);
+                    }
+                    charge_raw = false;
                 }
-                'resident: loop {
-                    let outer = match self.command.advance_resident_row_into(
-                        self.state,
-                        self.fuel,
-                        self.create_source_control_sequences,
-                        command.empty_for_raw_delivery(),
-                        &mut self.observer,
-                        &mut self.immediate_write_retirement,
-                        None,
-                    ) {
-                        Ok(interception) => interception,
-                        Err(cold) => {
-                            let settled = match self.settle_resident_cold_transition(cold, command)
-                            {
+                let outer = {
+                    macro_rules! resident_boundary {
+                        ($frame:lifetime, $boundary:expr) => {{
+                            let settled = match self.settle_resident_cold_transition(
+                                $boundary,
+                                command,
+                            ) {
                                 Ok(settled) => settled,
                                 Err(failure) => {
                                     return self.fail_expanded_delivery(
@@ -1043,7 +1004,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 }
                             };
                             match settled {
-                                ResidentColdOutcome::Retry => continue,
+                                ResidentColdOutcome::Retry => continue 'delivery,
                                 ResidentColdOutcome::End => break 'delivery DeliveryStatus::End,
                                 ResidentColdOutcome::ReplayCompleted(episode) => {
                                     if replay_completion == ReplayCompletionPolicy::Surface {
@@ -1051,23 +1012,791 @@ impl<G> CommandProcessor<'_, '_, G> {
                                     }
                                     continue 'delivery;
                                 }
-                                ResidentColdOutcome::SyntheticCommand(outer) => outer,
+                                ResidentColdOutcome::SyntheticCommand(outer) => {
+                                    break $frame outer;
+                                }
+                            }
+                        }};
+                    }
+
+                    #[cfg(feature = "profiling")]
+                    let mut character_run_count = 0_u32;
+                    #[cfg(feature = "profiling")]
+                    let mut character_run_kind = None;
+                    macro_rules! finish_character_run_accounting {
+                        () => {
+                            #[cfg(feature = "profiling")]
+                            if let Some(kind) = character_run_kind.take() {
+                                _fuel.record_raw_run(false, kind, character_run_count);
+                            }
+                        };
+                    }
+                    macro_rules! record_resident_first_touch {
+                        ($command_state:expr, $resident_index:expr, $rollback:expr, $state:expr) => {{
+                            if $command_state.roots.input.levels.recording {
+                                let interval = $command_state.roots.input.levels.interval;
+                                if !$rollback.in_epoch(interval) {
+                                    append_resident_inline_inverse(
+                                        $resident_index,
+                                        $state,
+                                        interval,
+                                        $rollback,
+                                        &mut $command_state.roots.input.levels.undo,
+                                        #[cfg(test)]
+                                        &mut $command_state
+                                            .roots
+                                            .input
+                                            .levels
+                                            .cursor_mutations
+                                            .first_touch_transitions,
+                                    );
+                                }
+                            }
+                        }};
+                    }
+                    'frame: {
+                        let command_state = &mut *self.command;
+                        let state = &mut *self.state;
+                        let _fuel = &mut *self.fuel;
+                        let diagnostic_effects = &mut *self.diagnostic_effects;
+                        let create_control_sequences = self.create_source_control_sequences;
+                        let observer = &mut self.observer;
+                        let immediate_write_retirement = &mut self.immediate_write_retirement;
+                        let Some(resident_index) =
+                            command_state.roots.input.levels.top.checked_sub(1)
+                        else {
+                            resident_boundary!('frame, ResidentBoundary::Empty);
+                        };
+                        #[cfg(test)]
+                        {
+                            command_state
+                                .roots
+                                .input
+                                .levels
+                                .cursor_mutations
+                                .typed_top_accesses = command_state
+                                .roots
+                                .input
+                                .levels
+                                .cursor_mutations
+                                .typed_top_accesses
+                                .saturating_add(1);
+                            command_state
+                                .raw_delivery_path_counters
+                                .resident_transitions = command_state
+                                .raw_delivery_path_counters
+                                .resident_transitions
+                                .saturating_add(1);
+                        }
+                        let mut direct_source = false;
+                        let mut direct_source_line = None;
+                        let mut suppress_expandable = false;
+                        #[cfg(feature = "profiling")]
+                        let mut raw_delivery_kind = crate::fuel::RawDeliveryKind::StoredToken;
+                        #[cfg(test)]
+                        let mut generic_stored_delivery = false;
+                        #[cfg(test)]
+                        let mut macro_body_delivery = false;
+                        #[cfg(test)]
+                        let mut macro_argument_delivery = false;
+                        #[cfg(test)]
+                        let mut source_delivery = false;
+                        let (word, origin, identity, position, active_source) = 'selected: {
+                            match &mut command_state.roots.input.levels.rows[resident_index] {
+                                InputLevel::Source(source) => {
+                                    #[cfg(test)]
+                                    {
+                                        command_state
+                                            .roots
+                                            .input
+                                            .levels
+                                            .cursor_mutations
+                                            .source_branch_entries = command_state
+                                            .roots
+                                            .input
+                                            .levels
+                                            .cursor_mutations
+                                            .source_branch_entries
+                                            .saturating_add(1);
+                                    }
+                                    let slot = command_state
+                                        .roots
+                                        .input
+                                        .levels
+                                        .source_slots
+                                        .resident_value_mut(source.slot.0.slot);
+                                    let mut top = ResidentSourceTop {
+                                        index: resident_index,
+                                        source,
+                                        slot,
+                                        recording: command_state.roots.input.levels.recording,
+                                        interval: command_state.roots.input.levels.interval,
+                                        undo: &mut command_state.roots.input.levels.undo,
+                                        source_lex_states: &mut command_state
+                                            .roots
+                                            .input
+                                            .levels
+                                            .source_lex_states,
+                                        source_lex_captures: &mut command_state
+                                            .roots
+                                            .input
+                                            .levels
+                                            .source_lex_captures,
+                                        #[cfg(test)]
+                                        counters: &mut command_state
+                                            .roots
+                                            .input
+                                            .levels
+                                            .cursor_mutations,
+                                    };
+                                    let force_eof =
+                                        top.force_eof(command_state.roots.input.force_eof);
+                                    let identity = top.source.identity();
+                                    let position = top.slot.cursor.next_physical_offset;
+                                    let active_source = top.source.frame.source_context();
+                                    if let Some(consume) = character_run.as_deref_mut()
+                                        && matches!(
+                                            command_state.roots.scanner.status(),
+                                            crate::processor::ScannerStatus::Normal
+                                        )
+                                    {
+                                        let run = match top.advance_character_run(
+                                            state,
+                                            |state, ch, origin| {
+                                                _fuel.charge()?;
+                                                Ok(consume(
+                                                    state,
+                                                    _fuel,
+                                                    diagnostic_effects,
+                                                    ch,
+                                                    origin,
+                                                ))
+                                            },
+                                        ) {
+                                            Ok(run) => run,
+                                            Err(()) => {
+                                                resident_boundary!('frame, ResidentBoundary::Failure)
+                                            }
+                                        };
+                                        match run {
+                                            ResidentSourceCharacterRun::Unavailable => {}
+                                            ResidentSourceCharacterRun::Consumed { count } => {
+                                                let _ = count;
+                                                let line = top.slot.cursor.line.as_ref().expect(
+                                                    "a consumed source run retains its line",
+                                                );
+                                                let location = SourceLocation::new(
+                                                    line.physical.source,
+                                                    line.cursor.byte_cursor.saturating_sub(1),
+                                                );
+                                                #[cfg(feature = "profiling")]
+                                                {
+                                                    character_run_count =
+                                                        character_run_count.saturating_add(count);
+                                                    character_run_kind =
+                                                        Some(crate::fuel::RawDeliveryKind::Source);
+                                                }
+                                                command_state.last_diagnostic_location =
+                                                    Some(location);
+                                                finish_character_run_accounting!();
+                                                break 'delivery DeliveryStatus::CharacterRun;
+                                            }
+                                            ResidentSourceCharacterRun::Failed { count, error } => {
+                                                let location = (count != 0).then(|| {
+                                                    let line =
+                                            top.slot.cursor.line.as_ref().expect(
+                                                "a consumed source prefix retains its line",
+                                            );
+                                                    SourceLocation::new(
+                                                        line.physical.source,
+                                                        line.cursor.byte_cursor.saturating_sub(1),
+                                                    )
+                                                });
+                                                #[cfg(feature = "profiling")]
+                                                if count != 0 {
+                                                    character_run_count =
+                                                        character_run_count.saturating_add(count);
+                                                    character_run_kind =
+                                                        Some(crate::fuel::RawDeliveryKind::Source);
+                                                }
+                                                let _ = count;
+                                                if location.is_some() {
+                                                    command_state.last_diagnostic_location =
+                                                        location;
+                                                }
+                                                finish_character_run_accounting!();
+                                                return self.fail_expanded_delivery(
+                                                    destination,
+                                                    depth,
+                                                    error,
+                                                );
+                                            }
+                                        }
+                                    }
+                                    match match top.advance(
+                                        command_state.roots.profile,
+                                        force_eof,
+                                        state,
+                                        create_control_sequences,
+                                    ) {
+                                        Ok(advance) => advance,
+                                        Err(()) => {
+                                            resident_boundary!('frame, ResidentBoundary::Failure)
+                                        }
+                                    } {
+                                        ResidentSourceAdvance::Delivered(
+                                            word,
+                                            origin,
+                                            location,
+                                        ) => {
+                                            direct_source = true;
+                                            direct_source_line =
+                                                top.slot.cursor.line.as_ref().map(|line| {
+                                                    u32::try_from(line.physical.number())
+                                                        .unwrap_or(u32::MAX)
+                                                });
+                                            #[cfg(feature = "profiling")]
+                                            {
+                                                raw_delivery_kind =
+                                                    crate::fuel::RawDeliveryKind::Source;
+                                            }
+                                            #[cfg(test)]
+                                            {
+                                                source_delivery = true;
+                                            }
+                                            command_state.last_diagnostic_location = Some(location);
+                                            break 'selected (
+                                                word,
+                                                origin,
+                                                identity.0,
+                                                position,
+                                                active_source,
+                                            );
+                                        }
+                                        ResidentSourceAdvance::InvalidCharacter => {
+                                            finish_character_run_accounting!();
+                                            resident_boundary!('frame, ResidentBoundary::InvalidCharacter);
+                                        }
+                                        ResidentSourceAdvance::NeedLine(identity) => {
+                                            if character_run.is_some() {
+                                                finish_character_run_accounting!();
+                                                break 'delivery DeliveryStatus::CharacterRun;
+                                            }
+                                            resident_boundary!('frame, ResidentBoundary::NeedLine(identity));
+                                        }
+                                        ResidentSourceAdvance::Exhausted(identity) => {
+                                            if character_run.is_some() {
+                                                finish_character_run_accounting!();
+                                                break 'delivery DeliveryStatus::CharacterRun;
+                                            }
+                                            resident_boundary!('frame, ResidentBoundary::SourceExhausted(identity));
+                                        }
+                                    }
+                                }
+                                InputLevel::Resident(row) => {
+                                    // Select the storage lifetime once, then keep that concrete cursor
+                                    // through the common header transition. In particular, do not
+                                    // redispatch `row.storage` to recover rollback, parameter, or
+                                    // accounting facts after the word read.
+                                    let exhausted_identity = row.header.identity();
+                                    let identity = exhausted_identity.0;
+                                    let active_source = row.header.frame.source_context();
+                                    suppress_expandable = row.header.frame.flags().contains(
+                            tex_state::packed_input::InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE,
+                        );
+                                    let position = row.header.frame.position();
+                                    macro_rules! drive_selected_cursor {
+                            (
+                                inline: $inline:expr,
+                                read: $read:expr,
+                                arguments: $arguments:expr,
+                                on_word: $on_word:block,
+                                on_parameter: $on_parameter:block $(,)?
+                            ) => {{
+                                record_resident_first_touch!(
+                                    command_state,
+                                    resident_index,
+                                    &mut row.header.rollback,
+                                    $inline
+                                );
+                                let Some((word, origin)) = $read else {
+                                    if character_run.is_some() {
+                                        finish_character_run_accounting!();
+                                        break 'delivery DeliveryStatus::CharacterRun;
+                                    }
+                                    let retirement = match command_state.finish_resident_exhaustion(
+                                            resident_index,
+                                            exhausted_identity,
+                                            observer,
+                                            immediate_write_retirement,
+                                        ) {
+                                            Ok(retirement) => retirement,
+                                            Err(()) => resident_boundary!(
+                                                'frame,
+                                                ResidentBoundary::Failure
+                                            ),
+                                        };
+                                    if let Some(retirement) = retirement {
+                                        resident_boundary!('frame, retirement);
+                                    }
+                                    continue 'delivery;
+                                };
+                                let consumed = row.header.frame.advance_resident();
+                                debug_assert_eq!(consumed, position);
+                                $on_word
+                                if let Some(arguments) = $arguments
+                                    && let Some(slot) = word.out_parameter_slot()
+                                {
+                                    #[cfg(test)]
+                                    {
+                                        command_state.raw_delivery_path_counters
+                                            .out_parameter_interceptions = command_state
+                                            .raw_delivery_path_counters
+                                            .out_parameter_interceptions
+                                            .saturating_add(1);
+                                    }
+                                    $on_parameter
+                                    if command_state.push_resident_parameter_cursor(
+                                        slot,
+                                        arguments,
+                                        active_source,
+                                        observer,
+                                    ).is_err() {
+                                        resident_boundary!('frame, ResidentBoundary::Failure);
+                                    }
+                                    continue 'delivery;
+                                }
+                                break 'selected (
+                                    word,
+                                    origin,
+                                    identity,
+                                    u64::from(position),
+                                    active_source,
+                                );
+                            }};
+                        }
+                                    match &mut row.storage {
+                                        ResidentTokenStorage::Replay { replay, cursor } => {
+                                            #[cfg(test)]
+                                            {
+                                                command_state
+                                                    .roots
+                                                    .input
+                                                    .levels
+                                                    .cursor_mutations
+                                                    .replay_domain_dispatches = command_state
+                                                    .roots
+                                                    .input
+                                                    .levels
+                                                    .cursor_mutations
+                                                    .replay_domain_dispatches
+                                                    .saturating_add(1);
+                                                command_state
+                                                    .stored_token_advance_counters
+                                                    .span_selections = command_state
+                                                    .stored_token_advance_counters
+                                                    .span_selections
+                                                    .saturating_add(1);
+                                            }
+                                            drive_selected_cursor! {
+                                                inline: InputLevelInlineState::replay_cursor(position, *cursor),
+                                                read: command_state.roots.input.replay.advance_sequential(
+                                                    *replay,
+                                                    cursor,
+                                                    #[cfg(test)]
+                                                    &mut command_state
+                                                        .stored_token_advance_counters
+                                                        .replay_segment_inspections,
+                                                    #[cfg(test)]
+                                                    &mut command_state
+                                                        .stored_token_advance_counters
+                                                        .replay_run_transitions,
+                                                )
+                                                .map(|word| (word.token_word(), word.origin())),
+                                                arguments: (!matches!(
+                                                    row.header.behavior(),
+                                                    TokenBehavior::Parameter
+                                                ))
+                                                .then_some(None),
+                                                on_word: {
+                                                    #[cfg(test)]
+                                                    {
+                                                        command_state.roots
+                                                            .input
+                                                            .levels
+                                                            .cursor_mutations
+                                                            .stored_token_branch_entries = command_state
+                                                            .roots
+                                                            .input
+                                                            .levels
+                                                            .cursor_mutations
+                                                            .stored_token_branch_entries
+                                                            .saturating_add(1);
+                                                        command_state.stored_token_advance_counters.packed_loads = command_state
+                                                            .stored_token_advance_counters
+                                                            .packed_loads
+                                                            .saturating_add(1);
+                                                        command_state.stored_token_advance_counters.cursor_advances = command_state
+                                                            .stored_token_advance_counters
+                                                            .cursor_advances
+                                                            .saturating_add(1);
+                                                        generic_stored_delivery = true;
+                                                    }
+                                                },
+                                                on_parameter: {
+                                                    #[cfg(test)]
+                                                    {
+                                                        command_state.stored_token_advance_counters
+                                                            .parameter_interceptions = command_state
+                                                            .stored_token_advance_counters
+                                                            .parameter_interceptions
+                                                            .saturating_add(1);
+                                                    }
+                                                },
+                                            }
+                                        }
+                                        ResidentTokenStorage::Attempt(list) => {
+                                            #[cfg(test)]
+                                            {
+                                                command_state
+                                                    .roots
+                                                    .input
+                                                    .levels
+                                                    .cursor_mutations
+                                                    .attempt_domain_dispatches = command_state
+                                                    .roots
+                                                    .input
+                                                    .levels
+                                                    .cursor_mutations
+                                                    .attempt_domain_dispatches
+                                                    .saturating_add(1);
+                                            }
+                                            drive_selected_cursor! {
+                                                inline: InputLevelInlineState::token_position(position),
+                                                read: command_state.attempt.arena().resident_token_word(
+                                                    list,
+                                                    position as usize,
+                                                ).map(|word| (word.token_word(), word.origin())),
+                                                arguments: (!matches!(
+                                                    row.header.behavior(),
+                                                    TokenBehavior::Parameter
+                                                ))
+                                                .then_some(None),
+                                                on_word: {
+                                                    #[cfg(test)]
+                                                    {
+                                                        command_state.roots.input.levels.cursor_mutations
+                                                            .stored_token_branch_entries = command_state.roots.input
+                                                            .levels.cursor_mutations.stored_token_branch_entries
+                                                            .saturating_add(1);
+                                                        command_state.stored_token_advance_counters.packed_loads = command_state
+                                                            .stored_token_advance_counters.packed_loads
+                                                            .saturating_add(1);
+                                                        command_state.stored_token_advance_counters.cursor_advances = command_state
+                                                            .stored_token_advance_counters.cursor_advances
+                                                            .saturating_add(1);
+                                                        generic_stored_delivery = true;
+                                                    }
+                                                },
+                                                on_parameter: {
+                                                    #[cfg(test)]
+                                                    {
+                                                        command_state.stored_token_advance_counters
+                                                            .parameter_interceptions = command_state
+                                                            .stored_token_advance_counters
+                                                            .parameter_interceptions
+                                                            .saturating_add(1);
+                                                    }
+                                                },
+                                            }
+                                        }
+                                        ResidentTokenStorage::Durable(list) => {
+                                            #[cfg(test)]
+                                            {
+                                                command_state
+                                                    .roots
+                                                    .input
+                                                    .levels
+                                                    .cursor_mutations
+                                                    .durable_domain_dispatches = command_state
+                                                    .roots
+                                                    .input
+                                                    .levels
+                                                    .cursor_mutations
+                                                    .durable_domain_dispatches
+                                                    .saturating_add(1);
+                                            }
+                                            drive_selected_cursor! {
+                                                inline: InputLevelInlineState::token_position(position),
+                                                read: list.word_at(position as usize).map(|word| (
+                                                    word,
+                                                    tex_state::token::OriginId::UNKNOWN,
+                                                )),
+                                                arguments: (!matches!(
+                                                    row.header.behavior(),
+                                                    TokenBehavior::Parameter
+                                                ))
+                                                .then_some(None),
+                                                on_word: {
+                                                    #[cfg(test)]
+                                                    {
+                                                        command_state.roots.input.levels.cursor_mutations
+                                                            .stored_token_branch_entries = command_state.roots.input
+                                                            .levels.cursor_mutations.stored_token_branch_entries
+                                                            .saturating_add(1);
+                                                        command_state.stored_token_advance_counters.packed_loads = command_state
+                                                            .stored_token_advance_counters.packed_loads
+                                                            .saturating_add(1);
+                                                        command_state.stored_token_advance_counters.cursor_advances = command_state
+                                                            .stored_token_advance_counters.cursor_advances
+                                                            .saturating_add(1);
+                                                        generic_stored_delivery = true;
+                                                    }
+                                                },
+                                                on_parameter: {
+                                                    #[cfg(test)]
+                                                    {
+                                                        command_state.stored_token_advance_counters
+                                                            .parameter_interceptions = command_state
+                                                            .stored_token_advance_counters
+                                                            .parameter_interceptions
+                                                            .saturating_add(1);
+                                                    }
+                                                },
+                                            }
+                                        }
+                                        ResidentTokenStorage::MacroBody(body) => {
+                                            #[cfg(test)]
+                                            {
+                                                command_state
+                                                    .roots
+                                                    .input
+                                                    .levels
+                                                    .cursor_mutations
+                                                    .macro_body_domain_dispatches = command_state
+                                                    .roots
+                                                    .input
+                                                    .levels
+                                                    .cursor_mutations
+                                                    .macro_body_domain_dispatches
+                                                    .saturating_add(1);
+                                                command_state.macro_kernel_counters.body_words =
+                                                    command_state
+                                                        .macro_kernel_counters
+                                                        .body_words
+                                                        .saturating_add(1);
+                                                command_state
+                                                    .macro_kernel_counters
+                                                    .body_cursor_advances = command_state
+                                                    .macro_kernel_counters
+                                                    .body_cursor_advances
+                                                    .saturating_add(1);
+                                                macro_body_delivery = true;
+                                            }
+                                            drive_selected_cursor! {
+                                                inline: InputLevelInlineState::token_position(position),
+                                                read: body.body.word(position as usize).map(|word| (
+                                                    word,
+                                                    tex_state::token::OriginId::UNKNOWN,
+                                                )),
+                                                arguments: Some(body.arguments),
+                                                on_word: {},
+                                                on_parameter: {
+                                                    #[cfg(test)]
+                                                    {
+                                                        command_state.macro_kernel_counters.body_parameter_pushes = command_state
+                                                            .macro_kernel_counters
+                                                            .body_parameter_pushes
+                                                            .saturating_add(1);
+                                                    }
+                                                },
+                                            }
+                                        }
+                                        ResidentTokenStorage::MacroArgument(argument) => {
+                                            #[cfg(test)]
+                                            {
+                                                command_state
+                                                    .roots
+                                                    .input
+                                                    .levels
+                                                    .cursor_mutations
+                                                    .macro_argument_branch_entries = command_state
+                                                    .roots
+                                                    .input
+                                                    .levels
+                                                    .cursor_mutations
+                                                    .macro_argument_branch_entries
+                                                    .saturating_add(1);
+                                                command_state
+                                                    .macro_kernel_counters
+                                                    .argument_words = command_state
+                                                    .macro_kernel_counters
+                                                    .argument_words
+                                                    .saturating_add(1);
+                                                command_state
+                                                    .macro_kernel_counters
+                                                    .argument_cursor_advances = command_state
+                                                    .macro_kernel_counters
+                                                    .argument_cursor_advances
+                                                    .saturating_add(1);
+                                                macro_argument_delivery = true;
+                                            }
+                                            #[cfg(feature = "profiling")]
+                                            {
+                                                raw_delivery_kind =
+                                                    crate::fuel::RawDeliveryKind::MacroArgument;
+                                            }
+                                            drive_selected_cursor! {
+                                                inline: InputLevelInlineState::macro_argument(
+                                                    position,
+                                                    argument.origin_run,
+                                                ),
+                                                read: argument.advance_delivery(position, &command_state.scratch),
+                                                arguments: None,
+                                                on_word: {},
+                                                on_parameter: {},
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        };
+                        if let Some(consume) = character_run.as_deref_mut()
+                            && matches!(
+                                command_state.roots.scanner.status(),
+                                crate::processor::ScannerStatus::Normal
+                            )
+                            && let tex_state::token::Token::Char {
+                                ch,
+                                cat:
+                                    tex_state::token::Catcode::Letter | tex_state::token::Catcode::Other,
+                            } = word.semantic_token()
+                        {
+                            if let Err(error) = _fuel.charge() {
+                                finish_character_run_accounting!();
+                                return self.fail_expanded_delivery(destination, depth, error);
+                            }
+                            #[cfg(feature = "profiling")]
+                            {
+                                character_run_count = character_run_count.saturating_add(1);
+                                character_run_kind = Some(raw_delivery_kind);
+                            }
+                            if consume(state, _fuel, diagnostic_effects, ch, origin) {
+                                continue 'delivery;
+                            }
+                            finish_character_run_accounting!();
+                            break 'delivery DeliveryStatus::CharacterRun;
+                        }
+                        if character_run.is_some() {
+                            if let Err(error) = _fuel.charge() {
+                                finish_character_run_accounting!();
+                                return self.fail_expanded_delivery(destination, depth, error);
+                            }
+                            finish_character_run_accounting!();
+                        }
+                        #[cfg(test)]
+                        {
+                            if generic_stored_delivery {
+                                command_state.stored_token_advance_counters.command_writes =
+                                    command_state
+                                        .stored_token_advance_counters
+                                        .command_writes
+                                        .saturating_add(1);
+                                command_state.raw_delivery_path_counters.stored_direct =
+                                    command_state
+                                        .raw_delivery_path_counters
+                                        .stored_direct
+                                        .saturating_add(1);
+                            }
+                            if macro_body_delivery {
+                                command_state.macro_kernel_counters.body_command_writes =
+                                    command_state
+                                        .macro_kernel_counters
+                                        .body_command_writes
+                                        .saturating_add(1);
+                            }
+                            if macro_argument_delivery {
+                                command_state.macro_kernel_counters.argument_command_writes =
+                                    command_state
+                                        .macro_kernel_counters
+                                        .argument_command_writes
+                                        .saturating_add(1);
+                                command_state
+                                    .raw_delivery_path_counters
+                                    .macro_argument_direct = command_state
+                                    .raw_delivery_path_counters
+                                    .macro_argument_direct
+                                    .saturating_add(1);
+                            }
+                            if source_delivery {
+                                command_state.raw_delivery_path_counters.source_direct =
+                                    command_state
+                                        .raw_delivery_path_counters
+                                        .source_direct
+                                        .saturating_add(1);
                             }
                         }
-                    };
-                    self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
-                    if command.is_direct_source_delivery() {
-                        self.readmit_delivery_stamp(command.delivery_stamp());
-                    } else {
-                        self.publish_resident_delivery();
+                        let mut raw_destination = command.empty_for_raw_delivery();
+                        let resolution = raw_destination.reborrow().write_resolved_delivery(
+                            word,
+                            origin,
+                            identity,
+                            position,
+                            active_source,
+                            direct_source,
+                            direct_source_line,
+                            suppress_expandable,
+                            state,
+                        );
+                        #[cfg(test)]
+                        if generic_stored_delivery {
+                            command_state.stored_token_advance_counters.meaning_lookups =
+                                command_state
+                                    .stored_token_advance_counters
+                                    .meaning_lookups
+                                    .saturating_add(u64::from(resolution.meaning_lookup()));
+                        }
+                        let scanner_active = !matches!(
+                            command_state.roots.scanner.status(),
+                            crate::processor::ScannerStatus::Normal
+                        );
+                        let command = raw_destination.into_resident();
+                        if command.suppresses_expandable_control_sequence() {
+                            command.suppress_expandable();
+                        }
+                        #[cfg(feature = "profiling")]
+                        _fuel.record_raw_delivery(
+                            scanner_active,
+                            resolution.meaning_lookup(),
+                            raw_delivery_kind,
+                        );
+                        let outer = if command.is_outer() && scanner_active {
+                            true
+                        } else {
+                            command_state.roots.alignment.classify_delivery(
+                                &mut command_state.timeline,
+                                command,
+                                resolution.literal_catcode(),
+                            );
+                            false
+                        };
+                        break 'frame outer;
                     }
-                    if outer && let Err(failure) = self.check_outer_validity_entry(command) {
-                        return self.fail_expanded_delivery(destination, depth, failure);
-                    }
-                    if self.is_observed() {
-                        self.observe_resident_command(command);
-                    }
-                    break 'resident;
+                };
+                self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
+                if command.is_direct_source_delivery() {
+                    self.readmit_delivery_stamp(command.delivery_stamp());
+                } else {
+                    self.publish_resident_delivery();
+                }
+                if outer && let Err(failure) = self.check_outer_validity_entry(command) {
+                    return self.fail_expanded_delivery(destination, depth, failure);
+                }
+                if self.is_observed() {
+                    self.observe_resident_command(command);
+                }
+                if character_run.is_some() {
+                    break 'delivery DeliveryStatus::CharacterRunBoundary;
                 }
             }
 
@@ -1083,6 +1812,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         return self.fail_expanded_delivery(destination, depth, failure);
                     }
                     fetch = true;
+                    charge_raw = true;
                     continue;
                 }
                 break 'delivery DeliveryStatus::Command;
@@ -1131,6 +1861,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             return self.fail_expanded_delivery(destination, depth, failure);
                         }
                         fetch = true;
+                        charge_raw = true;
                         continue;
                     }
                     if expanded_fetch == ExpandedFetch::XToken {
@@ -1141,6 +1872,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             return self.fail_expanded_delivery(destination, depth, failure);
                         }
                         fetch = true;
+                        charge_raw = true;
                         continue;
                     }
                     command.convert_end_template_to_endv(self.state.frozen_endv_token());
@@ -1177,6 +1909,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     ) {
                         Ok(()) => {
                             fetch = true;
+                            charge_raw = true;
                             continue;
                         }
                         Err(failure) => failure,
@@ -1190,6 +1923,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         CommandError::ParagraphInMacroArgument
                         | CommandError::OuterInMacroArgument => {
                             fetch = true;
+                            charge_raw = true;
                         }
                         failure => {
                             return self.fail_expanded_delivery(destination, depth, failure);
@@ -1205,7 +1939,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.command.transient.active_expansion_depth = depth;
         if matches!(
             status,
-            DeliveryStatus::End | DeliveryStatus::ReplayCompleted(_)
+            DeliveryStatus::End | DeliveryStatus::ReplayCompleted(_) | DeliveryStatus::CharacterRun
         ) {
             destination.take();
         }

@@ -109,7 +109,7 @@ fn source_checkpoint_and_probe_paths_cannot_clone_variable_owners() {
     assert!(levels.contains("struct RowRollbackMarker"));
     assert_eq!(
         levels
-            .matches("pub(super) rollback: RowRollbackMarker")
+            .matches("pub(crate) rollback: RowRollbackMarker")
             .count(),
         2
     );
@@ -158,18 +158,8 @@ fn command_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels
     assert_eq!(expansion.matches("fn expanded_delivery_entry(").count(), 0);
     assert!(!expansion.contains("fn expanded_destination_loop("));
     assert_eq!(expansion.matches("fn command_delivery_entry(").count(), 1);
-    assert_eq!(
-        input_history
-            .matches("fn advance_resident_row_into(")
-            .count(),
-        1,
-        "command state must own exactly one completed resident transition"
-    );
-    let resident_row = input_history
-        .split("pub(crate) fn advance_resident_row_into(")
-        .next()
-        .expect("resident row prefix");
-    assert!(resident_row.ends_with("#[inline(always)]\n    #[allow(\n        clippy::too_many_arguments,\n        reason = \"separate borrowed owners avoid a tuple handoff in the inlined row machine\"\n    )]\n    "));
+    assert_eq!(expansion.matches("fn command_delivery_entry(").count(), 1);
+    assert!(!input_history.contains("fn advance_resident_row_into("));
     assert!(!input_stack.contains("fn deliver_top_into("));
     for retired in [
         "fn take_input_token(",
@@ -192,16 +182,16 @@ fn command_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels
         .expect("locate singular delivery entry");
     assert!(!delivery_entry.contains("destination.as_ref()"));
     assert_eq!(delivery_entry.matches(".as_mut()").count(), 1);
-    assert!(expansion.contains(".advance_resident_row_into("));
+    assert!(!expansion.contains(".advance_resident_row_into("));
     assert!(!next.contains("fn apply_delivery_rules("));
-    assert!(input_history.contains("roots.alignment.classify_delivery("));
-    assert!(input_history.contains("resolution.literal_catcode()"));
+    assert!(delivery_entry.contains("roots.alignment.classify_delivery("));
+    assert!(delivery_entry.contains("resolution.literal_catcode()"));
     assert!(input_history.contains("true"));
     assert!(!input_history.contains("fn advance_resident_top_into("));
     assert!(!levels.contains("let frame = self.frame;"));
     assert!(command.contains("struct EmptyCommand<'slot, G>"));
     assert!(!command.contains("ResolvedCommand"));
-    assert!(input_history.contains("crate::command::EmptyCommand<'_, G>"));
+    assert!(delivery_entry.contains("command.empty_for_raw_delivery()"));
     assert!(!input_stack.contains("enum InputTopTransition {"));
     assert!(!input_history.contains("InputTopTransition"));
     assert!(!input_history.contains("fn select_resident_top("));
@@ -218,7 +208,7 @@ fn command_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels
         "resident input words must resolve through one final-slot write"
     );
     assert_eq!(
-        input_history.matches(".write_resolved_delivery(").count(),
+        delivery_entry.matches(".write_resolved_delivery(").count(),
         1,
         "all resident variants must share one final-slot admission tail"
     );
@@ -233,21 +223,13 @@ fn command_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels
             "input delivery must resolve the canonical command directly, without {retired}"
         );
     }
-    assert_eq!(
-        input_history
-            .matches("fn advance_resident_row_into(")
-            .count(),
-        1,
-        "source and stored input must share one destination-directed top transition"
-    );
-    let resident_front = input_history
-        .split("fn advance_resident_row_into(")
-        .nth(1)
-        .and_then(|tail| tail.split("fn push_resident_parameter_cursor(").next())
-        .expect("locate typed resident-delivery front");
+    let resident_front = delivery_entry;
+    assert_eq!(resident_front.matches("'delivery: loop").count(), 1);
+    assert_eq!(resident_front.matches("'frame: loop").count(), 0);
+    assert!(resident_front.contains("ExpandedCommandAction::Expand(dispatch)"));
     assert_eq!(
         resident_front
-            .matches("match &mut self.roots.input.levels.rows")
+            .matches("match &mut command_state.roots.input.levels.rows")
             .count(),
         1,
         "the owning input row must dispatch directly without a universal top carrier"
@@ -288,9 +270,9 @@ fn command_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels
             "resident front must not retain alternate machinery through {retired}"
         );
     }
-    assert_eq!(resident_front.matches("return Ok(outer);").count(), 1);
+    assert_eq!(resident_front.matches("break 'frame outer;").count(), 1);
     assert!(resident_front.contains("resolution.literal_catcode()"));
-    assert!(resident_front.contains("argument.advance_delivery(position, &self.scratch)"));
+    assert!(resident_front.contains("argument.advance_delivery(position, &command_state.scratch)"));
     let macro_argument_cursor = levels
         .split("impl<G> MacroArgumentCursor<G>")
         .nth(1)
@@ -314,11 +296,7 @@ fn command_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels
     assert!(!admitted_argument_read.contains("TracedTokenWord"));
     assert!(!input_stack.contains("fn deliver_top_into("));
     assert!(!input_history.contains("let Some(level) = roots.input.levels.last()"));
-    let input_top_transition = input_history
-        .split("fn advance_resident_row_into(")
-        .nth(1)
-        .and_then(|tail| tail.split("impl<G> InputStack<G> {").next())
-        .expect("locate warmed input-top transition");
+    let input_top_transition = delivery_entry;
     for forbidden in [
         "register_source",
         "backing_registered",
@@ -529,7 +507,7 @@ fn raw_delivery_handlers_are_private_direct_call_siblings() {
     assert!(history.contains("fn pop_resident("));
     assert!(!stack.contains("RetiredInputLevel"));
     assert!(!history.contains("pop_resident_project"));
-    assert!(history.contains("destination.reborrow()"));
+    assert!(expansion.contains("raw_destination.reborrow()"));
     assert!(!history.contains("self.retire_input_top("));
     assert!(expansion.contains("self.check_outer_validity_entry(command)"));
 }
@@ -1067,8 +1045,8 @@ fn condition_delivery_and_alignment_lifecycle_remain_on_the_canonical_seams() {
         .expect("read conditional implementation");
     let input =
         fs::read_to_string(manifest_dir.join("src/input/mod.rs")).expect("read input facade");
-    let input_history = fs::read_to_string(manifest_dir.join("src/input/history.rs"))
-        .expect("read resident command transition");
+    let expansion = fs::read_to_string(manifest_dir.join("src/processor/expand.rs"))
+        .expect("read frame-owned delivery loop");
     let state = fs::read_to_string(manifest_dir.join("src/state.rs")).expect("read command state");
     let alignment = fs::read_to_string(manifest_dir.join("src/processor/alignment.rs"))
         .expect("read alignment delivery implementation");
@@ -1129,7 +1107,7 @@ fn condition_delivery_and_alignment_lifecycle_remain_on_the_canonical_seams() {
     assert_eq!(alignment.matches("fn classify_delivery(").count(), 1);
     assert_eq!(next.matches(".classify_alignment_delivery(").count(), 0);
     assert_eq!(
-        input_history
+        expansion
             .matches("roots.alignment.classify_delivery(")
             .count(),
         1

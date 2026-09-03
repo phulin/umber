@@ -137,12 +137,10 @@ collector (see `src/conditionals.rs`).
   through one reborrow of the caller's `EmptyCommand`. The packed-token
   resolver receives that actual command as its in-place target, indexes the
   canonical dense eqtb row once, and writes the final static payload or sole
-  macro owner without a projection carrier. Input returns only the scalar
-  packed-resolution fact; the `CommandState` resident transition reclaims its
-  original destination for suppression and required alignment treatment. The
-  always-inlined resident row transition exposes only the scalar outer-validity
-  fact to its surrounding delivery state machine; there is no hot
-  interception enum or tuple handoff. Exact source geometry remains behind the spelling's
+  macro owner without a projection carrier. The processor's frame-owned loop
+  keeps the authoritative resident cursor from indexed read through resolution,
+  suppression, alignment treatment, and expansion-or-return; there is no hot
+  resident helper, interception enum, or result handoff. Exact source geometry remains behind the spelling's
   packed origin and is materialized only by cold processor consumers; the hot
   value retains only source-role policy and direct-line facts. The executor then borrows the one caller-owned value through preflight and scanning,
   and moves it only into an actual retry or another semantic owner; it never
@@ -162,7 +160,7 @@ collector (see `src/conditionals.rs`).
   end/replay/failure exits clear the slot, and only genuine suspension replaces
   and parks its command owner. There is no ordinary vacancy probe, placeholder
   reinstall, repeated `Option` recovery, or success-path move. Only their cold
-  failure and resident-transition helpers construct `CommandError`. Expanded
+  failure and cold-transition helpers construct `CommandError`. Expanded
   continuation restoration likewise lives in a cold helper reached only for a
   genuinely parked expansion. It also includes one
   main-control preflight entry that raw-fetches into the caller's destination,
@@ -436,8 +434,8 @@ collector (see `src/conditionals.rs`).
   raw/expanded destination loop,
   expansion, scanner-status, and alignment orchestration. The fused
   destination pipeline advances resident input and inspects the command
-  in place. The input owner's always-inlined resident kernel is part of this
-  loop's compiled frame, so parameter substitution and ordinary exhaustion
+  in place. The processor loop itself owns the resident frame and cursor, so
+  parameter substitution and ordinary exhaustion
   reselect the authoritative top only after changing the input stack, while
   source line acquisition remains the cold suspension boundary. Its sole
   delivery settlement applies noexpand, outer
@@ -446,9 +444,7 @@ collector (see `src/conditionals.rs`).
   creation permission exists only at source tokenization and is absent from
   delivery controls. The loop tests raw versus expanded only after one command
   has settled; resident input advancement itself has no mode branch.
-  token. Only cold resident transitions return a status or zero-sized failure marker.
-  The expanded request retains its request-local cold error slot; raw delivery
-  creates that slot only after entering the cold resident-transition helper.
+  token. Only cold resident transitions leave the frame loop for a handler.
   Expanded delivery classifies each resolved meaning once as return,
   end-template handling, macro activation, undefined recovery, or one exact
   primitive dispatch. That borrowed decision directly drives expansion;

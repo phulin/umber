@@ -99,6 +99,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             },
             ReplayCompletionPolicy::Surface,
             AlignmentInterceptionPolicy::Surface,
+            None,
             destination,
         )?;
         Ok(delivery)

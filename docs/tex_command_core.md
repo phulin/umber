@@ -192,32 +192,29 @@ keeps one direct mutable borrow of that initialized value through its complete
 ordinary loop. It neither probes vacancy, reinstalls a placeholder, recovers
 the command through repeated `as_ref`/`as_mut`, nor takes it on successful
 return. Each concrete
-source arm retains the separate lexer transition. Every non-source resident
-arm enters one compile-time-inlined token-row transition; the arm itself owns
-only its lifetime-specific storage read and cursor update. The shared
-transition applies first-touch rollback capture, parameter interception,
-exhaustion, and yields the packed word, origin, position, and source scalars.
-It is forced into the canonical command loop's compiled frame and adds no
-runtime call/result carrier or second storage dispatch. After that borrow ends, one branch-independent
+source arm retains the separate lexer transition. The delivery loop selects a
+non-source resident frame's lifetime-specific storage once and keeps its one
+authoritative cursor through read, first-touch capture, increment, parameter
+interception, resolution, and expansion-or-return. Exhaustion leaves through a
+cold handler; there is no runtime call/result carrier or second storage
+dispatch. After that borrow ends, one branch-independent
 `EmptyCommand::write_resolved_delivery` call writes spelling, resolved meaning,
 and delivery facts into the caller's address and returns only the scalar packed-
-resolution fact. The authoritative `CommandState` resident transition then
-reclaims its original destination: it applies one-delivery
+resolution fact. The same frame-owned loop then applies one-delivery
 suppression, reuses the dense resolver's already-decoded literal catcode for
 brace handling, and classifies an alignment delimiter only when an active cell
 can require it. That transition reads the semantic top index once, matches the
 authoritative input row directly, advances its resident cursor once, and
 handles a macro `Param` by pushing the admitted
 argument and continuing internally. An ordinary body or argument word writes
-the reusable destination through at most one dense meaning lookup and returns
-only the final `Ready`/`Outer` scalar. EOF, line acquisition, retirement,
+the reusable destination through at most one dense meaning lookup. EOF, line acquisition, retirement,
 replay completion, diagnostics, and invariant failure alone construct a cold
 resident status; focused counters keep intermediate status relays at zero.
 Raw and expanded entries select branches of the same delivery loop. Their
 ordinary command branches leave the already-resident result directly in the
 caller's return slot, without an eager `CommandError`, error slot, zero-sized failure
 relay, or general internal status carrier. Only cold failure and resident-
-transition helpers construct a rich error. The expanded entry restores parked
+cold-transition helpers construct a rich error. The expanded entry restores parked
 continuation state through a separate cold helper only when a genuine resource
 suspension exists; an ordinary synchronous request carries no resume state. The
 public boundary returns the compact final `DeliveryStatus`. Cold end, replay-
@@ -227,8 +224,8 @@ the typed expansion-suspension slot. There is no process-global
 slot, mailbox, destination inference, nested-request reuse, or second raw
 representation.
 
-The always-inlined resident kernel also owns final suppression, fuel, and
-alignment settlement rather than returning through a second hot helper.
+The frame-owned delivery loop also owns final suppression, fuel, and alignment
+settlement rather than returning through a second hot helper.
 Parameter substitution and ordinary token exhaustion mutate the input stack
 and immediately reselect its authoritative top. Cold source-line acquisition,
 source EOF, retained templates, and replay-completion publication alone leave
@@ -1974,9 +1971,9 @@ reached. Macro-body
 and macro-argument branches
 likewise advance only their resident cursors. Every ordinary arm then reaches
 the same final-slot resolution and settlement tail; no arm owns a separate
-command admission. The always-inlined `advance_resident_row_into` transition
-neither looks the top up again nor receives a token/cursor carrier; it is part
-of the compiled delivery state machine rather than a runtime driver boundary.
+command admission. The frame-owned loop neither looks the top up again nor
+receives a token/cursor carrier; read and expansion decision are one source-level
+state machine rather than a runtime driver boundary.
 Every row's
 common packed frame holds the active external-source context: source pushes
 install their own identity, while stored and macro-argument pushes inherit the

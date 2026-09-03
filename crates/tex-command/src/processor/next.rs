@@ -42,6 +42,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             super::FirstCommandPolicy::Raw,
             ReplayCompletionPolicy::Consume,
             AlignmentInterceptionPolicy::Scalar,
+            None,
             destination,
         )?;
         debug_assert!(matches!(
@@ -82,6 +83,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             super::FirstCommandPolicy::Raw,
             ReplayCompletionPolicy::Surface,
             AlignmentInterceptionPolicy::None,
+            None,
             destination,
         )?;
         debug_assert!(matches!(
@@ -162,6 +164,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             super::FirstCommandPolicy::Raw,
             ReplayCompletionPolicy::Consume,
             AlignmentInterceptionPolicy::Scalar,
+            None,
             destination,
         );
         self.create_source_control_sequences = false;
