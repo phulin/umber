@@ -1,5 +1,5 @@
-use tex_state::meaning::{MeaningFlags, MeaningWord};
-use tex_state::token::{Catcode, Token};
+use tex_state::meaning::{Meaning, MeaningFlags, MeaningWord, ResolvedMeaning};
+use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use super::{FileNameComponents, WriteStreamSelector};
 use crate::{AlignmentIdentity, CommandHostCapabilities, CommandState};
@@ -282,6 +282,161 @@ fn fresh_active_character_is_a_definition_target_without_recovery() {
         drop(processor);
         drop(context);
         assert_eq!(universe.resolve(target), Some("~"));
+    });
+}
+
+#[test]
+fn definition_target_projection_uses_spelling_and_active_map() {
+    crate::test_harness::with_universe(|universe| {
+        let target = universe
+            .intern("spelling_target")
+            .expect("ordinary target")
+            .symbol();
+        let active_existing = universe
+            .intern_active_character('~')
+            .expect("active target")
+            .symbol();
+        let mut resolve = |token| {
+            let context = universe.command_context().expect("command context");
+            crate::CurrentCommand::resolve(
+                TracedTokenWord::pack(token, OriginId::UNKNOWN),
+                crate::DeliveryStamp::new(1, 0),
+                None,
+                false,
+                None,
+                &context,
+            )
+        };
+
+        let ordinary = resolve(Token::Cs(target));
+        assert_eq!(ordinary.control_sequence(), Some(target));
+        let mut ordinary_without_metadata = resolve(Token::Cs(target));
+        ordinary_without_metadata.clear_control_sequence_for_test();
+        assert_eq!(ordinary_without_metadata.control_sequence(), None);
+
+        let active_with_metadata = resolve(Token::Char {
+            ch: '~',
+            cat: Catcode::Active,
+        });
+        assert_eq!(
+            active_with_metadata.control_sequence(),
+            Some(active_existing)
+        );
+
+        let active_without_metadata = resolve(Token::Char {
+            ch: '^',
+            cat: Catcode::Active,
+        });
+        assert_eq!(active_without_metadata.control_sequence(), None);
+        let malformed = resolve(Token::Char {
+            ch: 'x',
+            cat: Catcode::Other,
+        });
+
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+
+        assert_eq!(
+            processor.project_definition_target(&ordinary_without_metadata),
+            super::DefinitionTargetProjection::Target(target)
+        );
+        assert_eq!(
+            processor.project_definition_target(&active_with_metadata),
+            super::DefinitionTargetProjection::Target(active_existing)
+        );
+        assert_eq!(processor.state.active_character_symbol('^'), None);
+        let first = processor.project_definition_target(&active_without_metadata);
+        let active_interned = processor
+            .state
+            .active_character_symbol('^')
+            .expect("active target is interned");
+        let second = processor.project_definition_target(&active_without_metadata);
+        assert_eq!(
+            first,
+            super::DefinitionTargetProjection::Target(active_interned)
+        );
+        assert_eq!(second, first, "active target is reused after first intern");
+        assert_eq!(
+            processor.project_definition_target(&malformed),
+            super::DefinitionTargetProjection::Malformed
+        );
+    });
+}
+
+#[test]
+fn malformed_definition_target_follows_get_r_token_backup_and_diagnostic() {
+    crate::test_harness::with_universe(|universe| {
+        let source = universe
+            .intern("let_source")
+            .expect("source control sequence")
+            .symbol();
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(&mut command, [other('x'), Token::Cs(source)]);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+
+        let (target, meaning) = processor
+            .scan_let_assignment(false)
+            .expect("inaccessible target recovery");
+        assert_eq!(processor.state.resolve(target), "inaccessible");
+        assert_eq!(
+            meaning,
+            ResolvedMeaning::Static(Meaning::CharToken {
+                ch: 'x',
+                cat: Catcode::Other,
+            })
+        );
+        let mut destination = None;
+        assert_eq!(
+            processor
+                .get_token_into(&mut destination)
+                .expect("following source token"),
+            crate::DeliveryStatus::Command
+        );
+        assert_eq!(
+            destination
+                .take()
+                .expect("following source destination")
+                .spelling()
+                .semantic_token(),
+            Token::Cs(source)
+        );
+        drop(processor);
+        drop(context);
+        let rendered: String = universe
+            .world()
+            .effect_records()
+            .iter()
+            .filter_map(|effect| match effect {
+                tex_state::EffectRecord::StreamWrite { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            rendered.contains("Missing control sequence inserted"),
+            "missing-control-sequence diagnostic was not rendered: {rendered:?}"
+        );
     });
 }
 

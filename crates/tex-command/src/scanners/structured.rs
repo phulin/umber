@@ -1739,6 +1739,15 @@ pub enum AlignmentCellOpening {
     Omit,
 }
 
+/// The result of projecting one delivered spelling for TeX82's
+/// `get_r_token` (§1215). The spelling is authoritative: cached effective
+/// command metadata is only an optional agreement check.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DefinitionTargetProjection {
+    Target(tex_state::interner::Symbol),
+    Malformed,
+}
+
 impl<G> CommandProcessor<'_, '_, G> {
     pub(super) fn take_pending_structured_scanner(
         &mut self,
@@ -1997,24 +2006,54 @@ impl<G> CommandProcessor<'_, '_, G> {
             .map_err(|_| CommandError::input_invariant())
     }
 
+    /// Projects the packed token spelling into a definition target without
+    /// decoding its effective meaning. `Token::Cs` already carries the
+    /// ordinary control-sequence identity; active characters use their
+    /// separate active-character map and are interned only when §1215 first
+    /// needs to make that cell addressable. No fuel is charged here.
+    fn project_definition_target(
+        &mut self,
+        command: &crate::CurrentCommand<G>,
+    ) -> DefinitionTargetProjection {
+        match command.spelling().semantic_token() {
+            Token::Cs(symbol) => {
+                if let Some(cached) = command.control_sequence() {
+                    debug_assert_eq!(
+                        cached, symbol,
+                        "cached control-sequence metadata disagrees with token spelling"
+                    );
+                }
+                DefinitionTargetProjection::Target(symbol)
+            }
+            Token::Char {
+                ch,
+                cat: Catcode::Active,
+            } => {
+                let symbol = self
+                    .state
+                    .active_character_symbol(ch)
+                    .unwrap_or_else(|| self.state.intern_active_character(ch));
+                if let Some(cached) = command.control_sequence() {
+                    debug_assert_eq!(
+                        cached, symbol,
+                        "cached active-character metadata disagrees with active map"
+                    );
+                }
+                DefinitionTargetProjection::Target(symbol)
+            }
+            _ => {
+                debug_assert!(
+                    command.control_sequence().is_none(),
+                    "malformed definition target carries control-sequence metadata"
+                );
+                DefinitionTargetProjection::Malformed
+            }
+        }
+    }
+
     /// TeX82 §1215's `get_r_token`, including its restart after inserting
     /// the inaccessible target. The rejected delivery is backed up, so the
     /// caller's following operand scan still owns it.
-    fn delivered_definition_target(
-        &mut self,
-        command: &crate::CurrentCommand<G>,
-    ) -> Option<tex_state::interner::Symbol> {
-        command
-            .control_sequence()
-            .or_else(|| match command.spelling().semantic_token() {
-                Token::Char {
-                    ch,
-                    cat: Catcode::Active,
-                } => Some(self.state.intern_active_character(ch)),
-                _ => None,
-            })
-    }
-
     fn scan_definition_target(&mut self) -> Result<tex_state::interner::Symbol, CommandError> {
         let mut destination = None;
         loop {
@@ -2030,7 +2069,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 _ => return Err(CommandError::input_invariant()),
             };
-            if let Some(target) = self.delivered_definition_target(&command) {
+            if let DefinitionTargetProjection::Target(target) =
+                self.project_definition_target(&command)
+            {
                 return Ok(target);
             }
 
@@ -5456,14 +5497,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 return Err(CommandError::input_invariant());
             }
             None => {
-                let mut destination = None;
-                if self.next_non_space_raw_into(&mut destination)? != DeliveryStatus::Command {
-                    return Err(CommandError::input_invariant());
-                }
-                let command = destination.take().ok_or(CommandError::input_invariant())?;
-                let target = self
-                    .delivered_definition_target(&command)
-                    .ok_or(CommandError::input_invariant())?;
+                let target = self.scan_definition_target()?;
                 self.state.set_provisional_meaning(
                     target,
                     Meaning::Font(tex_state::font::NULL_FONT),
@@ -8380,17 +8414,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         {
             target
         } else {
-            let mut destination = None;
-            if self.next_non_space_raw_into(&mut destination)? != DeliveryStatus::Command {
-                return Err(CommandError::input_invariant());
-            }
-            let command = destination.take().ok_or(CommandError::input_invariant())?;
-            if let Some(target) = self.delivered_definition_target(&command) {
-                target
-            } else {
-                self.back_input(command)?;
-                self.scan_definition_target()?
-            }
+            self.scan_definition_target()?
         };
         let scanned = self.scan_toks_buffers(ScanToksMode::MacroDefinitionFor {
             expanded,
@@ -8424,13 +8448,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         future: bool,
     ) -> Result<(Symbol, ResolvedMeaning<G>), CommandError> {
         let mut destination = None;
-        if self.next_non_space_raw_into(&mut destination)? != DeliveryStatus::Command {
-            return Err(CommandError::input_invariant());
-        }
-        let command = destination.take().ok_or(CommandError::input_invariant())?;
-        let target = self
-            .delivered_definition_target(&command)
-            .ok_or(CommandError::input_invariant())?;
+        let target = self.scan_definition_target()?;
         let meaning = if future {
             let mut first_destination = None;
             if self.get_token_into(&mut first_destination)? != DeliveryStatus::Command {

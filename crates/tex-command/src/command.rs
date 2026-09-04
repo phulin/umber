@@ -1179,6 +1179,11 @@ impl<G> CurrentCommand<G> {
         self.control_sequence
     }
 
+    #[cfg(test)]
+    pub(crate) fn clear_control_sequence_for_test(&mut self) {
+        self.control_sequence = None;
+    }
+
     /// Returns the spelling's diagnostic origin.
     #[must_use]
     pub const fn origin(&self) -> tex_state::token::OriginId {
