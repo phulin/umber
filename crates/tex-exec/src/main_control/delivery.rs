@@ -160,10 +160,12 @@ impl<G> MainControl<G> {
                 let job_is_all_over = crate::page_output::job_is_all_over(context);
                 let display_eq_no = self.modes.current_list().display_eq_no().is_some();
                 if raw_main_loop_delivery
+                    && self.main_loop_active
                     && matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal)
                     && self.active_alignment.is_none()
                     && self.operation_observations.is_none()
                     && !tracked_region_is_active
+                    && !self.page_region_succession_pending
                 {
                     let etex_extended = self.command_profile() == CommandProfile::ETEX26;
                     let mut forbidden_host_facts = CommandMachineHostFacts::Forbidden;
@@ -177,16 +179,19 @@ impl<G> MainControl<G> {
                         context,
                     );
                     let mut run_error = None;
+                    let mut run_has_diagnostics = false;
                     let borrowed = processor.try_main_loop_borrowed_character_run(
                         &mut |context, fuel, diagnostic_effects, run| {
-                            match crate::box_runtime::append_character_run_with_fuel(
+                            let result = crate::box_runtime::append_character_run_with_fuel(
                                 &mut self.modes,
                                 context,
                                 diagnostic_effects,
                                 run,
                                 etex_extended,
                                 fuel,
-                            ) {
+                            );
+                            run_has_diagnostics = !diagnostic_effects.is_empty();
+                            match result {
                                 Ok(admitted) => tex_command::CharacterRunAdmission::new(
                                     admitted.count,
                                     admitted.continue_run,
@@ -205,6 +210,28 @@ impl<G> MainControl<G> {
                     match borrowed {
                         Ok(Some(continues)) => {
                             self.main_loop_active = continues;
+                            if *operations + 1 < max_operations && !run_has_diagnostics {
+                                // The borrowed run has already applied its
+                                // complete semantic prefix.  Close this
+                                // operation directly while the one admitted
+                                // context is still live, then reuse the same
+                                // state/mode/attempt owners for the next
+                                // lookahead.  The final slot-limit operation
+                                // keeps the existing AppliedDirect handoff so
+                                // the outer driver can publish its result.
+                                frame.clear_operation_origin();
+                                frame.assert_empty();
+                                *operations += 1;
+                                let completed_mark = operation_mark
+                                    .take()
+                                    .expect("borrowed run owns its current operation mark");
+                                drop(processor);
+                                self.commit_admitted_direct_operation(context, completed_mark);
+                                *operation_mark =
+                                    Some(self.begin_admitted_direct_operation(context));
+                                *host_preparation = OperationPreparation::new();
+                                continue 'admitted;
+                            }
                             host_preparation.fill_applied_direct();
                             return PreflightReadiness::Ready;
                         }

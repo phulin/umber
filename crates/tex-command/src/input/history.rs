@@ -176,7 +176,6 @@ pub(crate) enum ResidentSourceCharacterRun<E> {
 #[derive(Clone, Debug)]
 pub struct BorrowedSourceCharacterRun<'a> {
     bytes: &'a [u8],
-    mode: crate::CharacterMode,
     source: tex_state::SourceId,
     byte_start: u64,
     capability: Option<tex_state::source_map::RegisteredSource>,
@@ -216,19 +215,6 @@ impl BorrowedSourceCharacterRun<'_> {
         }
     }
 
-    /// Converts one eligible byte into its semantic command character.
-    #[must_use]
-    pub fn character(&self, index: usize) -> Option<char> {
-        self.bytes.get(index).map(|byte| {
-            let code = match self.mode {
-                crate::CharacterMode::EightBitExact | crate::CharacterMode::UnicodeExtended => {
-                    crate::CharacterCode::from_byte(*byte)
-                }
-            };
-            crate::profile::token_character(code)
-        })
-    }
-
     /// Returns the direct origin for one borrowed byte without a source-map
     /// lookup.  Registration failure intentionally degrades to unknown, as it
     /// does for the scalar source tokenizer.
@@ -243,59 +229,14 @@ impl BorrowedSourceCharacterRun<'_> {
     }
 }
 
-const SWAR_HIGH_BITS: u64 = 0x8080_8080_8080_8080;
-const SWAR_ONE_BYTES: u64 = 0x0101_0101_0101_0101;
-
 #[inline(always)]
-fn first_false_lane(flags: u64) -> usize {
-    let high = flags.wrapping_sub(SWAR_ONE_BYTES) & !flags & SWAR_HIGH_BITS;
-    if high == 0 {
-        8
-    } else {
-        (high.trailing_zeros() / 8) as usize
+fn ordinary_ascii_prefix(bytes: &[u8], ordinary_catcode: &mut impl FnMut(char) -> bool) -> usize {
+    for (offset, &byte) in bytes.iter().enumerate() {
+        if !byte.is_ascii() || !ordinary_catcode(char::from(byte)) {
+            return offset;
+        }
     }
-}
-
-#[inline(always)]
-fn ordinary_ascii_prefix(bytes: &[u8], catcodes: &[bool; 128]) -> usize {
-    let mut offset = 0_usize;
-    while bytes.len().saturating_sub(offset) >= 8 {
-        let word = u64::from_le_bytes(
-            bytes[offset..offset + 8]
-                .try_into()
-                .expect("eight-byte SWAR window"),
-        );
-        let high = word & SWAR_HIGH_BITS;
-        if high != 0 {
-            return offset + (high.trailing_zeros() / 8) as usize;
-        }
-        let mut flags = 0_u64;
-        for lane in 0..8 {
-            if catcodes[bytes[offset + lane] as usize] {
-                flags |= 1_u64 << (lane * 8);
-            }
-        }
-        let eligible = flags
-            | (flags << 1)
-            | (flags << 2)
-            | (flags << 3)
-            | (flags << 4)
-            | (flags << 5)
-            | (flags << 6)
-            | (flags << 7);
-        let lane = first_false_lane(eligible);
-        if lane != 8 {
-            return offset + lane;
-        }
-        offset += 8;
-    }
-    while let Some(&byte) = bytes.get(offset) {
-        if !byte.is_ascii() || !catcodes[byte as usize] {
-            break;
-        }
-        offset += 1;
-    }
-    offset
+    bytes.len()
 }
 
 impl<G> ResidentSourceTop<'_, G> {
@@ -306,15 +247,14 @@ impl<G> ResidentSourceTop<'_, G> {
 
     /// Borrows the maximal ASCII letter/other prefix from the loaded line.
     ///
-    /// Catcodes are supplied by the processor's generation-valid flat table;
-    /// the source row is never queried through `SourceMap` while this prefix
-    /// is admitted.  Non-ASCII bytes and every non-ordinary catcode remain at
-    /// the exact first scalar boundary.
+    /// The caller supplies the already-admitted live catcode query. Keeping
+    /// that query beside the source walk avoids constructing a fixed table for
+    /// every attempted run, while non-ASCII bytes and every non-ordinary
+    /// catcode still remain at the exact first scalar boundary.
     #[inline(always)]
     pub(crate) fn borrow_character_run<'a>(
         &'a mut self,
-        profile: crate::CommandProfile,
-        catcodes: &[bool; 128],
+        mut ordinary_catcode: impl FnMut(char) -> bool,
     ) -> Result<Option<BorrowedSourceCharacterRun<'a>>, ()> {
         record_source_lex_slot_borrow();
         let Some(line) = self.slot.cursor.line.as_ref() else {
@@ -336,13 +276,12 @@ impl<G> ResidentSourceTop<'_, G> {
         if capability.is_none() {
             return Ok(None);
         }
-        let count = ordinary_ascii_prefix(bytes, catcodes);
+        let count = ordinary_ascii_prefix(bytes, &mut ordinary_catcode);
         if count == 0 {
             return Ok(None);
         }
         Ok(Some(BorrowedSourceCharacterRun {
             bytes: &bytes[..count],
-            mode: profile.character_mode(),
             source: line.physical.source,
             byte_start: start,
             capability,

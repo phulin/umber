@@ -6053,6 +6053,34 @@ fn production_batch_commits_ordinary_prefix_before_terminal_transaction() {
 }
 
 #[test]
+fn production_batch_reuses_admitted_context_for_ordinary_source_run() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_cmr10_as(&mut control, stores, "cmr10.tfm");
+        register_source(
+            &mut control,
+            br"\font\body=cmr10 \body \setbox0=\hbox{ABC}\end",
+        );
+
+        loop {
+            if control.advance_episode(stores).expect("batch advances")
+                == StepResult::Progress(ReplayStep::End)
+            {
+                break;
+            }
+        }
+        assert!(matches!(
+            box_child_nodes(stores, 0).as_slice(),
+            [
+                Node::Char { ch: 'A', .. },
+                Node::Char { ch: 'B', .. },
+                Node::Char { ch: 'C', .. },
+            ]
+        ));
+    });
+}
+
+#[test]
 fn ranked_assignments_use_one_processor_borrow_each() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);

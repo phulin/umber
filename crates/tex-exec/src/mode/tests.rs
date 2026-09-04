@@ -293,6 +293,59 @@ fn pending_source_capacity_recycles_only_after_commit_and_rollback() {
     assert!(nest.storage.scratch.pending_source.is_empty());
 }
 
+#[test]
+fn pending_run_admission_reserves_before_first_append_and_stops_at_boundary() {
+    let mut nest = ModeNest::new();
+    nest.push(Mode::Horizontal).expect("horizontal mode");
+
+    let mut calls = 0;
+    let accepted =
+        nest.current_list_mutation()
+            .append_pending_hchars(FontId::testing_new(2), 16, |index| {
+                calls += 1;
+                (index < 3).then_some((
+                    char::from(b'a' + index as u8),
+                    tex_state::token::OriginId::UNKNOWN,
+                    None,
+                ))
+            });
+    assert_eq!(accepted, 3);
+    assert_eq!(
+        calls, 4,
+        "the first rejected candidate ends the borrowed walk"
+    );
+    let pending = nest.current_list().pending_hchars().expect("pending run");
+    assert_eq!(pending.source.len(), 3);
+    assert!(
+        pending.source.capacity() >= 16,
+        "the fresh pending vector reserves before begin_pending_hchars pushes"
+    );
+}
+
+#[test]
+fn pending_run_admission_with_zero_acceptance_leaves_journal_and_scratch_untouched() {
+    let mut nest = ModeNest::new();
+    nest.push(Mode::Horizontal).expect("horizontal mode");
+    nest.reset_journal_for_test();
+    let before = nest.summary();
+    let cursor = nest.begin_journal();
+
+    let mut calls = 0;
+    let accepted =
+        nest.current_list_mutation()
+            .append_pending_hchars(FontId::testing_new(2), 8, |_| {
+                calls += 1;
+                None
+            });
+    assert_eq!(accepted, 0);
+    assert_eq!(calls, 1);
+    assert_eq!(nest.journal_inverse_len_for_test(), 0);
+    assert_eq!(nest.summary(), before);
+    assert_eq!(nest.storage.scratch.pending_source.capacity(), 0);
+    nest.rollback_journal(cursor)
+        .expect("empty pending rollback");
+}
+
 #[cfg(feature = "profiling")]
 #[test]
 fn warmed_pending_source_flushes_allocate_nothing() {

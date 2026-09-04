@@ -1051,54 +1051,72 @@ impl ModeListMutation<'_> {
         true
     }
 
-    /// Appends one already-preflighted ordinary run while retaining a single
-    /// pending-run journal projection and one source-vector reservation.
-    /// Character values remain borrowed from the caller through `next`; the
-    /// pending vector is the sole semantic representation after admission.
-    pub(crate) fn append_pending_hchars<F>(&mut self, font: FontId, count: usize, mut next: F)
+    /// Admits one borrowed ordinary run directly into the pending vector.
+    ///
+    /// The producer is called once per candidate byte and returns `None` at
+    /// the first semantic boundary. Capacity is reserved immediately before
+    /// the first accepted character, so a rejected prefix leaves the list and
+    /// its journal untouched while a new run avoids the first-character
+    /// growth step.
+    pub(crate) fn append_pending_hchars<F>(
+        &mut self,
+        font: FontId,
+        capacity: usize,
+        mut next: F,
+    ) -> usize
     where
-        F: FnMut(usize) -> (char, OriginId, Option<tex_fonts::Script>),
+        F: FnMut(usize) -> Option<(char, OriginId, Option<tex_fonts::Script>)>,
     {
-        debug_assert!(count != 0);
-        if self.journal_is_active() {
-            let old = self
+        debug_assert!(capacity != 0);
+        let mut source = None;
+        let mut appended = 0_usize;
+        for index in 0..capacity {
+            let Some((ch, origin, script)) = next(index) else {
+                break;
+            };
+            if appended == 0 {
+                if self.journal_is_active() {
+                    let old = self
+                        .list
+                        .pending_hchars
+                        .as_ref()
+                        .map(journal::PendingHRunProjection::capture);
+                    if let Some(mut journal) = self.list_journal() {
+                        journal.record_pending_projection(old);
+                    }
+                }
+                if let Some(pending) = self.list.pending_hchars.as_mut() {
+                    pending.source.reserve(capacity);
+                } else {
+                    let mut pending_source = self
+                        .scratch
+                        .as_deref_mut()
+                        .expect("pending horizontal runs require the mode scratch owner")
+                        .take_pending_source();
+                    pending_source.reserve(capacity);
+                    source = Some(pending_source);
+                }
+            }
+            if let Some(pending) = self.list.pending_hchars.as_mut() {
+                pending.append_character(font, ch, origin, script);
+            } else {
+                let pending_source = source
+                    .take()
+                    .expect("first pending character owns the reserved source");
+                self.list
+                    .begin_pending_hchars(pending_source, font, ch, origin);
+            }
+            appended += 1;
+        }
+        if appended != 0 {
+            self.list.component_roots.pending_hchars = self
                 .list
                 .pending_hchars
                 .as_ref()
-                .map(journal::PendingHRunProjection::capture);
-            if let Some(mut journal) = self.list_journal() {
-                journal.record_pending_projection(old);
-            }
+                .expect("batch append retains pending run")
+                .semantic_identity_root;
         }
-        if let Some(pending) = self.list.pending_hchars.as_mut() {
-            pending.source.reserve(count);
-            for index in 0..count {
-                let (ch, origin, script) = next(index);
-                pending.append_character(font, ch, origin, script);
-            }
-        } else {
-            let source = self
-                .scratch
-                .as_deref_mut()
-                .expect("pending horizontal runs require the mode scratch owner")
-                .take_pending_source();
-            let (ch, origin, _) = next(0);
-            self.list.begin_pending_hchars(source, font, ch, origin);
-            let Some(pending) = self.list.pending_hchars.as_mut() else {
-                unreachable!("begin_pending_hchars installs a pending run")
-            };
-            pending.source.reserve(count.saturating_sub(1));
-            for index in 1..count {
-                let (ch, origin, script) = next(index);
-                pending.append_character(font, ch, origin, script);
-            }
-        }
-        self.list.component_roots.pending_hchars = self
-            .list
-            .pending_hchars
-            .as_ref()
-            .expect("batch append retains pending run")
-            .semantic_identity_root;
+        appended
     }
 
     pub(crate) fn pending_hchars(&self) -> Option<&PendingHRun> {
@@ -1109,17 +1127,6 @@ impl ModeListMutation<'_> {
         let old = self.list.space_factor;
         if let Some(mut journal) = self.list_journal() {
             journal.record_space_factor(old);
-        }
-        self.list.set_space_factor(value);
-    }
-
-    pub(crate) fn set_space_factor_batched(&mut self, value: i32, recorded: &mut bool) {
-        if !*recorded {
-            let old = self.list.space_factor;
-            if let Some(mut journal) = self.list_journal() {
-                journal.record_space_factor(old);
-            }
-            *recorded = true;
         }
         self.list.set_space_factor(value);
     }

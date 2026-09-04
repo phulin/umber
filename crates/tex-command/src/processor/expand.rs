@@ -3760,21 +3760,13 @@ impl<G> CommandProcessor<'_, '_, G> {
             return Ok(None);
         }
 
-        let mut catcodes = [false; 128];
-        for (code, eligible) in catcodes.iter_mut().enumerate() {
-            *eligible = matches!(
-                self.state.catcode(char::from(code as u8)),
-                Catcode::Letter | Catcode::Other
-            );
-        }
-        let result =
-            match self.advance_source_borrowed_character_run(resident_index, &catcodes, admit) {
-                Ok(result) => result,
-                Err(failure) => {
-                    self.invalidate_delivery_freshness();
-                    return Err(failure);
-                }
-            };
+        let result = match self.advance_source_borrowed_character_run(resident_index, admit) {
+            Ok(result) => result,
+            Err(failure) => {
+                self.invalidate_delivery_freshness();
+                return Err(failure);
+            }
+        };
         let Some((count, continue_run)) = result else {
             return Ok(None);
         };
@@ -3786,7 +3778,6 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn advance_source_borrowed_character_run<F>(
         &mut self,
         resident_index: usize,
-        catcodes: &[bool; 128],
         admit: &mut F,
     ) -> Result<Option<(u32, bool)>, CommandError>
     where
@@ -3797,7 +3788,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             BorrowedSourceCharacterRun<'run>,
         ) -> crate::CharacterRunAdmission,
     {
-        let profile = self.command.profile();
         let command_state = &mut *self.command;
         let state = &mut *self.state;
         let fuel = &mut *self.fuel;
@@ -3814,7 +3804,9 @@ impl<G> CommandProcessor<'_, '_, G> {
             .resident_value_mut(source.slot.0.slot);
         let mut top = ResidentSourceTop { source, slot };
         let Some(mut run) = top
-            .borrow_character_run(profile, catcodes)
+            .borrow_character_run(|ch| {
+                matches!(state.catcode(ch), Catcode::Letter | Catcode::Other)
+            })
             .map_err(|()| CommandError::input_invariant())?
         else {
             return Ok(None);
