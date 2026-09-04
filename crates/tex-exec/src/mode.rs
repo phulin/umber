@@ -1439,16 +1439,14 @@ pub struct PendingHChar {
 /// The buffers are deliberately outside [`ModeList`] and the mode journal:
 /// only their capacity survives a handoff. A pending run owns its source
 /// values while it is semantic state; once that owner is no longer needed,
-/// its cleared source vector can return here for the next run. Reconstitution
-/// events likewise live here only while hyphenation resolves source boundaries;
-/// the TFM cursor is cleared after each run. Final page nodes never pass
-/// through this scratch owner.
+/// its cleared source vector can return here for the next run. The TFM cursor
+/// is cleared after each run. Final page nodes never pass through this scratch
+/// owner.
 #[derive(Default)]
 pub(crate) struct HorizontalModeScratch {
     pending_source: Vec<PendingHChar>,
     shaping: crate::box_runtime::hmode::OpenTypeShapingScratch,
     tfm_work: crate::box_runtime::hmode::LigatureWorkList,
-    reconstituted: Vec<crate::box_runtime::hmode::ReconstitutedNode>,
 }
 
 impl HorizontalModeScratch {
@@ -1470,13 +1468,6 @@ impl HorizontalModeScratch {
         self.pending_source.clear();
         self.shaping.clear();
         self.tfm_work.clear();
-        self.reconstituted.clear();
-    }
-
-    pub(crate) fn reconstituted_nodes_mut(
-        &mut self,
-    ) -> &mut Vec<crate::box_runtime::hmode::ReconstitutedNode> {
-        &mut self.reconstituted
     }
 
     pub(crate) fn reshape_open_type_runs_list<G>(
@@ -1485,6 +1476,10 @@ impl HorizontalModeScratch {
         source: tex_state::node_arena::PageListId,
     ) -> tex_state::node_arena::PageListId {
         crate::box_runtime::hmode::reshape_open_type_runs_list(stores, source, &mut self.shaping)
+    }
+
+    pub(crate) fn tfm_work_mut(&mut self) -> &mut crate::box_runtime::hmode::LigatureWorkList {
+        &mut self.tfm_work
     }
 }
 

@@ -1,3 +1,5 @@
+use smallvec::SmallVec;
+
 #[derive(Clone, Debug)]
 pub(super) struct MissingHyphenDiagnostic {
     pub(super) node_index: usize,
@@ -60,7 +62,7 @@ impl HyphenationScanNode {
 struct HyphenationWalk<'walk, 'projection> {
     out: &'walk mut tex_state::page_node_arena::PageMaterialActiveListBuilder,
     out_segments: &'walk mut Vec<tex_state::node_arena::PageListId>,
-    generated_word: &'walk mut Vec<crate::box_runtime::hmode::ReconstitutedNode>,
+    tfm_work: &'walk mut crate::box_runtime::hmode::LigatureWorkList,
     fuel: &'walk mut tex_command::CommandFuel,
     projection: &'walk mut HyphenationProjection<'projection>,
     output_len: usize,
@@ -138,7 +140,7 @@ impl HyphenationWalk<'_, '_> {
                             candidate,
                             self.out,
                             self.out_segments,
-                            self.generated_word,
+                            self.tfm_work,
                             &mut self.output_len,
                             self.fuel,
                             self.projection,
@@ -208,7 +210,7 @@ fn hyphenated_hlist_with_projections<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     source: tex_state::node_arena::PageListId,
-    generated_word: &mut Vec<ReconstitutedNode>,
+    tfm_work: &mut crate::box_runtime::hmode::LigatureWorkList,
     fuel: &mut tex_command::CommandFuel,
     projection: &mut HyphenationProjection<'_>,
 ) -> Result<(tex_state::node_arena::PageListId, HyphenationContext), ExecError> {
@@ -218,9 +220,9 @@ fn hyphenated_hlist_with_projections<G>(
     let source = stores
         .admit_page_node_list(source)
         .expect("hyphenation source crosses one live page-region boundary");
+    let operation = stores.page_node_cursor();
     let mut out = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
     stores.open_page_active_list(&mut out);
-    generated_word.clear();
     let mut out_segments = Vec::new();
     let left = stores.int_param(IntParam::LEFT_HYPHEN_MIN).max(1) as usize;
     let right = stores.int_param(IntParam::RIGHT_HYPHEN_MIN).max(1) as usize;
@@ -228,7 +230,7 @@ fn hyphenated_hlist_with_projections<G>(
         let mut walk = HyphenationWalk {
             out: &mut out,
             out_segments: &mut out_segments,
-            generated_word,
+            tfm_work,
             fuel,
             projection,
             output_len: 0,
@@ -242,8 +244,15 @@ fn hyphenated_hlist_with_projections<G>(
         if let Some(tail) = stores
             .admitted_page_tail_chunk(source)
             .expect("hyphenation source remains admitted")
+            && let Err(error) = walk.visit_chunk_prefix(stores, source, tail, diagnostic_effects)
         {
-            walk.visit_chunk_prefix(stores, source, tail, diagnostic_effects)?;
+            if out.is_open() {
+                stores.rollback_page_active_list(&mut out);
+            }
+            stores
+                .truncate_page_nodes(operation)
+                .expect("hyphenation rollback restores its page suffix");
+            return Err(error);
         }
         (walk.retained_start, walk.language, walk.left, walk.right)
     };
@@ -281,27 +290,45 @@ pub(crate) fn hyphenated_hlist_with_fuel<G>(
     scratch: &mut crate::mode::HorizontalModeScratch,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<HyphenatedHlist, ExecError> {
+    let operation = stores.page_node_cursor();
     let mut physical_post_overrides = Vec::new();
     let mut missing_hyphens = Vec::new();
     let mut projection = HyphenationProjection {
         physical_post_overrides: &mut physical_post_overrides,
         missing_hyphens: &mut missing_hyphens,
     };
-    let (semantic, _) = hyphenated_hlist_with_projections(
+    let (semantic, _) = match hyphenated_hlist_with_projections(
         stores,
         diagnostic_effects,
         source,
-        scratch.reconstituted_nodes_mut(),
+        scratch.tfm_work_mut(),
         fuel,
         &mut projection,
-    )?;
-    let physical = project_physical_hlist(
+    ) {
+        Ok(result) => result,
+        Err(error) => {
+            stores
+                .truncate_page_nodes(operation)
+                .expect("hyphenation semantic rollback restores its page suffix");
+            return Err(error);
+        }
+    };
+    let physical = match project_physical_hlist(
         stores,
         diagnostic_effects,
         semantic,
         &physical_post_overrides,
+        scratch.tfm_work_mut(),
         fuel,
-    )?;
+    ) {
+        Ok(physical) => physical,
+        Err(error) => {
+            stores
+                .truncate_page_nodes(operation)
+                .expect("hyphenation physical rollback restores its page suffix");
+            return Err(error);
+        }
+    };
     let semantic = scratch.reshape_open_type_runs_list(stores, semantic);
     let physical_boundaries = compacted_physical_boundaries(stores, semantic, physical.len());
     Ok(HyphenatedHlist {
@@ -317,8 +344,10 @@ fn project_physical_hlist<G>(
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     semantic: tex_state::node_arena::PageListId,
     post_overrides: &[(usize, tex_state::node_arena::PageListId)],
+    tfm_work: &mut crate::box_runtime::hmode::LigatureWorkList,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<tex_state::node_arena::PageListId, ExecError> {
+    let operation = stores.page_node_cursor();
     let semantic = stores
         .admit_page_node_list(semantic)
         .expect("hyphenated paragraph crosses one live page-region boundary");
@@ -327,11 +356,11 @@ fn project_physical_hlist<G>(
     let mut physical_segments = Vec::new();
     let mut override_index = 0usize;
     let mut retained_start = 0usize;
-    if let Some(tail) = stores
+    let result = if let Some(tail) = stores
         .admitted_page_tail_chunk(semantic)
         .expect("hyphenated paragraph remains admitted")
     {
-        let _ = project_physical_chunk_prefix(
+        project_physical_chunk_prefix(
             stores,
             diagnostic_effects,
             semantic,
@@ -341,8 +370,21 @@ fn project_physical_hlist<G>(
             &mut physical,
             &mut physical_segments,
             &mut retained_start,
+            tfm_work,
             fuel,
-        )?;
+        )
+        .map(|_| ())
+    } else {
+        Ok(())
+    };
+    if let Err(error) = result {
+        if physical.is_open() {
+            stores.rollback_page_active_list(&mut physical);
+        }
+        stores
+            .truncate_page_nodes(operation)
+            .expect("physical projection rollback restores its page suffix");
+        return Err(error);
     }
     if retained_start < semantic.len() {
         stores.append_page_active_span_range(
@@ -373,6 +415,7 @@ fn project_physical_chunk_prefix<G>(
     physical: &mut tex_state::page_node_arena::PageMaterialActiveListBuilder,
     physical_segments: &mut Vec<tex_state::node_arena::PageListId>,
     retained_start: &mut usize,
+    tfm_work: &mut crate::box_runtime::hmode::LigatureWorkList,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<tex_state::page_node_arena::PageListChunkCursor, ExecError> {
     let previous = stores
@@ -389,6 +432,7 @@ fn project_physical_chunk_prefix<G>(
             physical,
             physical_segments,
             retained_start,
+            tfm_work,
             fuel,
         )?)
     } else {
@@ -412,16 +456,15 @@ fn project_physical_chunk_prefix<G>(
             if !segment.is_empty() {
                 physical_segments.push(segment);
             }
-            let pre = crate::box_runtime::hmode::reconstitute_with_fuel(
+            let pre = reconstitute_branch(
                 stores,
                 diagnostic_effects,
                 &pending,
                 true,
-                false,
+                crate::box_runtime::hmode::LigatureRightBoundary::Font,
                 fuel,
-            )
-            .map_err(ExecError::Command)?;
-            let pre = crate::box_runtime::hmode::publish_reconstituted_nodes(stores, pre);
+                tfm_work,
+            )?;
             stores.open_page_active_list(physical);
             Some(pre)
         } else {
@@ -455,7 +498,7 @@ fn physical_pre_break_pending<G>(
     previous_chunk: Option<&tex_state::page_node_arena::PageListChunkCursor>,
     chunk: &tex_state::page_node_arena::PageListChunkCursor,
     offset: usize,
-) -> Option<Vec<PendingHChar>> {
+) -> Option<SmallVec<[PendingHChar; 64]>> {
     let index = chunk.logical_start() + offset;
     if index == 0 {
         return None;
@@ -491,9 +534,13 @@ fn physical_pre_break_pending<G>(
         let (resolved, node) = stores.page_node_span_chunk_node(previous, previous_offset);
         debug_assert_eq!(resolved, index - 1);
         if let Some((font, ch, origin)) = node.character() {
-            (font, vec![PendingHChar { font, ch, origin }])
+            {
+                let mut pending: SmallVec<[PendingHChar; 64]> = SmallVec::new();
+                pending.push(PendingHChar { font, ch, origin });
+                (font, pending)
+            }
         } else {
-            let mut pending = Vec::new();
+            let mut pending: SmallVec<[PendingHChar; 64]> = SmallVec::new();
             let font = node.visit_ligature_source(|ch, origin| {
                 pending.push(PendingHChar {
                     font: tex_state::font::NULL_FONT,
@@ -571,7 +618,7 @@ fn hyphenate_candidate_after_glue<G>(
     candidate: HyphenationCandidate,
     out: &mut tex_state::page_node_arena::PageMaterialActiveListBuilder,
     out_segments: &mut Vec<tex_state::node_arena::PageListId>,
-    generated_word: &mut Vec<crate::box_runtime::hmode::ReconstitutedNode>,
+    tfm_work: &mut crate::box_runtime::hmode::LigatureWorkList,
     output_len: &mut usize,
     fuel: &mut tex_command::CommandFuel,
     projection: &mut HyphenationProjection<'_>,
@@ -631,7 +678,7 @@ fn hyphenate_candidate_after_glue<G>(
     if !segment.is_empty() {
         out_segments.push(segment);
     }
-    generated_word.clear();
+    stores.open_page_active_list(out);
     append_hyphenated_word(
         stores,
         diagnostic_effects,
@@ -639,13 +686,13 @@ fn hyphenate_candidate_after_glue<G>(
         &positions,
         no_left_boundary,
         right_boundary,
-        generated_word,
+        out,
+        out_segments,
         output_len,
         fuel,
         projection,
+        tfm_work,
     )?;
-    stores.open_page_active_list(out);
-    crate::box_runtime::hmode::append_reconstituted_nodes(stores, out, generated_word.drain(..));
     if trailing_font_kern && !matches!(right_boundary, HyphenationRightBoundary::Character(_)) {
         stores.append_page_active_span_range(out, source.span(), index - 1..index);
         *output_len += 1;
@@ -947,48 +994,914 @@ fn current_language<G>(stores: &CommandContext<'_, G>) -> u8 {
     u8::try_from(stores.int_param(IntParam::LANGUAGE)).unwrap_or(0)
 }
 
-fn reconstitute_hyphenated_span<G>(
-    stores: &mut CommandContext<'_, G>,
-    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
-    pending: &[PendingHChar],
-    no_left_boundary: bool,
-    right_boundary: HyphenationRightBoundary,
-    fuel: &mut tex_command::CommandFuel,
-) -> Result<Vec<crate::box_runtime::hmode::ReconstitutedNode>, ExecError> {
-    let result = match right_boundary {
-        HyphenationRightBoundary::None => {
-            crate::box_runtime::hmode::reconstitute_with_right_character(
-                stores,
-                diagnostic_effects,
-                pending,
-                no_left_boundary,
-                None,
-                fuel,
-            )
-        }
-        HyphenationRightBoundary::Font => crate::box_runtime::hmode::reconstitute_with_fuel(
-            stores,
-            diagnostic_effects,
-            pending,
-            no_left_boundary,
-            false,
-            fuel,
-        ),
-        HyphenationRightBoundary::Character(ch) => {
-            crate::box_runtime::hmode::reconstitute_with_right_character(
-                stores,
-                diagnostic_effects,
-                pending,
-                no_left_boundary,
-                Some(ch),
-                fuel,
-            )
-        }
-    };
-    result.map_err(ExecError::Command)
+fn right_boundary_cell(boundary: HyphenationRightBoundary) -> LigatureRightBoundary {
+    match boundary {
+        HyphenationRightBoundary::None => LigatureRightBoundary::Suppressed,
+        HyphenationRightBoundary::Font => LigatureRightBoundary::Font,
+        HyphenationRightBoundary::Character(ch) => LigatureRightBoundary::Character(ch),
+    }
 }
 
-#[allow(clippy::too_many_arguments)] // Word reconstruction carries independent boundary and projection state.
+/// Runs one branch directly into its final page-list builder. Nested replays
+/// borrow the parent cursor's tape window, so neither a node list nor an event
+/// list is needed between TFM and the page arena.
+fn reconstitute_branch<G>(
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
+    source: &[PendingHChar],
+    no_left_boundary: bool,
+    right_boundary: LigatureRightBoundary,
+    fuel: &mut tex_command::CommandFuel,
+    tfm_work: &mut crate::box_runtime::hmode::LigatureWorkList,
+) -> Result<tex_state::node_arena::PageListId, ExecError> {
+    if source.is_empty() {
+        return Ok(tex_state::node_arena::PageListId::empty());
+    }
+    let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
+    stores.open_page_active_list(&mut output);
+    let result = {
+        let mut sink = crate::box_runtime::hmode::PageNodeSink {
+            output: &mut output,
+        };
+        crate::box_runtime::hmode::run_tfm_ligature_machine_nested_with_work(
+            stores,
+            diagnostic_effects,
+            source,
+            no_left_boundary,
+            right_boundary,
+            false,
+            fuel,
+            tfm_work,
+            &mut sink,
+        )
+    };
+    match result {
+        Ok(()) => Ok(stores.finalize_page_active_list(&mut output)),
+        Err(error) => {
+            stores.rollback_page_active_list(&mut output);
+            Err(ExecError::Command(error))
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct PreviousOutput {
+    font: tex_state::ids::FontId,
+    ch: char,
+    origin: OriginId,
+    ligature_present: bool,
+}
+
+struct PreBreakSink<'a> {
+    output: &'a mut tex_state::page_node_arena::PageMaterialActiveListBuilder,
+    previous: Option<PreviousOutput>,
+    fallback: Option<PendingHRunChar>,
+    saw_output: bool,
+    keep_reconstituted_tail: bool,
+}
+
+impl PreBreakSink<'_> {
+    fn emit_fallback<G>(&mut self, stores: &mut CommandContext<'_, G>) {
+        let glyph = self
+            .fallback
+            .take()
+            .expect("pre-break fallback hyphen remains available");
+        let mut sink = crate::box_runtime::hmode::PageNodeSink {
+            output: self.output,
+        };
+        sink.glyph(stores, glyph);
+    }
+}
+
+impl FinalHNodeSink for PreBreakSink<'_> {
+    fn glyph<G>(&mut self, stores: &mut CommandContext<'_, G>, glyph: PendingHRunChar) {
+        if !self.saw_output {
+            self.saw_output = true;
+            if !glyph.ligature_present
+                && glyph.orig.len() == 1
+                && self.previous.is_some_and(|previous| {
+                    previous.font == glyph.font
+                        && previous.ch == glyph.ch
+                        && !previous.ligature_present
+                        && previous.origin
+                            == glyph.origins.first().cloned().unwrap_or(OriginId::UNKNOWN)
+                })
+            {
+                self.keep_reconstituted_tail = true;
+                return;
+            }
+            self.emit_fallback(stores);
+            return;
+        }
+        if !self.keep_reconstituted_tail {
+            return;
+        }
+        self.saw_output = true;
+        let mut sink = crate::box_runtime::hmode::PageNodeSink {
+            output: self.output,
+        };
+        sink.glyph(stores, glyph);
+    }
+
+    fn glyph_cell<G>(
+        &mut self,
+        stores: &mut CommandContext<'_, G>,
+        glyph: crate::box_runtime::hmode::LigatureGlyphCell,
+        source: &[crate::box_runtime::hmode::LigatureSourceEntry],
+    ) {
+        if !self.saw_output {
+            self.saw_output = true;
+            if !glyph.ligature_present
+                && source.len() == 1
+                && self.previous.is_some_and(|previous| {
+                    previous.font == glyph.font
+                        && previous.ch == glyph.ch
+                        && !previous.ligature_present
+                        && previous.origin == source[0].origin
+                })
+            {
+                self.keep_reconstituted_tail = true;
+                return;
+            }
+            self.emit_fallback(stores);
+            return;
+        }
+        if !self.keep_reconstituted_tail {
+            return;
+        }
+        let mut sink = crate::box_runtime::hmode::PageNodeSink {
+            output: self.output,
+        };
+        sink.glyph_cell(stores, glyph, source);
+    }
+
+    fn kern<G>(&mut self, stores: &mut CommandContext<'_, G>, amount: Scaled, kind: KernKind) {
+        if !self.saw_output {
+            self.saw_output = true;
+            self.emit_fallback(stores);
+            return;
+        }
+        if !self.keep_reconstituted_tail {
+            return;
+        }
+        self.saw_output = true;
+        let mut sink = crate::box_runtime::hmode::PageNodeSink {
+            output: self.output,
+        };
+        sink.kern(stores, amount, kind);
+    }
+
+    fn explicit_hyphen_disc<G>(&mut self, stores: &mut CommandContext<'_, G>) {
+        if !self.saw_output {
+            self.saw_output = true;
+            self.emit_fallback(stores);
+            return;
+        }
+        if !self.keep_reconstituted_tail {
+            return;
+        }
+        self.saw_output = true;
+        let mut sink = crate::box_runtime::hmode::PageNodeSink {
+            output: self.output,
+        };
+        sink.explicit_hyphen_disc(stores);
+    }
+
+    fn discretionary<G>(
+        &mut self,
+        stores: &mut CommandContext<'_, G>,
+        kind: DiscKind,
+        pre: tex_state::node_arena::PageListId,
+        post: tex_state::node_arena::PageListId,
+        replace: tex_state::node_arena::PageListId,
+        physical_replace_count: u8,
+    ) {
+        if !self.saw_output {
+            self.saw_output = true;
+            self.emit_fallback(stores);
+            return;
+        }
+        if !self.keep_reconstituted_tail {
+            return;
+        }
+        self.saw_output = true;
+        let mut sink = crate::box_runtime::hmode::PageNodeSink {
+            output: self.output,
+        };
+        sink.discretionary(stores, kind, pre, post, replace, physical_replace_count);
+    }
+}
+
+fn pending_word_range(
+    word: &[WordChar],
+    range: std::ops::Range<usize>,
+) -> SmallVec<[PendingHChar; 64]> {
+    word[range]
+        .iter()
+        .map(WordChar::pending)
+        .collect::<SmallVec<_>>()
+}
+
+fn pre_break_branch<G>(
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
+    previous: Option<PreviousOutput>,
+    fallback: PendingHRunChar,
+    source: &[PendingHChar],
+    fuel: &mut tex_command::CommandFuel,
+    tfm_work: &mut crate::box_runtime::hmode::LigatureWorkList,
+) -> Result<tex_state::node_arena::PageListId, ExecError> {
+    if source.is_empty() {
+        return Ok(tex_state::node_arena::PageListId::empty());
+    }
+    let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
+    stores.open_page_active_list(&mut output);
+    let result = {
+        let mut sink = PreBreakSink {
+            output: &mut output,
+            previous,
+            fallback: Some(fallback),
+            saw_output: false,
+            keep_reconstituted_tail: false,
+        };
+        crate::box_runtime::hmode::run_tfm_ligature_machine_nested_with_work(
+            stores,
+            diagnostic_effects,
+            source,
+            true,
+            LigatureRightBoundary::Font,
+            false,
+            fuel,
+            tfm_work,
+            &mut sink,
+        )
+    };
+    match result {
+        Ok(()) => Ok(stores.finalize_page_active_list(&mut output)),
+        Err(error) => {
+            stores.rollback_page_active_list(&mut output);
+            Err(ExecError::Command(error))
+        }
+    }
+}
+
+fn singleton_glyph_branch<G>(
+    stores: &mut CommandContext<'_, G>,
+    glyph: crate::box_runtime::hmode::LigatureGlyphCell,
+    tfm_work: &crate::box_runtime::hmode::LigatureWorkList,
+) -> tex_state::node_arena::PageListId {
+    let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
+    stores.open_page_active_list(&mut output);
+    let source = tfm_work.source(glyph.provenance);
+    let mut sink = crate::box_runtime::hmode::PageNodeSink {
+        output: &mut output,
+    };
+    sink.glyph_cell(stores, glyph, source);
+    stores.finalize_page_active_list(&mut output)
+}
+
+fn singleton_kern_branch<G>(
+    stores: &mut CommandContext<'_, G>,
+    amount: Scaled,
+    kind: KernKind,
+) -> tex_state::node_arena::PageListId {
+    let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
+    stores.open_page_active_list(&mut output);
+    let mut sink = crate::box_runtime::hmode::PageNodeSink {
+        output: &mut output,
+    };
+    sink.kern(stores, amount, kind);
+    stores.finalize_page_active_list(&mut output)
+}
+
+struct PhysicalMeasureSink {
+    current: usize,
+    current_start: usize,
+    current_len: usize,
+    initial_end: usize,
+    position: usize,
+    nodes: usize,
+    synchronization: Option<usize>,
+    nodes_at_synchronization: usize,
+}
+
+impl PhysicalMeasureSink {
+    fn observe(&mut self, work: &crate::box_runtime::hmode::LigatureWorkList) {
+        if self.synchronization.is_none()
+            && self.position >= self.initial_end
+            && work.physical_boundary_present(
+                self.current,
+                self.current_start,
+                self.current_len,
+                self.position,
+            )
+        {
+            self.synchronization = Some(self.position);
+            self.nodes_at_synchronization = self.nodes;
+        } else if self
+            .synchronization
+            .is_some_and(|synchronization| self.position <= synchronization)
+        {
+            self.nodes_at_synchronization = self.nodes;
+        }
+    }
+}
+
+impl FinalHNodeSink for PhysicalMeasureSink {
+    fn glyph<G>(&mut self, _stores: &mut CommandContext<'_, G>, glyph: PendingHRunChar) {
+        self.nodes += 1;
+        self.position = self.position.saturating_add(glyph.orig.len());
+    }
+
+    fn glyph_cell<G>(
+        &mut self,
+        _stores: &mut CommandContext<'_, G>,
+        glyph: crate::box_runtime::hmode::LigatureGlyphCell,
+        source: &[crate::box_runtime::hmode::LigatureSourceEntry],
+    ) {
+        self.nodes += 1;
+        self.position = self.position.saturating_add(source.len());
+        let _ = glyph;
+    }
+
+    fn glyph_cell_with_work<G>(
+        &mut self,
+        _stores: &mut CommandContext<'_, G>,
+        _current: usize,
+        glyph: crate::box_runtime::hmode::LigatureGlyphCell,
+        work: &mut crate::box_runtime::hmode::LigatureWorkList,
+        _diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
+        _fuel: &mut tex_command::CommandFuel,
+    ) -> Result<(), tex_command::CommandError> {
+        self.nodes += 1;
+        self.position = self.position.saturating_add(glyph.provenance.len);
+        self.observe(work);
+        Ok(())
+    }
+
+    fn kern<G>(&mut self, _stores: &mut CommandContext<'_, G>, _amount: Scaled, _kind: KernKind) {
+        self.nodes += 1;
+    }
+
+    fn kern_with_work<G>(
+        &mut self,
+        _stores: &mut CommandContext<'_, G>,
+        _current: usize,
+        _amount: Scaled,
+        _kind: KernKind,
+        work: &mut crate::box_runtime::hmode::LigatureWorkList,
+        _diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
+        _fuel: &mut tex_command::CommandFuel,
+    ) -> Result<(), tex_command::CommandError> {
+        self.nodes += 1;
+        self.observe(work);
+        Ok(())
+    }
+
+    fn explicit_hyphen_disc<G>(&mut self, _stores: &mut CommandContext<'_, G>) {
+        self.nodes += 1;
+    }
+
+    fn discretionary<G>(
+        &mut self,
+        _stores: &mut CommandContext<'_, G>,
+        _kind: DiscKind,
+        _pre: tex_state::node_arena::PageListId,
+        _post: tex_state::node_arena::PageListId,
+        _replace: tex_state::node_arena::PageListId,
+        _physical_replace_count: u8,
+    ) {
+        self.nodes += 1;
+    }
+}
+
+struct PhysicalPrefixSink<'a> {
+    output: &'a mut tex_state::page_node_arena::PageMaterialActiveListBuilder,
+    remaining: usize,
+}
+
+impl FinalHNodeSink for PhysicalPrefixSink<'_> {
+    fn glyph<G>(&mut self, stores: &mut CommandContext<'_, G>, glyph: PendingHRunChar) {
+        if self.remaining == 0 {
+            return;
+        }
+        self.remaining -= 1;
+        let mut sink = crate::box_runtime::hmode::PageNodeSink {
+            output: self.output,
+        };
+        sink.glyph(stores, glyph);
+    }
+
+    fn glyph_cell<G>(
+        &mut self,
+        stores: &mut CommandContext<'_, G>,
+        glyph: crate::box_runtime::hmode::LigatureGlyphCell,
+        source: &[crate::box_runtime::hmode::LigatureSourceEntry],
+    ) {
+        if self.remaining == 0 {
+            return;
+        }
+        self.remaining -= 1;
+        let mut sink = crate::box_runtime::hmode::PageNodeSink {
+            output: self.output,
+        };
+        sink.glyph_cell(stores, glyph, source);
+    }
+
+    fn kern<G>(&mut self, stores: &mut CommandContext<'_, G>, amount: Scaled, kind: KernKind) {
+        if self.remaining == 0 {
+            return;
+        }
+        self.remaining -= 1;
+        let mut sink = crate::box_runtime::hmode::PageNodeSink {
+            output: self.output,
+        };
+        sink.kern(stores, amount, kind);
+    }
+
+    fn explicit_hyphen_disc<G>(&mut self, stores: &mut CommandContext<'_, G>) {
+        if self.remaining == 0 {
+            return;
+        }
+        self.remaining -= 1;
+        let mut sink = crate::box_runtime::hmode::PageNodeSink {
+            output: self.output,
+        };
+        sink.explicit_hyphen_disc(stores);
+    }
+
+    fn discretionary<G>(
+        &mut self,
+        stores: &mut CommandContext<'_, G>,
+        kind: DiscKind,
+        pre: tex_state::node_arena::PageListId,
+        post: tex_state::node_arena::PageListId,
+        replace: tex_state::node_arena::PageListId,
+        physical_replace_count: u8,
+    ) {
+        if self.remaining == 0 {
+            return;
+        }
+        self.remaining -= 1;
+        let mut sink = crate::box_runtime::hmode::PageNodeSink {
+            output: self.output,
+        };
+        sink.discretionary(stores, kind, pre, post, replace, physical_replace_count);
+    }
+}
+
+fn physical_post_branch<G>(
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
+    source: &[PendingHChar],
+    right_boundary: LigatureRightBoundary,
+    nodes: usize,
+    fuel: &mut tex_command::CommandFuel,
+    tfm_work: &mut crate::box_runtime::hmode::LigatureWorkList,
+) -> Result<tex_state::node_arena::PageListId, ExecError> {
+    if source.is_empty() || nodes == 0 {
+        return Ok(tex_state::node_arena::PageListId::empty());
+    }
+    let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
+    stores.open_page_active_list(&mut output);
+    let result = {
+        let mut sink = PhysicalPrefixSink {
+            output: &mut output,
+            remaining: nodes,
+        };
+        crate::box_runtime::hmode::run_tfm_ligature_machine_nested_with_work(
+            stores,
+            diagnostic_effects,
+            source,
+            false,
+            right_boundary,
+            false,
+            fuel,
+            tfm_work,
+            &mut sink,
+        )
+    };
+    match result {
+        Ok(()) => Ok(stores.finalize_page_active_list(&mut output)),
+        Err(error) => {
+            stores.rollback_page_active_list(&mut output);
+            Err(ExecError::Command(error))
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)] // TeX's projection keeps source coordinates, branches, tape, diagnostics, and fuel explicit.
+fn physical_projection_for_glyph<G>(
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
+    word: &[WordChar],
+    position: usize,
+    current_start: usize,
+    current_len: usize,
+    current: usize,
+    right_boundary: LigatureRightBoundary,
+    fuel: &mut tex_command::CommandFuel,
+    tfm_work: &mut crate::box_runtime::hmode::LigatureWorkList,
+) -> Result<(u8, tex_state::node_arena::PageListId), ExecError> {
+    let minor_pending = pending_word_range(word, position..word.len());
+    let mut probe = PhysicalMeasureSink {
+        current,
+        current_start,
+        current_len,
+        initial_end: current_start.saturating_add(current_len),
+        position,
+        nodes: 0,
+        synchronization: None,
+        nodes_at_synchronization: 0,
+    };
+    // The first replay measures the full physical branch and owns its
+    // diagnostics. The direct child replay below is output-only and keeps a
+    // detached collector so a missing glyph is not reported twice.
+    crate::box_runtime::hmode::run_tfm_ligature_machine_nested_with_work(
+        stores,
+        diagnostic_effects,
+        &minor_pending,
+        false,
+        right_boundary,
+        false,
+        fuel,
+        tfm_work,
+        &mut probe,
+    )
+    .map_err(ExecError::Command)?;
+    let synchronization = probe.synchronization.unwrap_or(word.len());
+    let major_len = tfm_work.physical_nodes_through_boundary(
+        current,
+        current_start,
+        current_len,
+        synchronization,
+    );
+    let minor_len = if probe.synchronization.is_some() {
+        probe.nodes_at_synchronization
+    } else {
+        probe.nodes
+    };
+    let mut replay_diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+    let physical_post = physical_post_branch(
+        stores,
+        &mut replay_diagnostic_effects,
+        &minor_pending,
+        right_boundary,
+        minor_len,
+        fuel,
+        tfm_work,
+    )?;
+    let physical_replace_count = u8::try_from(major_len)
+        .ok()
+        .filter(|&count| count <= 127)
+        .expect("a TeX word has at most 127 physical replacement nodes");
+    Ok((physical_replace_count, physical_post))
+}
+
+struct HyphenationReconstitutionCursor<'output, 'word, 'projection, 'vectors> {
+    output: &'output mut tex_state::page_node_arena::PageMaterialActiveListBuilder,
+    out_segments: &'output mut Vec<tex_state::node_arena::PageListId>,
+    word: &'word [WordChar],
+    positions: &'word [usize],
+    right_boundary: LigatureRightBoundary,
+    position_index: usize,
+    char_start: usize,
+    output_len: &'output mut usize,
+    projection: &'projection mut HyphenationProjection<'vectors>,
+    previous: Option<PreviousOutput>,
+}
+
+fn command_error(error: ExecError) -> tex_command::CommandError {
+    match error {
+        ExecError::Command(error) => error,
+        _ => unreachable!("hyphenation branch construction only reports command errors"),
+    }
+}
+
+impl<'output, 'word, 'projection, 'vectors>
+    HyphenationReconstitutionCursor<'output, 'word, 'projection, 'vectors>
+{
+    fn suspend_main<G>(&mut self, stores: &mut CommandContext<'_, G>) {
+        let segment = stores.finalize_page_active_list(self.output);
+        if !segment.is_empty() {
+            self.out_segments.push(segment);
+        }
+    }
+
+    fn resume_main<G>(&mut self, stores: &mut CommandContext<'_, G>) {
+        stores.open_page_active_list(self.output);
+    }
+
+    fn automatic_pre<G>(
+        &mut self,
+        stores: &mut CommandContext<'_, G>,
+        diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
+        position: usize,
+        full_prefix: bool,
+        fuel: &mut tex_command::CommandFuel,
+        tfm_work: &mut crate::box_runtime::hmode::LigatureWorkList,
+    ) -> Result<tex_state::node_arena::PageListId, ExecError> {
+        let previous = self.word[position - 1];
+        let mut source = if full_prefix {
+            pending_word_range(self.word, 0..position)
+        } else {
+            pending_word_range(self.word, position - 1..position)
+        };
+        let Some(ch) = automatic_hyphen_char(
+            stores,
+            previous.font,
+            *self.output_len,
+            self.projection.missing_hyphens,
+        ) else {
+            return Ok(tex_state::node_arena::PageListId::empty());
+        };
+        let fallback = PendingHRunChar::new(previous.font, ch, OriginId::UNKNOWN);
+        source.push(PendingHChar {
+            font: previous.font,
+            ch,
+            origin: previous.origin,
+        });
+        if full_prefix {
+            reconstitute_branch(
+                stores,
+                diagnostic_effects,
+                &source,
+                true,
+                LigatureRightBoundary::Font,
+                fuel,
+                tfm_work,
+            )
+        } else {
+            pre_break_branch(
+                stores,
+                diagnostic_effects,
+                self.previous,
+                fallback,
+                &source,
+                fuel,
+                tfm_work,
+            )
+        }
+    }
+
+    fn append_boundary_disc<G>(
+        &mut self,
+        stores: &mut CommandContext<'_, G>,
+        diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
+        replacement: Option<(Scaled, KernKind)>,
+        fuel: &mut tex_command::CommandFuel,
+        tfm_work: &mut crate::box_runtime::hmode::LigatureWorkList,
+    ) -> Result<(), ExecError> {
+        let position = self
+            .positions
+            .get(self.position_index)
+            .copied()
+            .expect("boundary discretionary has a pending source position");
+        if position == 0 {
+            self.position_index += 1;
+            return Ok(());
+        }
+        self.suspend_main(stores);
+        let pre =
+            match self.automatic_pre(stores, diagnostic_effects, position, false, fuel, tfm_work) {
+                Ok(pre) => pre,
+                Err(error) => {
+                    self.resume_main(stores);
+                    return Err(error);
+                }
+            };
+        let (replace, physical_replace_count) = replacement.map_or(
+            (tex_state::node_arena::PageListId::empty(), 0),
+            |(amount, kind)| (singleton_kern_branch(stores, amount, kind), 2),
+        );
+        let empty = tex_state::node_arena::PageListId::empty();
+        self.resume_main(stores);
+        stores.construct_page_active_list(self.output, |destination| {
+            destination.discretionary(
+                DiscKind::AutomaticHyphen,
+                pre,
+                empty,
+                replace,
+                physical_replace_count,
+            );
+        });
+        self.previous = None;
+        *self.output_len += 1;
+        self.position_index += 1;
+        Ok(())
+    }
+
+    fn append_through_disc<G>(
+        &mut self,
+        stores: &mut CommandContext<'_, G>,
+        diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
+        current: usize,
+        glyph: crate::box_runtime::hmode::LigatureGlyphCell,
+        fuel: &mut tex_command::CommandFuel,
+        tfm_work: &mut crate::box_runtime::hmode::LigatureWorkList,
+    ) -> Result<usize, ExecError> {
+        self.suspend_main(stores);
+        let position = self.positions[self.position_index];
+        let end = self.char_start.saturating_add(glyph.provenance.len);
+        let pre =
+            match self.automatic_pre(stores, diagnostic_effects, position, true, fuel, tfm_work) {
+                Ok(pre) => pre,
+                Err(error) => {
+                    self.resume_main(stores);
+                    return Err(error);
+                }
+            };
+        let post_source = pending_word_range(self.word, position..end);
+        let post = match reconstitute_branch(
+            stores,
+            diagnostic_effects,
+            &post_source,
+            false,
+            self.right_boundary,
+            fuel,
+            tfm_work,
+        ) {
+            Ok(post) => post,
+            Err(error) => {
+                self.resume_main(stores);
+                return Err(error);
+            }
+        };
+        let (physical_replace_count, physical_post) = match physical_projection_for_glyph(
+            stores,
+            diagnostic_effects,
+            self.word,
+            position,
+            self.char_start,
+            glyph.provenance.len,
+            current,
+            self.right_boundary,
+            fuel,
+            tfm_work,
+        ) {
+            Ok(projection) => projection,
+            Err(error) => {
+                self.resume_main(stores);
+                return Err(error);
+            }
+        };
+        let replace = singleton_glyph_branch(stores, glyph, tfm_work);
+        self.resume_main(stores);
+        stores.construct_page_active_list(self.output, |destination| {
+            destination.discretionary(
+                DiscKind::AutomaticHyphen,
+                pre,
+                post,
+                replace,
+                physical_replace_count,
+            );
+        });
+        self.previous = None;
+        self.projection
+            .physical_post_overrides
+            .push((*self.output_len, physical_post));
+        *self.output_len += 1;
+        self.position_index += 1;
+        Ok(end)
+    }
+}
+
+impl FinalHNodeSink for HyphenationReconstitutionCursor<'_, '_, '_, '_> {
+    fn glyph<G>(&mut self, stores: &mut CommandContext<'_, G>, glyph: PendingHRunChar) {
+        let mut sink = crate::box_runtime::hmode::PageNodeSink {
+            output: self.output,
+        };
+        sink.glyph(stores, glyph);
+        *self.output_len += 1;
+    }
+
+    fn glyph_cell_with_work<G>(
+        &mut self,
+        stores: &mut CommandContext<'_, G>,
+        current: usize,
+        glyph: crate::box_runtime::hmode::LigatureGlyphCell,
+        work: &mut crate::box_runtime::hmode::LigatureWorkList,
+        diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
+        fuel: &mut tex_command::CommandFuel,
+    ) -> Result<(), tex_command::CommandError> {
+        let source_len = glyph.provenance.len;
+        let char_end = self.char_start.saturating_add(source_len);
+        let boundary = self.positions.get(self.position_index) == Some(&self.char_start);
+        if boundary {
+            while self.positions.get(self.position_index) == Some(&self.char_start) {
+                self.append_boundary_disc(stores, diagnostic_effects, None, fuel, work)
+                    .map_err(command_error)?;
+            }
+        }
+        if let Some(&position) = self
+            .positions
+            .get(self.position_index)
+            .filter(|&&position| self.char_start < position && position < char_end)
+        {
+            let end = self
+                .append_through_disc(stores, diagnostic_effects, current, glyph, fuel, work)
+                .map_err(command_error)?;
+            while self
+                .positions
+                .get(self.position_index)
+                .is_some_and(|&next| next < end)
+            {
+                self.position_index += 1;
+            }
+            self.char_start = end;
+            let _ = position;
+            return Ok(());
+        }
+        let glyph_font = glyph.font;
+        let glyph_is_ligature = glyph.ligature_present;
+        let source = work.source(glyph.provenance);
+        let mut sink = crate::box_runtime::hmode::PageNodeSink {
+            output: self.output,
+        };
+        sink.glyph_cell(stores, glyph, source);
+        *self.output_len += 1;
+        let previous = source.first().map(|entry| PreviousOutput {
+            font: glyph_font,
+            ch: entry.ch,
+            origin: entry.origin,
+            ligature_present: glyph_is_ligature,
+        });
+        self.previous = previous;
+        self.char_start = char_end;
+        Ok(())
+    }
+
+    fn kern<G>(&mut self, stores: &mut CommandContext<'_, G>, amount: Scaled, kind: KernKind) {
+        let mut sink = crate::box_runtime::hmode::PageNodeSink {
+            output: self.output,
+        };
+        sink.kern(stores, amount, kind);
+        *self.output_len += 1;
+        self.previous = None;
+    }
+
+    fn kern_with_work<G>(
+        &mut self,
+        stores: &mut CommandContext<'_, G>,
+        _current: usize,
+        amount: Scaled,
+        kind: KernKind,
+        work: &mut crate::box_runtime::hmode::LigatureWorkList,
+        diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
+        fuel: &mut tex_command::CommandFuel,
+    ) -> Result<(), tex_command::CommandError> {
+        if kind == KernKind::Font
+            && self.positions.get(self.position_index) == Some(&self.char_start)
+        {
+            while self.positions.get(self.position_index) == Some(&self.char_start) {
+                self.append_boundary_disc(
+                    stores,
+                    diagnostic_effects,
+                    Some((amount, kind)),
+                    fuel,
+                    work,
+                )
+                .map_err(command_error)?;
+            }
+            return Ok(());
+        }
+        let mut sink = crate::box_runtime::hmode::PageNodeSink {
+            output: self.output,
+        };
+        sink.kern(stores, amount, kind);
+        *self.output_len += 1;
+        self.previous = None;
+        Ok(())
+    }
+
+    fn explicit_hyphen_disc<G>(&mut self, stores: &mut CommandContext<'_, G>) {
+        let mut sink = crate::box_runtime::hmode::PageNodeSink {
+            output: self.output,
+        };
+        sink.explicit_hyphen_disc(stores);
+        self.previous = None;
+        *self.output_len += 1;
+    }
+
+    fn discretionary<G>(
+        &mut self,
+        stores: &mut CommandContext<'_, G>,
+        kind: DiscKind,
+        pre: tex_state::node_arena::PageListId,
+        post: tex_state::node_arena::PageListId,
+        replace: tex_state::node_arena::PageListId,
+        physical_replace_count: u8,
+    ) {
+        let mut sink = crate::box_runtime::hmode::PageNodeSink {
+            output: self.output,
+        };
+        sink.discretionary(stores, kind, pre, post, replace, physical_replace_count);
+        self.previous = None;
+        *self.output_len += 1;
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn append_hyphenated_word<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
@@ -996,391 +1909,43 @@ fn append_hyphenated_word<G>(
     positions: &[usize],
     no_left_boundary: bool,
     right_boundary: HyphenationRightBoundary,
-    out: &mut Vec<crate::box_runtime::hmode::ReconstitutedNode>,
+    output: &mut tex_state::page_node_arena::PageMaterialActiveListBuilder,
+    out_segments: &mut Vec<tex_state::node_arena::PageListId>,
     output_len: &mut usize,
     fuel: &mut tex_command::CommandFuel,
     projection: &mut HyphenationProjection<'_>,
+    tfm_work: &mut crate::box_runtime::hmode::LigatureWorkList,
 ) -> Result<(), ExecError> {
-    let pending: Vec<_> = word.iter().map(WordChar::pending).collect();
-    let nodes = reconstitute_hyphenated_span(
+    let pending = pending_word_range(word, 0..word.len());
+    let mut cursor = HyphenationReconstitutionCursor {
+        output,
+        out_segments,
+        word,
+        positions,
+        right_boundary: right_boundary_cell(right_boundary),
+        position_index: 0,
+        char_start: 0,
+        output_len,
+        projection,
+        previous: None,
+    };
+    crate::box_runtime::hmode::run_tfm_ligature_machine_with_work(
         stores,
         diagnostic_effects,
         &pending,
         no_left_boundary,
-        right_boundary,
-        fuel,
-    )?;
-    let mut position_index = 0;
-    let mut char_start = 0;
-
-    for (node_index, node) in nodes.iter().cloned().enumerate() {
-        let boundary_kern = matches!(
-            &node,
-            crate::box_runtime::hmode::ReconstitutedNode::Kern {
-                kind: KernKind::Font,
-                ..
-            }
-        ) && positions.get(position_index) == Some(&char_start);
-        while positions.get(position_index) == Some(&char_start) {
-            let replacement = boundary_kern.then_some(node.clone());
-            let disc = discretionary_hyphen(
-                stores,
-                diagnostic_effects,
-                &word[char_start - 1],
-                out.last(),
-                replacement,
-                *output_len,
-                fuel,
-                projection.missing_hyphens,
-            )?;
-            out.push(disc);
-            *output_len += 1;
-            position_index += 1;
-        }
-        if boundary_kern {
-            continue;
-        }
-
-        let char_end = char_start + node.original_len();
-        if let Some(&position) = positions
-            .get(position_index)
-            .filter(|&&position| char_start < position && position < char_end)
-        {
-            let (disc, physical_post) = discretionary_through_node(
-                stores,
-                diagnostic_effects,
-                word,
-                ((char_start, position, char_end), *output_len),
-                node,
-                &nodes[node_index + 1..],
-                right_boundary,
-                fuel,
-                projection.missing_hyphens,
-            )?;
-            projection
-                .physical_post_overrides
-                .push((*output_len, physical_post));
-            out.push(disc);
-            *output_len += 1;
-            position_index += 1;
-            // TeX82 likewise suppresses another hyphenation point whose
-            // branches have not synchronized before this node ends.
-            while positions
-                .get(position_index)
-                .is_some_and(|&next| next < char_end)
-            {
-                position_index += 1;
-            }
-        } else {
-            out.push(node);
-            *output_len += 1;
-        }
-        char_start = char_end;
-    }
-
-    while let Some(&position) = positions.get(position_index) {
-        debug_assert_eq!(position, char_start);
-        let disc = discretionary_hyphen(
-            stores,
-            diagnostic_effects,
-            &word[position - 1],
-            out.last(),
-            None,
-            *output_len,
-            fuel,
-            projection.missing_hyphens,
-        )?;
-        out.push(disc);
-        *output_len += 1;
-        position_index += 1;
-    }
-    Ok(())
-}
-
-#[allow(clippy::too_many_arguments)] // Discretionary reconstruction mirrors TeX's source and replacement coordinates.
-fn discretionary_through_node<G>(
-    stores: &mut CommandContext<'_, G>,
-    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
-    word: &[WordChar],
-    location: ((usize, usize, usize), usize),
-    replacement: crate::box_runtime::hmode::ReconstitutedNode,
-    following: &[crate::box_runtime::hmode::ReconstitutedNode],
-    right_boundary: HyphenationRightBoundary,
-    fuel: &mut tex_command::CommandFuel,
-    missing_hyphens: &mut Vec<MissingHyphenDiagnostic>,
-) -> Result<
-    (
-        crate::box_runtime::hmode::ReconstitutedNode,
-        tex_state::node_arena::PageListId,
-    ),
-    ExecError,
-> {
-    let (span, node_index) = location;
-    let (start, position, end) = span;
-    let font = word[position - 1].font;
-    let mut pre_pending: Vec<_> = word[start..position]
-        .iter()
-        .map(WordChar::pending)
-        .collect();
-    if let Some(ch) = automatic_hyphen_char(stores, font, node_index, missing_hyphens) {
-        pre_pending.push(PendingHChar {
-            font,
-            ch,
-            origin: word[position - 1].origin,
-        });
-    }
-    let pre = crate::box_runtime::hmode::reconstitute_with_fuel(
-        stores,
-        diagnostic_effects,
-        &pre_pending,
-        true,
+        right_boundary_cell(right_boundary),
         false,
         fuel,
+        tfm_work,
+        &mut cursor,
     )
     .map_err(ExecError::Command)?;
-    let post_pending: Vec<_> = word[position..end].iter().map(WordChar::pending).collect();
-    let post = reconstitute_hyphenated_span(
-        stores,
-        diagnostic_effects,
-        &post_pending,
-        false,
-        right_boundary,
-        fuel,
-    )?;
-
-    let (physical_replace_count, physical_post) = physical_discretionary_projection(
-        stores,
-        diagnostic_effects,
-        word,
-        span,
-        PhysicalDiscretionarySource {
-            replacement: &replacement,
-            following,
-            right_boundary,
-        },
-        fuel,
-    )?;
-    let disc = automatic_discretionary_with_count(
-        stores,
-        &pre,
-        &post,
-        &[replacement],
-        physical_replace_count,
-    )
-    .expect("a reconstituted word has a bounded physical replacement span");
-    Ok((disc, physical_post))
-}
-
-/// Replays TeX82 §§914--918's synchronization rule in character space.
-///
-/// Umber's semantic channel stores a ligature together with its source
-/// characters, whereas TeX counts the linked nodes produced by successive
-/// `reconstitute` calls.  The two branches synchronize at the first source
-/// character boundary represented by both reconstitutions.  Projecting that
-/// boundary here retains TeX's exact replacement count and post-break list
-/// without flattening the semantic ligature used by packing and shipout.
-struct PhysicalDiscretionarySource<'a> {
-    replacement: &'a crate::box_runtime::hmode::ReconstitutedNode,
-    following: &'a [crate::box_runtime::hmode::ReconstitutedNode],
-    right_boundary: HyphenationRightBoundary,
-}
-
-fn physical_discretionary_projection<G>(
-    stores: &mut CommandContext<'_, G>,
-    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
-    word: &[WordChar],
-    span: (usize, usize, usize),
-    source: PhysicalDiscretionarySource<'_>,
-    fuel: &mut tex_command::CommandFuel,
-) -> Result<(u8, tex_state::node_arena::PageListId), ExecError> {
-    let PhysicalDiscretionarySource {
-        replacement,
-        following,
-        right_boundary,
-    } = source;
-    let (start, position, end) = span;
-    let mut major = Vec::with_capacity(following.len() + 1);
-    major.push(replacement.clone());
-    major.extend_from_slice(following);
-    let minor_pending = word[position..]
-        .iter()
-        .map(WordChar::pending)
-        .collect::<Vec<_>>();
-    let minor = reconstitute_hyphenated_span(
-        stores,
-        diagnostic_effects,
-        &minor_pending,
-        false,
-        right_boundary,
-        fuel,
-    )?;
-
-    let (major_len, minor_len) =
-        synchronized_physical_branch_lengths(&major, start, &minor, position, end, word.len());
-    let physical_replace_count = u8::try_from(major_len)
-        .ok()
-        .filter(|&count| count <= 127)
-        .expect("a TeX word has at most 127 physical replacement nodes");
-    Ok((
-        physical_replace_count,
-        crate::box_runtime::hmode::publish_reconstituted_slice(stores, &minor[..minor_len]),
-    ))
-}
-
-fn physical_character_boundaries(
-    nodes: &[crate::box_runtime::hmode::ReconstitutedNode],
-    start: usize,
-) -> Vec<usize> {
-    let mut boundary = start;
-    nodes
-        .iter()
-        .map(|node| {
-            boundary = boundary.saturating_add(node.original_len());
-            boundary
-        })
-        .collect()
-}
-
-fn nodes_through_character_boundary(boundaries: &[usize], synchronization: usize) -> usize {
-    boundaries
-        .iter()
-        .take_while(|&&boundary| boundary <= synchronization)
-        .count()
-}
-
-fn synchronized_physical_branch_lengths(
-    major: &[crate::box_runtime::hmode::ReconstitutedNode],
-    major_start: usize,
-    minor: &[crate::box_runtime::hmode::ReconstitutedNode],
-    minor_start: usize,
-    initial_end: usize,
-    word_len: usize,
-) -> (usize, usize) {
-    let major_boundaries = physical_character_boundaries(major, major_start);
-    let minor_boundaries = physical_character_boundaries(minor, minor_start);
-    let synchronization = major_boundaries
-        .iter()
-        .copied()
-        .filter(|&boundary| boundary >= initial_end)
-        .find(|boundary| minor_boundaries.contains(boundary))
-        .unwrap_or(word_len);
-    (
-        nodes_through_character_boundary(&major_boundaries, synchronization),
-        nodes_through_character_boundary(&minor_boundaries, synchronization),
-    )
-}
-
-fn automatic_discretionary_with_count<G>(
-    stores: &mut CommandContext<'_, G>,
-    pre: &[ReconstitutedNode],
-    post: &[ReconstitutedNode],
-    replace: &[ReconstitutedNode],
-    physical_replace_count: u8,
-) -> Option<ReconstitutedNode> {
-    (physical_replace_count <= 127).then(|| {
-        let pre = crate::box_runtime::hmode::publish_reconstituted_slice(stores, pre);
-        let post = crate::box_runtime::hmode::publish_reconstituted_slice(stores, post);
-        let replace = crate::box_runtime::hmode::publish_reconstituted_slice(stores, replace);
-        ReconstitutedNode::Discretionary {
-            kind: DiscKind::AutomaticHyphen,
-            pre,
-            post,
-            replace,
-            physical_replace_count,
-        }
-    })
-}
-
-/// TeX82 §§904/914/918 counts the physical nodes between an automatic
-/// discretionary and the reconstitution synchronization point. Umber keeps
-/// a ligature and its boundary kern structured, so recover that pre-collapse
-/// physical span at the construction boundary where the distinction is known.
-fn automatic_physical_replace_count(replace: &[ReconstitutedNode]) -> Option<u8> {
-    let count = match replace {
-        [
-            ReconstitutedNode::Kern {
-                kind: KernKind::Font,
-                ..
-            },
-        ] => 2,
-        [ReconstitutedNode::Glyph(glyph)] if glyph.ligature_present => 1,
-        _ => replace.len(),
-    };
-    u8::try_from(count).ok().filter(|&count| count <= 127)
-}
-
-#[allow(clippy::too_many_arguments)] // TeX's discretionary carries reconstruction and diagnostic state.
-fn discretionary_hyphen<G>(
-    stores: &mut CommandContext<'_, G>,
-    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
-    previous_word_char: &WordChar,
-    previous_node: Option<&ReconstitutedNode>,
-    replacement: Option<ReconstitutedNode>,
-    node_index: usize,
-    fuel: &mut tex_command::CommandFuel,
-    missing_hyphens: &mut Vec<MissingHyphenDiagnostic>,
-) -> Result<ReconstitutedNode, ExecError> {
-    let font = previous_word_char.font;
-    let empty = tex_state::node_arena::PageListId::empty();
-    let pre = if let Some(ch) = automatic_hyphen_char(stores, font, node_index, missing_hyphens) {
-        let mut pending = vec![previous_word_char.pending()];
-        pending.push(PendingHChar {
-            font,
-            ch,
-            origin: previous_word_char.origin,
-        });
-        let reconstructed = crate::box_runtime::hmode::reconstitute_with_fuel(
-            stores,
-            diagnostic_effects,
-            &pending,
-            true,
-            false,
-            fuel,
-        )
-        .map_err(ExecError::Command)?;
-        let keeps_previous_character = matches!(
-            (previous_node, reconstructed.first()),
-            (
-                Some(ReconstitutedNode::Glyph(previous)),
-                Some(ReconstitutedNode::Glyph(reconstructed)),
-            ) if !previous.ligature_present
-                && !reconstructed.ligature_present
-                && previous.font == reconstructed.font
-                && previous.ch == reconstructed.ch
-                && previous.origins.first() == reconstructed.origins.first()
-        );
-        if keeps_previous_character {
-            crate::box_runtime::hmode::publish_reconstituted_slice(stores, &reconstructed[1..])
-        } else {
-            let hyphen =
-                ReconstitutedNode::Glyph(PendingHRunChar::new(font, ch, OriginId::UNKNOWN));
-            crate::box_runtime::hmode::publish_reconstituted_slice(
-                stores,
-                std::slice::from_ref(&hyphen),
-            )
-        }
-    } else {
-        empty
-    };
-    let replace = replacement.as_ref().map_or_else(
-        || empty,
-        |node| {
-            crate::box_runtime::hmode::publish_reconstituted_slice(
-                stores,
-                std::slice::from_ref(node),
-            )
-        },
-    );
-    Ok(ReconstitutedNode::Discretionary {
-        kind: DiscKind::AutomaticHyphen,
-        pre,
-        post: empty,
-        replace,
-        physical_replace_count: replacement.as_ref().map_or(0, |node| {
-            automatic_physical_replace_count(std::slice::from_ref(node))
-                .expect("one reconstituted node fits TeX82's replacement count")
-        }),
-    })
+    while let Some(&position) = cursor.positions.get(cursor.position_index) {
+        debug_assert_eq!(position, cursor.char_start);
+        cursor.append_boundary_disc(stores, diagnostic_effects, None, fuel, tfm_work)?;
+    }
+    Ok(())
 }
 
 fn usable_hyphen_char<G>(
@@ -1414,7 +1979,7 @@ fn automatic_hyphen_char<G>(
     None
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 struct WordChar {
     font: tex_state::ids::FontId,
     ch: char,
@@ -1438,8 +2003,9 @@ use tex_state::node::{DiscKind, KernKind};
 use tex_state::token::OriginId;
 
 use crate::ExecError;
-use crate::box_runtime::hmode::ReconstitutedNode;
+use crate::box_runtime::hmode::{FinalHNodeSink, LigatureRightBoundary};
 use crate::mode::{PendingHChar, PendingHRunChar};
+use tex_state::scaled::Scaled;
 
 #[cfg(test)]
 mod tests {
@@ -1742,6 +2308,123 @@ mod tests {
     }
 
     #[test]
+    fn streaming_reconstitution_links_multiple_discretionaries_in_order() {
+        crate::test_harness::with_nonstop_plain_universe(|universe| {
+            let mut stores = universe.command_context().expect("test state is admitted");
+            let font = hyphenation_font(&mut stores);
+            stores.set_font_hyphen_char(font, i32::from(b'-'));
+            stores.add_hyphenation_exception_for_language(
+                0,
+                ExceptionSpec {
+                    word: "abcd".to_owned(),
+                    positions: vec![1, 3],
+                },
+            );
+            stores
+                .assign_int_param(
+                    IntParam::LEFT_HYPHEN_MIN,
+                    1,
+                    tex_state::AssignmentScope::Global,
+                )
+                .expect("left minimum");
+            stores
+                .assign_int_param(
+                    IntParam::RIGHT_HYPHEN_MIN,
+                    1,
+                    tex_state::AssignmentScope::Global,
+                )
+                .expect("right minimum");
+            let source = hyphenation_source(&mut stores, font);
+            let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut scratch = crate::mode::HorizontalModeScratch::default();
+            let mut fuel = tex_command::CommandFuelLedger::new(10_000).expect("bounded fuel");
+            let hyphenated = hyphenated_hlist_with_fuel(
+                &mut stores,
+                &mut effects,
+                source,
+                &mut scratch,
+                fuel.fuel_mut(),
+            )
+            .expect("multiple discretionary construction succeeds");
+            let discs = stores
+                .page_nodes(hyphenated.semantic)
+                .expect("semantic list")
+                .iter()
+                .filter(|node| matches!(node, tex_state::NodeView::Disc { .. }))
+                .count();
+            assert_eq!(discs, 2);
+        });
+    }
+
+    #[test]
+    fn streaming_reconstitution_rolls_back_and_retries_after_fuel_abort() {
+        crate::test_harness::with_nonstop_plain_universe(|universe| {
+            let mut stores = universe.command_context().expect("test state is admitted");
+            let font = hyphenation_font(&mut stores);
+            stores.set_font_hyphen_char(font, i32::from(b'-'));
+            stores.add_hyphenation_exception_for_language(
+                0,
+                ExceptionSpec {
+                    word: "abcd".to_owned(),
+                    positions: vec![2],
+                },
+            );
+            stores
+                .assign_int_param(
+                    IntParam::LEFT_HYPHEN_MIN,
+                    1,
+                    tex_state::AssignmentScope::Global,
+                )
+                .expect("left minimum");
+            stores
+                .assign_int_param(
+                    IntParam::RIGHT_HYPHEN_MIN,
+                    1,
+                    tex_state::AssignmentScope::Global,
+                )
+                .expect("right minimum");
+            let source = hyphenation_source(&mut stores, font);
+            let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut scratch = crate::mode::HorizontalModeScratch::default();
+            let mut exhausted = tex_command::CommandFuelLedger::new(1).expect("bounded fuel");
+            assert!(
+                hyphenated_hlist_with_fuel(
+                    &mut stores,
+                    &mut effects,
+                    source,
+                    &mut scratch,
+                    exhausted.fuel_mut(),
+                )
+                .is_err()
+            );
+            assert_eq!(
+                stores
+                    .page_node_list(source)
+                    .expect("source remains live")
+                    .len(),
+                6,
+                "fuel abort leaves the pending semantic source untouched"
+            );
+            let mut retry = tex_command::CommandFuelLedger::default();
+            let retried = hyphenated_hlist_with_fuel(
+                &mut stores,
+                &mut effects,
+                source,
+                &mut scratch,
+                retry.fuel_mut(),
+            )
+            .expect("retry after rollback succeeds");
+            assert!(
+                stores
+                    .page_nodes(retried.semantic)
+                    .expect("semantic list")
+                    .iter()
+                    .any(|node| matches!(node, tex_state::NodeView::Disc { .. }))
+            );
+        });
+    }
+
+    #[test]
     fn unhyphenated_word_keeps_the_single_main_list_owner() {
         crate::test_harness::with_nonstop_plain_universe(|universe| {
             let mut stores = universe.command_context().expect("test state is admitted");
@@ -1985,12 +2668,11 @@ mod tests {
                 physical_post_overrides: &mut physical_post_overrides,
                 missing_hyphens: &mut missing_hyphens,
             };
-            let mut generated_word = Vec::new();
             let (_, final_context) = hyphenated_hlist_with_projections(
                 &mut stores,
                 &mut diagnostic_effects,
                 source,
-                &mut generated_word,
+                scratch.tfm_work_mut(),
                 fuel.fuel_mut(),
                 &mut projection,
             )
@@ -2212,12 +2894,12 @@ mod tests {
                 };
                 let mut ledger =
                     tex_command::CommandFuelLedger::new(100_000).expect("bounded fuel");
-                let mut generated_word = Vec::new();
+                let mut scratch = crate::mode::HorizontalModeScratch::default();
                 let (output, context) = hyphenated_hlist_with_projections(
                     &mut stores,
                     &mut effects,
                     source,
-                    &mut generated_word,
+                    scratch.tfm_work_mut(),
                     ledger.fuel_mut(),
                     &mut projection,
                 )

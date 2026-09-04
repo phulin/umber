@@ -760,15 +760,17 @@ pub(crate) fn is_ltr_shaping_font<G>(stores: &CommandContext<'_, G>, font: FontI
 /// Final nodes emitted by shaping and reconstitution.
 ///
 /// The sink deliberately carries no `Node` value.  Production sinks reserve
-/// and initialize the final page-arena slot immediately; the event sink below
-/// exists only for callers that still need to inspect a reconstructed word
-/// while applying TeX's hyphenation synchronization rules.
+/// and initialize the final page-arena slot immediately. Hyphenation cursors
+/// use the same sink contract while replaying child lists against their
+/// move-only TFM tape.
 pub(crate) trait FinalHNodeSink {
     fn glyph<G>(&mut self, stores: &mut CommandContext<'_, G>, glyph: PendingHRunChar);
 
-    /// Consumes one move-only TFM cell. The default adapter is used only by
-    /// the reconstructed-event sink; the production page sink writes the
-    /// resident record directly from the borrowed provenance span.
+    /// Consumes one move-only TFM cell while it is still attached to the
+    /// reconstitution tape.  The default path writes the resident record
+    /// directly from the borrowed provenance span.  A streaming hyphenation
+    /// cursor can override this hook to suspend the output at a source
+    /// boundary and replay a child list against the same tape.
     fn glyph_cell<G>(
         &mut self,
         stores: &mut CommandContext<'_, G>,
@@ -778,7 +780,36 @@ pub(crate) trait FinalHNodeSink {
         self.glyph(stores, glyph.into_pending(source));
     }
 
+    fn glyph_cell_with_work<G>(
+        &mut self,
+        stores: &mut CommandContext<'_, G>,
+        _current: usize,
+        glyph: LigatureGlyphCell,
+        work: &mut LigatureWorkList,
+        _diagnostic_effects: &mut DiagnosticEffects,
+        _fuel: &mut tex_command::CommandFuel,
+    ) -> Result<(), tex_command::CommandError> {
+        let source = work.source(glyph.provenance);
+        self.glyph_cell(stores, glyph, source);
+        Ok(())
+    }
+
     fn kern<G>(&mut self, stores: &mut CommandContext<'_, G>, amount: Scaled, kind: KernKind);
+
+    #[allow(clippy::too_many_arguments)] // The callback carries the live TFM cell and diagnostic/fuel state.
+    fn kern_with_work<G>(
+        &mut self,
+        stores: &mut CommandContext<'_, G>,
+        _current: usize,
+        amount: Scaled,
+        kind: KernKind,
+        _work: &mut LigatureWorkList,
+        _diagnostic_effects: &mut DiagnosticEffects,
+        _fuel: &mut tex_command::CommandFuel,
+    ) -> Result<(), tex_command::CommandError> {
+        self.kern(stores, amount, kind);
+        Ok(())
+    }
 
     fn explicit_hyphen_disc<G>(&mut self, stores: &mut CommandContext<'_, G>);
 
@@ -793,8 +824,8 @@ pub(crate) trait FinalHNodeSink {
     );
 }
 
-struct PageNodeSink<'a> {
-    output: &'a mut tex_state::page_node_arena::PageMaterialActiveListBuilder,
+pub(crate) struct PageNodeSink<'a> {
+    pub(crate) output: &'a mut tex_state::page_node_arena::PageMaterialActiveListBuilder,
 }
 
 impl FinalHNodeSink for PageNodeSink<'_> {
@@ -880,149 +911,6 @@ impl FinalHNodeSink for PageNodeSink<'_> {
             destination.discretionary(kind, pre, post, replace, physical_replace_count);
         });
     }
-}
-
-#[derive(Default)]
-struct ReconstitutedEventSink {
-    events: Vec<ReconstitutedNode>,
-}
-
-impl FinalHNodeSink for ReconstitutedEventSink {
-    fn glyph<G>(&mut self, _stores: &mut CommandContext<'_, G>, glyph: PendingHRunChar) {
-        self.events.push(ReconstitutedNode::Glyph(glyph));
-    }
-
-    fn kern<G>(&mut self, _stores: &mut CommandContext<'_, G>, amount: Scaled, kind: KernKind) {
-        self.events.push(ReconstitutedNode::Kern { amount, kind });
-    }
-
-    fn explicit_hyphen_disc<G>(&mut self, _stores: &mut CommandContext<'_, G>) {
-        self.events.push(ReconstitutedNode::Discretionary {
-            kind: DiscKind::ExplicitHyphen,
-            pre: tex_state::node_arena::PageListId::empty(),
-            post: tex_state::node_arena::PageListId::empty(),
-            replace: tex_state::node_arena::PageListId::empty(),
-            physical_replace_count: 0,
-        });
-    }
-
-    fn discretionary<G>(
-        &mut self,
-        _stores: &mut CommandContext<'_, G>,
-        kind: DiscKind,
-        pre: tex_state::node_arena::PageListId,
-        post: tex_state::node_arena::PageListId,
-        replace: tex_state::node_arena::PageListId,
-        physical_replace_count: u8,
-    ) {
-        self.events.push(ReconstitutedNode::Discretionary {
-            kind,
-            pre,
-            post,
-            replace,
-            physical_replace_count,
-        });
-    }
-}
-
-/// A reconstructed word node retained only while TeX decides where a
-/// discretionary crosses its source-character boundary.  It is not a second
-/// page-node representation: production turns each event into a destination
-/// slot as soon as the surrounding algorithm has enough lookahead.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum ReconstitutedNode {
-    Glyph(PendingHRunChar),
-    Kern {
-        amount: Scaled,
-        kind: KernKind,
-    },
-    Discretionary {
-        kind: DiscKind,
-        pre: tex_state::node_arena::PageListId,
-        post: tex_state::node_arena::PageListId,
-        replace: tex_state::node_arena::PageListId,
-        physical_replace_count: u8,
-    },
-}
-
-impl ReconstitutedNode {
-    pub(crate) fn original_len(&self) -> usize {
-        match self {
-            Self::Glyph(glyph) if glyph.ligature_present => glyph.orig.len(),
-            Self::Glyph(_) => 1,
-            Self::Kern { .. } | Self::Discretionary { .. } => 0,
-        }
-    }
-
-    fn emit<G>(self, stores: &mut CommandContext<'_, G>, sink: &mut PageNodeSink<'_>) {
-        match self {
-            Self::Glyph(glyph) => sink.glyph(stores, glyph),
-            Self::Kern { amount, kind } => sink.kern(stores, amount, kind),
-            Self::Discretionary {
-                kind,
-                pre,
-                post,
-                replace,
-                physical_replace_count,
-            } => sink.discretionary(stores, kind, pre, post, replace, physical_replace_count),
-        }
-    }
-}
-
-/// Publishes a reconstructed event buffer by consuming each event directly
-/// into its final page-arena destination.  Empty reconstruction has no list.
-pub(crate) fn publish_reconstituted_nodes<G>(
-    stores: &mut CommandContext<'_, G>,
-    nodes: Vec<ReconstitutedNode>,
-) -> tex_state::node_arena::PageListId {
-    if nodes.is_empty() {
-        return tex_state::node_arena::PageListId::empty();
-    }
-    let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
-    stores.open_page_active_list(&mut output);
-    {
-        let mut sink = PageNodeSink {
-            output: &mut output,
-        };
-        for node in nodes {
-            node.emit(stores, &mut sink);
-        }
-    }
-    stores.finalize_page_active_list(&mut output)
-}
-
-/// Emits reconstructed events into an already-open destination list.
-pub(crate) fn append_reconstituted_nodes<G>(
-    stores: &mut CommandContext<'_, G>,
-    output: &mut tex_state::page_node_arena::PageMaterialActiveListBuilder,
-    nodes: impl IntoIterator<Item = ReconstitutedNode>,
-) {
-    let mut sink = PageNodeSink { output };
-    for node in nodes {
-        node.emit(stores, &mut sink);
-    }
-}
-
-/// Publishes a borrowed reconstructed prefix while preserving the caller's
-/// event buffer for character-boundary synchronization.
-pub(crate) fn publish_reconstituted_slice<G>(
-    stores: &mut CommandContext<'_, G>,
-    nodes: &[ReconstitutedNode],
-) -> tex_state::node_arena::PageListId {
-    if nodes.is_empty() {
-        return tex_state::node_arena::PageListId::empty();
-    }
-    let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
-    stores.open_page_active_list(&mut output);
-    {
-        let mut sink = PageNodeSink {
-            output: &mut output,
-        };
-        for node in nodes.iter().cloned() {
-            node.emit(stores, &mut sink);
-        }
-    }
-    stores.finalize_page_active_list(&mut output)
 }
 
 fn shape_open_type_chars_into<G>(
@@ -1412,55 +1300,6 @@ pub(crate) fn reshape_open_type_runs_list<G>(
     }
 }
 
-pub(crate) fn reconstitute_with_fuel<G>(
-    stores: &mut CommandContext<'_, G>,
-    diagnostic_effects: &mut DiagnosticEffects,
-    pending: &[crate::mode::PendingHChar],
-    no_left_boundary: bool,
-    insert_hyphen_discs: bool,
-    fuel: &mut tex_command::CommandFuel,
-) -> Result<Vec<ReconstitutedNode>, tex_command::CommandError> {
-    let mut sink = ReconstitutedEventSink::default();
-    run_tfm_ligature_machine(
-        stores,
-        diagnostic_effects,
-        pending,
-        no_left_boundary,
-        LigatureRightBoundary::Font,
-        insert_hyphen_discs,
-        fuel,
-        &mut sink,
-    )?;
-    Ok(sink.events)
-}
-
-/// Reconstitutes a hyphenated word against TeX82 §897's saved same-font
-/// nonletter without materializing that implicit right character.
-pub(crate) fn reconstitute_with_right_character<G>(
-    stores: &mut CommandContext<'_, G>,
-    diagnostic_effects: &mut DiagnosticEffects,
-    pending: &[crate::mode::PendingHChar],
-    no_left_boundary: bool,
-    right_character: Option<u8>,
-    fuel: &mut tex_command::CommandFuel,
-) -> Result<Vec<ReconstitutedNode>, tex_command::CommandError> {
-    let mut sink = ReconstitutedEventSink::default();
-    run_tfm_ligature_machine(
-        stores,
-        diagnostic_effects,
-        pending,
-        no_left_boundary,
-        right_character.map_or(
-            LigatureRightBoundary::Suppressed,
-            LigatureRightBoundary::Character,
-        ),
-        false,
-        fuel,
-        &mut sink,
-    )?;
-    Ok(sink.events)
-}
-
 #[derive(Clone, Copy)]
 pub(crate) enum LigatureRightBoundary {
     Suppressed,
@@ -1470,20 +1309,20 @@ pub(crate) enum LigatureRightBoundary {
 
 #[derive(Clone, Copy)]
 pub(crate) struct LigatureSourceEntry {
-    ch: char,
-    origin: OriginId,
+    pub(crate) ch: char,
+    pub(crate) origin: OriginId,
 }
 
 #[derive(Clone, Copy)]
-struct ProvenanceSpan {
-    start: usize,
-    len: usize,
+pub(crate) struct ProvenanceSpan {
+    pub(crate) start: usize,
+    pub(crate) len: usize,
 }
 
 impl ProvenanceSpan {
     const EMPTY: Self = Self { start: 0, len: 0 };
 
-    fn end(self) -> usize {
+    pub(crate) fn end(self) -> usize {
         self.start + self.len
     }
 }
@@ -1496,18 +1335,18 @@ struct LigatureBoundaryCell {
 }
 
 pub(crate) struct LigatureGlyphCell {
-    font: FontId,
-    ch: char,
+    pub(crate) font: FontId,
+    pub(crate) ch: char,
     code: Option<u8>,
     _metric: Option<CharMetrics>,
     lig_kern_start: Option<u16>,
     leading_auto_kern: Scaled,
     trailing_auto_kern: Scaled,
-    provenance: ProvenanceSpan,
-    ligature_present: bool,
-    left_hit: bool,
-    right_hit: bool,
-    character_exists: bool,
+    pub(crate) provenance: ProvenanceSpan,
+    pub(crate) ligature_present: bool,
+    pub(crate) left_hit: bool,
+    pub(crate) right_hit: bool,
+    pub(crate) character_exists: bool,
 }
 
 impl LigatureGlyphCell {
@@ -1602,6 +1441,7 @@ impl LigatureWorkList {
             .reserve(capacity.saturating_sub(self.provenance.capacity()));
     }
 
+    #[cfg(test)]
     fn with_capacity(capacity: usize) -> Self {
         Self {
             nodes: Vec::with_capacity(capacity),
@@ -1617,8 +1457,80 @@ impl LigatureWorkList {
         ProvenanceSpan { start, len: 1 }
     }
 
-    fn source(&self, span: ProvenanceSpan) -> &[LigatureSourceEntry] {
+    pub(crate) fn source(&self, span: ProvenanceSpan) -> &[LigatureSourceEntry] {
         &self.provenance[span.start..span.end()]
+    }
+
+    /// Reports whether the remaining physical main branch has a glyph
+    /// boundary at `boundary`, including zero-source kerns at that boundary.
+    pub(crate) fn physical_boundary_present(
+        &self,
+        current: usize,
+        current_start: usize,
+        current_len: usize,
+        boundary: usize,
+    ) -> bool {
+        let mut position = current_start.saturating_add(current_len);
+        if position == boundary {
+            return true;
+        }
+        let mut index = self.nodes.get(current).and_then(|node| node.next);
+        while let Some(next) = index {
+            index = self.nodes[next].next;
+            match self.nodes[next].cell.as_ref() {
+                Some(LigatureWorkCell::Glyph(glyph)) => {
+                    position = position.saturating_add(glyph.provenance.len);
+                    if position == boundary {
+                        return true;
+                    }
+                }
+                Some(LigatureWorkCell::Kern { .. }) => {
+                    if position == boundary {
+                        return true;
+                    }
+                }
+                Some(LigatureWorkCell::Boundary(_)) | None => {}
+            }
+        }
+        false
+    }
+
+    /// Counts physical nodes through the first synchronized source boundary.
+    /// A kern immediately following the boundary is part of TeX's retained
+    /// physical span, matching `nodes_through_character_boundary`.
+    pub(crate) fn physical_nodes_through_boundary(
+        &self,
+        current: usize,
+        current_start: usize,
+        current_len: usize,
+        boundary: usize,
+    ) -> usize {
+        let mut position = current_start.saturating_add(current_len);
+        let mut count = 1usize;
+        if position > boundary {
+            return count;
+        }
+        let mut index = self.nodes.get(current).and_then(|node| node.next);
+        while let Some(next) = index {
+            index = self.nodes[next].next;
+            match self.nodes[next].cell.as_ref() {
+                Some(LigatureWorkCell::Glyph(glyph)) => {
+                    position = position.saturating_add(glyph.provenance.len);
+                    count += 1;
+                    if position > boundary {
+                        break;
+                    }
+                }
+                Some(LigatureWorkCell::Kern { .. }) => {
+                    count += 1;
+                    if position > boundary {
+                        break;
+                    }
+                }
+                Some(LigatureWorkCell::Boundary(_)) | None => {}
+            }
+        }
+        count
     }
 
     fn merge_source_spans(
@@ -1790,49 +1702,49 @@ impl LigatureWorkList {
 
 struct LigatureWorkReset<'a> {
     work: &'a mut LigatureWorkList,
+    restore: Option<(usize, usize, Option<usize>, Option<usize>)>,
 }
 
 impl<'a> LigatureWorkReset<'a> {
     fn new(work: &'a mut LigatureWorkList, capacity: usize) -> Self {
         work.prepare(capacity);
-        Self { work }
+        Self {
+            work,
+            restore: None,
+        }
+    }
+
+    /// Borrows one nested replay window from the same move-only tape.
+    /// Existing parent cells stay in place while the child uses the tail of
+    /// both packed vectors; dropping the window restores the parent's links
+    /// and truncates only the child suffix.
+    fn nested(work: &'a mut LigatureWorkList) -> Self {
+        let restore = (
+            work.nodes.len(),
+            work.provenance.len(),
+            work.head,
+            work.tail,
+        );
+        work.head = None;
+        work.tail = None;
+        Self {
+            work,
+            restore: Some(restore),
+        }
     }
 }
 
 impl Drop for LigatureWorkReset<'_> {
     fn drop(&mut self) {
-        self.work.clear();
+        if let Some((nodes, provenance, head, tail)) = self.restore {
+            self.work.nodes.truncate(nodes);
+            self.work.provenance.truncate(provenance);
+            self.work.head = head;
+            self.work.tail = tail;
+        } else {
+            self.work.clear();
+        }
     }
-}
-
-/// TeX82 §§1034-1036's complete ligature cursor.
-///
-/// Source glyphs, generated pseudo-ligatures, and both boundaries share one
-/// work list. Thus every replacement pair re-enters the TFM program, and the
-/// retain/delete and pass-over bits move one authoritative cursor.
-#[allow(clippy::too_many_arguments)] // TeX's ligature machine keeps boundary, diagnostics, fuel, and sink explicit.
-fn run_tfm_ligature_machine<G>(
-    stores: &mut CommandContext<'_, G>,
-    diagnostic_effects: &mut DiagnosticEffects,
-    source: &[crate::mode::PendingHChar],
-    no_left_boundary: bool,
-    right_boundary: LigatureRightBoundary,
-    insert_hyphen_discs: bool,
-    fuel: &mut tex_command::CommandFuel,
-    sink: &mut impl FinalHNodeSink,
-) -> Result<(), tex_command::CommandError> {
-    let mut work = LigatureWorkList::with_capacity(source.len() + 4);
-    run_tfm_ligature_machine_with_work(
-        stores,
-        diagnostic_effects,
-        source,
-        no_left_boundary,
-        right_boundary,
-        insert_hyphen_discs,
-        fuel,
-        &mut work,
-        sink,
-    )
 }
 
 /// Runs the TFM ligature machine with caller-owned unresolved work storage.
@@ -1850,7 +1762,68 @@ pub(crate) fn run_tfm_ligature_machine_with_work<G>(
     work: &mut LigatureWorkList,
     sink: &mut impl FinalHNodeSink,
 ) -> Result<(), tex_command::CommandError> {
-    let work_guard = LigatureWorkReset::new(work, source.len().saturating_add(4));
+    run_tfm_ligature_machine_with_work_mode(
+        stores,
+        diagnostic_effects,
+        source,
+        no_left_boundary,
+        right_boundary,
+        insert_hyphen_discs,
+        fuel,
+        work,
+        sink,
+        false,
+    )
+}
+
+/// Replays a child branch while a parent reconstitution cursor still owns
+/// the tape. The nested window is restored on every exit, including fuel
+/// failure, so one warm `HorizontalFlushScratch` remains the sole temporary
+/// owner for all branch replays.
+#[allow(clippy::too_many_arguments)] // TeX's replay keeps branch, diagnostics, fuel, tape, and sink explicit.
+pub(crate) fn run_tfm_ligature_machine_nested_with_work<G>(
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
+    source: &[crate::mode::PendingHChar],
+    no_left_boundary: bool,
+    right_boundary: LigatureRightBoundary,
+    insert_hyphen_discs: bool,
+    fuel: &mut tex_command::CommandFuel,
+    work: &mut LigatureWorkList,
+    sink: &mut impl FinalHNodeSink,
+) -> Result<(), tex_command::CommandError> {
+    run_tfm_ligature_machine_with_work_mode(
+        stores,
+        diagnostic_effects,
+        source,
+        no_left_boundary,
+        right_boundary,
+        insert_hyphen_discs,
+        fuel,
+        work,
+        sink,
+        true,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_tfm_ligature_machine_with_work_mode<G>(
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
+    source: &[crate::mode::PendingHChar],
+    no_left_boundary: bool,
+    right_boundary: LigatureRightBoundary,
+    insert_hyphen_discs: bool,
+    fuel: &mut tex_command::CommandFuel,
+    work: &mut LigatureWorkList,
+    sink: &mut impl FinalHNodeSink,
+    nested: bool,
+) -> Result<(), tex_command::CommandError> {
+    let work_guard = if nested {
+        LigatureWorkReset::nested(work)
+    } else {
+        LigatureWorkReset::new(work, source.len().saturating_add(4))
+    };
     let work = &mut *work_guard.work;
     let Some(first) = source.first() else {
         return Ok(());
@@ -2099,12 +2072,24 @@ pub(crate) fn run_tfm_ligature_machine_with_work<G>(
                     );
                     continue;
                 }
-                let source = work.source(glyph.provenance);
-                pending_literal_hyphen_disc =
-                    literal_hyphen_disc_enabled_source(stores, &glyph, source, insert_hyphen_discs);
-                sink.glyph_cell(stores, glyph, source);
+                let source_last = work.source(glyph.provenance).last().map(|entry| entry.ch);
+                pending_literal_hyphen_disc = literal_hyphen_disc_enabled_source(
+                    stores,
+                    &glyph,
+                    source_last,
+                    insert_hyphen_discs,
+                );
+                sink.glyph_cell_with_work(stores, current, glyph, work, diagnostic_effects, fuel)?;
             }
-            LigatureWorkCell::Kern { amount, kind } => sink.kern(stores, amount, kind),
+            LigatureWorkCell::Kern { amount, kind } => sink.kern_with_work(
+                stores,
+                current,
+                amount,
+                kind,
+                work,
+                diagnostic_effects,
+                fuel,
+            )?,
         }
     }
     if pending_literal_hyphen_disc {
@@ -2147,12 +2132,10 @@ fn auto_kern_values<G>(
 fn literal_hyphen_disc_enabled_source<G>(
     stores: &mut CommandContext<'_, G>,
     current: &LigatureGlyphCell,
-    source: &[LigatureSourceEntry],
+    source_last: Option<char>,
     enabled: bool,
 ) -> bool {
-    enabled
-        && stores.font_hyphen_char(current.font)
-            == source.last().map_or(current.ch, |entry| entry.ch) as i32
+    enabled && stores.font_hyphen_char(current.font) == source_last.unwrap_or(current.ch) as i32
 }
 
 pub(crate) fn add_scaled(left: Scaled, right: Scaled) -> Scaled {
