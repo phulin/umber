@@ -782,6 +782,110 @@ fn ifodd_register_operands_use_the_shared_index_lane() {
 }
 
 #[test]
+fn ifodd_resumes_its_exact_parent_after_nested_expandafter() {
+    crate::test_harness::with_universe(|universe| {
+        let ifodd = install_static(
+            universe,
+            "ifodd",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::IfOdd),
+        );
+        let expandafter = install_static(
+            universe,
+            "expandafter",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::ExpandAfter),
+        );
+        let fi = install_static(
+            universe,
+            "fi",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Fi),
+        );
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(
+            &mut command,
+            [
+                ifodd,
+                expandafter,
+                Token::Char {
+                    ch: '1',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: 'A',
+                    cat: Catcode::Letter,
+                },
+                fi,
+                Token::Char {
+                    ch: 'X',
+                    cat: Catcode::Letter,
+                },
+            ],
+        );
+        assert_eq!(collect_expanded_characters(universe, &mut command), "AX");
+        assert_eq!(command.scratch.driver_continuation_depth(), 0);
+    });
+}
+
+#[test]
+fn ifodd_exact_parent_matrix_covers_nested_scalar_children() {
+    crate::test_harness::with_universe(|universe| {
+        let ifodd = install_static(
+            universe,
+            "ifodd-matrix",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::IfOdd),
+        );
+        let the = install_static(
+            universe,
+            "the-matrix",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::The),
+        );
+        let count = install_static(
+            universe,
+            "count-matrix",
+            Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::Count),
+        );
+        let number = install_static(
+            universe,
+            "number-matrix",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Number),
+        );
+        let fi = install_static(
+            universe,
+            "fi-matrix",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Fi),
+        );
+        let relax = install_static(universe, "relax", Meaning::Relax);
+        let cases = [
+            vec![ifodd, the, count, other('0'), relax, fi, letter('X')],
+            vec![ifodd, number, other('1'), fi, letter('X')],
+            vec![ifodd, ifodd, other('1'), fi, other('1'), fi, letter('X')],
+        ];
+        for input in cases {
+            let mut command = CommandState::default();
+            let _operation = command.begin_attempt_operation();
+            crate::test_harness::push(&mut command, input);
+            assert_eq!(collect_expanded_characters(universe, &mut command), "X");
+            assert_eq!(command.scratch.driver_continuation_depth(), 0);
+            assert!(command.scratch.is_quiescent());
+        }
+    });
+}
+
+fn other(ch: char) -> Token {
+    Token::Char {
+        ch,
+        cat: Catcode::Other,
+    }
+}
+
+fn letter(ch: char) -> Token {
+    Token::Char {
+        ch,
+        cat: Catcode::Letter,
+    }
+}
+
+#[test]
 fn nested_the_register_indices_do_not_reenter_the_delivery_stack() {
     crate::test_harness::with_universe(|universe| {
         let the = install_static(

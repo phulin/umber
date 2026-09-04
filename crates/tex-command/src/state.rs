@@ -288,6 +288,10 @@ pub(crate) struct PendingExpansion<G> {
     pub(crate) command: crate::CurrentCommand<G>,
     pub(crate) resume: PendingExpansionResume,
     pub(crate) delivery_expanded: bool,
+    /// Exact synchronous parent that is waiting for this suspended child.
+    /// The slot is restored with the suspended control and is never
+    /// rediscovered from the current top after retry.
+    pub(crate) parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     pub(crate) child:
         Option<crate::execution_scratch::ChildContinuation<G, PendingExpansionChildDestination>>,
 }

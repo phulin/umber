@@ -1388,7 +1388,15 @@ impl<G> ExecutionScratch<G> {
     /// command-sized carrier.
     pub(crate) fn top_the_control(
         &self,
-    ) -> Result<Option<crate::expansion_work::control::TheControl>, ScratchError> {
+    ) -> Result<
+        Option<
+            crate::expansion_work::ExpansionControlView<
+                G,
+                crate::expansion_work::control::TheControl,
+            >,
+        >,
+        ScratchError,
+    > {
         self.expansion_work.top_the_control()
     }
 
@@ -1396,7 +1404,12 @@ impl<G> ExecutionScratch<G> {
         &mut self,
         phase: crate::expansion_work::control::ThePhase,
     ) -> Result<(), ScratchError> {
-        self.expansion_work.set_the_phase(phase)
+        let slot = self
+            .expansion_work
+            .top_the_control()?
+            .ok_or(ScratchError::InvalidCoordinate)?
+            .slot;
+        self.expansion_work.set_the_phase(slot, phase)
     }
 
     /// Closes one completed synchronous `\the` continuation in LIFO order.
@@ -1406,8 +1419,15 @@ impl<G> ExecutionScratch<G> {
 
     pub(crate) fn top_csname_control(
         &self,
-    ) -> Result<Option<crate::expansion_work::control::SynchronousCsNameControl>, ScratchError>
-    {
+    ) -> Result<
+        Option<
+            crate::expansion_work::ExpansionControlView<
+                G,
+                crate::expansion_work::control::SynchronousCsNameControl,
+            >,
+        >,
+        ScratchError,
+    > {
         self.expansion_work.top_csname_control()
     }
 
@@ -1426,8 +1446,15 @@ impl<G> ExecutionScratch<G> {
 
     pub(crate) fn top_ifcsname_control(
         &self,
-    ) -> Result<Option<crate::expansion_work::control::SynchronousIfCsNameControl>, ScratchError>
-    {
+    ) -> Result<
+        Option<
+            crate::expansion_work::ExpansionControlView<
+                G,
+                crate::expansion_work::control::SynchronousIfCsNameControl,
+            >,
+        >,
+        ScratchError,
+    > {
         self.expansion_work.top_ifcsname_control()
     }
 
@@ -1440,7 +1467,12 @@ impl<G> ExecutionScratch<G> {
     pub(crate) fn top_expandafter_control(
         &self,
     ) -> Result<
-        Option<crate::expansion_work::control::SynchronousExpandAfterControl<G>>,
+        Option<
+            crate::expansion_work::ExpansionControlView<
+                G,
+                crate::expansion_work::control::SynchronousExpandAfterControl<G>,
+            >,
+        >,
         ScratchError,
     > {
         self.expansion_work.top_expandafter_control()
@@ -1450,15 +1482,12 @@ impl<G> ExecutionScratch<G> {
         &mut self,
         first: crate::command::HotCommand<G>,
     ) -> Result<(), ScratchError> {
-        self.expansion_work.save_expandafter_first(first)
-    }
-
-    pub(crate) fn await_expandafter_nested(&mut self) -> Result<(), ScratchError> {
-        self.expansion_work.await_expandafter_nested()
-    }
-
-    pub(crate) fn resume_expandafter_second(&mut self) -> Result<(), ScratchError> {
-        self.expansion_work.resume_expandafter_second()
+        let slot = self
+            .expansion_work
+            .top_expandafter_control()?
+            .ok_or(ScratchError::InvalidCoordinate)?
+            .slot;
+        self.expansion_work.save_expandafter_first(slot, first)
     }
 
     pub(crate) fn pop_expandafter_control(
@@ -1480,8 +1509,15 @@ impl<G> ExecutionScratch<G> {
 
     pub(crate) fn top_if_compare_control(
         &self,
-    ) -> Result<Option<crate::expansion_work::control::SynchronousIfCompareControl>, ScratchError>
-    {
+    ) -> Result<
+        Option<
+            crate::expansion_work::ExpansionControlView<
+                G,
+                crate::expansion_work::control::SynchronousIfCompareControl,
+            >,
+        >,
+        ScratchError,
+    > {
         self.expansion_work.top_if_compare_control()
     }
 
@@ -1490,16 +1526,13 @@ impl<G> ExecutionScratch<G> {
         character: u32,
         category: Option<tex_state::token::Catcode>,
     ) -> Result<(), ScratchError> {
+        let slot = self
+            .expansion_work
+            .top_if_compare_control()?
+            .ok_or(ScratchError::InvalidCoordinate)?
+            .slot;
         self.expansion_work
-            .save_if_compare_first(character, category)
-    }
-
-    pub(crate) fn await_if_compare_operand(&mut self) -> Result<(), ScratchError> {
-        self.expansion_work.await_if_compare_operand()
-    }
-
-    pub(crate) fn resume_if_compare_operand(&mut self) -> Result<(), ScratchError> {
-        self.expansion_work.resume_if_compare_operand()
+            .save_if_compare_first(slot, character, category)
     }
 
     pub(crate) fn pop_if_compare_control(
@@ -1520,8 +1553,15 @@ impl<G> ExecutionScratch<G> {
 
     pub(crate) fn top_if_number_control(
         &self,
-    ) -> Result<Option<crate::expansion_work::control::SynchronousIfNumberControl>, ScratchError>
-    {
+    ) -> Result<
+        Option<
+            crate::expansion_work::ExpansionControlView<
+                G,
+                crate::expansion_work::control::SynchronousIfNumberControl,
+            >,
+        >,
+        ScratchError,
+    > {
         self.expansion_work.top_if_number_control()
     }
 
@@ -1529,15 +1569,12 @@ impl<G> ExecutionScratch<G> {
         &mut self,
         phase: crate::expansion_work::control::SynchronousIfNumberPhase,
     ) -> Result<(), ScratchError> {
-        self.expansion_work.set_if_number_phase(phase)
-    }
-
-    pub(crate) fn await_if_number_operand(&mut self) -> Result<(), ScratchError> {
-        self.expansion_work.await_if_number_operand()
-    }
-
-    pub(crate) fn resume_if_number_operand(&mut self) -> Result<(), ScratchError> {
-        self.expansion_work.resume_if_number_operand()
+        let slot = self
+            .expansion_work
+            .top_if_number_control()?
+            .ok_or(ScratchError::InvalidCoordinate)?
+            .slot;
+        self.expansion_work.set_if_number_phase(slot, phase)
     }
 
     pub(crate) fn pop_if_number_control(
@@ -1558,8 +1595,15 @@ impl<G> ExecutionScratch<G> {
 
     pub(crate) fn top_if_dimension_control(
         &self,
-    ) -> Result<Option<crate::expansion_work::control::SynchronousIfDimensionControl>, ScratchError>
-    {
+    ) -> Result<
+        Option<
+            crate::expansion_work::ExpansionControlView<
+                G,
+                crate::expansion_work::control::SynchronousIfDimensionControl,
+            >,
+        >,
+        ScratchError,
+    > {
         self.expansion_work.top_if_dimension_control()
     }
 
@@ -1567,15 +1611,12 @@ impl<G> ExecutionScratch<G> {
         &mut self,
         phase: crate::expansion_work::control::SynchronousIfDimensionPhase,
     ) -> Result<(), ScratchError> {
-        self.expansion_work.set_if_dimension_phase(phase)
-    }
-
-    pub(crate) fn await_if_dimension_operand(&mut self) -> Result<(), ScratchError> {
-        self.expansion_work.await_if_dimension_operand()
-    }
-
-    pub(crate) fn resume_if_dimension_operand(&mut self) -> Result<(), ScratchError> {
-        self.expansion_work.resume_if_dimension_operand()
+        let slot = self
+            .expansion_work
+            .top_if_dimension_control()?
+            .ok_or(ScratchError::InvalidCoordinate)?
+            .slot;
+        self.expansion_work.set_if_dimension_phase(slot, phase)
     }
 
     pub(crate) fn pop_if_dimension_control(
@@ -1666,8 +1707,15 @@ impl<G> ExecutionScratch<G> {
 
     pub(crate) fn top_number_control(
         &self,
-    ) -> Result<Option<crate::expansion_work::control::SynchronousNumberControl>, ScratchError>
-    {
+    ) -> Result<
+        Option<
+            crate::expansion_work::ExpansionControlView<
+                G,
+                crate::expansion_work::control::SynchronousNumberControl,
+            >,
+        >,
+        ScratchError,
+    > {
         self.expansion_work.top_number_control()
     }
 
@@ -1675,15 +1723,12 @@ impl<G> ExecutionScratch<G> {
         &mut self,
         phase: crate::expansion_work::control::SynchronousNumberPhase,
     ) -> Result<(), ScratchError> {
-        self.expansion_work.set_number_phase(phase)
-    }
-
-    pub(crate) fn await_number_operand(&mut self) -> Result<(), ScratchError> {
-        self.expansion_work.await_number_operand()
-    }
-
-    pub(crate) fn resume_number_operand(&mut self) -> Result<(), ScratchError> {
-        self.expansion_work.resume_number_operand()
+        let slot = self
+            .expansion_work
+            .top_number_control()?
+            .ok_or(ScratchError::InvalidCoordinate)?
+            .slot;
+        self.expansion_work.set_number_phase(slot, phase)
     }
 
     pub(crate) fn pop_number_control(
@@ -1694,8 +1739,15 @@ impl<G> ExecutionScratch<G> {
 
     pub(crate) fn top_pdf_ximage_bbox_control(
         &self,
-    ) -> Result<Option<crate::expansion_work::control::SynchronousPdfXImageBBoxControl>, ScratchError>
-    {
+    ) -> Result<
+        Option<
+            crate::expansion_work::ExpansionControlView<
+                G,
+                crate::expansion_work::control::SynchronousPdfXImageBBoxControl,
+            >,
+        >,
+        ScratchError,
+    > {
         self.expansion_work.top_pdf_ximage_bbox_control()
     }
 
@@ -1703,7 +1755,12 @@ impl<G> ExecutionScratch<G> {
         &mut self,
         phase: crate::expansion_work::control::SynchronousPdfXImageBBoxPhase,
     ) -> Result<(), ScratchError> {
-        self.expansion_work.set_pdf_ximage_bbox_phase(phase)
+        let slot = self
+            .expansion_work
+            .top_pdf_ximage_bbox_control()?
+            .ok_or(ScratchError::InvalidCoordinate)?
+            .slot;
+        self.expansion_work.set_pdf_ximage_bbox_phase(slot, phase)
     }
 
     pub(crate) fn pop_pdf_ximage_bbox_control(
@@ -1743,8 +1800,15 @@ impl<G> ExecutionScratch<G> {
 
     pub(crate) fn top_fontname_control(
         &self,
-    ) -> Result<Option<crate::expansion_work::control::SynchronousFontNameControl>, ScratchError>
-    {
+    ) -> Result<
+        Option<
+            crate::expansion_work::ExpansionControlView<
+                G,
+                crate::expansion_work::control::SynchronousFontNameControl,
+            >,
+        >,
+        ScratchError,
+    > {
         self.expansion_work.top_fontname_control()
     }
 
@@ -1786,20 +1850,37 @@ impl<G> ExecutionScratch<G> {
 
     pub(crate) fn top_expanded_control(
         &self,
-    ) -> Result<Option<crate::expansion_work::control::SynchronousExpandedControl>, ScratchError>
-    {
+    ) -> Result<
+        Option<
+            crate::expansion_work::ExpansionControlView<
+                G,
+                crate::expansion_work::control::SynchronousExpandedControl,
+            >,
+        >,
+        ScratchError,
+    > {
         self.expansion_work.top_expanded_control()
     }
 
     pub(crate) fn begin_expanded_body(&mut self) -> Result<(), ScratchError> {
-        self.expansion_work.begin_expanded_body()
+        let slot = self
+            .expansion_work
+            .top_expanded_control()?
+            .ok_or(ScratchError::InvalidCoordinate)?
+            .slot;
+        self.expansion_work.begin_expanded_body(slot)
     }
 
     pub(crate) fn settle_expanded_word(
         &mut self,
         word: tex_state::token::TokenWord,
     ) -> Result<bool, ScratchError> {
-        self.expansion_work.settle_expanded_word(word)
+        let slot = self
+            .expansion_work
+            .top_expanded_control()?
+            .ok_or(ScratchError::InvalidCoordinate)?
+            .slot;
+        self.expansion_work.settle_expanded_word(slot, word)
     }
 
     pub(crate) fn pop_expanded_control(
@@ -1815,6 +1896,44 @@ impl<G> ExecutionScratch<G> {
     #[cfg(test)]
     pub(crate) fn driver_continuation_depth(&self) -> u32 {
         self.expansion_work.driver_continuation_depth()
+    }
+
+    pub(crate) fn expansion_control_depth(&self) -> u32 {
+        self.expansion_work.control_depth()
+    }
+
+    pub(crate) fn top_expansion_control_slot(
+        &self,
+    ) -> Result<Option<crate::expansion_work::ExpansionControlSlot<G>>, ScratchError> {
+        self.expansion_work.top_control_slot()
+    }
+
+    pub(crate) fn top_awaitable_expansion_control_slot(
+        &self,
+    ) -> Result<Option<crate::expansion_work::ExpansionControlSlot<G>>, ScratchError> {
+        self.expansion_work.top_awaitable_control()
+    }
+
+    pub(crate) fn await_expansion_control_for_child(
+        &mut self,
+        slot: crate::expansion_work::ExpansionControlSlot<G>,
+    ) -> Result<(), ScratchError> {
+        self.expansion_work.await_control_for_child(slot)
+    }
+
+    pub(crate) fn resume_expansion_control_parent(
+        &mut self,
+        slot: crate::expansion_work::ExpansionControlSlot<G>,
+    ) -> Result<(), ScratchError> {
+        self.expansion_work.resume_control_parent(slot)
+    }
+
+    pub(crate) fn attach_expansion_control_parent(
+        &mut self,
+        child: crate::expansion_work::ExpansionControlSlot<G>,
+        parent: crate::expansion_work::ExpansionControlSlot<G>,
+    ) -> Result<(), ScratchError> {
+        self.expansion_work.attach_control_parent(child, parent)
     }
 
     #[cfg(test)]

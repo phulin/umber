@@ -1122,7 +1122,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         // the legacy scanner (and therefore avoids a second delivery loop).
         if control.kind == ConditionalKind::IfFontChar {
             return self
-                .advance_if_font_char_continuation(control, command, character, is_space, digit);
+                .advance_if_font_char_continuation(*control, command, character, is_space, digit);
         }
 
         // A register primitive is the first token of a `scan_int` operand;
@@ -1211,7 +1211,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 | ConditionalKind::IfVBox
                 | ConditionalKind::IfEof
         ) {
-            return self.advance_if_number_unary(control, command, character, is_space, digit);
+            return self.advance_if_number_unary(*control, command, character, is_space, digit);
         }
 
         let saturating_digit = |value: i64, radix: i64, digit: i64| {

@@ -41,6 +41,46 @@ fn reviewed_layout_bounds_are_compile_time_invariants() {
 }
 
 #[test]
+fn exact_parent_edge_retires_child_before_resuming_its_awaiting_slot() {
+    let mut work = ExpansionWork::<()>::default();
+    let parent = work
+        .push_control(ExpansionControl::IfNumber(SynchronousIfNumberControl {
+            condition: crate::processor::status::ConditionId(1),
+            kind: crate::conditionals::ConditionalKind::IfOdd,
+            inverted: false,
+            phase: SynchronousIfNumberPhase::NeedLeft,
+        }))
+        .expect("parent control");
+    work.await_control_for_child(parent)
+        .expect("parent enters await phase");
+    let child = work
+        .push_control(ExpansionControl::ExpandAfterSync(
+            SynchronousExpandAfterControl {
+                opener: OriginId::UNKNOWN,
+                saved_first: None,
+                phase: SynchronousExpandAfterPhase::NeedFirst,
+            },
+        ))
+        .expect("child control");
+    work.attach_control_parent(child, parent)
+        .expect("attach exact parent");
+    work.pop_control(child).expect("retire child first");
+    assert_eq!(
+        work.top_if_number_control()
+            .expect("parent control")
+            .expect("parent remains")
+            .phase,
+        SynchronousIfNumberPhase::Left {
+            negative: false,
+            value: 0,
+            seen_digit: false,
+        }
+    );
+    work.pop_control(parent).expect("retire parent");
+    assert!(work.is_quiescent());
+}
+
+#[test]
 fn synchronous_the_controls_are_lifo_and_do_not_retain_commands() {
     let mut work = ExpansionWork::<()>::default();
     for _ in 0..1_024 {
@@ -74,7 +114,12 @@ fn synchronous_expanded_controls_share_one_lifo_lane() {
             .kind,
         SynchronousExpandedKind::Expanded
     );
-    work.begin_expanded_body().expect("expanded opening");
+    let slot = work
+        .top_expanded_control()
+        .expect("expanded control")
+        .expect("top")
+        .slot;
+    work.begin_expanded_body(slot).expect("expanded opening");
     let control = work.pop_expanded_control().expect("expanded pop");
     assert_eq!(control.writer, writer);
     assert_eq!(work.driver_continuation_depth(), 0);
@@ -133,6 +178,7 @@ fn aborting_a_cold_child_also_retires_its_synchronous_parent() {
                 opener: tex_state::token::OriginId::UNKNOWN,
             },
             delivery_expanded: true,
+            parent: None,
             child: None,
         })
         .expect("suspended child");
@@ -482,6 +528,7 @@ fn failed_production_park_restores_the_exact_pending_owner() {
         command: empty_command(),
         resume: crate::state::PendingExpansionResume::PdfInsertHeight,
         delivery_expanded: true,
+        parent: None,
         child: None,
     };
     let (error, pending) = work
@@ -518,6 +565,7 @@ fn nested_suspensions_are_lifo_and_reject_an_out_of_order_key_without_mutation()
                 opener: tex_state::token::OriginId::UNKNOWN,
             },
             delivery_expanded: false,
+            parent: None,
             child: None,
         })
         .expect("outer suspension");
@@ -527,6 +575,7 @@ fn nested_suspensions_are_lifo_and_reject_an_out_of_order_key_without_mutation()
             command: empty_command(),
             resume: crate::state::PendingExpansionResume::PdfInsertHeight,
             delivery_expanded: true,
+            parent: None,
             child: None,
         })
         .expect("inner suspension");

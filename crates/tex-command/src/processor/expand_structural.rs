@@ -126,33 +126,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             .map_err(crate::scan_toks::scratch_command_error)
     }
 
-    pub(super) fn expandafter_awaiting_nested(&self) -> Result<bool, CommandError> {
-        self.command
-            .scratch
-            .top_expandafter_control()
-            .map(|control| {
-                control.is_some_and(|control| {
-                    control.phase
-                        == crate::expansion_work::control::SynchronousExpandAfterPhase::AwaitNested
-                })
-            })
-            .map_err(crate::scan_toks::scratch_command_error)
-    }
-
-    pub(super) fn await_expandafter_nested(&mut self) -> Result<(), CommandError> {
-        self.command
-            .scratch
-            .await_expandafter_nested()
-            .map_err(crate::scan_toks::scratch_command_error)
-    }
-
-    pub(super) fn resume_expandafter_second(&mut self) -> Result<(), CommandError> {
-        self.command
-            .scratch
-            .resume_expandafter_second()
-            .map_err(crate::scan_toks::scratch_command_error)
-    }
-
     /// Completes the active hot `\csname`, or performs TeX82's missing
     /// `\endcsname` recovery for the already-delivered offending command.
     /// Name materialization is a semantic boundary and therefore occurs only

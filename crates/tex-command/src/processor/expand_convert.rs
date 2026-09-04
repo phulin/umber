@@ -1044,7 +1044,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         self.back_input(command.materialize())?;
                     }
                     self.missing_number_error()?;
-                    finish_margin_kern(self, control, 0, false)?;
+                    finish_margin_kern(self, *control, 0, false)?;
                     return Ok(true);
                 }
                 Phase::Accumulating {
@@ -1065,12 +1065,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                             self.back_input(command.materialize())?;
                         }
                         self.missing_number_error()?;
-                        finish_margin_kern(self, control, 0, negative)?;
+                        finish_margin_kern(self, *control, 0, negative)?;
                     } else {
                         if !at_end && !is_space {
                             self.back_input(command.materialize())?;
                         }
-                        finish_margin_kern(self, control, value, negative)?;
+                        finish_margin_kern(self, *control, value, negative)?;
                     }
                     return Ok(true);
                 }
@@ -1186,7 +1186,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .scratch
                     .pop_number_control()
                     .map_err(crate::scan_toks::scratch_command_error)?;
-                self.finish_number_output(control, value)?;
+                self.finish_number_output(*control, value)?;
                 return Ok(true);
             }
         }
@@ -1269,14 +1269,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                         self.back_input(command.materialize())?;
                     }
                     self.missing_number_error()?;
-                    finish_register(self, control, target, 0, false)?;
+                    finish_register(self, *control, target, 0, false)?;
                     return Ok(true);
                 }
                 _ => {
                     if !at_end && !is_space {
                         self.back_input(command.materialize())?;
                     }
-                    finish_register(self, control, target, value, negative)?;
+                    finish_register(self, *control, target, value, negative)?;
                     return Ok(true);
                 }
             }
@@ -1306,7 +1306,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     self.back_input(command.materialize())?;
                 }
                 self.missing_number_error()?;
-                finish(self, control, 0, false)?;
+                finish(self, *control, 0, false)?;
                 Ok(true)
             }
             Phase::Await { .. } => Err(CommandError::input_invariant()),
@@ -1330,12 +1330,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                         self.back_input(command.materialize())?;
                     }
                     self.missing_number_error()?;
-                    finish(self, control, 0, negative)?;
+                    finish(self, *control, 0, negative)?;
                 } else {
                     if !at_end && !is_space {
                         self.back_input(command.materialize())?;
                     }
-                    finish(self, control, value, negative)?;
+                    finish(self, *control, value, negative)?;
                 }
                 Ok(true)
             }
