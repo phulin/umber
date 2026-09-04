@@ -570,6 +570,7 @@ pub(crate) enum PrimitiveControl<G> {
 
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum ExpansionControl<G> {
+    Return(ExpansionReturn),
     Dispatch {
         command: ExpansionCommandSlot<G>,
         trace: TraceState,
@@ -599,6 +600,44 @@ pub(crate) enum ExpansionControl<G> {
     Expanded(SynchronousExpandedControl),
     Primitive(PrimitiveControl<G>),
 }
+
+/// One exact caller-owned destination hidden below a nested expansion.
+///
+/// The destination itself remains in its scanner's stack or retained frame;
+/// this move-only lane entry is the capability that prevents an unrelated
+/// outer synchronous control from consuming the child's result first.
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct ExpansionReturn {
+    pub(crate) destination: ExpansionReturnDestination,
+    pub(crate) awaiting: bool,
+    pub(crate) command_mark: u32,
+    pub(crate) name_mark: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ExpansionReturnDestination {
+    ScannerToken,
+    ScannerExpansion,
+}
+
+/// Copy-small observation of the move-only return capability. Dispatch may
+/// inspect this projection, but only popping the lane entry consumes it.
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct ExpansionReturnView<G> {
+    pub(crate) slot: super::ExpansionControlSlot<G>,
+    pub(crate) destination: ExpansionReturnDestination,
+    pub(crate) awaiting: bool,
+}
+
+impl<G> Copy for ExpansionReturnView<G> {}
+
+impl<G> Clone for ExpansionReturnView<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+const _: () = assert!(core::mem::size_of::<ExpansionReturn>() <= 24);
 
 const _: () = {
     assert!(core::mem::size_of::<SynchronousExpandAfterControl<()>>() <= 128);

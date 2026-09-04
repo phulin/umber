@@ -1091,6 +1091,36 @@ impl<G> ExecutionScratch<G> {
         self.expansion_work.active_control_tag()
     }
 
+    pub(crate) fn begin_expansion_return(
+        &mut self,
+        destination: crate::expansion_work::control::ExpansionReturnDestination,
+    ) -> Result<(), ScratchError> {
+        self.expansion_work.begin_return(destination)
+    }
+
+    pub(crate) fn finish_expansion_return(
+        &mut self,
+        destination: crate::expansion_work::control::ExpansionReturnDestination,
+    ) -> Result<(), ScratchError> {
+        self.expansion_work.finish_return(destination)
+    }
+
+    pub(crate) fn active_expansion_return(
+        &self,
+    ) -> Option<crate::expansion_work::control::ExpansionReturnDestination> {
+        self.expansion_work.active_return_destination()
+    }
+
+    pub(crate) fn top_expansion_return(
+        &self,
+    ) -> Result<Option<crate::expansion_work::control::ExpansionReturnView<G>>, ScratchError> {
+        self.expansion_work.top_return_control()
+    }
+
+    pub(crate) fn resume_exposed_expansion_parent(&mut self) -> Result<bool, ScratchError> {
+        self.expansion_work.resume_exposed_parent()
+    }
+
     pub(crate) fn active_control_is_synchronous(&self) -> bool {
         self.expansion_work.active_control_is_synchronous()
     }

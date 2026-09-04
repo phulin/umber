@@ -217,6 +217,7 @@ impl<G> ParentAdmission<G> {
 }
 
 enum ActiveControlSnapshot<G> {
+    Return(crate::expansion_work::control::ExpansionReturnView<G>),
     Expanded(
         crate::expansion_work::ExpansionControlView<
             G,
@@ -274,6 +275,7 @@ impl<G> ActiveControlSnapshot<G> {
     /// typed lane slot, so dispatch does not rediscover the top control.
     fn awaitable_slot(self) -> Option<crate::expansion_work::ExpansionControlSlot<G>> {
         match self {
+            Self::Return(control) if !control.awaiting => Some(control.slot),
             Self::ExpandAfterSync(control)
                 if control.phase
                     == crate::expansion_work::control::SynchronousExpandAfterPhase::NeedSecond =>
@@ -1360,6 +1362,13 @@ impl<G> CommandProcessor<'_, '_, G> {
         let mut suppress_first_expansion_trace = delivery_expanded;
         let status = 'delivery: loop {
             if command.is_none() {
+                if self.command.scratch.active_expansion_return()
+                    == Some(
+                        crate::expansion_work::control::ExpansionReturnDestination::ScannerExpansion,
+                    )
+                {
+                    break 'delivery DeliveryStatus::PendingExpanded;
+                }
                 debug_assert!(
                     destination.is_none(),
                     "the caller-owned hot command must be empty before a resident fetch"
@@ -1569,6 +1578,12 @@ impl<G> CommandProcessor<'_, '_, G> {
         // `\the`/conditional can use the same LIFO lane.
         let active = match active_control {
             None => None,
+            Some(ActiveControlTag::Return) => self
+                .command
+                .scratch
+                .top_expansion_return()
+                .map_err(crate::scan_toks::scratch_command_error)?
+                .map(ActiveControlSnapshot::Return),
             Some(ActiveControlTag::Expanded) => self
                 .command
                 .scratch
@@ -3440,7 +3455,27 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        self.get_x_token_into(destination)
+        use crate::expansion_work::control::ExpansionReturnDestination;
+
+        let return_to = ExpansionReturnDestination::ScannerToken;
+        if !self
+            .scanner_resume
+            .as_ref()
+            .is_some_and(crate::ScannerFrameKey::is_expansion)
+        {
+            self.command
+                .scratch
+                .begin_expansion_return(return_to)
+                .map_err(crate::scan_toks::scratch_command_error)?;
+        }
+        let result = self.get_x_token_into(destination);
+        if result.is_ok() && self.command.scratch.active_expansion_return() == Some(return_to) {
+            self.command
+                .scratch
+                .finish_expansion_return(return_to)
+                .map_err(crate::scan_toks::scratch_command_error)?;
+        }
+        result
     }
 
     /// Requests one already-delivered command's expansion from the same
@@ -3452,7 +3487,63 @@ impl<G> CommandProcessor<'_, '_, G> {
         destination: &mut Option<CurrentCommand<G>>,
         report_trace: bool,
     ) -> Result<(), CommandError> {
-        self.expand_into(destination, report_trace)
+        use crate::expansion_work::control::ExpansionReturnDestination;
+
+        let return_to = ExpansionReturnDestination::ScannerExpansion;
+        let resuming_return = self
+            .scanner_resume
+            .as_ref()
+            .is_some_and(crate::ScannerFrameKey::is_expansion);
+        let owns_return = self.command.scratch.active_expansion_return()
+            != Some(ExpansionReturnDestination::ScannerToken);
+        if owns_return && !resuming_return {
+            self.command
+                .scratch
+                .begin_expansion_return(return_to)
+                .map_err(crate::scan_toks::scratch_command_error)?;
+        }
+        let mut result = self.expand_into(destination, report_trace);
+        let owns_return = owns_return
+            && !(resuming_return
+                && self.command.scratch.active_expansion_return()
+                    == Some(ExpansionReturnDestination::ScannerToken));
+        if owns_return
+            && result.is_ok()
+            && self.command.scratch.active_expansion_return() != Some(return_to)
+        {
+            destination.take();
+            result = loop {
+                match self.expanded_next(destination) {
+                    Ok(DeliveryStatus::PendingExpanded)
+                        if destination.is_none()
+                            && self.command.scratch.active_expansion_return()
+                                == Some(return_to) =>
+                    {
+                        break Ok(());
+                    }
+                    Ok(DeliveryStatus::Command | DeliveryStatus::PendingExpanded) => {
+                        self.command
+                            .scratch
+                            .resume_exposed_expansion_parent()
+                            .map_err(crate::scan_toks::scratch_command_error)?;
+                        continue;
+                    }
+                    Ok(DeliveryStatus::ReplayCompleted(_)) => continue,
+                    Ok(_) => break Err(CommandError::input_invariant()),
+                    Err(error) => break Err(error),
+                }
+            };
+        }
+        if owns_return && result.is_ok() {
+            if self.command.scratch.active_expansion_return() != Some(return_to) {
+                return Err(CommandError::input_invariant());
+            }
+            self.command
+                .scratch
+                .finish_expansion_return(return_to)
+                .map_err(crate::scan_toks::scratch_command_error)?;
+        }
+        result
     }
 
     /// Delivers protected replay-aware expansion into caller-provided storage.
