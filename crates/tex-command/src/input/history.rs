@@ -173,7 +173,7 @@ pub(crate) enum ResidentSourceCharacterRun<E> {
 /// source slot.  This value is only a short-lived admission contract: the
 /// executor may inspect the bytes and origins, then the processor commits the
 /// source cursor once for the accepted prefix.
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct BorrowedSourceCharacterRun<'a> {
     bytes: &'a [u8],
     source: tex_state::SourceId,
@@ -256,7 +256,6 @@ impl<G> ResidentSourceTop<'_, G> {
         &'a mut self,
         mut ordinary_catcode: impl FnMut(char) -> bool,
     ) -> Result<Option<BorrowedSourceCharacterRun<'a>>, ()> {
-        record_source_lex_slot_borrow();
         let Some(line) = self.slot.cursor.line.as_ref() else {
             return Ok(None);
         };
@@ -280,6 +279,7 @@ impl<G> ResidentSourceTop<'_, G> {
         if count == 0 {
             return Ok(None);
         }
+        record_source_lex_slot_borrow();
         Ok(Some(BorrowedSourceCharacterRun {
             bytes: &bytes[..count],
             source: line.physical.source,

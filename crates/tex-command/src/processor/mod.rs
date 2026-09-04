@@ -28,7 +28,7 @@ use tex_state::CommandContext;
 
 use crate::{CommandError, CommandFuel, CommandHostContext, CommandState};
 
-use crate::input::{InputLevel, InputLevelId, input_level_identity};
+use crate::input::{BorrowedSourceCharacterRun, InputLevel, InputLevelId, input_level_identity};
 
 use crate::observation::CommandObserver;
 
@@ -96,6 +96,37 @@ pub enum DeliveryStatus {
 pub struct CharacterRunAdmission {
     count: u32,
     continue_run: bool,
+    scalar_fallback: bool,
+}
+
+/// One input event presented to main-control character admission.
+///
+/// The source-step owner presents a borrowed physical prefix as one event and
+/// presents exceptional scalar input as individual events. Keeping both in a
+/// single callback means the processor owns one source transaction while the
+/// executor's direct hmode admission remains the only ordinary-prefix path.
+#[derive(Debug)]
+pub enum MainCharacterInput<'run> {
+    Borrowed(BorrowedSourceCharacterRun<'run>),
+    Scalar {
+        ch: char,
+        origin: tex_state::token::OriginId,
+    },
+}
+
+/// Main-control admission for one source-step event.
+///
+/// Implementations are monomorphized into the command loop. The ordinary
+/// source path invokes [`Self::admit`] once for a borrowed prefix; scalar
+/// fallback invokes it only at the exceptional character boundary.
+pub trait MainCharacterConsumer<G> {
+    fn admit<'state, 'admission, 'fuel, 'effects, 'run>(
+        &mut self,
+        state: &'state mut tex_state::CommandContext<'admission, G>,
+        fuel: &'fuel mut crate::CommandFuel,
+        diagnostic_effects: &'effects mut tex_state::diagnostic::DiagnosticEffects,
+        input: MainCharacterInput<'run>,
+    ) -> CharacterRunAdmission;
 }
 
 impl CharacterRunAdmission {
@@ -106,6 +137,20 @@ impl CharacterRunAdmission {
         Self {
             count,
             continue_run,
+            scalar_fallback: false,
+        }
+    }
+
+    /// Requests the canonical scalar admission for the first character when
+    /// a borrowed prefix cannot admit any character (for example a missing
+    /// metric). This keeps consumer failures distinct from recoverable
+    /// character boundaries.
+    #[must_use]
+    pub const fn scalar_fallback() -> Self {
+        Self {
+            count: 0,
+            continue_run: false,
+            scalar_fallback: true,
         }
     }
 
@@ -117,6 +162,11 @@ impl CharacterRunAdmission {
     #[must_use]
     pub const fn continue_run(self) -> bool {
         self.continue_run
+    }
+
+    #[must_use]
+    pub(crate) const fn needs_scalar_fallback(self) -> bool {
+        self.scalar_fallback
     }
 }
 

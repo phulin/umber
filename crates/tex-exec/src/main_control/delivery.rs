@@ -10,6 +10,86 @@ pub(super) struct PreparedAlignmentPreamble<G> {
     pub(super) repeat_start: Option<usize>,
 }
 
+/// The one main-loop admission owner for ordinary source text and its scalar
+/// boundaries. The command processor invokes `admit` once for a borrowed
+/// prefix and again only for exceptional scalar events; this concrete owner
+/// keeps hmode state, diagnostics, and the compact outcome together.
+struct MainSourceAdmission<'a> {
+    modes: &'a mut ModeNest,
+    etex_extended: bool,
+    run_error: &'a mut Option<ExecError>,
+    run_has_diagnostics: &'a mut bool,
+    borrowed_applied: &'a mut bool,
+    count: &'a mut usize,
+    continues: &'a mut bool,
+}
+
+impl<G> tex_command::MainCharacterConsumer<G> for MainSourceAdmission<'_> {
+    #[inline(always)]
+    fn admit<'state, 'admission, 'fuel, 'effects, 'run>(
+        &mut self,
+        context: &'state mut CommandContext<'admission, G>,
+        fuel: &'fuel mut tex_command::CommandFuel,
+        diagnostic_effects: &'effects mut DiagnosticEffects,
+        input: tex_command::MainCharacterInput<'run>,
+    ) -> tex_command::CharacterRunAdmission {
+        match input {
+            tex_command::MainCharacterInput::Borrowed(run) => {
+                let result = crate::box_runtime::append_character_run_with_fuel(
+                    self.modes,
+                    context,
+                    &mut *diagnostic_effects,
+                    run,
+                    self.etex_extended,
+                    fuel,
+                );
+                *self.run_has_diagnostics = !diagnostic_effects.is_empty();
+                match result {
+                    Ok(admitted) => {
+                        *self.borrowed_applied |= admitted.count != 0;
+                        *self.continues = admitted.continue_run;
+                        if admitted.count == 0 {
+                            tex_command::CharacterRunAdmission::scalar_fallback()
+                        } else {
+                            tex_command::CharacterRunAdmission::new(
+                                admitted.count,
+                                admitted.continue_run,
+                            )
+                        }
+                    }
+                    Err(error) => {
+                        *self.run_error = Some(error);
+                        tex_command::CharacterRunAdmission::new(0, false)
+                    }
+                }
+            }
+            tex_command::MainCharacterInput::Scalar { ch, origin } => {
+                *self.count = (*self.count).saturating_add(1);
+                if let Err(error) = crate::box_runtime::append_character_with_fuel(
+                    self.modes,
+                    context,
+                    &mut *diagnostic_effects,
+                    ch,
+                    origin,
+                    self.etex_extended,
+                    fuel,
+                ) {
+                    *self.run_error = Some(error);
+                    *self.continues = false;
+                    return tex_command::CharacterRunAdmission::new(0, false);
+                }
+                *self.run_has_diagnostics |= !diagnostic_effects.is_empty();
+                *self.continues = u8::try_from(u32::from(ch)).ok().is_some_and(|code| {
+                    context
+                        .font_char_metrics(context.current_font(), code)
+                        .is_some()
+                });
+                tex_command::CharacterRunAdmission::new(1, *self.continues)
+            }
+        }
+    }
+}
+
 /// Selects the uncommon static barrier directly from the resident command.
 ///
 /// Ordinary deliveries return `None` and never write a classification into
@@ -169,7 +249,7 @@ impl<G> MainControl<G> {
                 {
                     let etex_extended = self.command_profile() == CommandProfile::ETEX26;
                     let mut forbidden_host_facts = CommandMachineHostFacts::Forbidden;
-                    let mut processor = character_run_processor(
+                    let mut processor = main_source_processor(
                         &mut self.command,
                         self.fuel.fuel_mut(),
                         &mut self.capabilities,
@@ -180,107 +260,52 @@ impl<G> MainControl<G> {
                     );
                     let mut run_error = None;
                     let mut run_has_diagnostics = false;
-                    let borrowed = processor.try_main_loop_borrowed_character_run(
-                        &mut |context, fuel, diagnostic_effects, run| {
-                            let result = crate::box_runtime::append_character_run_with_fuel(
-                                &mut self.modes,
-                                context,
-                                diagnostic_effects,
-                                run,
-                                etex_extended,
-                                fuel,
-                            );
-                            run_has_diagnostics = !diagnostic_effects.is_empty();
-                            match result {
-                                Ok(admitted) => tex_command::CharacterRunAdmission::new(
-                                    admitted.count,
-                                    admitted.continue_run,
-                                ),
-                                Err(error) => {
-                                    run_error = Some(error);
-                                    tex_command::CharacterRunAdmission::new(0, false)
-                                }
-                            }
-                        },
-                    );
+                    let mut borrowed_applied = false;
+                    let mut count = 0_usize;
+                    let mut continues = true;
+                    let status = {
+                        let mut source_admission = MainSourceAdmission {
+                            modes: &mut self.modes,
+                            etex_extended,
+                            run_error: &mut run_error,
+                            run_has_diagnostics: &mut run_has_diagnostics,
+                            borrowed_applied: &mut borrowed_applied,
+                            count: &mut count,
+                            continues: &mut continues,
+                        };
+                        processor
+                            .main_loop_source_step_into(&mut frame.command, &mut source_admission)
+                    };
+                    drop(processor);
                     if let Some(error) = run_error {
                         frame.error = Some(error);
                         return PreflightReadiness::Failed;
                     }
-                    match borrowed {
-                        Ok(Some(continues)) => {
+                    match status {
+                        Ok(tex_command::DeliveryStatus::CharacterRun)
+                            if borrowed_applied || count != 0 =>
+                        {
                             self.main_loop_active = continues;
-                            if *operations + 1 < max_operations && !run_has_diagnostics {
-                                // The borrowed run has already applied its
-                                // complete semantic prefix.  Close this
-                                // operation directly while the one admitted
-                                // context is still live, then reuse the same
-                                // state/mode/attempt owners for the next
-                                // lookahead.  The final slot-limit operation
-                                // keeps the existing AppliedDirect handoff so
-                                // the outer driver can publish its result.
+                            if borrowed_applied
+                                && *operations + 1 < max_operations
+                                && !run_has_diagnostics
+                            {
+                                // The source prefix was admitted and settled
+                                // by this processor. Reuse the already-live
+                                // context only when the normal operation
+                                // continuation contract still holds.
                                 frame.clear_operation_origin();
                                 frame.assert_empty();
                                 *operations += 1;
                                 let completed_mark = operation_mark
                                     .take()
-                                    .expect("borrowed run owns its current operation mark");
-                                drop(processor);
+                                    .expect("source run owns its operation mark");
                                 self.commit_admitted_direct_operation(context, completed_mark);
                                 *operation_mark =
                                     Some(self.begin_admitted_direct_operation(context));
                                 *host_preparation = OperationPreparation::new();
                                 continue 'admitted;
                             }
-                            host_preparation.fill_applied_direct();
-                            return PreflightReadiness::Ready;
-                        }
-                        Ok(None) => {
-                            // No source prefix was admitted. The generic
-                            // callback below remains the scalar oracle for
-                            // resident rows and all source boundaries.
-                        }
-                        Err(error) => {
-                            frame.error = Some(command_error(error));
-                            return PreflightReadiness::Failed;
-                        }
-                    }
-                    let mut count = 0_usize;
-                    let mut continues = true;
-                    let mut apply_error = None;
-                    let status = processor.main_loop_character_run_into(
-                        &mut frame.command,
-                        &mut |context, fuel, diagnostic_effects, ch, origin| {
-                            count = count.saturating_add(1);
-                            if let Err(error) = crate::box_runtime::append_character_with_fuel(
-                                &mut self.modes,
-                                context,
-                                diagnostic_effects,
-                                ch,
-                                origin,
-                                etex_extended,
-                                fuel,
-                            ) {
-                                apply_error = Some(error);
-                                continues = false;
-                                return false;
-                            }
-                            continues = u8::try_from(u32::from(ch)).ok().is_some_and(|code| {
-                                context
-                                    .font_char_metrics(context.current_font(), code)
-                                    .is_some()
-                            });
-                            continues
-                        },
-                    );
-                    drop(processor);
-                    if let Some(error) = apply_error {
-                        frame.error = Some(error);
-                        return PreflightReadiness::Failed;
-                    }
-                    match status {
-                        Ok(tex_command::DeliveryStatus::CharacterRun) if count != 0 => {
-                            self.main_loop_active = continues;
                             host_preparation.fill_applied_direct();
                             return PreflightReadiness::Ready;
                         }

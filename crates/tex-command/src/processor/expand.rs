@@ -7,15 +7,17 @@ use crate::command::{CommandClass, DeliveryStamp, HotCommand, HotPrimitiveInvoca
 use crate::execution_scratch::ArgumentSetId;
 use crate::expansion_work::ActiveControlTag;
 use crate::input::{
-    BorrowedSourceCharacterRun, InputLevel, InputLevelId, PackedInputFrame, ResidentBoundary,
-    ResidentSourceAdvance, ResidentSourceCharacterRun, ResidentSourceTop, ResidentTokenStorage,
-    SourceLocation, SourceNameClass, TokenBehavior,
+    InputLevel, InputLevelId, PackedInputFrame, ResidentBoundary, ResidentSourceAdvance,
+    ResidentSourceCharacterRun, ResidentSourceTop, ResidentTokenStorage, SourceLocation,
+    SourceNameClass, TokenBehavior,
 };
 use crate::{CommandError, CommandReplayDelivery, CurrentCommand};
 
 use super::end_input::{RetirementHandoff, SourceExhaustionStatus};
 use super::expand_render::format_pdf_date;
-use super::{AlignmentLookahead, CommandProcessor, DeliveryStatus};
+use super::{
+    AlignmentLookahead, CommandProcessor, DeliveryStatus, MainCharacterConsumer, MainCharacterInput,
+};
 
 use crate::observation::{
     CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation, CommandProvenance,
@@ -2740,13 +2742,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub(super) fn main_character_run(
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
-        consume: &mut impl for<'state, 'admission, 'fuel, 'effects> FnMut(
-            &'state mut tex_state::CommandContext<'admission, G>,
-            &'fuel mut crate::CommandFuel,
-            &'effects mut tex_state::diagnostic::DiagnosticEffects,
-            char,
-            tex_state::token::OriginId,
-        ) -> bool,
+        consume: &mut impl MainCharacterConsumer<G>,
     ) -> Result<DeliveryStatus, CommandError> {
         debug_assert!(destination.is_none());
         self.invalidate_delivery_freshness();
@@ -2819,11 +2815,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .resident_transitions
                         .saturating_add(1);
                 }
-                if self.command.delivery_mode.allows_character_run()
-                    && self
-                        .advance_source_character_run(resident_index, consume)?
-                        .is_some()
+                if self
+                    .advance_source_character_step(resident_index, consume)?
+                    .is_some()
                 {
+                    // The source cursor and its provenance moved in place;
+                    // no resident command can retain the previous
+                    // freshness proof across this direct admission.
+                    self.invalidate_delivery_freshness();
                     return Ok(DeliveryStatus::CharacterRun);
                 }
                 let cold = self.transition_resident_word(
@@ -2900,7 +2899,15 @@ impl<G> CommandProcessor<'_, '_, G> {
                 let Token::Char { ch, .. } = word.semantic_token() else {
                     unreachable!("main-loop character predicate accepts only characters")
                 };
-                if consume(self.state, self.fuel, self.diagnostic_effects, ch, origin) {
+                if consume
+                    .admit(
+                        self.state,
+                        self.fuel,
+                        self.diagnostic_effects,
+                        MainCharacterInput::Scalar { ch, origin },
+                    )
+                    .continue_run()
+                {
                     continue;
                 }
                 self.invalidate_delivery_freshness();
@@ -3885,144 +3892,18 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
     }
 
-    /// Lends the consecutive ordinary-character prefix of §1038's raw
-    /// lookahead directly to the admitted list builder.
-    ///
-    /// The resident input row stays authoritative. Letter/other tokens charge
-    /// fuel and advance provenance in place without constructing a
-    /// [`CurrentCommand`]; the first non-character is resolved into
-    /// `destination` and continues through the canonical expansion tail.
-    /// Observation keeps scalar delivery so its one-record-per-command
-    /// contract remains exact.
-    pub fn main_loop_character_run_into(
+    /// Lends one main-control source step to the direct list admission, then
+    /// settles scalar input through the same owner when the borrowed prefix is
+    /// unavailable.  The source row is selected once by `main_character_run`;
+    /// this entry never probes it and re-enters a second delivery loop.
+    pub fn main_loop_source_step_into<C: MainCharacterConsumer<G>>(
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
-        consume: &mut impl for<'state, 'admission, 'fuel, 'effects> FnMut(
-            &'state mut tex_state::CommandContext<'admission, G>,
-            &'fuel mut crate::CommandFuel,
-            &'effects mut tex_state::diagnostic::DiagnosticEffects,
-            char,
-            tex_state::token::OriginId,
-        ) -> bool,
+        consume: &mut C,
     ) -> Result<DeliveryStatus, CommandError> {
         debug_assert!(destination.is_none());
         debug_assert!(!self.is_observed());
         self.main_character_run(destination, consume)
-    }
-
-    /// Tries one borrowed ordinary source prefix without crossing a scalar
-    /// delivery boundary.  `None` leaves the caller to the scalar oracle;
-    /// `Some` reports the run's continuation bit after the source cursor and
-    /// fuel ledger have committed exactly once.
-    pub fn try_main_loop_borrowed_character_run<F>(
-        &mut self,
-        admit: &mut F,
-    ) -> Result<Option<bool>, CommandError>
-    where
-        F: for<'state, 'admission, 'run> FnMut(
-            &'state mut tex_state::CommandContext<'admission, G>,
-            &'state mut crate::CommandFuel,
-            &'state mut tex_state::diagnostic::DiagnosticEffects,
-            BorrowedSourceCharacterRun<'run>,
-        ) -> crate::CharacterRunAdmission,
-    {
-        debug_assert!(!self.is_observed());
-        let Some(resident_index) = self.command.roots.input.levels.top.checked_sub(1) else {
-            return Ok(None);
-        };
-        if !matches!(
-            self.command.roots.input.levels.rows.get(resident_index),
-            Some(InputLevel::Source(_))
-        ) || !self.command.delivery_mode.allows_character_run()
-        {
-            return Ok(None);
-        }
-
-        let result = match self.advance_source_borrowed_character_run(resident_index, admit) {
-            Ok(result) => result,
-            Err(failure) => {
-                self.invalidate_delivery_freshness();
-                return Err(failure);
-            }
-        };
-        let Some((count, continue_run)) = result else {
-            return Ok(None);
-        };
-        debug_assert!(count != 0);
-        self.invalidate_delivery_freshness();
-        Ok(Some(continue_run))
-    }
-
-    fn advance_source_borrowed_character_run<F>(
-        &mut self,
-        resident_index: usize,
-        admit: &mut F,
-    ) -> Result<Option<(u32, bool)>, CommandError>
-    where
-        F: for<'state, 'admission, 'run> FnMut(
-            &'state mut tex_state::CommandContext<'admission, G>,
-            &'state mut crate::CommandFuel,
-            &'state mut tex_state::diagnostic::DiagnosticEffects,
-            BorrowedSourceCharacterRun<'run>,
-        ) -> crate::CharacterRunAdmission,
-    {
-        let command_state = &mut *self.command;
-        let state = &mut *self.state;
-        let fuel = &mut *self.fuel;
-        let diagnostic_effects = &mut *self.diagnostic_effects;
-        let InputLevel::Source(source) = &mut command_state.roots.input.levels.rows[resident_index]
-        else {
-            return Err(CommandError::input_invariant());
-        };
-        let slot = command_state
-            .roots
-            .input
-            .levels
-            .source_slots
-            .resident_value_mut(source.slot.0.slot);
-        let mut top = ResidentSourceTop { source, slot };
-        let Some(mut run) = top
-            .borrow_character_run(|ch| {
-                matches!(state.catcode(ch), Catcode::Letter | Catcode::Other)
-            })
-            .map_err(|()| CommandError::input_invariant())?
-        else {
-            return Ok(None);
-        };
-        let available = usize::try_from(fuel.remaining()).unwrap_or(usize::MAX);
-        if available == 0 {
-            return Err(fuel.charge().expect_err("zero remaining fuel is exhausted"));
-        }
-        if run.bytes().len() > available {
-            run = run.limit_to(available);
-        }
-        let run_len = run.bytes().len();
-        let admission = admit(state, fuel, diagnostic_effects, run);
-        let count =
-            usize::try_from(admission.count()).map_err(|_| CommandError::input_invariant())?;
-        if count > run_len {
-            return Err(CommandError::input_invariant());
-        }
-        if count == 0 {
-            return Ok(None);
-        }
-        let count = u32::try_from(count).map_err(|_| CommandError::input_invariant())?;
-        fuel.charge_run(count)?;
-        top.commit_character_run(usize::try_from(count).expect("u32 fits usize"))
-            .map_err(|()| CommandError::input_invariant())?;
-        let line = top
-            .slot
-            .cursor
-            .line
-            .as_ref()
-            .expect("a committed source run retains its line");
-        command_state.last_diagnostic_location = Some(SourceLocation::new(
-            line.physical.source,
-            line.cursor.byte_cursor.saturating_sub(1),
-        ));
-        #[cfg(feature = "profiling")]
-        fuel.record_raw_run(false, crate::fuel::RawDeliveryKind::Source, count);
-        Ok(Some((count, admission.continue_run())))
     }
 
     #[cold]
@@ -4277,22 +4158,19 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
     }
 
-    /// Consumes the ordinary-character prefix of a source line for
-    /// `main_character_run`. This is the only source transition that borrows
-    /// the character consumer; ordinary raw and expanded delivery never carry
-    /// that capability.
+    /// Performs one source-character step for `main_character_run`.
+    ///
+    /// An eligible physical line lends its ordinary prefix to `admit` first;
+    /// if that admission cannot accept a character, the same selected source
+    /// row falls through to the scalar tokenizer without reopening a
+    /// processor or selecting a second top row. Stored source rows and every
+    /// cold/source boundary remain on the scalar transition below.
     #[cold]
     #[inline(never)]
-    fn advance_source_character_run(
+    fn advance_source_character_step<C: MainCharacterConsumer<G>>(
         &mut self,
         resident_index: usize,
-        consume: &mut impl for<'state, 'admission, 'fuel, 'effects> FnMut(
-            &'state mut tex_state::CommandContext<'admission, G>,
-            &'fuel mut crate::CommandFuel,
-            &'effects mut tex_state::diagnostic::DiagnosticEffects,
-            char,
-            tex_state::token::OriginId,
-        ) -> bool,
+        consume: &mut C,
     ) -> Result<Option<u32>, CommandError> {
         let command_state = &mut *self.command;
         let state = &mut *self.state;
@@ -4312,10 +4190,108 @@ impl<G> CommandProcessor<'_, '_, G> {
         if !command_state.delivery_mode.allows_character_run() {
             return Ok(None);
         }
+
+        if let Some(mut run) = top
+            .borrow_character_run(|ch| {
+                matches!(state.catcode(ch), Catcode::Letter | Catcode::Other)
+            })
+            .map_err(|()| CommandError::input_invariant())?
+        {
+            let available = usize::try_from(fuel.remaining()).unwrap_or(usize::MAX);
+            if available == 0 {
+                return Err(fuel.charge().expect_err("zero remaining fuel is exhausted"));
+            }
+            if run.bytes().len() > available {
+                run = run.limit_to(available);
+            }
+            let run_len = run.bytes().len();
+            let admission = consume.admit(
+                state,
+                fuel,
+                diagnostic_effects,
+                MainCharacterInput::Borrowed(run),
+            );
+            let count =
+                usize::try_from(admission.count()).map_err(|_| CommandError::input_invariant())?;
+            if count > run_len {
+                return Err(CommandError::input_invariant());
+            }
+            if count == 0 && !admission.needs_scalar_fallback() {
+                // A consumer failure is represented by its surrounding
+                // operation error slot. Do not run scalar admission after it:
+                // the source cursor and hmode state must remain owned by this
+                // same source step until that failure settles.
+                return Ok(Some(0));
+            }
+            if count == 0 {
+                // The borrowed probe already identified the first ordinary
+                // byte. Admit that boundary directly instead of reopening
+                // the source tokenizer on the same row.
+                let byte = *run
+                    .bytes()
+                    .first()
+                    .ok_or_else(CommandError::input_invariant)?;
+                let ch = char::from(byte);
+                let origin = run.origin(0);
+                fuel.charge()?;
+                let scalar = consume.admit(
+                    state,
+                    fuel,
+                    diagnostic_effects,
+                    MainCharacterInput::Scalar { ch, origin },
+                );
+                if scalar.count() != 1 {
+                    // A scalar admission error is retained by the caller's
+                    // side-channel outcome. Do not move either source cursor
+                    // until the consumer has accepted this byte.
+                    return Ok(Some(0));
+                }
+                top.commit_character_run(1)
+                    .map_err(|()| CommandError::input_invariant())?;
+                let line = top
+                    .slot
+                    .cursor
+                    .line
+                    .as_ref()
+                    .expect("a scalar fallback retains its line");
+                command_state.last_diagnostic_location = Some(SourceLocation::new(
+                    line.physical.source,
+                    line.cursor.byte_cursor.saturating_sub(1),
+                ));
+                #[cfg(feature = "profiling")]
+                fuel.record_raw_run(false, crate::fuel::RawDeliveryKind::Source, 1);
+                return Ok(Some(1));
+            }
+            let count = u32::try_from(count).map_err(|_| CommandError::input_invariant())?;
+            fuel.charge_run(count)?;
+            top.commit_character_run(usize::try_from(count).expect("u32 fits usize"))
+                .map_err(|()| CommandError::input_invariant())?;
+            let line = top
+                .slot
+                .cursor
+                .line
+                .as_ref()
+                .expect("a committed source run retains its line");
+            command_state.last_diagnostic_location = Some(SourceLocation::new(
+                line.physical.source,
+                line.cursor.byte_cursor.saturating_sub(1),
+            ));
+            #[cfg(feature = "profiling")]
+            fuel.record_raw_run(false, crate::fuel::RawDeliveryKind::Source, count);
+            return Ok(Some(count));
+        }
+
         let run = top
             .advance_character_run(state, |state, ch, origin| {
                 fuel.charge()?;
-                Ok(consume(state, fuel, diagnostic_effects, ch, origin))
+                Ok(consume
+                    .admit(
+                        state,
+                        fuel,
+                        diagnostic_effects,
+                        MainCharacterInput::Scalar { ch, origin },
+                    )
+                    .continue_run())
             })
             .map_err(|()| CommandError::input_invariant())?;
         match run {

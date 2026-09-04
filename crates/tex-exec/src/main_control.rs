@@ -789,8 +789,9 @@ pub enum DiagnosticStepResult {
 /// Constructs the one kind of command-processor episode canonical main
 /// control ever runs.
 ///
-/// This is the only production processor-borrow helper in `tex-exec`, and the
-/// architecture test in `crates/tex-exec/tests/it.rs` pins it there. A single
+/// These are the production processor-borrow helpers in `tex-exec`, and the
+/// architecture test in `crates/tex-exec/tests/it.rs` pins their ownership
+/// there. A single
 /// main-control operation runs several episodes -- the delivery episode
 /// itself, plus the nested math-field, math-script, and `\mathchoice`
 /// episodes a host-applied step (`docs/tex_command_core.md` §33.5) runs while
@@ -1139,7 +1140,11 @@ fn command_processor<'episode, 'admission, G>(
     )
 }
 
-fn character_run_processor<'episode, 'admission, G>(
+/// Borrows the shared interpreter for the unified source-step admission. The
+/// source path uses the same constructor and ownership surface as ordinary
+/// preflight; this name keeps its hot admission call distinct in the source
+/// delivery module without creating an alternate semantic path.
+fn main_source_processor<'episode, 'admission, G>(
     command: &'episode mut PersistentInterpreter<G>,
     fuel: &'episode mut tex_command::CommandFuel,
     capabilities: &'episode mut CommandHostCapabilities,

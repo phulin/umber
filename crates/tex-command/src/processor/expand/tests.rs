@@ -16,6 +16,44 @@ impl CommandObserver for RecordingObserver {
     }
 }
 
+#[derive(Default)]
+struct RecordingCharacterConsumer {
+    characters: String,
+    origins: Vec<OriginId>,
+    fallback_borrowed: bool,
+}
+
+impl<G> crate::MainCharacterConsumer<G> for RecordingCharacterConsumer {
+    fn admit<'state, 'admission, 'fuel, 'effects, 'run>(
+        &mut self,
+        _state: &'state mut tex_state::CommandContext<'admission, G>,
+        _fuel: &'fuel mut crate::CommandFuel,
+        _diagnostic_effects: &'effects mut tex_state::diagnostic::DiagnosticEffects,
+        input: crate::MainCharacterInput<'run>,
+    ) -> crate::CharacterRunAdmission {
+        match input {
+            crate::MainCharacterInput::Borrowed(run) => {
+                if self.fallback_borrowed {
+                    return crate::CharacterRunAdmission::scalar_fallback();
+                }
+                for (index, &byte) in run.bytes().iter().enumerate() {
+                    self.characters.push(char::from(byte));
+                    self.origins.push(run.origin(index));
+                }
+                crate::CharacterRunAdmission::new(
+                    u32::try_from(run.bytes().len()).expect("test source run fits u32"),
+                    true,
+                )
+            }
+            crate::MainCharacterInput::Scalar { ch, origin } => {
+                self.characters.push(ch);
+                self.origins.push(origin);
+                crate::CharacterRunAdmission::new(1, true)
+            }
+        }
+    }
+}
+
 fn install_static<G>(universe: &mut tex_state::Universe<G>, name: &str, meaning: Meaning) -> Token {
     let symbol = universe.intern(name).expect("intern primitive");
     universe
@@ -2712,17 +2750,14 @@ fn main_loop_character_run_resolves_only_its_non_character_tail() {
             &mut diagnostic_effects,
         );
         let mut destination = None;
-        let mut characters = String::new();
+        let mut consumer = RecordingCharacterConsumer::default();
         assert_eq!(
             processor
-                .main_loop_character_run_into(&mut destination, &mut |_, _, _, ch, _| {
-                    characters.push(ch);
-                    true
-                },)
+                .main_loop_source_step_into(&mut destination, &mut consumer)
                 .expect("borrowed character run"),
             crate::DeliveryStatus::CharacterRunBoundary
         );
-        assert_eq!(characters, "Ab");
+        assert_eq!(consumer.characters, "Ab");
         assert!(matches!(
             destination.as_ref().expect("tail command").meaning(),
             tex_state::meaning::ResolvedMeaning::Static(Meaning::CharToken {
@@ -2789,21 +2824,16 @@ fn main_loop_character_run_lexes_a_resident_source_prefix_once() {
             .profile_reset_input_source_context_counters();
         let ownership_before = crate::command::command_ownership_counters();
         let mut destination = None;
-        let mut characters = String::new();
-        let mut origins = Vec::new();
+        let mut consumer = RecordingCharacterConsumer::default();
         assert_eq!(
             processor
-                .main_loop_character_run_into(&mut destination, &mut |_, _, _, ch, origin| {
-                    characters.push(ch);
-                    origins.push(origin);
-                    true
-                },)
+                .main_loop_source_step_into(&mut destination, &mut consumer)
                 .expect("source character run"),
             crate::DeliveryStatus::CharacterRun
         );
-        assert_eq!(characters, "ab");
-        assert_eq!(origins.len(), 2);
-        assert_ne!(origins[0], origins[1]);
+        assert_eq!(consumer.characters, "ab");
+        assert_eq!(consumer.origins.len(), 2);
+        assert_ne!(consumer.origins[0], consumer.origins[1]);
         assert!(destination.is_none());
         assert_eq!(
             processor.command.profile_resident_input_branch_counters(),
@@ -2826,7 +2856,7 @@ fn main_loop_character_run_lexes_a_resident_source_prefix_once() {
 
         assert_eq!(
             processor
-                .main_loop_character_run_into(&mut destination, &mut |_, _, _, _, _| true)
+                .main_loop_source_step_into(&mut destination, &mut consumer)
                 .expect("scalar source boundary"),
             crate::DeliveryStatus::CharacterRunBoundary
         );
@@ -2843,6 +2873,59 @@ fn main_loop_character_run_lexes_a_resident_source_prefix_once() {
             4,
             "the initial source character plus the run and tail each cost one charge"
         );
+    });
+}
+
+#[test]
+fn main_loop_source_step_settles_zero_prefix_without_reopening_source() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = CommandState::default();
+        let source = command
+            .register_source(crate::SourceRegistration::new(
+                crate::RegisteredSourceKind::Generated,
+                &b"xab "[..],
+            ))
+            .expect("source registration");
+        command
+            .open_registered_source(source)
+            .expect("source opening");
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::new(3).expect("source character-run fuel");
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        processor
+            .get_next()
+            .expect("source line acquisition")
+            .expect("first source token");
+        processor
+            .command
+            .profile_reset_input_source_context_counters();
+        let mut consumer = RecordingCharacterConsumer {
+            fallback_borrowed: true,
+            ..RecordingCharacterConsumer::default()
+        };
+        let mut destination = None;
+        assert_eq!(
+            processor
+                .main_loop_source_step_into(&mut destination, &mut consumer)
+                .expect("source metric boundary"),
+            crate::DeliveryStatus::CharacterRun
+        );
+        assert_eq!(consumer.characters, "a");
+        assert_eq!(
+            processor.command.profile_input_source_context_counters(),
+            (0, 0, 0, 1)
+        );
+        drop(processor);
+        assert_eq!(fuel.burned(), 2);
+        assert!(destination.is_none());
     });
 }
 
@@ -2893,17 +2976,14 @@ fn main_loop_character_run_charges_resident_macro_body_once_per_character() {
             &mut diagnostic_effects,
         );
         let mut destination = None;
-        let mut characters = String::new();
+        let mut consumer = RecordingCharacterConsumer::default();
         assert_eq!(
             processor
-                .main_loop_character_run_into(&mut destination, &mut |_, _, _, ch, _| {
-                    characters.push(ch);
-                    true
-                })
+                .main_loop_source_step_into(&mut destination, &mut consumer)
                 .expect("macro body character run"),
             crate::DeliveryStatus::CharacterRunBoundary
         );
-        assert_eq!(characters, "Abc");
+        assert_eq!(consumer.characters, "Abc");
         assert!(matches!(
             destination.as_ref().expect("macro body tail").meaning(),
             tex_state::meaning::ResolvedMeaning::Static(Meaning::CharToken {
@@ -2985,17 +3065,14 @@ fn main_loop_character_run_charges_macro_argument_chars_once() {
             &mut diagnostic_effects,
         );
         let mut destination = None;
-        let mut characters = String::new();
+        let mut consumer = RecordingCharacterConsumer::default();
         assert_eq!(
             processor
-                .main_loop_character_run_into(&mut destination, &mut |_, _, _, ch, _| {
-                    characters.push(ch);
-                    true
-                })
+                .main_loop_source_step_into(&mut destination, &mut consumer)
                 .expect("macro argument character run"),
             crate::DeliveryStatus::CharacterRun
         );
-        assert_eq!(characters, "Abc");
+        assert_eq!(consumer.characters, "Abc");
         assert!(destination.is_none());
         drop(processor);
         assert_eq!(fuel.burned(), 3);
@@ -3032,17 +3109,14 @@ fn main_loop_character_run_rollback_keeps_fuel_monotonic() {
                 &mut diagnostic_effects,
             );
             let mut destination = None;
-            let mut characters = String::new();
+            let mut consumer = RecordingCharacterConsumer::default();
             assert_eq!(
                 processor
-                    .main_loop_character_run_into(&mut destination, &mut |_, _, _, ch, _| {
-                        characters.push(ch);
-                        true
-                    })
+                    .main_loop_source_step_into(&mut destination, &mut consumer)
                     .expect("character run retry"),
                 crate::DeliveryStatus::CharacterRun
             );
-            assert_eq!(characters, "Ab");
+            assert_eq!(consumer.characters, "Ab");
             drop(processor);
             assert_eq!(fuel.burned(), expected_burned);
 
