@@ -96,10 +96,11 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// Starts a balanced expanded-text collector for one of pdfTeX's string
     /// projections. The body is consumed by the canonical expanded-delivery
     /// loop; only the finished attempt buffer crosses into the byte renderer.
-    pub(super) fn begin_pdf_string_continuation(
+    pub(super) fn begin_pdf_string_continuation_with_parent(
         &mut self,
         opener: OriginId,
         kind: crate::expansion_work::control::SynchronousExpandedKind,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), CommandError> {
         let attempt_opening = self.command.attempt.arena().mark();
         let writer = self
@@ -108,12 +109,13 @@ impl<G> CommandProcessor<'_, '_, G> {
             .arena_mut()
             .allocate_token_buffer()
             .map_err(crate::scan_toks::attempt_command_error)?;
-        if let Err(error) = self.command.scratch.push_pdf_string_control(
+        if let Err(error) = self.command.scratch.push_pdf_string_control_with_parent(
             opener,
             kind,
             attempt_opening,
             writer,
             None,
+            parent,
         ) {
             self.command
                 .attempt

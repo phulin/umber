@@ -1345,43 +1345,51 @@ impl<G> ExecutionScratch<G> {
         self.expansion_work.resume_suspension(key)
     }
 
-    /// Begins one synchronous expanded `\the` continuation in the shared
-    /// generation-scoped control lane.
-    pub(crate) fn push_the_control(
+    pub(crate) fn push_the_control_with_parent(
         &mut self,
         opener: tex_state::token::OriginId,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), ScratchError> {
-        self.expansion_work.push_the_control(opener)
+        self.expansion_work
+            .push_the_control_with_parent(opener, parent)
     }
 
-    pub(crate) fn push_csname_control(
+    pub(crate) fn push_csname_control_with_parent(
         &mut self,
         opener: tex_state::token::OriginId,
         previous_in_csname: bool,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), ScratchError> {
         self.expansion_work
-            .push_csname_control(opener, previous_in_csname)
+            .push_csname_control_with_parent(opener, previous_in_csname, parent)
     }
 
     pub(crate) fn push_name_byte(&mut self, byte: u8) -> Result<(), ScratchError> {
         self.expansion_work.push_name_byte(byte)
     }
 
-    pub(crate) fn push_ifcsname_control(
+    pub(crate) fn push_ifcsname_control_with_parent(
         &mut self,
         condition: crate::processor::status::ConditionId,
         inverted: bool,
         previous_in_csname: bool,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), ScratchError> {
-        self.expansion_work
-            .push_ifcsname_control(condition, inverted, previous_in_csname)
+        self.expansion_work.push_ifcsname_control_with_parent(
+            condition,
+            inverted,
+            previous_in_csname,
+            parent,
+        )
     }
 
-    pub(crate) fn push_expandafter_control(
+    pub(crate) fn push_expandafter_control_with_parent(
         &mut self,
         opener: tex_state::token::OriginId,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), ScratchError> {
-        self.expansion_work.push_expandafter_control(opener)
+        self.expansion_work
+            .push_expandafter_control_with_parent(opener, parent)
     }
 
     /// Reads the top synchronous `\the` continuation without creating a
@@ -1497,14 +1505,15 @@ impl<G> ExecutionScratch<G> {
         self.expansion_work.pop_expandafter_control()
     }
 
-    pub(crate) fn push_if_compare_control(
+    pub(crate) fn push_if_compare_control_with_parent(
         &mut self,
         condition: crate::processor::status::ConditionId,
         kind: crate::conditionals::ConditionalKind,
         inverted: bool,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), ScratchError> {
         self.expansion_work
-            .push_if_compare_control(condition, kind, inverted)
+            .push_if_compare_control_with_parent(condition, kind, inverted, parent)
     }
 
     pub(crate) fn top_if_compare_control(
@@ -1541,14 +1550,15 @@ impl<G> ExecutionScratch<G> {
         self.expansion_work.pop_if_compare_control()
     }
 
-    pub(crate) fn push_if_number_control(
+    pub(crate) fn push_if_number_control_with_parent(
         &mut self,
         condition: crate::processor::status::ConditionId,
         kind: crate::conditionals::ConditionalKind,
         inverted: bool,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), ScratchError> {
         self.expansion_work
-            .push_if_number_control(condition, kind, inverted)
+            .push_if_number_control_with_parent(condition, kind, inverted, parent)
     }
 
     pub(crate) fn top_if_number_control(
@@ -1583,14 +1593,15 @@ impl<G> ExecutionScratch<G> {
         self.expansion_work.pop_if_number_control()
     }
 
-    pub(crate) fn push_if_dimension_control(
+    pub(crate) fn push_if_dimension_control_with_parent(
         &mut self,
         condition: crate::processor::status::ConditionId,
         kind: crate::conditionals::ConditionalKind,
         inverted: bool,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), ScratchError> {
         self.expansion_work
-            .push_if_dimension_control(condition, kind, inverted)
+            .push_if_dimension_control_with_parent(condition, kind, inverted, parent)
     }
 
     pub(crate) fn top_if_dimension_control(
@@ -1625,84 +1636,107 @@ impl<G> ExecutionScratch<G> {
         self.expansion_work.pop_if_dimension_control()
     }
 
-    pub(crate) fn push_number_control(
+    pub(crate) fn push_number_control_with_parent(
         &mut self,
         opener: tex_state::token::OriginId,
         roman: bool,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), ScratchError> {
-        self.expansion_work.push_number_control(opener, roman)
+        self.expansion_work
+            .push_number_control_with_parent(opener, roman, parent)
     }
 
-    pub(crate) fn push_pdf_uniform_deviate_control(
+    pub(crate) fn push_pdf_uniform_deviate_control_with_parent(
         &mut self,
         opener: tex_state::token::OriginId,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), ScratchError> {
-        self.expansion_work.push_pdf_uniform_deviate_control(opener)
+        self.expansion_work
+            .push_pdf_uniform_deviate_control_with_parent(opener, parent)
     }
 
-    pub(crate) fn push_pdf_margin_kern_control(
+    pub(crate) fn push_pdf_margin_kern_control_with_parent(
         &mut self,
         opener: tex_state::token::OriginId,
         side: tex_state::node::MarginKernSide,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), ScratchError> {
         self.expansion_work
-            .push_pdf_margin_kern_control(opener, side)
+            .push_pdf_margin_kern_control_with_parent(opener, side, parent)
     }
 
-    pub(crate) fn push_pdf_insert_height_control(
+    pub(crate) fn push_pdf_insert_height_control_with_parent(
         &mut self,
         opener: tex_state::token::OriginId,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), ScratchError> {
-        self.expansion_work.push_pdf_insert_height_control(opener)
+        self.expansion_work
+            .push_pdf_insert_height_control_with_parent(opener, parent)
     }
 
-    pub(crate) fn push_pdf_xform_name_control(
+    pub(crate) fn push_pdf_xform_name_control_with_parent(
         &mut self,
         opener: tex_state::token::OriginId,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), ScratchError> {
-        self.expansion_work.push_pdf_xform_name_control(opener)
+        self.expansion_work
+            .push_pdf_xform_name_control_with_parent(opener, parent)
     }
 
-    pub(crate) fn push_pdf_page_ref_control(
+    pub(crate) fn push_pdf_page_ref_control_with_parent(
         &mut self,
         opener: tex_state::token::OriginId,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), ScratchError> {
-        self.expansion_work.push_pdf_page_ref_control(opener)
+        self.expansion_work
+            .push_pdf_page_ref_control_with_parent(opener, parent)
     }
 
-    pub(crate) fn push_pdf_last_match_control(
+    pub(crate) fn push_pdf_last_match_control_with_parent(
         &mut self,
         opener: tex_state::token::OriginId,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), ScratchError> {
-        self.expansion_work.push_pdf_last_match_control(opener)
+        self.expansion_work
+            .push_pdf_last_match_control_with_parent(opener, parent)
     }
 
-    pub(crate) fn push_mark_class_control(
+    pub(crate) fn push_mark_class_control_with_parent(
         &mut self,
         opener: tex_state::token::OriginId,
         primitive: tex_state::meaning::ExpandablePrimitive,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), ScratchError> {
         self.expansion_work
-            .push_mark_class_control(opener, primitive)
+            .push_mark_class_control_with_parent(opener, primitive, parent)
     }
 
-    pub(crate) fn push_pdf_ximage_bbox_control(
+    pub(crate) fn push_pdf_ximage_bbox_control_with_parent(
         &mut self,
         opener: tex_state::token::OriginId,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), ScratchError> {
-        self.expansion_work.push_pdf_ximage_bbox_control(opener)
+        self.expansion_work
+            .push_pdf_ximage_bbox_control_with_parent(opener, parent)
     }
 
-    pub(crate) fn push_pdf_string_control(
+    pub(crate) fn push_pdf_string_control_with_parent(
         &mut self,
         opener: tex_state::token::OriginId,
         kind: crate::expansion_work::control::SynchronousExpandedKind,
         attempt_opening: crate::attempt::AttemptMark,
         writer: crate::attempt::AttemptTokenBufferId,
         left: Option<crate::AttemptTokenListId>,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), ScratchError> {
-        self.expansion_work
-            .push_pdf_string_control(opener, kind, attempt_opening, writer, left)
+        self.expansion_work.push_pdf_string_control_with_parent(
+            opener,
+            kind,
+            attempt_opening,
+            writer,
+            left,
+            parent,
+        )
     }
 
     pub(crate) fn top_number_control(
@@ -1737,6 +1771,18 @@ impl<G> ExecutionScratch<G> {
         self.expansion_work.pop_number_control()
     }
 
+    pub(crate) fn pop_number_control_with_parent(
+        &mut self,
+    ) -> Result<
+        (
+            crate::expansion_work::control::SynchronousNumberControl,
+            Option<crate::expansion_work::ExpansionControlSlot<G>>,
+        ),
+        ScratchError,
+    > {
+        self.expansion_work.pop_number_control_with_parent()
+    }
+
     pub(crate) fn top_pdf_ximage_bbox_control(
         &self,
     ) -> Result<
@@ -1769,33 +1815,40 @@ impl<G> ExecutionScratch<G> {
         self.expansion_work.pop_pdf_ximage_bbox_control()
     }
 
-    pub(crate) fn push_fontname_control(
+    pub(crate) fn push_fontname_control_with_parent(
         &mut self,
         opener: tex_state::token::OriginId,
-    ) -> Result<(), ScratchError> {
-        self.expansion_work.push_fontname_control(opener)
-    }
-
-    pub(crate) fn push_pdf_font_size_control(
-        &mut self,
-        opener: tex_state::token::OriginId,
-    ) -> Result<(), ScratchError> {
-        self.expansion_work.push_pdf_font_size_control(opener)
-    }
-
-    pub(crate) fn push_pdf_font_name_control(
-        &mut self,
-        opener: tex_state::token::OriginId,
-    ) -> Result<(), ScratchError> {
-        self.expansion_work.push_pdf_font_name_control(opener)
-    }
-
-    pub(crate) fn push_pdf_font_object_number_control(
-        &mut self,
-        opener: tex_state::token::OriginId,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), ScratchError> {
         self.expansion_work
-            .push_pdf_font_object_number_control(opener)
+            .push_fontname_control_with_parent(opener, parent)
+    }
+
+    pub(crate) fn push_pdf_font_size_control_with_parent(
+        &mut self,
+        opener: tex_state::token::OriginId,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
+    ) -> Result<(), ScratchError> {
+        self.expansion_work
+            .push_pdf_font_size_control_with_parent(opener, parent)
+    }
+
+    pub(crate) fn push_pdf_font_name_control_with_parent(
+        &mut self,
+        opener: tex_state::token::OriginId,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
+    ) -> Result<(), ScratchError> {
+        self.expansion_work
+            .push_pdf_font_name_control_with_parent(opener, parent)
+    }
+
+    pub(crate) fn push_pdf_font_object_number_control_with_parent(
+        &mut self,
+        opener: tex_state::token::OriginId,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
+    ) -> Result<(), ScratchError> {
+        self.expansion_work
+            .push_pdf_font_object_number_control_with_parent(opener, parent)
     }
 
     pub(crate) fn top_fontname_control(
@@ -1818,34 +1871,49 @@ impl<G> ExecutionScratch<G> {
         self.expansion_work.pop_fontname_control()
     }
 
-    pub(crate) fn push_expanded_control(
+    pub(crate) fn push_expanded_control_with_parent(
         &mut self,
         opener: tex_state::token::OriginId,
         attempt_opening: crate::attempt::AttemptMark,
         writer: crate::attempt::AttemptTokenBufferId,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), ScratchError> {
-        self.expansion_work
-            .push_expanded_control(opener, attempt_opening, writer)
+        self.expansion_work.push_expanded_control_with_parent(
+            opener,
+            attempt_opening,
+            writer,
+            parent,
+        )
     }
 
-    pub(crate) fn push_unexpanded_control(
+    pub(crate) fn push_unexpanded_control_with_parent(
         &mut self,
         opener: tex_state::token::OriginId,
         attempt_opening: crate::attempt::AttemptMark,
         writer: crate::attempt::AttemptTokenBufferId,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), ScratchError> {
-        self.expansion_work
-            .push_unexpanded_control(opener, attempt_opening, writer)
+        self.expansion_work.push_unexpanded_control_with_parent(
+            opener,
+            attempt_opening,
+            writer,
+            parent,
+        )
     }
 
-    pub(crate) fn push_detokenize_control(
+    pub(crate) fn push_detokenize_control_with_parent(
         &mut self,
         opener: tex_state::token::OriginId,
         attempt_opening: crate::attempt::AttemptMark,
         writer: crate::attempt::AttemptTokenBufferId,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), ScratchError> {
-        self.expansion_work
-            .push_detokenize_control(opener, attempt_opening, writer)
+        self.expansion_work.push_detokenize_control_with_parent(
+            opener,
+            attempt_opening,
+            writer,
+            parent,
+        )
     }
 
     pub(crate) fn top_expanded_control(
@@ -1883,10 +1951,16 @@ impl<G> ExecutionScratch<G> {
         self.expansion_work.settle_expanded_word(slot, word)
     }
 
-    pub(crate) fn pop_expanded_control(
+    pub(crate) fn pop_expanded_control_with_parent(
         &mut self,
-    ) -> Result<crate::expansion_work::control::SynchronousExpandedControl, ScratchError> {
-        self.expansion_work.pop_expanded_control()
+    ) -> Result<
+        (
+            crate::expansion_work::control::SynchronousExpandedControl,
+            Option<crate::expansion_work::ExpansionControlSlot<G>>,
+        ),
+        ScratchError,
+    > {
+        self.expansion_work.pop_expanded_control_with_parent()
     }
 
     pub(crate) fn abort_synchronous_controls(&mut self) -> Result<(), ScratchError> {
@@ -1898,14 +1972,9 @@ impl<G> ExecutionScratch<G> {
         self.expansion_work.driver_continuation_depth()
     }
 
-    pub(crate) fn expansion_control_depth(&self) -> u32 {
-        self.expansion_work.control_depth()
-    }
-
-    pub(crate) fn top_expansion_control_slot(
-        &self,
-    ) -> Result<Option<crate::expansion_work::ExpansionControlSlot<G>>, ScratchError> {
-        self.expansion_work.top_control_slot()
+    #[cfg(debug_assertions)]
+    pub(crate) fn expansion_control_progress(&self) -> u64 {
+        self.expansion_work.progress_epoch()
     }
 
     pub(crate) fn top_awaitable_expansion_control_slot(
@@ -1928,14 +1997,6 @@ impl<G> ExecutionScratch<G> {
         self.expansion_work.resume_control_parent(slot)
     }
 
-    pub(crate) fn attach_expansion_control_parent(
-        &mut self,
-        child: crate::expansion_work::ExpansionControlSlot<G>,
-        parent: crate::expansion_work::ExpansionControlSlot<G>,
-    ) -> Result<(), ScratchError> {
-        self.expansion_work.attach_control_parent(child, parent)
-    }
-
     #[cfg(test)]
     pub(crate) fn recursive_delivery_entries(&self) -> u64 {
         self.expansion_work.counters().recursive_delivery_entries
@@ -1946,6 +2007,13 @@ impl<G> ExecutionScratch<G> {
         self.expansion_work
             .counters()
             .recursive_delivery_entries_with_control
+    }
+
+    #[cfg(test)]
+    pub(crate) fn expansion_control_counters(
+        &self,
+    ) -> crate::expansion_work::ExpansionWorkCounters {
+        self.expansion_work.counters()
     }
 
     pub(crate) fn cancel_expansion(

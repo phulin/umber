@@ -46,14 +46,15 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// Starts the hot `\csname` continuation. The name spelling is appended
     /// directly to the generation-owned fixed-chunk lane while the control
     /// retains only its opener origin and dynamic `ifincsname` bit.
-    pub(super) fn begin_csname_continuation(
+    pub(super) fn begin_csname_continuation_with_parent(
         &mut self,
         opener: OriginId,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), CommandError> {
         let previous = self.is_in_csname;
         self.command
             .scratch
-            .push_csname_control(opener, previous)
+            .push_csname_control_with_parent(opener, previous, parent)
             .map_err(crate::scan_toks::scratch_command_error)?;
         self.is_in_csname = true;
         Ok(())

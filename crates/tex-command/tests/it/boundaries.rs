@@ -192,7 +192,7 @@ fn command_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels
             "raw delivery must not retain the retired {retired} envelope"
         );
     }
-    assert!(expansion.contains("(None, true, false)"));
+    assert!(expansion.contains("(None, true, false, None)"));
     assert!(expansion.contains("HotCommand::from_resolved_delivery"));
     let delivery_entry = expansion
         .split("pub(super) fn expanded_next(")
@@ -798,10 +798,9 @@ fn command_delivery_has_separate_concrete_loops_and_direct_input_mutation() {
         .nth(1)
         .and_then(|tail| tail.split("pub(super) fn retain_expansion_scalar").next())
         .expect("locate exact expansion dispatch");
-    assert!(
-        expansion
-            .contains("self.expand_classified_into(destination, dispatch, report_trace, false)")
-    );
+    assert!(expansion.contains(
+        "self.expand_classified_into(destination, dispatch, report_trace, false, parent)",
+    ));
     assert!(expansion.contains("match self.expand_classified_occupied("));
     assert!(
         !expansion_dispatch.contains("Option<ExpansionDispatch>"),
@@ -819,7 +818,7 @@ fn command_delivery_has_separate_concrete_loops_and_direct_input_mutation() {
     assert!(!expansion.contains("MacroCallOutcome"));
     assert!(expansion.contains("suppress_first_expansion_trace"));
     assert!(expansion.contains(".store_expansion_frame(pending)"));
-    assert!(expansion.contains("(None, true, false)"));
+    assert!(expansion.contains("(None, true, false, None)"));
     assert!(expansion.contains("HotCommand::from_resolved_delivery"));
     assert!(expansion.contains("std::mem::replace(command, CurrentCommand::empty())"));
     assert!(!expansion.contains("fn expand_with_trace("));

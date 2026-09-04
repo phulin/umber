@@ -867,7 +867,87 @@ fn ifodd_exact_parent_matrix_covers_nested_scalar_children() {
             assert_eq!(collect_expanded_characters(universe, &mut command), "X");
             assert_eq!(command.scratch.driver_continuation_depth(), 0);
             assert!(command.scratch.is_quiescent());
+            let counters = command.scratch.expansion_control_counters();
+            assert_eq!(
+                counters.control_pushes, counters.control_pops,
+                "every nested control frame must retire exactly once"
+            );
+            assert!(
+                counters.max_control_depth >= 2,
+                "the fixture must exercise a nested parent/child frame"
+            );
         }
+    });
+}
+
+#[test]
+fn low_fuel_nested_if_controls_balance_their_inline_frames() {
+    crate::test_harness::with_universe(|universe| {
+        let ifodd = install_static(
+            universe,
+            "ifodd-low-fuel",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::IfOdd),
+        );
+        let ifnum = install_static(
+            universe,
+            "ifnum-low-fuel",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::IfNum),
+        );
+        let expandafter = install_static(
+            universe,
+            "expandafter-low-fuel",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::ExpandAfter),
+        );
+        let fi = install_static(
+            universe,
+            "fi-low-fuel",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Fi),
+        );
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(
+            &mut command,
+            [
+                ifodd,
+                expandafter,
+                other('1'),
+                letter('A'),
+                fi,
+                ifnum,
+                other('1'),
+                other('='),
+                other('1'),
+                fi,
+                letter('X'),
+            ],
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::new(128).expect("small fuel ledger");
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        let mut output = String::new();
+        while let Some(command) = processor.get_x_token().expect("low-fuel delivery") {
+            match command.meaning() {
+                tex_state::meaning::ResolvedMeaning::Static(Meaning::CharToken { ch, .. }) => {
+                    output.push(ch);
+                }
+                other => panic!("expected expanded character, found {other:?}"),
+            }
+        }
+        assert_eq!(output, "AX");
+        assert!(processor.fuel.burned() <= 128);
+        assert_eq!(processor.command.scratch.driver_continuation_depth(), 0);
+        assert!(processor.command.scratch.is_quiescent());
+        let counters = processor.command.scratch.expansion_control_counters();
+        assert_eq!(counters.control_pushes, counters.control_pops);
+        assert!(counters.max_control_depth >= 2);
     });
 }
 

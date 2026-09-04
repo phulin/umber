@@ -9,7 +9,7 @@ fn empty_command<G>() -> CurrentCommand<G> {
 }
 
 fn root_command<G>(work: &ExpansionWork<G>, key: &ExpansionWorkKey<G>) -> ExpansionCommandSlot<G> {
-    match work.controls.get(key.root).expect("live root control") {
+    match work.control(key.root).expect("live root control") {
         ExpansionControl::Dispatch { command, .. } => *command,
         _ => panic!("dispatch root"),
     }
@@ -54,16 +54,15 @@ fn exact_parent_edge_retires_child_before_resuming_its_awaiting_slot() {
     work.await_control_for_child(parent)
         .expect("parent enters await phase");
     let child = work
-        .push_control(ExpansionControl::ExpandAfterSync(
-            SynchronousExpandAfterControl {
+        .push_control_with_parent(
+            ExpansionControl::ExpandAfterSync(SynchronousExpandAfterControl {
                 opener: OriginId::UNKNOWN,
                 saved_first: None,
                 phase: SynchronousExpandAfterPhase::NeedFirst,
-            },
-        ))
+            }),
+            Some(parent),
+        )
         .expect("child control");
-    work.attach_control_parent(child, parent)
-        .expect("attach exact parent");
     work.pop_control(child).expect("retire child first");
     assert_eq!(
         work.top_if_number_control()
@@ -84,7 +83,7 @@ fn exact_parent_edge_retires_child_before_resuming_its_awaiting_slot() {
 fn synchronous_the_controls_are_lifo_and_do_not_retain_commands() {
     let mut work = ExpansionWork::<()>::default();
     for _ in 0..1_024 {
-        work.push_the_control(OriginId::UNKNOWN)
+        work.push_the_control_with_parent(OriginId::UNKNOWN, None)
             .expect("the control");
     }
     assert_eq!(work.driver_continuation_depth(), 1_024);
@@ -104,7 +103,7 @@ fn synchronous_expanded_controls_share_one_lifo_lane() {
         .arena_mut()
         .allocate_token_buffer()
         .expect("expanded writer");
-    work.push_expanded_control(OriginId::UNKNOWN, opening, writer)
+    work.push_expanded_control_with_parent(OriginId::UNKNOWN, opening, writer, None)
         .expect("expanded control");
     assert_eq!(work.driver_continuation_depth(), 1);
     assert_eq!(
@@ -120,7 +119,10 @@ fn synchronous_expanded_controls_share_one_lifo_lane() {
         .expect("top")
         .slot;
     work.begin_expanded_body(slot).expect("expanded opening");
-    let control = work.pop_expanded_control().expect("expanded pop");
+    let (control, parent) = work
+        .pop_expanded_control_with_parent()
+        .expect("expanded pop");
+    assert!(parent.is_none());
     assert_eq!(control.writer, writer);
     assert_eq!(work.driver_continuation_depth(), 0);
     assert!(work.is_quiescent());
@@ -129,12 +131,12 @@ fn synchronous_expanded_controls_share_one_lifo_lane() {
 #[test]
 fn synchronous_csname_controls_reuse_the_name_lane_in_lifo_order() {
     let mut work = ExpansionWork::<()>::default();
-    work.push_csname_control(OriginId::UNKNOWN, false)
+    work.push_csname_control_with_parent(OriginId::UNKNOWN, false, None)
         .expect("outer csname");
     for byte in b"outer" {
         work.push_name_byte(*byte).expect("outer name byte");
     }
-    work.push_csname_control(OriginId::UNKNOWN, true)
+    work.push_csname_control_with_parent(OriginId::UNKNOWN, true, None)
         .expect("inner csname");
     for byte in b"inner" {
         work.push_name_byte(*byte).expect("inner name byte");
@@ -169,7 +171,7 @@ fn synchronous_csname_controls_reuse_the_name_lane_in_lifo_order() {
 #[test]
 fn aborting_a_cold_child_also_retires_its_synchronous_parent() {
     let mut work = ExpansionWork::<()>::default();
-    work.push_the_control(OriginId::UNKNOWN)
+    work.push_the_control_with_parent(OriginId::UNKNOWN, None)
         .expect("the parent");
     let key = work
         .park_suspension(crate::state::PendingExpansion {

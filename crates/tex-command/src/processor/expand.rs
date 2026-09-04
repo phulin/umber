@@ -170,6 +170,46 @@ enum ExpandedHotDispatch {
     Finished(DeliveryStatus),
 }
 
+/// Exact parent capability carried between the loop and one child admission.
+/// `Captured` is a live parent slot that still needs its one Await transition;
+/// `Awaiting` is the same slot restored from an inline frame link. Encoding
+/// that distinction in the value keeps admission/rollback from relying on a
+/// parallel boolean or on rediscovering the lane top.
+#[derive(Debug)]
+enum ParentAdmission<G> {
+    Captured(crate::expansion_work::ExpansionControlSlot<G>),
+    Awaiting(crate::expansion_work::ExpansionControlSlot<G>),
+}
+
+#[derive(Debug)]
+struct ResumedExpandedDelivery<G> {
+    command: HotCommand<G>,
+    delivery_expanded: bool,
+    parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
+}
+
+impl<G> Copy for ParentAdmission<G> {}
+
+impl<G> Clone for ParentAdmission<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<G> ParentAdmission<G> {
+    #[inline]
+    fn slot(self) -> crate::expansion_work::ExpansionControlSlot<G> {
+        match self {
+            Self::Captured(slot) | Self::Awaiting(slot) => slot,
+        }
+    }
+
+    #[inline]
+    const fn needs_await(self) -> bool {
+        matches!(self, Self::Captured(_))
+    }
+}
+
 #[inline(always)]
 fn active_control_probe<T>(
     active_control: Option<ActiveControlTag>,
@@ -192,6 +232,25 @@ pub(crate) enum ExpansionDispatch {
     Macro,
     Primitive(ExpandablePrimitive),
     Undefined,
+}
+
+/// Primitive branches in the rich dispatcher that install a compact
+/// synchronous frame before they request another expanded token. Parent
+/// admission is restricted to these branches; ordinary expandable commands
+/// either mutate input or finish without creating a child frame. The other
+/// compact branches are cut over earlier in `dispatch_expanded_action`.
+#[inline]
+fn starts_synchronous_control(dispatch: ExpansionDispatch) -> bool {
+    matches!(
+        dispatch,
+        ExpansionDispatch::Primitive(
+            ExpandablePrimitive::ExpandAfter
+                | ExpandablePrimitive::CsName
+                | ExpandablePrimitive::IfCsName
+                | ExpandablePrimitive::The
+                | ExpandablePrimitive::Unless
+        )
+    )
 }
 
 #[cfg(test)]
@@ -926,41 +985,23 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .scanner_resume
                 .as_ref()
                 .is_some_and(crate::ScannerFrameKey::is_expansion);
-        let (mut command, mut fetch, mut delivery_expanded) = if resuming {
+        let (mut command, mut fetch, mut delivery_expanded, mut carried_parent) = if resuming {
             match self.resume_expanded_delivery(destination.take()) {
-                Ok((command, resumed_expanded)) => (Some(command), false, resumed_expanded),
+                Ok(resumed) => (
+                    Some(resumed.command),
+                    false,
+                    resumed.delivery_expanded,
+                    resumed.parent.map(ParentAdmission::Awaiting),
+                ),
                 Err(failure) => {
                     return self.fail_hot_expanded_delivery(destination, depth, failure);
                 }
             }
         } else if let Some(command) = destination.take() {
-            (Some(command), false, false)
+            (Some(command), false, false, None)
         } else {
-            (None, true, false)
+            (None, true, false, None)
         };
-        // A suspended child carries its exact waiting parent across the
-        // resource boundary.  If the child control itself survived in the
-        // lane, install the edge before dispatch resumes; otherwise the
-        // eventual child retirement resumes this saved parent directly.
-        let mut carried_parent = if resuming {
-            self.resumed_expansion_parent.take()
-        } else {
-            None
-        };
-        if let Some(parent) = carried_parent
-            && let Some(child) = self
-                .command
-                .scratch
-                .top_expansion_control_slot()
-                .map_err(crate::scan_toks::scratch_command_error)?
-            && !child.same(parent)
-        {
-            self.command
-                .scratch
-                .attach_expansion_control_parent(child, parent)
-                .map_err(crate::scan_toks::scratch_command_error)?;
-            carried_parent = None;
-        }
         let mut initial_action = initial_action;
         let mut suppress_first_expansion_trace = delivery_expanded;
         let status = 'delivery: loop {
@@ -1285,6 +1326,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                     ExpandedCommandAction::Expand(_) => {}
                 }
             }
+            #[cfg(debug_assertions)]
+            let dispatch_progress_before = (
+                fetch,
+                self.command.top_input_level_identity(),
+                active_control,
+                self.command.scratch.expansion_control_progress(),
+            );
             match self.dispatch_expanded_action(
                 command,
                 action,
@@ -1295,7 +1343,29 @@ impl<G> CommandProcessor<'_, '_, G> {
                 destination,
                 depth,
             )? {
-                ExpandedHotDispatch::Continue => fetch = true,
+                ExpandedHotDispatch::Continue => {
+                    #[cfg(debug_assertions)]
+                    {
+                        let (had_fetch, input_before, control_before, epoch_before) =
+                            dispatch_progress_before;
+                        let progress = had_fetch
+                            || matches!(action, ExpandedCommandAction::Expand(_))
+                            || input_before != self.command.top_input_level_identity()
+                            || control_before != self.command.scratch.active_control_tag()
+                            || epoch_before != self.command.scratch.expansion_control_progress()
+                            || active_control.is_some()
+                                && matches!(
+                                    action,
+                                    ExpandedCommandAction::Return
+                                        | ExpandedCommandAction::EndTemplate
+                                );
+                        debug_assert!(
+                            progress,
+                            "expanded dispatcher returned Continue without consuming input, settling a control, emitting, or parking"
+                        );
+                    }
+                    fetch = true;
+                }
                 ExpandedHotDispatch::Finished(status) => break status,
             }
         };
@@ -1325,7 +1395,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         active_control: Option<crate::expansion_work::ActiveControlTag>,
         delivery_expanded: &mut bool,
         suppress_first_expansion_trace: &mut bool,
-        carried_parent: &mut Option<crate::expansion_work::ExpansionControlSlot<G>>,
+        carried_parent: &mut Option<ParentAdmission<G>>,
         destination: &mut Option<HotCommand<G>>,
         depth: u32,
     ) -> Result<ExpandedHotDispatch, CommandError> {
@@ -1408,8 +1478,8 @@ impl<G> CommandProcessor<'_, '_, G> {
             ExpandablePrimitive::Expanded,
         )) = action
         {
-            self.run_nested_expansion_with_parent(carried_parent, |this| {
-                this.begin_expanded_continuation(command.origin())
+            self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
+                this.begin_expanded_continuation_with_parent(command.origin(), parent)
             })?;
             return Ok(ExpandedHotDispatch::Continue);
         }
@@ -1424,8 +1494,12 @@ impl<G> CommandProcessor<'_, '_, G> {
             && let Some(control) = expanded_control
             && control.kind == crate::expansion_work::control::SynchronousExpandedKind::Expanded
         {
-            self.run_nested_expansion_with_parent(carried_parent, |this| {
-                this.begin_unexpanded_continuation(command.origin(), control.writer)
+            self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
+                this.begin_unexpanded_continuation_with_parent(
+                    command.origin(),
+                    control.writer,
+                    parent,
+                )
             })?;
             return Ok(ExpandedHotDispatch::Continue);
         }
@@ -1439,8 +1513,12 @@ impl<G> CommandProcessor<'_, '_, G> {
             && let Some(control) = expanded_control
             && control.kind == crate::expansion_work::control::SynchronousExpandedKind::Expanded
         {
-            self.run_nested_expansion_with_parent(carried_parent, |this| {
-                this.begin_detokenize_continuation(command.origin(), control.writer)
+            self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
+                this.begin_detokenize_continuation_with_parent(
+                    command.origin(),
+                    control.writer,
+                    parent,
+                )
             })?;
             return Ok(ExpandedHotDispatch::Continue);
         }
@@ -1666,24 +1744,48 @@ impl<G> CommandProcessor<'_, '_, G> {
                 )) => {
                     match primitive {
                         ExpandablePrimitive::FontName => {
-                            self.run_nested_expansion_with_parent(carried_parent, |this| {
-                                this.begin_fontname_continuation(command.origin())
-                            })?;
+                            self.run_nested_expansion_with_parent(
+                                carried_parent,
+                                |this, parent| {
+                                    this.begin_fontname_continuation_with_parent(
+                                        command.origin(),
+                                        parent,
+                                    )
+                                },
+                            )?;
                         }
                         ExpandablePrimitive::PdfFontSize => {
-                            self.run_nested_expansion_with_parent(carried_parent, |this| {
-                                this.begin_pdf_font_size_continuation(command.origin())
-                            })?;
+                            self.run_nested_expansion_with_parent(
+                                carried_parent,
+                                |this, parent| {
+                                    this.begin_pdf_font_size_continuation_with_parent(
+                                        command.origin(),
+                                        parent,
+                                    )
+                                },
+                            )?;
                         }
                         ExpandablePrimitive::PdfFontName => {
-                            self.run_nested_expansion_with_parent(carried_parent, |this| {
-                                this.begin_pdf_font_name_continuation(command.origin())
-                            })?;
+                            self.run_nested_expansion_with_parent(
+                                carried_parent,
+                                |this, parent| {
+                                    this.begin_pdf_font_name_continuation_with_parent(
+                                        command.origin(),
+                                        parent,
+                                    )
+                                },
+                            )?;
                         }
                         ExpandablePrimitive::PdfFontObjectNumber => {
-                            self.run_nested_expansion_with_parent(carried_parent, |this| {
-                                this.begin_pdf_font_object_number_continuation(command.origin())
-                            })?;
+                            self.run_nested_expansion_with_parent(
+                                carried_parent,
+                                |this, parent| {
+                                    this.begin_pdf_font_object_number_continuation_with_parent(
+                                        command.origin(),
+                                        parent,
+                                    )
+                                },
+                            )?;
                         }
                         _ => unreachable!("font control branch validates its primitive"),
                     }
@@ -1724,20 +1826,20 @@ impl<G> CommandProcessor<'_, '_, G> {
                 crate::conditionals::ConditionalKind::If
                     | crate::conditionals::ConditionalKind::IfCat
             ) {
-                self.run_nested_expansion_with_parent(carried_parent, |this| {
-                    this.begin_if_compare_continuation(kind, false)
+                self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
+                    this.begin_if_compare_continuation_with_parent(kind, false, parent)
                 })?;
             } else if matches!(
                 kind,
                 crate::conditionals::ConditionalKind::IfDim
                     | crate::conditionals::ConditionalKind::IfPdfAbsDim
             ) {
-                self.run_nested_expansion_with_parent(carried_parent, |this| {
-                    this.begin_if_dimension_continuation(kind, false)
+                self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
+                    this.begin_if_dimension_continuation_with_parent(kind, false, parent)
                 })?;
             } else {
-                self.run_nested_expansion_with_parent(carried_parent, |this| {
-                    this.begin_if_number_continuation(kind, false)
+                self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
+                    this.begin_if_number_continuation_with_parent(kind, false, parent)
                 })?;
             }
             return Ok(ExpandedHotDispatch::Continue);
@@ -1752,23 +1854,26 @@ impl<G> CommandProcessor<'_, '_, G> {
         {
             match primitive {
                 ExpandablePrimitive::FontName => {
-                    self.run_nested_expansion_with_parent(carried_parent, |this| {
-                        this.begin_fontname_continuation(command.origin())
+                    self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
+                        this.begin_fontname_continuation_with_parent(command.origin(), parent)
                     })?;
                 }
                 ExpandablePrimitive::PdfFontSize => {
-                    self.run_nested_expansion_with_parent(carried_parent, |this| {
-                        this.begin_pdf_font_size_continuation(command.origin())
+                    self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
+                        this.begin_pdf_font_size_continuation_with_parent(command.origin(), parent)
                     })?;
                 }
                 ExpandablePrimitive::PdfFontName => {
-                    self.run_nested_expansion_with_parent(carried_parent, |this| {
-                        this.begin_pdf_font_name_continuation(command.origin())
+                    self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
+                        this.begin_pdf_font_name_continuation_with_parent(command.origin(), parent)
                     })?;
                 }
                 ExpandablePrimitive::PdfFontObjectNumber => {
-                    self.run_nested_expansion_with_parent(carried_parent, |this| {
-                        this.begin_pdf_font_object_number_continuation(command.origin())
+                    self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
+                        this.begin_pdf_font_object_number_continuation_with_parent(
+                            command.origin(),
+                            parent,
+                        )
                     })?;
                 }
                 _ => unreachable!("font primitive branch validates its primitive"),
@@ -1785,23 +1890,26 @@ impl<G> CommandProcessor<'_, '_, G> {
         {
             match primitive {
                 ExpandablePrimitive::PdfInsertHeight => {
-                    self.run_nested_expansion_with_parent(carried_parent, |this| {
-                        this.begin_pdf_insert_height_continuation(command.origin())
+                    self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
+                        this.begin_pdf_insert_height_continuation_with_parent(
+                            command.origin(),
+                            parent,
+                        )
                     })?;
                 }
                 ExpandablePrimitive::PdfXFormName => {
-                    self.run_nested_expansion_with_parent(carried_parent, |this| {
-                        this.begin_pdf_xform_name_continuation(command.origin())
+                    self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
+                        this.begin_pdf_xform_name_continuation_with_parent(command.origin(), parent)
                     })?;
                 }
                 ExpandablePrimitive::PdfPageRef => {
-                    self.run_nested_expansion_with_parent(carried_parent, |this| {
-                        this.begin_pdf_page_ref_continuation(command.origin())
+                    self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
+                        this.begin_pdf_page_ref_continuation_with_parent(command.origin(), parent)
                     })?;
                 }
                 ExpandablePrimitive::PdfLastMatch => {
-                    self.run_nested_expansion_with_parent(carried_parent, |this| {
-                        this.begin_pdf_last_match_continuation(command.origin())
+                    self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
+                        this.begin_pdf_last_match_continuation_with_parent(command.origin(), parent)
                     })?;
                 }
                 _ => unreachable!("PDF integer branch validates its primitive"),
@@ -1813,8 +1921,8 @@ impl<G> CommandProcessor<'_, '_, G> {
             ExpandablePrimitive::PdfXImageBBox,
         )) = action
         {
-            self.run_nested_expansion_with_parent(carried_parent, |this| {
-                this.begin_pdf_ximage_bbox_continuation(command.origin())
+            self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
+                this.begin_pdf_ximage_bbox_continuation_with_parent(command.origin(), parent)
             })?;
             return Ok(ExpandedHotDispatch::Continue);
         }
@@ -1841,8 +1949,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 _ => unreachable!("PDF string branch validates its primitive"),
             };
-            self.run_nested_expansion_with_parent(carried_parent, |this| {
-                this.begin_pdf_string_continuation(command.origin(), kind)
+            self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
+                this.begin_pdf_string_continuation_with_parent(command.origin(), kind, parent)
             })?;
             return Ok(ExpandedHotDispatch::Continue);
         }
@@ -1867,8 +1975,8 @@ impl<G> CommandProcessor<'_, '_, G> {
             | ExpandablePrimitive::SplitBotMarks),
         )) = action
         {
-            self.run_nested_expansion_with_parent(carried_parent, |this| {
-                this.begin_mark_class_continuation(command.origin(), primitive)
+            self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
+                this.begin_mark_class_continuation_with_parent(command.origin(), primitive, parent)
             })?;
             return Ok(ExpandedHotDispatch::Continue);
         }
@@ -1877,10 +1985,11 @@ impl<G> CommandProcessor<'_, '_, G> {
             primitive @ (ExpandablePrimitive::Number | ExpandablePrimitive::RomanNumeral),
         )) = action
         {
-            self.run_nested_expansion_with_parent(carried_parent, |this| {
-                this.begin_number_continuation(
+            self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
+                this.begin_number_continuation_with_parent(
                     command.origin(),
                     primitive == ExpandablePrimitive::RomanNumeral,
+                    parent,
                 )
             })?;
             return Ok(ExpandedHotDispatch::Continue);
@@ -1894,8 +2003,8 @@ impl<G> CommandProcessor<'_, '_, G> {
             ExpandablePrimitive::PdfUniformDeviate,
         )) = action
         {
-            self.run_nested_expansion_with_parent(carried_parent, |this| {
-                this.begin_pdf_uniform_deviate_continuation(command.origin())
+            self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
+                this.begin_pdf_uniform_deviate_continuation_with_parent(command.origin(), parent)
             })?;
             return Ok(ExpandedHotDispatch::Continue);
         }
@@ -1910,8 +2019,8 @@ impl<G> CommandProcessor<'_, '_, G> {
             } else {
                 tex_state::node::MarginKernSide::Right
             };
-            self.run_nested_expansion_with_parent(carried_parent, |this| {
-                this.begin_pdf_margin_kern_continuation(command.origin(), side)
+            self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
+                this.begin_pdf_margin_kern_continuation_with_parent(command.origin(), side, parent)
             })?;
             return Ok(ExpandedHotDispatch::Continue);
         }
@@ -1969,8 +2078,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                 ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
                     ExpandablePrimitive::CsName,
                 )) => {
-                    self.run_nested_expansion_with_parent(carried_parent, |this| {
-                        this.begin_csname_continuation(command.origin())
+                    self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
+                        this.begin_csname_continuation_with_parent(command.origin(), parent)
                     })?;
                     return Ok(ExpandedHotDispatch::Continue);
                 }
@@ -2005,8 +2114,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                 ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
                     ExpandablePrimitive::IfCsName,
                 )) => {
-                    self.run_nested_expansion_with_parent(carried_parent, |this| {
-                        this.begin_ifcsname_continuation(false)
+                    self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
+                        this.begin_ifcsname_continuation_with_parent(false, parent)
                     })?;
                     return Ok(ExpandedHotDispatch::Continue);
                 }
@@ -2045,8 +2154,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                         ExpandablePrimitive::The,
                     )),
                 ) => {
-                    self.run_nested_expansion_with_parent(carried_parent, |this| {
-                        this.begin_the_continuation(command.origin())
+                    self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
+                        this.begin_the_continuation_with_parent(command.origin(), parent)
                     })?;
                     return Ok(ExpandedHotDispatch::Continue);
                 }
@@ -2214,21 +2323,25 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // control lane. A macro or undefined command does not need
                 // an edge: it only changes input, and the next settled token
                 // is still owned by the same top control.
-                let fresh_parent = if active_control.is_none()
-                    || matches!(
+                let admission = if let Some(parent) = carried_parent.take() {
+                    Some(parent)
+                } else if active_control.is_some()
+                    && !matches!(
                         dispatch,
                         ExpansionDispatch::Macro | ExpansionDispatch::Undefined
-                    ) {
-                    None
-                } else {
-                    self.command
+                    )
+                {
+                    let parent = self
+                        .command
                         .scratch
                         .top_awaitable_expansion_control_slot()
-                        .map_err(crate::scan_toks::scratch_command_error)?
+                        .map_err(crate::scan_toks::scratch_command_error)?;
+                    parent.map(ParentAdmission::Captured)
+                } else {
+                    None
                 };
-                let parent = fresh_parent.or_else(|| carried_parent.take());
-                if let Some(parent) = parent
-                    && fresh_parent.is_some()
+                if let Some(admission) = admission
+                    && admission.needs_await()
                 {
                     // A parent restored from a suspension is already in an
                     // Await phase. Fresh dispatches transition it once here;
@@ -2236,10 +2349,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                     // that may become the new top.
                     self.command
                         .scratch
-                        .await_expansion_control_for_child(parent)
+                        .await_expansion_control_for_child(admission.slot())
                         .map_err(crate::scan_toks::scratch_command_error)?;
                 }
-                let control_depth = self.command.scratch.expansion_control_depth();
+                let parent = admission.map(ParentAdmission::slot);
                 let mut command_parked = false;
                 let failure = match self.expand_classified_occupied(
                     command,
@@ -2250,24 +2363,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                     &mut command_parked,
                 ) {
                     Ok(()) => {
-                        if let Some(parent) = parent {
-                            if self.command.scratch.expansion_control_depth() > control_depth {
-                                let child = self
-                                    .command
-                                    .scratch
-                                    .top_expansion_control_slot()
-                                    .map_err(crate::scan_toks::scratch_command_error)?
-                                    .ok_or_else(CommandError::input_invariant)?;
-                                self.command
-                                    .scratch
-                                    .attach_expansion_control_parent(child, parent)
-                                    .map_err(crate::scan_toks::scratch_command_error)?;
-                            } else {
-                                self.command
-                                    .scratch
-                                    .resume_expansion_control_parent(parent)
-                                    .map_err(crate::scan_toks::scratch_command_error)?;
-                            }
+                        if let Some(parent) = parent
+                            && !starts_synchronous_control(dispatch)
+                        {
+                            self.command
+                                .scratch
+                                .resume_expansion_control_parent(parent)
+                                .map_err(crate::scan_toks::scratch_command_error)?;
                         }
                         // Some expandable commands consume themselves
                         // without putting a command back on input. In an
@@ -2313,7 +2415,18 @@ impl<G> CommandProcessor<'_, '_, G> {
                         }
                         return Ok(ExpandedHotDispatch::Continue);
                     }
-                    Err(failure) => failure,
+                    Err(failure) => {
+                        if !command_parked
+                            && admission.is_some_and(ParentAdmission::needs_await)
+                            && let Some(parent) = parent
+                        {
+                            self.command
+                                .scratch
+                                .resume_expansion_control_parent(parent)
+                                .map_err(crate::scan_toks::scratch_command_error)?;
+                        }
+                        failure
+                    }
                 };
                 match failure {
                     CommandError::ParagraphInMacroArgument | CommandError::OuterInMacroArgument => {
@@ -2327,55 +2440,48 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     /// Runs a synchronous child admission for a hot expansion branch. The
     /// parent slot is captured before the branch can push a child, moved to
-    /// its exact awaiting phase, and then either attached to the newly pushed
-    /// row or resumed directly if the branch produced no control. This is
+    /// its exact awaiting phase, and then either carried by the newly pushed
+    /// frame or resumed directly if the branch produced no control. This is
     /// used by the branches that consume an expandable primitive before the
     /// common dispatch arm gets a chance to perform the same bookkeeping.
     fn run_nested_expansion_with_parent<T>(
         &mut self,
-        carried_parent: &mut Option<crate::expansion_work::ExpansionControlSlot<G>>,
-        start: impl FnOnce(&mut Self) -> Result<T, CommandError>,
+        carried_parent: &mut Option<ParentAdmission<G>>,
+        start: impl FnOnce(
+            &mut Self,
+            Option<crate::expansion_work::ExpansionControlSlot<G>>,
+        ) -> Result<T, CommandError>,
     ) -> Result<T, CommandError> {
-        let fresh_parent =
-            if carried_parent.is_some() || self.command.scratch.active_control_tag().is_some() {
-                self.command
-                    .scratch
-                    .top_awaitable_expansion_control_slot()
-                    .map_err(crate::scan_toks::scratch_command_error)?
-            } else {
-                None
-            };
-        let parent = fresh_parent.or_else(|| carried_parent.take());
-        if let Some(parent) = parent
-            && fresh_parent.is_some()
+        let admission = if let Some(parent) = carried_parent.take() {
+            Some(parent)
+        } else if self.command.scratch.active_control_tag().is_some() {
+            let parent = self
+                .command
+                .scratch
+                .top_awaitable_expansion_control_slot()
+                .map_err(crate::scan_toks::scratch_command_error)?;
+            parent.map(ParentAdmission::Captured)
+        } else {
+            None
+        };
+        if let Some(admission) = admission
+            && admission.needs_await()
         {
             self.command
                 .scratch
-                .await_expansion_control_for_child(parent)
+                .await_expansion_control_for_child(admission.slot())
                 .map_err(crate::scan_toks::scratch_command_error)?;
         }
-        let control_depth = self.command.scratch.expansion_control_depth();
-        let result = start(self);
-        if result.is_ok()
+        let parent = admission.map(ParentAdmission::slot);
+        let result = start(self, parent);
+        if result.is_err()
+            && admission.is_some_and(ParentAdmission::needs_await)
             && let Some(parent) = parent
         {
-            if self.command.scratch.expansion_control_depth() > control_depth {
-                let child = self
-                    .command
-                    .scratch
-                    .top_expansion_control_slot()
-                    .map_err(crate::scan_toks::scratch_command_error)?
-                    .ok_or_else(CommandError::input_invariant)?;
-                self.command
-                    .scratch
-                    .attach_expansion_control_parent(child, parent)
-                    .map_err(crate::scan_toks::scratch_command_error)?;
-            } else {
-                self.command
-                    .scratch
-                    .resume_expansion_control_parent(parent)
-                    .map_err(crate::scan_toks::scratch_command_error)?;
-            }
+            self.command
+                .scratch
+                .resume_expansion_control_parent(parent)
+                .map_err(crate::scan_toks::scratch_command_error)?;
         }
         result
     }
@@ -3852,7 +3958,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn resume_expanded_delivery(
         &mut self,
         destination: Option<HotCommand<G>>,
-    ) -> Result<(HotCommand<G>, bool), CommandError> {
+    ) -> Result<ResumedExpandedDelivery<G>, CommandError> {
         let key = self.expansion_resume.take().or_else(|| {
             self.scanner_resume
                 .as_ref()
@@ -3889,13 +3995,14 @@ impl<G> CommandProcessor<'_, '_, G> {
             self.scanner_resume = Some(key);
         }
         self.resumed_expansion = Some(retained.resume);
-        self.resumed_expansion_parent = retained.parent;
         let delivery_expanded = retained.delivery_expanded;
+        let parent = retained.parent;
         self.resume_current_command(&retained.command);
-        Ok((
-            HotCommand::from_current(retained.command),
+        Ok(ResumedExpandedDelivery {
+            command: HotCommand::from_current(retained.command),
             delivery_expanded,
-        ))
+            parent,
+        })
     }
 
     #[cold]
@@ -4528,6 +4635,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         destination: &mut Option<CurrentCommand<G>>,
         mut report_trace: bool,
     ) -> Result<(), CommandError> {
+        let mut parent = None;
         if self.resumed_expansion.is_none()
             && self.scanner_resume.is_some()
             && !self
@@ -4570,9 +4678,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 self.scanner_resume = Some(key);
             }
+            parent = retained.parent;
             *destination = Some(retained.command);
             self.resumed_expansion = Some(retained.resume);
-            self.resumed_expansion_parent = retained.parent;
             self.resume_current_command(
                 destination
                     .as_ref()
@@ -4594,7 +4702,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
             ExpandedCommandAction::Return => return Err(CommandError::input_invariant()),
         };
-        self.expand_classified_into(destination, dispatch, report_trace, false)
+        self.expand_classified_into(destination, dispatch, report_trace, false, parent)
     }
 
     /// Executes the dispatch selected by the expanded-delivery classifier
@@ -4605,23 +4713,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         dispatch: ExpansionDispatch,
         report_trace: bool,
         delivery_expanded: bool,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), CommandError> {
-        let mut parent = self.resumed_expansion_parent.take();
-        if let Some(saved_parent) = parent
-            && let Some(child) = self
-                .command
-                .scratch
-                .top_expansion_control_slot()
-                .map_err(crate::scan_toks::scratch_command_error)?
-            && !child.same(saved_parent)
-        {
-            self.command
-                .scratch
-                .attach_expansion_control_parent(child, saved_parent)
-                .map_err(crate::scan_toks::scratch_command_error)?;
-            parent = None;
-        }
-        let control_depth = self.command.scratch.expansion_control_depth();
         let mut command = destination
             .take()
             .ok_or_else(CommandError::input_invariant)?;
@@ -4639,24 +4732,12 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
         if result.is_ok()
             && let Some(parent) = parent
+            && !starts_synchronous_control(dispatch)
         {
-            if self.command.scratch.expansion_control_depth() > control_depth {
-                let child = self
-                    .command
-                    .scratch
-                    .top_expansion_control_slot()
-                    .map_err(crate::scan_toks::scratch_command_error)?
-                    .ok_or_else(CommandError::input_invariant)?;
-                self.command
-                    .scratch
-                    .attach_expansion_control_parent(child, parent)
-                    .map_err(crate::scan_toks::scratch_command_error)?;
-            } else {
-                self.command
-                    .scratch
-                    .resume_expansion_control_parent(parent)
-                    .map_err(crate::scan_toks::scratch_command_error)?;
-            }
+            self.command
+                .scratch
+                .resume_expansion_control_parent(parent)
+                .map_err(crate::scan_toks::scratch_command_error)?;
         }
         result
     }
@@ -4796,11 +4877,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                         &mut suspended_resume,
                     )
                 }
-                ExpansionDispatch::Primitive(ExpandablePrimitive::Unless) => {
-                    self.expand_unless(command, &mut expansion_resume, &mut suspended_resume)
-                }
+                ExpansionDispatch::Primitive(ExpandablePrimitive::Unless) => self.expand_unless(
+                    command,
+                    &mut expansion_resume,
+                    &mut suspended_resume,
+                    parent,
+                ),
                 ExpansionDispatch::Primitive(ExpandablePrimitive::IfCsName) => {
-                    self.begin_ifcsname_continuation(false)
+                    self.begin_ifcsname_continuation_with_parent(false, parent)
                 }
                 ExpansionDispatch::Primitive(
                     primitive @ (ExpandablePrimitive::Else
@@ -4820,10 +4904,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                 ExpansionDispatch::Primitive(ExpandablePrimitive::ExpandAfter) => self
                     .command
                     .scratch
-                    .push_expandafter_control(command.origin())
+                    .push_expandafter_control_with_parent(command.origin(), parent)
                     .map_err(crate::scan_toks::scratch_command_error),
                 ExpansionDispatch::Primitive(ExpandablePrimitive::CsName) => {
-                    self.begin_csname_continuation(command.origin())
+                    self.begin_csname_continuation_with_parent(command.origin(), parent)
                 }
                 ExpansionDispatch::Primitive(ExpandablePrimitive::String) => {
                     self.expand_string(command)
@@ -4838,7 +4922,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     self.expand_number(command, true, &mut expansion_resume, &mut suspended_resume)
                 }
                 ExpansionDispatch::Primitive(ExpandablePrimitive::The) => {
-                    self.begin_the_continuation(command.origin())
+                    self.begin_the_continuation_with_parent(command.origin(), parent)
                 }
                 ExpansionDispatch::Primitive(ExpandablePrimitive::Unexpanded) => {
                     self.expand_unexpanded()

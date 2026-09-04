@@ -631,46 +631,50 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// Starts the compact `\fontname` operand protocol.  The opener is kept
     /// as an origin in the generation-owned control lane, so a chain of font
     /// name conversions never nests a scanner call frame.
-    pub(super) fn begin_fontname_continuation(
+    pub(super) fn begin_fontname_continuation_with_parent(
         &mut self,
         opener: OriginId,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), CommandError> {
         self.command
             .scratch
-            .push_fontname_control(opener)
+            .push_fontname_control_with_parent(opener, parent)
             .map_err(crate::scan_toks::scratch_command_error)
     }
 
     /// Starts the compact `\pdffontsize` operand protocol.  It shares the
     /// expanded font-selector request and differs only in the rendering step,
     /// so a nested selector follows the same generation-owned control lane.
-    pub(super) fn begin_pdf_font_size_continuation(
+    pub(super) fn begin_pdf_font_size_continuation_with_parent(
         &mut self,
         opener: OriginId,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), CommandError> {
         self.command
             .scratch
-            .push_pdf_font_size_control(opener)
+            .push_pdf_font_size_control_with_parent(opener, parent)
             .map_err(crate::scan_toks::scratch_command_error)
     }
 
-    pub(super) fn begin_pdf_font_name_continuation(
+    pub(super) fn begin_pdf_font_name_continuation_with_parent(
         &mut self,
         opener: OriginId,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), CommandError> {
         self.command
             .scratch
-            .push_pdf_font_name_control(opener)
+            .push_pdf_font_name_control_with_parent(opener, parent)
             .map_err(crate::scan_toks::scratch_command_error)
     }
 
-    pub(super) fn begin_pdf_font_object_number_continuation(
+    pub(super) fn begin_pdf_font_object_number_continuation_with_parent(
         &mut self,
         opener: OriginId,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), CommandError> {
         self.command
             .scratch
-            .push_pdf_font_object_number_control(opener)
+            .push_pdf_font_object_number_control_with_parent(opener, parent)
             .map_err(crate::scan_toks::scratch_command_error)
     }
 
@@ -763,86 +767,94 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// Starts the compact literal operand path for `\number` and
     /// `\romannumeral`.  The opener survives only as provenance in the
     /// generation-owned control lane.
-    pub(super) fn begin_number_continuation(
+    pub(super) fn begin_number_continuation_with_parent(
         &mut self,
         opener: OriginId,
         roman: bool,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), CommandError> {
         self.command
             .scratch
-            .push_number_control(opener, roman)
+            .push_number_control_with_parent(opener, roman, parent)
             .map_err(crate::scan_toks::scratch_command_error)
     }
 
-    pub(super) fn begin_pdf_uniform_deviate_continuation(
+    pub(super) fn begin_pdf_uniform_deviate_continuation_with_parent(
         &mut self,
         opener: OriginId,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), CommandError> {
         self.command
             .scratch
-            .push_pdf_uniform_deviate_control(opener)
+            .push_pdf_uniform_deviate_control_with_parent(opener, parent)
             .map_err(crate::scan_toks::scratch_command_error)
     }
 
-    pub(super) fn begin_pdf_margin_kern_continuation(
+    pub(super) fn begin_pdf_margin_kern_continuation_with_parent(
         &mut self,
         opener: OriginId,
         side: tex_state::node::MarginKernSide,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), CommandError> {
         self.command
             .scratch
-            .push_pdf_margin_kern_control(opener, side)
+            .push_pdf_margin_kern_control_with_parent(opener, side, parent)
             .map_err(crate::scan_toks::scratch_command_error)
     }
 
-    pub(super) fn begin_pdf_insert_height_continuation(
+    pub(super) fn begin_pdf_insert_height_continuation_with_parent(
         &mut self,
         opener: OriginId,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), CommandError> {
         self.command
             .scratch
-            .push_pdf_insert_height_control(opener)
+            .push_pdf_insert_height_control_with_parent(opener, parent)
             .map_err(crate::scan_toks::scratch_command_error)
     }
 
-    pub(super) fn begin_pdf_xform_name_continuation(
+    pub(super) fn begin_pdf_xform_name_continuation_with_parent(
         &mut self,
         opener: OriginId,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), CommandError> {
         self.command
             .scratch
-            .push_pdf_xform_name_control(opener)
+            .push_pdf_xform_name_control_with_parent(opener, parent)
             .map_err(crate::scan_toks::scratch_command_error)
     }
 
-    pub(super) fn begin_pdf_page_ref_continuation(
+    pub(super) fn begin_pdf_page_ref_continuation_with_parent(
         &mut self,
         opener: OriginId,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), CommandError> {
         self.command
             .scratch
-            .push_pdf_page_ref_control(opener)
+            .push_pdf_page_ref_control_with_parent(opener, parent)
             .map_err(crate::scan_toks::scratch_command_error)
     }
 
-    pub(super) fn begin_pdf_last_match_continuation(
+    pub(super) fn begin_pdf_last_match_continuation_with_parent(
         &mut self,
         opener: OriginId,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), CommandError> {
         self.command
             .scratch
-            .push_pdf_last_match_control(opener)
+            .push_pdf_last_match_control_with_parent(opener, parent)
             .map_err(crate::scan_toks::scratch_command_error)
     }
 
-    pub(super) fn begin_mark_class_continuation(
+    pub(super) fn begin_mark_class_continuation_with_parent(
         &mut self,
         opener: OriginId,
         primitive: ExpandablePrimitive,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), CommandError> {
         self.command
             .scratch
-            .push_mark_class_control(opener, primitive)
+            .push_mark_class_control_with_parent(opener, primitive, parent)
             .map_err(crate::scan_toks::scratch_command_error)
     }
 
@@ -1115,13 +1127,12 @@ impl<G> CommandProcessor<'_, '_, G> {
             if control.purpose != crate::expansion_work::control::SynchronousNumberPurpose::Roman
                 && meaning == Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NumExpr)
             {
-                let opener = self
+                let (number, parent) = self
                     .command
                     .scratch
-                    .pop_number_control()
-                    .map_err(crate::scan_toks::scratch_command_error)?
-                    .opener;
-                self.begin_the_continuation(opener)?;
+                    .pop_number_control_with_parent()
+                    .map_err(crate::scan_toks::scratch_command_error)?;
+                self.begin_the_continuation_with_parent(number.opener, parent)?;
                 self.command.scratch.set_the_phase(
                     crate::expansion_work::control::ThePhase::Expression {
                         target: meaning,
@@ -1140,13 +1151,12 @@ impl<G> CommandProcessor<'_, '_, G> {
             if control.purpose != crate::expansion_work::control::SynchronousNumberPurpose::Roman
                 && meaning == Meaning::UnexpandablePrimitive(UnexpandablePrimitive::DimExpr)
             {
-                let opener = self
+                let (number, parent) = self
                     .command
                     .scratch
-                    .pop_number_control()
-                    .map_err(crate::scan_toks::scratch_command_error)?
-                    .opener;
-                self.begin_the_continuation(opener)?;
+                    .pop_number_control_with_parent()
+                    .map_err(crate::scan_toks::scratch_command_error)?;
+                self.begin_the_continuation_with_parent(number.opener, parent)?;
                 self.command.scratch.set_the_phase(
                     crate::expansion_work::control::ThePhase::DimensionExpression {
                         target: meaning,
@@ -1392,10 +1402,14 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// Starts the iterative `\the` operand request.  The opener is reduced to
     /// its packed origin before the request enters the shared expansion-work
     /// control lane; no rich command is retained while the operand expands.
-    pub(super) fn begin_the_continuation(&mut self, opener: OriginId) -> Result<(), CommandError> {
+    pub(super) fn begin_the_continuation_with_parent(
+        &mut self,
+        opener: OriginId,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
+    ) -> Result<(), CommandError> {
         self.command
             .scratch
-            .push_the_control(opener)
+            .push_the_control_with_parent(opener, parent)
             .map_err(crate::scan_toks::scratch_command_error)
     }
 
@@ -1403,9 +1417,10 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// `\expanded` conversion.  Its attempt buffer is admitted before the
     /// control, so a failed control push rolls back the complete local suffix
     /// without leaving a half-open collector behind.
-    pub(super) fn begin_expanded_continuation(
+    pub(super) fn begin_expanded_continuation_with_parent(
         &mut self,
         opener: OriginId,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), CommandError> {
         let attempt_opening = self.command.attempt.arena().mark();
         let writer = self
@@ -1414,11 +1429,12 @@ impl<G> CommandProcessor<'_, '_, G> {
             .arena_mut()
             .allocate_token_buffer()
             .map_err(crate::scan_toks::attempt_command_error)?;
-        if let Err(error) =
-            self.command
-                .scratch
-                .push_expanded_control(opener, attempt_opening, writer)
-        {
+        if let Err(error) = self.command.scratch.push_expanded_control_with_parent(
+            opener,
+            attempt_opening,
+            writer,
+            parent,
+        ) {
             self.command
                 .attempt
                 .arena_mut()
@@ -1432,30 +1448,32 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// Starts the raw balanced child of an active `\expanded` collector.
     /// Its destination is the parent's already-open token buffer, so the
     /// child can retire without copying or installing an intermediate list.
-    pub(super) fn begin_unexpanded_continuation(
+    pub(super) fn begin_unexpanded_continuation_with_parent(
         &mut self,
         opener: OriginId,
         writer: crate::attempt::AttemptTokenBufferId,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), CommandError> {
         let attempt_opening = self.command.attempt.arena().mark();
         self.command
             .scratch
-            .push_unexpanded_control(opener, attempt_opening, writer)
+            .push_unexpanded_control_with_parent(opener, attempt_opening, writer, parent)
             .map_err(crate::scan_toks::scratch_command_error)
     }
 
     /// Starts the raw balanced child of an active `\expanded` collector for
     /// `\detokenize`. Rendered characters are written directly to the
     /// parent's token buffer as the child settles each source word.
-    pub(super) fn begin_detokenize_continuation(
+    pub(super) fn begin_detokenize_continuation_with_parent(
         &mut self,
         opener: OriginId,
         writer: crate::attempt::AttemptTokenBufferId,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), CommandError> {
         let attempt_opening = self.command.attempt.arena().mark();
         self.command
             .scratch
-            .push_detokenize_control(opener, attempt_opening, writer)
+            .push_detokenize_control_with_parent(opener, attempt_opening, writer, parent)
             .map_err(crate::scan_toks::scratch_command_error)
     }
 
@@ -1518,7 +1536,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             Some(
                 self.command
                     .scratch
-                    .pop_expanded_control()
+                    .pop_expanded_control_with_parent()
                     .map_err(crate::scan_toks::scratch_command_error)?,
             )
         } else {
@@ -1568,7 +1586,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .map_err(crate::scan_toks::attempt_command_error)?;
             return Ok(false);
         }
-        let control = control.expect("closing expanded word retires its control");
+        let (control, parent) = control.expect("closing expanded word retires its control");
         if matches!(
             control.kind,
             crate::expansion_work::control::SynchronousExpandedKind::Unexpanded
@@ -1593,12 +1611,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .map_err(crate::scan_toks::attempt_command_error)?;
             self.command
                 .scratch
-                .push_pdf_string_control(
+                .push_pdf_string_control_with_parent(
                     control.opener,
                     crate::expansion_work::control::SynchronousExpandedKind::PdfStringCompareRight,
                     control.attempt_opening,
                     writer,
                     Some(list),
+                    parent,
                 )
                 .map_err(crate::scan_toks::scratch_command_error)?;
             return Ok(true);

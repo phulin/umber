@@ -422,10 +422,11 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// Begins an iterative `\if` or `\ifcat` comparison. The condition frame
     /// is installed before the first expanded operand so nested predicates
     /// inherit the same evaluating-limit semantics as TeX82 part 28.
-    pub(super) fn begin_if_compare_continuation(
+    pub(super) fn begin_if_compare_continuation_with_parent(
         &mut self,
         kind: ConditionalKind,
         inverted: bool,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), CommandError> {
         if !matches!(kind, ConditionalKind::If | ConditionalKind::IfCat) {
             return Err(CommandError::input_invariant());
@@ -446,7 +447,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         if let Err(error) = self
             .command
             .scratch
-            .push_if_compare_control(condition, kind, inverted)
+            .push_if_compare_control_with_parent(condition, kind, inverted, parent)
             .map_err(crate::scan_toks::scratch_command_error)
         {
             let _ = self.command.conditions.pop();
@@ -485,10 +486,11 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// Begins the compact hot protocol for a numeric conditional.  Literal
     /// integer operands are consumed by the delivery loop itself; richer
     /// internal quantities still use the existing scalar continuation path.
-    pub(super) fn begin_if_number_continuation(
+    pub(super) fn begin_if_number_continuation_with_parent(
         &mut self,
         kind: ConditionalKind,
         inverted: bool,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), CommandError> {
         if !matches!(
             kind,
@@ -521,7 +523,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         if let Err(error) = self
             .command
             .scratch
-            .push_if_number_control(condition, kind, inverted)
+            .push_if_number_control_with_parent(condition, kind, inverted, parent)
             .map_err(crate::scan_toks::scratch_command_error)
         {
             let _ = self.command.conditions.pop();
@@ -534,10 +536,11 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// remain available through the established scalar evaluator; this lane
     /// handles the ordinary decimal `pt` form without retaining a scanner
     /// command while nested expandable operands are delivered.
-    pub(super) fn begin_if_dimension_continuation(
+    pub(super) fn begin_if_dimension_continuation_with_parent(
         &mut self,
         kind: ConditionalKind,
         inverted: bool,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), CommandError> {
         if !matches!(kind, ConditionalKind::IfDim | ConditionalKind::IfPdfAbsDim) {
             return Err(CommandError::input_invariant());
@@ -558,7 +561,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         if let Err(error) = self
             .command
             .scratch
-            .push_if_dimension_control(condition, kind, inverted)
+            .push_if_dimension_control_with_parent(condition, kind, inverted, parent)
             .map_err(crate::scan_toks::scratch_command_error)
         {
             let _ = self.command.conditions.pop();
@@ -2022,9 +2025,10 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// Begins an iterative `\ifcsname` predicate in the shared expansion
     /// control lane. The conditional frame is established before any name
     /// character is requested, matching TeX's evaluating-limit semantics.
-    pub(super) fn begin_ifcsname_continuation(
+    pub(super) fn begin_ifcsname_continuation_with_parent(
         &mut self,
         inverted: bool,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), CommandError> {
         let source_line = u32::try_from(self.command.input.current_file_line_number()).unwrap_or(0);
         let condition = self.command.conditions.push_with_inversion(
@@ -2044,7 +2048,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         if let Err(error) = self
             .command
             .scratch
-            .push_ifcsname_control(condition, inverted, previous)
+            .push_ifcsname_control_with_parent(condition, inverted, previous, parent)
             .map_err(crate::scan_toks::scratch_command_error)
         {
             let _ = self.command.conditions.pop();
@@ -2303,6 +2307,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         _command: &crate::CurrentCommand<G>,
         resume: &mut crate::state::PendingExpansionResume,
         suspended: &mut Option<crate::state::PendingExpansionResume>,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), CommandError> {
         match std::mem::replace(resume, crate::state::PendingExpansionResume::Dispatch) {
             crate::state::PendingExpansionResume::Dispatch => {}
@@ -2356,6 +2361,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                 message,
                 &["I'll pretend you didn't say \\unless."],
             )?;
+            if let Some(parent) = parent {
+                self.command
+                    .scratch
+                    .resume_expansion_control_parent(parent)
+                    .map_err(crate::scan_toks::scratch_command_error)?;
+            }
             return Ok(());
         };
         if _kind == ConditionalKind::IfCsName {
@@ -2366,7 +2377,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     crate::processor::expand_render::PrintCommand::from_current(&next),
                 );
             }
-            return self.begin_ifcsname_continuation(true);
+            return self.begin_ifcsname_continuation_with_parent(true, parent);
         }
         if matches!(
             _kind,
@@ -2387,11 +2398,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                 );
             }
             return if matches!(_kind, ConditionalKind::If | ConditionalKind::IfCat) {
-                self.begin_if_compare_continuation(_kind, true)
+                self.begin_if_compare_continuation_with_parent(_kind, true, parent)
             } else if matches!(_kind, ConditionalKind::IfDim | ConditionalKind::IfPdfAbsDim) {
-                self.begin_if_dimension_continuation(_kind, true)
+                self.begin_if_dimension_continuation_with_parent(_kind, true, parent)
             } else {
-                self.begin_if_number_continuation(_kind, true)
+                self.begin_if_number_continuation_with_parent(_kind, true, parent)
             };
         }
         if self.state.int_param(IntParam::TRACING_COMMANDS) > 1

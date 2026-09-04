@@ -12,13 +12,14 @@ use super::expand_render::format_scaled;
 pub(crate) const TOO_MANY_COLOR_STACKS_DIAGNOSTIC: u64 = 0x7064_6663_7300_0495;
 
 impl<G> CommandProcessor<'_, '_, G> {
-    pub(super) fn begin_pdf_ximage_bbox_continuation(
+    pub(super) fn begin_pdf_ximage_bbox_continuation_with_parent(
         &mut self,
         opener: OriginId,
+        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), CommandError> {
         self.command
             .scratch
-            .push_pdf_ximage_bbox_control(opener)
+            .push_pdf_ximage_bbox_control_with_parent(opener, parent)
             .map_err(crate::scan_toks::scratch_command_error)
     }
 

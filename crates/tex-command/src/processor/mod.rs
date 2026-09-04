@@ -175,9 +175,6 @@ pub struct CommandProcessor<'episode, 'admission, G> {
     /// wrapper around the same move-only root.
     expansion_resume: Option<crate::ExpansionWorkKey<G>>,
     resumed_expansion: Option<crate::state::PendingExpansionResume>,
-    /// Exact parent carried by a suspended expanded child. It is consumed by
-    /// the next dispatch and never rediscovered from the current top.
-    resumed_expansion_parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     /// Set only by canonical outer-validity recovery while a scalar macro
     /// matcher owns `ScannerStatus::Matching`.
     /// tex.web §360 has just ended a `\\read` pseudo-file's only line.
@@ -683,7 +680,6 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
             scanner_resume: None,
             expansion_resume: None,
             resumed_expansion: None,
-            resumed_expansion_parent: None,
             read_line_ended: false,
             outer_recovered_while_matching: false,
             outer_recovered_while_absorbing: false,
