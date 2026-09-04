@@ -362,6 +362,14 @@ impl CommandDeliveryFlags {
         self.0 & flag != 0
     }
 
+    const fn delivery(direct_source: bool, has_line: bool, suppress: bool) -> Self {
+        Self(
+            ((direct_source as u8) * Self::DIRECT_SOURCE)
+                | ((has_line as u8) * Self::HAS_DIRECT_SOURCE_LINE)
+                | ((suppress as u8) * Self::SUPPRESS_EXPANDABLE),
+        )
+    }
+
     fn set(&mut self, flag: u8, enabled: bool) {
         if enabled {
             self.0 |= flag;
@@ -621,25 +629,16 @@ impl<G> HotCommand<G> {
                     active_source_role: active_source.map(|source| source.role()),
                     direct_source_line: direct_source_line.unwrap_or(0),
                     alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment::None,
-                    delivery_flags: CommandDeliveryFlags::default(),
+                    delivery_flags: CommandDeliveryFlags::delivery(
+                        direct_source,
+                        direct_source_line.is_some(),
+                        suppress_expandable,
+                    ),
                 },
             },
             command: CommandWord::from_static_word(Meaning::Undefined.encode()),
             font: None,
         };
-        command
-            .token
-            .site
-            .delivery_flags
-            .set(CommandDeliveryFlags::DIRECT_SOURCE, direct_source);
-        command.token.site.delivery_flags.set(
-            CommandDeliveryFlags::HAS_DIRECT_SOURCE_LINE,
-            direct_source_line.is_some(),
-        );
-        command.token.site.delivery_flags.set(
-            CommandDeliveryFlags::SUPPRESS_EXPANDABLE,
-            suppress_expandable,
-        );
         let resolution = state.write_packed_token_command_into(word, &mut command);
         (command, resolution)
     }
@@ -695,21 +694,13 @@ impl<G> HotCommand<G> {
                 active_source_role: active_source.map(|source| source.role()),
                 direct_source_line: direct_source_line.unwrap_or(0),
                 alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment::None,
-                delivery_flags: CommandDeliveryFlags::default(),
+                delivery_flags: CommandDeliveryFlags::delivery(
+                    direct_source,
+                    direct_source_line.is_some(),
+                    suppress_expandable,
+                ),
             },
         };
-        self.token
-            .site
-            .delivery_flags
-            .set(CommandDeliveryFlags::DIRECT_SOURCE, direct_source);
-        self.token.site.delivery_flags.set(
-            CommandDeliveryFlags::HAS_DIRECT_SOURCE_LINE,
-            direct_source_line.is_some(),
-        );
-        self.token.site.delivery_flags.set(
-            CommandDeliveryFlags::SUPPRESS_EXPANDABLE,
-            suppress_expandable,
-        );
         state.write_packed_token_command_into(word, self)
     }
 

@@ -639,25 +639,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<DeliveryStatus, CommandError> {
         let mut hot_destination = None;
         let result = self.raw_next_hot(&mut hot_destination);
-        match result {
-            Ok(status) => {
-                if matches!(
-                    status,
-                    DeliveryStatus::End | DeliveryStatus::ReplayCompleted(_)
-                ) {
-                    hot_destination.take();
-                    destination.take();
-                } else {
-                    *destination = hot_destination.take().map(|command| command.materialize());
-                }
-                Ok(status)
-            }
-            Err(error) => {
-                hot_destination.take();
-                destination.take();
-                Err(error)
-            }
-        }
+        self.finish_hot_delivery(destination, &mut hot_destination, result)
     }
 
     #[inline(always)]
