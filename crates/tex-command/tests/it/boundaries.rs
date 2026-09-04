@@ -192,7 +192,11 @@ fn command_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels
             "raw delivery must not retain the retired {retired} envelope"
         );
     }
-    assert!(expansion.contains("(None, true, false, None)"));
+    assert_eq!(expansion.matches("fn admit_resident_word(").count(), 1);
+    assert_eq!(expansion.matches("fn settle_hot_delivery(").count(), 1);
+    assert_eq!(expansion.matches("fn transition_resident_word(").count(), 1);
+    assert!(!expansion.contains("fn active_control_probe("));
+    assert!(expansion.contains("let active = match active_control"));
     assert!(expansion.contains("HotCommand::from_resolved_delivery"));
     let delivery_entry = expansion
         .split("pub(super) fn expanded_next(")
@@ -215,10 +219,23 @@ fn command_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels
     assert_eq!(delivery_entry.matches("destination.as_mut()").count(), 0);
     assert!(!expansion.contains(".advance_resident_row_into("));
     assert!(!next.contains("fn apply_delivery_rules("));
-    assert!(delivery_entry.contains("roots.alignment.account_literal_brace("));
-    assert!(delivery_entry.contains("resolution.literal_catcode()"));
+    assert!(delivery_entry.contains("self.admit_resident_word("));
+    assert!(delivery_entry.contains("self.settle_hot_delivery("));
+    let admission = expansion
+        .split("fn admit_resident_word(")
+        .nth(1)
+        .and_then(|tail| tail.split("fn settle_hot_delivery(").next())
+        .expect("locate shared resident admission tail");
+    assert!(admission.contains("command.write_resolved_delivery("));
+    assert!(admission.contains("resolution.literal_catcode()"));
+    let settlement = expansion
+        .split("fn settle_hot_delivery(")
+        .nth(1)
+        .and_then(|tail| tail.split("#[cold]").next())
+        .expect("locate shared hot settlement tail");
+    assert!(settlement.contains("roots.alignment.account_literal_brace("));
     assert_eq!(
-        delivery_entry.matches("requires_slow_settlement()").count(),
+        settlement.matches("requires_slow_settlement()").count(),
         1,
         "ordinary delivery has one exceptional-mode branch"
     );
@@ -229,7 +246,6 @@ fn command_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels
     assert!(command.contains("struct CommandWord<G>"));
     assert!(!command.contains("struct EmptyCommand"));
     assert!(!command.contains("ResolvedCommand"));
-    assert!(delivery_entry.contains("command.write_resolved_delivery("));
     assert!(!input_stack.contains("enum InputTopTransition {"));
     assert!(!input_history.contains("InputTopTransition"));
     assert!(!input_history.contains("fn select_resident_top("));
@@ -245,11 +261,7 @@ fn command_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels
         1,
         "resident input words must resolve through one final-slot write"
     );
-    assert_eq!(
-        delivery_entry.matches(".write_resolved_delivery(").count(),
-        1,
-        "all resident variants must share one final-slot admission tail"
-    );
+    assert_eq!(admission.matches(".write_resolved_delivery(").count(), 1);
     assert!(!levels.contains("destination.write_resolved_delivery("));
     for retired in [
         "RawDeliverySlot",
@@ -264,10 +276,7 @@ fn command_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels
     let resident_front = expansion
         .split("fn next_resident_word(&mut self)")
         .nth(1)
-        .and_then(|tail| {
-            tail.split("/// Substitution changes the input stack")
-                .next()
-        })
+        .and_then(|tail| tail.split("fn admit_resident_word(").next())
         .expect("locate resident-word reader");
     let expanded_delivery = delivery_entry;
     assert_eq!(expanded_delivery.matches("'delivery: loop").count(), 1);
@@ -309,14 +318,13 @@ fn command_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels
         );
     }
     assert!(expanded_delivery.contains("break 'fetch literal_catcode;"));
-    assert!(expanded_delivery.contains("resolution.literal_catcode()"));
     assert!(resident_front.contains("argument.advance_delivery("));
     assert!(resident_front.contains("next_word_from_current_frame("));
     let frame_read = expansion
         .split("fn next_word_from_current_frame(")
         .nth(1)
         .and_then(|tail| {
-            tail.split("/// Reads one word from an admitted macro")
+            tail.split("fn next_macro_body_word_from_current_frame<G>(")
                 .next()
         })
         .expect("locate tiny current-frame read");
@@ -701,19 +709,23 @@ fn command_delivery_has_separate_concrete_loops_and_direct_input_mutation() {
         assert!(!delivery_loop.contains("Result<DeliveryStatus, DeliveryFailed>"));
         assert!(!delivery_loop.contains("destination.as_ref()"));
         assert_eq!(delivery_loop.matches("destination.as_mut()").count(), 0);
-        assert!(delivery_loop.contains("roots.alignment.account_literal_brace("));
-        assert!(delivery_loop.contains("resolution.literal_catcode()"));
-        assert_eq!(
-            delivery_loop.matches("requires_slow_settlement()").count(),
-            1,
-            "each concrete loop has one exceptional-mode branch"
-        );
-        assert_eq!(
-            delivery_loop.matches("write_resolved_delivery(").count(),
-            1,
-            "each concrete loop has one final-slot resolution"
-        );
+        assert!(delivery_loop.contains("self.admit_resident_word("));
+        assert!(delivery_loop.contains("self.settle_hot_delivery("));
     }
+    assert_eq!(expansion.matches("fn admit_resident_word(").count(), 1);
+    assert_eq!(expansion.matches("fn settle_hot_delivery(").count(), 1);
+    assert_eq!(expansion.matches("fn transition_resident_word(").count(), 1);
+    assert_eq!(
+        expansion
+            .split("fn settle_hot_delivery(")
+            .nth(1)
+            .and_then(|tail| tail.split("#[cold]").next())
+            .expect("locate shared hot settlement tail")
+            .matches("roots.alignment.account_literal_brace(")
+            .count(),
+        1,
+        "all concrete loops share one alignment settlement"
+    );
     assert!(!format!("{expansion}\n{policies}").contains("DeliveryErrorSlot"));
     assert!(!format!("{expansion}\n{policies}").contains("DeliveryFailed"));
     assert!(!input_history.contains("take_ready_replay_completion"));
@@ -818,7 +830,10 @@ fn command_delivery_has_separate_concrete_loops_and_direct_input_mutation() {
     assert!(!expansion.contains("MacroCallOutcome"));
     assert!(expansion.contains("suppress_first_expansion_trace"));
     assert!(expansion.contains(".store_expansion_frame(pending)"));
-    assert!(expansion.contains("(None, true, false, None)"));
+    assert_eq!(expansion.matches("fn admit_resident_word(").count(), 1);
+    assert_eq!(expansion.matches("fn settle_hot_delivery(").count(), 1);
+    assert!(!expansion.contains("mut fetch"));
+    assert!(expansion.contains("ParentAdmission"));
     assert!(expansion.contains("HotCommand::from_resolved_delivery"));
     assert!(expansion.contains("std::mem::replace(command, CurrentCommand::empty())"));
     assert!(!expansion.contains("fn expand_with_trace("));
@@ -1234,8 +1249,8 @@ fn condition_delivery_and_alignment_lifecycle_remain_on_the_canonical_seams() {
         expansion
             .matches("roots.alignment.account_literal_brace(")
             .count(),
-        4,
-        "three hot loops and the cold synthetic tail share the one alignment authority"
+        1,
+        "all hot loops and the cold synthetic tail share one alignment authority"
     );
     assert!(!next.contains("record_alignment_phase"));
     let classifier = alignment

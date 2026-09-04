@@ -4,7 +4,7 @@ use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, ResolvedMea
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
 use crate::command::{CommandClass, DeliveryStamp, HotCommand};
-use crate::execution_scratch::{ArgumentSetId, ScratchError};
+use crate::execution_scratch::ArgumentSetId;
 use crate::expansion_work::ActiveControlTag;
 use crate::input::{
     BorrowedSourceCharacterRun, InputLevel, InputLevelId, PackedInputFrame, ResidentBoundary,
@@ -27,11 +27,14 @@ const INVALID_SOURCE_CHARACTER_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0345;
 
 enum ResidentColdOutcome {
     Retry,
-    End,
-    ReplayCompleted(crate::CommandReplayEpisode),
-    SyntheticCommand { literal_catcode: Option<Catcode> },
+    Finished(DeliveryStatus),
+    Synthetic { literal_catcode: Option<Catcode> },
 }
-
+#[derive(Clone, Copy)]
+enum ExpandedUntilMode {
+    Protected,
+    PreserveUndefined,
+}
 #[cfg(test)]
 #[derive(Clone, Copy)]
 enum ResidentStorageKind {
@@ -39,7 +42,6 @@ enum ResidentStorageKind {
     MacroBody,
     MacroArgument,
 }
-
 struct CurrentFrameWord {
     word: TokenWord,
     origin: OriginId,
@@ -163,8 +165,6 @@ enum ExpandedCommandAction {
     Expand(ExpansionDispatch),
 }
 
-/// Result of one cold continuation/action dispatch. The inline delivery loop
-/// only needs to choose whether to fetch again or return a finished command.
 enum ExpandedHotDispatch {
     Continue,
     Finished(DeliveryStatus),
@@ -210,16 +210,118 @@ impl<G> ParentAdmission<G> {
     }
 }
 
-#[inline(always)]
-fn active_control_probe<T>(
-    active_control: Option<ActiveControlTag>,
-    expected: ActiveControlTag,
-    probe: impl FnOnce() -> Result<Option<T>, ScratchError>,
-) -> Result<Option<T>, CommandError> {
-    if active_control == Some(expected) {
-        probe().map_err(crate::scan_toks::scratch_command_error)
-    } else {
-        Ok(None)
+#[derive(Clone, Copy)]
+enum ActiveControlSnapshot<G> {
+    Expanded(
+        crate::expansion_work::ExpansionControlView<
+            G,
+            crate::expansion_work::control::SynchronousExpandedControl,
+        >,
+    ),
+    ExpandAfterSync(
+        crate::expansion_work::ExpansionControlView<
+            G,
+            crate::expansion_work::control::SynchronousExpandAfterControl<G>,
+        >,
+    ),
+    IfCompare(
+        crate::expansion_work::ExpansionControlView<
+            G,
+            crate::expansion_work::control::SynchronousIfCompareControl,
+        >,
+    ),
+    IfNumber(
+        crate::expansion_work::ExpansionControlView<
+            G,
+            crate::expansion_work::control::SynchronousIfNumberControl,
+        >,
+    ),
+    IfDimension(
+        crate::expansion_work::ExpansionControlView<
+            G,
+            crate::expansion_work::control::SynchronousIfDimensionControl,
+        >,
+    ),
+    Number(
+        crate::expansion_work::ExpansionControlView<
+            G,
+            crate::expansion_work::control::SynchronousNumberControl,
+        >,
+    ),
+    PdfXImageBBox,
+    FontName,
+    CsName,
+    IfCsName,
+    The(crate::expansion_work::ExpansionControlView<G, crate::expansion_work::control::TheControl>),
+}
+
+impl<G> ActiveControlSnapshot<G> {
+    /// Returns the exact active parent capability when its phase can suspend
+    /// around a nested expanded child. The snapshot already contains the
+    /// typed lane slot, so dispatch does not rediscover the top control.
+    fn awaitable_slot(self) -> Option<crate::expansion_work::ExpansionControlSlot<G>> {
+        match self {
+            Self::ExpandAfterSync(control)
+                if control.phase
+                    == crate::expansion_work::control::SynchronousExpandAfterPhase::NeedSecond =>
+            {
+                Some(control.slot)
+            }
+            Self::IfCompare(control)
+                if matches!(
+                    control.phase,
+                    crate::expansion_work::control::SynchronousIfComparePhase::NeedFirst
+                        | crate::expansion_work::control::SynchronousIfComparePhase::NeedSecond {
+                            ..
+                        }
+                ) => Some(control.slot),
+            Self::IfNumber(control)
+                if matches!(
+                    control.phase,
+                    crate::expansion_work::control::SynchronousIfNumberPhase::NeedLeft
+                        | crate::expansion_work::control::SynchronousIfNumberPhase::Left {
+                            ..
+                        }
+                        | crate::expansion_work::control::SynchronousIfNumberPhase::NeedRelation {
+                            ..
+                        }
+                        | crate::expansion_work::control::SynchronousIfNumberPhase::Right {
+                            ..
+                        }
+                        | crate::expansion_work::control::SynchronousIfNumberPhase::RegisterIndex {
+                            ..
+                        }
+                ) => Some(control.slot),
+            Self::IfDimension(control)
+                if matches!(
+                    control.phase,
+                    crate::expansion_work::control::SynchronousIfDimensionPhase::NeedLeft
+                        | crate::expansion_work::control::SynchronousIfDimensionPhase::Left {
+                            ..
+                        }
+                        | crate::expansion_work::control::SynchronousIfDimensionPhase::NeedRelation {
+                            ..
+                        }
+                        | crate::expansion_work::control::SynchronousIfDimensionPhase::Right {
+                            ..
+                        }
+                        | crate::expansion_work::control::SynchronousIfDimensionPhase::RegisterIndex {
+                            ..
+                        }
+                ) => Some(control.slot),
+            Self::Number(control)
+                if matches!(
+                    control.phase,
+                    crate::expansion_work::control::SynchronousNumberPhase::Need
+                        | crate::expansion_work::control::SynchronousNumberPhase::Accumulating {
+                            ..
+                        }
+                        | crate::expansion_work::control::SynchronousNumberPhase::RegisterIndex {
+                            ..
+                        }
+                ) => Some(control.slot),
+            _ => None,
+        }
     }
 }
 
@@ -646,10 +748,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 active_source,
             });
         }
-
-        // The row cursor is the sole resident freshness proof. Enter that
-        // state only when a real resident word is selected; subsequent
-        // sequential words retain it without a per-delivery publication.
         self.enter_resident_delivery();
 
         Ok(ResidentWordRead::Word {
@@ -666,32 +764,187 @@ impl<G> CommandProcessor<'_, '_, G> {
         })
     }
 
-    /// Substitution changes the input stack and therefore stays on the cold
-    /// transition side of the delivery boundary. The resident reader only
-    /// reports the parameter coordinate; each concrete loop retries its own
-    /// fetch after this one transition.
+    #[inline(always)]
+    fn admit_resident_word(
+        &mut self,
+        selected: ResidentWordRead<G>,
+        destination: &mut Option<HotCommand<G>>,
+    ) -> Result<Option<Catcode>, CommandError> {
+        let ResidentWordRead::Word {
+            word,
+            origin,
+            identity,
+            position,
+            active_source,
+            suppress_expandable,
+            #[cfg(test)]
+            storage_kind,
+            #[cfg(feature = "profiling")]
+            raw_kind,
+        } = selected
+        else {
+            return Err(CommandError::input_invariant());
+        };
+        #[cfg(test)]
+        match storage_kind {
+            ResidentStorageKind::Stored => {
+                self.command.stored_token_advance_counters.command_writes = self
+                    .command
+                    .stored_token_advance_counters
+                    .command_writes
+                    .saturating_add(1);
+                self.command.raw_delivery_path_counters.stored_direct = self
+                    .command
+                    .raw_delivery_path_counters
+                    .stored_direct
+                    .saturating_add(1);
+            }
+            ResidentStorageKind::MacroBody => {
+                self.command.macro_kernel_counters.body_command_writes = self
+                    .command
+                    .macro_kernel_counters
+                    .body_command_writes
+                    .saturating_add(1);
+            }
+            ResidentStorageKind::MacroArgument => {
+                self.command.macro_kernel_counters.argument_command_writes = self
+                    .command
+                    .macro_kernel_counters
+                    .argument_command_writes
+                    .saturating_add(1);
+                self.command
+                    .raw_delivery_path_counters
+                    .macro_argument_direct = self
+                    .command
+                    .raw_delivery_path_counters
+                    .macro_argument_direct
+                    .saturating_add(1);
+            }
+        }
+        let resolution = if let Some(command) = destination.as_mut() {
+            command.write_resolved_delivery(
+                word,
+                origin,
+                identity,
+                position,
+                active_source,
+                false,
+                None,
+                suppress_expandable,
+                self.state,
+            )
+        } else {
+            let (command, resolution) = HotCommand::from_resolved_delivery(
+                word,
+                origin,
+                identity,
+                position,
+                active_source,
+                false,
+                None,
+                suppress_expandable,
+                self.state,
+            );
+            destination.replace(command);
+            resolution
+        };
+        #[cfg(test)]
+        if matches!(storage_kind, ResidentStorageKind::Stored) {
+            self.command.stored_token_advance_counters.meaning_lookups = self
+                .command
+                .stored_token_advance_counters
+                .meaning_lookups
+                .saturating_add(u64::from(resolution.meaning_lookup()));
+        }
+        #[cfg(feature = "profiling")]
+        self.fuel.record_raw_delivery(
+            self.command.delivery_mode.scanner_active(),
+            resolution.meaning_lookup(),
+            raw_kind,
+        );
+        Ok(resolution.literal_catcode())
+    }
+
+    #[inline(always)]
+    fn settle_hot_delivery(
+        &mut self,
+        command: &mut HotCommand<G>,
+        literal_catcode: Option<Catcode>,
+    ) -> Result<(), CommandError> {
+        self.command.delivery_mode.begin_token(
+            command.suppresses_expandable_control_sequence(),
+            command.is_outer(),
+        );
+        self.command.roots.alignment.account_literal_brace(
+            &mut self.command.timeline,
+            command,
+            literal_catcode,
+        );
+        self.advance_delivery_sequence();
+        if command.is_direct_source_delivery() {
+            self.readmit_delivery_stamp(command.delivery_stamp());
+        }
+        if self.command.delivery_mode.requires_slow_settlement() {
+            self.settle_exceptional_delivery(command)?;
+        }
+        Ok(())
+    }
+
     #[cold]
     #[inline(never)]
-    fn retry_parameter_delivery(
+    fn transition_resident_word(
         &mut self,
-        slot: u8,
-        arguments: Option<ArgumentSetId<G>>,
-        active_source: Option<tex_state::packed_input::SourceContext>,
-        command: &mut HotCommand<G>,
-    ) -> Result<(), CommandError> {
-        match self.transition_input_frame(
-            InputFrameTransition::Parameter {
+        selected: ResidentWordRead<G>,
+        destination: &mut Option<HotCommand<G>>,
+        expanded_eof: bool,
+    ) -> Result<ResidentColdOutcome, CommandError> {
+        let transition = match selected {
+            ResidentWordRead::NoResident => InputFrameTransition::Boundary(ResidentBoundary::Empty),
+            ResidentWordRead::Source { resident_index } => {
+                InputFrameTransition::Source { resident_index }
+            }
+            ResidentWordRead::Parameter {
                 slot,
                 arguments,
                 active_source,
+            } => {
+                self.transition_input_frame(
+                    InputFrameTransition::Parameter {
+                        slot,
+                        arguments,
+                        active_source,
+                    },
+                    destination,
+                )?;
+                return Ok(ResidentColdOutcome::Retry);
+            }
+            ResidentWordRead::Exhausted {
+                resident_index,
+                identity,
+            } => InputFrameTransition::ResidentExhausted {
+                resident_index,
+                identity,
             },
-            command,
-        )? {
-            ResidentColdOutcome::Retry => Ok(()),
-            ResidentColdOutcome::End
-            | ResidentColdOutcome::ReplayCompleted(_)
-            | ResidentColdOutcome::SyntheticCommand { .. } => Err(CommandError::input_invariant()),
+            ResidentWordRead::Word { .. } => {
+                return Err(CommandError::input_invariant());
+            }
+        };
+        let outcome = self.transition_input_frame(transition, destination)?;
+        if expanded_eof && matches!(outcome, ResidentColdOutcome::Finished(DeliveryStatus::End)) {
+            if self.finish_number_continuation_at_end()? {
+                return Ok(ResidentColdOutcome::Retry);
+            }
+            if self.finish_pdf_ximage_bbox_continuation_at_end()? {
+                return Ok(ResidentColdOutcome::Retry);
+            }
+            if self.command.scratch.active_control_is_synchronous() {
+                self.command
+                    .scratch
+                    .abort_synchronous_controls()
+                    .map_err(crate::scan_toks::scratch_command_error)?;
+            }
         }
+        Ok(outcome)
     }
 
     /// The concrete TeX82 §341 raw-token loop. It owns one fuel charge for
@@ -712,7 +965,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         destination: &mut Option<HotCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
         let depth = self.command.transient.active_expansion_depth;
-        let mut command = HotCommand::empty();
+        let mut command = None;
         if let Err(failure) = self.charge_command_action() {
             return self.fail_hot_expanded_delivery(destination, depth, failure);
         }
@@ -723,189 +976,30 @@ impl<G> CommandProcessor<'_, '_, G> {
                     return self.fail_hot_expanded_delivery(destination, depth, failure);
                 }
             };
-            match selected {
-                ResidentWordRead::NoResident => {
-                    let cold = match self.transition_input_frame(
-                        InputFrameTransition::Boundary(ResidentBoundary::Empty),
-                        &mut command,
-                    ) {
-                        Ok(cold) => cold,
-                        Err(failure) => {
-                            return self.fail_hot_expanded_delivery(destination, depth, failure);
-                        }
-                    };
-                    match cold {
-                        ResidentColdOutcome::Retry => continue 'fetch,
-                        ResidentColdOutcome::End => {
-                            destination.take();
-                            return Ok(DeliveryStatus::End);
-                        }
-                        ResidentColdOutcome::ReplayCompleted(episode) => {
-                            destination.take();
-                            return Ok(DeliveryStatus::ReplayCompleted(episode));
-                        }
-                        ResidentColdOutcome::SyntheticCommand { literal_catcode } => {
-                            break 'fetch literal_catcode;
-                        }
-                    }
+            if matches!(selected, ResidentWordRead::Word { .. }) {
+                break 'fetch self.admit_resident_word(selected, &mut command)?;
+            }
+            let cold = match self.transition_resident_word(selected, &mut command, false) {
+                Ok(cold) => cold,
+                Err(failure) => {
+                    return self.fail_hot_expanded_delivery(destination, depth, failure);
                 }
-                ResidentWordRead::Source { resident_index } => {
-                    let cold = match self.transition_input_frame(
-                        InputFrameTransition::Source { resident_index },
-                        &mut command,
-                    ) {
-                        Ok(cold) => cold,
-                        Err(failure) => {
-                            return self.fail_hot_expanded_delivery(destination, depth, failure);
-                        }
-                    };
-                    match cold {
-                        ResidentColdOutcome::Retry => continue 'fetch,
-                        ResidentColdOutcome::End => {
-                            destination.take();
-                            return Ok(DeliveryStatus::End);
-                        }
-                        ResidentColdOutcome::ReplayCompleted(episode) => {
-                            destination.take();
-                            return Ok(DeliveryStatus::ReplayCompleted(episode));
-                        }
-                        ResidentColdOutcome::SyntheticCommand { literal_catcode } => {
-                            break 'fetch literal_catcode;
-                        }
-                    }
+            };
+            match cold {
+                ResidentColdOutcome::Retry => continue 'fetch,
+                ResidentColdOutcome::Finished(status) => {
+                    destination.take();
+                    return Ok(status);
                 }
-                ResidentWordRead::Parameter {
-                    slot,
-                    arguments,
-                    active_source,
-                } => {
-                    self.retry_parameter_delivery(slot, arguments, active_source, &mut command)?;
-                    continue 'fetch;
-                }
-                ResidentWordRead::Exhausted {
-                    resident_index,
-                    identity,
-                } => {
-                    let cold = match self.transition_input_frame(
-                        InputFrameTransition::ResidentExhausted {
-                            resident_index,
-                            identity,
-                        },
-                        &mut command,
-                    ) {
-                        Ok(cold) => cold,
-                        Err(failure) => {
-                            return self.fail_hot_expanded_delivery(destination, depth, failure);
-                        }
-                    };
-                    match cold {
-                        ResidentColdOutcome::Retry => continue 'fetch,
-                        ResidentColdOutcome::End => {
-                            destination.take();
-                            return Ok(DeliveryStatus::End);
-                        }
-                        ResidentColdOutcome::ReplayCompleted(episode) => {
-                            destination.take();
-                            return Ok(DeliveryStatus::ReplayCompleted(episode));
-                        }
-                        ResidentColdOutcome::SyntheticCommand { literal_catcode } => {
-                            break 'fetch literal_catcode;
-                        }
-                    }
-                }
-                ResidentWordRead::Word {
-                    word,
-                    origin,
-                    identity,
-                    position,
-                    active_source,
-                    suppress_expandable,
-                    #[cfg(test)]
-                    storage_kind,
-                    #[cfg(feature = "profiling")]
-                    raw_kind,
-                } => {
-                    #[cfg(test)]
-                    match storage_kind {
-                        ResidentStorageKind::Stored => {
-                            self.command.stored_token_advance_counters.command_writes = self
-                                .command
-                                .stored_token_advance_counters
-                                .command_writes
-                                .saturating_add(1);
-                            self.command.raw_delivery_path_counters.stored_direct = self
-                                .command
-                                .raw_delivery_path_counters
-                                .stored_direct
-                                .saturating_add(1);
-                        }
-                        ResidentStorageKind::MacroBody => {
-                            self.command.macro_kernel_counters.body_command_writes = self
-                                .command
-                                .macro_kernel_counters
-                                .body_command_writes
-                                .saturating_add(1);
-                        }
-                        ResidentStorageKind::MacroArgument => {
-                            self.command.macro_kernel_counters.argument_command_writes = self
-                                .command
-                                .macro_kernel_counters
-                                .argument_command_writes
-                                .saturating_add(1);
-                            self.command
-                                .raw_delivery_path_counters
-                                .macro_argument_direct = self
-                                .command
-                                .raw_delivery_path_counters
-                                .macro_argument_direct
-                                .saturating_add(1);
-                        }
-                    }
-                    let resolution = command.write_resolved_delivery(
-                        word,
-                        origin,
-                        identity,
-                        position,
-                        active_source,
-                        false,
-                        None,
-                        suppress_expandable,
-                        self.state,
-                    );
-                    #[cfg(test)]
-                    if matches!(storage_kind, ResidentStorageKind::Stored) {
-                        self.command.stored_token_advance_counters.meaning_lookups = self
-                            .command
-                            .stored_token_advance_counters
-                            .meaning_lookups
-                            .saturating_add(u64::from(resolution.meaning_lookup()));
-                    }
-                    #[cfg(feature = "profiling")]
-                    self.fuel.record_raw_delivery(
-                        self.command.delivery_mode.scanner_active(),
-                        resolution.meaning_lookup(),
-                        raw_kind,
-                    );
-                    break 'fetch resolution.literal_catcode();
+                ResidentColdOutcome::Synthetic { literal_catcode } => {
+                    break 'fetch literal_catcode;
                 }
             }
         };
-        self.command.delivery_mode.begin_token(
-            command.suppresses_expandable_control_sequence(),
-            command.is_outer(),
-        );
-        self.command.roots.alignment.account_literal_brace(
-            &mut self.command.timeline,
-            &mut command,
-            literal_catcode,
-        );
-        self.advance_delivery_sequence();
-        if command.is_direct_source_delivery() {
-            self.readmit_delivery_stamp(command.delivery_stamp());
-        }
-        if self.command.delivery_mode.requires_slow_settlement()
-            && let Err(failure) = self.settle_exceptional_delivery(&mut command)
-        {
+        let mut command = command
+            .take()
+            .expect("resident admission initializes the hot command");
+        if let Err(failure) = self.settle_hot_delivery(&mut command, literal_catcode) {
             return self.fail_hot_expanded_delivery(destination, depth, failure);
         }
         *destination = Some(command);
@@ -964,7 +1058,6 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// The concrete TeX82 §380 `get_x_token` loop. Expansion remains in the
     /// continuously occupied hot command; only scanner/diagnostic/resource
     /// boundaries materialize or park it.
-    #[inline(always)]
     fn expanded_next_hot(
         &mut self,
         destination: &mut Option<HotCommand<G>>,
@@ -985,11 +1078,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .scanner_resume
                 .as_ref()
                 .is_some_and(crate::ScannerFrameKey::is_expansion);
-        let (mut command, mut fetch, mut delivery_expanded, mut carried_parent) = if resuming {
+        let (mut command, mut delivery_expanded, mut carried_parent) = if resuming {
             match self.resume_expanded_delivery(destination.take()) {
                 Ok(resumed) => (
                     Some(resumed.command),
-                    false,
                     resumed.delivery_expanded,
                     resumed.parent.map(ParentAdmission::Awaiting),
                 ),
@@ -998,14 +1090,18 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
             }
         } else if let Some(command) = destination.take() {
-            (Some(command), false, false, None)
+            (Some(command), false, None)
         } else {
-            (None, true, false, None)
+            (None, false, None)
         };
         let mut initial_action = initial_action;
         let mut suppress_first_expansion_trace = delivery_expanded;
         let status = 'delivery: loop {
-            if fetch {
+            if command.is_none() {
+                debug_assert!(
+                    destination.is_none(),
+                    "the caller-owned hot command must be empty before a resident fetch"
+                );
                 if let Err(failure) = self.charge_command_action() {
                     return self.fail_hot_expanded_delivery(destination, depth, failure);
                 }
@@ -1016,292 +1112,63 @@ impl<G> CommandProcessor<'_, '_, G> {
                             return self.fail_hot_expanded_delivery(destination, depth, failure);
                         }
                     };
-                    match selected {
-                        ResidentWordRead::NoResident => {
-                            let cold = match self.transition_input_frame(
-                                InputFrameTransition::Boundary(ResidentBoundary::Empty),
-                                command.get_or_insert_with(HotCommand::empty),
-                            ) {
-                                Ok(cold) => cold,
-                                Err(failure) => {
-                                    return self.fail_hot_expanded_delivery(
-                                        destination,
-                                        depth,
-                                        failure,
-                                    );
-                                }
-                            };
-                            match cold {
-                                ResidentColdOutcome::Retry => continue 'fetch,
-                                ResidentColdOutcome::End => {
-                                    if self.finish_number_continuation_at_end()? {
-                                        continue 'fetch;
-                                    }
-                                    if self.finish_pdf_ximage_bbox_continuation_at_end()? {
-                                        continue 'fetch;
-                                    }
-                                    if self.command.scratch.active_control_is_synchronous() {
-                                        self.command
-                                            .scratch
-                                            .abort_synchronous_controls()
-                                            .map_err(crate::scan_toks::scratch_command_error)?;
-                                    }
-                                    break 'delivery DeliveryStatus::End;
-                                }
-                                ResidentColdOutcome::ReplayCompleted(episode) => {
-                                    break 'delivery DeliveryStatus::ReplayCompleted(episode);
-                                }
-                                ResidentColdOutcome::SyntheticCommand { literal_catcode } => {
-                                    break 'fetch literal_catcode;
-                                }
-                            }
+                    if matches!(selected, ResidentWordRead::Word { .. }) {
+                        break 'fetch self.admit_resident_word(selected, &mut command)?;
+                    }
+                    let cold = match self.transition_resident_word(selected, &mut command, true) {
+                        Ok(cold) => cold,
+                        Err(failure) => {
+                            return self.fail_hot_expanded_delivery(destination, depth, failure);
                         }
-                        ResidentWordRead::Source { resident_index } => {
-                            let cold = match self.transition_input_frame(
-                                InputFrameTransition::Source { resident_index },
-                                command.get_or_insert_with(HotCommand::empty),
-                            ) {
-                                Ok(cold) => cold,
-                                Err(failure) => {
-                                    return self.fail_hot_expanded_delivery(
-                                        destination,
-                                        depth,
-                                        failure,
-                                    );
-                                }
-                            };
-                            match cold {
-                                ResidentColdOutcome::Retry => continue 'fetch,
-                                ResidentColdOutcome::End => {
-                                    if self.finish_number_continuation_at_end()? {
-                                        continue 'fetch;
-                                    }
-                                    if self.finish_pdf_ximage_bbox_continuation_at_end()? {
-                                        continue 'fetch;
-                                    }
-                                    if self.command.scratch.active_control_is_synchronous() {
-                                        self.command
-                                            .scratch
-                                            .abort_synchronous_controls()
-                                            .map_err(crate::scan_toks::scratch_command_error)?;
-                                    }
-                                    break 'delivery DeliveryStatus::End;
-                                }
-                                ResidentColdOutcome::ReplayCompleted(episode) => {
-                                    break 'delivery DeliveryStatus::ReplayCompleted(episode);
-                                }
-                                ResidentColdOutcome::SyntheticCommand { literal_catcode } => {
-                                    break 'fetch literal_catcode;
-                                }
-                            }
-                        }
-                        ResidentWordRead::Parameter {
-                            slot,
-                            arguments,
-                            active_source,
-                        } => {
-                            self.retry_parameter_delivery(
-                                slot,
-                                arguments,
-                                active_source,
-                                command.get_or_insert_with(HotCommand::empty),
-                            )?;
-                            continue 'fetch;
-                        }
-                        ResidentWordRead::Exhausted {
-                            resident_index,
-                            identity,
-                        } => {
-                            let cold = match self.transition_input_frame(
-                                InputFrameTransition::ResidentExhausted {
-                                    resident_index,
-                                    identity,
-                                },
-                                command.get_or_insert_with(HotCommand::empty),
-                            ) {
-                                Ok(cold) => cold,
-                                Err(failure) => {
-                                    return self.fail_hot_expanded_delivery(
-                                        destination,
-                                        depth,
-                                        failure,
-                                    );
-                                }
-                            };
-                            match cold {
-                                ResidentColdOutcome::Retry => continue 'fetch,
-                                ResidentColdOutcome::End => {
-                                    if self.finish_number_continuation_at_end()? {
-                                        continue 'fetch;
-                                    }
-                                    if self.finish_pdf_ximage_bbox_continuation_at_end()? {
-                                        continue 'fetch;
-                                    }
-                                    if self.command.scratch.active_control_is_synchronous() {
-                                        self.command
-                                            .scratch
-                                            .abort_synchronous_controls()
-                                            .map_err(crate::scan_toks::scratch_command_error)?;
-                                    }
-                                    break 'delivery DeliveryStatus::End;
-                                }
-                                ResidentColdOutcome::ReplayCompleted(episode) => {
-                                    break 'delivery DeliveryStatus::ReplayCompleted(episode);
-                                }
-                                ResidentColdOutcome::SyntheticCommand { literal_catcode } => {
-                                    break 'fetch literal_catcode;
-                                }
-                            }
-                        }
-                        ResidentWordRead::Word {
-                            word,
-                            origin,
-                            identity,
-                            position,
-                            active_source,
-                            suppress_expandable,
-                            #[cfg(test)]
-                            storage_kind,
-                            #[cfg(feature = "profiling")]
-                            raw_kind,
-                        } => {
-                            #[cfg(test)]
-                            match storage_kind {
-                                ResidentStorageKind::Stored => {
-                                    self.command.stored_token_advance_counters.command_writes =
-                                        self.command
-                                            .stored_token_advance_counters
-                                            .command_writes
-                                            .saturating_add(1);
-                                    self.command.raw_delivery_path_counters.stored_direct = self
-                                        .command
-                                        .raw_delivery_path_counters
-                                        .stored_direct
-                                        .saturating_add(1);
-                                }
-                                ResidentStorageKind::MacroBody => {
-                                    self.command.macro_kernel_counters.body_command_writes = self
-                                        .command
-                                        .macro_kernel_counters
-                                        .body_command_writes
-                                        .saturating_add(1);
-                                }
-                                ResidentStorageKind::MacroArgument => {
-                                    self.command.macro_kernel_counters.argument_command_writes =
-                                        self.command
-                                            .macro_kernel_counters
-                                            .argument_command_writes
-                                            .saturating_add(1);
-                                    self.command
-                                        .raw_delivery_path_counters
-                                        .macro_argument_direct = self
-                                        .command
-                                        .raw_delivery_path_counters
-                                        .macro_argument_direct
-                                        .saturating_add(1);
-                                }
-                            }
-                            let resolution = if let Some(command) = command.as_mut() {
-                                command.write_resolved_delivery(
-                                    word,
-                                    origin,
-                                    identity,
-                                    position,
-                                    active_source,
-                                    false,
-                                    None,
-                                    suppress_expandable,
-                                    self.state,
-                                )
-                            } else {
-                                let (resolved, resolution) = HotCommand::from_resolved_delivery(
-                                    word,
-                                    origin,
-                                    identity,
-                                    position,
-                                    active_source,
-                                    false,
-                                    None,
-                                    suppress_expandable,
-                                    self.state,
-                                );
-                                command.replace(resolved);
-                                resolution
-                            };
-                            #[cfg(test)]
-                            if matches!(storage_kind, ResidentStorageKind::Stored) {
-                                self.command.stored_token_advance_counters.meaning_lookups = self
-                                    .command
-                                    .stored_token_advance_counters
-                                    .meaning_lookups
-                                    .saturating_add(u64::from(resolution.meaning_lookup()));
-                            }
-                            #[cfg(feature = "profiling")]
-                            self.fuel.record_raw_delivery(
-                                self.command.delivery_mode.scanner_active(),
-                                resolution.meaning_lookup(),
-                                raw_kind,
-                            );
-                            break 'fetch resolution.literal_catcode();
+                    };
+                    match cold {
+                        ResidentColdOutcome::Retry => continue 'fetch,
+                        ResidentColdOutcome::Finished(status) => break 'delivery status,
+                        ResidentColdOutcome::Synthetic { literal_catcode } => {
+                            break 'fetch literal_catcode;
                         }
                     }
                 };
                 let command_ref = command
                     .as_mut()
                     .expect("resident delivery initializes the hot command");
-                self.command.delivery_mode.begin_token(
-                    command_ref.suppresses_expandable_control_sequence(),
-                    command_ref.is_outer(),
-                );
-                self.command.roots.alignment.account_literal_brace(
-                    &mut self.command.timeline,
-                    command_ref,
-                    literal_catcode,
-                );
-                self.advance_delivery_sequence();
-                if command_ref.is_direct_source_delivery() {
-                    self.readmit_delivery_stamp(command_ref.delivery_stamp());
-                }
-                if self.command.delivery_mode.requires_slow_settlement()
-                    && let Err(failure) = self.settle_exceptional_delivery(command_ref)
-                {
+                if let Err(failure) = self.settle_hot_delivery(command_ref, literal_catcode) {
                     return self.fail_hot_expanded_delivery(destination, depth, failure);
                 }
             }
 
-            let command = command
+            let hot_command = command
                 .as_mut()
                 .expect("resident delivery initializes the hot command");
             let action = initial_action
                 .take()
-                .unwrap_or_else(|| classify_hot_command(command));
+                .unwrap_or_else(|| classify_hot_command(hot_command));
             let active_control = self.command.scratch.active_control_tag();
             if active_control.is_none() {
                 match action {
                     ExpandedCommandAction::Return => {
-                        break self.finish_expanded_command(command, delivery_expanded);
+                        break self.finish_expanded_command(hot_command, delivery_expanded);
                     }
                     ExpandedCommandAction::EndTemplate => {
                         if matches!(
-                            command.alignment_adjustment(),
+                            hot_command.alignment_adjustment(),
                             crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
                         ) {
                             break DeliveryStatus::AlignmentEndTemplate;
                         }
-                        command.convert_end_template_to_endv(self.state.frozen_endv_token());
-                        break self.finish_expanded_command(command, delivery_expanded);
+                        hot_command.convert_end_template_to_endv(self.state.frozen_endv_token());
+                        break self.finish_expanded_command(hot_command, delivery_expanded);
                     }
                     ExpandedCommandAction::Expand(ExpansionDispatch::Macro) => {
                         // Parameterless and ordinary macro chains are the
                         // common expandable path. Keep their compact owner
                         // in this loop; no continuation dispatcher or rich
-                        // HotCommand -> CurrentCommand -> HotCommand bridge
-                        // is needed while the macro body is installed.
+                        // command bridge is needed while the macro body is installed.
                         delivery_expanded = true;
                         let report_trace = !std::mem::take(&mut suppress_first_expansion_trace);
                         let mut command_parked = false;
                         if let Err(failure) = self.expand_classified_occupied(
-                            command,
+                            hot_command,
                             ExpansionDispatch::Macro,
                             report_trace,
                             delivery_expanded,
@@ -1320,7 +1187,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 }
                             }
                         }
-                        fetch = true;
+                        debug_assert!(command.is_some(), "macro expansion consumes its hot owner");
+                        command.take();
                         continue;
                     }
                     ExpandedCommandAction::Expand(_) => {}
@@ -1328,13 +1196,13 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
             #[cfg(debug_assertions)]
             let dispatch_progress_before = (
-                fetch,
                 self.command.top_input_level_identity(),
                 active_control,
                 self.command.scratch.expansion_control_progress(),
             );
+            let mut command_parked = false;
             match self.dispatch_expanded_action(
-                command,
+                hot_command,
                 action,
                 active_control,
                 &mut delivery_expanded,
@@ -1342,14 +1210,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                 &mut carried_parent,
                 destination,
                 depth,
+                &mut command_parked,
             )? {
                 ExpandedHotDispatch::Continue => {
                     #[cfg(debug_assertions)]
                     {
-                        let (had_fetch, input_before, control_before, epoch_before) =
-                            dispatch_progress_before;
-                        let progress = had_fetch
-                            || matches!(action, ExpandedCommandAction::Expand(_))
+                        let (input_before, control_before, epoch_before) = dispatch_progress_before;
+                        let progress = matches!(action, ExpandedCommandAction::Expand(_))
                             || input_before != self.command.top_input_level_identity()
                             || control_before != self.command.scratch.active_control_tag()
                             || epoch_before != self.command.scratch.expansion_control_progress()
@@ -1364,7 +1231,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                             "expanded dispatcher returned Continue without consuming input, settling a control, emitting, or parking"
                         );
                     }
-                    fetch = true;
+                    debug_assert!(
+                        command.is_some(),
+                        "continuation dispatch consumes its caller-owned hot command"
+                    );
+                    command.take();
                 }
                 ExpandedHotDispatch::Finished(status) => break status,
             }
@@ -1398,6 +1269,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         carried_parent: &mut Option<ParentAdmission<G>>,
         destination: &mut Option<HotCommand<G>>,
         depth: u32,
+        command_parked: &mut bool,
     ) -> Result<ExpandedHotDispatch, CommandError> {
         // e-TeX `\expanded` is a balanced expanded-token collector.  Its
         // body stays in the same hot delivery loop: expandable commands
@@ -1405,13 +1277,77 @@ impl<G> CommandProcessor<'_, '_, G> {
         // words are appended to the attempt-owned buffer here.  This is
         // deliberately before the other operand controls so a nested
         // `\the`/conditional can use the same LIFO lane.
-        let expanded_control =
-            active_control_probe(active_control, ActiveControlTag::Expanded, || {
-                self.command.scratch.top_expanded_control()
-            })?;
-        if active_control.is_some()
-            && let Some(control) = expanded_control
-        {
+        let active = match active_control {
+            None => None,
+            Some(ActiveControlTag::Expanded) => self
+                .command
+                .scratch
+                .top_expanded_control()
+                .map_err(crate::scan_toks::scratch_command_error)?
+                .map(ActiveControlSnapshot::Expanded),
+            Some(ActiveControlTag::ExpandAfterSync) => self
+                .command
+                .scratch
+                .top_expandafter_control()
+                .map_err(crate::scan_toks::scratch_command_error)?
+                .map(ActiveControlSnapshot::ExpandAfterSync),
+            Some(ActiveControlTag::IfCompare) => self
+                .command
+                .scratch
+                .top_if_compare_control()
+                .map_err(crate::scan_toks::scratch_command_error)?
+                .map(ActiveControlSnapshot::IfCompare),
+            Some(ActiveControlTag::IfNumber) => self
+                .command
+                .scratch
+                .top_if_number_control()
+                .map_err(crate::scan_toks::scratch_command_error)?
+                .map(ActiveControlSnapshot::IfNumber),
+            Some(ActiveControlTag::IfDimension) => self
+                .command
+                .scratch
+                .top_if_dimension_control()
+                .map_err(crate::scan_toks::scratch_command_error)?
+                .map(ActiveControlSnapshot::IfDimension),
+            Some(ActiveControlTag::Number) => self
+                .command
+                .scratch
+                .top_number_control()
+                .map_err(crate::scan_toks::scratch_command_error)?
+                .map(ActiveControlSnapshot::Number),
+            Some(ActiveControlTag::PdfXImageBBox) => self
+                .command
+                .scratch
+                .top_pdf_ximage_bbox_control()
+                .map_err(crate::scan_toks::scratch_command_error)?
+                .map(|_| ActiveControlSnapshot::PdfXImageBBox),
+            Some(ActiveControlTag::FontName) => self
+                .command
+                .scratch
+                .top_fontname_control()
+                .map_err(crate::scan_toks::scratch_command_error)?
+                .map(|_| ActiveControlSnapshot::FontName),
+            Some(ActiveControlTag::CsName) => self
+                .command
+                .scratch
+                .top_csname_control()
+                .map_err(crate::scan_toks::scratch_command_error)?
+                .map(|_| ActiveControlSnapshot::CsName),
+            Some(ActiveControlTag::IfCsName) => self
+                .command
+                .scratch
+                .top_ifcsname_control()
+                .map_err(crate::scan_toks::scratch_command_error)?
+                .map(|_| ActiveControlSnapshot::IfCsName),
+            Some(ActiveControlTag::The) => self
+                .command
+                .scratch
+                .top_the_control()
+                .map_err(crate::scan_toks::scratch_command_error)?
+                .map(ActiveControlSnapshot::The),
+            Some(_) => None,
+        };
+        if let Some(ActiveControlSnapshot::Expanded(control)) = active {
             match control.phase {
                 crate::expansion_work::control::SynchronousExpandedPhase::NeedOpening => {
                     let is_space =
@@ -1478,7 +1414,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             ExpandablePrimitive::Expanded,
         )) = action
         {
-            self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
+            self.run_nested_expansion_with_parent(active, carried_parent, |this, parent| {
                 this.begin_expanded_continuation_with_parent(command.origin(), parent)
             })?;
             return Ok(ExpandedHotDispatch::Continue);
@@ -1491,10 +1427,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
             ExpandablePrimitive::Unexpanded,
         )) = action
-            && let Some(control) = expanded_control
+            && let Some(ActiveControlSnapshot::Expanded(control)) = active
             && control.kind == crate::expansion_work::control::SynchronousExpandedKind::Expanded
         {
-            self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
+            self.run_nested_expansion_with_parent(active, carried_parent, |this, parent| {
                 this.begin_unexpanded_continuation_with_parent(
                     command.origin(),
                     control.writer,
@@ -1510,10 +1446,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
             ExpandablePrimitive::Detokenize,
         )) = action
-            && let Some(control) = expanded_control
+            && let Some(ActiveControlSnapshot::Expanded(control)) = active
             && control.kind == crate::expansion_work::control::SynchronousExpandedKind::Expanded
         {
-            self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
+            self.run_nested_expansion_with_parent(active, carried_parent, |this, parent| {
                 this.begin_detokenize_continuation_with_parent(
                     command.origin(),
                     control.writer,
@@ -1528,11 +1464,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         // then lets every nested expansion continue through this same
         // delivery loop. Once that second stream settles on a returned
         // command, backup/replay is performed at the semantic boundary.
-        let expandafter_control =
-            active_control_probe(active_control, ActiveControlTag::ExpandAfterSync, || {
-                self.command.scratch.top_expandafter_control()
-            })?;
-        if let Some(control) = expandafter_control {
+        if let Some(ActiveControlSnapshot::ExpandAfterSync(control)) = active {
             match control.phase {
                 crate::expansion_work::control::SynchronousExpandAfterPhase::NeedFirst => {
                     self.command
@@ -1555,11 +1487,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         // only their compact scalar projection in the control lane; an
         // operand that is itself expandable is allowed to run normally
         // and returns here when its result settles.
-        let if_compare_control =
-            active_control_probe(active_control, ActiveControlTag::IfCompare, || {
-                self.command.scratch.top_if_compare_control()
-            })?;
-        if let Some(control) = if_compare_control {
+        if let Some(ActiveControlSnapshot::IfCompare(control)) = active {
             match control.phase {
                 crate::expansion_work::control::SynchronousIfComparePhase::NeedFirst => {
                     if matches!(action, ExpandedCommandAction::Return) {
@@ -1595,11 +1523,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         // operands remain ordinary delivery actions and return to this
         // compact phase instead of retaining a scalar scanner frame on
         // the Rust stack.
-        let if_number_control =
-            active_control_probe(active_control, ActiveControlTag::IfNumber, || {
-                self.command.scratch.top_if_number_control()
-            })?;
-        if let Some(control) = if_number_control {
+        if let Some(ActiveControlSnapshot::IfNumber(control)) = active {
             let nested_delimiter = matches!(
                 action,
                 ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
@@ -1636,11 +1560,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
         }
 
-        let if_dimension_control =
-            active_control_probe(active_control, ActiveControlTag::IfDimension, || {
-                self.command.scratch.top_if_dimension_control()
-            })?;
-        if let Some(control) = if_dimension_control {
+        if let Some(ActiveControlSnapshot::IfDimension(control)) = active {
             let nested_delimiter = matches!(
                 action,
                 ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
@@ -1681,11 +1601,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
         }
 
-        let number_control =
-            active_control_probe(active_control, ActiveControlTag::Number, || {
-                self.command.scratch.top_number_control()
-            })?;
-        if let Some(control) = number_control
+        if let Some(ActiveControlSnapshot::Number(control)) = active
             && matches!(
                 action,
                 ExpandedCommandAction::Return
@@ -1706,11 +1622,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             return Ok(ExpandedHotDispatch::Continue);
         }
 
-        let ximage_bbox_control =
-            active_control_probe(active_control, ActiveControlTag::PdfXImageBBox, || {
-                self.command.scratch.top_pdf_ximage_bbox_control()
-            })?;
-        if ximage_bbox_control.is_some()
+        if matches!(active, Some(ActiveControlSnapshot::PdfXImageBBox))
             && matches!(
                 action,
                 ExpandedCommandAction::Return
@@ -1730,11 +1642,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         // opener in the compact control lane so nested conversions are
         // reduced by this loop rather than by recursively re-entering a
         // font scanner.
-        let fontname_control =
-            active_control_probe(active_control, ActiveControlTag::FontName, || {
-                self.command.scratch.top_fontname_control()
-            })?;
-        if fontname_control.is_some() {
+        if matches!(active, Some(ActiveControlSnapshot::FontName)) {
             match action {
                 ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
                     primitive @ (ExpandablePrimitive::FontName
@@ -1745,6 +1653,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     match primitive {
                         ExpandablePrimitive::FontName => {
                             self.run_nested_expansion_with_parent(
+                                active,
                                 carried_parent,
                                 |this, parent| {
                                     this.begin_fontname_continuation_with_parent(
@@ -1756,6 +1665,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         }
                         ExpandablePrimitive::PdfFontSize => {
                             self.run_nested_expansion_with_parent(
+                                active,
                                 carried_parent,
                                 |this, parent| {
                                     this.begin_pdf_font_size_continuation_with_parent(
@@ -1767,6 +1677,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         }
                         ExpandablePrimitive::PdfFontName => {
                             self.run_nested_expansion_with_parent(
+                                active,
                                 carried_parent,
                                 |this, parent| {
                                     this.begin_pdf_font_name_continuation_with_parent(
@@ -1778,6 +1689,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         }
                         ExpandablePrimitive::PdfFontObjectNumber => {
                             self.run_nested_expansion_with_parent(
+                                active,
                                 carried_parent,
                                 |this, parent| {
                                     this.begin_pdf_font_object_number_continuation_with_parent(
@@ -1826,7 +1738,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 crate::conditionals::ConditionalKind::If
                     | crate::conditionals::ConditionalKind::IfCat
             ) {
-                self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
+                self.run_nested_expansion_with_parent(active, carried_parent, |this, parent| {
                     this.begin_if_compare_continuation_with_parent(kind, false, parent)
                 })?;
             } else if matches!(
@@ -1834,11 +1746,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                 crate::conditionals::ConditionalKind::IfDim
                     | crate::conditionals::ConditionalKind::IfPdfAbsDim
             ) {
-                self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
+                self.run_nested_expansion_with_parent(active, carried_parent, |this, parent| {
                     this.begin_if_dimension_continuation_with_parent(kind, false, parent)
                 })?;
             } else {
-                self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
+                self.run_nested_expansion_with_parent(active, carried_parent, |this, parent| {
                     this.begin_if_number_continuation_with_parent(kind, false, parent)
                 })?;
             }
@@ -1854,27 +1766,49 @@ impl<G> CommandProcessor<'_, '_, G> {
         {
             match primitive {
                 ExpandablePrimitive::FontName => {
-                    self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
-                        this.begin_fontname_continuation_with_parent(command.origin(), parent)
-                    })?;
+                    self.run_nested_expansion_with_parent(
+                        active,
+                        carried_parent,
+                        |this, parent| {
+                            this.begin_fontname_continuation_with_parent(command.origin(), parent)
+                        },
+                    )?;
                 }
                 ExpandablePrimitive::PdfFontSize => {
-                    self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
-                        this.begin_pdf_font_size_continuation_with_parent(command.origin(), parent)
-                    })?;
+                    self.run_nested_expansion_with_parent(
+                        active,
+                        carried_parent,
+                        |this, parent| {
+                            this.begin_pdf_font_size_continuation_with_parent(
+                                command.origin(),
+                                parent,
+                            )
+                        },
+                    )?;
                 }
                 ExpandablePrimitive::PdfFontName => {
-                    self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
-                        this.begin_pdf_font_name_continuation_with_parent(command.origin(), parent)
-                    })?;
+                    self.run_nested_expansion_with_parent(
+                        active,
+                        carried_parent,
+                        |this, parent| {
+                            this.begin_pdf_font_name_continuation_with_parent(
+                                command.origin(),
+                                parent,
+                            )
+                        },
+                    )?;
                 }
                 ExpandablePrimitive::PdfFontObjectNumber => {
-                    self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
-                        this.begin_pdf_font_object_number_continuation_with_parent(
-                            command.origin(),
-                            parent,
-                        )
-                    })?;
+                    self.run_nested_expansion_with_parent(
+                        active,
+                        carried_parent,
+                        |this, parent| {
+                            this.begin_pdf_font_object_number_continuation_with_parent(
+                                command.origin(),
+                                parent,
+                            )
+                        },
+                    )?;
                 }
                 _ => unreachable!("font primitive branch validates its primitive"),
             }
@@ -1890,27 +1824,52 @@ impl<G> CommandProcessor<'_, '_, G> {
         {
             match primitive {
                 ExpandablePrimitive::PdfInsertHeight => {
-                    self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
-                        this.begin_pdf_insert_height_continuation_with_parent(
-                            command.origin(),
-                            parent,
-                        )
-                    })?;
+                    self.run_nested_expansion_with_parent(
+                        active,
+                        carried_parent,
+                        |this, parent| {
+                            this.begin_pdf_insert_height_continuation_with_parent(
+                                command.origin(),
+                                parent,
+                            )
+                        },
+                    )?;
                 }
                 ExpandablePrimitive::PdfXFormName => {
-                    self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
-                        this.begin_pdf_xform_name_continuation_with_parent(command.origin(), parent)
-                    })?;
+                    self.run_nested_expansion_with_parent(
+                        active,
+                        carried_parent,
+                        |this, parent| {
+                            this.begin_pdf_xform_name_continuation_with_parent(
+                                command.origin(),
+                                parent,
+                            )
+                        },
+                    )?;
                 }
                 ExpandablePrimitive::PdfPageRef => {
-                    self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
-                        this.begin_pdf_page_ref_continuation_with_parent(command.origin(), parent)
-                    })?;
+                    self.run_nested_expansion_with_parent(
+                        active,
+                        carried_parent,
+                        |this, parent| {
+                            this.begin_pdf_page_ref_continuation_with_parent(
+                                command.origin(),
+                                parent,
+                            )
+                        },
+                    )?;
                 }
                 ExpandablePrimitive::PdfLastMatch => {
-                    self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
-                        this.begin_pdf_last_match_continuation_with_parent(command.origin(), parent)
-                    })?;
+                    self.run_nested_expansion_with_parent(
+                        active,
+                        carried_parent,
+                        |this, parent| {
+                            this.begin_pdf_last_match_continuation_with_parent(
+                                command.origin(),
+                                parent,
+                            )
+                        },
+                    )?;
                 }
                 _ => unreachable!("PDF integer branch validates its primitive"),
             }
@@ -1921,7 +1880,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             ExpandablePrimitive::PdfXImageBBox,
         )) = action
         {
-            self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
+            self.run_nested_expansion_with_parent(active, carried_parent, |this, parent| {
                 this.begin_pdf_ximage_bbox_continuation_with_parent(command.origin(), parent)
             })?;
             return Ok(ExpandedHotDispatch::Continue);
@@ -1949,7 +1908,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 _ => unreachable!("PDF string branch validates its primitive"),
             };
-            self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
+            self.run_nested_expansion_with_parent(active, carried_parent, |this, parent| {
                 this.begin_pdf_string_continuation_with_parent(command.origin(), kind, parent)
             })?;
             return Ok(ExpandedHotDispatch::Continue);
@@ -1975,7 +1934,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             | ExpandablePrimitive::SplitBotMarks),
         )) = action
         {
-            self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
+            self.run_nested_expansion_with_parent(active, carried_parent, |this, parent| {
                 this.begin_mark_class_continuation_with_parent(command.origin(), primitive, parent)
             })?;
             return Ok(ExpandedHotDispatch::Continue);
@@ -1985,7 +1944,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             primitive @ (ExpandablePrimitive::Number | ExpandablePrimitive::RomanNumeral),
         )) = action
         {
-            self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
+            self.run_nested_expansion_with_parent(active, carried_parent, |this, parent| {
                 this.begin_number_continuation_with_parent(
                     command.origin(),
                     primitive == ExpandablePrimitive::RomanNumeral,
@@ -2003,7 +1962,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             ExpandablePrimitive::PdfUniformDeviate,
         )) = action
         {
-            self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
+            self.run_nested_expansion_with_parent(active, carried_parent, |this, parent| {
                 this.begin_pdf_uniform_deviate_continuation_with_parent(command.origin(), parent)
             })?;
             return Ok(ExpandedHotDispatch::Continue);
@@ -2019,7 +1978,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             } else {
                 tex_state::node::MarginKernSide::Right
             };
-            self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
+            self.run_nested_expansion_with_parent(active, carried_parent, |this, parent| {
                 this.begin_pdf_margin_kern_continuation_with_parent(command.origin(), side, parent)
             })?;
             return Ok(ExpandedHotDispatch::Continue);
@@ -2047,6 +2006,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     return Ok(ExpandedHotDispatch::Continue);
                 }
                 Err(error) if error.is_resource_suspension() => {
+                    *command_parked = true;
                     return self
                         .park_the_continuation(
                             target,
@@ -2069,18 +2029,18 @@ impl<G> CommandProcessor<'_, '_, G> {
         // control remains at the top of the same delivery stack. Nested
         // character-producing expansions therefore return here instead
         // of entering `scan_csname_characters` recursively.
-        let csname_control =
-            active_control_probe(active_control, ActiveControlTag::CsName, || {
-                self.command.scratch.top_csname_control()
-            })?;
-        if csname_control.is_some() {
+        if matches!(active, Some(ActiveControlSnapshot::CsName)) {
             match action {
                 ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
                     ExpandablePrimitive::CsName,
                 )) => {
-                    self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
-                        this.begin_csname_continuation_with_parent(command.origin(), parent)
-                    })?;
+                    self.run_nested_expansion_with_parent(
+                        active,
+                        carried_parent,
+                        |this, parent| {
+                            this.begin_csname_continuation_with_parent(command.origin(), parent)
+                        },
+                    )?;
                     return Ok(ExpandedHotDispatch::Continue);
                 }
                 ExpandedCommandAction::Expand(_) => {}
@@ -2105,18 +2065,16 @@ impl<G> CommandProcessor<'_, '_, G> {
         // instead of backing a control-sequence token. Keeping this
         // predicate in the same control lane removes the recursive
         // scanner edge while preserving the evaluating condition limit.
-        let ifcsname_control =
-            active_control_probe(active_control, ActiveControlTag::IfCsName, || {
-                self.command.scratch.top_ifcsname_control()
-            })?;
-        if ifcsname_control.is_some() {
+        if matches!(active, Some(ActiveControlSnapshot::IfCsName)) {
             match action {
                 ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
                     ExpandablePrimitive::IfCsName,
                 )) => {
-                    self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
-                        this.begin_ifcsname_continuation_with_parent(false, parent)
-                    })?;
+                    self.run_nested_expansion_with_parent(
+                        active,
+                        carried_parent,
+                        |this, parent| this.begin_ifcsname_continuation_with_parent(false, parent),
+                    )?;
                     return Ok(ExpandedHotDispatch::Continue);
                 }
                 ExpandedCommandAction::Expand(_) => {}
@@ -2143,10 +2101,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         // second `expanded_next`/`get_x_token` call.  We remove the
         // completed control before entering a scalar scanner because a
         // register's own index probe is an independent scalar child.
-        let the_control = active_control_probe(active_control, ActiveControlTag::The, || {
-            self.command.scratch.top_the_control()
-        })?;
-        if let Some(the_control) = the_control {
+        if let Some(ActiveControlSnapshot::The(the_control)) = active {
             match (the_control.phase, action) {
                 (
                     crate::expansion_work::control::ThePhase::NeedTarget,
@@ -2154,9 +2109,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                         ExpandablePrimitive::The,
                     )),
                 ) => {
-                    self.run_nested_expansion_with_parent(carried_parent, |this, parent| {
-                        this.begin_the_continuation_with_parent(command.origin(), parent)
-                    })?;
+                    self.run_nested_expansion_with_parent(
+                        active,
+                        carried_parent,
+                        |this, parent| {
+                            this.begin_the_continuation_with_parent(command.origin(), parent)
+                        },
+                    )?;
                     return Ok(ExpandedHotDispatch::Continue);
                 }
                 (
@@ -2278,6 +2237,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             return Ok(ExpandedHotDispatch::Continue);
                         }
                         Err(error) if error.is_resource_suspension() => {
+                            *command_parked = true;
                             return self
                                 .park_the_continuation(
                                     target,
@@ -2319,6 +2279,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                 let report_trace = !std::mem::take(suppress_first_expansion_trace);
                 let macro_input_before = (dispatch == ExpansionDispatch::Macro)
                     .then(|| self.command.top_input_level_identity());
+                let expandafter_pending = matches!(
+                    active,
+                    Some(ActiveControlSnapshot::ExpandAfterSync(control))
+                        if control.phase
+                            == crate::expansion_work::control::SynchronousExpandAfterPhase::NeedSecond
+                );
                 // Capture the one exact parent before dispatch mutates the
                 // control lane. A macro or undefined command does not need
                 // an edge: it only changes input, and the next settled token
@@ -2331,12 +2297,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                         ExpansionDispatch::Macro | ExpansionDispatch::Undefined
                     )
                 {
-                    let parent = self
-                        .command
-                        .scratch
-                        .top_awaitable_expansion_control_slot()
-                        .map_err(crate::scan_toks::scratch_command_error)?;
-                    parent.map(ParentAdmission::Captured)
+                    active
+                        .and_then(|control| control.awaitable_slot())
+                        .map(ParentAdmission::Captured)
                 } else {
                     None
                 };
@@ -2404,13 +2367,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             }
                             _ => false,
                         };
-                        if no_output
-                            && matches!(
-                                active_control,
-                                Some(crate::expansion_work::ActiveControlTag::ExpandAfterSync)
-                            )
-                            && self.expandafter_second_pending()?
-                        {
+                        if no_output && expandafter_pending {
                             self.complete_expandafter_without_second()?;
                         }
                         return Ok(ExpandedHotDispatch::Continue);
@@ -2446,6 +2403,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// common dispatch arm gets a chance to perform the same bookkeeping.
     fn run_nested_expansion_with_parent<T>(
         &mut self,
+        active: Option<ActiveControlSnapshot<G>>,
         carried_parent: &mut Option<ParentAdmission<G>>,
         start: impl FnOnce(
             &mut Self,
@@ -2454,15 +2412,10 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<T, CommandError> {
         let admission = if let Some(parent) = carried_parent.take() {
             Some(parent)
-        } else if self.command.scratch.active_control_tag().is_some() {
-            let parent = self
-                .command
-                .scratch
-                .top_awaitable_expansion_control_slot()
-                .map_err(crate::scan_toks::scratch_command_error)?;
-            parent.map(ParentAdmission::Captured)
         } else {
-            None
+            active
+                .and_then(|control| control.awaitable_slot())
+                .map(ParentAdmission::Captured)
         };
         if let Some(admission) = admission
             && admission.needs_await()
@@ -2494,7 +2447,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     #[inline(never)]
     fn finish_main_loop_synthetic(
         &mut self,
-        command: &mut HotCommand<G>,
+        command: &mut Option<HotCommand<G>>,
         literal_catcode: Option<Catcode>,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
@@ -2502,27 +2455,30 @@ impl<G> CommandProcessor<'_, '_, G> {
             self.invalidate_delivery_freshness();
             return Err(failure);
         }
-        self.command.delivery_mode.begin_token(
-            command.suppresses_expandable_control_sequence(),
-            command.is_outer(),
-        );
-        self.command.roots.alignment.account_literal_brace(
-            &mut self.command.timeline,
-            command,
-            literal_catcode,
-        );
-        self.advance_delivery_sequence();
-        if command.is_direct_source_delivery() {
-            self.readmit_delivery_stamp(command.delivery_stamp());
-        }
-        if self.command.delivery_mode.requires_slow_settlement()
-            && let Err(failure) = self.settle_exceptional_delivery(command)
-        {
+        let mut command = command.take().ok_or_else(CommandError::input_invariant)?;
+        if let Err(failure) = self.settle_hot_delivery(&mut command, literal_catcode) {
             self.invalidate_delivery_freshness();
             return Err(failure);
         }
         *destination = Some(command.materialize());
         Ok(DeliveryStatus::CharacterRunBoundary)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn finish_main_cold_transition(
+        &mut self,
+        cold: ResidentColdOutcome,
+        command: &mut Option<HotCommand<G>>,
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<Option<DeliveryStatus>, CommandError> {
+        match cold {
+            ResidentColdOutcome::Retry => Ok(None),
+            ResidentColdOutcome::Finished(status) => Ok(Some(status)),
+            ResidentColdOutcome::Synthetic { literal_catcode } => self
+                .finish_main_loop_synthetic(command, literal_catcode, destination)
+                .map(Some),
+        }
     }
 
     /// Consumes the direct ordinary-character prefix owned by main control.
@@ -2541,7 +2497,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<DeliveryStatus, CommandError> {
         debug_assert!(destination.is_none());
         self.invalidate_delivery_freshness();
-        let mut command = HotCommand::empty();
+        let mut command = None;
         let mut consumed_characters = false;
         #[cfg(feature = "profiling")]
         let mut character_run_count = 0_u32;
@@ -2558,24 +2514,17 @@ impl<G> CommandProcessor<'_, '_, G> {
                     }
                     return Ok(DeliveryStatus::CharacterRun);
                 }
-                let cold = self.transition_input_frame(
-                    InputFrameTransition::Boundary(ResidentBoundary::Empty),
+                let cold = self.transition_resident_word(
+                    ResidentWordRead::NoResident,
                     &mut command,
+                    false,
                 )?;
-                match cold {
-                    ResidentColdOutcome::Retry => continue,
-                    ResidentColdOutcome::End => return Ok(DeliveryStatus::End),
-                    ResidentColdOutcome::ReplayCompleted(episode) => {
-                        return Ok(DeliveryStatus::ReplayCompleted(episode));
-                    }
-                    ResidentColdOutcome::SyntheticCommand { literal_catcode } => {
-                        return self.finish_main_loop_synthetic(
-                            &mut command,
-                            literal_catcode,
-                            destination,
-                        );
-                    }
+                if let Some(status) =
+                    self.finish_main_cold_transition(cold, &mut command, destination)?
+                {
+                    return Ok(status);
                 }
+                continue;
             };
 
             let is_source = matches!(
@@ -2624,24 +2573,17 @@ impl<G> CommandProcessor<'_, '_, G> {
                 {
                     return Ok(DeliveryStatus::CharacterRun);
                 }
-                let cold = self.transition_input_frame(
-                    InputFrameTransition::Source { resident_index },
+                let cold = self.transition_resident_word(
+                    ResidentWordRead::Source { resident_index },
                     &mut command,
+                    false,
                 )?;
-                match cold {
-                    ResidentColdOutcome::Retry => continue,
-                    ResidentColdOutcome::End => return Ok(DeliveryStatus::End),
-                    ResidentColdOutcome::ReplayCompleted(episode) => {
-                        return Ok(DeliveryStatus::ReplayCompleted(episode));
-                    }
-                    ResidentColdOutcome::SyntheticCommand { literal_catcode } => {
-                        return self.finish_main_loop_synthetic(
-                            &mut command,
-                            literal_catcode,
-                            destination,
-                        );
-                    }
+                if let Some(status) =
+                    self.finish_main_cold_transition(cold, &mut command, destination)?
+                {
+                    return Ok(status);
                 }
+                continue;
             }
 
             let selected = match self.next_resident_word() {
@@ -2651,80 +2593,47 @@ impl<G> CommandProcessor<'_, '_, G> {
                     return Err(failure);
                 }
             };
-            let ResidentWordRead::Word {
-                word,
-                origin,
-                identity,
-                position,
-                active_source,
-                suppress_expandable,
-                #[cfg(test)]
-                storage_kind,
-                #[cfg(feature = "profiling")]
-                raw_kind,
-            } = selected
-            else {
-                match selected {
-                    ResidentWordRead::NoResident => unreachable!("top row was selected"),
-                    ResidentWordRead::Source { .. } => unreachable!("source handled above"),
-                    ResidentWordRead::Parameter {
-                        slot,
-                        arguments,
-                        active_source,
-                    } => {
-                        self.retry_parameter_delivery(
-                            slot,
-                            arguments,
-                            active_source,
-                            &mut command,
-                        )?;
-                        continue;
+            if !matches!(selected, ResidentWordRead::Word { .. }) {
+                if consumed_characters && matches!(selected, ResidentWordRead::Exhausted { .. }) {
+                    self.invalidate_delivery_freshness();
+                    #[cfg(feature = "profiling")]
+                    if let Some(kind) = character_run_kind.take() {
+                        self.fuel.record_raw_run(false, kind, character_run_count);
                     }
-                    ResidentWordRead::Exhausted { .. } if consumed_characters => {
-                        self.invalidate_delivery_freshness();
-                        #[cfg(feature = "profiling")]
-                        if let Some(kind) = character_run_kind.take() {
-                            self.fuel.record_raw_run(false, kind, character_run_count);
-                        }
-                        return Ok(DeliveryStatus::CharacterRun);
-                    }
-                    ResidentWordRead::Exhausted {
-                        resident_index,
-                        identity,
-                    } => {
-                        match self.transition_input_frame(
-                            InputFrameTransition::ResidentExhausted {
-                                resident_index,
-                                identity,
-                            },
-                            &mut command,
-                        )? {
-                            ResidentColdOutcome::Retry => continue,
-                            ResidentColdOutcome::End => return Ok(DeliveryStatus::End),
-                            ResidentColdOutcome::ReplayCompleted(episode) => {
-                                return Ok(DeliveryStatus::ReplayCompleted(episode));
-                            }
-                            ResidentColdOutcome::SyntheticCommand { literal_catcode } => {
-                                return self.finish_main_loop_synthetic(
-                                    &mut command,
-                                    literal_catcode,
-                                    destination,
-                                );
-                            }
-                        }
-                    }
-                    ResidentWordRead::Word { .. } => unreachable!("word was matched above"),
+                    return Ok(DeliveryStatus::CharacterRun);
                 }
-            };
-
+                let cold = self.transition_resident_word(selected, &mut command, false)?;
+                if let Some(status) =
+                    self.finish_main_cold_transition(cold, &mut command, destination)?
+                {
+                    return Ok(status);
+                }
+                continue;
+            }
             let is_character = matches!(
-                word.semantic_token(),
-                Token::Char {
-                    cat: Catcode::Letter | Catcode::Other,
+                &selected,
+                ResidentWordRead::Word {
+                    word,
                     ..
-                }
+                } if matches!(
+                    word.semantic_token(),
+                    Token::Char {
+                        cat: Catcode::Letter | Catcode::Other,
+                        ..
+                    }
+                )
             );
             if is_character && self.command.delivery_mode.allows_character_run() {
+                let ResidentWordRead::Word {
+                    word,
+                    origin,
+                    #[cfg(feature = "profiling")]
+                    raw_kind,
+                    ..
+                } = selected
+                else {
+                    unreachable!("character predicate accepts only resident words")
+                };
                 if let Err(failure) = self.fuel.charge() {
                     self.invalidate_delivery_freshness();
                     return Err(failure);
@@ -2757,72 +2666,9 @@ impl<G> CommandProcessor<'_, '_, G> {
             if let Some(kind) = character_run_kind.take() {
                 self.fuel.record_raw_run(false, kind, character_run_count);
             }
-            #[cfg(test)]
-            match storage_kind {
-                ResidentStorageKind::Stored => {
-                    self.command.stored_token_advance_counters.command_writes = self
-                        .command
-                        .stored_token_advance_counters
-                        .command_writes
-                        .saturating_add(1);
-                    self.command.raw_delivery_path_counters.stored_direct = self
-                        .command
-                        .raw_delivery_path_counters
-                        .stored_direct
-                        .saturating_add(1);
-                }
-                ResidentStorageKind::MacroBody => {
-                    self.command.macro_kernel_counters.body_command_writes = self
-                        .command
-                        .macro_kernel_counters
-                        .body_command_writes
-                        .saturating_add(1);
-                }
-                ResidentStorageKind::MacroArgument => {
-                    self.command.macro_kernel_counters.argument_command_writes = self
-                        .command
-                        .macro_kernel_counters
-                        .argument_command_writes
-                        .saturating_add(1);
-                    self.command
-                        .raw_delivery_path_counters
-                        .macro_argument_direct = self
-                        .command
-                        .raw_delivery_path_counters
-                        .macro_argument_direct
-                        .saturating_add(1);
-                }
-            }
-            let resolution = command.write_resolved_delivery(
-                word,
-                origin,
-                identity,
-                position,
-                active_source,
-                false,
-                None,
-                suppress_expandable,
-                self.state,
-            );
-            #[cfg(feature = "profiling")]
-            self.fuel.record_raw_delivery(
-                self.command.delivery_mode.scanner_active(),
-                resolution.meaning_lookup(),
-                raw_kind,
-            );
-            self.command.delivery_mode.begin_token(
-                command.suppresses_expandable_control_sequence(),
-                command.is_outer(),
-            );
-            self.command.roots.alignment.account_literal_brace(
-                &mut self.command.timeline,
-                &mut command,
-                resolution.literal_catcode(),
-            );
-            self.advance_delivery_sequence();
-            if self.command.delivery_mode.requires_slow_settlement()
-                && let Err(failure) = self.settle_exceptional_delivery(&mut command)
-            {
+            let literal_catcode = self.admit_resident_word(selected, &mut command)?;
+            let mut command = command.take().ok_or_else(CommandError::input_invariant)?;
+            if let Err(failure) = self.settle_hot_delivery(&mut command, literal_catcode) {
                 self.invalidate_delivery_freshness();
                 return Err(failure);
             }
@@ -2862,6 +2708,16 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
+        self.expanded_until(destination, ExpandedUntilMode::Protected)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn expanded_until(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+        mode: ExpandedUntilMode,
+    ) -> Result<DeliveryStatus, CommandError> {
         loop {
             let status = if destination.is_some() {
                 DeliveryStatus::Command
@@ -2896,11 +2752,20 @@ impl<G> CommandProcessor<'_, '_, G> {
             let command = destination
                 .as_ref()
                 .ok_or_else(CommandError::input_invariant)?;
-            if matches!(
-                command.meaning_ref(),
-                ResolvedMeaning::Macro { flags, .. } if flags.contains(MeaningFlags::PROTECTED)
-            ) || !is_expandable_command(command)
-            {
+            let stop = match mode {
+                ExpandedUntilMode::Protected => {
+                    matches!(
+                        command.meaning_ref(),
+                        ResolvedMeaning::Macro { flags, .. }
+                            if flags.contains(MeaningFlags::PROTECTED)
+                    ) || !is_expandable_command(command)
+                }
+                ExpandedUntilMode::PreserveUndefined => matches!(
+                    command.meaning_ref(),
+                    ResolvedMeaning::Static(Meaning::Undefined)
+                ),
+            };
+            if stop {
                 return Ok(DeliveryStatus::Command);
             }
             match self.expanded_next(destination)? {
@@ -2933,62 +2798,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        loop {
-            let status = if destination.is_some() {
-                DeliveryStatus::Command
-            } else if self.expansion_resume.is_some()
-                || self
-                    .scanner_resume
-                    .as_ref()
-                    .is_some_and(crate::ScannerFrameKey::is_expansion)
-            {
-                self.expanded_next(destination)?
-            } else {
-                self.raw_next(destination)?
-            };
-            match status {
-                DeliveryStatus::End | DeliveryStatus::ReplayCompleted(_) => return Ok(status),
-                DeliveryStatus::Command => {}
-                DeliveryStatus::AlignmentEndTemplate => {
-                    let command = destination
-                        .take()
-                        .ok_or_else(CommandError::input_invariant)?;
-                    self.begin_scalar_alignment_v_template(&command)?;
-                    continue;
-                }
-                DeliveryStatus::PendingExpanded | DeliveryStatus::AlignmentClosingBrace => {
-                    return Ok(DeliveryStatus::Command);
-                }
-                DeliveryStatus::CharacterRun | DeliveryStatus::CharacterRunBoundary => {
-                    unreachable!("undefined-preserving delivery has no character consumer")
-                }
-            }
-            if destination.as_ref().is_some_and(|command| {
-                matches!(
-                    command.meaning_ref(),
-                    ResolvedMeaning::Static(Meaning::Undefined)
-                )
-            }) {
-                return Ok(DeliveryStatus::Command);
-            }
-            match self.expanded_next(destination)? {
-                status @ (DeliveryStatus::End | DeliveryStatus::ReplayCompleted(_)) => {
-                    return Ok(status);
-                }
-                DeliveryStatus::Command
-                | DeliveryStatus::PendingExpanded
-                | DeliveryStatus::AlignmentClosingBrace => return Ok(DeliveryStatus::Command),
-                DeliveryStatus::AlignmentEndTemplate => {
-                    let command = destination
-                        .take()
-                        .ok_or_else(CommandError::input_invariant)?;
-                    self.begin_scalar_alignment_v_template(&command)?;
-                }
-                DeliveryStatus::CharacterRun | DeliveryStatus::CharacterRunBoundary => {
-                    unreachable!("undefined-preserving delivery has no character consumer")
-                }
-            }
-        }
+        self.expanded_until(destination, ExpandedUntilMode::PreserveUndefined)
     }
 
     /// `x_token` starts with a command already in hand. Ordinary uses have no
@@ -3040,28 +2850,74 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        let status = if destination.is_some() {
-            DeliveryStatus::Command
+        self.main_action_lookahead(destination, false)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn main_action_lookahead(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+        preflight: bool,
+    ) -> Result<DeliveryStatus, CommandError> {
+        let existing = destination.is_some();
+        let mut hot_destination = if existing {
+            destination.as_ref().map(HotCommand::from_current_ref)
         } else {
-            self.raw_next(destination)?
+            None
         };
-        if status != DeliveryStatus::Command {
-            return Ok(status);
+        if hot_destination.is_none() {
+            match self.raw_next_hot(&mut hot_destination)? {
+                DeliveryStatus::Command => {}
+                status => return Ok(status),
+            }
         }
-        let command = destination
+        let hot = hot_destination
             .as_ref()
             .ok_or_else(CommandError::input_invariant)?;
-        let hot = HotCommand::from_current_ref(command);
-        if hot.command_word().is_main_loop_character() {
+        let is_character = hot.command_word().is_main_loop_character();
+        if is_character && !preflight {
+            if !existing {
+                *destination = hot_destination.take().map(|command| command.materialize());
+            }
             return Ok(DeliveryStatus::Command);
         }
-        let action = classify_hot_command(&hot);
-        if !matches!(action, ExpandedCommandAction::Return) {
-            let pending = destination.take();
-            return self.x_token_from_into_with_action(pending, destination, Some(action));
+        let action = classify_hot_command(hot);
+        if matches!(action, ExpandedCommandAction::EndTemplate) {
+            if matches!(
+                hot.alignment_adjustment(),
+                crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
+            ) {
+                if !existing {
+                    *destination = hot_destination.take().map(|command| command.materialize());
+                }
+                return Ok(DeliveryStatus::AlignmentEndTemplate);
+            }
+            hot_destination.take();
+            destination.take();
+            self.insert_frozen_endv()?;
+            let result = self.expanded_next_hot(&mut hot_destination, None);
+            return self.finish_hot_delivery(destination, &mut hot_destination, result);
         }
-        self.observe_expanded_delivery(command);
-        Ok(DeliveryStatus::Command)
+        if is_character || matches!(action, ExpandedCommandAction::Return) {
+            if existing {
+                self.observe_expanded_delivery(
+                    destination
+                        .as_ref()
+                        .ok_or_else(CommandError::input_invariant)?,
+                );
+            } else {
+                let command = hot_destination
+                    .take()
+                    .ok_or_else(CommandError::input_invariant)?
+                    .materialize();
+                self.observe_expanded_delivery(&command);
+                *destination = Some(command);
+            }
+            return Ok(DeliveryStatus::Command);
+        }
+        let result = self.expanded_next_hot(&mut hot_destination, Some(action));
+        self.finish_hot_delivery(destination, &mut hot_destination, result)
     }
 
     /// Main-control preflight owns its first raw fetch and then continues from
@@ -3073,44 +2929,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
         loop {
-            let mut hot_destination = None;
-            let mut initial_action = None;
-            if destination.is_none() {
-                match self.raw_next_hot(&mut hot_destination)? {
-                    DeliveryStatus::Command => {}
-                    status => return Ok(status),
-                }
-            }
-            if hot_destination.is_none() {
-                let command = destination
-                    .as_ref()
-                    .ok_or_else(CommandError::input_invariant)?;
-                let action = classify_hot_command(&HotCommand::from_current_ref(command));
-                if matches!(action, ExpandedCommandAction::Return) {
-                    self.observe_expanded_delivery(command);
-                    return Ok(DeliveryStatus::Command);
-                }
-                initial_action = Some(action);
-                hot_destination = destination.take().map(HotCommand::from_current);
-            }
-            let initial_action = initial_action.unwrap_or_else(|| {
-                classify_hot_command(
-                    hot_destination
-                        .as_ref()
-                        .expect("raw delivery initializes the hot command"),
-                )
-            });
-            if matches!(initial_action, ExpandedCommandAction::Return) {
-                let command = hot_destination
-                    .take()
-                    .ok_or_else(CommandError::input_invariant)?
-                    .materialize();
-                self.observe_expanded_delivery(&command);
-                *destination = Some(command);
-                return Ok(DeliveryStatus::Command);
-            }
-            let result = self.expanded_next_hot(&mut hot_destination, Some(initial_action));
-            match self.finish_hot_delivery(destination, &mut hot_destination, result)? {
+            match self.main_action_lookahead(destination, true)? {
                 DeliveryStatus::PendingExpanded | DeliveryStatus::AlignmentClosingBrace => {
                     return Ok(DeliveryStatus::Command);
                 }
@@ -4083,7 +3902,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn transition_source_input_frame(
         &mut self,
         resident_index: usize,
-        command: &mut HotCommand<G>,
+        command: &mut Option<HotCommand<G>>,
     ) -> Result<ResidentColdOutcome, CommandError> {
         let command_state = &mut *self.command;
         let state = &mut *self.state;
@@ -4153,24 +3972,40 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .source_direct
                         .saturating_add(1);
                 }
-                let resolution = command.write_resolved_delivery(
-                    word,
-                    origin,
-                    identity.0,
-                    position,
-                    active_source,
-                    true,
-                    direct_source_line,
-                    false,
-                    state,
-                );
+                let resolution = if let Some(command) = command.as_mut() {
+                    command.write_resolved_delivery(
+                        word,
+                        origin,
+                        identity.0,
+                        position,
+                        active_source,
+                        true,
+                        direct_source_line,
+                        false,
+                        state,
+                    )
+                } else {
+                    let (resolved, resolution) = HotCommand::from_resolved_delivery(
+                        word,
+                        origin,
+                        identity.0,
+                        position,
+                        active_source,
+                        true,
+                        direct_source_line,
+                        false,
+                        state,
+                    );
+                    command.replace(resolved);
+                    resolution
+                };
                 #[cfg(feature = "profiling")]
                 self.fuel.record_raw_delivery(
                     command_state.delivery_mode.scanner_active(),
                     resolution.meaning_lookup(),
                     crate::fuel::RawDeliveryKind::Source,
                 );
-                Ok(ResidentColdOutcome::SyntheticCommand {
+                Ok(ResidentColdOutcome::Synthetic {
                     literal_catcode: resolution.literal_catcode(),
                 })
             }
@@ -4269,10 +4104,20 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     #[cold]
     #[inline(never)]
+    fn finish_resident_eof(&mut self) -> Result<ResidentColdOutcome, CommandError> {
+        match self.raw_end_restarts() {
+            Ok(true) => Ok(ResidentColdOutcome::Retry),
+            Ok(false) => Ok(ResidentColdOutcome::Finished(DeliveryStatus::End)),
+            Err(failure) => Err(failure),
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
     fn transition_input_frame(
         &mut self,
         transition: InputFrameTransition<G>,
-        command: &mut HotCommand<G>,
+        command: &mut Option<HotCommand<G>>,
     ) -> Result<ResidentColdOutcome, CommandError> {
         self.invalidate_delivery_freshness();
         let cold = match transition {
@@ -4337,11 +4182,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         position: 0,
                     }),
                 );
-                match self.raw_end_restarts() {
-                    Ok(true) => Ok(ResidentColdOutcome::Retry),
-                    Ok(false) => Ok(ResidentColdOutcome::End),
-                    Err(failure) => Err(failure),
-                }
+                self.finish_resident_eof()
             }
             ResidentBoundary::InvalidCharacter => {
                 self.report_recoverable(
@@ -4356,20 +4197,13 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
             ResidentBoundary::NeedLine(identity) => {
                 let line = self.acquire_source_line(true)?;
-                let exhausted = if line.is_none() {
-                    match self.finish_exhausted_source(identity) {
-                        Ok(status) => matches!(status, SourceExhaustionStatus::End),
-                        Err(failure) => return Err(failure),
-                    }
-                } else {
-                    false
-                };
-                if exhausted {
-                    match self.raw_end_restarts() {
-                        Ok(true) => Ok(ResidentColdOutcome::Retry),
-                        Ok(false) => Ok(ResidentColdOutcome::End),
-                        Err(failure) => Err(failure),
-                    }
+                if line.is_some() {
+                    Ok(ResidentColdOutcome::Retry)
+                } else if matches!(
+                    self.finish_exhausted_source(identity)?,
+                    SourceExhaustionStatus::End
+                ) {
+                    self.finish_resident_eof()
                 } else {
                     Ok(ResidentColdOutcome::Retry)
                 }
@@ -4385,16 +4219,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .cold_source_retirements
                         .saturating_add(1);
                 }
-                let exhausted = match self.finish_exhausted_source(identity) {
-                    Ok(status) => matches!(status, SourceExhaustionStatus::End),
-                    Err(failure) => return Err(failure),
-                };
-                if exhausted {
-                    match self.raw_end_restarts() {
-                        Ok(true) => Ok(ResidentColdOutcome::Retry),
-                        Ok(false) => Ok(ResidentColdOutcome::End),
-                        Err(failure) => Err(failure),
-                    }
+                if matches!(
+                    self.finish_exhausted_source(identity)?,
+                    SourceExhaustionStatus::End
+                ) {
+                    self.finish_resident_eof()
                 } else {
                     Ok(ResidentColdOutcome::Retry)
                 }
@@ -4440,41 +4269,62 @@ impl<G> CommandProcessor<'_, '_, G> {
                 match handoff {
                     RetirementHandoff::Stop => match self.raw_end_restarts() {
                         Ok(true) => Ok(ResidentColdOutcome::Retry),
-                        Ok(false) => Ok(ResidentColdOutcome::End),
+                        Ok(false) => Ok(ResidentColdOutcome::Finished(DeliveryStatus::End)),
                         Err(failure) => Err(failure),
                     },
                     RetirementHandoff::Continue => Ok(ResidentColdOutcome::Retry),
-                    RetirementHandoff::Completed(episode) => {
-                        Ok(ResidentColdOutcome::ReplayCompleted(episode))
-                    }
+                    RetirementHandoff::Completed(episode) => Ok(ResidentColdOutcome::Finished(
+                        DeliveryStatus::ReplayCompleted(episode),
+                    )),
                     RetirementHandoff::EndV(level) => {
-                        let _resolution = command.write_resolved_delivery(
-                            TokenWord::pack(self.state.frozen_end_template_token()),
-                            OriginId::UNKNOWN,
-                            level.0,
-                            u64::from(index),
-                            active_source,
-                            false,
-                            None,
-                            false,
-                            self.state,
-                        );
+                        let _resolution = if let Some(command) = command.as_mut() {
+                            command.write_resolved_delivery(
+                                TokenWord::pack(self.state.frozen_end_template_token()),
+                                OriginId::UNKNOWN,
+                                level.0,
+                                u64::from(index),
+                                active_source,
+                                false,
+                                None,
+                                false,
+                                self.state,
+                            )
+                        } else {
+                            let (resolved, resolution) = HotCommand::from_resolved_delivery(
+                                TokenWord::pack(self.state.frozen_end_template_token()),
+                                OriginId::UNKNOWN,
+                                level.0,
+                                u64::from(index),
+                                active_source,
+                                false,
+                                None,
+                                false,
+                                self.state,
+                            );
+                            command.replace(resolved);
+                            resolution
+                        };
                         #[cfg(feature = "profiling")]
                         self.fuel.record_raw_delivery(
                             self.command.delivery_mode.scanner_active(),
                             _resolution.meaning_lookup(),
                             crate::fuel::RawDeliveryKind::SyntheticEndV,
                         );
-                        self.readmit_delivery_stamp(command.delivery_stamp());
-                        Ok(ResidentColdOutcome::SyntheticCommand {
+                        self.readmit_delivery_stamp(
+                            command
+                                .as_ref()
+                                .ok_or_else(CommandError::input_invariant)?
+                                .delivery_stamp(),
+                        );
+                        Ok(ResidentColdOutcome::Synthetic {
                             literal_catcode: _resolution.literal_catcode(),
                         })
                     }
                 }
             }
-            ResidentBoundary::ReplayCompleted(episode) => {
-                Ok(ResidentColdOutcome::ReplayCompleted(episode))
-            }
+            ResidentBoundary::ReplayCompleted(episode) => Ok(ResidentColdOutcome::Finished(
+                DeliveryStatus::ReplayCompleted(episode),
+            )),
         }
     }
 }

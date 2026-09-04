@@ -825,50 +825,6 @@ impl<G> ExpansionWork<G> {
         }))
     }
 
-    /// Returns the exact top control that can own the next synchronous child.
-    /// The slot is captured once; callers must carry it through dispatch
-    /// rather than looking up a possibly different top after the child runs.
-    pub(crate) fn top_awaitable_control(
-        &self,
-    ) -> Result<Option<ExpansionControlSlot<G>>, ScratchError> {
-        let Some(slot) = self.top_control_slot()? else {
-            return Ok(None);
-        };
-        let awaitable = match self.control(slot.lane)? {
-            ExpansionControl::ExpandAfterSync(control) => {
-                control.phase == SynchronousExpandAfterPhase::NeedSecond
-            }
-            ExpansionControl::IfCompare(control) => matches!(
-                control.phase,
-                SynchronousIfComparePhase::NeedFirst | SynchronousIfComparePhase::NeedSecond { .. }
-            ),
-            ExpansionControl::IfNumber(control) => matches!(
-                control.phase,
-                SynchronousIfNumberPhase::NeedLeft
-                    | SynchronousIfNumberPhase::Left { .. }
-                    | SynchronousIfNumberPhase::NeedRelation { .. }
-                    | SynchronousIfNumberPhase::Right { .. }
-                    | SynchronousIfNumberPhase::RegisterIndex { .. }
-            ),
-            ExpansionControl::IfDimension(control) => matches!(
-                control.phase,
-                SynchronousIfDimensionPhase::NeedLeft
-                    | SynchronousIfDimensionPhase::Left { .. }
-                    | SynchronousIfDimensionPhase::NeedRelation { .. }
-                    | SynchronousIfDimensionPhase::Right { .. }
-                    | SynchronousIfDimensionPhase::RegisterIndex { .. }
-            ),
-            ExpansionControl::Number(control) => matches!(
-                control.phase,
-                SynchronousNumberPhase::Need
-                    | SynchronousNumberPhase::Accumulating { .. }
-                    | SynchronousNumberPhase::RegisterIndex { .. }
-            ),
-            _ => false,
-        };
-        Ok(awaitable.then_some(slot))
-    }
-
     /// Moves one exact parent into its variant-specific awaiting phase.
     /// Dispatch owns the returned slot and must either carry it in a child
     /// frame or resume it immediately when no child was admitted.

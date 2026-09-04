@@ -111,22 +111,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.replay_expandafter_first(first.materialize())
     }
 
-    /// Returns whether the top hot control is waiting for the settled second
-    /// operand. This keeps the expanded loop's post-dispatch decision typed;
-    /// it never peeks into a rich pending command.
-    pub(super) fn expandafter_second_pending(&self) -> Result<bool, CommandError> {
-        self.command
-            .scratch
-            .top_expandafter_control()
-            .map(|control| {
-                control.is_some_and(|control| {
-                    control.phase
-                        == crate::expansion_work::control::SynchronousExpandAfterPhase::NeedSecond
-                })
-            })
-            .map_err(crate::scan_toks::scratch_command_error)
-    }
-
     /// Completes the active hot `\csname`, or performs TeX82's missing
     /// `\endcsname` recovery for the already-delivered offending command.
     /// Name materialization is a semantic boundary and therefore occurs only

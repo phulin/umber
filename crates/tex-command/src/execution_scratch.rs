@@ -1977,12 +1977,6 @@ impl<G> ExecutionScratch<G> {
         self.expansion_work.progress_epoch()
     }
 
-    pub(crate) fn top_awaitable_expansion_control_slot(
-        &self,
-    ) -> Result<Option<crate::expansion_work::ExpansionControlSlot<G>>, ScratchError> {
-        self.expansion_work.top_awaitable_control()
-    }
-
     pub(crate) fn await_expansion_control_for_child(
         &mut self,
         slot: crate::expansion_work::ExpansionControlSlot<G>,
