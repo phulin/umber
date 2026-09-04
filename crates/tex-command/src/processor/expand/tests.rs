@@ -2151,6 +2151,202 @@ fn one_hundred_macros_materialize_only_the_final_command() {
     });
 }
 
+#[test]
+fn synchronous_primitive_chain_stays_in_the_occupied_hot_owner() {
+    crate::test_harness::with_universe(|universe| {
+        let top_mark = install_static(
+            universe,
+            "topmark",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::TopMark),
+        );
+        let first_mark = install_static(
+            universe,
+            "firstmark",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::FirstMark),
+        );
+        let bot_mark = install_static(
+            universe,
+            "botmark",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::BotMark),
+        );
+        let terminal = Token::Char {
+            ch: 'Z',
+            cat: Catcode::Letter,
+        };
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(&mut command, [top_mark, first_mark, bot_mark, terminal]);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let ownership_before = crate::command::command_ownership_counters();
+        let hot_before = super::expansion_hot_counters();
+        #[cfg(feature = "profiling")]
+        let allocation_before = tex_state::measurement::hot_core_thread_allocation_measurement(
+            tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan,
+        );
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        #[cfg(feature = "profiling")]
+        let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
+            tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan,
+        );
+        let mut destination = None;
+        assert_eq!(
+            processor
+                .expanded_next_hot(&mut destination, None)
+                .expect("hot primitive chain"),
+            crate::DeliveryStatus::PendingExpanded
+        );
+        let delivered = destination.expect("hot terminal command");
+        assert_eq!(delivered.spelling().semantic_token(), terminal);
+        let ownership_after = crate::command::command_ownership_counters();
+        let hot_after = super::expansion_hot_counters();
+        assert_eq!(
+            ownership_after.rich_materializations - ownership_before.rich_materializations,
+            0
+        );
+        assert_eq!(
+            ownership_after.hot_reconstructions - ownership_before.hot_reconstructions,
+            0
+        );
+        assert_eq!(
+            hot_after.primitive_hot_dispatches - hot_before.primitive_hot_dispatches,
+            3
+        );
+        assert_eq!(
+            hot_after.primitive_cold_materializations - hot_before.primitive_cold_materializations,
+            0
+        );
+        assert_eq!(
+            hot_after.active_dispatch_calls - hot_before.active_dispatch_calls,
+            0
+        );
+        #[cfg(feature = "profiling")]
+        {
+            let allocation_after = tex_state::measurement::hot_core_thread_allocation_measurement(
+                tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan,
+            );
+            assert_eq!(allocation_after.calls - allocation_before.calls, 0);
+            assert_eq!(
+                allocation_after.requested_bytes - allocation_before.requested_bytes,
+                0
+            );
+        }
+    });
+}
+
+#[test]
+fn primitive_scanner_start_uses_compact_opener_state() {
+    crate::test_harness::with_universe(|universe| {
+        let number = install_static(
+            universe,
+            "number",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Number),
+        );
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(
+            &mut command,
+            [
+                number,
+                Token::Char {
+                    ch: '4',
+                    cat: Catcode::Other,
+                },
+            ],
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let ownership_before = crate::command::command_ownership_counters();
+        let hot_before = super::expansion_hot_counters();
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        let mut destination = None;
+        assert_eq!(
+            processor
+                .expanded_next_hot(&mut destination, None)
+                .expect("compact number scanner"),
+            crate::DeliveryStatus::PendingExpanded
+        );
+        assert_eq!(
+            destination
+                .expect("number result")
+                .spelling()
+                .semantic_token(),
+            Token::Char {
+                ch: '4',
+                cat: Catcode::Other,
+            }
+        );
+        let ownership_after = crate::command::command_ownership_counters();
+        let hot_after = super::expansion_hot_counters();
+        assert_eq!(
+            ownership_after.rich_materializations - ownership_before.rich_materializations,
+            0
+        );
+        assert_eq!(
+            ownership_after.hot_reconstructions - ownership_before.hot_reconstructions,
+            0
+        );
+        assert_eq!(
+            hot_after.primitive_hot_dispatches - hot_before.primitive_hot_dispatches,
+            1
+        );
+        assert_eq!(
+            hot_after.primitive_cold_materializations - hot_before.primitive_cold_materializations,
+            0
+        );
+        assert!(
+            hot_after.active_dispatch_calls - hot_before.active_dispatch_calls > 0,
+            "number operands use the active compact accumulator"
+        );
+    });
+}
+
+#[test]
+fn expandafter_replays_first_token_when_undefined_second_is_compact() {
+    crate::test_harness::with_universe(|universe| {
+        let expandafter = install_static(
+            universe,
+            "expandafter",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::ExpandAfter),
+        );
+        let missing = Token::Cs(universe.intern("missing").expect("undefined name").symbol());
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(
+            &mut command,
+            [
+                expandafter,
+                Token::Char {
+                    ch: 'A',
+                    cat: Catcode::Letter,
+                },
+                missing,
+                Token::Char {
+                    ch: 'Z',
+                    cat: Catcode::Letter,
+                },
+            ],
+        );
+        assert_eq!(collect_expanded_characters(universe, &mut command), "AZ");
+    });
+}
+
 #[cfg(feature = "profiling")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct OrdinaryDeliveryEvidence {
@@ -3164,6 +3360,7 @@ fn nested_expandafter_suspension_parks_each_command_once() {
         let mut fuel = crate::CommandFuelLedger::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let ownership_before = crate::command::command_ownership_counters();
+        let hot_before = super::expansion_hot_counters();
 
         let (resume, delivery_cursor) = {
             let mut context = universe.command_context().expect("command context");
@@ -3191,6 +3388,18 @@ fn nested_expandafter_suspension_parks_each_command_once() {
             )
         };
         let ownership_after_suspend = crate::command::command_ownership_counters();
+        let hot_after_suspend = super::expansion_hot_counters();
+        assert_eq!(
+            hot_after_suspend.primitive_cold_materializations
+                - hot_before.primitive_cold_materializations,
+            1,
+            "resource suspension crosses one primitive rich boundary"
+        );
+        assert_eq!(
+            ownership_after_suspend.hot_reconstructions - ownership_before.hot_reconstructions,
+            0,
+            "a parked primitive owner is not reconstructed before returning"
+        );
         assert_eq!(
             ownership_after_suspend.clones - ownership_before.clones,
             0,

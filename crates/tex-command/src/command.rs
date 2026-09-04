@@ -27,6 +27,7 @@ pub(crate) struct CommandOwnershipCounters {
     pub(crate) resolved_writes: u64,
     pub(crate) delivery_stamp_writes: u64,
     pub(crate) rich_materializations: u64,
+    pub(crate) hot_reconstructions: u64,
 }
 
 #[cfg(any(test, feature = "profiling"))]
@@ -41,6 +42,7 @@ thread_local! {
             resolved_writes: 0,
             delivery_stamp_writes: 0,
             rich_materializations: 0,
+            hot_reconstructions: 0,
         }) };
 }
 
@@ -282,6 +284,24 @@ pub(crate) struct HotCommand<G> {
     /// be reconstructed from their dense slot. Keep that opaque capability
     /// beside the fixed-width command word only for the font command class.
     font: Option<FontId>,
+}
+
+/// Fixed compact invocation facts for an expandable primitive.
+///
+/// Primitive scanners and conversion starters must not receive a rich
+/// `CurrentCommand` merely to preserve the opener's identity across the
+/// synchronous hot loop.  The occupied [`HotCommand`] remains the owner;
+/// this copy-small descriptor is only the spelling, identity, and delivery
+/// projection needed by a starter that crosses into a typed control lane.
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct HotPrimitiveInvocation<G> {
+    pub(crate) primitive: ExpandablePrimitive,
+    pub(crate) spelling: TracedTokenWord,
+    pub(crate) identity: CommandIdentity,
+    pub(crate) origin: OriginId,
+    pub(crate) site: DeliverySite,
+    pub(crate) _generation: core::marker::PhantomData<fn() -> G>,
 }
 
 impl<G> PartialEq for HotCommand<G> {
@@ -937,6 +957,10 @@ impl<G> HotCommand<G> {
     }
 
     pub(crate) fn from_current(command: CurrentCommand<G>) -> Self {
+        #[cfg(any(test, feature = "profiling"))]
+        update_command_ownership_counters(|counters| {
+            counters.hot_reconstructions = counters.hot_reconstructions.saturating_add(1);
+        });
         let (command_word, font) = CommandWord::from_meaning(command.meaning);
         Self {
             token: HotToken {
@@ -957,6 +981,10 @@ impl<G> HotCommand<G> {
     }
 
     pub(crate) fn from_current_ref(command: &CurrentCommand<G>) -> Self {
+        #[cfg(any(test, feature = "profiling"))]
+        update_command_ownership_counters(|counters| {
+            counters.hot_reconstructions = counters.hot_reconstructions.saturating_add(1);
+        });
         let (command_word, font) = CommandWord::from_meaning(command.meaning);
         Self {
             token: HotToken {
@@ -973,6 +1001,25 @@ impl<G> HotCommand<G> {
             },
             command: command_word,
             font,
+        }
+    }
+
+    /// Projects one primitive's fixed invocation facts from the occupied hot
+    /// owner.  No meaning resolution, rich command construction, or owner
+    /// transfer occurs here.
+    #[allow(dead_code)]
+    #[inline(always)]
+    pub(crate) fn primitive_invocation(
+        &self,
+        primitive: ExpandablePrimitive,
+    ) -> HotPrimitiveInvocation<G> {
+        HotPrimitiveInvocation {
+            primitive,
+            spelling: self.spelling(),
+            identity: self.identity(),
+            origin: self.origin(),
+            site: self.token.site,
+            _generation: core::marker::PhantomData,
         }
     }
 }

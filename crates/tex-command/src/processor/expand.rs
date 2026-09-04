@@ -3,7 +3,7 @@
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, ResolvedMeaning};
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
-use crate::command::{CommandClass, DeliveryStamp, HotCommand};
+use crate::command::{CommandClass, DeliveryStamp, HotCommand, HotPrimitiveInvocation};
 use crate::execution_scratch::ArgumentSetId;
 use crate::expansion_work::ActiveControlTag;
 use crate::input::{
@@ -212,7 +212,6 @@ impl<G> ParentAdmission<G> {
     }
 }
 
-#[derive(Clone, Copy)]
 enum ActiveControlSnapshot<G> {
     Expanded(
         crate::expansion_work::ExpansionControlView<
@@ -255,6 +254,14 @@ enum ActiveControlSnapshot<G> {
     CsName,
     IfCsName,
     The(crate::expansion_work::ExpansionControlView<G, crate::expansion_work::control::TheControl>),
+}
+
+impl<G> Copy for ActiveControlSnapshot<G> {}
+
+impl<G> Clone for ActiveControlSnapshot<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
 }
 
 impl<G> ActiveControlSnapshot<G> {
@@ -357,9 +364,186 @@ fn starts_synchronous_control(dispatch: ExpansionDispatch) -> bool {
     )
 }
 
+/// Primitive families that can consume their opener from the occupied hot
+/// command.  These are either copy-small control-lane starters or operand-free
+/// conversions; rich scanner/observer/resource families stay on the cold arm.
+#[inline(always)]
+fn is_hot_synchronous_primitive(primitive: ExpandablePrimitive) -> bool {
+    matches!(
+        primitive,
+        ExpandablePrimitive::Expanded
+            | ExpandablePrimitive::ExpandAfter
+            | ExpandablePrimitive::CsName
+            | ExpandablePrimitive::IfCsName
+            | ExpandablePrimitive::The
+            | ExpandablePrimitive::If
+            | ExpandablePrimitive::IfCat
+            | ExpandablePrimitive::IfNum
+            | ExpandablePrimitive::IfPdfAbsNum
+            | ExpandablePrimitive::IfDim
+            | ExpandablePrimitive::IfPdfAbsDim
+            | ExpandablePrimitive::IfOdd
+            | ExpandablePrimitive::IfCase
+            | ExpandablePrimitive::IfVoid
+            | ExpandablePrimitive::IfHBox
+            | ExpandablePrimitive::IfVBox
+            | ExpandablePrimitive::IfEof
+            | ExpandablePrimitive::IfFontChar
+            | ExpandablePrimitive::FontName
+            | ExpandablePrimitive::PdfFontSize
+            | ExpandablePrimitive::PdfFontName
+            | ExpandablePrimitive::PdfFontObjectNumber
+            | ExpandablePrimitive::PdfInsertHeight
+            | ExpandablePrimitive::PdfXFormName
+            | ExpandablePrimitive::PdfPageRef
+            | ExpandablePrimitive::PdfLastMatch
+            | ExpandablePrimitive::PdfXImageBBox
+            | ExpandablePrimitive::PdfEscapeString
+            | ExpandablePrimitive::PdfEscapeHex
+            | ExpandablePrimitive::PdfUnescapeHex
+            | ExpandablePrimitive::StringCompare
+            | ExpandablePrimitive::TopMark
+            | ExpandablePrimitive::FirstMark
+            | ExpandablePrimitive::BotMark
+            | ExpandablePrimitive::SplitFirstMark
+            | ExpandablePrimitive::SplitBotMark
+            | ExpandablePrimitive::TopMarks
+            | ExpandablePrimitive::FirstMarks
+            | ExpandablePrimitive::BotMarks
+            | ExpandablePrimitive::SplitFirstMarks
+            | ExpandablePrimitive::SplitBotMarks
+            | ExpandablePrimitive::Number
+            | ExpandablePrimitive::RomanNumeral
+            | ExpandablePrimitive::PdfUniformDeviate
+            | ExpandablePrimitive::LeftMarginKern
+            | ExpandablePrimitive::RightMarginKern
+            | ExpandablePrimitive::EndInput
+            | ExpandablePrimitive::JobName
+            | ExpandablePrimitive::ETeXRevision
+            | ExpandablePrimitive::PdfTeXRevision
+            | ExpandablePrimitive::PdfTeXBanner
+            | ExpandablePrimitive::PdfNormalDeviate
+            | ExpandablePrimitive::CreationDate
+            | ExpandablePrimitive::ShellEscape
+    )
+}
+
+#[inline(always)]
+fn hot_primitive_starts_control(primitive: ExpandablePrimitive) -> bool {
+    matches!(
+        primitive,
+        ExpandablePrimitive::Expanded
+            | ExpandablePrimitive::ExpandAfter
+            | ExpandablePrimitive::CsName
+            | ExpandablePrimitive::IfCsName
+            | ExpandablePrimitive::The
+            | ExpandablePrimitive::If
+            | ExpandablePrimitive::IfCat
+            | ExpandablePrimitive::IfNum
+            | ExpandablePrimitive::IfPdfAbsNum
+            | ExpandablePrimitive::IfDim
+            | ExpandablePrimitive::IfPdfAbsDim
+            | ExpandablePrimitive::IfOdd
+            | ExpandablePrimitive::IfCase
+            | ExpandablePrimitive::IfVoid
+            | ExpandablePrimitive::IfHBox
+            | ExpandablePrimitive::IfVBox
+            | ExpandablePrimitive::IfEof
+            | ExpandablePrimitive::IfFontChar
+            | ExpandablePrimitive::FontName
+            | ExpandablePrimitive::PdfFontSize
+            | ExpandablePrimitive::PdfFontName
+            | ExpandablePrimitive::PdfFontObjectNumber
+            | ExpandablePrimitive::PdfInsertHeight
+            | ExpandablePrimitive::PdfXFormName
+            | ExpandablePrimitive::PdfPageRef
+            | ExpandablePrimitive::PdfLastMatch
+            | ExpandablePrimitive::PdfXImageBBox
+            | ExpandablePrimitive::PdfEscapeString
+            | ExpandablePrimitive::PdfEscapeHex
+            | ExpandablePrimitive::PdfUnescapeHex
+            | ExpandablePrimitive::StringCompare
+            | ExpandablePrimitive::TopMarks
+            | ExpandablePrimitive::FirstMarks
+            | ExpandablePrimitive::BotMarks
+            | ExpandablePrimitive::SplitFirstMarks
+            | ExpandablePrimitive::SplitBotMarks
+            | ExpandablePrimitive::Number
+            | ExpandablePrimitive::RomanNumeral
+            | ExpandablePrimitive::PdfUniformDeviate
+            | ExpandablePrimitive::LeftMarginKern
+            | ExpandablePrimitive::RightMarginKern
+    )
+}
+
+#[inline(always)]
+fn primitive_owns_parent(primitive: ExpandablePrimitive) -> bool {
+    hot_primitive_starts_control(primitive) || matches!(primitive, ExpandablePrimitive::Unless)
+}
+
 #[cfg(test)]
 thread_local! {
     static EXPANDED_CLASSIFICATIONS: core::cell::Cell<u64> = const { core::cell::Cell::new(0) };
+}
+
+/// Focused ownership/dispatch evidence for the expanded hot loop.  These
+/// counters are test/profiling instrumentation only; the production loop has
+/// no side ledger or dispatch token.
+#[cfg(any(test, feature = "profiling"))]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ExpansionHotCounters {
+    pub(crate) primitive_hot_dispatches: u64,
+    pub(crate) active_dispatch_calls: u64,
+    pub(crate) primitive_cold_materializations: u64,
+}
+
+#[cfg(any(test, feature = "profiling"))]
+thread_local! {
+    static EXPANSION_HOT_COUNTERS:
+        core::cell::Cell<ExpansionHotCounters> = const { core::cell::Cell::new(
+            ExpansionHotCounters {
+                primitive_hot_dispatches: 0,
+                active_dispatch_calls: 0,
+                primitive_cold_materializations: 0,
+            },
+        ) };
+}
+
+#[inline(always)]
+fn record_primitive_hot_dispatch() {
+    #[cfg(any(test, feature = "profiling"))]
+    EXPANSION_HOT_COUNTERS.with(|counter| {
+        let mut value = counter.get();
+        value.primitive_hot_dispatches = value.primitive_hot_dispatches.saturating_add(1);
+        counter.set(value);
+    });
+}
+
+#[inline(always)]
+fn record_active_dispatch_call() {
+    #[cfg(any(test, feature = "profiling"))]
+    EXPANSION_HOT_COUNTERS.with(|counter| {
+        let mut value = counter.get();
+        value.active_dispatch_calls = value.active_dispatch_calls.saturating_add(1);
+        counter.set(value);
+    });
+}
+
+#[inline(always)]
+fn record_primitive_cold_materialization() {
+    #[cfg(any(test, feature = "profiling"))]
+    EXPANSION_HOT_COUNTERS.with(|counter| {
+        let mut value = counter.get();
+        value.primitive_cold_materializations =
+            value.primitive_cold_materializations.saturating_add(1);
+        counter.set(value);
+    });
+}
+
+#[cfg(any(test, feature = "profiling"))]
+#[allow(dead_code)]
+pub(crate) fn expansion_hot_counters() -> ExpansionHotCounters {
+    EXPANSION_HOT_COUNTERS.with(core::cell::Cell::get)
 }
 
 #[cfg(test)]
@@ -1167,16 +1351,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                         // in this loop; no continuation dispatcher or rich
                         // command bridge is needed while the macro body is installed.
                         delivery_expanded = true;
-                        let report_trace = !std::mem::take(&mut suppress_first_expansion_trace);
-                        let mut command_parked = false;
-                        if let Err(failure) = self.expand_classified_occupied(
-                            hot_command,
-                            ExpansionDispatch::Macro,
-                            report_trace,
-                            delivery_expanded,
-                            None,
-                            &mut command_parked,
-                        ) {
+                        let _ = std::mem::take(&mut suppress_first_expansion_trace);
+                        if let Err(failure) =
+                            self.expand_classified_occupied(hot_command, ExpansionDispatch::Macro)
+                        {
                             match failure {
                                 CommandError::ParagraphInMacroArgument
                                 | CommandError::OuterInMacroArgument => {}
@@ -1193,7 +1371,40 @@ impl<G> CommandProcessor<'_, '_, G> {
                         command.take();
                         continue;
                     }
-                    ExpandedCommandAction::Expand(_) => {}
+                    ExpandedCommandAction::Expand(ExpansionDispatch::Undefined) => {
+                        match self.expand_undefined_hot(
+                            hot_command,
+                            None,
+                            &mut delivery_expanded,
+                            &mut suppress_first_expansion_trace,
+                        )? {
+                            ExpandedHotDispatch::Continue => {
+                                command.take();
+                                continue;
+                            }
+                            ExpandedHotDispatch::Finished(status) => break 'delivery status,
+                        }
+                    }
+                    ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(primitive)) => {
+                        let mut command_parked = false;
+                        match self.expand_primitive_hot(
+                            hot_command,
+                            primitive,
+                            None,
+                            &mut delivery_expanded,
+                            &mut suppress_first_expansion_trace,
+                            &mut carried_parent,
+                            destination,
+                            depth,
+                            &mut command_parked,
+                        )? {
+                            ExpandedHotDispatch::Continue => {
+                                command.take();
+                                continue;
+                            }
+                            ExpandedHotDispatch::Finished(status) => break 'delivery status,
+                        }
+                    }
                 }
             }
             #[cfg(debug_assertions)]
@@ -1273,6 +1484,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         depth: u32,
         command_parked: &mut bool,
     ) -> Result<ExpandedHotDispatch, CommandError> {
+        record_active_dispatch_call();
         // e-TeX `\expanded` is a balanced expanded-token collector.  Its
         // body stays in the same hot delivery loop: expandable commands
         // fall through to the ordinary dispatch below, while settled
@@ -1408,20 +1620,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
             }
         }
-        // Starting `\expanded` itself is a control-lane transition.  A
-        // nested occurrence follows the same path and is therefore
-        // reduced iteratively rather than invoking `scan_toks` from the
-        // live delivery frame.
-        if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-            ExpandablePrimitive::Expanded,
-        )) = action
-        {
-            self.run_nested_expansion_with_parent(active, carried_parent, |this, parent| {
-                this.begin_expanded_continuation_with_parent(command.origin(), parent)
-            })?;
-            return Ok(ExpandedHotDispatch::Continue);
-        }
-
         // Within an expanded collector, `\unexpanded` consumes a raw
         // balanced child and splices its words into the parent's writer.
         // Keeping that child in the same control lane avoids the legacy
@@ -1646,344 +1844,12 @@ impl<G> CommandProcessor<'_, '_, G> {
         // font scanner.
         if matches!(active, Some(ActiveControlSnapshot::FontName)) {
             match action {
-                ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-                    primitive @ (ExpandablePrimitive::FontName
-                    | ExpandablePrimitive::PdfFontSize
-                    | ExpandablePrimitive::PdfFontName
-                    | ExpandablePrimitive::PdfFontObjectNumber),
-                )) => {
-                    match primitive {
-                        ExpandablePrimitive::FontName => {
-                            self.run_nested_expansion_with_parent(
-                                active,
-                                carried_parent,
-                                |this, parent| {
-                                    this.begin_fontname_continuation_with_parent(
-                                        command.origin(),
-                                        parent,
-                                    )
-                                },
-                            )?;
-                        }
-                        ExpandablePrimitive::PdfFontSize => {
-                            self.run_nested_expansion_with_parent(
-                                active,
-                                carried_parent,
-                                |this, parent| {
-                                    this.begin_pdf_font_size_continuation_with_parent(
-                                        command.origin(),
-                                        parent,
-                                    )
-                                },
-                            )?;
-                        }
-                        ExpandablePrimitive::PdfFontName => {
-                            self.run_nested_expansion_with_parent(
-                                active,
-                                carried_parent,
-                                |this, parent| {
-                                    this.begin_pdf_font_name_continuation_with_parent(
-                                        command.origin(),
-                                        parent,
-                                    )
-                                },
-                            )?;
-                        }
-                        ExpandablePrimitive::PdfFontObjectNumber => {
-                            self.run_nested_expansion_with_parent(
-                                active,
-                                carried_parent,
-                                |this, parent| {
-                                    this.begin_pdf_font_object_number_continuation_with_parent(
-                                        command.origin(),
-                                        parent,
-                                    )
-                                },
-                            )?;
-                        }
-                        _ => unreachable!("font control branch validates its primitive"),
-                    }
-                    return Ok(ExpandedHotDispatch::Continue);
-                }
                 ExpandedCommandAction::Expand(_) => {}
                 ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate => {
                     self.complete_fontname_continuation(*command)?;
                     return Ok(ExpandedHotDispatch::Continue);
                 }
             }
-        }
-
-        // The comparison controls are entered from the hot loop rather
-        // than through the legacy scalar conditional evaluator. Keeping
-        // this cutover here leaves that evaluator available to cold
-        // callers while every ordinary delivery stays on one loop.
-        if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-            primitive @ (ExpandablePrimitive::If
-            | ExpandablePrimitive::IfCat
-            | ExpandablePrimitive::IfNum
-            | ExpandablePrimitive::IfPdfAbsNum
-            | ExpandablePrimitive::IfDim
-            | ExpandablePrimitive::IfPdfAbsDim
-            | ExpandablePrimitive::IfOdd
-            | ExpandablePrimitive::IfCase
-            | ExpandablePrimitive::IfVoid
-            | ExpandablePrimitive::IfHBox
-            | ExpandablePrimitive::IfVBox
-            | ExpandablePrimitive::IfEof
-            | ExpandablePrimitive::IfFontChar),
-        )) = action
-        {
-            let kind = crate::conditionals::ConditionalKind::from_primitive(primitive)
-                .ok_or_else(CommandError::input_invariant)?;
-            if matches!(
-                kind,
-                crate::conditionals::ConditionalKind::If
-                    | crate::conditionals::ConditionalKind::IfCat
-            ) {
-                self.run_nested_expansion_with_parent(active, carried_parent, |this, parent| {
-                    this.begin_if_compare_continuation_with_parent(kind, false, parent)
-                })?;
-            } else if matches!(
-                kind,
-                crate::conditionals::ConditionalKind::IfDim
-                    | crate::conditionals::ConditionalKind::IfPdfAbsDim
-            ) {
-                self.run_nested_expansion_with_parent(active, carried_parent, |this, parent| {
-                    this.begin_if_dimension_continuation_with_parent(kind, false, parent)
-                })?;
-            } else {
-                self.run_nested_expansion_with_parent(active, carried_parent, |this, parent| {
-                    this.begin_if_number_continuation_with_parent(kind, false, parent)
-                })?;
-            }
-            return Ok(ExpandedHotDispatch::Continue);
-        }
-
-        if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-            primitive @ (ExpandablePrimitive::FontName
-            | ExpandablePrimitive::PdfFontSize
-            | ExpandablePrimitive::PdfFontName
-            | ExpandablePrimitive::PdfFontObjectNumber),
-        )) = action
-        {
-            match primitive {
-                ExpandablePrimitive::FontName => {
-                    self.run_nested_expansion_with_parent(
-                        active,
-                        carried_parent,
-                        |this, parent| {
-                            this.begin_fontname_continuation_with_parent(command.origin(), parent)
-                        },
-                    )?;
-                }
-                ExpandablePrimitive::PdfFontSize => {
-                    self.run_nested_expansion_with_parent(
-                        active,
-                        carried_parent,
-                        |this, parent| {
-                            this.begin_pdf_font_size_continuation_with_parent(
-                                command.origin(),
-                                parent,
-                            )
-                        },
-                    )?;
-                }
-                ExpandablePrimitive::PdfFontName => {
-                    self.run_nested_expansion_with_parent(
-                        active,
-                        carried_parent,
-                        |this, parent| {
-                            this.begin_pdf_font_name_continuation_with_parent(
-                                command.origin(),
-                                parent,
-                            )
-                        },
-                    )?;
-                }
-                ExpandablePrimitive::PdfFontObjectNumber => {
-                    self.run_nested_expansion_with_parent(
-                        active,
-                        carried_parent,
-                        |this, parent| {
-                            this.begin_pdf_font_object_number_continuation_with_parent(
-                                command.origin(),
-                                parent,
-                            )
-                        },
-                    )?;
-                }
-                _ => unreachable!("font primitive branch validates its primitive"),
-            }
-            return Ok(ExpandedHotDispatch::Continue);
-        }
-
-        if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-            primitive @ (ExpandablePrimitive::PdfInsertHeight
-            | ExpandablePrimitive::PdfXFormName
-            | ExpandablePrimitive::PdfPageRef
-            | ExpandablePrimitive::PdfLastMatch),
-        )) = action
-        {
-            match primitive {
-                ExpandablePrimitive::PdfInsertHeight => {
-                    self.run_nested_expansion_with_parent(
-                        active,
-                        carried_parent,
-                        |this, parent| {
-                            this.begin_pdf_insert_height_continuation_with_parent(
-                                command.origin(),
-                                parent,
-                            )
-                        },
-                    )?;
-                }
-                ExpandablePrimitive::PdfXFormName => {
-                    self.run_nested_expansion_with_parent(
-                        active,
-                        carried_parent,
-                        |this, parent| {
-                            this.begin_pdf_xform_name_continuation_with_parent(
-                                command.origin(),
-                                parent,
-                            )
-                        },
-                    )?;
-                }
-                ExpandablePrimitive::PdfPageRef => {
-                    self.run_nested_expansion_with_parent(
-                        active,
-                        carried_parent,
-                        |this, parent| {
-                            this.begin_pdf_page_ref_continuation_with_parent(
-                                command.origin(),
-                                parent,
-                            )
-                        },
-                    )?;
-                }
-                ExpandablePrimitive::PdfLastMatch => {
-                    self.run_nested_expansion_with_parent(
-                        active,
-                        carried_parent,
-                        |this, parent| {
-                            this.begin_pdf_last_match_continuation_with_parent(
-                                command.origin(),
-                                parent,
-                            )
-                        },
-                    )?;
-                }
-                _ => unreachable!("PDF integer branch validates its primitive"),
-            }
-            return Ok(ExpandedHotDispatch::Continue);
-        }
-
-        if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-            ExpandablePrimitive::PdfXImageBBox,
-        )) = action
-        {
-            self.run_nested_expansion_with_parent(active, carried_parent, |this, parent| {
-                this.begin_pdf_ximage_bbox_continuation_with_parent(command.origin(), parent)
-            })?;
-            return Ok(ExpandedHotDispatch::Continue);
-        }
-
-        if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-            primitive @ (ExpandablePrimitive::PdfEscapeString
-            | ExpandablePrimitive::PdfEscapeHex
-            | ExpandablePrimitive::PdfUnescapeHex
-            | ExpandablePrimitive::StringCompare),
-        )) = action
-        {
-            let kind = match primitive {
-                ExpandablePrimitive::PdfEscapeString => {
-                    crate::expansion_work::control::SynchronousExpandedKind::PdfEscapeString
-                }
-                ExpandablePrimitive::PdfEscapeHex => {
-                    crate::expansion_work::control::SynchronousExpandedKind::PdfEscapeHex
-                }
-                ExpandablePrimitive::PdfUnescapeHex => {
-                    crate::expansion_work::control::SynchronousExpandedKind::PdfUnescapeHex
-                }
-                ExpandablePrimitive::StringCompare => {
-                    crate::expansion_work::control::SynchronousExpandedKind::PdfStringCompareLeft
-                }
-                _ => unreachable!("PDF string branch validates its primitive"),
-            };
-            self.run_nested_expansion_with_parent(active, carried_parent, |this, parent| {
-                this.begin_pdf_string_continuation_with_parent(command.origin(), kind, parent)
-            })?;
-            return Ok(ExpandedHotDispatch::Continue);
-        }
-
-        if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-            primitive @ (ExpandablePrimitive::TopMark
-            | ExpandablePrimitive::FirstMark
-            | ExpandablePrimitive::BotMark
-            | ExpandablePrimitive::SplitFirstMark
-            | ExpandablePrimitive::SplitBotMark),
-        )) = action
-        {
-            self.expand_mark(primitive)?;
-            return Ok(ExpandedHotDispatch::Continue);
-        }
-
-        if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-            primitive @ (ExpandablePrimitive::TopMarks
-            | ExpandablePrimitive::FirstMarks
-            | ExpandablePrimitive::BotMarks
-            | ExpandablePrimitive::SplitFirstMarks
-            | ExpandablePrimitive::SplitBotMarks),
-        )) = action
-        {
-            self.run_nested_expansion_with_parent(active, carried_parent, |this, parent| {
-                this.begin_mark_class_continuation_with_parent(command.origin(), primitive, parent)
-            })?;
-            return Ok(ExpandedHotDispatch::Continue);
-        }
-
-        if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-            primitive @ (ExpandablePrimitive::Number | ExpandablePrimitive::RomanNumeral),
-        )) = action
-        {
-            self.run_nested_expansion_with_parent(active, carried_parent, |this, parent| {
-                this.begin_number_continuation_with_parent(
-                    command.origin(),
-                    primitive == ExpandablePrimitive::RomanNumeral,
-                    parent,
-                )
-            })?;
-            return Ok(ExpandedHotDispatch::Continue);
-        }
-
-        // pdfTeX's uniform-deviate conversion shares TeX's integer
-        // operand grammar. Give it the same compact accumulator so a
-        // nested enquiry returns through this driver instead of
-        // re-entering the retained scalar scanner.
-        if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-            ExpandablePrimitive::PdfUniformDeviate,
-        )) = action
-        {
-            self.run_nested_expansion_with_parent(active, carried_parent, |this, parent| {
-                this.begin_pdf_uniform_deviate_continuation_with_parent(command.origin(), parent)
-            })?;
-            return Ok(ExpandedHotDispatch::Continue);
-        }
-
-        if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-            primitive
-            @ (ExpandablePrimitive::LeftMarginKern | ExpandablePrimitive::RightMarginKern),
-        )) = action
-        {
-            let side = if primitive == ExpandablePrimitive::LeftMarginKern {
-                tex_state::node::MarginKernSide::Left
-            } else {
-                tex_state::node::MarginKernSide::Right
-            };
-            self.run_nested_expansion_with_parent(active, carried_parent, |this, parent| {
-                this.begin_pdf_margin_kern_continuation_with_parent(command.origin(), side, parent)
-            })?;
-            return Ok(ExpandedHotDispatch::Continue);
         }
 
         // A `\the` scalar child may cross an immutable resource barrier
@@ -2033,18 +1899,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         // of entering `scan_csname_characters` recursively.
         if matches!(active, Some(ActiveControlSnapshot::CsName)) {
             match action {
-                ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-                    ExpandablePrimitive::CsName,
-                )) => {
-                    self.run_nested_expansion_with_parent(
-                        active,
-                        carried_parent,
-                        |this, parent| {
-                            this.begin_csname_continuation_with_parent(command.origin(), parent)
-                        },
-                    )?;
-                    return Ok(ExpandedHotDispatch::Continue);
-                }
                 ExpandedCommandAction::Expand(_) => {}
                 ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate => {
                     if command.command_word().expandable_primitive()
@@ -2069,16 +1923,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         // scanner edge while preserving the evaluating condition limit.
         if matches!(active, Some(ActiveControlSnapshot::IfCsName)) {
             match action {
-                ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-                    ExpandablePrimitive::IfCsName,
-                )) => {
-                    self.run_nested_expansion_with_parent(
-                        active,
-                        carried_parent,
-                        |this, parent| this.begin_ifcsname_continuation_with_parent(false, parent),
-                    )?;
-                    return Ok(ExpandedHotDispatch::Continue);
-                }
                 ExpandedCommandAction::Expand(_) => {}
                 ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate => {
                     if command.command_word().expandable_primitive()
@@ -2105,21 +1949,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         // register's own index probe is an independent scalar child.
         if let Some(ActiveControlSnapshot::The(the_control)) = active {
             match (the_control.phase, action) {
-                (
-                    crate::expansion_work::control::ThePhase::NeedTarget,
-                    ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-                        ExpandablePrimitive::The,
-                    )),
-                ) => {
-                    self.run_nested_expansion_with_parent(
-                        active,
-                        carried_parent,
-                        |this, parent| {
-                            this.begin_the_continuation_with_parent(command.origin(), parent)
-                        },
-                    )?;
-                    return Ok(ExpandedHotDispatch::Continue);
-                }
                 (
                     crate::expansion_work::control::ThePhase::NeedTarget,
                     ExpandedCommandAction::Expand(_),
@@ -2258,6 +2087,36 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
             }
         }
+
+        // Once active controls have consumed their own operand phases, every
+        // remaining primitive takes the single compact primitive ABI.  This
+        // is also the only primitive entry used by the no-active hot loop;
+        // the cold continuation dispatcher is reserved for non-primitive
+        // control flow and explicit rich boundaries.
+        if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(primitive)) = action {
+            return self.expand_primitive_hot(
+                command,
+                primitive,
+                active,
+                delivery_expanded,
+                suppress_first_expansion_trace,
+                carried_parent,
+                destination,
+                depth,
+                command_parked,
+            );
+        }
+        if matches!(
+            action,
+            ExpandedCommandAction::Expand(ExpansionDispatch::Undefined)
+        ) {
+            return self.expand_undefined_hot(
+                command,
+                active,
+                delivery_expanded,
+                suppress_first_expansion_trace,
+            );
+        }
         match action {
             ExpandedCommandAction::Return => Ok(ExpandedHotDispatch::Finished(
                 self.finish_expanded_command(command, *delivery_expanded),
@@ -2278,7 +2137,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
             ExpandedCommandAction::Expand(dispatch) => {
                 *delivery_expanded = true;
-                let report_trace = !std::mem::take(suppress_first_expansion_trace);
+                let _ = std::mem::take(suppress_first_expansion_trace);
                 let macro_input_before = (dispatch == ExpansionDispatch::Macro)
                     .then(|| self.command.top_input_level_identity());
                 let expandafter_pending = matches!(
@@ -2318,15 +2177,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .map_err(crate::scan_toks::scratch_command_error)?;
                 }
                 let parent = admission.map(ParentAdmission::slot);
-                let mut command_parked = false;
-                let failure = match self.expand_classified_occupied(
-                    command,
-                    dispatch,
-                    report_trace,
-                    *delivery_expanded,
-                    parent,
-                    &mut command_parked,
-                ) {
+                let failure = match self.expand_classified_occupied(command, dispatch) {
                     Ok(()) => {
                         if let Some(parent) = parent
                             && !starts_synchronous_control(dispatch)
@@ -2375,8 +2226,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         return Ok(ExpandedHotDispatch::Continue);
                     }
                     Err(failure) => {
-                        if !command_parked
-                            && admission.is_some_and(ParentAdmission::needs_await)
+                        if admission.is_some_and(ParentAdmission::needs_await)
                             && let Some(parent) = parent
                         {
                             self.command
@@ -2439,6 +2289,407 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .map_err(crate::scan_toks::scratch_command_error)?;
         }
         result
+    }
+
+    /// Starts one compact scanner/control lane from a fixed primitive
+    /// invocation projection. The occupied command remains the owner; only
+    /// the descriptor's opener identity and primitive selector cross this
+    /// boundary.
+    #[inline(always)]
+    fn begin_hot_primitive_continuation(
+        &mut self,
+        invocation: HotPrimitiveInvocation<G>,
+        active: Option<ActiveControlSnapshot<G>>,
+        carried_parent: &mut Option<ParentAdmission<G>>,
+    ) -> Result<(), CommandError> {
+        self.run_nested_expansion_with_parent(active, carried_parent, |this, parent| {
+            let primitive = invocation.primitive;
+            if primitive == ExpandablePrimitive::IfCsName {
+                return this.begin_ifcsname_continuation_with_parent(false, parent);
+            }
+            if let Some(kind) = crate::conditionals::ConditionalKind::from_primitive(primitive) {
+                return if matches!(
+                    kind,
+                    crate::conditionals::ConditionalKind::If
+                        | crate::conditionals::ConditionalKind::IfCat
+                ) {
+                    this.begin_if_compare_continuation_with_parent(kind, false, parent)
+                } else if matches!(
+                    kind,
+                    crate::conditionals::ConditionalKind::IfDim
+                        | crate::conditionals::ConditionalKind::IfPdfAbsDim
+                ) {
+                    this.begin_if_dimension_continuation_with_parent(kind, false, parent)
+                } else {
+                    this.begin_if_number_continuation_with_parent(kind, false, parent)
+                };
+            }
+            match primitive {
+                ExpandablePrimitive::Expanded => {
+                    this.begin_expanded_continuation_with_parent(invocation.origin, parent)
+                }
+                ExpandablePrimitive::ExpandAfter => this
+                    .command
+                    .scratch
+                    .push_expandafter_control_with_parent(invocation.origin, parent)
+                    .map_err(crate::scan_toks::scratch_command_error),
+                ExpandablePrimitive::CsName => {
+                    this.begin_csname_continuation_with_parent(invocation.origin, parent)
+                }
+                ExpandablePrimitive::IfCsName => unreachable!("ifcsname handled above"),
+                ExpandablePrimitive::The => {
+                    this.begin_the_continuation_with_parent(invocation.origin, parent)
+                }
+                primitive @ (ExpandablePrimitive::FontName
+                | ExpandablePrimitive::PdfFontSize
+                | ExpandablePrimitive::PdfFontName
+                | ExpandablePrimitive::PdfFontObjectNumber) => match primitive {
+                    ExpandablePrimitive::FontName => {
+                        this.begin_fontname_continuation_with_parent(invocation.origin, parent)
+                    }
+                    ExpandablePrimitive::PdfFontSize => {
+                        this.begin_pdf_font_size_continuation_with_parent(invocation.origin, parent)
+                    }
+                    ExpandablePrimitive::PdfFontName => {
+                        this.begin_pdf_font_name_continuation_with_parent(invocation.origin, parent)
+                    }
+                    ExpandablePrimitive::PdfFontObjectNumber => this
+                        .begin_pdf_font_object_number_continuation_with_parent(
+                            invocation.origin,
+                            parent,
+                        ),
+                    _ => unreachable!("font primitive branch validates its primitive"),
+                },
+                primitive @ (ExpandablePrimitive::PdfInsertHeight
+                | ExpandablePrimitive::PdfXFormName
+                | ExpandablePrimitive::PdfPageRef
+                | ExpandablePrimitive::PdfLastMatch) => match primitive {
+                    ExpandablePrimitive::PdfInsertHeight => this
+                        .begin_pdf_insert_height_continuation_with_parent(
+                            invocation.origin,
+                            parent,
+                        ),
+                    ExpandablePrimitive::PdfXFormName => this
+                        .begin_pdf_xform_name_continuation_with_parent(invocation.origin, parent),
+                    ExpandablePrimitive::PdfPageRef => {
+                        this.begin_pdf_page_ref_continuation_with_parent(invocation.origin, parent)
+                    }
+                    ExpandablePrimitive::PdfLastMatch => this
+                        .begin_pdf_last_match_continuation_with_parent(invocation.origin, parent),
+                    _ => unreachable!("PDF integer branch validates its primitive"),
+                },
+                ExpandablePrimitive::PdfXImageBBox => {
+                    this.begin_pdf_ximage_bbox_continuation_with_parent(invocation.origin, parent)
+                }
+                primitive @ (ExpandablePrimitive::PdfEscapeString
+                | ExpandablePrimitive::PdfEscapeHex
+                | ExpandablePrimitive::PdfUnescapeHex
+                | ExpandablePrimitive::StringCompare) => {
+                    let kind = match primitive {
+                        ExpandablePrimitive::PdfEscapeString => crate::expansion_work::control::
+                            SynchronousExpandedKind::PdfEscapeString,
+                        ExpandablePrimitive::PdfEscapeHex => crate::expansion_work::control::
+                            SynchronousExpandedKind::PdfEscapeHex,
+                        ExpandablePrimitive::PdfUnescapeHex => crate::expansion_work::control::
+                            SynchronousExpandedKind::PdfUnescapeHex,
+                        ExpandablePrimitive::StringCompare => crate::expansion_work::control::
+                            SynchronousExpandedKind::PdfStringCompareLeft,
+                        _ => unreachable!("PDF string branch validates its primitive"),
+                    };
+                    this.begin_pdf_string_continuation_with_parent(invocation.origin, kind, parent)
+                }
+                primitive @ (ExpandablePrimitive::TopMarks
+                | ExpandablePrimitive::FirstMarks
+                | ExpandablePrimitive::BotMarks
+                | ExpandablePrimitive::SplitFirstMarks
+                | ExpandablePrimitive::SplitBotMarks) => this
+                    .begin_mark_class_continuation_with_parent(
+                        invocation.origin,
+                        primitive,
+                        parent,
+                    ),
+                primitive @ (ExpandablePrimitive::Number | ExpandablePrimitive::RomanNumeral) => {
+                    this.begin_number_continuation_with_parent(
+                        invocation.origin,
+                        primitive == ExpandablePrimitive::RomanNumeral,
+                        parent,
+                    )
+                }
+                ExpandablePrimitive::PdfUniformDeviate => this
+                    .begin_pdf_uniform_deviate_continuation_with_parent(invocation.origin, parent),
+                primitive @ (ExpandablePrimitive::LeftMarginKern
+                | ExpandablePrimitive::RightMarginKern) => {
+                    let side = if primitive == ExpandablePrimitive::LeftMarginKern {
+                        tex_state::node::MarginKernSide::Left
+                    } else {
+                        tex_state::node::MarginKernSide::Right
+                    };
+                    this.begin_pdf_margin_kern_continuation_with_parent(
+                        invocation.origin,
+                        side,
+                        parent,
+                    )
+                }
+                _ => Err(CommandError::input_invariant()),
+            }
+        })
+    }
+
+    /// TeX82 §370's undefined-command recovery has no operand and therefore
+    /// remains entirely compact unless an outer diagnostic explicitly needs a
+    /// richer command owner.
+    #[inline(always)]
+    fn expand_undefined_hot(
+        &mut self,
+        command: &HotCommand<G>,
+        active: Option<ActiveControlSnapshot<G>>,
+        delivery_expanded: &mut bool,
+        suppress_first_expansion_trace: &mut bool,
+    ) -> Result<ExpandedHotDispatch, CommandError> {
+        *delivery_expanded = true;
+        let report_trace = !std::mem::take(suppress_first_expansion_trace);
+        if report_trace && self.command.delivery_mode.tracing() {
+            self.print_hot_command_trace(command);
+        }
+        #[cfg(feature = "profiling")]
+        tex_state::measurement::record_hot_core_undefined_expansion();
+        let context = self.command.output_open_context(self.state);
+        self.command
+            .semantic_diagnostics
+            .push(crate::CommandSemanticDiagnostic::UndefinedControlSequence { context });
+        if !self.command.profile().capabilities().supports_etex() {
+            self.observe_hot_command_diagnostic("undefined_control_sequence", command);
+        }
+        if matches!(
+            active,
+            Some(ActiveControlSnapshot::ExpandAfterSync(control))
+                if control.phase
+                    == crate::expansion_work::control::SynchronousExpandAfterPhase::NeedSecond
+        ) {
+            self.complete_expandafter_without_second()?;
+        }
+        Ok(ExpandedHotDispatch::Continue)
+    }
+
+    /// Expand one primitive while the delivery loop still owns its compact
+    /// command.  The common synchronous families below consume only the
+    /// packed command word and delivery projections; scanner/resource and
+    /// diagnostic families take the explicit cold path at the end.
+    #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    fn expand_primitive_hot(
+        &mut self,
+        command: &mut HotCommand<G>,
+        primitive: ExpandablePrimitive,
+        active: Option<ActiveControlSnapshot<G>>,
+        delivery_expanded: &mut bool,
+        suppress_first_expansion_trace: &mut bool,
+        carried_parent: &mut Option<ParentAdmission<G>>,
+        destination: &mut Option<HotCommand<G>>,
+        depth: u32,
+        command_parked: &mut bool,
+    ) -> Result<ExpandedHotDispatch, CommandError> {
+        *delivery_expanded = true;
+        let report_trace = !std::mem::take(suppress_first_expansion_trace);
+
+        #[cfg(feature = "profiling")]
+        tex_state::measurement::record_hot_core_expandable_opcode(
+            usize::try_from(primitive.operand()).expect("expandable primitive operand fits usize"),
+        );
+
+        // Keep the descriptor construction next to the primitive match.  It
+        // is copy-small and does not transfer ownership out of `command`;
+        // scanner starters retain only the fields they actually need.
+        let invocation = command.primitive_invocation(primitive);
+
+        if !is_hot_synchronous_primitive(primitive) {
+            return self.expand_primitive_cold(
+                command,
+                primitive,
+                report_trace,
+                *delivery_expanded,
+                active,
+                carried_parent,
+                destination,
+                depth,
+                command_parked,
+            );
+        }
+        record_primitive_hot_dispatch();
+
+        // TeX82 §367 traces the primitive before it consumes an operand. The
+        // hot print projection retains the exact command identity without a
+        // `CurrentCommand` bridge.
+        if report_trace && self.command.delivery_mode.tracing() {
+            self.print_hot_command_trace(command);
+        }
+
+        let result = if hot_primitive_starts_control(primitive) {
+            self.begin_hot_primitive_continuation(invocation, active, carried_parent)
+        } else {
+            let admission = if let Some(parent) = carried_parent.take() {
+                Some(parent)
+            } else {
+                active
+                    .and_then(|control| control.awaitable_slot())
+                    .map(ParentAdmission::Captured)
+            };
+            if let Some(admission) = admission
+                && admission.needs_await()
+            {
+                self.command
+                    .scratch
+                    .await_expansion_control_for_child(admission.slot())
+                    .map_err(crate::scan_toks::scratch_command_error)?;
+            }
+            let parent = admission.map(ParentAdmission::slot);
+            let result = match primitive {
+                primitive @ (ExpandablePrimitive::TopMark
+                | ExpandablePrimitive::FirstMark
+                | ExpandablePrimitive::BotMark
+                | ExpandablePrimitive::SplitFirstMark
+                | ExpandablePrimitive::SplitBotMark) => self.expand_mark(primitive),
+                ExpandablePrimitive::EndInput => self.expand_endinput(),
+                ExpandablePrimitive::JobName => {
+                    self.state.unsupported_host_capability();
+                    let job_name = self.host.job_name().to_owned();
+                    self.push_rendered_text(&job_name, invocation.origin);
+                    Ok(())
+                }
+                ExpandablePrimitive::ETeXRevision => {
+                    self.push_rendered_text(".6", invocation.origin);
+                    Ok(())
+                }
+                ExpandablePrimitive::PdfTeXRevision => {
+                    self.push_rendered_text("27", invocation.origin);
+                    Ok(())
+                }
+                ExpandablePrimitive::PdfTeXBanner => {
+                    self.push_rendered_text(
+                        "This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) kpathsea version 6.4.2",
+                        invocation.origin,
+                    );
+                    Ok(())
+                }
+                ExpandablePrimitive::PdfNormalDeviate => {
+                    let value = self.state.pdf_normal_deviate();
+                    self.push_rendered_text(&value.to_string(), invocation.origin);
+                    Ok(())
+                }
+                ExpandablePrimitive::CreationDate => {
+                    let clock = self.state.job_clock();
+                    self.push_rendered_text(&format_pdf_date(clock, 0), invocation.origin);
+                    Ok(())
+                }
+                ExpandablePrimitive::ShellEscape => {
+                    let status = self
+                        .state
+                        .internal_integer(tex_state::meaning::InternalInteger::PdfShellEscape)
+                        .expect("the shell-escape status is an integer enquiry");
+                    self.push_rendered_text(&status.to_string(), invocation.origin);
+                    Ok(())
+                }
+                _ => unreachable!("primitive was filtered by is_hot_synchronous_primitive"),
+            };
+            if let Some(parent) = parent
+                && result.is_ok()
+            {
+                self.command
+                    .scratch
+                    .resume_expansion_control_parent(parent)
+                    .map_err(crate::scan_toks::scratch_command_error)?;
+            } else if let Some(parent) = parent
+                && admission.is_some_and(ParentAdmission::needs_await)
+                && result.is_err()
+            {
+                self.command
+                    .scratch
+                    .resume_expansion_control_parent(parent)
+                    .map_err(crate::scan_toks::scratch_command_error)?;
+            }
+            result
+        };
+
+        match result {
+            Ok(()) => Ok(ExpandedHotDispatch::Continue),
+            Err(error) => self.fail_expanded_dispatch(destination, depth, error),
+        }
+    }
+
+    /// Explicit cold boundary for primitive families whose scanner, observer,
+    /// diagnostic, or host/resource owner still needs a rich command.  The
+    /// occupied hot owner is materialized once and reconstructed only when
+    /// the operation completes synchronously; suspension parks that one rich
+    /// owner and never rebuilds the hot pair on the return edge.
+    #[cold]
+    #[inline(never)]
+    #[allow(clippy::too_many_arguments)]
+    fn expand_primitive_cold(
+        &mut self,
+        command: &mut HotCommand<G>,
+        primitive: ExpandablePrimitive,
+        report_trace: bool,
+        delivery_expanded: bool,
+        active: Option<ActiveControlSnapshot<G>>,
+        carried_parent: &mut Option<ParentAdmission<G>>,
+        destination: &mut Option<HotCommand<G>>,
+        depth: u32,
+        command_parked: &mut bool,
+    ) -> Result<ExpandedHotDispatch, CommandError> {
+        record_primitive_cold_materialization();
+        let admission = if let Some(parent) = carried_parent.take() {
+            Some(parent)
+        } else {
+            active
+                .and_then(|control| control.awaitable_slot())
+                .map(ParentAdmission::Captured)
+        };
+        if let Some(admission) = admission
+            && admission.needs_await()
+        {
+            self.command
+                .scratch
+                .await_expansion_control_for_child(admission.slot())
+                .map_err(crate::scan_toks::scratch_command_error)?;
+        }
+        let parent = admission.map(ParentAdmission::slot);
+        let mut rich = command.materialize();
+        let result = self.expand_classified_rich_occupied(
+            &mut rich,
+            ExpansionDispatch::Primitive(primitive),
+            report_trace,
+            delivery_expanded,
+            parent,
+            command_parked,
+        );
+        if !*command_parked {
+            *command = HotCommand::from_current(rich);
+        }
+        match result {
+            Ok(()) => {
+                if let Some(parent) = parent
+                    && !primitive_owns_parent(primitive)
+                {
+                    self.command
+                        .scratch
+                        .resume_expansion_control_parent(parent)
+                        .map_err(crate::scan_toks::scratch_command_error)?;
+                }
+                Ok(ExpandedHotDispatch::Continue)
+            }
+            Err(error) => {
+                if !*command_parked
+                    && admission.is_some_and(ParentAdmission::needs_await)
+                    && let Some(parent) = parent
+                {
+                    self.command
+                        .scratch
+                        .resume_expansion_control_parent(parent)
+                        .map_err(crate::scan_toks::scratch_command_error)?;
+                }
+                self.fail_expanded_dispatch(destination, depth, error)
+            }
+        }
     }
 
     /// Completes a source or synthetic `endv` command after the main-loop
@@ -4594,50 +4845,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         result
     }
 
-    /// Expands directly from the delivery loop's continuously occupied
-    /// command destination. Only a real resource suspension moves that value
-    /// into parked work; every synchronous arm retains the same owner.
-    fn expand_classified_occupied(
-        &mut self,
-        command: &mut HotCommand<G>,
-        dispatch: ExpansionDispatch,
-        report_trace: bool,
-        delivery_expanded: bool,
-        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
-        command_parked: &mut bool,
-    ) -> Result<(), CommandError> {
-        if dispatch == ExpansionDispatch::Macro {
-            if self.resumed_expansion.is_some() || self.scanner_resume.is_some() {
-                return Err(CommandError::input_invariant());
-            }
-            #[cfg(feature = "profiling")]
-            {
-                tex_state::measurement::record_hot_core_macro_expansion();
-                if self.write_expansion_depth != 0 {
-                    self.record_write_expansion();
-                }
-            }
-            let _activated = self.macro_call_hot(command)?;
-            return Ok(());
-        }
-
-        // Primitive scanners, diagnostics, and genuine suspension are rich
-        // semantic boundaries. Macro-to-macro chains never enter this arm.
-        let mut rich = command.materialize();
-        let result = self.expand_classified_rich_occupied(
-            &mut rich,
-            dispatch,
-            report_trace,
-            delivery_expanded,
-            parent,
-            command_parked,
-        );
-        if !*command_parked {
-            *command = HotCommand::from_current(rich);
-        }
-        result
-    }
-
     fn expand_classified_rich_occupied(
         &mut self,
         command: &mut CurrentCommand<G>,
@@ -5053,6 +5260,36 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
         }
         result
+    }
+
+    /// Dispatch the already-classified macro branch from the occupied hot
+    /// owner. This compatibility-shaped entry contains only the compact macro
+    /// ABI; primitive and undefined branches have already returned through
+    /// their dedicated hot/cold paths above.
+    #[inline(always)]
+    fn expand_classified_occupied(
+        &mut self,
+        command: &mut HotCommand<G>,
+        dispatch: ExpansionDispatch,
+    ) -> Result<(), CommandError> {
+        match dispatch {
+            ExpansionDispatch::Macro => {}
+            ExpansionDispatch::Primitive(_) | ExpansionDispatch::Undefined => {
+                return Err(CommandError::input_invariant());
+            }
+        }
+        if self.resumed_expansion.is_some() || self.scanner_resume.is_some() {
+            return Err(CommandError::input_invariant());
+        }
+        #[cfg(feature = "profiling")]
+        {
+            tex_state::measurement::record_hot_core_macro_expansion();
+            if self.write_expansion_depth != 0 {
+                self.record_write_expansion();
+            }
+        }
+        let _activated = self.macro_call_hot(command)?;
+        Ok(())
     }
 
     pub(super) fn retain_expansion_scalar<T>(

@@ -575,6 +575,18 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
         self.print_command_trace_text(command_text, conditional_suffix);
     }
 
+    /// Prints a command trace from the compact delivery owner.  This is the
+    /// hot counterpart of [`Self::print_command_trace`]; ordinary expansion
+    /// must not materialize a rich command merely for TeX82 §367's observer
+    /// text.
+    pub(crate) fn print_hot_command_trace(&mut self, command: &crate::command::HotCommand<G>) {
+        let command = PrintCommand::from_hot(command);
+        let conditional_suffix = self.command_trace_conditional_suffix(command.meaning());
+        let mut command_text = String::new();
+        expand_render::append_print_cmd_chr_text(self.state, command, &mut command_text);
+        self.print_command_trace_text(command_text, conditional_suffix);
+    }
+
     /// Prints e-TeX §28.498's merged `\unless` conditional command.
     pub(crate) fn print_unless_command_trace(&mut self, operand: PrintCommand<G>) {
         let conditional_suffix = self.command_trace_conditional_suffix(operand.meaning());

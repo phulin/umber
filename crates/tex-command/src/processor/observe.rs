@@ -151,6 +151,25 @@ impl<G> CommandProcessor<'_, '_, G> {
         }));
     }
 
+    /// Compact counterpart used by recoverable expansion diagnostics whose
+    /// only command argument is its delivered spelling.
+    pub(crate) fn observe_hot_command_diagnostic(
+        &mut self,
+        diagnostic: &'static str,
+        command: &crate::command::HotCommand<G>,
+    ) {
+        if !self.is_observed() {
+            return;
+        }
+        self.observe(CommandObservation::Diagnostic(DiagnosticRecord {
+            severity: "error",
+            diagnostic,
+            arguments: vec![DiagnosticArgument::Token(
+                self.observed_hot_command_spelling(command),
+            )],
+        }));
+    }
+
     /// Publishes one source-located schema-v4 diagnostic report.
     pub(crate) fn observe_diagnostic_lifecycle(
         &mut self,

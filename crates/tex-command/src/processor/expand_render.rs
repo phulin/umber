@@ -11,6 +11,7 @@ use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
 
 use crate::CurrentCommand;
+use crate::command::HotCommand;
 
 pub(super) fn format_scaled(value: Scaled) -> String {
     let mut output = String::new();
@@ -381,6 +382,17 @@ impl<G> PrintCommand<G> {
     pub fn from_current(command: &CurrentCommand<G>) -> Self {
         Self {
             meaning: command.meaning(),
+            control_sequence: command.control_sequence(),
+        }
+    }
+
+    /// Captures the copy-small command projection directly from the hot
+    /// owner.  Tracing is an explicit observer boundary; it must not force a
+    /// `HotCommand -> CurrentCommand` bridge just to render `cur_cmd`/`cur_chr`.
+    #[must_use]
+    pub(crate) fn from_hot(command: &HotCommand<G>) -> Self {
+        Self {
+            meaning: command.resolved_meaning(),
             control_sequence: command.control_sequence(),
         }
     }
