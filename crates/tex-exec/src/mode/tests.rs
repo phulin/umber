@@ -346,6 +346,27 @@ fn pending_run_admission_with_zero_acceptance_leaves_journal_and_scratch_untouch
         .expect("empty pending rollback");
 }
 
+#[test]
+fn identity_enabled_pending_accumulation_does_not_capture_mode_identity() {
+    let mut nest = ModeNest::new();
+    nest.enable_reachable_state_identity();
+    nest.push(Mode::Horizontal).expect("horizontal mode");
+    super::reset_mode_identity_capture_calls_for_test();
+
+    let appended =
+        nest.current_list_mutation()
+            .append_pending_hchars(FontId::testing_new(2), 8, |index| {
+                (index < 4).then_some((
+                    char::from(b'a' + index as u8),
+                    tex_state::token::OriginId::UNKNOWN,
+                    None,
+                ))
+            });
+    assert_eq!(appended, 4);
+    assert_eq!(super::mode_identity_capture_calls_for_test(), 0);
+    assert!(nest.current_list_mutation().clear_pending_hchars());
+}
+
 #[cfg(feature = "profiling")]
 #[test]
 fn warmed_pending_source_flushes_allocate_nothing() {
@@ -809,8 +830,8 @@ fn compact_inverse_layout_and_representative_recorded_bytes_are_exact() {
     let layout = super::journal::inverse_layout_for_test();
     assert_eq!(
         layout,
-        [16, 40, 128, 64, 144, 48, 8, 40, 56, 680],
-        "descriptor, list root, alignment, fraction, display interrupt, equation number, previous depth, pending projection, pending value, and popped level layouts"
+        [16, 40, 112, 64, 144, 48, 8, 24, 40, 600],
+        "descriptor, list root, alignment, fraction, display interrupt, equation number, previous depth, structural pending projection, pending value, and popped level layouts"
     );
     let [
         descriptor,
@@ -1199,7 +1220,7 @@ fn journal_fatal_commit_model_and_operational_invisibility_hold() {
 fn rooted_candidate_rewinds_the_direct_owner_and_rejects_symmetrically() {
     with_context(|context| {
         let mut source = ModeNest::new();
-        let checkpoint = source.checkpoint();
+        let checkpoint = source.checkpoint_with_identity(false);
         for index in 0..4_096 {
             source.current_list_mutation().push(context, kern(index));
         }
@@ -1227,7 +1248,7 @@ fn rooted_candidate_rewinds_the_direct_owner_and_rejects_symmetrically() {
 fn rooted_candidate_accepts_direct_topology_and_keeps_the_mark_seedable() {
     with_context(|context| {
         let mut source = ModeNest::new();
-        let checkpoint = source.checkpoint();
+        let checkpoint = source.checkpoint_with_identity(false);
         source.push(Mode::Horizontal).expect("accepted push");
         source.current_list_mutation().push(context, kern(2));
 
@@ -1255,10 +1276,10 @@ fn rooted_candidate_accepts_direct_topology_and_keeps_the_mark_seedable() {
 fn accepted_candidate_keeps_its_published_mark_seedable() {
     with_context(|context| {
         let mut source = ModeNest::new();
-        let root = source.checkpoint();
+        let root = source.checkpoint_with_identity(false);
         let mut candidate = ModeNest::fork_checkpoint(&root).expect("rooted fork");
         candidate.current_list_mutation().set_prev_graf(1);
-        let published = candidate.checkpoint();
+        let published = candidate.checkpoint_with_identity(false);
         candidate.current_list_mutation().set_prev_graf(2);
         drop(candidate.accept_checkpoint_candidate());
 
@@ -1343,7 +1364,7 @@ fn rooted_candidate_consuming_transitions_preserve_all_mode_families_and_sibling
             outer.set_prev_depth(Scaled::from_raw(59));
             outer.set_prev_graf(13);
         }
-        let checkpoint = source.checkpoint();
+        let checkpoint = source.checkpoint_with_identity(false);
         let rooted = source.summary();
 
         let mut accepted = ModeNest::fork_checkpoint(&checkpoint).expect("accepted fork");
@@ -1400,7 +1421,7 @@ fn rooted_candidate_consuming_transitions_preserve_all_mode_families_and_sibling
 #[should_panic(expected = "checkpoint candidate mode owner requires explicit accept or reject")]
 fn unresolved_mode_candidate_cannot_hide_disposition_in_drop() {
     let mut source = ModeNest::new();
-    let checkpoint = source.checkpoint();
+    let checkpoint = source.checkpoint_with_identity(false);
     let _candidate = ModeNest::fork_checkpoint(&checkpoint).expect("rooted candidate");
 }
 
@@ -1408,7 +1429,7 @@ fn unresolved_mode_candidate_cannot_hide_disposition_in_drop() {
 fn rooted_candidate_take_excludes_the_accepted_later_suffix() {
     with_context(|context| {
         let mut source = ModeNest::new();
-        let checkpoint = source.checkpoint();
+        let checkpoint = source.checkpoint_with_identity(false);
         for index in 0..4_096 {
             source.current_list_mutation().push(context, kern(index));
         }
@@ -1438,32 +1459,42 @@ fn rooted_candidate_take_excludes_the_accepted_later_suffix() {
 }
 
 #[test]
-fn maintained_mode_identity_tracks_mutations_and_restores_exactly() {
+fn boundary_mode_identity_is_demanded_once_and_restores_exactly() {
     with_context(|_| {
         let mut nest = ModeNest::new();
-        nest.enable_reachable_state_identity();
+        super::reset_mode_identity_capture_calls_for_test();
+        assert_eq!(
+            nest.checkpoint_with_identity(false)
+                .reachable_state_identity_root(),
+            None,
+            "ordinary mode checkpoints do not compute convergence identity"
+        );
+        assert_eq!(super::mode_identity_capture_calls_for_test(), 0);
         let initial = nest
-            .checkpoint()
+            .checkpoint_with_identity(true)
             .reachable_state_identity_root()
             .expect("mode root is available");
+        assert_eq!(super::mode_identity_capture_calls_for_test(), 1);
         nest.current_list_mutation().set_prev_graf(7);
         let scalar = nest
-            .checkpoint()
+            .checkpoint_with_identity(true)
             .reachable_state_identity_root()
             .expect("mode root is available");
         assert_ne!(scalar, initial);
-        let rooted = nest.checkpoint();
+        let rooted = nest.checkpoint_with_identity(true);
         let expected = rooted
             .reachable_state_identity_root()
             .expect("mode root is available");
         nest.current_list_mutation().set_prev_graf(8);
         assert_ne!(
-            nest.checkpoint().reachable_state_identity_root(),
+            nest.checkpoint_with_identity(true)
+                .reachable_state_identity_root(),
             Some(expected)
         );
         nest.restore_checkpoint(&rooted).expect("root restores");
         assert_eq!(
-            nest.checkpoint().reachable_state_identity_root(),
+            nest.checkpoint_with_identity(true)
+                .reachable_state_identity_root(),
             Some(expected)
         );
     });
@@ -1474,10 +1505,21 @@ fn maintained_mode_identity_tracks_mutations_and_restores_exactly() {
 fn transient_mode_material_cannot_publish_a_retained_checkpoint() {
     with_context(|context| {
         let mut source = ModeNest::new();
-        source.enable_reachable_state_identity();
         source.current_list_mutation().push(context, kern(1));
-        let _ = source.checkpoint();
+        let _ = source.checkpoint_with_identity(false);
     });
+}
+
+#[test]
+#[should_panic(expected = "restart checkpoint requires one quiescent empty outer vertical mode")]
+fn pending_horizontal_run_cannot_publish_a_retained_checkpoint() {
+    let mut source = ModeNest::new();
+    source.current_list_mutation().begin_pending_hchars(
+        FontId::testing_new(2),
+        'a',
+        tex_state::token::OriginId::UNKNOWN,
+    );
+    let _ = source.checkpoint_with_identity(false);
 }
 
 #[test]
@@ -1485,7 +1527,7 @@ fn transient_mode_material_cannot_publish_a_retained_checkpoint() {
 fn nested_mode_cannot_publish_a_retained_checkpoint() {
     let mut source = ModeNest::new();
     source.push(Mode::Horizontal).expect("nested mode");
-    let _ = source.checkpoint();
+    let _ = source.checkpoint_with_identity(false);
 }
 
 #[test]
@@ -1589,7 +1631,7 @@ fn foreign_cross_generation_mode_span_is_rejected_before_succession() {
 fn eligible_checkpoint_has_no_independent_live_mode_list_owner() {
     let mut nest = ModeNest::new();
     nest.current_list_mutation().set_prev_graf(7);
-    let checkpoint = nest.checkpoint();
+    let checkpoint = nest.checkpoint_with_identity(false);
 
     assert!(checkpoint.outer.list.nodes.is_empty());
     assert!(checkpoint.outer.list.is_checkpoint_rootless());

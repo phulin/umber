@@ -29,8 +29,6 @@ const HYPHEN_CONTEXT: usize = 11;
 struct ListProjection {
     id: u64,
     root: tex_state::page_node_arena::PageListSpan,
-    list_semantic_identity_root: u64,
-    component_roots: super::ModeComponentRoots,
     inverse_positions: [usize; FIELD_COUNT],
 }
 
@@ -39,8 +37,6 @@ impl ListProjection {
         Self {
             id,
             root: list.nodes,
-            list_semantic_identity_root: list.semantic_identity_root,
-            component_roots: list.component_roots,
             inverse_positions: [UNRECORDED; FIELD_COUNT],
         }
     }
@@ -51,8 +47,6 @@ pub(super) struct PendingHRunProjection {
     insertion_index: usize,
     source_len: usize,
     script: tex_fonts::Script,
-    source_identity_root: u64,
-    semantic_identity_root: u64,
 }
 
 impl PendingHRunProjection {
@@ -61,8 +55,6 @@ impl PendingHRunProjection {
             insertion_index: run.insertion_index,
             source_len: run.source.len(),
             script: run.script,
-            source_identity_root: run.source_identity_root,
-            semantic_identity_root: run.semantic_identity_root,
         }
     }
 
@@ -70,8 +62,6 @@ impl PendingHRunProjection {
         run.insertion_index = self.insertion_index;
         run.source.truncate(self.source_len);
         run.script = self.script;
-        run.source_identity_root = self.source_identity_root;
-        run.semantic_identity_root = self.semantic_identity_root;
     }
 }
 
@@ -598,8 +588,6 @@ impl ModeNestStorage {
             let projection = self.journal.projections[index];
             let level = self.level_by_id_mut(projection.id);
             level.list.nodes = projection.root;
-            level.list.semantic_identity_root = projection.list_semantic_identity_root;
-            level.list.component_roots = projection.component_roots;
         }
         self.journal.projections.truncate(frame.projection_start);
         self.scratch.clear();

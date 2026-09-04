@@ -28,7 +28,7 @@ pub const REACHABLE_STATE_IDENTITY_SCHEMA_VERSION: u32 = 1;
 ///
 /// The value is optional because ordinary checkpoints do not request it and a
 /// requested projection remains unavailable until every component supplies a
-/// journal-maintained root. Runtime coordinates and partial projections are
+/// canonical boundary root. Runtime coordinates and partial projections are
 /// never substituted for a missing root.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ReachableStateIdentity {
@@ -736,7 +736,7 @@ impl<G> EngineCheckpoint<G> {
             .root_source_anchor()
             .and_then(|anchor| usize::try_from(anchor).ok())
             .unwrap_or(0);
-        let modes = nest.checkpoint();
+        let modes = nest.checkpoint_with_identity(wants_reachable_state_identity);
         let effect_prefix = usize::try_from(universe.world().effect_pos().raw())
             .expect("effect log position must fit in memory address space");
         let artifact_prefix = universe.world().artifact_pos();

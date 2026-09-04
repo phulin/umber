@@ -1854,12 +1854,11 @@ impl<G> MainControl<G> {
         self.capture_checkpoint_with_identity_demand(eligibility, stores, budget_counters, false)
     }
 
-    /// Selects maintained convergence identity before an incremental session
-    /// begins ordinary execution.
+    /// Selects convergence identity for an incremental session. Mode identity
+    /// is computed at each demanded quiescent checkpoint boundary.
     #[doc(hidden)]
     pub fn enable_reachable_state_identity(&mut self, stores: &mut Universe<G>) {
         let _ = self.command.enable_reachable_state_identity();
-        self.modes.enable_reachable_state_identity();
         stores.enable_reachable_state_identity();
     }
 

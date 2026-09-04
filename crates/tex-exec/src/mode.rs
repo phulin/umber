@@ -17,6 +17,7 @@ use crate::ExecError;
 #[cfg(test)]
 thread_local! {
     static SEMANTIC_FINGERPRINT_CALLS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static MODE_IDENTITY_CAPTURE_CALLS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 mod journal;
@@ -149,9 +150,6 @@ pub struct ModeList {
     hyphen_language: u8,
     left_hyphen_min: u8,
     right_hyphen_min: u8,
-    component_roots: ModeComponentRoots,
-    identity_enabled: bool,
-    semantic_identity_root: u64,
 }
 
 impl ModeList {
@@ -173,9 +171,6 @@ impl ModeList {
             hyphen_language: self.hyphen_language,
             left_hyphen_min: self.left_hyphen_min,
             right_hyphen_min: self.right_hyphen_min,
-            component_roots: self.component_roots,
-            identity_enabled: self.identity_enabled,
-            semantic_identity_root: self.semantic_identity_root,
         }
     }
 
@@ -217,15 +212,6 @@ impl PartialEq for ModeList {
             && self.left_hyphen_min == other.left_hyphen_min
             && self.right_hyphen_min == other.right_hyphen_min
     }
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-struct ModeComponentRoots {
-    align: u64,
-    incomplete_fraction: u64,
-    display_interrupt: u64,
-    display_eq_no: u64,
-    pending_hchars: u64,
 }
 
 impl ModeList {
@@ -285,40 +271,6 @@ impl ModeList {
                 .admit_page_node_span(root)
                 .expect("owner-validated page root admits its checked span")
         })
-    }
-
-    fn refresh_semantic_identity_root(&mut self) {
-        if self.identity_enabled {
-            self.semantic_identity_root = mode_list_semantic_identity(self);
-        }
-    }
-
-    fn enable_semantic_identity(&mut self) {
-        if self.identity_enabled {
-            return;
-        }
-        self.identity_enabled = true;
-        self.component_roots.align = self
-            .align_state
-            .as_mut()
-            .map_or(0, |state| state.enable_semantic_identity());
-        self.component_roots.incomplete_fraction = self
-            .incomplete_fraction
-            .as_ref()
-            .map_or(0, incomplete_fraction_identity);
-        self.component_roots.display_interrupt = self
-            .display_interrupt
-            .as_ref()
-            .map_or(0, display_interrupt_identity);
-        self.component_roots.display_eq_no = self
-            .display_eq_no
-            .as_ref()
-            .map_or(0, display_eq_no_identity);
-        self.component_roots.pending_hchars = self
-            .pending_hchars
-            .as_mut()
-            .map_or(0, |run| run.enable_semantic_identity());
-        self.refresh_semantic_identity_root();
     }
 
     fn is_checkpoint_rootless(&self) -> bool {
@@ -486,12 +438,7 @@ impl ModeList {
         debug_assert!(self.pending_hchars.is_none());
         debug_assert!(source.is_empty());
         source.push(PendingHChar { font, ch, origin });
-        let mut pending = PendingHRun::new(source, self.nodes.len());
-        if self.identity_enabled {
-            pending.enable_semantic_identity();
-        }
-        self.component_roots.pending_hchars = pending.semantic_identity_root;
-        self.pending_hchars = Some(pending);
+        self.pending_hchars = Some(PendingHRun::new(source, self.nodes.len()));
     }
 
     pub(crate) fn pending_hchars(&self) -> Option<&PendingHRun> {
@@ -499,9 +446,7 @@ impl ModeList {
     }
 
     pub(crate) fn take_pending_hchars(&mut self) -> Option<PendingHRun> {
-        let value = self.pending_hchars.take();
-        self.component_roots.pending_hchars = 0;
-        value
+        self.pending_hchars.take()
     }
 
     #[must_use]
@@ -647,11 +592,6 @@ impl ModeList {
     }
 
     pub fn set_align_state(&mut self, state: AlignState) {
-        let mut state = state;
-        if self.identity_enabled {
-            state.enable_semantic_identity();
-        }
-        self.component_roots.align = state.semantic_identity_root;
         self.align_state = Some(state);
     }
 
@@ -660,15 +600,11 @@ impl ModeList {
         mutate: impl for<'a> FnOnce(&'a mut AlignState) -> R,
     ) -> Option<R> {
         let state = self.align_state.as_mut()?;
-        let result = mutate(state);
-        self.component_roots.align = state.semantic_identity_root;
-        Some(result)
+        Some(mutate(state))
     }
 
     pub fn take_align_state(&mut self) -> Option<AlignState> {
-        let value = self.align_state.take();
-        self.component_roots.align = 0;
-        value
+        self.align_state.take()
     }
 
     #[must_use]
@@ -677,22 +613,14 @@ impl ModeList {
     }
 
     fn set_incomplete_fraction(&mut self, fraction: IncompleteFraction) {
-        if self.identity_enabled {
-            self.component_roots.incomplete_fraction = incomplete_fraction_identity(&fraction);
-        }
         self.incomplete_fraction = Some(fraction);
     }
 
     pub fn take_incomplete_fraction(&mut self) -> Option<IncompleteFraction> {
-        let value = self.incomplete_fraction.take();
-        self.component_roots.incomplete_fraction = 0;
-        value
+        self.incomplete_fraction.take()
     }
 
     fn set_display_interrupt(&mut self, interrupt: DisplayInterrupt) {
-        if self.identity_enabled {
-            self.component_roots.display_interrupt = display_interrupt_identity(&interrupt);
-        }
         self.display_interrupt = Some(interrupt);
     }
 
@@ -702,15 +630,10 @@ impl ModeList {
     }
 
     pub fn take_display_interrupt(&mut self) -> Option<DisplayInterrupt> {
-        let value = self.display_interrupt.take();
-        self.component_roots.display_interrupt = 0;
-        value
+        self.display_interrupt.take()
     }
 
     fn set_display_eq_no(&mut self, eq_no: DisplayEqNo) {
-        if self.identity_enabled {
-            self.component_roots.display_eq_no = display_eq_no_identity(&eq_no);
-        }
         self.display_eq_no = Some(eq_no);
     }
 
@@ -720,9 +643,7 @@ impl ModeList {
     }
 
     pub fn take_display_eq_no(&mut self) -> Option<DisplayEqNo> {
-        let value = self.display_eq_no.take();
-        self.component_roots.display_eq_no = 0;
-        value
+        self.display_eq_no.take()
     }
 
     fn set_display_alignment(&mut self, nodes: PageListSpan, prev_depth: Option<Scaled>) {
@@ -787,12 +708,6 @@ pub(crate) struct ModeListMutation<'a> {
     list: ModeListBorrow<'a>,
     journal: ModeListJournalBorrow<'a>,
     scratch: Option<&'a mut HorizontalModeScratch>,
-}
-
-impl Drop for ModeListMutation<'_> {
-    fn drop(&mut self) {
-        self.list.refresh_semantic_identity_root();
-    }
 }
 
 impl ModeListMutation<'_> {
@@ -1019,11 +934,7 @@ impl ModeListMutation<'_> {
             }
         }
         let pending = self.list.pending_hchars.as_mut()?;
-        let result = mutate(pending);
-        pending.source_identity_root = pending_source_identity(&pending.source);
-        pending.refresh_semantic_identity_root();
-        self.list.component_roots.pending_hchars = pending.semantic_identity_root;
-        Some(result)
+        Some(mutate(pending))
     }
 
     pub(crate) fn append_pending_hchar(
@@ -1047,7 +958,6 @@ impl ModeListMutation<'_> {
             return false;
         };
         pending.append_character(font, ch, origin, script);
-        self.list.component_roots.pending_hchars = pending.semantic_identity_root;
         true
     }
 
@@ -1107,14 +1017,6 @@ impl ModeListMutation<'_> {
                     .begin_pending_hchars(pending_source, font, ch, origin);
             }
             appended += 1;
-        }
-        if appended != 0 {
-            self.list.component_roots.pending_hchars = self
-                .list
-                .pending_hchars
-                .as_ref()
-                .expect("batch append retains pending run")
-                .semantic_identity_root;
         }
         appended
     }
@@ -1386,9 +1288,6 @@ pub struct AlignState {
     current_col: usize,
     current_span: u16,
     suppress_redundant_cr: bool,
-    identity_enabled: bool,
-    definition_identity_root: u64,
-    semantic_identity_root: u64,
 }
 
 impl AlignState {
@@ -1412,9 +1311,6 @@ impl AlignState {
             current_col: 0,
             current_span: 1,
             suppress_redundant_cr: false,
-            identity_enabled: false,
-            definition_identity_root: 0,
-            semantic_identity_root: 0,
         }
     }
 
@@ -1470,7 +1366,6 @@ impl AlignState {
 
     pub fn set_suppress_redundant_cr(&mut self, value: bool) {
         self.suppress_redundant_cr = value;
-        self.refresh_semantic_identity_root();
     }
 
     #[must_use]
@@ -1513,48 +1408,22 @@ impl AlignState {
     pub fn start_row(&mut self) {
         self.current_col = 0;
         self.current_span = 1;
-        self.refresh_semantic_identity_root();
     }
 
     pub fn start_cell(&mut self, column: usize, span_count: u16) {
         self.current_col = column;
         self.current_span = span_count;
-        self.refresh_semantic_identity_root();
     }
 
     pub fn finish_cell(&mut self, next_column: usize) {
         self.current_col = next_column;
         self.current_span = 1;
-        self.refresh_semantic_identity_root();
     }
 
     pub fn finish_row(&mut self) {
         self.current_row += 1;
         self.current_col = 0;
         self.current_span = 1;
-        self.refresh_semantic_identity_root();
-    }
-
-    fn refresh_semantic_identity_root(&mut self) {
-        if !self.identity_enabled {
-            return;
-        }
-        let mut hasher = mode_identity_hasher(b"umber-mode-alignment-state-v1");
-        self.definition_identity_root.hash(&mut hasher);
-        (self.current_row as u64).hash(&mut hasher);
-        (self.current_col as u64).hash(&mut hasher);
-        self.current_span.hash(&mut hasher);
-        self.suppress_redundant_cr.hash(&mut hasher);
-        self.semantic_identity_root = hasher.finish();
-    }
-
-    fn enable_semantic_identity(&mut self) -> u64 {
-        if !self.identity_enabled {
-            self.identity_enabled = true;
-            self.definition_identity_root = alignment_definition_identity(self);
-            self.refresh_semantic_identity_root();
-        }
-        self.semantic_identity_root
     }
 }
 
@@ -1633,9 +1502,6 @@ pub(crate) struct PendingHRun {
     pub(crate) insertion_index: usize,
     pub(crate) source: Vec<PendingHChar>,
     pub(crate) script: tex_fonts::Script,
-    identity_enabled: bool,
-    source_identity_root: u64,
-    semantic_identity_root: u64,
 }
 
 impl PendingHRun {
@@ -1648,9 +1514,6 @@ impl PendingHRun {
             insertion_index,
             source,
             script,
-            identity_enabled: false,
-            source_identity_root: 0,
-            semantic_identity_root: 0,
         }
     }
 
@@ -1664,49 +1527,7 @@ impl PendingHRun {
         if let Some(script) = script {
             self.script = script;
         }
-        let source = PendingHChar { font, ch, origin };
-        if self.identity_enabled {
-            self.source_identity_root = self
-                .source_identity_root
-                .rotate_left(27)
-                .wrapping_mul(0x9e37_79b1_85eb_ca87)
-                .wrapping_add(pending_char_identity(&source));
-        }
-        self.source.push(source);
-        self.refresh_semantic_identity_root();
-    }
-
-    fn refresh_semantic_identity_root(&mut self) {
-        if !self.identity_enabled {
-            return;
-        }
-        let mut hasher = mode_identity_hasher(b"umber-mode-pending-run-v1");
-        pending_char_identity(
-            self.source
-                .first()
-                .expect("a pending run owns its first source character"),
-        )
-        .hash(&mut hasher);
-        (self.insertion_index as u64).hash(&mut hasher);
-        (self.source.len() as u64).hash(&mut hasher);
-        self.source_identity_root.hash(&mut hasher);
-        pending_source_current_identity(
-            self.source
-                .last()
-                .expect("a pending run owns its current source character"),
-        )
-        .hash(&mut hasher);
-        (self.script as u32).hash(&mut hasher);
-        self.semantic_identity_root = hasher.finish();
-    }
-
-    fn enable_semantic_identity(&mut self) -> u64 {
-        if !self.identity_enabled {
-            self.identity_enabled = true;
-            self.source_identity_root = pending_source_identity(&self.source);
-            self.refresh_semantic_identity_root();
-        }
-        self.semantic_identity_root
+        self.source.push(PendingHChar { font, ch, origin });
     }
 }
 
@@ -1865,9 +1686,7 @@ impl ModeLevelSummary {
         &mut self,
         mutate: impl for<'a> FnOnce(&'a mut ModeList) -> R,
     ) -> R {
-        let result = mutate(&mut self.list);
-        self.list.refresh_semantic_identity_root();
-        result
+        mutate(&mut self.list)
     }
 
     pub(crate) fn list_mutation(&mut self) -> ModeListMutation<'_> {
@@ -1939,6 +1758,16 @@ pub(crate) fn reset_semantic_fingerprint_calls_for_test() {
 #[cfg(test)]
 pub(crate) fn semantic_fingerprint_calls_for_test() -> u64 {
     SEMANTIC_FINGERPRINT_CALLS.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+pub(crate) fn reset_mode_identity_capture_calls_for_test() {
+    MODE_IDENTITY_CAPTURE_CALLS.with(|calls| calls.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn mode_identity_capture_calls_for_test() -> u64 {
+    MODE_IDENTITY_CAPTURE_CALLS.with(std::cell::Cell::get)
 }
 
 fn hash_mode<G>(mode: Mode, projection: &mut EngineBoundaryHasher<'_, G>) {
@@ -2146,149 +1975,24 @@ fn mode_identity_hasher(domain: &[u8]) -> ahash::AHasher {
     hasher
 }
 
-fn hash_optional_scaled(value: Option<Scaled>, hasher: &mut impl Hasher) {
-    value.map(Scaled::raw).hash(hasher);
-}
-
-fn hash_node_token_list(tokens: &NodeTokenList, hasher: &mut impl Hasher) {
-    tokens.hash(hasher);
-}
-
-fn hash_glue_value(glue: GlueSpec, hasher: &mut impl Hasher) {
-    glue.width.raw().hash(hasher);
-    glue.stretch.raw().hash(hasher);
-    (glue.stretch_order as u8).hash(hasher);
-    glue.shrink.raw().hash(hasher);
-    (glue.shrink_order as u8).hash(hasher);
-}
-
-fn alignment_definition_identity(align: &AlignState) -> u64 {
-    let mut hasher = mode_identity_hasher(b"umber-mode-alignment-definition-v1");
-    match align.kind {
-        AlignmentKind::HAlign => 0_u8.hash(&mut hasher),
-        AlignmentKind::VAlign => 1_u8.hash(&mut hasher),
-    }
-    match align.pack_spec {
-        AlignmentPackSpec::Natural => 0_u8.hash(&mut hasher),
-        AlignmentPackSpec::Exactly(size) => {
-            1_u8.hash(&mut hasher);
-            size.raw().hash(&mut hasher);
-        }
-        AlignmentPackSpec::Spread(size) => {
-            2_u8.hash(&mut hasher);
-            size.raw().hash(&mut hasher);
-        }
-    }
-    (align.columns.len() as u64).hash(&mut hasher);
-    for column in &align.columns {
-        hash_node_token_list(&column.u_template, &mut hasher);
-        hash_node_token_list(&column.v_template, &mut hasher);
-    }
-    (align.tabskips.len() as u64).hash(&mut hasher);
-    for &tabskip in &align.tabskips {
-        hash_glue_value(tabskip, &mut hasher);
-    }
-    hash_glue_value(align.default_tabskip, &mut hasher);
-    align.loop_start.map(|value| value as u64).hash(&mut hasher);
-    hasher.finish()
-}
-
-fn incomplete_fraction_identity(fraction: &IncompleteFraction) -> u64 {
-    let mut hasher = mode_identity_hasher(b"umber-mode-incomplete-fraction-v1");
-    fraction.numerator.hash(&mut hasher);
-    match fraction.thickness {
-        FractionThickness::Default => 0_u8.hash(&mut hasher),
-        FractionThickness::Explicit(size) => {
-            1_u8.hash(&mut hasher);
-            size.raw().hash(&mut hasher);
-        }
-    }
-    fraction.left_delimiter.hash(&mut hasher);
-    fraction.right_delimiter.hash(&mut hasher);
-    hasher.finish()
-}
-
-fn display_interrupt_identity(interrupt: &DisplayInterrupt) -> u64 {
-    let mut hasher = mode_identity_hasher(b"umber-mode-display-interrupt-v1");
-    (interrupt.active_directions.len() as u64).hash(&mut hasher);
-    for direction in &interrupt.active_directions {
-        match direction {
-            tex_state::node::Direction::BeginL => 0_u8,
-            tex_state::node::Direction::EndL => 1,
-            tex_state::node::Direction::BeginR => 2,
-            tex_state::node::Direction::EndR => 3,
-            tex_state::node::Direction::BeginM => 4,
-            tex_state::node::Direction::EndM => 5,
-        }
-        .hash(&mut hasher);
-    }
-    match &interrupt.prototype {
-        Some(prototype) => {
-            1_u8.hash(&mut hasher);
-            let node = Node::HList(map_box_lists(*prototype, PageListSpan::list));
-            tex_state::node_sequence::SemanticSequenceIdentity::from_nodes([&node])
-                .raw()
-                .hash(&mut hasher);
-        }
-        None => 0_u8.hash(&mut hasher),
-    }
-    hasher.finish()
-}
-
-fn display_eq_no_identity(eq_no: &DisplayEqNo) -> u64 {
-    let mut hasher = mode_identity_hasher(b"umber-mode-display-eqno-v1");
-    match eq_no.side {
-        EqNoSide::Left => 0_u8,
-        EqNoSide::Right => 1,
-    }
-    .hash(&mut hasher);
-    eq_no.display.hash(&mut hasher);
-    hasher.finish()
-}
-
-fn pending_char_identity(value: &PendingHChar) -> u64 {
-    let mut hasher = mode_identity_hasher(b"umber-mode-pending-char-v1");
-    value.font.hash(&mut hasher);
-    (value.ch as u32).hash(&mut hasher);
-    hasher.finish()
-}
-
-fn pending_source_current_identity(value: &PendingHChar) -> u64 {
-    let mut hasher = mode_identity_hasher(b"umber-mode-pending-current-v1");
-    value.font.hash(&mut hasher);
-    (value.ch as u32).hash(&mut hasher);
-    1_u64.hash(&mut hasher);
-    (value.ch as u32).hash(&mut hasher);
-    false.hash(&mut hasher);
-    false.hash(&mut hasher);
-    false.hash(&mut hasher);
-    hasher.finish()
-}
-
-fn pending_source_identity(source: &[PendingHChar]) -> u64 {
-    source.iter().fold(0_u64, |root, value| {
-        root.rotate_left(27)
-            .wrapping_mul(0x9e37_79b1_85eb_ca87)
-            .wrapping_add(pending_char_identity(value))
-    })
-}
-
 fn mode_list_semantic_identity(list: &ModeList) -> u64 {
+    assert!(
+        list.is_checkpoint_rootless(),
+        "mode identity is captured only at a quiescent checkpoint boundary"
+    );
     let mut hasher = mode_identity_hasher(MODE_LIST_IDENTITY_DOMAIN);
     (list.nodes.len() as u64).hash(&mut hasher);
-    list.nodes
-        .list()
-        .semantic_identity()
-        .unwrap_or(0)
-        .hash(&mut hasher);
-    list.component_roots.align.hash(&mut hasher);
-    list.component_roots.incomplete_fraction.hash(&mut hasher);
-    list.component_roots.display_interrupt.hash(&mut hasher);
-    list.component_roots.display_eq_no.hash(&mut hasher);
+    0_u64.hash(&mut hasher);
+    // These transient values cannot cross a restart boundary. Their empty
+    // encodings remain part of the canonical mode-list projection.
+    0_u64.hash(&mut hasher);
+    0_u64.hash(&mut hasher);
+    0_u64.hash(&mut hasher);
+    0_u64.hash(&mut hasher);
     list.display_alignment.hash(&mut hasher);
-    hash_optional_scaled(list.prev_depth, &mut hasher);
+    list.prev_depth.map(Scaled::raw).hash(&mut hasher);
     list.prev_graf.hash(&mut hasher);
-    list.component_roots.pending_hchars.hash(&mut hasher);
+    0_u64.hash(&mut hasher);
     list.space_factor.hash(&mut hasher);
     list.no_boundary.hash(&mut hasher);
     list.hyphen_language.hash(&mut hasher);
@@ -2298,6 +2002,8 @@ fn mode_list_semantic_identity(list: &ModeList) -> u64 {
 }
 
 fn mode_nest_semantic_identity(levels: &[ModeLevelSummary]) -> u64 {
+    #[cfg(test)]
+    MODE_IDENTITY_CAPTURE_CALLS.with(|calls| calls.set(calls.get() + 1));
     let mut hasher = mode_identity_hasher(MODE_NEST_IDENTITY_DOMAIN);
     1_u16.hash(&mut hasher);
     (levels.len() as u64).hash(&mut hasher);
@@ -2312,7 +2018,7 @@ fn mode_nest_semantic_identity(levels: &[ModeLevelSummary]) -> u64 {
         }
         .hash(&mut hasher);
         level.entry_line.hash(&mut hasher);
-        level.list.semantic_identity_root.hash(&mut hasher);
+        mode_list_semantic_identity(&level.list).hash(&mut hasher);
     }
     hasher.finish()
 }
@@ -2322,7 +2028,6 @@ struct ModeNestStorage {
     levels: Vec<ModeLevelSummary>,
     journal: journal::ModeJournal,
     scratch: HorizontalModeScratch,
-    identity_enabled: bool,
 }
 
 impl ModeNestStorage {
@@ -2493,7 +2198,6 @@ impl ModeNest {
                 levels,
                 journal: journal::ModeJournal::enabled(1),
                 scratch: HorizontalModeScratch::default(),
-                identity_enabled: false,
             },
             lifecycle: ModeNestLifecycle::Independent,
             max_nest_stack: 0,
@@ -2516,7 +2220,6 @@ impl ModeNest {
                 journal: journal::ModeJournal::enabled(summary.levels.len()),
                 levels: summary.levels,
                 scratch: HorizontalModeScratch::default(),
-                identity_enabled: false,
             },
             lifecycle: ModeNestLifecycle::Independent,
             max_nest_stack: 0,
@@ -2552,32 +2255,22 @@ impl ModeNest {
         semantic_fingerprint_levels(&self.storage.levels, universe)
     }
 
-    /// Enables semantic-root maintenance for one convergence session.
+    /// Retains the former demand-selection entry point for callers which
+    /// enable the complete engine identity. Mode identity is now computed at
+    /// the checkpoint boundary, so there is no live state to enable.
     #[doc(hidden)]
-    pub fn enable_reachable_state_identity(&mut self) {
-        let storage = &mut self.storage;
-        if storage.identity_enabled {
-            return;
-        }
-        assert!(
-            storage.levels.len() == 1 && storage.levels[0].list.is_checkpoint_rootless(),
-            "mode semantic identity must be selected before execution"
-        );
-        for level in &mut storage.levels {
-            level.list.enable_semantic_identity();
-        }
-        storage.identity_enabled = true;
-    }
+    pub fn enable_reachable_state_identity(&mut self) {}
 
-    pub(crate) fn checkpoint(&mut self) -> ModeCheckpoint {
+    pub(crate) fn checkpoint_with_identity(
+        &mut self,
+        wants_reachable_state_identity: bool,
+    ) -> ModeCheckpoint {
         assert!(
             self.restart_checkpoint_is_quiescent(),
             "restart checkpoint requires one quiescent empty outer vertical mode"
         );
         self.storage.scratch.clear();
-        let reachable_state_identity_root = self
-            .storage
-            .identity_enabled
+        let reachable_state_identity_root = wants_reachable_state_identity
             .then(|| mode_nest_semantic_identity(&self.storage.levels));
         let owner = NEXT_MODE_CHECKPOINT_OWNER.fetch_add(1, Ordering::Relaxed);
         assert_ne!(owner, 0, "mode checkpoint owner identity exhausted");
@@ -2644,7 +2337,6 @@ impl ModeNest {
         self.storage.levels.push(checkpoint.outer.clone_rootless());
         self.storage.journal = journal::ModeJournal::enabled(1);
         self.storage.scratch.clear();
-        self.storage.identity_enabled = checkpoint.reachable_state_identity_root.is_some();
         Ok(())
     }
 
@@ -2656,7 +2348,6 @@ impl ModeNest {
                 levels,
                 journal: journal::ModeJournal::enabled(1),
                 scratch: HorizontalModeScratch::default(),
-                identity_enabled: checkpoint.reachable_state_identity_root.is_some(),
             },
             lifecycle: ModeNestLifecycle::CheckpointCandidate,
             max_nest_stack: 0,
