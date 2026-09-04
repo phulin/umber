@@ -10,6 +10,9 @@ use hayro_syntax::object::{Array, Dict, FromBytes, MaybeRef, Object, ObjectIdent
 use hayro_syntax::page::{Page, Resources};
 use hayro_syntax::reader::{Reader, ReaderExt};
 
+#[cfg(test)]
+mod tests;
+
 pub(crate) struct ImportedPdfPage {
     pub(crate) data: Vec<u8>,
     pub(crate) resources: PdfDictionary,
@@ -496,9 +499,39 @@ fn number_value(source: &[u8]) -> Result<PdfValue, String> {
     };
     let coefficient = i64::try_from(coefficient)
         .map_err(|_| "page resource number is out of range".to_owned())?;
-    PdfNumber::new(coefficient, decimal_places as u8)
-        .map(PdfValue::Number)
-        .map_err(|error| error.to_string())
+    canonical_imported_number(coefficient, decimal_places as u8).map(PdfValue::Number)
+}
+
+/// Applies pdfTeX 1.40.29's `pdftoepdf.cc::convertNumToPDF` policy (lines
+/// 501-545, called by `copyObject` at lines 557-565) to an imported real
+/// spelling. The supported PDF numeric range is defined by Appendix C.1.
+///
+/// The reference implementation adds `0.5E-6` to the non-negative magnitude
+/// before taking six fractional digits. For an input with more than six
+/// decimal places, the same operation is exact integer division: the divisor
+/// is the number of discarded decimal units and its half is the epsilon. A
+/// zero quotient also covers pdfTeX's strict `fabs(n) < epsilon` check, while
+/// an exact half rounds away from zero. Inputs with at most six decimal places
+/// are already on the output grid and need no arithmetic.
+fn canonical_imported_number(coefficient: i64, decimal_places: u8) -> Result<PdfNumber, String> {
+    if decimal_places <= 6 {
+        return PdfNumber::new(coefficient, decimal_places).map_err(|error| error.to_string());
+    }
+
+    let discarded_places = u32::from(decimal_places - 6);
+    let divisor = 10_i128.pow(discarded_places);
+    let magnitude = i128::from(coefficient.unsigned_abs());
+    let rounded = (magnitude + divisor / 2) / divisor;
+    let coefficient = if coefficient < 0 {
+        rounded
+            .checked_neg()
+            .ok_or_else(|| "page resource number is out of range".to_owned())?
+    } else {
+        rounded
+    };
+    let coefficient = i64::try_from(coefficient)
+        .map_err(|_| "page resource number is out of range".to_owned())?;
+    PdfNumber::new(coefficient, 6).map_err(|error| error.to_string())
 }
 
 fn trim_pdf_whitespace(source: &[u8]) -> &[u8] {
@@ -511,100 +544,4 @@ fn trim_pdf_whitespace(source: &[u8]) -> &[u8] {
         .rposition(|byte| !matches!(*byte, b'\0' | b'\t' | b'\n' | b'\x0c' | b'\r' | b' '))
         .map_or(start, |index| index + 1);
     &source[start..end]
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn number(coefficient: i64, decimal_places: u8) -> PdfNumber {
-        PdfNumber::new(coefficient, decimal_places).expect("valid fixed number")
-    }
-
-    #[test]
-    fn imported_numbers_keep_decimal_digits_without_binary_rounding() {
-        assert_eq!(
-            number_value(b"-891.018"),
-            Ok(PdfValue::Number(number(-891018, 3)))
-        );
-        assert_eq!(number_value(b".125"), Ok(PdfValue::Number(number(125, 3))));
-        assert_eq!(
-            number_value(b"9223372036854775807"),
-            Ok(PdfValue::Number(number(i64::MAX, 0)))
-        );
-        assert_eq!(
-            number_value(b"-9223372036854775808"),
-            Ok(PdfValue::Number(number(i64::MIN, 0)))
-        );
-    }
-
-    #[test]
-    fn imported_number_range_and_precision_are_rejected() {
-        assert!(number_value(b"9223372036854775808").is_err());
-        assert!(number_value(b"-9223372036854775809").is_err());
-        assert!(number_value(b"0.1234567890").is_err());
-        assert!(number_value(b"1e-3").is_err());
-    }
-
-    #[test]
-    fn imported_dictionary_and_array_parsing_preserves_nested_numbers() {
-        let entries = raw_dictionary_entries(
-            b"<< /Matrix [0.123456789 -0.25] /Name /Example /Nested << /Scale 1.5 >> >>",
-        )
-        .expect("valid dictionary");
-        assert_eq!(entries.len(), 3);
-        assert_eq!(entries[0].name, b"Matrix");
-        let array = Array::from_bytes(entries[0].value).expect("valid array");
-        let values = raw_array_values(array.data()).expect("valid array values");
-        assert_eq!(
-            values
-                .into_iter()
-                .map(number_value)
-                .collect::<Result<Vec<_>, _>>()
-                .expect("valid numbers"),
-            vec![
-                PdfValue::Number(number(123456789, 9)),
-                PdfValue::Number(number(-25, 2)),
-            ]
-        );
-    }
-
-    #[test]
-    fn fixed_formatter_handles_signs_and_i64_minimum() {
-        let mut buffer = [0_u8; 32];
-        assert_eq!(
-            super::super::fixed_number_bytes(number(-891018, 3), &mut buffer),
-            b"-891.018"
-        );
-        assert_eq!(
-            super::super::fixed_number_bytes(number(-5, 2), &mut buffer),
-            b"-0.05"
-        );
-        assert_eq!(
-            super::super::fixed_number_bytes(number(1200, 3), &mut buffer),
-            b"1.2"
-        );
-        assert_eq!(
-            super::super::fixed_number_bytes(number(i64::MIN, 0), &mut buffer),
-            b"-9223372036854775808"
-        );
-    }
-
-    #[test]
-    fn imported_page_with_empty_resource_categories_remains_valid() {
-        let bytes = include_bytes!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../tests/corpus/pdf/external_pdf_page/minimal_rule.expected.ref.pdf"
-        ));
-        let mut next_object = 100;
-        let imported = import_pdf_page(
-            bytes.into(),
-            1,
-            &mut next_object,
-            super::super::PdfFinalizationLimits::default(),
-        )
-        .expect("minimal imported page");
-        assert_eq!(imported.resources.len(), 1);
-        assert!(imported.resources.get(b"ProcSet").is_some());
-    }
 }
