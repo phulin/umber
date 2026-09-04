@@ -51,14 +51,96 @@ pub struct ShapedRun {
     pub script: Script,
 }
 
+/// Metadata describing one borrowed shaping result.
+///
+/// The hot execution path only needs to visit the glyphs while rustybuzz's
+/// output buffer is borrowed.  Keeping the two properties separate from the
+/// glyph storage lets that path avoid constructing an owned [`ShapedRun`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ShapingMetadata {
+    pub direction: WritingDirection,
+    pub script: Script,
+}
+
+/// Caller-owned storage for repeated OpenType shaping operations.
+///
+/// rustybuzz consumes a [`UnicodeBuffer`] and returns a [`rustybuzz::GlyphBuffer`].
+/// Calling [`rustybuzz::GlyphBuffer::clear`] on the latter returns the same
+/// allocation as a Unicode buffer, so retaining that buffer here keeps both
+/// input and output storage warm without allowing a shaped glyph vector to
+/// escape the shaping boundary.  Feature records are similarly rebuilt in
+/// place for each request.
+pub struct ShapingScratch {
+    input: Option<UnicodeBuffer>,
+    features: Vec<Feature>,
+}
+
+impl ShapingScratch {
+    /// Clears logical contents while retaining rustybuzz and feature
+    /// capacities for the next operation.
+    pub fn clear(&mut self) {
+        if let Some(input) = &mut self.input {
+            input.clear();
+        }
+        self.features.clear();
+    }
+
+    fn take_input(&mut self) -> UnicodeBuffer {
+        self.input.take().unwrap_or_default()
+    }
+
+    fn return_input(&mut self, input: UnicodeBuffer) {
+        debug_assert!(self.input.is_none());
+        self.input = Some(input);
+    }
+}
+
+impl Default for ShapingScratch {
+    fn default() -> Self {
+        Self {
+            input: Some(UnicodeBuffer::new()),
+            features: Vec::new(),
+        }
+    }
+}
+
 pub(crate) fn shape_run(
     font: &OpenTypeFont,
     size: Scaled,
     request: ShapingRequest<'_>,
 ) -> ShapedRun {
+    let mut scratch = ShapingScratch::default();
+    let mut glyphs = Vec::new();
+    let metadata = shape_run_with_scratch(font, size, request, &mut scratch, |glyph| {
+        glyphs.push(glyph);
+    });
+    ShapedRun {
+        glyphs,
+        direction: metadata.direction,
+        script: metadata.script,
+    }
+}
+
+/// Shapes one caller-delimited run and visits each glyph before the reusable
+/// rustybuzz output buffer is returned to `scratch`.
+///
+/// This is the allocation-free boundary used by execution.  The callback is
+/// intentionally passed a copyable glyph projection rather than rustybuzz's
+/// borrowed records, so callers do not need to depend on rustybuzz internals.
+pub(crate) fn shape_run_with_scratch<F>(
+    font: &OpenTypeFont,
+    size: Scaled,
+    request: ShapingRequest<'_>,
+    scratch: &mut ShapingScratch,
+    mut visit: F,
+) -> ShapingMetadata
+where
+    F: FnMut(ShapedGlyph),
+{
     let text = request.text;
     let script = run_script(text);
-    let mut buffer = UnicodeBuffer::new();
+    let mut buffer = scratch.take_input();
+    buffer.clear();
     buffer.push_str(text);
     buffer.set_direction(to_rustybuzz_direction(font.direction));
     buffer.set_script(font.script.map_or_else(
@@ -69,33 +151,32 @@ pub(crate) fn shape_run(
         },
     ));
     set_language(&mut buffer, font.language.as_ref());
-    let mut features = font
-        .feature_policy
-        .settings()
-        .iter()
-        .map(|setting| Feature::new(to_rustybuzz_tag(setting.tag), setting.value, ..))
-        .collect::<Vec<_>>();
-    suppress_ligatures_at_breaks(&mut features, text, request.break_offsets);
-
-    let glyphs = font.with_shaping_face(|face| {
-        let output = rustybuzz::shape(face, &features, buffer);
-        output
-            .glyph_infos()
+    scratch.features.clear();
+    scratch
+        .features
+        .reserve(font.feature_policy.settings().len());
+    scratch.features.extend(
+        font.feature_policy
+            .settings()
             .iter()
-            .zip(output.glyph_positions())
-            .map(|(info, position)| ShapedGlyph {
-                glyph_id: info.glyph_id,
-                cluster: info.cluster,
-                x_advance: project(position.x_advance, size, font.metrics.units_per_em),
-                y_advance: project(position.y_advance, size, font.metrics.units_per_em),
-                x_offset: project(position.x_offset, size, font.metrics.units_per_em),
-                y_offset: project(position.y_offset, size, font.metrics.units_per_em),
-            })
-            .collect()
-    });
+            .map(|setting| Feature::new(to_rustybuzz_tag(setting.tag), setting.value, ..)),
+    );
+    suppress_ligatures_at_breaks(&mut scratch.features, text, request.break_offsets);
 
-    ShapedRun {
-        glyphs,
+    let output = font.with_shaping_face(|face| rustybuzz::shape(face, &scratch.features, buffer));
+    for (info, position) in output.glyph_infos().iter().zip(output.glyph_positions()) {
+        visit(ShapedGlyph {
+            glyph_id: info.glyph_id,
+            cluster: info.cluster,
+            x_advance: project(position.x_advance, size, font.metrics.units_per_em),
+            y_advance: project(position.y_advance, size, font.metrics.units_per_em),
+            x_offset: project(position.x_offset, size, font.metrics.units_per_em),
+            y_offset: project(position.y_offset, size, font.metrics.units_per_em),
+        });
+    }
+    scratch.return_input(output.clear());
+    scratch.features.clear();
+    ShapingMetadata {
         direction: font.direction,
         script,
     }
@@ -110,6 +191,7 @@ fn set_language(buffer: &mut UnicodeBuffer, language: Option<&FontLanguage>) {
 }
 
 fn suppress_ligatures_at_breaks(features: &mut Vec<Feature>, text: &str, breaks: &[usize]) {
+    features.reserve(breaks.len().saturating_mul(4));
     for &boundary in breaks {
         if boundary > text.len() || !text.is_char_boundary(boundary) {
             continue;

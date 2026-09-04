@@ -825,6 +825,25 @@ impl LoadedFont {
         }
     }
 
+    /// Shapes one run into caller-owned scratch and visits borrowed glyph
+    /// projections before rustybuzz's reusable output buffer is cleared.
+    pub fn shape_run_with_scratch<F>(
+        &self,
+        request: crate::ShapingRequest<'_>,
+        scratch: &mut crate::ShapingScratch,
+        visit: F,
+    ) -> Option<crate::ShapingMetadata>
+    where
+        F: FnMut(crate::ShapedGlyph),
+    {
+        match &self.metrics {
+            FontMetricsSource::OpenType(font) => Some(crate::shaping::shape_run_with_scratch(
+                &font.font, self.size, request, scratch, visit,
+            )),
+            FontMetricsSource::Tfm(_) => None,
+        }
+    }
+
     /// Canonical identity for the selected OpenType instance at this TeX size.
     #[must_use]
     pub fn opentype_instance_identity(&self) -> Option<FontInstanceIdentity> {

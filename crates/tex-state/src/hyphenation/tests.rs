@@ -105,6 +105,42 @@ fn exceptions_override_patterns() {
 }
 
 #[test]
+fn caller_owned_hyphenation_scratch_matches_owned_adapter_and_clears_values() {
+    let mut table = HyphenationTable::new();
+    table
+        .add_pattern(PatternSpec {
+            letters: "hyphen".chars().collect(),
+            values: vec![0, 2, 0, 3, 0, 0, 0],
+        })
+        .expect("pattern fits the default trie capacity");
+    let expected = table.hyphen_positions("hyphen", 2, 2);
+    let mut positions = Vec::new();
+    let mut scratch = HyphenationScratch::default();
+    table.hyphen_positions_for_language_into(0, "hyphen", 2, 2, &mut positions, &mut scratch);
+    assert_eq!(positions, expected);
+    let capacities = (
+        positions.capacity(),
+        scratch.chars.capacity(),
+        scratch.decorated.capacity(),
+        scratch.values.capacity(),
+    );
+
+    table.hyphen_positions_for_language_into(0, "h", 2, 2, &mut positions, &mut scratch);
+    assert!(positions.is_empty());
+    table.hyphen_positions_for_language_into(0, "hyphen", 2, 2, &mut positions, &mut scratch);
+    assert_eq!(positions, expected);
+    assert_eq!(
+        capacities,
+        (
+            positions.capacity(),
+            scratch.chars.capacity(),
+            scratch.decorated.capacity(),
+            scratch.values.capacity(),
+        )
+    );
+}
+
+#[test]
 fn pattern_overlay_and_language_exception_matrix() {
     // TeX82 §§923-933 overlays every matching pattern by taking the maximum
     // value at each interletter position. Sections 951-966 qualify tries by

@@ -48,6 +48,27 @@ pub struct HyphenationCapacityError {
     pub capacity: usize,
 }
 
+/// Caller-owned temporary storage for Liang hyphenation queries.
+///
+/// The ordinary public query remains an owned convenience adapter, while
+/// execution-side paragraph and pending-run paths retain this workspace and
+/// write their result positions into their own scratch vector.
+#[derive(Default)]
+pub struct HyphenationScratch {
+    chars: Vec<char>,
+    decorated: Vec<char>,
+    values: Vec<u8>,
+}
+
+impl HyphenationScratch {
+    /// Clears query contents while retaining all temporary capacities.
+    pub fn clear(&mut self) {
+        self.chars.clear();
+        self.decorated.clear();
+        self.values.clear();
+    }
+}
+
 #[derive(Debug)]
 pub struct HyphenationTable {
     patterns: PatternOwner,
@@ -572,54 +593,95 @@ impl HyphenationTable {
         left_min: usize,
         right_min: usize,
     ) -> Vec<usize> {
-        let chars: Vec<char> = word.chars().collect();
-        if chars.len() < left_min.saturating_add(right_min) {
-            return Vec::new();
+        let mut positions = Vec::new();
+        let mut scratch = HyphenationScratch::default();
+        self.hyphen_positions_for_language_into(
+            language,
+            word,
+            left_min,
+            right_min,
+            &mut positions,
+            &mut scratch,
+        );
+        positions
+    }
+
+    /// Writes Liang hyphenation positions into caller-owned scratch.
+    ///
+    /// This is the reusable counterpart to
+    /// [`Self::hyphen_positions_for_language`]. It performs no temporary
+    /// allocation once `positions` and `scratch` have reached their warm
+    /// capacities, including exception and pattern lookups.
+    pub fn hyphen_positions_for_language_into(
+        &self,
+        language: u8,
+        word: &str,
+        left_min: usize,
+        right_min: usize,
+        positions: &mut Vec<usize>,
+        scratch: &mut HyphenationScratch,
+    ) {
+        positions.clear();
+        scratch.chars.clear();
+        scratch.chars.extend(word.chars());
+        let len = scratch.chars.len();
+        if len < left_min.saturating_add(right_min) {
+            return;
         }
-        if let Some(positions) = self
+        if let Some(exception_positions) = self
             .runtime
             .exceptions
             .get(&language)
             .and_then(|exceptions| exceptions.get(word))
         {
-            return filter_bounds(positions.iter().copied(), chars.len(), left_min, right_min);
+            filter_bounds_into(
+                exception_positions.iter().copied(),
+                len,
+                left_min,
+                right_min,
+                positions,
+            );
+            return;
         }
         let Some(nodes) = self.patterns.languages().get(&language) else {
-            return Vec::new();
+            return;
         };
 
-        let mut decorated = Vec::with_capacity(chars.len() + 2);
-        decorated.push('.');
-        decorated.extend(chars.iter().copied());
-        decorated.push('.');
-        let mut values = vec![0u8; decorated.len() + 1];
-        for start in 0..decorated.len() {
+        scratch.decorated.clear();
+        scratch.decorated.reserve(len.saturating_add(2));
+        scratch.decorated.push('.');
+        scratch.decorated.extend(scratch.chars.iter().copied());
+        scratch.decorated.push('.');
+        scratch.values.resize(scratch.decorated.len() + 1, 0);
+        scratch.values.fill(0);
+        for start in 0..scratch.decorated.len() {
             let mut node = 0usize;
-            for ch in decorated[start..].iter().copied() {
+            for ch in scratch.decorated[start..].iter().copied() {
                 let Some(next) = edge(nodes, node, ch) else {
                     break;
                 };
                 node = next;
                 for (i, value) in nodes[node].values.iter().copied().enumerate() {
                     let pos = start + i;
-                    if pos < values.len() && value > values[pos] {
-                        values[pos] = value;
+                    if pos < scratch.values.len() && value > scratch.values[pos] {
+                        scratch.values[pos] = value;
                     }
                 }
             }
         }
-        filter_bounds(
-            values.iter().enumerate().filter_map(|(i, value)| {
+        filter_bounds_into(
+            scratch.values.iter().enumerate().filter_map(|(i, value)| {
                 if value % 2 == 1 && i > 0 {
                     Some(i - 1)
                 } else {
                     None
                 }
             }),
-            chars.len(),
+            len,
             left_min,
             right_min,
-        )
+            positions,
+        );
     }
 
     #[must_use]
@@ -779,15 +841,14 @@ fn edge_or_insert(nodes: &mut Vec<TrieNode>, node: usize, ch: char) -> usize {
     }
 }
 
-fn filter_bounds(
+fn filter_bounds_into(
     positions: impl Iterator<Item = usize>,
     len: usize,
     left_min: usize,
     right_min: usize,
-) -> Vec<usize> {
-    positions
-        .filter(|&pos| pos >= left_min && len.saturating_sub(pos) >= right_min)
-        .collect()
+    output: &mut Vec<usize>,
+) {
+    output.extend(positions.filter(|&pos| pos >= left_min && len.saturating_sub(pos) >= right_min));
 }
 
 #[cfg(test)]

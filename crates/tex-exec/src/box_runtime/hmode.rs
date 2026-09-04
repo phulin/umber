@@ -358,23 +358,22 @@ pub(crate) fn flush_pending_hchar_run_with_fuel<G>(
         is_ltr_shaping_font(stores, first_font) && is_supported_script(pending.script);
     let language = nest.current_list().hyphen_language();
     let no_boundary = nest.current_list().no_boundary();
-    let breaks = if use_open_type && insert_hyphen_discs {
-        candidate_positions_for_chars(
-            stores,
-            language,
-            &pending.source,
-            stores.int_param(IntParam::LEFT_HYPHEN_MIN).max(1) as usize,
-            stores.int_param(IntParam::RIGHT_HYPHEN_MIN).max(1) as usize,
-        )
-    } else {
-        Vec::new()
-    };
     let result = {
         let mut list = nest.current_list_mutation();
         list.append_pending_constructed(stores, |stores, source, shaping, tfm_work, output| {
             let mut sink = PageNodeSink { output };
             if use_open_type {
-                shape_open_type_chars_into(stores, source, &breaks, shaping, &mut sink);
+                if insert_hyphen_discs {
+                    prepare_candidate_positions_for_chars(
+                        stores,
+                        language,
+                        source,
+                        stores.int_param(IntParam::LEFT_HYPHEN_MIN).max(1) as usize,
+                        stores.int_param(IntParam::RIGHT_HYPHEN_MIN).max(1) as usize,
+                        shaping,
+                    );
+                }
+                shape_open_type_chars_into(stores, source, shaping, &mut sink);
                 Ok(())
             } else {
                 run_tfm_ligature_machine_with_work(
@@ -403,41 +402,52 @@ pub(crate) fn flush_pending_hchar_run_with_fuel<G>(
     Ok(())
 }
 
-fn candidate_positions_for_chars<G>(
+fn prepare_candidate_positions_for_chars<G>(
     stores: &CommandContext<'_, G>,
     language: u8,
     chars: &[PendingHChar],
     left: usize,
     right: usize,
-) -> Vec<usize> {
+    scratch: &mut OpenTypeShapingScratch,
+) {
+    // The pending-run owner supplies all of these buffers.  Clearing them at
+    // entry also makes every early return leave no logical candidate state
+    // behind for a later flush.
+    scratch.candidate_positions.clear();
+    scratch.hyphenation_text.clear();
     if chars.len() > 63 || chars.len() < left.saturating_add(right) {
-        return Vec::new();
+        return;
     }
     let Some(first) = chars.first() else {
-        return Vec::new();
+        return;
     };
     if !(0..=255).contains(&stores.font_hyphen_char(first.font))
         || chars.iter().any(|entry| entry.font != first.font)
     {
-        return Vec::new();
+        return;
     }
-    let Some(normalized) = chars
-        .iter()
-        .map(|entry| {
-            stores
-                .saved_hyphenation_code(language, entry.ch)
-                .unwrap_or_else(|| {
-                    char::from_u32(stores.lccode(entry.ch)).filter(|&mapped| mapped != '\0')
-                })
-        })
-        .collect::<Option<String>>()
-    else {
-        return Vec::new();
-    };
-    if !normalized.starts_with(first.ch) && stores.int_param(IntParam::UC_HYPH) <= 0 {
-        return Vec::new();
+    for entry in chars {
+        let Some(mapped) = stores
+            .saved_hyphenation_code(language, entry.ch)
+            .unwrap_or_else(|| {
+                char::from_u32(stores.lccode(entry.ch)).filter(|&mapped| mapped != '\0')
+            })
+        else {
+            return;
+        };
+        scratch.hyphenation_text.push(mapped);
     }
-    stores.hyphen_positions_for_language(language, &normalized, left, right)
+    if !scratch.hyphenation_text.starts_with(first.ch) && stores.int_param(IntParam::UC_HYPH) <= 0 {
+        return;
+    }
+    stores.hyphen_positions_for_language_into(
+        language,
+        &scratch.hyphenation_text,
+        left,
+        right,
+        &mut scratch.candidate_positions,
+        &mut scratch.hyphenation,
+    );
 }
 
 pub(crate) fn append_space_after_flush<G>(
@@ -1018,12 +1028,12 @@ pub(crate) fn publish_reconstituted_slice<G>(
 fn shape_open_type_chars_into<G>(
     stores: &mut CommandContext<'_, G>,
     chars: &[crate::mode::PendingHChar],
-    break_positions: &[usize],
     scratch: &mut OpenTypeShapingScratch,
     sink: &mut impl FinalHNodeSink,
 ) {
-    let adjustments = plan_open_type_adjustments(&*stores, chars, break_positions, scratch);
-    for (entry, adjustment) in chars.iter().zip(adjustments.iter().copied()) {
+    plan_open_type_adjustments(&*stores, chars, scratch);
+    for (index, entry) in chars.iter().enumerate() {
+        let adjustment = scratch.adjustments[index];
         sink.glyph(
             stores,
             PendingHRunChar::new(entry.font, entry.ch, entry.origin),
@@ -1036,102 +1046,198 @@ fn shape_open_type_chars_into<G>(
 }
 
 #[derive(Default)]
-pub(crate) struct OpenTypeShapingScratch {
+pub(crate) struct HorizontalFlushScratch {
+    source_chars: Vec<crate::mode::PendingHChar>,
     text: String,
     byte_starts: Vec<usize>,
     break_bytes: Vec<usize>,
+    candidate_positions: Vec<usize>,
+    hyphenation_text: String,
+    hyphenation: tex_state::hyphenation::HyphenationScratch,
+    nominal_widths: Vec<i64>,
+    cluster_accum: Vec<i64>,
+    cluster_seen: Vec<bool>,
     cluster_advances: Vec<(usize, i64)>,
     adjustments: Vec<Scaled>,
+    shaping: tex_fonts::ShapingScratch,
 }
 
-impl OpenTypeShapingScratch {
+/// Compatibility name retained for the existing hmode callers and tests.
+pub(crate) type OpenTypeShapingScratch = HorizontalFlushScratch;
+
+impl HorizontalFlushScratch {
     pub(crate) fn clear(&mut self) {
+        self.source_chars.clear();
         self.text.clear();
         self.byte_starts.clear();
         self.break_bytes.clear();
+        self.candidate_positions.clear();
+        self.hyphenation_text.clear();
+        self.hyphenation.clear();
+        self.nominal_widths.clear();
+        self.cluster_accum.clear();
+        self.cluster_seen.clear();
         self.cluster_advances.clear();
         self.adjustments.clear();
+        self.shaping.clear();
     }
 }
 
-fn plan_open_type_adjustments<'scratch, G>(
+fn plan_open_type_adjustments<G>(
     stores: &CommandContext<'_, G>,
     chars: &[crate::mode::PendingHChar],
-    break_positions: &[usize],
-    scratch: &'scratch mut OpenTypeShapingScratch,
-) -> &'scratch [Scaled] {
+    scratch: &mut OpenTypeShapingScratch,
+) {
     scratch.text.clear();
     scratch.byte_starts.clear();
     scratch.break_bytes.clear();
+    scratch.nominal_widths.clear();
+    scratch.cluster_accum.clear();
+    scratch.cluster_seen.clear();
     scratch.cluster_advances.clear();
     scratch.adjustments.clear();
     let Some(first) = chars.first() else {
-        return &scratch.adjustments;
+        return;
     };
     scratch.byte_starts.reserve(chars.len());
-    for entry in chars {
+    scratch.nominal_widths.reserve(chars.len());
+    let mut candidate_index = 0usize;
+    for (source_index, entry) in chars.iter().enumerate() {
+        while scratch.candidate_positions.get(candidate_index) == Some(&source_index) {
+            scratch.break_bytes.push(scratch.text.len());
+            candidate_index += 1;
+        }
         scratch.byte_starts.push(scratch.text.len());
-        if let Some(mapped) = stores.font_mapped_text(first.font, entry.ch) {
+        if let Some(mapped) = stores.font_mapped_text(entry.font, entry.ch) {
             scratch.text.push_str(mapped);
         } else {
             scratch.text.push(entry.ch);
         }
+        scratch.nominal_widths.push(i64::from(
+            stores
+                .font_character_metrics(entry.font, entry.ch)
+                .map_or(0, |metrics| metrics.width.raw()),
+        ));
     }
-    scratch.break_bytes.extend(
-        break_positions
-            .iter()
-            .filter_map(|&position| scratch.byte_starts.get(position).copied()),
-    );
-    let shaped = stores
-        .shape_font_run(
+    scratch.adjustments.resize(chars.len(), Scaled::from_raw(0));
+    scratch.cluster_accum.resize(chars.len(), 0);
+    scratch.cluster_seen.resize(chars.len(), false);
+    scratch.cluster_accum.fill(0);
+    scratch.cluster_seen.fill(false);
+
+    let mut source_cursor = 0usize;
+    let mut last_cluster = None;
+    let mut fallback = false;
+    let byte_starts = &scratch.byte_starts;
+    let cluster_accum = &mut scratch.cluster_accum;
+    let cluster_seen = &mut scratch.cluster_seen;
+    let cluster_advances = &mut scratch.cluster_advances;
+    let _metadata = stores
+        .shape_font_run_with_scratch(
             first.font,
             tex_fonts::ShapingRequest::with_breaks(&scratch.text, &scratch.break_bytes),
+            &mut scratch.shaping,
+            |glyph| {
+                let cluster_byte = glyph.cluster as usize;
+                if !fallback {
+                    if last_cluster.is_some_and(|previous| cluster_byte < previous) {
+                        fallback = true;
+                        for (index, seen) in cluster_seen.iter().copied().enumerate() {
+                            if seen {
+                                cluster_advances.push((index, cluster_accum[index]));
+                            }
+                        }
+                    } else {
+                        last_cluster = Some(cluster_byte);
+                        while source_cursor + 1 < byte_starts.len()
+                            && byte_starts[source_cursor + 1] <= cluster_byte
+                        {
+                            source_cursor += 1;
+                        }
+                        let source_index = source_cursor.min(byte_starts.len() - 1);
+                        cluster_accum[source_index] += i64::from(glyph.x_advance.raw());
+                        cluster_seen[source_index] = true;
+                        return;
+                    }
+                }
+                let source_index = byte_starts
+                    .partition_point(|&start| start <= cluster_byte)
+                    .saturating_sub(1);
+                cluster_advances.push((source_index, i64::from(glyph.x_advance.raw())));
+            },
         )
         .expect("OpenType run font");
-    for glyph in shaped.glyphs {
-        let cluster_byte = glyph.cluster as usize;
-        let source_index = scratch
-            .byte_starts
-            .partition_point(|&start| start <= cluster_byte)
-            .saturating_sub(1);
+    if fallback {
         scratch
             .cluster_advances
-            .push((source_index, i64::from(glyph.x_advance.raw())));
-    }
-    scratch
-        .cluster_advances
-        .sort_unstable_by_key(|entry| entry.0);
-    scratch.adjustments.resize(chars.len(), Scaled::from_raw(0));
-    let mut cluster = 0usize;
-    while cluster < scratch.cluster_advances.len() {
-        let start = scratch.cluster_advances[cluster].0;
-        let mut shaped = 0_i64;
-        let mut next = cluster;
-        while next < scratch.cluster_advances.len() && scratch.cluster_advances[next].0 == start {
-            shaped += scratch.cluster_advances[next].1;
-            next += 1;
-        }
-        let end = scratch
-            .cluster_advances
-            .get(next)
-            .map_or(chars.len(), |entry| entry.0);
-        if start >= end {
+            .sort_unstable_by_key(|entry| entry.0);
+        let mut cluster = 0usize;
+        while cluster < scratch.cluster_advances.len() {
+            let start = scratch.cluster_advances[cluster].0;
+            let mut shaped = 0_i64;
+            let mut next = cluster;
+            while next < scratch.cluster_advances.len() && scratch.cluster_advances[next].0 == start
+            {
+                shaped += scratch.cluster_advances[next].1;
+                next += 1;
+            }
+            let end = scratch
+                .cluster_advances
+                .get(next)
+                .map_or(chars.len(), |entry| entry.0);
+            finish_open_type_cluster(
+                &mut scratch.adjustments,
+                &scratch.nominal_widths,
+                start,
+                end,
+                shaped,
+            );
             cluster = next;
-            continue;
         }
-        let nominal = chars[start..end].iter().fold(0_i64, |sum, entry| {
-            sum + i64::from(
-                stores
-                    .font_character_metrics(entry.font, entry.ch)
-                    .map_or(0, |metrics| metrics.width.raw()),
-            )
-        });
-        scratch.adjustments[end - 1] = Scaled::from_raw(
-            i32::try_from(shaped - nominal).expect("shaped cluster adjustment fits Scaled"),
-        );
-        cluster = next;
+    } else {
+        let mut cluster_start = None;
+        let mut shaped = 0_i64;
+        for (source_index, seen) in scratch.cluster_seen.iter().copied().enumerate() {
+            if seen {
+                if let Some(start) = cluster_start {
+                    finish_open_type_cluster(
+                        &mut scratch.adjustments,
+                        &scratch.nominal_widths,
+                        start,
+                        source_index,
+                        shaped,
+                    );
+                }
+                cluster_start = Some(source_index);
+                shaped = scratch.cluster_accum[source_index];
+            }
+        }
+        if let Some(start) = cluster_start {
+            finish_open_type_cluster(
+                &mut scratch.adjustments,
+                &scratch.nominal_widths,
+                start,
+                chars.len(),
+                shaped,
+            );
+        }
     }
-    &scratch.adjustments
+}
+
+fn finish_open_type_cluster(
+    adjustments: &mut [Scaled],
+    nominal_widths: &[i64],
+    start: usize,
+    end: usize,
+    shaped: i64,
+) {
+    if start >= end {
+        return;
+    }
+    let nominal = nominal_widths[start..end].iter().copied().sum::<i64>();
+    adjustments[end - 1] = Scaled::from_raw(
+        i32::try_from(shaped - nominal).expect("shaped cluster adjustment fits Scaled"),
+    );
 }
 
 /// Replaces provisional OpenType adjustments while retaining every unchanged
@@ -1161,7 +1267,6 @@ impl OpenTypeSourceNode {
 
 struct OpenTypeSourceWalk<'a> {
     output: &'a mut tex_state::page_node_arena::PageMaterialActiveListBuilder,
-    chars: &'a mut Vec<crate::mode::PendingHChar>,
     shaping: &'a mut OpenTypeShapingScratch,
     saw_run: bool,
     retained_start: usize,
@@ -1209,7 +1314,8 @@ impl OpenTypeSourceWalk<'_> {
                     if is_strong_script(next_script) {
                         self.run_script = next_script;
                     }
-                    self.chars
+                    self.shaping
+                        .source_chars
                         .push(crate::mode::PendingHChar { font, ch, origin });
                     return;
                 }
@@ -1232,8 +1338,9 @@ impl OpenTypeSourceWalk<'_> {
                     self.retained_start..index,
                 );
             }
-            self.chars.clear();
-            self.chars
+            self.shaping.source_chars.clear();
+            self.shaping
+                .source_chars
                 .push(crate::mode::PendingHChar { font, ch, origin });
             self.run_font = Some(font);
             self.run_script = tex_fonts::character_script(ch);
@@ -1241,9 +1348,11 @@ impl OpenTypeSourceWalk<'_> {
     }
 
     fn flush_run<G>(&mut self, stores: &mut CommandContext<'_, G>, end: usize) {
+        let chars = std::mem::take(&mut self.shaping.source_chars);
         {
-            let adjustments = plan_open_type_adjustments(stores, self.chars, &[], self.shaping);
-            for (entry, adjustment) in self.chars.iter().zip(adjustments.iter().copied()) {
+            plan_open_type_adjustments(stores, &chars, self.shaping);
+            for (index, entry) in chars.iter().enumerate() {
+                let adjustment = self.shaping.adjustments[index];
                 stores.construct_page_active_list(self.output, |destination| {
                     destination.char(entry.font, entry.ch, entry.origin);
                 });
@@ -1254,6 +1363,7 @@ impl OpenTypeSourceWalk<'_> {
                 }
             }
         }
+        self.shaping.source_chars = chars;
         self.shaping.clear();
         self.run_font = None;
         self.retained_start = end;
@@ -1263,10 +1373,8 @@ impl OpenTypeSourceWalk<'_> {
 pub(crate) fn reshape_open_type_runs_list<G>(
     stores: &mut CommandContext<'_, G>,
     source: tex_state::node_arena::PageListId,
-    chars: &mut Vec<crate::mode::PendingHChar>,
     shaping: &mut OpenTypeShapingScratch,
 ) -> tex_state::node_arena::PageListId {
-    chars.clear();
     shaping.clear();
     let source = stores
         .admit_page_node_span(source)
@@ -1274,7 +1382,6 @@ pub(crate) fn reshape_open_type_runs_list<G>(
     let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
     let mut walk = OpenTypeSourceWalk {
         output: &mut output,
-        chars,
         shaping,
         saw_run: false,
         retained_start: 0,
@@ -1297,7 +1404,6 @@ pub(crate) fn reshape_open_type_runs_list<G>(
         );
     }
     let saw_run = walk.saw_run;
-    chars.clear();
     shaping.clear();
     if saw_run {
         stores.finalize_page_active_list(&mut output)

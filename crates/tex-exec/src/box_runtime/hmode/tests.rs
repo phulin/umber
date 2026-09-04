@@ -1,21 +1,37 @@
 use super::{
-    LigatureWorkCell, LigatureWorkList, OpenTypeShapingScratch, flush_pending_hchar_run_with_fuel,
+    HorizontalFlushScratch, LigatureWorkCell, LigatureWorkList, flush_pending_hchar_run_with_fuel,
 };
 
 #[test]
 fn shaping_scratch_clear_preserves_warm_capacity_without_logical_contents() {
-    let mut scratch = OpenTypeShapingScratch::default();
+    let mut scratch = HorizontalFlushScratch::default();
+    scratch.source_chars.push(crate::mode::PendingHChar {
+        font: tex_state::ids::FontId::testing_new(1),
+        ch: 'a',
+        origin: tex_state::token::OriginId::UNKNOWN,
+    });
     scratch.text.push_str("mapped text");
     scratch.byte_starts.extend([0, 2, 5]);
     scratch.break_bytes.extend([2, 5]);
+    scratch.candidate_positions.extend([1, 3]);
+    scratch.hyphenation_text.push_str("mapped");
+    scratch.nominal_widths.extend([10, 20, 30]);
+    scratch.cluster_accum.extend([10, 20, 30]);
+    scratch.cluster_seen.extend([true, false, true]);
     scratch.cluster_advances.extend([(0, 10), (1, 20)]);
     scratch
         .adjustments
         .extend([tex_state::scaled::Scaled::from_raw(1); 3]);
     let capacities = (
+        scratch.source_chars.capacity(),
         scratch.text.capacity(),
         scratch.byte_starts.capacity(),
         scratch.break_bytes.capacity(),
+        scratch.candidate_positions.capacity(),
+        scratch.hyphenation_text.capacity(),
+        scratch.nominal_widths.capacity(),
+        scratch.cluster_accum.capacity(),
+        scratch.cluster_seen.capacity(),
         scratch.cluster_advances.capacity(),
         scratch.adjustments.capacity(),
     );
@@ -23,16 +39,28 @@ fn shaping_scratch_clear_preserves_warm_capacity_without_logical_contents() {
     scratch.clear();
 
     assert!(scratch.text.is_empty());
+    assert!(scratch.source_chars.is_empty());
     assert!(scratch.byte_starts.is_empty());
     assert!(scratch.break_bytes.is_empty());
+    assert!(scratch.candidate_positions.is_empty());
+    assert!(scratch.hyphenation_text.is_empty());
+    assert!(scratch.nominal_widths.is_empty());
+    assert!(scratch.cluster_accum.is_empty());
+    assert!(scratch.cluster_seen.is_empty());
     assert!(scratch.cluster_advances.is_empty());
     assert!(scratch.adjustments.is_empty());
     assert_eq!(
         capacities,
         (
+            scratch.source_chars.capacity(),
             scratch.text.capacity(),
             scratch.byte_starts.capacity(),
             scratch.break_bytes.capacity(),
+            scratch.candidate_positions.capacity(),
+            scratch.hyphenation_text.capacity(),
+            scratch.nominal_widths.capacity(),
+            scratch.cluster_accum.capacity(),
+            scratch.cluster_seen.capacity(),
             scratch.cluster_advances.capacity(),
             scratch.adjustments.capacity(),
         )

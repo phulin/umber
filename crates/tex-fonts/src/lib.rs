@@ -46,7 +46,8 @@ pub use pdf_vf::{
     VfPacketMetadata, VfParseError, VfProgram, VfProgramIdentity,
 };
 pub use shaping::{
-    Script, ShapedGlyph, ShapedRun, ShapingRequest, character_script, run_script, text_direction,
+    Script, ShapedGlyph, ShapedRun, ShapingMetadata, ShapingRequest, ShapingScratch,
+    character_script, run_script, text_direction,
 };
 pub use tfm::{
     FontParameter, FontParameterKind, FontParameters, Header, ParseError, TfmFont, TfmTable,

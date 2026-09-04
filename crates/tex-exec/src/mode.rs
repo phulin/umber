@@ -1446,7 +1446,6 @@ pub struct PendingHChar {
 #[derive(Default)]
 pub(crate) struct HorizontalModeScratch {
     pending_source: Vec<PendingHChar>,
-    shaping_chars: Vec<PendingHChar>,
     shaping: crate::box_runtime::hmode::OpenTypeShapingScratch,
     tfm_work: crate::box_runtime::hmode::LigatureWorkList,
     reconstituted: Vec<crate::box_runtime::hmode::ReconstitutedNode>,
@@ -1469,7 +1468,6 @@ impl HorizontalModeScratch {
 
     fn clear(&mut self) {
         self.pending_source.clear();
-        self.shaping_chars.clear();
         self.shaping.clear();
         self.tfm_work.clear();
         self.reconstituted.clear();
@@ -1486,12 +1484,7 @@ impl HorizontalModeScratch {
         stores: &mut CommandContext<'_, G>,
         source: tex_state::node_arena::PageListId,
     ) -> tex_state::node_arena::PageListId {
-        crate::box_runtime::hmode::reshape_open_type_runs_list(
-            stores,
-            source,
-            &mut self.shaping_chars,
-            &mut self.shaping,
-        )
+        crate::box_runtime::hmode::reshape_open_type_runs_list(stores, source, &mut self.shaping)
     }
 }
 

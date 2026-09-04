@@ -118,6 +118,34 @@ fn cmu_serif_ligatures_and_mark_attachment_match_fixture() {
 }
 
 #[test]
+fn callback_shaping_reuses_feature_and_rustybuzz_storage() {
+    let font = cmu_serif(FontFeaturePolicy::default());
+    let mut scratch = ShapingScratch::default();
+    let mut first = Vec::new();
+    let metadata = font
+        .shape_run_with_scratch(
+            ShapingRequest::with_breaks("office", &[2]),
+            &mut scratch,
+            |glyph| first.push(glyph),
+        )
+        .expect("OpenType fixture");
+    assert_eq!(metadata.direction, WritingDirection::LeftToRight);
+    assert_eq!(metadata.script, Script::Latin);
+    assert!(!first.is_empty());
+    assert!(scratch.input.as_ref().is_some_and(|input| input.is_empty()));
+    let feature_capacity = scratch.features.capacity();
+
+    let mut second_count = 0;
+    font.shape_run_with_scratch(ShapingRequest::new("office"), &mut scratch, |_| {
+        second_count += 1
+    })
+    .expect("OpenType fixture");
+    assert_eq!(second_count, 4);
+    assert_eq!(scratch.features.capacity(), feature_capacity);
+    assert!(scratch.input.as_ref().is_some_and(|input| input.is_empty()));
+}
+
+#[test]
 fn complex_script_fixtures_match_glyph_and_position_snapshots() {
     let features = FontFeaturePolicy::default();
     for (name, bytes, text, direction) in [

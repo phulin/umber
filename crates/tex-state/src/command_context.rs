@@ -2529,6 +2529,25 @@ impl<'a, G> CommandContext<'a, G> {
         self.resident.fonts.get(id).shape_run(request)
     }
 
+    /// Shapes an OpenType run through caller-owned reusable storage. Glyphs
+    /// are visited while rustybuzz's output buffer is borrowed, so no owned
+    /// shaped-run vector crosses the execution boundary.
+    pub fn shape_font_run_with_scratch<F>(
+        &self,
+        id: crate::ids::FontId,
+        request: tex_fonts::ShapingRequest<'_>,
+        scratch: &mut tex_fonts::ShapingScratch,
+        visit: F,
+    ) -> Option<tex_fonts::ShapingMetadata>
+    where
+        F: FnMut(tex_fonts::ShapedGlyph),
+    {
+        self.resident
+            .fonts
+            .get(id)
+            .shape_run_with_scratch(request, scratch, visit)
+    }
+
     #[must_use]
     pub fn font_uses_tfm_metrics(&self, id: crate::ids::FontId) -> bool {
         self.resident.fonts.get(id).uses_tfm_metrics()
@@ -3310,6 +3329,25 @@ impl<'a, G> CommandContext<'a, G> {
         self.resident
             .hyphenation
             .hyphen_positions_for_language(language, word, left_min, right_min)
+    }
+
+    /// Writes language-qualified hyphenation positions into caller-owned
+    /// storage so hot pending-run queries do not construct temporary strings
+    /// or vectors inside the state facade.
+    pub fn hyphen_positions_for_language_into(
+        &self,
+        language: u8,
+        word: &str,
+        left_min: usize,
+        right_min: usize,
+        positions: &mut Vec<usize>,
+        scratch: &mut crate::hyphenation::HyphenationScratch,
+    ) {
+        self.resident
+            .hyphenation
+            .hyphen_positions_for_language_into(
+                language, word, left_min, right_min, positions, scratch,
+            );
     }
 
     pub fn pdf_uniform_deviate(&mut self, bound: i32) -> i32 {
