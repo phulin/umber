@@ -9,7 +9,7 @@ use tex_state::meaning::Meaning;
 use tex_state::token::{Catcode, Token, TracedTokenWord};
 
 use crate::CommandReplayDelivery;
-use crate::command::{CurrentCommand, HotCommand};
+use crate::command::{CurrentCommand, HotCommand, MacroMatchDelivery};
 use crate::error::CommandError;
 
 use super::CommandProcessor;
@@ -154,6 +154,21 @@ impl<G> CommandProcessor<'_, '_, G> {
         debug_assert!(!self.create_source_control_sequences);
         self.create_source_control_sequences = true;
         let delivery = self.get_next_into(destination);
+        self.create_source_control_sequences = false;
+        delivery
+    }
+
+    /// Delivers one raw token for TeX82 §394's macro matcher.  The canonical
+    /// source/resident reader still owns tokenization and settlement; only
+    /// the final command projection is kept compact so successful matching
+    /// does not materialize `CurrentCommand` values.
+    pub(crate) fn get_macro_match_token(
+        &mut self,
+        paragraph_token: Option<tex_state::token::TokenWord>,
+    ) -> Result<Option<MacroMatchDelivery<G>>, CommandError> {
+        debug_assert!(!self.create_source_control_sequences);
+        self.create_source_control_sequences = true;
+        let delivery = self.raw_next_matcher(paragraph_token);
         self.create_source_control_sequences = false;
         delivery
     }

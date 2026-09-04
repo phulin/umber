@@ -2,7 +2,7 @@
 
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
 
-use crate::command::CurrentCommand;
+use crate::command::{CurrentCommand, MacroMatchDelivery};
 use crate::error::CommandError;
 use crate::input::{InputLevel, RetirementBehavior, TokenBehavior};
 use crate::observation::{AlignmentRecord, CommandObservation};
@@ -247,6 +247,43 @@ impl<G> CommandProcessor<'_, '_, G> {
             .direct_source_line_number()
             .unwrap_or_else(|| self.command.current_file_line_number());
         if !self.delivery_is_fresh(command) {
+            return Err(CommandError::StaleDelivery);
+        }
+        self.invalidate_delivery_freshness();
+        self.start_alignment_v_template(alignment, delimiter, delimiter_line)
+    }
+
+    /// Compact sibling of [`Self::begin_scalar_alignment_v_template`].  Raw
+    /// macro matching uses the same `get_next` alignment interception but its
+    /// terminal token remains a hot delivery; entering the v-template must
+    /// therefore consume the exact stamp and adjustment without constructing
+    /// a `CurrentCommand` solely for this boundary.
+    pub(crate) fn begin_scalar_alignment_v_template_hot(
+        &mut self,
+        delivery: &MacroMatchDelivery<G>,
+    ) -> Result<(), CommandError> {
+        let alignment = self
+            .command
+            .alignment
+            .active_alignment
+            .ok_or(CommandError::input_invariant())?;
+        let delimiter = match delivery.alignment_adjustment() {
+            crate::processor::AlignmentDeliveryAdjustment::Delimiter(
+                crate::processor::alignment::AlignmentDelimiter::Tab,
+            ) => crate::AlignmentCellDelimiter::Tab,
+            crate::processor::AlignmentDeliveryAdjustment::Delimiter(
+                crate::processor::alignment::AlignmentDelimiter::Span,
+            ) => crate::AlignmentCellDelimiter::Span,
+            crate::processor::AlignmentDeliveryAdjustment::Delimiter(
+                crate::processor::alignment::AlignmentDelimiter::Cr
+                | crate::processor::alignment::AlignmentDelimiter::CrCr,
+            ) => crate::AlignmentCellDelimiter::Row,
+            _ => return Err(CommandError::input_invariant()),
+        };
+        let delimiter_line = delivery
+            .direct_source_line_number()
+            .unwrap_or_else(|| self.command.current_file_line_number());
+        if !self.delivery_stamp_is_fresh(delivery.delivery_stamp()) {
             return Err(CommandError::StaleDelivery);
         }
         self.invalidate_delivery_freshness();

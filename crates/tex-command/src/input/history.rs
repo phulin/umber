@@ -1421,11 +1421,11 @@ impl<G> crate::CommandState<G> {
 }
 
 fn plain_macro_scan_word(word: tex_state::token::TokenWord) -> bool {
-    use tex_state::token::{Catcode, Token};
+    use tex_state::token::Catcode;
 
     matches!(
-        word.semantic_token(),
-        Token::Char { cat, .. }
+        word.literal_catcode(),
+        Some(cat)
             if !matches!(
                 cat,
                 Catcode::BeginGroup | Catcode::EndGroup | Catcode::AlignmentTab | Catcode::Active

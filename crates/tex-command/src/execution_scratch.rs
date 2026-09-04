@@ -12,6 +12,8 @@ use core::num::NonZeroU64;
 
 use tex_state::token::{Catcode, OriginId, TokenWord, TracedTokenWord};
 
+use crate::command::MacroMatchDelivery;
+#[cfg(any(test, feature = "profiling"))]
 use crate::token_collector::ClassifiedToken;
 
 const MACRO_WORD_RESERVE: usize = 4_096;
@@ -448,11 +450,16 @@ pub(crate) struct MacroArgumentWriter<G> {
     owner: ArgumentSetId<G>,
     slot: u8,
     start: u32,
+    /// End of the published argument prefix. A delimiter candidate is
+    /// already resident in the same lane but remains after this coordinate
+    /// until it is revealed or truncated.
+    visible_end: u32,
     append: MacroAppendPosition,
     cursor: crate::scanner_kernel::ScannerCursor,
     end_trim: u8,
-    delimiter_start: usize,
-    delimiter_head: usize,
+    holdback_start: u32,
+    holdback_len: u32,
+    delimiter_match: u32,
 }
 
 impl<G> MacroArgumentWriter<G> {
@@ -467,10 +474,20 @@ impl<G> MacroArgumentWriter<G> {
         }
     }
 
+    /// Returns the settled argument length from the writer's known cursor
+    /// metadata. Range/lane validation remains deferred to observation or
+    /// publication, so the unobserved matcher does not reread its own sink.
+    pub(crate) fn visible_len(&self) -> Result<usize, ScratchError> {
+        self.visible_end
+            .checked_sub(self.start)
+            .and_then(|len| len.checked_sub(u32::from(self.end_trim)))
+            .map(|len| len as usize)
+            .ok_or(ScratchError::InvalidCoordinate)
+    }
+
     pub(crate) fn strip_outer_group(&mut self) -> Result<(), ScratchError> {
         let collected = self
-            .append
-            .absolute
+            .visible_end
             .checked_sub(self.start)
             .and_then(|len| len.checked_sub(u32::from(self.end_trim)))
             .ok_or(ScratchError::InvalidCoordinate)?;
@@ -987,7 +1004,6 @@ pub(crate) struct ExecutionScratch<G> {
     macro_words: MacroWordLane,
     next_macro_serial: u64,
     transient_depth: u32,
-    delimiter_words: Vec<ClassifiedToken>,
     scanner_resumes: ResumeFrameLane<crate::scan_toks::PendingScanToks<G>, G>,
     continuation_resumes: ResumeFrameLane<StoredContinuationFrame<G>, G>,
     expression_frames: Vec<crate::scanners::ExpressionFrame<G>>,
@@ -1028,7 +1044,6 @@ impl<G> Default for ExecutionScratch<G> {
             macro_words: MacroWordLane::default(),
             next_macro_serial: 1,
             transient_depth: 0,
-            delimiter_words: Vec::new(),
             scanner_resumes: ResumeFrameLane::default(),
             continuation_resumes: ResumeFrameLane::default(),
             expression_frames: Vec::new(),
@@ -1066,7 +1081,6 @@ pub(crate) struct ExecutionScratchTransientMark {
     pending_macro_slot: u32,
     free_macro_slot: u32,
     next_macro_serial: u64,
-    delimiter_words_len: usize,
 }
 
 impl<G> ExecutionScratch<G> {
@@ -2160,7 +2174,7 @@ impl<G> ExecutionScratch<G> {
     }
 
     pub(crate) fn begin_macro_match(&mut self) -> Result<PendingArgumentSet<G>, ScratchError> {
-        if !self.delimiter_words.is_empty() || self.pending_slot().is_ok() {
+        if self.pending_slot().is_ok() {
             return Err(ScratchError::InvalidCoordinate);
         }
         let mut reused_free_parent = None;
@@ -2228,7 +2242,6 @@ impl<G> ExecutionScratch<G> {
         matching: &PendingArgumentSet<G>,
     ) -> Result<MacroArgumentWriter<G>, ScratchError> {
         let start = self.macro_words.len();
-        let delimiter_start = self.delimiter_words.len();
         let slot_index = matching.frame.slot() as usize;
         let slot = self.pending_slot_for(matching.frame)?;
         if slot.current_argument.is_some() || slot.argument_count >= 9 {
@@ -2248,11 +2261,13 @@ impl<G> ExecutionScratch<G> {
             owner: matching.frame,
             slot: argument_slot,
             start,
+            visible_end: start,
             append,
             cursor: crate::scanner_kernel::ScannerCursor::default(),
             end_trim: 0,
-            delimiter_start,
-            delimiter_head: delimiter_start,
+            holdback_start: start,
+            holdback_len: 0,
+            delimiter_match: 0,
         })
     }
 
@@ -2262,6 +2277,7 @@ impl<G> ExecutionScratch<G> {
     /// authoritative new cursor, then the resident writer updates paragraph,
     /// brace-depth, and removable-outer-group facts from the same classification.
     /// Frame publication validates once when the argument finishes.
+    #[cfg(any(test, feature = "profiling"))]
     #[inline]
     pub(crate) fn append_argument_token(
         &mut self,
@@ -2269,9 +2285,43 @@ impl<G> ExecutionScratch<G> {
         token: ClassifiedToken,
         paragraph_checked: bool,
     ) -> Result<u32, ScratchError> {
+        if writer.holdback_len != 0 {
+            return Err(ScratchError::InvalidCoordinate);
+        }
         self.macro_words
             .append_at(&mut writer.append, token.word())?;
         let brace_depth = writer.cursor.settle_argument(token, paragraph_checked);
+        writer.visible_end = writer.append.absolute;
+        #[cfg(test)]
+        {
+            self.match_writer_appends = self.match_writer_appends.saturating_add(1);
+            self.match_writer_fact_updates = self.match_writer_fact_updates.saturating_add(1);
+        }
+        Ok(brace_depth)
+    }
+
+    /// Appends one compact matcher delivery directly to the parent sink. The
+    /// packed spelling and paragraph fact are already available from the raw
+    /// delivery, so no rich command or second semantic classification is
+    /// needed on the ordinary accepted path.
+    #[inline(always)]
+    pub(crate) fn append_match_delivery(
+        &mut self,
+        writer: &mut MacroArgumentWriter<G>,
+        delivery: &MacroMatchDelivery<G>,
+        paragraph_checked: bool,
+    ) -> Result<u32, ScratchError> {
+        if writer.holdback_len != 0 {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        let spelling = delivery.spelling();
+        debug_assert_eq!(spelling.origin(), delivery.origin());
+        self.macro_words.append_at(&mut writer.append, spelling)?;
+        let brace_depth = writer.cursor.settle_argument_word(
+            delivery.word(),
+            paragraph_checked && delivery.paragraph_spelling(),
+        );
+        writer.visible_end = writer.append.absolute;
         #[cfg(test)]
         {
             self.match_writer_appends = self.match_writer_appends.saturating_add(1);
@@ -2292,10 +2342,14 @@ impl<G> ExecutionScratch<G> {
         words: &[Cell<TokenWord>],
         origin: OriginId,
     ) -> Result<(), ScratchError> {
+        if writer.holdback_len != 0 {
+            return Err(ScratchError::InvalidCoordinate);
+        }
         let count = self
             .macro_words
             .append_cell_run_at(&mut writer.append, words, origin)?;
         writer.cursor.settle_plain_run(count);
+        writer.visible_end = writer.append.absolute;
         Ok(())
     }
 
@@ -2311,6 +2365,9 @@ impl<G> ExecutionScratch<G> {
         writer: &mut MacroArgumentWriter<G>,
         limit: usize,
     ) -> Result<u32, ScratchError> {
+        if writer.holdback_len != 0 {
+            return Err(ScratchError::InvalidCoordinate);
+        }
         let count = self.macro_words.append_plain_range_at(
             source,
             position,
@@ -2319,7 +2376,98 @@ impl<G> ExecutionScratch<G> {
             limit,
         )?;
         writer.cursor.settle_plain_run(count);
+        writer.visible_end = writer.append.absolute;
         Ok(count)
+    }
+
+    /// Appends a delimiter candidate to the same parent-owned word lane as
+    /// the visible argument prefix. The candidate is unpublished, so its
+    /// scanner facts remain untouched until a mismatch reveals it.
+    #[inline(always)]
+    pub(crate) fn append_delimiter_word(
+        &mut self,
+        writer: &mut MacroArgumentWriter<G>,
+        spelling: TracedTokenWord,
+    ) -> Result<(), ScratchError> {
+        if writer.holdback_len == 0 {
+            writer.holdback_start = writer.visible_end;
+        }
+        self.macro_words.append_at(&mut writer.append, spelling)?;
+        writer.holdback_len = writer
+            .holdback_len
+            .checked_add(1)
+            .ok_or(ScratchError::CapacityOverflow)?;
+        writer.delimiter_match = writer.holdback_len;
+        #[cfg(test)]
+        {
+            self.match_writer_appends = self.match_writer_appends.saturating_add(1);
+        }
+        Ok(())
+    }
+
+    /// Commits the first `count` words of the unpublished delimiter suffix.
+    /// Words already reside in the sink; only the stack-local scanner cursor
+    /// and visible-end coordinate advance. No token is copied or rewritten.
+    pub(crate) fn reveal_delimiter_words(
+        &mut self,
+        writer: &mut MacroArgumentWriter<G>,
+        count: u32,
+    ) -> Result<(), ScratchError> {
+        if count > writer.holdback_len {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        let end = writer
+            .holdback_start
+            .checked_add(count)
+            .ok_or(ScratchError::CapacityOverflow)?;
+        let mut absolute = writer.visible_end;
+        while absolute < end {
+            let spelling = self
+                .macro_words
+                .get(absolute)
+                .ok_or(ScratchError::InvalidCoordinate)?;
+            // A delimiter prefix is deliberately not reclassified as a
+            // paragraph after a mismatch. This preserves TeX82's historical
+            // `paragraph delimiter prefix` fact: it contributes brace/group
+            // state when revealed, but the non-long paragraph check applies
+            // only to the newly ordinary token.
+            writer
+                .cursor
+                .settle_argument_word(spelling.token_word(), false);
+            absolute += 1;
+            #[cfg(test)]
+            {
+                self.match_writer_fact_updates = self.match_writer_fact_updates.saturating_add(1);
+            }
+        }
+        writer.visible_end = end;
+        writer.holdback_start = end;
+        writer.holdback_len -= count;
+        writer.delimiter_match = writer.holdback_len;
+        Ok(())
+    }
+
+    /// Drops a completed delimiter from the lane tail and re-admits the
+    /// append coordinate in place. The committed argument prefix remains
+    /// resident and no delimiter-side owner ever existed.
+    pub(crate) fn truncate_delimiter_suffix(
+        &mut self,
+        writer: &mut MacroArgumentWriter<G>,
+    ) -> Result<(), ScratchError> {
+        let holdback_end = writer
+            .holdback_start
+            .checked_add(writer.holdback_len)
+            .ok_or(ScratchError::CapacityOverflow)?;
+        if writer.holdback_start > self.macro_words.len() || holdback_end != writer.append.absolute
+        {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        self.macro_words.truncate(writer.holdback_start)?;
+        writer.append = self.macro_words.admit_append_position()?;
+        writer.visible_end = writer.holdback_start;
+        writer.holdback_len = 0;
+        writer.delimiter_match = 0;
+        Ok(())
     }
 
     pub(crate) fn match_words(
@@ -2327,11 +2475,13 @@ impl<G> ExecutionScratch<G> {
         writer: &MacroArgumentWriter<G>,
     ) -> Result<MacroWords<'_, G>, ScratchError> {
         let visible_end = writer
-            .append
-            .absolute
+            .visible_end
             .checked_sub(u32::from(writer.end_trim))
             .ok_or(ScratchError::InvalidCoordinate)?;
-        if visible_end < writer.start || writer.append.absolute > self.macro_words.len() {
+        if visible_end < writer.start
+            || writer.visible_end > writer.append.absolute
+            || writer.append.absolute > self.macro_words.len()
+        {
             return Err(ScratchError::InvalidCoordinate);
         }
         Ok(MacroWords {
@@ -2344,20 +2494,18 @@ impl<G> ExecutionScratch<G> {
 
     pub(crate) fn publish_argument(
         &mut self,
-        mut writer: MacroArgumentWriter<G>,
+        writer: MacroArgumentWriter<G>,
     ) -> Result<(), ScratchError> {
         let slot_index = writer.owner.slot() as usize;
         let slot = self.pending_slot_for(writer.owner)?;
         if slot.current_argument != Some(writer.slot) || slot.argument_count != writer.slot {
             return Err(ScratchError::InvalidCoordinate);
         }
-        if writer.append.absolute != self.macro_words.len() {
+        if writer.holdback_len != 0 || writer.visible_end != self.macro_words.len() {
             return Err(ScratchError::InvalidCoordinate);
         }
-        self.clear_delimiter_prefix(&mut writer)?;
         let range_len = writer
-            .append
-            .absolute
+            .visible_end
             .checked_sub(writer.start)
             .and_then(|len| len.checked_sub(u32::from(writer.end_trim)))
             .ok_or(ScratchError::InvalidCoordinate)?;
@@ -2381,105 +2529,58 @@ impl<G> ExecutionScratch<G> {
         Ok(())
     }
 
-    pub(crate) fn clear_delimiter_prefix(
-        &mut self,
-        writer: &mut MacroArgumentWriter<G>,
-    ) -> Result<(), ScratchError> {
-        if writer.delimiter_start > self.delimiter_words.len() {
-            return Err(ScratchError::InvalidCoordinate);
-        }
-        self.delimiter_words.truncate(writer.delimiter_start);
-        writer.delimiter_head = writer.delimiter_start;
-        Ok(())
-    }
-
     pub(crate) fn delimiter_prefix_len(
         &self,
         writer: &MacroArgumentWriter<G>,
     ) -> Result<usize, ScratchError> {
-        Ok(self
-            .delimiter_words
-            .len()
-            .saturating_sub(writer.delimiter_head))
-    }
-
-    pub(crate) fn delimiter_prefix_is_empty(
-        &self,
-        writer: &MacroArgumentWriter<G>,
-    ) -> Result<bool, ScratchError> {
-        Ok(self.delimiter_prefix_len(writer)? == 0)
+        debug_assert_eq!(writer.delimiter_match, writer.holdback_len);
+        usize::try_from(writer.delimiter_match).map_err(|_| ScratchError::CapacityOverflow)
     }
 
     pub(crate) fn delimiter_prefix_word(
         &self,
         writer: &MacroArgumentWriter<G>,
         index: usize,
-    ) -> Result<ClassifiedToken, ScratchError> {
-        self.delimiter_words
-            .get(
-                writer
-                    .delimiter_head
-                    .checked_add(index)
-                    .ok_or(ScratchError::CapacityOverflow)?,
-            )
-            .copied()
+    ) -> Result<TracedTokenWord, ScratchError> {
+        if index
+            >= usize::try_from(writer.holdback_len).map_err(|_| ScratchError::CapacityOverflow)?
+        {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        let absolute = writer
+            .holdback_start
+            .checked_add(u32::try_from(index).map_err(|_| ScratchError::CapacityOverflow)?)
+            .ok_or(ScratchError::CapacityOverflow)?;
+        self.macro_words
+            .get(absolute)
             .ok_or(ScratchError::InvalidCoordinate)
     }
 
     pub(crate) fn delimiter_prefix_words<'a>(
         &'a self,
         writer: &'a MacroArgumentWriter<G>,
-    ) -> Result<impl Iterator<Item = TracedTokenWord> + 'a, ScratchError> {
-        let len = self.delimiter_prefix_len(writer)?;
-        Ok((0..len).map(|index| {
-            self.delimiter_prefix_word(writer, index)
-                .expect("live delimiter prefix")
-                .word()
-        }))
-    }
-
-    pub(crate) fn push_delimiter_prefix(
-        &mut self,
-        writer: &MacroArgumentWriter<G>,
-        token: ClassifiedToken,
-    ) -> Result<(), ScratchError> {
-        if writer.delimiter_start > self.delimiter_words.len() {
-            return Err(ScratchError::InvalidCoordinate);
-        }
-        if self.delimiter_words.len() == self.delimiter_words.capacity() {
-            self.delimiter_words
-                .try_reserve_exact(MACRO_WORD_RESERVE)
-                .map_err(|_| ScratchError::AllocationFailed)?;
-        }
-        self.delimiter_words.push(token);
-        Ok(())
-    }
-
-    pub(crate) fn pop_delimiter_prefix_word(
-        &mut self,
-        writer: &mut MacroArgumentWriter<G>,
-    ) -> Result<ClassifiedToken, ScratchError> {
-        let token = self
-            .delimiter_words
-            .get(writer.delimiter_head)
-            .copied()
-            .ok_or(ScratchError::InvalidCoordinate)?;
-        writer.delimiter_head = writer
-            .delimiter_head
-            .checked_add(1)
+    ) -> Result<MacroWords<'a, G>, ScratchError> {
+        let end = writer
+            .holdback_start
+            .checked_add(writer.holdback_len)
             .ok_or(ScratchError::CapacityOverflow)?;
-        if writer.delimiter_head == self.delimiter_words.len() {
-            self.delimiter_words.truncate(writer.delimiter_start);
-            writer.delimiter_head = writer.delimiter_start;
-        }
-        Ok(token)
+        Ok(MacroWords {
+            lane: &self.macro_words,
+            position: writer.holdback_start,
+            end,
+            _generation: PhantomData,
+        })
     }
 
     pub(crate) fn commit_macro_match(
         &mut self,
         matching: PendingArgumentSet<G>,
     ) -> Result<ArgumentSetId<G>, ScratchError> {
-        if !self.delimiter_words.is_empty() {
+        if self
+            .macro_slots
+            .get(self.pending_macro_slot as usize)
+            .is_some_and(|slot| slot.current_argument.is_some())
+        {
             return Err(ScratchError::InvalidCoordinate);
         }
         let slot_index = self.pending_slot_index()? as u32;
@@ -2517,7 +2618,6 @@ impl<G> ExecutionScratch<G> {
         self.pending_macro_slot = NO_MACRO_SLOT;
         self.truncate_macro_words(reclaim_mark)?;
         self.release_macro_slot(slot_index as u32);
-        self.delimiter_words.clear();
         Ok(())
     }
 
@@ -2711,7 +2811,6 @@ impl<G> ExecutionScratch<G> {
             pending_macro_slot: self.pending_macro_slot,
             free_macro_slot: self.free_macro_slot,
             next_macro_serial: self.next_macro_serial,
-            delimiter_words_len: self.delimiter_words.len(),
         }
     }
 
@@ -2722,7 +2821,6 @@ impl<G> ExecutionScratch<G> {
         if mark.depth != self.transient_depth
             || mark.macro_slots_len > self.macro_slots.len()
             || mark.macro_words_len > self.macro_words.len()
-            || mark.delimiter_words_len > self.delimiter_words.len()
         {
             return Err(ScratchError::InvalidCoordinate);
         }
@@ -2743,7 +2841,6 @@ impl<G> ExecutionScratch<G> {
         self.pending_macro_slot = mark.pending_macro_slot;
         self.free_macro_slot = mark.free_macro_slot;
         self.next_macro_serial = mark.next_macro_serial;
-        self.delimiter_words.truncate(mark.delimiter_words_len);
         self.transient_depth -= 1;
         Ok(())
     }
@@ -2808,7 +2905,6 @@ impl<G> ExecutionScratch<G> {
     pub(crate) fn is_quiescent(&self) -> bool {
         self.frame_len() == 0
             && self.pending_slot().is_err()
-            && self.delimiter_words.is_empty()
             && self.scanner_resumes.live_len() == 0
             && self.continuation_resumes.live_len() == 0
             && self.expansion_work.is_quiescent()
@@ -2984,11 +3080,9 @@ impl<G> ExecutionScratch<G> {
 }
 
 fn plain_macro_scan_word(word: TokenWord) -> bool {
-    use tex_state::token::Token;
-
     matches!(
-        word.semantic_token(),
-        Token::Char { cat, .. }
+        word.literal_catcode(),
+        Some(cat)
             if !matches!(
                 cat,
                 Catcode::BeginGroup | Catcode::EndGroup | Catcode::AlignmentTab | Catcode::Active

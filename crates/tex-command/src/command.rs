@@ -766,6 +766,33 @@ impl<G> HotCommand<G> {
         TracedTokenWord::from_parts(self.token.word, self.token.origin)
     }
 
+    /// Whether this compact delivery was replaced by TeX82 §23's temporary
+    /// recovery space.  Macro matching consumes this fact directly; the
+    /// ordinary command facade exposes the same bit through
+    /// [`CurrentCommand::is_outer_recovery_space`].
+    pub(crate) const fn is_outer_recovery_space(&self) -> bool {
+        self.token
+            .site
+            .delivery_flags
+            .contains(CommandDeliveryFlags::OUTER_RECOVERY_SPACE)
+    }
+
+    /// Physical source line retained with a direct source delivery.  The
+    /// compact matcher needs this only when an active alignment turns the
+    /// delivery into a v-template boundary.
+    pub(crate) const fn direct_source_line_number(&self) -> Option<u32> {
+        if self
+            .token
+            .site
+            .delivery_flags
+            .contains(CommandDeliveryFlags::HAS_DIRECT_SOURCE_LINE)
+        {
+            Some(self.token.site.direct_source_line)
+        } else {
+            None
+        }
+    }
+
     pub(crate) const fn origin(&self) -> OriginId {
         self.token.origin
     }
@@ -1021,6 +1048,111 @@ impl<G> HotCommand<G> {
             site: self.token.site,
             _generation: core::marker::PhantomData,
         }
+    }
+}
+
+/// One raw token delivered specifically to the macro matcher.
+///
+/// The matcher never needs TeX's rich `CurrentCommand`: literal spelling,
+/// effective command class, outer/recovery state, paragraph identity, and the
+/// exact delivery/alignment coordinates are sufficient.  The compact command
+/// remains attached so an exceptional paragraph/right-brace path can perform
+/// the canonical stamped backup without reconstructing a rich value.
+#[derive(Debug)]
+pub(crate) struct MacroMatchDelivery<G> {
+    command: HotCommand<G>,
+    literal_catcode: Option<Catcode>,
+    paragraph_spelling: bool,
+    effective_paragraph: bool,
+}
+
+impl<G> Copy for MacroMatchDelivery<G> {}
+
+impl<G> Clone for MacroMatchDelivery<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<G> MacroMatchDelivery<G> {
+    #[inline(always)]
+    pub(crate) fn from_hot(
+        command: HotCommand<G>,
+        literal_catcode: Option<Catcode>,
+        paragraph_token: Option<TokenWord>,
+    ) -> Self {
+        let paragraph_spelling =
+            paragraph_token.is_some_and(|token| token == command.spelling_word());
+        let effective_paragraph =
+            command.command_word().unexpandable_primitive() == Some(UnexpandablePrimitive::Par);
+        Self {
+            command,
+            literal_catcode,
+            paragraph_spelling,
+            effective_paragraph,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn word(&self) -> TokenWord {
+        self.command.spelling_word()
+    }
+
+    #[inline(always)]
+    pub(crate) const fn spelling(&self) -> TracedTokenWord {
+        self.command.spelling()
+    }
+
+    #[inline(always)]
+    pub(crate) const fn origin(&self) -> OriginId {
+        self.command.origin()
+    }
+
+    #[inline(always)]
+    pub(crate) const fn literal_catcode(&self) -> Option<Catcode> {
+        self.literal_catcode
+    }
+
+    #[inline(always)]
+    pub(crate) const fn paragraph_spelling(&self) -> bool {
+        self.paragraph_spelling
+    }
+
+    #[inline(always)]
+    pub(crate) const fn effective_paragraph(&self) -> bool {
+        self.effective_paragraph
+    }
+
+    #[inline(always)]
+    pub(crate) const fn is_outer(&self) -> bool {
+        self.command.is_outer()
+    }
+
+    #[inline(always)]
+    pub(crate) const fn is_outer_recovery_space(&self) -> bool {
+        self.command.is_outer_recovery_space()
+    }
+
+    #[inline(always)]
+    pub(crate) const fn delivery_stamp(&self) -> DeliveryStamp {
+        self.command.delivery_stamp()
+    }
+
+    #[inline(always)]
+    pub(crate) const fn alignment_adjustment(
+        &self,
+    ) -> crate::processor::AlignmentDeliveryAdjustment {
+        self.command.alignment_adjustment()
+    }
+
+    #[inline(always)]
+    pub(crate) const fn direct_source_line_number(&self) -> Option<u32> {
+        self.command.direct_source_line_number()
+    }
+
+    #[inline(always)]
+    pub(crate) fn into_hot(self) -> HotCommand<G> {
+        self.command
     }
 }
 

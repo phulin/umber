@@ -3,7 +3,9 @@
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, ResolvedMeaning};
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
-use crate::command::{CommandClass, DeliveryStamp, HotCommand, HotPrimitiveInvocation};
+use crate::command::{
+    CommandClass, DeliveryStamp, HotCommand, HotPrimitiveInvocation, MacroMatchDelivery,
+};
 use crate::execution_scratch::ArgumentSetId;
 use crate::expansion_work::ActiveControlTag;
 use crate::input::{
@@ -1145,6 +1147,78 @@ impl<G> CommandProcessor<'_, '_, G> {
         let mut hot_destination = None;
         let result = self.raw_next_hot(&mut hot_destination);
         self.finish_hot_delivery(destination, &mut hot_destination, result)
+    }
+
+    /// Raw delivery for TeX82 §394's macro matcher.  This is the same
+    /// canonical resident/source reader, settlement, outer-validity, replay,
+    /// freshness, and fuel path as [`Self::raw_next`], but it returns the
+    /// compact settled token instead of crossing the rich command boundary.
+    ///
+    /// Alignment delimiter interception is completed in the compact slot as
+    /// well; a matcher therefore never needs to materialize a
+    /// `CurrentCommand` merely to hand a token to its argument cursor.
+    pub(super) fn raw_next_matcher(
+        &mut self,
+        paragraph_token: Option<TokenWord>,
+    ) -> Result<Option<MacroMatchDelivery<G>>, CommandError> {
+        let mut hot = None;
+        loop {
+            match self.raw_next_hot(&mut hot)? {
+                DeliveryStatus::End => return Ok(None),
+                DeliveryStatus::ReplayCompleted(_) => continue,
+                DeliveryStatus::Command => {
+                    let command = hot.take().ok_or_else(CommandError::input_invariant)?;
+                    // The matcher needs the category of the delivered
+                    // spelling, not the category implied by its effective
+                    // command.  A control sequence may resolve to a
+                    // character command while remaining a control-sequence
+                    // token in TeX's parameter grammar.
+                    let literal_catcode = command.spelling_word().literal_catcode();
+                    let delivery =
+                        MacroMatchDelivery::from_hot(command, literal_catcode, paragraph_token);
+                    if matches!(
+                        delivery.alignment_adjustment(),
+                        crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
+                    ) {
+                        self.begin_scalar_alignment_v_template_hot(&delivery)?;
+                        continue;
+                    }
+                    #[cfg(test)]
+                    {
+                        // Preserve the collector-path metric's meaning: one
+                        // compact matcher classification per raw token. This
+                        // is a packed fact projection, not a
+                        // `ClassifiedToken` materialization.
+                        self.command
+                            .token_collector_path_counters
+                            .raw_classifications = self
+                            .command
+                            .token_collector_path_counters
+                            .raw_classifications
+                            .saturating_add(1);
+                    }
+                    if matches!(
+                        delivery.alignment_adjustment(),
+                        crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
+                    ) {
+                        self.begin_scalar_alignment_v_template_hot(&delivery)?;
+                        continue;
+                    }
+                    debug_assert!(
+                        !delivery.is_outer(),
+                        "an outer command must be recovered before macro matching"
+                    );
+                    return Ok(Some(delivery));
+                }
+                DeliveryStatus::CharacterRun
+                | DeliveryStatus::CharacterRunBoundary
+                | DeliveryStatus::PendingExpanded
+                | DeliveryStatus::AlignmentEndTemplate
+                | DeliveryStatus::AlignmentClosingBrace => {
+                    return Err(CommandError::input_invariant());
+                }
+            }
+        }
     }
 
     #[inline(always)]

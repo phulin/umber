@@ -653,8 +653,8 @@ fn scalar_macro_call_keeps_one_raw_fallback_matcher() {
         "delimited matching must have one canonical scanner"
     );
     assert!(
-        matcher.contains("self.get_token_into(&mut delivered)?"),
-        "the scalar matcher must consume raw tokens into its request-local destination"
+        matcher.contains("get_macro_match_token(paragraph_token)?"),
+        "the scalar matcher must consume compact raw tokens through its canonical delivery path"
     );
     for forbidden in ["CompiledMacroMatcher", "MacroBytecode", "FastMacroMatcher"] {
         assert!(

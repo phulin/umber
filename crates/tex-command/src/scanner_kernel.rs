@@ -32,14 +32,26 @@ impl ScannerCursor {
     /// Settles one scalar token after its caller has written it to the final
     /// sink. Classification, brace balance, and first-token state advance in
     /// this one cursor and are never represented in a second pending object.
+    #[cfg(any(test, feature = "profiling"))]
     #[inline(always)]
     pub(crate) fn settle_argument(
         &mut self,
         token: ClassifiedToken,
         paragraph_checked: bool,
     ) -> u32 {
-        self.rejects_non_long_paragraph |= token.rejects_non_long_paragraph(paragraph_checked);
-        let delta = match token.spelling().literal_catcode() {
+        self.settle_argument_word(
+            token.spelling(),
+            token.rejects_non_long_paragraph(paragraph_checked),
+        )
+    }
+
+    /// Settles one already-packed matcher token.  The macro matcher carries
+    /// paragraph spelling as a compact fact, so it need not construct a
+    /// `ClassifiedToken` or decode the token again on the accepted path.
+    #[inline(always)]
+    pub(crate) fn settle_argument_word(&mut self, word: TokenWord, paragraph: bool) -> u32 {
+        self.rejects_non_long_paragraph |= paragraph;
+        let delta = match word.literal_catcode() {
             Some(Catcode::BeginGroup) => 1_i8,
             Some(Catcode::EndGroup) => -1_i8,
             _ => 0,

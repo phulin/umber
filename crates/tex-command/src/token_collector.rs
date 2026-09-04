@@ -91,14 +91,11 @@ impl ClassifiedToken {
         matches!(self.spelling().literal_catcode(), Some(Catcode::EndGroup))
     }
 
-    pub(crate) const fn spelling_is_space(&self) -> bool {
-        matches!(self.spelling().literal_catcode(), Some(Catcode::Space))
-    }
-
     pub(crate) const fn spelling_is_parameter(&self) -> bool {
         matches!(self.spelling().literal_catcode(), Some(Catcode::Parameter))
     }
 
+    #[cfg(any(test, feature = "profiling"))]
     pub(crate) const fn rejects_non_long_paragraph(&self, paragraph_checked: bool) -> bool {
         paragraph_checked && self.paragraph
     }
