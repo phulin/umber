@@ -980,6 +980,74 @@ impl NodeRecord<PageMaterialLane> {
         }
     }
 
+    /// Encodes the compact character record without constructing an owned
+    /// compatibility node first.
+    pub(crate) fn encode_char(font: FontId, ch: char, origin: OriginId) -> Self {
+        let font = font.words();
+        Self::new(
+            NodeKind::Char,
+            0,
+            0,
+            [
+                font[0],
+                font[1],
+                font[2],
+                font[3],
+                ch as u32,
+                origin.raw(),
+                0,
+            ],
+        )
+    }
+
+    /// Encodes a ligature's variable source span directly into its annex.
+    /// The source iterator is exact, which lets the fixed two-word source
+    /// header be emitted without staging a temporary `Vec<u32>`.
+    #[allow(clippy::too_many_arguments)] // Direct encoding keeps all fixed payload fields at the destination boundary.
+    pub(crate) fn encode_ligature(
+        font: FontId,
+        ch: char,
+        source_len: usize,
+        origins_empty: bool,
+        left_hit: bool,
+        right_hit: bool,
+        source: &mut dyn ExactSizeIterator<Item = (char, OriginId)>,
+        annex: &mut NodeAnnexWriter<'_>,
+    ) -> Self {
+        assert_eq!(
+            source.len(),
+            source_len,
+            "ligature source length remains exact"
+        );
+        let source = annex.append_span_iter::<LigatureSource>(
+            std::iter::once(u32::try_from(source_len).expect("ligature source length fits u32"))
+                .chain(std::iter::once(bool_word(origins_empty)))
+                .chain(source.flat_map(|(ch, origin)| [ch as u32, origin.raw()])),
+        );
+        let font = font.words();
+        let mut payload = [0_u32; 12];
+        payload[..4].copy_from_slice(&font);
+        payload[4] = ch as u32;
+        payload[5..].copy_from_slice(&source.words());
+        let key = annex.append_fixed::<LigaturePayload>(&payload);
+        Self::with_key(
+            NodeKind::Lig,
+            0,
+            bool_word(left_hit) | (bool_word(right_hit) << 1),
+            key,
+        )
+    }
+
+    /// Encodes a compact kern record without constructing an owned node.
+    pub(crate) fn encode_kern(amount: Scaled, kind: KernKind) -> Self {
+        Self::new(
+            NodeKind::Kern,
+            encode_kern_kind(kind),
+            0,
+            [scaled_word(amount), 0, 0, 0, 0, 0, 0],
+        )
+    }
+
     pub(crate) fn decode_owned(self, annex: NodeAnnexView<'_>) -> Option<Node> {
         let kind = self.kind()?;
         let subtype = self.subtype();

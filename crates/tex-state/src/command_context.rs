@@ -2614,6 +2614,47 @@ impl<'a, G> CommandContext<'a, G> {
         command
     }
 
+    /// Resolves the first instruction of one ligature/kern program once.
+    /// Character programs still honor pdfTeX's per-code ligature-enable bit;
+    /// the boundary program is synthetic and has no such gate.
+    #[must_use]
+    pub fn font_lig_kern_start(
+        &self,
+        id: crate::ids::FontId,
+        left: crate::font::LigKernChar,
+    ) -> Option<u16> {
+        if let crate::font::LigKernChar::Char(code) = left
+            && self.pdf_font_code(crate::PdfFontCode::Tag, id, code) & 1 == 0
+        {
+            return None;
+        }
+        self.resident.fonts.get(id).metrics().lig_kern_start(left)
+    }
+
+    /// Looks up a pair against a previously resolved ligature/kern start.
+    /// This is the direct counterpart to [`Self::font_lig_kern_command`] for
+    /// move-only TFM work cells, so pair matching does not repeat start
+    /// resolution.
+    #[must_use]
+    pub fn font_lig_kern_command_from_start(
+        &self,
+        id: crate::ids::FontId,
+        start: u16,
+        right: crate::font::LigKernChar,
+    ) -> Option<crate::font::LigKernCommand> {
+        let command = self
+            .resident
+            .fonts
+            .get(id)
+            .metrics()
+            .lig_kern_command_from_start(start, right);
+        if self.pdf_font_ligatures_disabled(id) {
+            command.filter(|command| matches!(command, crate::font::LigKernCommand::Kern(_)))
+        } else {
+            command
+        }
+    }
+
     #[must_use]
     pub fn font_math_metrics_source(
         &self,

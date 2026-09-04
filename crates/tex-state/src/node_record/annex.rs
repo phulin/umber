@@ -404,6 +404,26 @@ impl<'a> NodeAnnexWriter<'a> {
         self.dependency_floor = self.dependency_floor.min(position);
         AnnexKey::from_list(list, publication_serial)
     }
+
+    /// Appends a typed span from a caller-owned iterator directly into the
+    /// annex arena. The iterator is consumed by the arena's append run, so
+    /// variable-length payloads do not need a temporary word vector.
+    pub(crate) fn append_span_iter<Kind>(
+        &mut self,
+        body: impl IntoIterator<Item = u32>,
+    ) -> AnnexKey<Kind> {
+        let publication_serial = self.pool.next_publication_serial();
+        let list = self
+            .arena
+            .append_unsealed_list(self.pool, std::iter::once(publication_serial).chain(body))
+            .expect("typed annex publication fits its paired region");
+        let position = self
+            .arena
+            .owner_relative_head_position(self.pool, list)
+            .expect("new annex record belongs to its paired region");
+        self.dependency_floor = self.dependency_floor.min(position);
+        AnnexKey::from_list(list, publication_serial)
+    }
 }
 
 impl<'a> NodeAnnexView<'a> {

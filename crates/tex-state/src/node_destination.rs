@@ -70,7 +70,13 @@ impl<'a> NodeDestination<'a> {
     }
 
     pub fn char(self, font: FontId, ch: char, origin: OriginId) {
-        self.store(Node::Char { font, ch, origin });
+        match self.slot {
+            #[cfg(test)]
+            NodeDestinationSlot::Owned(slot) => *slot = Some(Node::Char { font, ch, origin }),
+            NodeDestinationSlot::Record { slot, encoder } => {
+                *slot = Some(encoder.encode_char(font, ch, origin));
+            }
+        }
     }
 
     pub fn ligature(
@@ -82,18 +88,106 @@ impl<'a> NodeDestination<'a> {
         left_hit: bool,
         right_hit: bool,
     ) {
-        self.store(Node::Lig {
+        assert!(
+            origins.is_empty() || origins.len() == orig.len(),
+            "ligature origin rows are empty or parallel to source characters"
+        );
+        let origins_empty = origins.is_empty();
+        self.ligature_iter_with_origin_mode(
             font,
             ch,
-            orig,
             left_hit,
             right_hit,
-            origins,
-        });
+            origins_empty,
+            orig.into_iter().enumerate().map(move |(index, ch)| {
+                (
+                    ch,
+                    if origins_empty {
+                        OriginId::UNKNOWN
+                    } else {
+                        origins[index]
+                    },
+                )
+            }),
+        );
+    }
+
+    /// Initializes a ligature record from an exact, caller-owned source
+    /// iterator. Production destinations append the source words and fixed
+    /// payload directly; only the `cfg(test)` adapter materializes a `Node`.
+    pub fn ligature_iter<I>(
+        self,
+        font: FontId,
+        ch: char,
+        left_hit: bool,
+        right_hit: bool,
+        source: I,
+    ) where
+        I: ExactSizeIterator<Item = (char, OriginId)>,
+    {
+        let origins_empty = source.len() == 0;
+        self.ligature_iter_with_origin_mode(font, ch, left_hit, right_hit, origins_empty, source);
+    }
+
+    pub fn ligature_iter_with_origin_mode<I>(
+        self,
+        font: FontId,
+        ch: char,
+        left_hit: bool,
+        right_hit: bool,
+        origins_empty: bool,
+        source: I,
+    ) where
+        I: ExactSizeIterator<Item = (char, OriginId)>,
+    {
+        let source_len = source.len();
+        match self.slot {
+            #[cfg(test)]
+            NodeDestinationSlot::Owned(slot) => {
+                let mut orig = Vec::with_capacity(source_len);
+                let mut origins = if origins_empty {
+                    Vec::new()
+                } else {
+                    Vec::with_capacity(source_len)
+                };
+                for (ch, origin) in source {
+                    orig.push(ch);
+                    if !origins_empty {
+                        origins.push(origin);
+                    }
+                }
+                *slot = Some(Node::Lig {
+                    font,
+                    ch,
+                    orig,
+                    left_hit,
+                    right_hit,
+                    origins,
+                });
+            }
+            NodeDestinationSlot::Record { slot, encoder } => {
+                let mut source = source;
+                *slot = Some(encoder.encode_ligature(
+                    font,
+                    ch,
+                    source_len,
+                    origins_empty,
+                    left_hit,
+                    right_hit,
+                    &mut source,
+                ));
+            }
+        }
     }
 
     pub fn kern(self, amount: Scaled, kind: KernKind) {
-        self.store(Node::Kern { amount, kind });
+        match self.slot {
+            #[cfg(test)]
+            NodeDestinationSlot::Owned(slot) => *slot = Some(Node::Kern { amount, kind }),
+            NodeDestinationSlot::Record { slot, encoder } => {
+                *slot = Some(encoder.encode_kern(amount, kind));
+            }
+        }
     }
 
     pub fn margin_kern(self, amount: Scaled, side: MarginKernSide, font: FontId, ch: u8) {

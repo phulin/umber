@@ -1,4 +1,5 @@
-use tex_fonts::{LigKernChar, LigKernCommand};
+use smallvec::SmallVec;
+use tex_fonts::{CharMetrics, LigKernChar, LigKernCommand};
 use tex_state::CommandContext;
 use tex_state::diagnostic::DiagnosticEffects;
 use tex_state::env::banks::{GlueParam, IntParam};
@@ -755,6 +756,18 @@ pub(crate) fn is_ltr_shaping_font<G>(stores: &CommandContext<'_, G>, font: FontI
 pub(crate) trait FinalHNodeSink {
     fn glyph<G>(&mut self, stores: &mut CommandContext<'_, G>, glyph: PendingHRunChar);
 
+    /// Consumes one move-only TFM cell. The default adapter is used only by
+    /// the reconstructed-event sink; the production page sink writes the
+    /// resident record directly from the borrowed provenance span.
+    fn glyph_cell<G>(
+        &mut self,
+        stores: &mut CommandContext<'_, G>,
+        glyph: LigatureGlyphCell,
+        source: &[LigatureSourceEntry],
+    ) {
+        self.glyph(stores, glyph.into_pending(source));
+    }
+
     fn kern<G>(&mut self, stores: &mut CommandContext<'_, G>, amount: Scaled, kind: KernKind);
 
     fn explicit_hyphen_disc<G>(&mut self, stores: &mut CommandContext<'_, G>);
@@ -778,19 +791,56 @@ impl FinalHNodeSink for PageNodeSink<'_> {
     fn glyph<G>(&mut self, stores: &mut CommandContext<'_, G>, glyph: PendingHRunChar) {
         stores.construct_page_active_list(self.output, |destination| {
             if glyph.ligature_present {
-                destination.ligature(
+                let origins_empty = glyph.origins.is_empty();
+                destination.ligature_iter_with_origin_mode(
                     glyph.font,
                     glyph.ch,
-                    glyph.orig.into_vec(),
-                    glyph.origins.into_vec(),
                     glyph.left_hit,
                     glyph.right_hit,
+                    origins_empty,
+                    glyph.orig.iter().enumerate().map(|(index, ch)| {
+                        (
+                            *ch,
+                            if origins_empty {
+                                OriginId::UNKNOWN
+                            } else {
+                                glyph.origins[index]
+                            },
+                        )
+                    }),
                 );
             } else {
                 destination.char(
                     glyph.font,
                     glyph.ch,
                     glyph.origins.first().cloned().unwrap_or(OriginId::UNKNOWN),
+                );
+            }
+        });
+    }
+
+    fn glyph_cell<G>(
+        &mut self,
+        stores: &mut CommandContext<'_, G>,
+        glyph: LigatureGlyphCell,
+        source: &[LigatureSourceEntry],
+    ) {
+        stores.construct_page_active_list(self.output, |destination| {
+            if glyph.ligature_present {
+                destination.ligature_iter(
+                    glyph.font,
+                    glyph.ch,
+                    glyph.left_hit,
+                    glyph.right_hit,
+                    source.iter().map(|entry| (entry.ch, entry.origin)),
+                );
+            } else {
+                destination.char(
+                    glyph.font,
+                    glyph.ch,
+                    source
+                        .first()
+                        .map_or(OriginId::UNKNOWN, |entry| entry.origin),
                 );
             }
         });
@@ -1305,19 +1355,6 @@ pub(crate) fn reconstitute_with_right_character<G>(
     Ok(sink.events)
 }
 
-#[derive(Clone)]
-enum LigatureWorkItem {
-    Boundary(Option<u8>),
-    Glyph(PendingHRunChar),
-    Kern { amount: Scaled, kind: KernKind },
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct KernSpec {
-    pub(crate) amount: Scaled,
-    pub(crate) kind: KernKind,
-}
-
 #[derive(Clone, Copy)]
 pub(crate) enum LigatureRightBoundary {
     Suppressed,
@@ -1325,9 +1362,111 @@ pub(crate) enum LigatureRightBoundary {
     Character(u8),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
+pub(crate) struct LigatureSourceEntry {
+    ch: char,
+    origin: OriginId,
+}
+
+#[derive(Clone, Copy)]
+struct ProvenanceSpan {
+    start: usize,
+    len: usize,
+}
+
+impl ProvenanceSpan {
+    const EMPTY: Self = Self { start: 0, len: 0 };
+
+    fn end(self) -> usize {
+        self.start + self.len
+    }
+}
+
+#[derive(Clone, Copy)]
+struct LigatureBoundaryCell {
+    code: Option<u8>,
+    lig_kern_start: Option<u16>,
+    leading_auto_kern: Scaled,
+}
+
+pub(crate) struct LigatureGlyphCell {
+    font: FontId,
+    ch: char,
+    code: Option<u8>,
+    _metric: Option<CharMetrics>,
+    lig_kern_start: Option<u16>,
+    leading_auto_kern: Scaled,
+    trailing_auto_kern: Scaled,
+    provenance: ProvenanceSpan,
+    ligature_present: bool,
+    left_hit: bool,
+    right_hit: bool,
+    character_exists: bool,
+}
+
+impl LigatureGlyphCell {
+    fn new<G>(
+        stores: &CommandContext<'_, G>,
+        font: FontId,
+        ch: char,
+        provenance: ProvenanceSpan,
+        ligature_present: bool,
+        left_hit: bool,
+        right_hit: bool,
+    ) -> Self {
+        let code = font_code(ch).ok();
+        let metric = code.and_then(|code| stores.font_char_metrics(font, code));
+        let lig_kern_start = code
+            .filter(|&code| stores.pdf_font_code(tex_state::PdfFontCode::Tag, font, code) & 1 != 0)
+            .and(metric)
+            .and_then(|metric| match metric.tag {
+                tex_fonts::MetricCharTag::LigKern { start_index, .. } => Some(start_index),
+                _ => None,
+            });
+        let (leading_auto_kern, trailing_auto_kern) = auto_kern_values(stores, font, code);
+        Self {
+            font,
+            ch,
+            code,
+            _metric: metric,
+            lig_kern_start,
+            leading_auto_kern,
+            trailing_auto_kern,
+            provenance,
+            ligature_present,
+            left_hit,
+            right_hit,
+            character_exists: stores.font_character_exists(font, ch),
+        }
+    }
+
+    fn into_pending(self, source: &[LigatureSourceEntry]) -> PendingHRunChar {
+        let mut orig = SmallVec::new();
+        let mut origins = SmallVec::new();
+        for entry in source {
+            orig.push(entry.ch);
+            origins.push(entry.origin);
+        }
+        PendingHRunChar {
+            font: self.font,
+            ch: self.ch,
+            orig,
+            origins,
+            ligature_present: self.ligature_present,
+            left_hit: self.left_hit,
+            right_hit: self.right_hit,
+        }
+    }
+}
+
+enum LigatureWorkCell {
+    Boundary(LigatureBoundaryCell),
+    Glyph(LigatureGlyphCell),
+    Kern { amount: Scaled, kind: KernKind },
+}
+
 struct LigatureWorkNode {
-    item: LigatureWorkItem,
+    cell: Option<LigatureWorkCell>,
     previous: Option<usize>,
     next: Option<usize>,
     discard_if_missing: bool,
@@ -1336,6 +1475,7 @@ struct LigatureWorkNode {
 #[derive(Default)]
 pub(crate) struct LigatureWorkList {
     nodes: Vec<LigatureWorkNode>,
+    provenance: Vec<LigatureSourceEntry>,
     head: Option<usize>,
     tail: Option<usize>,
 }
@@ -1343,6 +1483,7 @@ pub(crate) struct LigatureWorkList {
 impl LigatureWorkList {
     pub(crate) fn clear(&mut self) {
         self.nodes.clear();
+        self.provenance.clear();
         self.head = None;
         self.tail = None;
     }
@@ -1351,20 +1492,63 @@ impl LigatureWorkList {
         self.clear();
         self.nodes
             .reserve(capacity.saturating_sub(self.nodes.capacity()));
+        self.provenance
+            .reserve(capacity.saturating_sub(self.provenance.capacity()));
     }
 
     fn with_capacity(capacity: usize) -> Self {
         Self {
             nodes: Vec::with_capacity(capacity),
+            provenance: Vec::with_capacity(capacity),
             head: None,
             tail: None,
         }
     }
 
-    fn push_back(&mut self, item: LigatureWorkItem) -> usize {
+    fn append_source(&mut self, ch: char, origin: OriginId) -> ProvenanceSpan {
+        let start = self.provenance.len();
+        self.provenance.push(LigatureSourceEntry { ch, origin });
+        ProvenanceSpan { start, len: 1 }
+    }
+
+    fn source(&self, span: ProvenanceSpan) -> &[LigatureSourceEntry] {
+        &self.provenance[span.start..span.end()]
+    }
+
+    fn merge_source_spans(
+        &mut self,
+        left: ProvenanceSpan,
+        right: ProvenanceSpan,
+    ) -> ProvenanceSpan {
+        if left.len == 0 {
+            return right;
+        }
+        if right.len == 0 {
+            return left;
+        }
+        if left.end() == right.start {
+            return ProvenanceSpan {
+                start: left.start,
+                len: left.len + right.len,
+            };
+        }
+        // Live glyph cells partition source provenance in logical order, so
+        // this is only a defensive path for a future operation that creates
+        // non-adjacent spans. It still appends into the reusable tape and
+        // never inserts or moves the linked work nodes.
+        let start = self.provenance.len();
+        self.provenance.extend_from_within(left.start..left.end());
+        self.provenance.extend_from_within(right.start..right.end());
+        ProvenanceSpan {
+            start,
+            len: left.len + right.len,
+        }
+    }
+
+    fn push_back(&mut self, cell: LigatureWorkCell) -> usize {
         let index = self.nodes.len();
         self.nodes.push(LigatureWorkNode {
-            item,
+            cell: Some(cell),
             previous: self.tail,
             next: None,
             discard_if_missing: false,
@@ -1378,22 +1562,94 @@ impl LigatureWorkList {
         index
     }
 
-    fn insert_after(&mut self, index: usize, item: LigatureWorkItem) -> usize {
-        let next = self.nodes[index].next;
-        let inserted = self.nodes.len();
+    fn insert_between(&mut self, left: usize, right: usize, cell: LigatureWorkCell) -> usize {
+        debug_assert_eq!(self.nodes[left].next, Some(right));
+        debug_assert_eq!(self.nodes[right].previous, Some(left));
+        let inserted = self.append_detached(cell);
+        self.nodes[inserted].previous = Some(left);
+        self.nodes[inserted].next = Some(right);
+        self.nodes[left].next = Some(inserted);
+        self.nodes[right].previous = Some(inserted);
+        inserted
+    }
+
+    fn auto_kern(&self, left: usize, right: usize) -> Option<Scaled> {
+        let amount = match (
+            self.nodes[left].cell.as_ref(),
+            self.nodes[right].cell.as_ref(),
+        ) {
+            (Some(LigatureWorkCell::Boundary(_)), Some(LigatureWorkCell::Glyph(glyph))) => {
+                glyph.leading_auto_kern
+            }
+            (Some(LigatureWorkCell::Glyph(glyph)), Some(LigatureWorkCell::Boundary(boundary))) => {
+                add_scaled(glyph.trailing_auto_kern, boundary.leading_auto_kern)
+            }
+            (
+                Some(LigatureWorkCell::Glyph(left_glyph)),
+                Some(LigatureWorkCell::Glyph(right_glyph)),
+            ) if left_glyph.font == right_glyph.font => {
+                add_scaled(left_glyph.trailing_auto_kern, right_glyph.leading_auto_kern)
+            }
+            (Some(LigatureWorkCell::Glyph(glyph)), Some(LigatureWorkCell::Glyph(_))) => {
+                glyph.trailing_auto_kern
+            }
+            _ => Scaled::from_raw(0),
+        };
+        (amount.raw() != 0).then_some(amount)
+    }
+
+    fn replace_pair(
+        &mut self,
+        left: usize,
+        right: usize,
+        cell: LigatureWorkCell,
+        delete_current: bool,
+        delete_next: bool,
+    ) -> usize {
+        let previous = if delete_current {
+            self.nodes[left].previous
+        } else {
+            Some(left)
+        };
+        let next = if delete_next {
+            self.nodes[right].next
+        } else {
+            Some(right)
+        };
+        let discard_if_missing = (delete_current && self.nodes[left].discard_if_missing)
+            || (delete_next && self.nodes[right].discard_if_missing);
+        let replacement = self.append_detached(cell);
+        self.nodes[replacement].discard_if_missing = discard_if_missing;
+        self.nodes[replacement].previous = previous;
+        self.nodes[replacement].next = next;
+        if let Some(previous) = previous {
+            self.nodes[previous].next = Some(replacement);
+        } else {
+            self.head = Some(replacement);
+        }
+        if let Some(next) = next {
+            self.nodes[next].previous = Some(replacement);
+        } else {
+            self.tail = Some(replacement);
+        }
+        if delete_current {
+            self.tombstone(left);
+        }
+        if delete_next {
+            self.tombstone(right);
+        }
+        replacement
+    }
+
+    fn append_detached(&mut self, cell: LigatureWorkCell) -> usize {
+        let index = self.nodes.len();
         self.nodes.push(LigatureWorkNode {
-            item,
-            previous: Some(index),
-            next,
+            cell: Some(cell),
+            previous: None,
+            next: None,
             discard_if_missing: false,
         });
-        self.nodes[index].next = Some(inserted);
-        if let Some(next) = next {
-            self.nodes[next].previous = Some(inserted);
-        } else {
-            self.tail = Some(inserted);
-        }
-        inserted
+        index
     }
 
     fn remove(&mut self, index: usize) {
@@ -1409,8 +1665,20 @@ impl LigatureWorkList {
         } else {
             self.tail = previous;
         }
+        self.tombstone(index);
+    }
+
+    fn tombstone(&mut self, index: usize) {
+        self.nodes[index].cell = None;
         self.nodes[index].previous = None;
         self.nodes[index].next = None;
+    }
+
+    fn take(&mut self, index: usize) -> LigatureWorkCell {
+        self.nodes[index]
+            .cell
+            .take()
+            .expect("live ligature work cell remains present")
     }
 }
 
@@ -1428,34 +1696,6 @@ impl<'a> LigatureWorkReset<'a> {
 impl Drop for LigatureWorkReset<'_> {
     fn drop(&mut self) {
         self.work.clear();
-    }
-}
-
-pub(crate) fn replacement_glyph(
-    font: FontId,
-    replacement: u8,
-    consumed: impl IntoIterator<Item = PendingHRunChar>,
-    left_hit: bool,
-    right_hit: bool,
-) -> PendingHRunChar {
-    let mut orig = smallvec::SmallVec::new();
-    let mut origins = smallvec::SmallVec::new();
-    let mut inherited_left_hit = false;
-    let mut inherited_right_hit = false;
-    for glyph in consumed {
-        inherited_left_hit |= glyph.left_hit;
-        inherited_right_hit |= glyph.right_hit;
-        orig.extend(glyph.orig);
-        origins.extend(glyph.origins);
-    }
-    PendingHRunChar {
-        font,
-        ch: char::from(replacement),
-        orig,
-        origins,
-        ligature_present: true,
-        left_hit: left_hit || inherited_left_hit,
-        right_hit: right_hit || inherited_right_hit,
     }
 }
 
@@ -1511,23 +1751,37 @@ pub(crate) fn run_tfm_ligature_machine_with_work<G>(
     };
     let font = first.font;
     let false_bchar = stores.font_false_boundary_char(font);
+    let left_boundary_start = stores.font_lig_kern_start(font, LigKernChar::Boundary);
     if !no_left_boundary {
-        work.push_back(LigatureWorkItem::Boundary(None));
+        work.push_back(LigatureWorkCell::Boundary(LigatureBoundaryCell {
+            code: None,
+            lig_kern_start: left_boundary_start,
+            leading_auto_kern: Scaled::from_raw(0),
+        }));
     }
     for entry in source {
-        work.push_back(LigatureWorkItem::Glyph(PendingHRunChar::new(
-            entry.font,
-            entry.ch,
-            entry.origin,
-        )));
+        let provenance = work.append_source(entry.ch, entry.origin);
+        let glyph = LigatureGlyphCell::new(
+            stores, entry.font, entry.ch, provenance, false, false, false,
+        );
+        work.push_back(LigatureWorkCell::Glyph(glyph));
     }
     match right_boundary {
         LigatureRightBoundary::Suppressed => {}
         LigatureRightBoundary::Font => {
-            work.push_back(LigatureWorkItem::Boundary(None));
+            work.push_back(LigatureWorkCell::Boundary(LigatureBoundaryCell {
+                code: None,
+                lig_kern_start: left_boundary_start,
+                leading_auto_kern: Scaled::from_raw(0),
+            }));
         }
         LigatureRightBoundary::Character(ch) => {
-            work.push_back(LigatureWorkItem::Boundary(Some(ch)));
+            let code = Some(ch);
+            work.push_back(LigatureWorkCell::Boundary(LigatureBoundaryCell {
+                code,
+                lig_kern_start: left_boundary_start,
+                leading_auto_kern: auto_kern_values(stores, font, code).0,
+            }));
         }
     }
 
@@ -1537,53 +1791,57 @@ pub(crate) fn run_tfm_ligature_machine_with_work<G>(
             break;
         };
         fuel.charge()?;
-        let left_item = work.nodes[left_index].item.clone();
-        let right_item = work.nodes[right_index].item.clone();
-        if matches!(left_item, LigatureWorkItem::Kern { .. })
-            || matches!(right_item, LigatureWorkItem::Kern { .. })
-        {
+        if matches!(
+            work.nodes[left_index].cell.as_ref(),
+            Some(LigatureWorkCell::Kern { .. })
+        ) || matches!(
+            work.nodes[right_index].cell.as_ref(),
+            Some(LigatureWorkCell::Kern { .. })
+        ) {
             cursor = Some(right_index);
             continue;
         }
-        let pair: Option<(LigKernChar, LigKernChar)> = match (&left_item, &right_item) {
-            (LigatureWorkItem::Boundary(_), LigatureWorkItem::Glyph(right)) => font_code(right.ch)
-                .ok()
+
+        let pair = match (
+            work.nodes[left_index].cell.as_ref(),
+            work.nodes[right_index].cell.as_ref(),
+        ) {
+            (Some(LigatureWorkCell::Boundary(_)), Some(LigatureWorkCell::Glyph(right))) => right
+                .code
                 .map(|right| (LigKernChar::Boundary, LigKernChar::Char(right))),
-            (LigatureWorkItem::Glyph(left), LigatureWorkItem::Boundary(right)) => {
-                font_code(left.ch).ok().map(|left| {
+            (Some(LigatureWorkCell::Glyph(left)), Some(LigatureWorkCell::Boundary(right))) => {
+                left.code.map(|left| {
                     (
                         LigKernChar::Char(left),
-                        right.map_or(LigKernChar::Boundary, LigKernChar::Char),
+                        right.code.map_or(LigKernChar::Boundary, LigKernChar::Char),
                     )
                 })
             }
-            (LigatureWorkItem::Glyph(left), LigatureWorkItem::Glyph(right))
+            (Some(LigatureWorkCell::Glyph(left)), Some(LigatureWorkCell::Glyph(right)))
                 if left.font == right.font =>
             {
-                font_code(left.ch)
-                    .ok()
-                    .zip(font_code(right.ch).ok())
+                left.code
+                    .zip(right.code)
                     .map(|(left, right)| (LigKernChar::Char(left), LigKernChar::Char(right)))
             }
             _ => None,
         };
         let false_boundary_match = matches!(
-            &right_item,
-            LigatureWorkItem::Glyph(right)
-                if right.font == font
-                    && font_code(right.ch).ok().is_some_and(|code| Some(code) == false_bchar)
+            work.nodes[right_index].cell.as_ref(),
+            Some(LigatureWorkCell::Glyph(right))
+                if right.font == font && right.code.is_some_and(|code| Some(code) == false_bchar)
         );
         if false_boundary_match {
             work.nodes[right_index].discard_if_missing = true;
         }
-        let Some((left_code, right_code)) = pair else {
+        let Some((_left_code, right_code)) = pair else {
             cursor = Some(right_index);
             continue;
         };
 
         if false_boundary_match {
-            if let LigatureWorkItem::Glyph(right) = &right_item
-                && !stores.font_character_exists(right.font, right.ch)
+            if let Some(LigatureWorkCell::Glyph(right)) = work.nodes[right_index].cell.as_ref()
+                && !right.character_exists
             {
                 crate::diagnostics::report_missing_character_warning(
                     stores,
@@ -1599,36 +1857,39 @@ pub(crate) fn run_tfm_ligature_machine_with_work<G>(
             continue;
         }
 
-        let auto = match (&left_item, &right_item) {
-            (LigatureWorkItem::Boundary(_), LigatureWorkItem::Glyph(right)) => {
-                auto_kern(stores, right, Some(true))
-            }
-            (LigatureWorkItem::Glyph(left), LigatureWorkItem::Boundary(Some(right))) => {
-                auto_kern_codes(stores, left.font, Some(left.ch), Some(char::from(*right)))
-            }
-            (LigatureWorkItem::Glyph(left), LigatureWorkItem::Boundary(None)) => {
-                auto_kern(stores, left, None)
-            }
-            (LigatureWorkItem::Glyph(left), LigatureWorkItem::Glyph(right)) => {
-                auto_kern_between(stores, left, right)
-            }
-            _ => None,
-        };
-        if let Some(KernSpec { amount, kind }) = auto {
-            let inserted = work.insert_after(left_index, LigatureWorkItem::Kern { amount, kind });
+        if let Some(amount) = work.auto_kern(left_index, right_index) {
+            let inserted = work.insert_between(
+                left_index,
+                right_index,
+                LigatureWorkCell::Kern {
+                    amount,
+                    kind: KernKind::Auto,
+                },
+            );
             cursor = work.nodes[inserted].next;
             continue;
         }
 
-        let Some(command) = stores.font_lig_kern_command(font, left_code, right_code) else {
+        let left_start = match work.nodes[left_index].cell.as_ref() {
+            Some(LigatureWorkCell::Boundary(boundary)) => boundary.lig_kern_start,
+            Some(LigatureWorkCell::Glyph(glyph)) => glyph.lig_kern_start,
+            Some(LigatureWorkCell::Kern { .. }) | None => None,
+        };
+        let Some(left_start) = left_start else {
+            cursor = Some(right_index);
+            continue;
+        };
+        let Some(command) = stores.font_lig_kern_command_from_start(font, left_start, right_code)
+        else {
             cursor = Some(right_index);
             continue;
         };
         match command {
             LigKernCommand::Kern(amount) => {
-                let inserted = work.insert_after(
+                let inserted = work.insert_between(
                     left_index,
-                    LigatureWorkItem::Kern {
+                    right_index,
+                    LigatureWorkCell::Kern {
                         amount,
                         kind: KernKind::Font,
                     },
@@ -1636,34 +1897,58 @@ pub(crate) fn run_tfm_ligature_machine_with_work<G>(
                 cursor = work.nodes[inserted].next;
             }
             LigKernCommand::Ligature(lig) => {
-                let consumed = [
-                    lig.delete_current.then(|| work_glyph(&left_item)).flatten(),
-                    lig.delete_next.then(|| work_glyph(&right_item)).flatten(),
-                ]
-                .into_iter()
-                .flatten();
-                let replacement = LigatureWorkItem::Glyph(replacement_glyph(
+                let (left_span, left_hit, left_is_boundary) =
+                    match work.nodes[left_index].cell.as_ref() {
+                        Some(LigatureWorkCell::Glyph(glyph)) => {
+                            (glyph.provenance, glyph.left_hit, false)
+                        }
+                        Some(LigatureWorkCell::Boundary(_)) => (ProvenanceSpan::EMPTY, false, true),
+                        Some(LigatureWorkCell::Kern { .. }) | None => unreachable!(),
+                    };
+                let (right_span, right_hit, right_is_boundary) =
+                    match work.nodes[right_index].cell.as_ref() {
+                        Some(LigatureWorkCell::Glyph(glyph)) => {
+                            (glyph.provenance, glyph.right_hit, false)
+                        }
+                        Some(LigatureWorkCell::Boundary(_)) => (ProvenanceSpan::EMPTY, false, true),
+                        Some(LigatureWorkCell::Kern { .. }) | None => unreachable!(),
+                    };
+                let provenance = work.merge_source_spans(
+                    if lig.delete_current {
+                        left_span
+                    } else {
+                        ProvenanceSpan::EMPTY
+                    },
+                    if lig.delete_next {
+                        right_span
+                    } else {
+                        ProvenanceSpan::EMPTY
+                    },
+                );
+                let replacement = LigatureGlyphCell::new(
+                    stores,
                     font,
-                    lig.replacement,
-                    consumed,
-                    matches!(left_item, LigatureWorkItem::Boundary(_)),
-                    matches!(right_item, LigatureWorkItem::Boundary(_)),
-                ));
-                match (lig.delete_current, lig.delete_next) {
-                    (true, true) => {
-                        work.nodes[left_index].item = replacement;
-                        work.remove(right_index);
-                    }
-                    (true, false) => work.nodes[left_index].item = replacement,
-                    (false, true) => work.nodes[right_index].item = replacement,
-                    (false, false) => {
-                        work.insert_after(left_index, replacement);
-                    }
-                }
+                    char::from(lig.replacement),
+                    provenance,
+                    true,
+                    left_is_boundary || left_hit,
+                    right_is_boundary || right_hit,
+                );
+                let replacement = work.replace_pair(
+                    left_index,
+                    right_index,
+                    LigatureWorkCell::Glyph(replacement),
+                    lig.delete_current,
+                    lig.delete_next,
+                );
                 let op_byte = lig.pass_over * 4
                     + u8::from(!lig.delete_current) * 2
                     + u8::from(!lig.delete_next);
-                cursor = Some(left_index);
+                cursor = Some(if lig.delete_current {
+                    replacement
+                } else {
+                    left_index
+                });
                 for _ in 0..match op_byte {
                     5..=7 => 1,
                     11 => 2,
@@ -1682,25 +1967,23 @@ pub(crate) fn run_tfm_ligature_machine_with_work<G>(
     let mut pending_literal_hyphen_disc = false;
     let mut index = work.head;
     while let Some(current) = index {
-        let item = work.nodes[current].item.clone();
         index = work.nodes[current].next;
-        if !matches!(
-            item,
-            LigatureWorkItem::Kern {
+        let is_auto_kern = matches!(
+            work.nodes[current].cell.as_ref(),
+            Some(LigatureWorkCell::Kern {
                 kind: KernKind::Auto,
                 ..
-            }
-        ) && pending_literal_hyphen_disc
-        {
+            })
+        );
+        if !is_auto_kern && pending_literal_hyphen_disc {
             sink.explicit_hyphen_disc(stores);
             pending_literal_hyphen_disc = false;
         }
-        match item {
-            LigatureWorkItem::Boundary(_) => {}
-            LigatureWorkItem::Glyph(glyph) => {
-                if work.nodes[current].discard_if_missing
-                    && !stores.font_character_exists(glyph.font, glyph.ch)
-                {
+        let discard_if_missing = work.nodes[current].discard_if_missing;
+        match work.take(current) {
+            LigatureWorkCell::Boundary(_) => {}
+            LigatureWorkCell::Glyph(glyph) => {
+                if discard_if_missing && !glyph.character_exists {
                     crate::diagnostics::report_missing_character_warning(
                         stores,
                         diagnostic_effects,
@@ -1710,11 +1993,12 @@ pub(crate) fn run_tfm_ligature_machine_with_work<G>(
                     );
                     continue;
                 }
+                let source = work.source(glyph.provenance);
                 pending_literal_hyphen_disc =
-                    literal_hyphen_disc_enabled(stores, &glyph, insert_hyphen_discs);
-                sink.glyph(stores, glyph);
+                    literal_hyphen_disc_enabled_source(stores, &glyph, source, insert_hyphen_discs);
+                sink.glyph_cell(stores, glyph, source);
             }
-            LigatureWorkItem::Kern { amount, kind } => sink.kern(stores, amount, kind),
+            LigatureWorkCell::Kern { amount, kind } => sink.kern(stores, amount, kind),
         }
     }
     if pending_literal_hyphen_disc {
@@ -1723,74 +2007,46 @@ pub(crate) fn run_tfm_ligature_machine_with_work<G>(
     Ok(())
 }
 
-fn work_glyph(item: &LigatureWorkItem) -> Option<PendingHRunChar> {
-    match item {
-        LigatureWorkItem::Glyph(glyph) => Some(glyph.clone()),
-        LigatureWorkItem::Boundary(_) | LigatureWorkItem::Kern { .. } => None,
-    }
-}
-
-pub(crate) fn auto_kern_between<G>(
-    stores: &CommandContext<'_, G>,
-    left: &PendingHRunChar,
-    right: &PendingHRunChar,
-) -> Option<KernSpec> {
-    if left.font == right.font {
-        return auto_kern_codes(stores, left.font, Some(left.ch), Some(right.ch));
-    }
-    // Font changes normally flush the old run before the assignment. Keep the
-    // fallback deterministic for reconstructed mixed-font runs by applying
-    // only the old font's trailing append code here.
-    auto_kern_codes(stores, left.font, Some(left.ch), None)
-}
-
-pub(crate) fn auto_kern<G>(
-    stores: &CommandContext<'_, G>,
-    glyph: &PendingHRunChar,
-    leading: Option<bool>,
-) -> Option<KernSpec> {
-    match leading {
-        Some(true) => auto_kern_codes(stores, glyph.font, None, Some(glyph.ch)),
-        _ => auto_kern_codes(stores, glyph.font, Some(glyph.ch), None),
-    }
-}
-
-pub(crate) fn auto_kern_codes<G>(
+fn auto_kern_values<G>(
     stores: &CommandContext<'_, G>,
     font: FontId,
-    left: Option<char>,
-    right: Option<char>,
-) -> Option<KernSpec> {
+    code: Option<u8>,
+) -> (Scaled, Scaled) {
     let configuration = stores.pdf_font_configuration();
-    let mut amount = Scaled::from_raw(0);
-    if configuration.appends_kerns()
-        && let Some(left) = left.and_then(|ch| u8::try_from(ch as u32).ok())
-    {
-        amount = add_scaled(
-            amount,
+    let leading = if configuration.prepends_kerns() {
+        code.map_or(Scaled::from_raw(0), |code| {
             scaled_font_code(
                 stores,
                 font,
-                stores.pdf_font_code(tex_state::PdfFontCode::Knac, font, left),
-            ),
-        );
-    }
-    if configuration.prepends_kerns()
-        && let Some(right) = right.and_then(|ch| u8::try_from(ch as u32).ok())
-    {
-        amount = add_scaled(
-            amount,
+                stores.pdf_font_code(tex_state::PdfFontCode::Knbc, font, code),
+            )
+        })
+    } else {
+        Scaled::from_raw(0)
+    };
+    let trailing = if configuration.appends_kerns() {
+        code.map_or(Scaled::from_raw(0), |code| {
             scaled_font_code(
                 stores,
                 font,
-                stores.pdf_font_code(tex_state::PdfFontCode::Knbc, font, right),
-            ),
-        );
-    }
-    (amount.raw() != 0).then_some(KernSpec {
-        amount,
-        kind: KernKind::Auto,
-    })
+                stores.pdf_font_code(tex_state::PdfFontCode::Knac, font, code),
+            )
+        })
+    } else {
+        Scaled::from_raw(0)
+    };
+    (leading, trailing)
+}
+
+fn literal_hyphen_disc_enabled_source<G>(
+    stores: &mut CommandContext<'_, G>,
+    current: &LigatureGlyphCell,
+    source: &[LigatureSourceEntry],
+    enabled: bool,
+) -> bool {
+    enabled
+        && stores.font_hyphen_char(current.font)
+            == source.last().map_or(current.ch, |entry| entry.ch) as i32
 }
 
 pub(crate) fn add_scaled(left: Scaled, right: Scaled) -> Scaled {
@@ -1866,16 +2122,6 @@ pub(crate) fn scaled_font_code<G>(
     } else {
         i32::MAX
     }))
-}
-
-fn literal_hyphen_disc_enabled<G>(
-    stores: &mut CommandContext<'_, G>,
-    current: &PendingHRunChar,
-    enabled: bool,
-) -> bool {
-    enabled
-        && stores.font_hyphen_char(current.font)
-            == current.orig.last().copied().unwrap_or(current.ch) as i32
 }
 
 pub(crate) fn update_space_factor<G>(

@@ -1,5 +1,5 @@
 use super::{
-    LigatureWorkItem, LigatureWorkList, OpenTypeShapingScratch, flush_pending_hchar_run_with_fuel,
+    LigatureWorkCell, LigatureWorkList, OpenTypeShapingScratch, flush_pending_hchar_run_with_fuel,
 };
 
 #[test]
@@ -42,9 +42,19 @@ fn shaping_scratch_clear_preserves_warm_capacity_without_logical_contents() {
 #[test]
 fn ligature_work_clear_preserves_capacity_without_stale_links() {
     let mut work = LigatureWorkList::with_capacity(8);
-    work.push_back(LigatureWorkItem::Boundary(None));
-    work.push_back(LigatureWorkItem::Boundary(Some(b'f')));
+    work.push_back(LigatureWorkCell::Boundary(super::LigatureBoundaryCell {
+        code: None,
+        lig_kern_start: None,
+        leading_auto_kern: tex_state::scaled::Scaled::from_raw(0),
+    }));
+    work.push_back(LigatureWorkCell::Boundary(super::LigatureBoundaryCell {
+        code: Some(b'f'),
+        lig_kern_start: None,
+        leading_auto_kern: tex_state::scaled::Scaled::from_raw(0),
+    }));
     let capacity = work.nodes.capacity();
+    let provenance_capacity = work.provenance.capacity();
+    work.append_source('f', tex_state::token::OriginId::UNKNOWN);
 
     work.clear();
 
@@ -52,6 +62,8 @@ fn ligature_work_clear_preserves_capacity_without_stale_links() {
     assert!(work.head.is_none());
     assert!(work.tail.is_none());
     assert_eq!(work.nodes.capacity(), capacity);
+    assert_eq!(work.provenance.capacity(), provenance_capacity);
+    assert!(work.provenance.is_empty());
 }
 
 #[test]
