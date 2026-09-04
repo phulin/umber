@@ -289,6 +289,7 @@ impl<G> MainControl<G> {
                             if borrowed_applied
                                 && *operations + 1 < max_operations
                                 && !run_has_diagnostics
+                                && !diagnostic_effects.has_first_recoverable()
                             {
                                 // The source prefix was admitted and settled
                                 // by this processor. Reuse the already-live
@@ -576,6 +577,7 @@ impl<G> MainControl<G> {
                                 && admission.settled_in_admission
                                 && !admission.pending_page_output.is_pending()
                                 && diagnostic_effects.is_empty()
+                                && !diagnostic_effects.has_first_recoverable()
                                 && !self.paragraph_checkpoint_cut
                                 && !self.page_region_succession_pending
                                 && context.artifact_commit_count() == output_start.artifact_count
@@ -3392,16 +3394,19 @@ pub(super) fn dispatch_main_control_command_inner<G>(
                 let printed = tex_command::PrintCommand::from_current(command.current());
                 // §1212's `back_error`: the substantive command is retained
                 // and re-delivered without the discarded prefixes.
+                let site = processor.capture_diagnostic_site(Some(command.current()));
                 processor
                     .back_input(command.take_current())
                     .map_err(command_error)?;
                 // `back_error` is `back_input` *then* `error`, so §82 renders
                 // the context with the backed-up level already on the stack.
                 let etex = processor.profile().capabilities().supports_etex();
+                let site = Some(processor.complete_diagnostic_site(site));
                 diagnostics.push(PendingDiagnostic::PrefixOnNonPrefixedCommand(
                     printed,
                     processor.error_context(),
                     etex,
+                    site,
                 ));
                 return Ok(retain_cold_operation(
                     command,
@@ -3426,10 +3431,12 @@ pub(super) fn dispatch_main_control_command_inner<G>(
             )
         {
             let etex = processor.profile().capabilities().supports_etex();
+            let site = Some(processor.current_diagnostic_site(Some(command.current())));
             diagnostics.push(PendingDiagnostic::IrrelevantLongOuterPrefix(
                 tex_command::PrintCommand::from_current(command.current()),
                 processor.error_context(),
                 etex,
+                site,
             ));
         }
         // §406's helper is `repeat get_x_token until cur_cmd<>spacer` --

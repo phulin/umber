@@ -132,6 +132,18 @@ impl<G> tex_command::CommandHostFacts<G> for ExecutorHostFacts<'_, G> {
         self.modes.conditional_state()
     }
 
+    fn diagnostic_mode_name(&mut self) -> &'static str {
+        self.telemetry.record_host_fact_query();
+        match self.modes.current_mode() {
+            Mode::Vertical => "vertical mode",
+            Mode::InternalVertical => "internal vertical mode",
+            Mode::Horizontal => "horizontal mode",
+            Mode::RestrictedHorizontal => "restricted horizontal mode",
+            Mode::Math => "math mode",
+            Mode::DisplayMath => "display math mode",
+        }
+    }
+
     fn space_factor(&mut self) -> Option<i32> {
         self.telemetry.record_host_fact_query();
         matches!(

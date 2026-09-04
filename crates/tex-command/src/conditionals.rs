@@ -760,8 +760,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 let internal = self.scan_the_register_value(target, index)?;
                 let left = Self::hot_dimension_value_from_internal(&internal).unwrap_or(0);
                 if !seen_digit {
+                    let site = self.capture_hot_diagnostic_site(&command);
                     self.back_input(command.materialize())?;
-                    self.report_missing_number_for_hot_conditional()?;
+                    self.report_missing_number_for_hot_conditional(Some(site))?;
                 } else if !is_space {
                     self.back_input(command.materialize())?;
                 }
@@ -799,8 +800,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                     })?;
                     return Ok(IfDimensionAdvance::Continue);
                 }
+                let site = self.capture_hot_diagnostic_site(&command);
                 self.back_input(command.materialize())?;
-                self.report_missing_number_for_hot_conditional()?;
+                self.report_missing_number_for_hot_conditional(Some(site))?;
                 self.command
                     .scratch
                     .set_if_dimension_phase(Phase::NeedRelation { left: 0 })?;
@@ -913,8 +915,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                         return Ok(IfDimensionAdvance::Continue);
                     }
                 }
+                let site = self.capture_hot_diagnostic_site(&command);
                 self.back_input(command.materialize())?;
-                self.report_missing_number_for_hot_conditional()?;
+                self.report_missing_number_for_hot_conditional(Some(site))?;
                 self.command
                     .scratch
                     .set_if_dimension_phase(Phase::NeedRelation {
@@ -946,8 +949,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                     })?;
                     return Ok(IfDimensionAdvance::Continue);
                 }
+                let site = self.capture_hot_diagnostic_site(&command);
                 self.back_input(command.materialize())?;
-                self.report_missing_relation_for_hot_conditional()?;
+                self.report_missing_relation_for_hot_conditional(Some(site))?;
                 self.command.scratch.set_if_dimension_phase(Phase::Right {
                     left,
                     relation: IfRelation::Equal,
@@ -1081,8 +1085,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                     self.complete_if_dimension_values(left, relation, right)?;
                     return Ok(IfDimensionAdvance::Complete);
                 }
+                let site = self.capture_hot_diagnostic_site(&command);
                 self.back_input(command.materialize())?;
-                self.report_missing_number_for_hot_conditional()?;
+                self.report_missing_number_for_hot_conditional(Some(site))?;
                 self.complete_if_dimension_values(left, relation, 0)?;
                 Ok(IfDimensionAdvance::Complete)
             }
@@ -1256,8 +1261,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 // Match scan_int's vacuous recovery: restore the offending
                 // command so the relation scanner sees it after `0`.
+                let site = self.capture_hot_diagnostic_site(&command);
                 self.back_input(command.materialize())?;
-                self.report_missing_number_for_hot_conditional()?;
+                self.report_missing_number_for_hot_conditional(Some(site))?;
                 self.command
                     .scratch
                     .set_if_number_phase(Phase::NeedRelation { left: 0 })?;
@@ -1324,8 +1330,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 let internal = self.scan_the_register_value(target, index)?;
                 let left = Self::hot_integer_value(&internal).unwrap_or(0);
                 if !seen_digit {
+                    let site = self.capture_hot_diagnostic_site(&command);
                     self.back_input(command.materialize())?;
-                    self.report_missing_number_for_hot_conditional()?;
+                    self.report_missing_number_for_hot_conditional(Some(site))?;
                 } else if !is_space {
                     self.back_input(command.materialize())?;
                 }
@@ -1370,15 +1377,17 @@ impl<G> CommandProcessor<'_, '_, G> {
                     return Ok(IfNumberAdvance::Continue);
                 }
                 if !seen_digit {
+                    let site = self.capture_hot_diagnostic_site(&command);
                     self.back_input(command.materialize())?;
-                    self.report_missing_number_for_hot_conditional()?;
+                    self.report_missing_number_for_hot_conditional(Some(site))?;
                     self.command
                         .scratch
                         .set_if_number_phase(Phase::NeedRelation { left: 0 })?;
                     return Ok(IfNumberAdvance::Continue);
                 }
+                let site = self.capture_hot_diagnostic_site(&command);
                 self.back_input(command.materialize())?;
-                self.report_missing_relation_for_hot_conditional()?;
+                self.report_missing_relation_for_hot_conditional(Some(site))?;
                 self.command.scratch.set_if_number_phase(Phase::Right {
                     left,
                     relation: IfRelation::Equal,
@@ -1402,8 +1411,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                     })?;
                     return Ok(IfNumberAdvance::Continue);
                 }
+                let site = self.capture_hot_diagnostic_site(&command);
                 self.back_input(command.materialize())?;
-                self.report_missing_relation_for_hot_conditional()?;
+                self.report_missing_relation_for_hot_conditional(Some(site))?;
                 self.command.scratch.set_if_number_phase(Phase::Right {
                     left,
                     relation: IfRelation::Equal,
@@ -1445,8 +1455,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                     return Ok(IfNumberAdvance::Continue);
                 }
                 if !seen_digit {
+                    let site = self.capture_hot_diagnostic_site(&command);
                     self.back_input(command.materialize())?;
-                    self.report_missing_number_for_hot_conditional()?;
+                    self.report_missing_number_for_hot_conditional(Some(site))?;
                     self.complete_if_number_values(left, relation, 0)?;
                 } else if !is_space {
                     self.back_input(command.materialize())?;
@@ -1619,8 +1630,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                     _ => return Err(CommandError::input_invariant()),
                 };
                 if !seen_digit {
+                    let site = self.capture_hot_diagnostic_site(&command);
                     self.back_input(command.materialize())?;
-                    self.report_missing_number_for_hot_conditional()?;
+                    self.report_missing_number_for_hot_conditional(Some(site))?;
                 } else if !is_space {
                     self.back_input(command.materialize())?;
                 }
@@ -1666,8 +1678,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                     return Ok(IfNumberAdvance::Continue);
                 }
                 if !seen_digit {
+                    let site = self.capture_hot_diagnostic_site(&command);
                     self.back_input(command.materialize())?;
-                    self.report_missing_number_for_hot_conditional()?;
+                    self.report_missing_number_for_hot_conditional(Some(site))?;
                     finish(self, font, 0, false, control)?;
                 } else if !is_space {
                     self.back_input(command.materialize())?;
@@ -1863,8 +1876,9 @@ impl<G> CommandProcessor<'_, '_, G> {
             let internal = self.scan_the_register_value(target, index)?;
             let value = Self::hot_integer_value(&internal).unwrap_or(0);
             if !seen_digit {
+                let site = self.capture_hot_diagnostic_site(&command);
                 self.back_input(command.materialize())?;
-                self.report_missing_number_for_hot_conditional()?;
+                self.report_missing_number_for_hot_conditional(Some(site))?;
             } else if !is_space {
                 self.back_input(command.materialize())?;
             }
@@ -1893,8 +1907,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                     })?;
                     return Ok(IfNumberAdvance::Continue);
                 }
+                let site = self.capture_hot_diagnostic_site(&command);
                 self.back_input(command.materialize())?;
-                self.report_missing_number_for_hot_conditional()?;
+                self.report_missing_number_for_hot_conditional(Some(site))?;
                 finish(self, 0, false, control)?;
                 Ok(IfNumberAdvance::Complete)
             }
@@ -1912,8 +1927,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                     return Ok(IfNumberAdvance::Continue);
                 }
                 if !seen_digit {
+                    let site = self.capture_hot_diagnostic_site(&command);
                     self.back_input(command.materialize())?;
-                    self.report_missing_number_for_hot_conditional()?;
+                    self.report_missing_number_for_hot_conditional(Some(site))?;
                     finish(self, 0, negative, control)?;
                 } else {
                     if !is_space {
@@ -1965,7 +1981,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         )
     }
 
-    fn report_missing_number_for_hot_conditional(&mut self) -> Result<(), CommandError> {
+    fn report_missing_number_for_hot_conditional(
+        &mut self,
+        site: Option<tex_state::diagnostic::DiagnosticSite>,
+    ) -> Result<(), CommandError> {
         self.observe_diagnostic_lifecycle(
             crate::DiagnosticClass::RecoverableError,
             "error",
@@ -1973,11 +1992,15 @@ impl<G> CommandProcessor<'_, '_, G> {
             Vec::new(),
         );
         let context = self.command.output_open_context(self.state);
+        let site =
+            Some(self.complete_diagnostic_site(
+                site.unwrap_or_else(|| self.capture_diagnostic_site(None)),
+            ));
         if !self.command.semantic_diagnostics.is_empty() || self.command.expanding_deferred_write()
         {
             self.command
                 .semantic_diagnostics
-                .push(crate::CommandSemanticDiagnostic::MissingNumber { context });
+                .push(crate::CommandSemanticDiagnostic::MissingNumber { context, site });
             return Ok(());
         }
         let mut report = self.state.print_err("Missing number, treated as zero");
@@ -1988,11 +2011,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                 "look up `weird error' in the index to The TeXbook.)",
             ])
             .context(context);
-        let outcome = report.error();
+        let outcome = report.error_with_effects_at(self.diagnostic_effects, site);
         self.finish_error_outcome(outcome)
     }
 
-    fn report_missing_relation_for_hot_conditional(&mut self) -> Result<(), CommandError> {
+    fn report_missing_relation_for_hot_conditional(
+        &mut self,
+        site: Option<tex_state::diagnostic::DiagnosticSite>,
+    ) -> Result<(), CommandError> {
         let kind = if let Some(control) = self
             .command
             .scratch
@@ -2013,12 +2039,16 @@ impl<G> CommandProcessor<'_, '_, G> {
         let name =
             crate::processor::expand_render::print_esc_text(self.state, kind.canonical_name());
         let context = self.command.output_open_context(self.state);
+        let site =
+            Some(self.complete_diagnostic_site(
+                site.unwrap_or_else(|| self.capture_diagnostic_site(None)),
+            ));
         let message = format!("Missing = inserted for {name}");
         let mut report = self.state.print_err(&message);
         report
             .help(&["I was expecting to see `<', `=', or `>'. Didn't."])
             .context(context);
-        let outcome = report.error();
+        let outcome = report.error_with_effects_at(self.diagnostic_effects, site);
         self.finish_error_outcome(outcome)
     }
 
@@ -3186,7 +3216,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 continue;
             }
             if delimiter == ConditionalDelimiter::Or {
-                self.record_extra_delimiter(delimiter);
+                self.record_extra_delimiter(delimiter, None);
                 continue;
             }
             return self.common_ending(condition, delimiter);
@@ -3240,7 +3270,8 @@ impl<G> CommandProcessor<'_, '_, G> {
             _ => return Err(CommandError::input_invariant()),
         };
         let Some(frame) = self.command.conditions.current().cloned() else {
-            self.record_extra_delimiter(delimiter);
+            let site = self.capture_diagnostic_site(Some(command));
+            self.record_extra_delimiter(delimiter, Some(site));
             return Ok(());
         };
         self.trace_conditional_close(delimiter, &frame, false);
@@ -3259,7 +3290,8 @@ impl<G> CommandProcessor<'_, '_, G> {
             return Ok(());
         }
         if !frame.limit.accepts_delimiter(delimiter) {
-            self.record_extra_delimiter(delimiter);
+            let site = self.capture_diagnostic_site(Some(command));
+            self.record_extra_delimiter(delimiter, Some(site));
             return Ok(());
         }
         self.skip_to_fi_after_delimiter(frame, delimiter)
@@ -3296,7 +3328,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(())
     }
 
-    fn record_extra_delimiter(&mut self, delimiter: ConditionalDelimiter) {
+    fn record_extra_delimiter(
+        &mut self,
+        delimiter: ConditionalDelimiter,
+        site: Option<tex_state::diagnostic::DiagnosticSite>,
+    ) {
         // §510's `print_cmd_chr(fi_or_else,cur_chr)` names the delimiter that
         // matched nothing, so the message ends in the escaped primitive.
         let name = crate::processor::expand_render::print_esc_text(
@@ -3308,6 +3344,10 @@ impl<G> CommandProcessor<'_, '_, G> {
             },
         );
         let context = self.command.output_open_context(self.state);
+        let site =
+            Some(self.complete_diagnostic_site(
+                site.unwrap_or_else(|| self.capture_diagnostic_site(None)),
+            ));
         self.command
             .semantic_diagnostics
             .push(crate::CommandSemanticDiagnostic::Recoverable {
@@ -3317,6 +3357,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 help: &["I'm ignoring this; it doesn't match any \\if."],
                 context,
                 integer_error: None,
+                site,
             });
         // TeX82 §509 diagnoses a delimiter which exceeds the current
         // `if_limit` at the delimiter transition itself. Publish the detached

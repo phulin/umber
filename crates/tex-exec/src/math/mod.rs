@@ -104,7 +104,7 @@ pub(crate) fn reject_invalid_math_fonts_at_outer_barrier<G>(
     }
     stores
         .world_mut()
-        .publish_diagnostic_effects(std::mem::take(diagnostic_effects));
+        .publish_diagnostic_effects_preserving(diagnostic_effects);
     reject_invalid_math_fonts(
         &mut stores
             .command_context()

@@ -234,6 +234,16 @@ impl fmt::Display for SessionError {
 
 impl std::error::Error for SessionError {}
 
+impl SessionError {
+    #[must_use]
+    pub fn first_recoverable_diagnostic(&self) -> Option<&tex_exec::FirstRecoverableDiagnostic> {
+        match self {
+            Self::Execution(error) => error.first_recoverable_diagnostic(),
+            _ => None,
+        }
+    }
+}
+
 impl From<SourceRegistrationError> for SessionError {
     fn from(error: SourceRegistrationError) -> Self {
         Self::SourceRegistration(error)
@@ -1025,6 +1035,7 @@ impl<'a, G> EngineSession<'a, G> {
                 history: self.stores.world().error_channel().history(),
                 mode_transitions: self.mode_transitions.clone(),
                 fatal: self.control.fatal_error(),
+                first_recoverable_diagnostic: None,
                 artifacts: Vec::new(),
                 dvi_pages: Vec::new(),
                 committed_artifacts: Vec::new(),
@@ -1147,6 +1158,7 @@ impl<'a, G> EngineSession<'a, G> {
             .control
             .take_format_dump(self.stores)
             .map_err(SessionError::FormatDump)?;
+        let first_recoverable_diagnostic = self.control.take_first_recoverable_diagnostic();
         let history = self.stores.world().error_channel().history();
         let result = RunResult {
             terminal_text,
@@ -1154,6 +1166,7 @@ impl<'a, G> EngineSession<'a, G> {
             history,
             mode_transitions: self.mode_transitions.clone(),
             fatal: self.control.fatal_error(),
+            first_recoverable_diagnostic,
             artifacts,
             dvi_pages,
             committed_artifacts,

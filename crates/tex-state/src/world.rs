@@ -4401,6 +4401,19 @@ impl World {
         }
     }
 
+    /// Publishes detached print effects while retaining any operation-local
+    /// first-recoverable candidate in its caller-owned collector. A nested
+    /// synchronous report may publish prior trace output before its enclosing
+    /// operation commits; the candidate must remain rollbackable until then.
+    pub fn publish_diagnostic_effects_preserving(
+        &mut self,
+        effects: &mut crate::diagnostic::DiagnosticEffects,
+    ) {
+        for effect in effects.drain() {
+            self.publish_diagnostic_effect(effect);
+        }
+    }
+
     fn publish_diagnostic_effect(&mut self, effect: crate::diagnostic::DetachedDiagnosticEffect) {
         if effect.records_warning_history() {
             self.error_channel_mut().record_warning_history();

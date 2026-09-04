@@ -87,10 +87,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                     return Ok(false);
                 }
                 if !seen_digit {
+                    let site = (!at_end).then(|| self.capture_hot_diagnostic_site(&command));
                     if !at_end {
                         self.back_input(command.materialize())?;
                     }
-                    self.missing_number_error()?;
+                    self.missing_number_error_at(site)?;
                 } else if !at_end && !is_space {
                     self.back_input(command.materialize())?;
                 }
@@ -144,10 +145,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                     return Ok(false);
                 }
                 if !seen_digit {
+                    let site = (!at_end).then(|| self.capture_hot_diagnostic_site(&command));
                     if !at_end {
                         self.back_input(command.materialize())?;
                     }
-                    self.missing_number_error()?;
+                    self.missing_number_error_at(site)?;
                 } else if !at_end && !is_space {
                     self.back_input(command.materialize())?;
                 }

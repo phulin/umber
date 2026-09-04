@@ -467,6 +467,9 @@ pub struct ErrorReport<'a, G> {
     help: Vec<String>,
     err_help: Option<String>,
     context: Option<String>,
+    message: String,
+    diagnostic_kind: &'static str,
+    diagnostic_arguments: Vec<crate::diagnostic::RecoverableDiagnosticArgument>,
 }
 
 /// An error report paused between tex.web's message/help setup and §82's
@@ -476,6 +479,9 @@ pub struct DeferredErrorReport {
     help: Vec<String>,
     err_help: Option<String>,
     context: Option<String>,
+    message: String,
+    diagnostic_kind: &'static str,
+    diagnostic_arguments: Vec<crate::diagnostic::RecoverableDiagnosticArgument>,
 }
 
 /// tex.web §81's `jump_out`: the non-local exit that abandons whatever was in
@@ -538,6 +544,57 @@ impl ErrorOutcome {
 }
 
 impl<'a, G> ErrorReport<'a, G> {
+    fn default_kind(text: &str) -> &'static str {
+        if text
+            .as_bytes()
+            .windows("undefined control sequence".len())
+            .any(|window| window.eq_ignore_ascii_case(b"undefined control sequence"))
+        {
+            "undefined-control-sequence"
+        } else if text
+            .as_bytes()
+            .windows("missing number".len())
+            .any(|window| window.eq_ignore_ascii_case(b"missing number"))
+        {
+            "missing-number"
+        } else if text
+            .as_bytes()
+            .windows("doesn't match its definition".len())
+            .any(|window| window.eq_ignore_ascii_case(b"doesn't match its definition"))
+        {
+            "macro-prefix-mismatch"
+        } else {
+            "command-recoverable"
+        }
+    }
+
+    fn message_append(&mut self, text: &str) {
+        if self.message.len() >= crate::diagnostic::MAX_RECOVERABLE_DIAGNOSTIC_TEXT {
+            return;
+        }
+        let remaining = crate::diagnostic::MAX_RECOVERABLE_DIAGNOSTIC_TEXT - self.message.len();
+        let end = text
+            .char_indices()
+            .map(|(index, _)| index)
+            .chain(std::iter::once(text.len()))
+            .take_while(|index| *index <= remaining)
+            .last()
+            .unwrap_or(0);
+        self.message.push_str(&text[..end]);
+    }
+
+    fn recoverable_candidate(
+        self,
+        interaction: InteractionMode,
+    ) -> crate::diagnostic::RecoverableDiagnostic {
+        crate::diagnostic::RecoverableDiagnostic::new(
+            self.diagnostic_kind,
+            self.message,
+            self.diagnostic_arguments,
+            interaction,
+        )
+    }
+
     fn begin(universe: &'a mut Universe<G>, text: &str) -> Self {
         let selector = Selector::for_interaction(universe.interaction_mode());
         Self::begin_with_selector(universe, text, selector)
@@ -552,6 +609,9 @@ impl<'a, G> ErrorReport<'a, G> {
             help: Vec::new(),
             err_help: None,
             context: None,
+            message: crate::diagnostic::RecoverableDiagnostic::truncate_text(text),
+            diagnostic_kind: Self::default_kind(text),
+            diagnostic_arguments: Vec::new(),
         }
     }
 
@@ -578,6 +638,9 @@ impl<'a, G> ErrorReport<'a, G> {
             help: Vec::new(),
             err_help: None,
             context: None,
+            message: crate::diagnostic::RecoverableDiagnostic::truncate_text(text),
+            diagnostic_kind: Self::default_kind(text),
+            diagnostic_arguments: Vec::new(),
         }
     }
 
@@ -601,6 +664,9 @@ impl<'a, G> ErrorReport<'a, G> {
             help: Vec::new(),
             err_help: None,
             context: None,
+            message: String::new(),
+            diagnostic_kind: "command-recoverable",
+            diagnostic_arguments: Vec::new(),
         }
     }
 
@@ -624,6 +690,9 @@ impl<'a, G> ErrorReport<'a, G> {
             help: deferred.help,
             err_help: deferred.err_help,
             context: deferred.context,
+            message: deferred.message,
+            diagnostic_kind: deferred.diagnostic_kind,
+            diagnostic_arguments: deferred.diagnostic_arguments,
         }
     }
 
@@ -648,6 +717,9 @@ impl<'a, G> ErrorReport<'a, G> {
             help: Vec::new(),
             err_help: None,
             context: None,
+            message: String::new(),
+            diagnostic_kind: "command-recoverable",
+            diagnostic_arguments: Vec::new(),
         };
         report.users_advice(Some(context))
     }
@@ -655,18 +727,21 @@ impl<'a, G> ErrorReport<'a, G> {
     /// tex.web §59's `print`, continuing the message text.
     pub fn print(&mut self, text: &str) -> &mut Self {
         self.printer.print(text);
+        self.message_append(text);
         self
     }
 
     /// Writes text already rendered through TeX's print primitives.
     pub fn print_rendered(&mut self, text: &str) -> &mut Self {
         self.printer.print_rendered(text);
+        self.message_append(text);
         self
     }
 
     /// tex.web §58's `print_char`.
     pub fn print_char(&mut self, character: char) -> &mut Self {
         self.printer.print_char(character);
+        self.message_append(&character.to_string());
         self
     }
 
@@ -675,6 +750,7 @@ impl<'a, G> ErrorReport<'a, G> {
     /// extension characters outside that table pass through unchanged.
     pub fn print_ascii(&mut self, character: char) -> &mut Self {
         self.printer.print_character_string(character);
+        self.message_append(&character.to_string());
         self
     }
 
@@ -682,30 +758,60 @@ impl<'a, G> ErrorReport<'a, G> {
     /// than one line (§288's `prepare_mag` is one).
     pub fn print_nl(&mut self, text: &str) -> &mut Self {
         self.printer.print_nl(text);
+        self.message_append("\n");
+        self.message_append(text);
         self
     }
 
     /// tex.web §65's `print_int`.
     pub fn print_int(&mut self, value: i32) -> &mut Self {
         self.printer.print_int(value);
+        self.message_append(&value.to_string());
         self
     }
 
     /// tex.web §103's `print_scaled`.
     pub fn print_scaled(&mut self, value: Scaled) -> &mut Self {
         self.printer.print_scaled(value);
+        self.message_append(&value.raw().to_string());
         self
     }
 
     /// tex.web §63's `print_esc`.
     pub fn print_esc(&mut self, name: &str) -> &mut Self {
         self.printer.print_esc(name);
+        self.message_append("\\");
+        self.message_append(name);
         self
     }
 
     /// TeX82 §263's typed control-sequence renderer.
     pub fn sprint_cs(&mut self, kind: ControlSequenceKind, name: &str) -> &mut Self {
         self.printer.sprint_cs(kind, name);
+        if kind == ControlSequenceKind::ActiveCharacter {
+            self.message_append(name);
+        } else {
+            self.message_append("\\");
+            self.message_append(name);
+        }
+        self
+    }
+
+    /// Overrides the bounded causal kind for callers whose message text is
+    /// shared by more than one TeX recovery family.
+    pub fn diagnostic_kind(&mut self, kind: &'static str) -> &mut Self {
+        self.diagnostic_kind = kind;
+        self
+    }
+
+    /// Adds one bounded structured argument to the retained causal evidence.
+    pub fn diagnostic_argument(
+        &mut self,
+        argument: crate::diagnostic::RecoverableDiagnosticArgument,
+    ) -> &mut Self {
+        if self.diagnostic_arguments.len() < 8 {
+            self.diagnostic_arguments.push(argument);
+        }
         self
     }
 
@@ -750,6 +856,9 @@ impl<'a, G> ErrorReport<'a, G> {
             help: self.help,
             err_help: self.err_help,
             context: self.context,
+            message: self.message,
+            diagnostic_kind: self.diagnostic_kind,
+            diagnostic_arguments: self.diagnostic_arguments,
         }
     }
 
@@ -759,8 +868,79 @@ impl<'a, G> ErrorReport<'a, G> {
         self.error()
     }
 
+    /// Completes §91 and retains its causal evidence in the operation-local
+    /// diagnostic collector.
+    pub fn int_error_with_effects(
+        self,
+        value: i32,
+        effects: &mut crate::diagnostic::DiagnosticEffects,
+    ) -> ErrorOutcome {
+        self.int_error_with_effects_at(value, effects, None)
+    }
+
+    /// Completes §91 while retaining an already captured diagnostic site.
+    pub fn int_error_with_effects_at(
+        mut self,
+        value: i32,
+        effects: &mut crate::diagnostic::DiagnosticEffects,
+        site: Option<crate::diagnostic::DiagnosticSite>,
+    ) -> ErrorOutcome {
+        self.print(" (").print_int(value).print_char(')');
+        self.error_with_effects_at(effects, site)
+    }
+
     /// tex.web §82's `error`.
-    pub fn error(mut self) -> ErrorOutcome {
+    pub fn error(self) -> ErrorOutcome {
+        self.error_inner().0
+    }
+
+    /// Completes §82 and records exactly the first candidate produced by this
+    /// report in the enclosing operation's detached effects.
+    pub fn error_with_effects(
+        self,
+        effects: &mut crate::diagnostic::DiagnosticEffects,
+    ) -> ErrorOutcome {
+        self.error_with_effects_at(effects, None)
+    }
+
+    /// Completes §82 and freezes a supplied report-time diagnostic site in
+    /// the same operation-local candidate used by direct reports. The site is
+    /// moved once; commit-time promotion never consults live command state to
+    /// reconstruct it.
+    pub fn error_with_effects_at(
+        self,
+        effects: &mut crate::diagnostic::DiagnosticEffects,
+        site: Option<crate::diagnostic::DiagnosticSite>,
+    ) -> ErrorOutcome {
+        let (outcome, candidate) = self.error_inner();
+        let first = effects.record_first_recoverable(candidate);
+        if first && let Some(site) = site {
+            effects.complete_first_recoverable(site);
+        }
+        outcome
+    }
+
+    /// Completes §82 and routes an ErrorStop recovery request through the
+    /// same detached effects collector as the causal report.
+    pub fn error_and_defer(
+        self,
+        effects: &mut crate::diagnostic::DiagnosticEffects,
+    ) -> Result<(), JumpOut> {
+        self.error_with_effects(effects).defer_recovery(effects)
+    }
+
+    /// Completes §82 with a frozen site and routes any ErrorStop response to
+    /// the enclosing executor transition.
+    pub fn error_and_defer_at(
+        self,
+        effects: &mut crate::diagnostic::DiagnosticEffects,
+        site: Option<crate::diagnostic::DiagnosticSite>,
+    ) -> Result<(), JumpOut> {
+        self.error_with_effects_at(effects, site)
+            .defer_recovery(effects)
+    }
+
+    fn error_inner(mut self) -> (ErrorOutcome, crate::diagnostic::RecoverableDiagnostic) {
         self.printer
             .world_mut()
             .error_channel_mut()
@@ -780,25 +960,30 @@ impl<'a, G> ErrorReport<'a, G> {
         // an error tex.web does not count, printing help tex.web does not
         // print, and continuing past the point tex.web ends the job
         // (`umber2-er8c`).
-        if self.printer.interaction_mode() == InteractionMode::ErrorStop {
-            return self.users_advice(context.as_deref());
-        }
-        let error_count = self
-            .printer
-            .world_mut()
-            .error_channel_mut()
-            .record_scrolled_error();
-        if error_count == 100 {
-            self.printer
-                .print_nl("(That makes 100 errors; please try again.)");
-            self.printer
+        let interaction = self.printer.interaction_mode();
+        let outcome = if interaction == InteractionMode::ErrorStop {
+            self.users_advice(context.as_deref())
+        } else {
+            let error_count = self
+                .printer
                 .world_mut()
                 .error_channel_mut()
-                .record_fatal_history();
-            return ErrorOutcome::JumpOut(JumpOut::TooManyErrors);
-        }
-        self.help_on_transcript();
-        ErrorOutcome::Continue
+                .record_scrolled_error();
+            if error_count == 100 {
+                self.printer
+                    .print_nl("(That makes 100 errors; please try again.)");
+                self.printer
+                    .world_mut()
+                    .error_channel_mut()
+                    .record_fatal_history();
+                ErrorOutcome::JumpOut(JumpOut::TooManyErrors)
+            } else {
+                self.help_on_transcript();
+                ErrorOutcome::Continue
+            }
+        };
+        let candidate = self.recoverable_candidate(interaction);
+        (outcome, candidate)
     }
 
     /// tex.web §90's `<Put help message on the transcript file>`.
@@ -1176,6 +1361,9 @@ impl<G> Universe<G> {
             help: Vec::new(),
             err_help: None,
             context: None,
+            message: String::new(),
+            diagnostic_kind: "command-recoverable",
+            diagnostic_arguments: Vec::new(),
         }
     }
 
@@ -1186,6 +1374,9 @@ impl<G> Universe<G> {
             help: deferred.help,
             err_help: deferred.err_help,
             context: deferred.context,
+            message: deferred.message,
+            diagnostic_kind: deferred.diagnostic_kind,
+            diagnostic_arguments: deferred.diagnostic_arguments,
         }
     }
 
@@ -1198,6 +1389,9 @@ impl<G> Universe<G> {
             help: Vec::new(),
             err_help: None,
             context: None,
+            message: String::new(),
+            diagnostic_kind: "command-recoverable",
+            diagnostic_arguments: Vec::new(),
         };
         report.users_advice(Some(context))
     }

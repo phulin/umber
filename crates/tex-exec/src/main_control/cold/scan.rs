@@ -2506,6 +2506,7 @@ fn scan_unclassified_primitive<G>(
             ColdOperation::IllegalLastItem {
                 token: command.spelling().semantic_token(),
                 context: processor.error_context(),
+                site: processor.current_diagnostic_site(Some(&command)),
             }
         ),
         // TeX82 §1126's `any_mode(car_ret), any_mode(tab_mark): align_error`.
@@ -2641,6 +2642,7 @@ fn scan_unclassified_meaning<G>(
             ColdOperation::IllegalLastItem {
                 token: command.spelling().semantic_token(),
                 context: processor.error_context(),
+                site: processor.current_diagnostic_site(Some(&command)),
             }
         ),
         Meaning::CharToken { ch, cat } => {

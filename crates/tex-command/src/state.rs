@@ -477,7 +477,12 @@ pub enum CommandSemanticDiagnostic {
     /// command stack that is still live inside the borrowed processor
     /// episode. The display therefore crosses the deferred-report boundary
     /// with the diagnostic, exactly as [`Self::MissingNumber`]'s does.
-    UndefinedControlSequence { context: String },
+    UndefinedControlSequence {
+        context: String,
+        /// Compact command/token provenance captured while §370 still owns
+        /// the offending delivery. The queue never retains the live command.
+        site: Option<tex_state::diagnostic::DiagnosticSite>,
+    },
     /// A recoverable command-owned error whose message, help and context the
     /// command core composed at the point of failure.
     ///
@@ -497,11 +502,15 @@ pub enum CommandSemanticDiagnostic {
         /// The scanned value for reports canonically completed by TeX82
         /// §81's `int_error`, rather than its ordinary `error` routine.
         integer_error: Option<i32>,
+        /// Compact provenance captured before any scanner backup.
+        site: Option<tex_state::diagnostic::DiagnosticSite>,
     },
     /// TeX82 §391's compulsory macro-parameter-text mismatch.
     MacroPrefixMismatch {
         macro_name: tex_state::interner::Symbol,
         context: String,
+        /// Compact provenance for the mismatching call token.
+        site: Option<tex_state::diagnostic::DiagnosticSite>,
     },
     /// TeX82 §415's missing-number recovery, deferred only when an earlier
     /// command-owned diagnostic is already waiting for executor output.
@@ -510,7 +519,12 @@ pub enum CommandSemanticDiagnostic {
     /// already used §325's `back_error` to put the offending token back.
     /// The command stack is the sole owner of that backed-up level, so its
     /// display crosses the deferred-report boundary with the diagnostic.
-    MissingNumber { context: String },
+    MissingNumber {
+        context: String,
+        /// Compact report-time provenance captured before §325 backs up the
+        /// offending command. The queue never retains the live command.
+        site: Option<tex_state::diagnostic::DiagnosticSite>,
+    },
     /// TeX82 §§578--579's failed `find_font_dimen(false)` enquiry.
     ///
     /// The scanner owns both the bound decision and the live input context;
@@ -518,6 +532,8 @@ pub enum CommandSemanticDiagnostic {
     FontDimenUnavailable {
         font: tex_state::ids::FontId,
         context: String,
+        /// Report-time scanner provenance, independent of the font id.
+        site: Option<tex_state::diagnostic::DiagnosticSite>,
     },
 }
 

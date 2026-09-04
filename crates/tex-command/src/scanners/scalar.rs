@@ -1913,7 +1913,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             overflowed,
         }) = pending
         {
-            let (value, vacuous) = self.scan_radix_tail_from(
+            let (value, vacuous, site) = self.scan_radix_tail_from(
                 value,
                 vacuous,
                 overflowed,
@@ -1922,7 +1922,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 suspended,
             )?;
             if vacuous {
-                self.missing_number_error()?;
+                self.missing_number_error_at(site)?;
                 return Ok(self.inserted_zero_integer(provenance));
             }
             return Ok(self.finish_integer(value, negative, provenance, ScalarRecovery::None));
@@ -2099,14 +2099,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                     ch: '\'',
                     cat: Catcode::Other,
                 } => {
-                    let (value, vacuous) = self.scan_radix_tail(
+                    let (value, vacuous, site) = self.scan_radix_tail(
                         None,
                         8,
                         retain_continuation.then_some((negative, provenance)),
                         suspended,
                     )?;
                     if vacuous {
-                        self.missing_number_error()?;
+                        self.missing_number_error_at(site)?;
                         return Ok((self.inserted_zero_integer(provenance), 8));
                     }
                     (value, 8, ScalarRecovery::None)
@@ -2115,14 +2115,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                     ch: '"',
                     cat: Catcode::Other,
                 } => {
-                    let (value, vacuous) = self.scan_radix_tail(
+                    let (value, vacuous, site) = self.scan_radix_tail(
                         None,
                         16,
                         retain_continuation.then_some((negative, provenance)),
                         suspended,
                     )?;
                     if vacuous {
-                        self.missing_number_error()?;
+                        self.missing_number_error_at(site)?;
                         return Ok((self.inserted_zero_integer(provenance), 16));
                     }
                     (value, 16, ScalarRecovery::None)
@@ -2163,8 +2163,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 _ => {
                     // §444's `vacuous` case. `radix:=10` is assigned before
                     // the accumulation loop, so it survives §446's recovery.
+                    let site = self.capture_diagnostic_site(Some(&first));
                     self.back_input(first)?;
-                    self.missing_number_error()?;
+                    self.missing_number_error_at(Some(site))?;
                     return Ok((self.inserted_zero_integer(provenance), DECIMAL_RADIX));
                 }
             },
@@ -3237,13 +3238,14 @@ impl<G> CommandProcessor<'_, '_, G> {
             None => {
                 let rendered = meaning_text(self.state, &command);
                 let context = self.command.output_open_context(self.state);
+                let site = Some(self.current_diagnostic_site(Some(&command)));
                 let mut report = self
                     .state
                     .print_err(&format!("You can't use `{rendered}' after \\the"));
                 report
                     .help(&["I'm forgetting what you said and using zero instead."])
                     .context(context);
-                let outcome = report.error();
+                let outcome = report.error_with_effects_at(self.diagnostic_effects, site);
                 self.finish_error_outcome(outcome)?;
                 InternalValue::Integer(0)
             }
@@ -3272,13 +3274,14 @@ impl<G> CommandProcessor<'_, '_, G> {
             None => {
                 let rendered = meaning_text(self.state, command);
                 let context = self.command.output_open_context(self.state);
+                let site = Some(self.current_diagnostic_site(Some(command)));
                 let mut report = self
                     .state
                     .print_err(&format!("You can't use `{rendered}' after \\the"));
                 report
                     .help(&["I'm forgetting what you said and using zero instead."])
                     .context(context);
-                let outcome = report.error();
+                let outcome = report.error_with_effects_at(self.diagnostic_effects, site);
                 self.finish_error_outcome(outcome)?;
                 InternalValue::Integer(0)
             }
@@ -3551,7 +3554,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         radix: u8,
         integer_continuation: Option<(bool, OriginId)>,
         suspended: &mut Option<PendingIntegerScan>,
-    ) -> Result<(i32, bool), CommandError> {
+    ) -> Result<(i32, bool, Option<tex_state::diagnostic::DiagnosticSite>), CommandError> {
         self.scan_radix_tail_from(
             i32::from(first.unwrap_or(0)),
             first.is_none(),
@@ -3570,7 +3573,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         radix: u8,
         integer_continuation: Option<(bool, OriginId)>,
         suspended: &mut Option<PendingIntegerScan>,
-    ) -> Result<(i32, bool), CommandError> {
+    ) -> Result<(i32, bool, Option<tex_state::diagnostic::DiagnosticSite>), CommandError> {
+        let mut missing_site = None;
         loop {
             let mut command = None;
             let delivery = match self.request_expanded_token(&mut command) {
@@ -3614,7 +3618,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                             // `loc`. Later digits remain consumed, but do not
                             // repeat the report (`OK_so_far:=false`).
                             if !overflowed {
-                                self.number_too_big_error()?;
+                                let site = self.capture_diagnostic_site(Some(&command));
+                                self.number_too_big_error(Some(site))?;
                                 overflowed = true;
                             }
                         }
@@ -3626,6 +3631,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         // §446's `back_error`, which is `back_input; error`
                         // and so keeps even a spacer for the caller's report
                         // to pseudoprint.
+                        missing_site = Some(self.capture_diagnostic_site(Some(&command)));
                         self.back_input(command)?;
                     } else if self.back_input_unless_spacer(command)? {
                         // A numeric constant absorbs one terminating space,
@@ -3637,7 +3643,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
             }
         }
-        Ok((value, vacuous))
+        Ok((value, vacuous, missing_site))
     }
 
     fn radix_digit(command: &CurrentCommand<G>) -> Option<u8> {
@@ -4504,14 +4510,23 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(())
     }
 
-    /// TeX82 §415's `back_error` before the scanner publishes zero.
-    pub(crate) fn missing_number_error(&mut self) -> Result<(), CommandError> {
+    /// Completes a missing-number report, carrying the offending command's
+    /// pre-backup site when one exists. The supplied site is completed only
+    /// after the caller's `back_input`, so its context is report-time state.
+    pub(crate) fn missing_number_error_at(
+        &mut self,
+        site: Option<tex_state::diagnostic::DiagnosticSite>,
+    ) -> Result<(), CommandError> {
         // TeX82 §82 completes every error with `show_context`, and §415
         // reaches it only after §325's `back_error` has installed the
         // offending token as a `backed_up` level. CommandState, rather than
         // Universe, owns that level, so capture its display while it is live
         // for both immediate and deferred reporting.
         let context = self.command.output_open_context(self.state);
+        let site =
+            Some(self.complete_diagnostic_site(
+                site.unwrap_or_else(|| self.capture_diagnostic_site(None)),
+            ));
         self.observe_diagnostic_lifecycle(
             crate::DiagnosticClass::RecoverableError,
             "error",
@@ -4528,7 +4543,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         {
             self.command
                 .semantic_diagnostics
-                .push(crate::CommandSemanticDiagnostic::MissingNumber { context });
+                .push(crate::CommandSemanticDiagnostic::MissingNumber { context, site });
             return Ok(());
         }
         let mut report = self.state.print_err("Missing number, treated as zero");
@@ -4539,14 +4554,21 @@ impl<G> CommandProcessor<'_, '_, G> {
                 "look up `weird error' in the index to The TeXbook.)",
             ])
             .context(context);
-        let outcome = report.error();
+        let outcome = report.error_with_effects_at(self.diagnostic_effects, site);
         self.finish_error_outcome(outcome)?;
         Ok(())
     }
 
     /// TeX82 §445's capped integer recovery.
-    fn number_too_big_error(&mut self) -> Result<(), CommandError> {
+    fn number_too_big_error(
+        &mut self,
+        site: Option<tex_state::diagnostic::DiagnosticSite>,
+    ) -> Result<(), CommandError> {
         let context = self.command.output_open_context(self.state);
+        let site =
+            Some(self.complete_diagnostic_site(
+                site.unwrap_or_else(|| self.capture_diagnostic_site(None)),
+            ));
         let mut report = self.state.print_err("Number too big");
         report
             .help(&[
@@ -4554,7 +4576,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 "so I'm using that number instead of yours.",
             ])
             .context(context);
-        let outcome = report.error();
+        let outcome = report.error_with_effects_at(self.diagnostic_effects, site);
         self.finish_error_outcome(outcome)?;
         Ok(())
     }
@@ -4581,6 +4603,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// internal value. The value is still published as zero after the report.
     fn improper_auxiliary_error(&mut self, name: &str) -> Result<(), CommandError> {
         let context = self.command.output_open_context(self.state);
+        let site = Some(self.current_diagnostic_site(None));
         // TeX82 §1370 keeps the write_text level live while expanded
         // scan_toks calls §418. Shipout expansion is transactional in Umber,
         // so carry the report (including §82's already-rendered context) over
@@ -4597,12 +4620,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                     help: IMPROPER_AUXILIARY_HELP,
                     context,
                     integer_error: None,
+                    site,
                 });
             return Ok(());
         }
         let mut report = self.state.print_err(&format!("Improper \\{name}"));
         report.help(IMPROPER_AUXILIARY_HELP).context(context);
-        let outcome = report.error();
+        let outcome = report.error_with_effects_at(self.diagnostic_effects, site);
         self.finish_error_outcome(outcome)?;
         Ok(())
     }
@@ -4862,8 +4886,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         command: &CurrentCommand<G>,
         level: InternalLevel,
     ) -> Result<InternalScan, CommandError> {
+        let site = self.capture_diagnostic_site(Some(command));
         self.back_input(command.copy_for_backup())?;
-        self.missing_number_error()?;
+        self.missing_number_error_at(Some(site))?;
         let value = self
             .coerce_internal_value(InternalValue::Dimension(Scaled::from_raw(0)), level)?
             .expect("TeX82 §429 always lowers §416's dimen_val zero");
@@ -5452,9 +5477,14 @@ impl<G> CommandProcessor<'_, '_, G> {
         // belongs at this scanner cursor.
         if !self.font_dimen_readable(font, number) {
             let context = self.error_context();
-            self.command
-                .semantic_diagnostics
-                .push(crate::CommandSemanticDiagnostic::FontDimenUnavailable { font, context });
+            let site = Some(self.current_diagnostic_site(None));
+            self.command.semantic_diagnostics.push(
+                crate::CommandSemanticDiagnostic::FontDimenUnavailable {
+                    font,
+                    context,
+                    site,
+                },
+            );
         }
         let number = u32::try_from(number).unwrap_or(0);
         InternalValue::Dimension(self.state.font_dimen(font, number))

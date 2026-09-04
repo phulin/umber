@@ -241,3 +241,107 @@ fn dropping_operation_collector_publishes_nothing() {
         assert_eq!(universe.world().effect_records().len(), before);
     });
 }
+
+#[test]
+fn first_recoverable_candidate_is_bounded_and_never_replaced() {
+    let mut effects = super::DiagnosticEffects::new();
+    let first = super::RecoverableDiagnostic::new(
+        "missing-number",
+        "界".repeat(171),
+        vec![
+            super::RecoverableDiagnosticArgument::Name("first".into()),
+            super::RecoverableDiagnosticArgument::Name("second".into()),
+        ],
+        crate::InteractionMode::Nonstop,
+    );
+    effects.record_first_recoverable(first);
+    effects.record_first_recoverable(super::RecoverableDiagnostic::new(
+        "later",
+        "later".into(),
+        Vec::new(),
+        crate::InteractionMode::Nonstop,
+    ));
+
+    let retained = effects
+        .take_first_recoverable()
+        .expect("first candidate retained");
+    assert_eq!(retained.kind, "missing-number");
+    assert!(retained.message.len() <= super::MAX_RECOVERABLE_DIAGNOSTIC_TEXT);
+    assert!(retained.message.is_char_boundary(retained.message.len()));
+    assert_eq!(retained.arguments.len(), 2);
+    assert!(retained.site.is_none());
+    assert!(!effects.has_first_recoverable());
+}
+
+#[test]
+fn first_recoverable_provenance_is_frozen_after_its_first_report() {
+    let mut effects = super::DiagnosticEffects::new();
+    effects.record_first_recoverable(super::RecoverableDiagnostic::new(
+        "first",
+        "first".into(),
+        Vec::new(),
+        crate::InteractionMode::Nonstop,
+    ));
+
+    effects.complete_first_recoverable(super::DiagnosticSite {
+        origin: Some(crate::token::OriginId::from_raw(7)),
+        observed_token: None,
+        command: None,
+        command_operand: None,
+        context: None,
+        mode: Some("vertical mode"),
+        scanner_status: "scalar",
+        interaction: Some(crate::InteractionMode::Nonstop),
+    });
+    effects.complete_first_recoverable(super::DiagnosticSite {
+        origin: Some(crate::token::OriginId::from_raw(8)),
+        observed_token: None,
+        command: Some("later".into()),
+        command_operand: None,
+        context: None,
+        mode: Some("horizontal mode"),
+        scanner_status: "font",
+        interaction: Some(crate::InteractionMode::Batch),
+    });
+
+    let retained = effects
+        .take_first_recoverable()
+        .expect("first candidate retained");
+    assert_eq!(
+        retained.site.as_ref().and_then(|site| site.origin),
+        Some(crate::token::OriginId::from_raw(7))
+    );
+    assert_eq!(
+        retained.site.as_ref().map(|site| site.scanner_status),
+        Some("scalar")
+    );
+}
+
+#[test]
+fn diagnostic_publication_leaves_the_candidate_for_commit() {
+    with_test_universe(|universe| {
+        let mut effects = super::DiagnosticEffects::new();
+        effects.record_first_recoverable(super::RecoverableDiagnostic::new(
+            "command-recoverable",
+            "first".into(),
+            Vec::new(),
+            crate::InteractionMode::Nonstop,
+        ));
+        effects.push_ordinary_rendered(crate::InteractionMode::Nonstop, 79, "trace".into());
+
+        universe
+            .world_mut()
+            .publish_diagnostic_effects_preserving(&mut effects);
+
+        assert!(effects.has_first_recoverable());
+        assert_eq!(
+            effects
+                .take_first_recoverable()
+                .expect("first recoverable candidate")
+                .message
+                .as_ref(),
+            "first"
+        );
+        assert!(effects.is_empty());
+    });
+}

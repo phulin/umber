@@ -4015,6 +4015,14 @@ impl SessionError {
             _ => None,
         }
     }
+
+    #[must_use]
+    pub fn first_recoverable_diagnostic(&self) -> Option<&tex_exec::FirstRecoverableDiagnostic> {
+        match self {
+            Self::Execute(error) => error.first_recoverable_diagnostic(),
+            _ => None,
+        }
+    }
 }
 
 impl From<tex_exec::ExecError> for SessionError {

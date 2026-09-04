@@ -5501,7 +5501,7 @@ impl<'a, G> CommandContext<'a, G> {
     ) {
         self.resident
             .world
-            .publish_diagnostic_effects(std::mem::take(effects));
+            .publish_diagnostic_effects_preserving(effects);
     }
 
     pub fn error_report(&mut self) -> crate::print::ErrorReport<'_, G> {

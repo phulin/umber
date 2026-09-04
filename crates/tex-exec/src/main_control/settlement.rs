@@ -46,6 +46,122 @@ pub(super) enum OperationTransaction {
 }
 
 impl<G> MainControl<G> {
+    /// Promotes one operation-local recoverable report at its commit seam.
+    ///
+    /// The candidate is moved out of the detached collector before any state
+    /// or mode journal is committed. A later operation can therefore never
+    /// replace it, while a rollback simply drops the collector that still
+    /// owns an unpromoted candidate.
+    pub(super) fn promote_first_recoverable(
+        &mut self,
+        stores: &mut Universe<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
+    ) {
+        let Some(candidate) = diagnostic_effects.take_first_recoverable() else {
+            return;
+        };
+        if self.first_recoverable_diagnostic.is_some() {
+            return;
+        }
+
+        let mut context = stores.command_context().expect("diagnostic admission");
+        self.promote_recoverable_in_context(&mut context, candidate);
+    }
+
+    /// Completes promotion while the caller owns the admitted command context.
+    fn promote_recoverable_in_context(
+        &mut self,
+        context: &mut tex_state::CommandContext<'_, G>,
+        candidate: tex_state::diagnostic::RecoverableDiagnostic,
+    ) {
+        let (
+            origin,
+            observed_token,
+            command,
+            command_operand,
+            frozen_context,
+            mode,
+            scanner_status,
+        ) = match candidate.site {
+            Some(site) => (
+                site.origin,
+                site.observed_token.map(observed_token_from_site),
+                site.command,
+                site.command_operand,
+                site.context.map(|context| crate::FrozenDiagnosticContext {
+                    cause_kind: candidate.kind,
+                    input_frame_count: context.input_frame_count,
+                    input_frame_tail: context.input_frame_tail,
+                    group_depth: context.group_depth,
+                    group_tail: context
+                        .group_tail
+                        .into_iter()
+                        .map(|group| crate::FrozenDiagnosticGroup {
+                            kind: group.kind,
+                            entered_line: group.entered_line,
+                        })
+                        .collect(),
+                }),
+                diagnostic_mode(site.mode),
+                site.scanner_status,
+            ),
+            None => (None, None, None, None, None, Mode::Vertical, "normal"),
+        };
+        let frozen_origin =
+            origin.and_then(|origin| crate::error::freeze_diagnostic_origin(context, origin));
+        let arguments = candidate
+            .arguments
+            .into_iter()
+            .map(|argument| match argument {
+                tex_state::diagnostic::RecoverableDiagnosticArgument::Name(value) => {
+                    tex_command::DiagnosticArgument::Name(value)
+                }
+                tex_state::diagnostic::RecoverableDiagnosticArgument::Token(value) => {
+                    tex_command::DiagnosticArgument::Token(observed_token_from_site(value))
+                }
+            })
+            .collect();
+        self.first_recoverable_diagnostic = Some(Box::new(crate::FirstRecoverableDiagnostic {
+            kind: candidate.kind,
+            message: candidate.message,
+            arguments,
+            command,
+            command_operand,
+            observed_token,
+            origin: frozen_origin,
+            context: frozen_context,
+            mode,
+            scanner_status,
+            interaction: candidate.interaction,
+        }));
+    }
+
+    /// Moves an uncommitted candidate into the run's sole suspension owner.
+    /// The operation's detached effects remain the source of truth until this
+    /// handoff, so rollback paths never publish it accidentally.
+    pub(super) fn retain_first_recoverable_for_retry(
+        &mut self,
+        diagnostic_effects: &mut DiagnosticEffects,
+    ) {
+        if let Some(candidate) = diagnostic_effects.take_first_recoverable() {
+            assert!(
+                self.pending_first_recoverable_diagnostic
+                    .replace(candidate)
+                    .is_none(),
+                "one suspended operation owns at most one first recoverable diagnostic"
+            );
+        }
+    }
+
+    pub(super) fn restore_first_recoverable_after_retry(
+        &mut self,
+        diagnostic_effects: &mut DiagnosticEffects,
+    ) {
+        if let Some(candidate) = self.pending_first_recoverable_diagnostic.take() {
+            diagnostic_effects.restore_first_recoverable(candidate);
+        }
+    }
+
     pub(super) fn capture_first_causal_context(
         &mut self,
         stores: &mut Universe<G>,
@@ -117,6 +233,53 @@ impl<G> MainControl<G> {
         }
         pending.receipt.set_termination(termination);
         self.operation_evidence_limit_error()
+    }
+}
+
+fn observed_token_from_site(
+    token: tex_state::diagnostic::DiagnosticToken,
+) -> tex_command::ObservedToken {
+    match token {
+        tex_state::diagnostic::DiagnosticToken::Character { character, catcode } => {
+            tex_command::ObservedToken::Character { character, catcode }
+        }
+        tex_state::diagnostic::DiagnosticToken::ControlSequence(value) => {
+            tex_command::ObservedToken::ControlSequence(value)
+        }
+        tex_state::diagnostic::DiagnosticToken::MacroMatch => {
+            tex_command::ObservedToken::MacroMatch
+        }
+        tex_state::diagnostic::DiagnosticToken::MacroEndMatch => {
+            tex_command::ObservedToken::MacroEndMatch
+        }
+        tex_state::diagnostic::DiagnosticToken::Parameter(value) => {
+            tex_command::ObservedToken::Parameter(value)
+        }
+        tex_state::diagnostic::DiagnosticToken::FrozenEndTemplate => {
+            tex_command::ObservedToken::FrozenEndTemplate
+        }
+        tex_state::diagnostic::DiagnosticToken::FrozenEndV => {
+            tex_command::ObservedToken::FrozenEndV
+        }
+        tex_state::diagnostic::DiagnosticToken::FrozenPrimitive(value) => {
+            tex_command::ObservedToken::FrozenPrimitive(value)
+        }
+        tex_state::diagnostic::DiagnosticToken::FrozenOther => {
+            tex_command::ObservedToken::FrozenOther
+        }
+    }
+}
+
+fn diagnostic_mode(mode: Option<&'static str>) -> Mode {
+    match mode {
+        Some("vertical mode") => Mode::Vertical,
+        Some("internal vertical mode") => Mode::InternalVertical,
+        Some("horizontal mode") => Mode::Horizontal,
+        Some("restricted horizontal mode") => Mode::RestrictedHorizontal,
+        Some("math mode") => Mode::Math,
+        Some("display math mode") => Mode::DisplayMath,
+        None => Mode::Vertical,
+        Some(_) => Mode::Vertical,
     }
 }
 
@@ -289,7 +452,9 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &mut Universe<G>,
         mark: DirectOperationMark<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
     ) {
+        self.promote_first_recoverable(stores, diagnostic_effects);
         let DirectOperationMark {
             state,
             mode,
@@ -312,7 +477,9 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &mut Universe<G>,
         mark: DirectOperationMark<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
     ) -> tex_command::CommandAttemptOperation {
+        self.retain_first_recoverable_for_retry(diagnostic_effects);
         let DirectOperationMark {
             state,
             mode,
@@ -333,8 +500,9 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         mark: DirectOperationMark<G>,
         destination: PendingDirectDestination<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
     ) {
-        let operation = self.retain_direct_operation_for_retry(stores, mark);
+        let operation = self.retain_direct_operation_for_retry(stores, mark, diagnostic_effects);
         assert!(
             self.pending_direct_operation
                 .replace(PendingDirectOperation {
@@ -353,7 +521,9 @@ impl<G> MainControl<G> {
         frame: CommandEpisode<G>,
         cold: ColdOperationSlot<G>,
         barrier: Option<crate::transaction_protocol::CommandBarrier>,
+        diagnostic_effects: &mut DiagnosticEffects,
     ) {
+        self.retain_first_recoverable_for_retry(diagnostic_effects);
         let pending = SuspendedResourceResume::<G> {
             frame: OperationFrame::new(frame, cold),
             barrier,
@@ -380,18 +550,30 @@ impl<G> MainControl<G> {
         mut frame: CommandEpisode<G>,
         cold: ColdOperationSlot<G>,
         barrier: Option<crate::transaction_protocol::CommandBarrier>,
+        diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<StepResult, ExecError> {
         assert!(
             frame.has_unavailable(&cold),
             "unavailable resource remains in its attempt-owned frame"
         );
         let error = frame.take_error();
-        let result = self.finish_resource_preflight_failure(stores, error);
+        let result = self.finish_resource_preflight_failure(stores, error, diagnostic_effects);
         if matches!(result, Ok(StepResult::Suspended(_))) {
-            let operation = self.retain_direct_operation_for_retry(stores, mark);
-            self.suspend_prepared_resource_operation(stores, operation, frame, cold, barrier);
+            let operation = self.retain_direct_operation_for_retry(
+                stores,
+                mark,
+                diagnostic_effects,
+            );
+            self.suspend_prepared_resource_operation(
+                stores,
+                operation,
+                frame,
+                cold,
+                barrier,
+                diagnostic_effects,
+            );
         } else {
-            self.commit_direct_operation(stores, mark);
+            self.commit_direct_operation(stores, mark, diagnostic_effects);
         }
         result
     }
@@ -428,7 +610,7 @@ impl<G> MainControl<G> {
         operation_mark: DirectOperationMark<G>,
         error: ExecError,
         context: DirectFailureContext,
-        diagnostic_effects: DiagnosticEffects,
+        mut diagnostic_effects: DiagnosticEffects,
     ) -> Result<StepResult, ExecError> {
         let DirectFailureContext {
             operations,
@@ -444,6 +626,7 @@ impl<G> MainControl<G> {
             self.discard_direct_operation(stores, operation_mark);
             return Err(error);
         };
+        self.promote_first_recoverable(stores, &mut diagnostic_effects);
         let context = self
             .command
             .output_open_context(&stores.command_context().expect("live generation"));
@@ -481,10 +664,10 @@ impl<G> MainControl<G> {
         self.observe_committed(records);
         stores
             .world_mut()
-            .publish_diagnostic_effects(diagnostic_effects);
+            .publish_diagnostic_effects_preserving(&mut diagnostic_effects);
         let evidence_error =
             self.admit_observed_receipt(stores, OperationTermination::Fatal(fatal));
-        self.commit_direct_operation(stores, operation_mark);
+        self.commit_direct_operation(stores, operation_mark, &mut diagnostic_effects);
         self.record_direct_episode_commit(
             stores,
             operations,
@@ -632,12 +815,22 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &mut Universe<G>,
         error: ExecError,
+        diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<StepResult, ExecError> {
         let error = {
             let mut context = stores.command_context().expect("live generation");
             error.freeze_diagnostic_origin(&mut context, self.command.diagnostic_input_context(8))
         };
         if let Some(fatal) = error.as_fatal() {
+            if self.first_causal_context.is_none() {
+                let context = stores.command_context().expect("live generation");
+                self.first_causal_context = Some(crate::FrozenDiagnosticContext::capture(
+                    &context,
+                    self.command.diagnostic_input_context(8),
+                    "command-error",
+                ));
+            }
+            self.promote_first_recoverable(stores, diagnostic_effects);
             let context = self
                 .command
                 .output_open_context(&stores.command_context().expect("live generation"));

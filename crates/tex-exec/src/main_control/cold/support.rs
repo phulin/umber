@@ -1457,13 +1457,23 @@ pub(in crate::main_control) enum PendingDiagnostic<G> {
     ///
     /// The `bool` is `eTeX_ex`: etex.ch rewrites `help_line[0]` to name
     /// `\protected` alongside `\long`, `\outer`, and `\global`.
-    PrefixOnNonPrefixedCommand(tex_command::PrintCommand<G>, String, bool),
+    PrefixOnNonPrefixedCommand(
+        tex_command::PrintCommand<G>,
+        String,
+        bool,
+        Option<tex_state::diagnostic::DiagnosticSite>,
+    ),
     /// tex.web §1213's `<Discard the prefixes \long and \outer if they are
     /// irrelevant>`.
     ///
     /// The `bool` is `eTeX_ex`, which here rewrites the *message* as well as
     /// the help: etex.ch prints `' or `\protected'` before `' with `'.
-    IrrelevantLongOuterPrefix(tex_command::PrintCommand<G>, String, bool),
+    IrrelevantLongOuterPrefix(
+        tex_command::PrintCommand<G>,
+        String,
+        bool,
+        Option<tex_state::diagnostic::DiagnosticSite>,
+    ),
 }
 
 impl<G> PendingDiagnostic<G> {
@@ -1513,7 +1523,7 @@ pub(in crate::main_control) fn report_pending_diagnostics<G>(
             // partial-line capability enters the newly admitted reporter.
             universe
                 .world_mut()
-                .publish_diagnostic_effects(std::mem::take(diagnostic_effects));
+                .publish_diagnostic_effects_preserving(diagnostic_effects);
         }
         let mut context = universe
             .command_context()
@@ -1539,16 +1549,18 @@ pub(in crate::main_control) fn report_pending_diagnostics<G>(
                 output.print_nl(&text).print_ln();
             }
             PendingDiagnostic::Command(
-                tex_command::CommandSemanticDiagnostic::UndefinedControlSequence { context },
+                tex_command::CommandSemanticDiagnostic::UndefinedControlSequence { context, site },
             ) => crate::diagnostics::report_undefined_control_sequence(
                 stores,
                 diagnostic_effects,
                 Some(context),
+                site,
             )?,
             PendingDiagnostic::Command(
                 tex_command::CommandSemanticDiagnostic::MacroPrefixMismatch {
                     macro_name: symbol,
                     context,
+                    site,
                 },
             ) => {
                 let name = stores.resolve(symbol).to_owned();
@@ -1565,7 +1577,7 @@ pub(in crate::main_control) fn report_pending_diagnostics<G>(
                         "followed by the required stuff, so I'm ignoring it.",
                     ])
                     .context(context);
-                report.error().defer_recovery(diagnostic_effects)?;
+                report.error_and_defer_at(diagnostic_effects, site)?;
             }
             PendingDiagnostic::Command(tex_command::CommandSemanticDiagnostic::Recoverable {
                 runaway,
@@ -1573,6 +1585,7 @@ pub(in crate::main_control) fn report_pending_diagnostics<G>(
                 help,
                 context,
                 integer_error,
+                site,
                 ..
             }) => {
                 if let Some(runaway) = runaway {
@@ -1583,13 +1596,16 @@ pub(in crate::main_control) fn report_pending_diagnostics<G>(
                 let mut report = stores.print_err(&message);
                 report.help(help).context(context);
                 if let Some(value) = integer_error {
-                    report.int_error(value).defer_recovery(diagnostic_effects)?;
+                    report
+                        .int_error_with_effects_at(value, diagnostic_effects, site)
+                        .defer_recovery(diagnostic_effects)?;
                 } else {
-                    report.error().defer_recovery(diagnostic_effects)?;
+                    report.error_and_defer_at(diagnostic_effects, site)?;
                 }
             }
             PendingDiagnostic::Command(tex_command::CommandSemanticDiagnostic::MissingNumber {
                 context,
+                site,
             }) => {
                 let mut report = stores.print_err("Missing number, treated as zero");
                 report
@@ -1599,12 +1615,16 @@ pub(in crate::main_control) fn report_pending_diagnostics<G>(
                         "look up `weird error' in the index to The TeXbook.)",
                     ])
                     .context(context);
-                report.error().defer_recovery(diagnostic_effects)?;
+                report.error_and_defer_at(diagnostic_effects, site)?;
             }
             PendingDiagnostic::Command(
-                tex_command::CommandSemanticDiagnostic::FontDimenUnavailable { font, context },
-            ) => report_font_parameter_recovery(stores, diagnostic_effects, font, context)?,
-            PendingDiagnostic::PrefixOnNonPrefixedCommand(command, context, etex) => {
+                tex_command::CommandSemanticDiagnostic::FontDimenUnavailable {
+                    font,
+                    context,
+                    site,
+                },
+            ) => report_font_parameter_recovery(stores, diagnostic_effects, font, context, site)?,
+            PendingDiagnostic::PrefixOnNonPrefixedCommand(command, context, etex, site) => {
                 let command = tex_command::print_cmd_chr_text(stores, command);
                 let mut report = stores.print_err("You can't use a prefix with `");
                 report.print(&command).print_char('\'');
@@ -1614,9 +1634,9 @@ pub(in crate::main_control) fn report_pending_diagnostics<G>(
                     &["I'll pretend you didn't say \\long or \\outer or \\global."]
                 });
                 report.context(context);
-                report.error().defer_recovery(diagnostic_effects)?;
+                report.error_and_defer_at(diagnostic_effects, site)?;
             }
-            PendingDiagnostic::IrrelevantLongOuterPrefix(command, context, etex) => {
+            PendingDiagnostic::IrrelevantLongOuterPrefix(command, context, etex, site) => {
                 let command = tex_command::print_cmd_chr_text(stores, command);
                 let mut report = stores.print_err("You can't use `");
                 report.print_esc("long").print("' or `").print_esc("outer");
@@ -1630,7 +1650,7 @@ pub(in crate::main_control) fn report_pending_diagnostics<G>(
                     &["I'll pretend you didn't say \\long or \\outer here."]
                 });
                 report.context(context);
-                report.error().defer_recovery(diagnostic_effects)?;
+                report.error_and_defer_at(diagnostic_effects, site)?;
             }
         }
     }
@@ -1826,6 +1846,7 @@ pub(in crate::main_control) fn report_font_parameter_recovery<G>(
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     font: tex_state::ids::FontId,
     context: String,
+    site: Option<tex_state::diagnostic::DiagnosticSite>,
 ) -> Result<(), ExecError> {
     // TeX82 §579 prints `font_id_text(f)`, which §1257 replaces whenever
     // a font definition (even a failed one naming `null_font`) reaches
@@ -1846,7 +1867,7 @@ pub(in crate::main_control) fn report_font_parameter_recovery<G>(
         "use \\fontdimen immediately after the \\font is loaded.",
     ]);
     report.context(context);
-    report.error().defer_recovery(diagnostic_effects)?;
+    report.error_and_defer_at(diagnostic_effects, site)?;
     Ok(())
 }
 

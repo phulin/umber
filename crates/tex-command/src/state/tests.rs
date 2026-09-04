@@ -417,6 +417,7 @@ fn semantic_diagnostic_transfer_moves_the_ordered_allocation_without_allocating(
         .semantic_diagnostics
         .push(CommandSemanticDiagnostic::MissingNumber {
             context: "second".to_owned(),
+            site: None,
         });
     state
         .semantic_diagnostics
@@ -454,7 +455,7 @@ fn semantic_diagnostic_transfer_moves_the_ordered_allocation_without_allocating(
                 text,
                 force_newline: false,
             },
-            CommandSemanticDiagnostic::MissingNumber { context },
+            CommandSemanticDiagnostic::MissingNumber { context, site: None },
             CommandSemanticDiagnostic::PdfExpansionMessage { text: pdf_text },
         ] if text == "first" && context == "second" && pdf_text == "third"
     ));

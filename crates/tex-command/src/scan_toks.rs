@@ -2831,6 +2831,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             ];
             partial.extend(self.read_runaway_words(collector)?);
             let context = self.command.output_open_context(self.state);
+            let site = Some(self.current_diagnostic_site(None));
             self.command
                 .semantic_diagnostics
                 .push(crate::CommandSemanticDiagnostic::Recoverable {
@@ -2843,6 +2844,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     help: &["This \\read has unbalanced braces."],
                     context,
                     integer_error: None,
+                    site,
                 });
             self.set_runaway_partial(FILE_ENDED_WITHIN_READ_DIAGNOSTIC, &partial);
             self.command.record_alignment_phase();

@@ -14,8 +14,162 @@
 
 use crate::print::Selector;
 use crate::scaled::Scaled;
+use crate::token::OriginId;
 use crate::token_show::append_tex_print_char;
 use crate::universe::{InteractionMode, Universe};
+
+/// The observed spelling of a token retained by a cold diagnostic report.
+///
+/// This transport value deliberately keeps the token kind alongside its
+/// spelling. A control-sequence-looking string is not enough to distinguish a
+/// character, parameter, macro-match marker, or frozen sentinel after the
+/// command that supplied it has been backed up.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum DiagnosticToken {
+    Character {
+        character: char,
+        catcode: crate::token::Catcode,
+    },
+    ControlSequence(String),
+    MacroMatch,
+    MacroEndMatch,
+    Parameter(u8),
+    FrozenEndTemplate,
+    FrozenEndV,
+    FrozenPrimitive(String),
+    FrozenOther,
+}
+
+/// A compact, report-time snapshot of the live input/group context.
+///
+/// The context is intentionally structural rather than rendered text. It is
+/// small enough to cross a queued diagnostic or a resource suspension and is
+/// independent of the command-generation owner that may be rolled back.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct DiagnosticContext {
+    pub input_frame_count: usize,
+    pub input_frame_tail: Vec<&'static str>,
+    pub group_depth: u32,
+    pub group_tail: Vec<DiagnosticGroup>,
+}
+
+/// One bounded group entry in a [`DiagnosticContext`].
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct DiagnosticGroup {
+    pub kind: &'static str,
+    pub entered_line: u32,
+}
+
+/// Crate-neutral provenance and scanner facts for one recoverable report.
+///
+/// Every field is frozen at the report-completion seam. In particular, this
+/// value never retains a `CurrentCommand`, a command context borrow, or a live
+/// input coordinate that could become stale after TeX backs up a token.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct DiagnosticSite {
+    pub origin: Option<OriginId>,
+    pub observed_token: Option<DiagnosticToken>,
+    pub command: Option<String>,
+    pub command_operand: Option<i64>,
+    pub context: Option<DiagnosticContext>,
+    pub mode: Option<&'static str>,
+    pub scanner_status: &'static str,
+    pub interaction: Option<InteractionMode>,
+}
+
+/// Maximum amount of text retained for one causal recoverable diagnostic.
+///
+/// Error reports are cold paths, but a malformed input can supply arbitrarily
+/// large rendered context or message fragments.  Keeping the bound here makes
+/// the retained run evidence predictable without adding any work to command
+/// delivery or ordinary printing.
+pub const MAX_RECOVERABLE_DIAGNOSTIC_TEXT: usize = 512;
+
+/// Small, engine-neutral structured argument carried with a deferred error.
+///
+/// `tex-state` cannot depend on `tex-command`, so the command observation
+/// layer converts these owned values to its transport vocabulary when the
+/// report reaches the executor boundary.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum RecoverableDiagnosticArgument {
+    Token(DiagnosticToken),
+    Name(String),
+}
+
+/// One recoverable report candidate, owned by an operation until its effects
+/// are committed.  The candidate is intentionally independent of World and
+/// command-generation handles so rollback can drop it with the rest of the
+/// detached diagnostic effects.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct RecoverableDiagnostic {
+    pub kind: &'static str,
+    pub message: Box<str>,
+    pub arguments: Vec<RecoverableDiagnosticArgument>,
+    pub site: Option<DiagnosticSite>,
+    pub interaction: InteractionMode,
+}
+
+impl RecoverableDiagnostic {
+    pub(crate) fn truncate_text(value: &str) -> String {
+        let end = value
+            .char_indices()
+            .map(|(index, _)| index)
+            .chain(std::iter::once(value.len()))
+            .take_while(|index| *index <= MAX_RECOVERABLE_DIAGNOSTIC_TEXT)
+            .last()
+            .unwrap_or(0);
+        value[..end].to_owned()
+    }
+
+    fn truncate_owned(mut value: String) -> String {
+        if value.len() > MAX_RECOVERABLE_DIAGNOSTIC_TEXT {
+            let mut end = MAX_RECOVERABLE_DIAGNOSTIC_TEXT;
+            while !value.is_char_boundary(end) {
+                end -= 1;
+            }
+            value.truncate(end);
+        }
+        value
+    }
+
+    pub(crate) fn new(
+        kind: &'static str,
+        message: String,
+        arguments: Vec<RecoverableDiagnosticArgument>,
+        interaction: InteractionMode,
+    ) -> Self {
+        Self {
+            kind,
+            message: Self::truncate_owned(message).into_boxed_str(),
+            arguments: arguments
+                .into_iter()
+                .take(8)
+                .map(|argument| match argument {
+                    RecoverableDiagnosticArgument::Token(value) => {
+                        RecoverableDiagnosticArgument::Token(Self::truncate_diagnostic_token(value))
+                    }
+                    RecoverableDiagnosticArgument::Name(value) => {
+                        RecoverableDiagnosticArgument::Name(Self::truncate_owned(value))
+                    }
+                })
+                .collect(),
+            site: None,
+            interaction,
+        }
+    }
+
+    fn truncate_diagnostic_token(token: DiagnosticToken) -> DiagnosticToken {
+        match token {
+            DiagnosticToken::ControlSequence(value) => {
+                DiagnosticToken::ControlSequence(Self::truncate_owned(value))
+            }
+            DiagnosticToken::FrozenPrimitive(value) => {
+                DiagnosticToken::FrozenPrimitive(Self::truncate_owned(value))
+            }
+            token => token,
+        }
+    }
+}
 
 /// One print operation whose World-dependent routing is intentionally
 /// deferred until the enclosing command operation commits.
@@ -67,6 +221,7 @@ impl DetachedDiagnosticEffect {
 pub struct DiagnosticEffects {
     effects: Vec<DetachedDiagnosticEffect>,
     error_stop_recovery: Option<crate::print::ErrorRecoveryRequest>,
+    first_recoverable: Option<RecoverableDiagnostic>,
 }
 
 impl DiagnosticEffects {
@@ -75,6 +230,7 @@ impl DiagnosticEffects {
         Self {
             effects: Vec::new(),
             error_stop_recovery: None,
+            first_recoverable: None,
         }
     }
 
@@ -101,6 +257,25 @@ impl DiagnosticEffects {
         self.effects.is_empty() && self.error_stop_recovery.is_none()
     }
 
+    /// Reports whether a cold-path recoverable candidate is waiting for the
+    /// enclosing operation's commit seam. This is intentionally separate from
+    /// [`Self::is_empty`], which is used by the hot character/command loop and
+    /// must retain its pre-evidence cost model.
+    #[must_use]
+    pub fn has_first_recoverable(&self) -> bool {
+        self.first_recoverable.is_some()
+    }
+
+    /// Reports whether the operation-local candidate still needs its
+    /// report-time site completed. Callers use this to avoid recomputing a
+    /// captured site at the outer error-return seam.
+    #[must_use]
+    pub fn first_recoverable_site_missing(&self) -> bool {
+        self.first_recoverable
+            .as_ref()
+            .is_some_and(|diagnostic| diagnostic.site.is_none())
+    }
+
     #[must_use]
     pub fn len(&self) -> usize {
         self.effects.len()
@@ -122,6 +297,43 @@ impl DiagnosticEffects {
     /// Transfers the synchronous response to the command/input transition.
     pub fn take_error_stop_recovery(&mut self) -> Option<crate::print::ErrorRecoveryRequest> {
         self.error_stop_recovery.take()
+    }
+
+    /// Records the first recoverable report produced by this operation.
+    /// Later reports cannot replace it, matching TeX's first-cause semantics.
+    pub fn record_first_recoverable(&mut self, diagnostic: RecoverableDiagnostic) -> bool {
+        if self.first_recoverable.is_some() {
+            false
+        } else {
+            self.first_recoverable = Some(diagnostic);
+            true
+        }
+    }
+
+    /// Freezes the first report's compact provenance at the report-completion
+    /// seam. A later report cannot fill or overwrite an earlier site.
+    pub fn complete_first_recoverable(&mut self, site: DiagnosticSite) {
+        if let Some(diagnostic) = self.first_recoverable.as_mut()
+            && diagnostic.site.is_none()
+        {
+            if let Some(interaction) = site.interaction {
+                diagnostic.interaction = interaction;
+            }
+            diagnostic.site = Some(site);
+        }
+    }
+
+    /// Moves the operation-local candidate to its enclosing commit owner.
+    pub fn take_first_recoverable(&mut self) -> Option<RecoverableDiagnostic> {
+        self.first_recoverable.take()
+    }
+
+    /// Reinstalls a candidate retained across an intermediate publication.
+    pub fn restore_first_recoverable(&mut self, diagnostic: RecoverableDiagnostic) {
+        assert!(
+            self.first_recoverable.replace(diagnostic).is_none(),
+            "one operation owns at most one first recoverable diagnostic"
+        );
     }
 }
 

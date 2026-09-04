@@ -32,6 +32,26 @@ pub struct FrozenDiagnosticContext {
     pub group_tail: Vec<FrozenDiagnosticGroup>,
 }
 
+/// First committed recoverable diagnostic retained as cold-path causal
+/// evidence.  It is not part of execution identity, snapshots, or output
+/// event streams; callers explicitly requesting diagnostic evidence may
+/// inspect it after a run or fatal conversion.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FirstRecoverableDiagnostic {
+    pub kind: &'static str,
+    pub message: Box<str>,
+    pub arguments: Vec<tex_command::DiagnosticArgument>,
+    pub command: Option<String>,
+    /// Canonical TeX command operand, when the observed meaning has one.
+    pub command_operand: Option<i64>,
+    pub observed_token: Option<tex_command::ObservedToken>,
+    pub origin: Option<FrozenDiagnosticOrigin>,
+    pub context: Option<FrozenDiagnosticContext>,
+    pub mode: Mode,
+    pub scanner_status: &'static str,
+    pub interaction: tex_state::InteractionMode,
+}
+
 /// One bounded group-stack entry in [`FrozenDiagnosticContext`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FrozenDiagnosticGroup {
@@ -45,6 +65,7 @@ pub struct FrozenDiagnosticGroup {
 pub struct FrozenDiagnosticEvidence {
     pub origin: Option<FrozenDiagnosticOrigin>,
     pub context: Option<FrozenDiagnosticContext>,
+    pub first_recoverable: Option<Box<FirstRecoverableDiagnostic>>,
 }
 
 /// Compact live diagnostic coordinate retained only until cold detachment.
@@ -900,6 +921,7 @@ impl ExecError {
                     input_context.clone(),
                     "terminal-execution",
                 )),
+                first_recoverable: None,
             }));
         }
         if matches!(self, Self::Captured { .. } | Self::PdfXFormVoidBox)
@@ -921,6 +943,7 @@ impl ExecError {
                         input_context,
                         "terminal-execution",
                     )),
+                    first_recoverable: None,
                 })),
             }
         }
@@ -938,6 +961,16 @@ impl ExecError {
     pub fn frozen_diagnostic_context(&self) -> Option<&FrozenDiagnosticContext> {
         match self {
             Self::Captured { frozen, .. } => frozen.as_deref()?.context.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// Returns the first committed recoverable report attached at a fatal
+    /// diagnostic boundary, if this error carries one.
+    #[must_use]
+    pub fn first_recoverable_diagnostic(&self) -> Option<&FirstRecoverableDiagnostic> {
+        match self {
+            Self::Captured { frozen, .. } => frozen.as_deref()?.first_recoverable.as_deref(),
             _ => None,
         }
     }
@@ -977,7 +1010,7 @@ impl ExecError {
     }
 }
 
-fn freeze_diagnostic_origin<G>(
+pub(crate) fn freeze_diagnostic_origin<G>(
     stores: &mut CommandContext<'_, G>,
     origin: OriginId,
 ) -> Option<FrozenDiagnosticOrigin> {
@@ -1015,32 +1048,10 @@ fn freeze_diagnostic_context<G>(
             .rev()
             .take(TAIL_LIMIT)
             .map(|frame| FrozenDiagnosticGroup {
-                kind: diagnostic_group_kind(frame.kind()),
+                kind: frame.kind().diagnostic_name(),
                 entered_line: frame.entered_line(),
             })
             .collect(),
-    }
-}
-
-const fn diagnostic_group_kind(kind: tex_state::GroupKind) -> &'static str {
-    use tex_state::GroupKind as Kind;
-    match kind {
-        Kind::Simple => "simple",
-        Kind::HBox => "hbox",
-        Kind::AdjustedHBox => "adjusted-hbox",
-        Kind::VBox => "vbox",
-        Kind::VTop => "vtop",
-        Kind::SemiSimple => "semi-simple",
-        Kind::MathShift => "math-shift",
-        Kind::Align => "align",
-        Kind::NoAlign => "no-align",
-        Kind::Output => "output",
-        Kind::Math => "math",
-        Kind::Disc => "disc",
-        Kind::Insert => "insert",
-        Kind::VCenter => "vcenter",
-        Kind::MathChoice => "math-choice",
-        Kind::MathLeft => "math-left",
     }
 }
 

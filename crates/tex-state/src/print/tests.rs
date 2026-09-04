@@ -172,6 +172,29 @@ fn print_err_formats_message_help_and_history() {
 }
 
 #[test]
+fn recoverable_message_capture_is_bounded_while_report_is_built() {
+    with_test_universe(|universe| {
+        universe.set_interaction_mode(InteractionMode::Nonstop);
+        let mut effects = crate::diagnostic::DiagnosticEffects::new();
+        let mut report = universe.print_err("bounded");
+        report.print(&"x".repeat(crate::diagnostic::MAX_RECOVERABLE_DIAGNOSTIC_TEXT * 4));
+        assert_eq!(
+            report.error_with_effects(&mut effects),
+            ErrorOutcome::Continue
+        );
+
+        let candidate = effects
+            .take_first_recoverable()
+            .expect("recoverable report candidate");
+        assert_eq!(
+            candidate.message.len(),
+            crate::diagnostic::MAX_RECOVERABLE_DIAGNOSTIC_TEXT
+        );
+        assert!(candidate.message.is_char_boundary(candidate.message.len()));
+    });
+}
+
+#[test]
 fn error_stop_answers_resume_or_quit_with_typed_outcomes() {
     with_test_universe(|universe| {
         universe

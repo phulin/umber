@@ -201,7 +201,7 @@ pub struct CommandProcessor<'episode, 'admission, G> {
     pub(crate) host: CommandHostContext<'episode, G>,
     observer: Option<&'episode mut dyn CommandObserver>,
     pub(crate) fuel: &'episode mut CommandFuel,
-    diagnostic_effects: &'episode mut tex_state::diagnostic::DiagnosticEffects,
+    pub(crate) diagnostic_effects: &'episode mut tex_state::diagnostic::DiagnosticEffects,
     /// The §53 write scanner registers its replay level here solely to name
     /// that level in detached observation. This is processor-local observer
     /// metadata: raw delivery neither reads replay provenance nor lets this

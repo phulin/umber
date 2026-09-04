@@ -1842,6 +1842,7 @@ pub(in crate::main_control) fn apply<G>(
                     command.diagnostic_effects,
                     *font,
                     std::mem::take(context),
+                    None,
                 )?,
                 None => {
                     let number = u32::try_from(*number)
@@ -2791,13 +2792,18 @@ pub(in crate::main_control) fn apply<G>(
             )?;
             Ok(ReplayStep::Continue)
         }
-        ColdOperation::IllegalLastItem { token, context } => {
-            crate::diagnostics::report_illegal_case_with_context(
+        ColdOperation::IllegalLastItem {
+            token,
+            context,
+            site,
+        } => {
+            crate::diagnostics::report_illegal_case_with_site(
                 stores,
                 command.diagnostic_effects,
                 *token,
                 modes.current_mode(),
                 Some(std::mem::take(context)),
+                Some(site.clone()),
             )?;
             Ok(ReplayStep::Continue)
         }

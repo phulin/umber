@@ -3811,6 +3811,73 @@ fn display_alignment_tail_runs_assignments_before_main_control() {
             !terminal.contains("{display math mode: blank space}"),
             "the do_assignments blank must not reach main control: {terminal}"
         );
+        let first = control
+            .first_recoverable_diagnostic()
+            .expect("missing-number report is retained");
+        assert_eq!(first.kind, "missing-number");
+        assert!(first.message.starts_with("Missing number, treated as zero"));
+        assert_eq!(first.interaction, tex_state::InteractionMode::Nonstop);
+        assert_eq!(first.command.as_deref(), Some("other_char"));
+        assert_eq!(first.command_operand, Some(i64::from(b'*')));
+        assert_eq!(
+            first.observed_token,
+            Some(ObservedToken::Character {
+                character: '*',
+                catcode: Catcode::Other,
+            })
+        );
+        assert!(first.origin.is_some(), "missing-number source is retained");
+        assert!(
+            first.context.is_some(),
+            "missing-number context is retained"
+        );
+    });
+}
+
+#[test]
+fn direct_missing_number_retains_offender_before_scalar_backup() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(&mut control, br"\nonstopmode\count0=* \count1=17\end");
+
+        run_to_end(&mut control, stores);
+
+        assert_eq!(stores.count(1).expect("following assignment executes"), 17);
+        let first = control
+            .first_recoverable_diagnostic()
+            .expect("direct missing-number report is retained");
+        assert_eq!(first.kind, "missing-number");
+        assert_eq!(first.command.as_deref(), Some("other_char"));
+        assert_eq!(first.command_operand, Some(i64::from(b'*')));
+        assert_eq!(
+            first.observed_token,
+            Some(ObservedToken::Character {
+                character: '*',
+                catcode: Catcode::Other,
+            })
+        );
+        assert!(first.origin.is_some(), "direct report keeps source origin");
+        assert!(first.context.is_some(), "direct report keeps input context");
+        assert_eq!(first.mode, Mode::Vertical);
+        assert_eq!(first.scanner_status, "normal");
+    });
+}
+
+#[test]
+fn missing_number_keeps_report_time_mode_and_group_context() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(&mut control, br"\nonstopmode\hbox{\count0=*}\end");
+
+        run_to_end(&mut control, stores);
+
+        let first = control
+            .first_recoverable_diagnostic()
+            .expect("nested missing-number report is retained");
+        assert_eq!(first.mode, Mode::RestrictedHorizontal);
+        let context = first.context.as_ref().expect("frozen report context");
+        assert_eq!(context.group_depth, 1);
+        assert_eq!(context.group_tail[0].kind, "adjusted-hbox");
     });
 }
 
@@ -5323,6 +5390,27 @@ fn hundredth_standalone_internal_integer_error_terminates_before_later_command()
         assert!(
             pending_sink_text(stores, true).contains("(That makes 100 errors; please try again.)")
         );
+        let first = control
+            .first_recoverable_diagnostic()
+            .expect("aggregate retains first committed recoverable diagnostic");
+        assert_eq!(first.kind, "command-recoverable");
+        assert_eq!(
+            first.message.as_ref(),
+            "You can't use `\\badness' in vertical mode"
+        );
+        assert_eq!(first.mode, Mode::Vertical);
+        assert_eq!(first.interaction, tex_state::InteractionMode::Nonstop);
+        assert_eq!(first.command.as_deref(), Some("last_item"));
+        assert_eq!(first.command_operand, Some(4));
+        assert_eq!(
+            first.observed_token,
+            Some(ObservedToken::ControlSequence("badness".into()))
+        );
+        assert!(first.origin.is_some(), "TooManyErrors retains first source");
+        assert!(
+            first.context.is_some(),
+            "TooManyErrors retains first context"
+        );
     });
 }
 
@@ -5352,6 +5440,14 @@ fn errorstop_standalone_internal_integer_prompts_after_live_context_and_resumes(
         );
         assert_eq!(stores.world().error_channel().error_count(), 0);
         assert_eq!(control.fatal_error(), None);
+        assert_eq!(
+            control
+                .first_recoverable_diagnostic()
+                .expect("error-stop report is retained")
+                .interaction,
+            tex_state::InteractionMode::ErrorStop,
+            "capture precedes the dialog's switch to scroll mode"
+        );
     });
 }
 
@@ -6009,6 +6105,12 @@ fn bare_macro_parameter_commit_survives_later_input_retry_without_duplication() 
         ));
         let committed = terminal_text(stores);
         assert_eq!(committed.matches("macro parameter character #").count(), 1);
+        let first = control
+            .first_recoverable_diagnostic()
+            .expect("committed stomach diagnostic");
+        assert_eq!(first.kind, "command-recoverable");
+        assert!(first.message.contains("macro parameter character #"));
+        let first_message = first.message.clone();
 
         for _ in 0..3 {
             assert!(matches!(
@@ -6019,6 +6121,13 @@ fn bare_macro_parameter_commit_survives_later_input_retry_without_duplication() 
                 }) if name == "child.tex" && original_name == "child"
             ));
             assert_eq!(terminal_text(stores), committed);
+            assert_eq!(
+                control
+                    .first_recoverable_diagnostic()
+                    .expect("first diagnostic survives suspension")
+                    .message,
+                first_message
+            );
         }
 
         control.capabilities_mut().register_input(
@@ -6032,6 +6141,53 @@ fn bare_macro_parameter_commit_survives_later_input_retry_without_duplication() 
                 .count(),
             1
         );
+    });
+}
+
+#[test]
+fn committed_recoverable_diagnostic_survives_later_input_suspension() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\def\first{\badness \input child}\first\end",
+        );
+
+        let mut suspended = false;
+        for _ in 0..8 {
+            let step = control
+                .advance(stores)
+                .expect("diagnostic operation advances");
+            if matches!(
+                step,
+                StepResult::Suspended(ResourceNeed::Input { ref name, .. })
+                    if name == "child.tex"
+            ) {
+                suspended = true;
+                break;
+            }
+        }
+        assert!(
+            suspended,
+            "diagnostic operation eventually requests child input"
+        );
+        let first_message = control
+            .first_recoverable_diagnostic()
+            .expect("earlier diagnostic is committed before the input suspension")
+            .message
+            .clone();
+
+        control.capabilities_mut().register_input(
+            "child.tex",
+            SourceRegistration::new(RegisteredSourceKind::Generated, Arc::<[u8]>::from(&b""[..])),
+        );
+        run_to_end(&mut control, stores);
+        let first = control
+            .first_recoverable_diagnostic()
+            .expect("retry commits the retained candidate");
+        assert_eq!(first.kind, "command-recoverable");
+        assert!(first.message.contains("\\badness"));
+        assert_eq!(first.message, first_message);
     });
 }
 
@@ -16623,6 +16779,22 @@ fn undefined_control_sequence_reports_once_and_drops_only_its_token() {
             output.contains("and I'll forget about whatever was undefined."),
             "{output}"
         );
+        let first = control
+            .first_recoverable_diagnostic()
+            .expect("committed recoverable diagnostic");
+        assert_eq!(first.kind, "undefined-control-sequence");
+        assert_eq!(first.message.as_ref(), "Undefined control sequence");
+        assert_eq!(first.command.as_deref(), Some("undefined_cs"));
+        assert_eq!(first.command_operand, Some(-268_435_455));
+        assert_eq!(
+            first.observed_token,
+            Some(tex_command::ObservedToken::ControlSequence("^^@".into()))
+        );
+        assert_eq!(first.mode, Mode::Vertical);
+        assert_eq!(first.scanner_status, "normal");
+        assert_eq!(first.interaction, tex_state::InteractionMode::Nonstop);
+        assert!(first.origin.is_some(), "source origin is retained");
+        assert!(first.context.is_some(), "input context is retained");
     });
 }
 

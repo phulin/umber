@@ -1561,7 +1561,7 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
     // overtake it in the host-visible stream.
     stores
         .world_mut()
-        .publish_diagnostic_effects(std::mem::take(command.diagnostic_effects));
+        .publish_diagnostic_effects_preserving(command.diagnostic_effects);
     let effect_start = stores.world().effect_records().len();
     let effect_cursor = std::cell::Cell::new(effect_start);
     let replay_diagnostics = std::cell::RefCell::new(Vec::new());
@@ -1707,7 +1707,7 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
             // atomic page transaction.
             stores
                 .world_mut()
-                .publish_diagnostic_effects(std::mem::take(diagnostic_effects));
+                .publish_diagnostic_effects_preserving(diagnostic_effects);
             let mut context = stores
                 .command_context()
                 .map_err(|_| ExecError::MissingToken {
@@ -1805,7 +1805,7 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
     // that same point so the following live prints cannot overtake it.
     stores
         .world_mut()
-        .publish_diagnostic_effects(std::mem::take(command.diagnostic_effects));
+        .publish_diagnostic_effects_preserving(command.diagnostic_effects);
     print_ship_out_marker_close(stores, tracing_output);
     if let Some(publication) = receipt.as_mut() {
         stores.world_mut().claim_effect_publication_boundary(

@@ -537,6 +537,8 @@ pub struct RunResult {
     pub mode_transitions: Vec<tex_exec::Mode>,
     /// TeX82's defined fatal terminal state, distinct from runner failure.
     pub fatal: Option<tex_command::FatalError>,
+    /// First committed recoverable diagnostic, when the run reported one.
+    pub first_recoverable_diagnostic: Option<Box<tex_exec::FirstRecoverableDiagnostic>>,
     pub artifacts: Vec<ContentHash>,
     /// Precompiled page-local DVI bodies aligned with `artifacts`.
     pub dvi_pages: Vec<DviPagePlan>,

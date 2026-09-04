@@ -138,10 +138,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
 
         if !seen_digit {
+            let site = self.capture_hot_diagnostic_site(&command);
             if !is_relax {
                 self.back_input(command.materialize())?;
             }
-            self.missing_number_error()?;
+            self.missing_number_error_at(Some(site))?;
             finish(self, expression, if term_active { term } else { 0 })?;
             return Ok(true);
         }
@@ -451,10 +452,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
 
         if unit != 2 {
+            let site = self.capture_hot_diagnostic_site(&command);
             if !is_relax {
                 self.back_input(command.materialize())?;
             }
-            self.missing_number_error()?;
+            self.missing_number_error_at(Some(site))?;
             finish(self, expression, expression_sign, term, term_active)?;
             return Ok(true);
         }
@@ -600,8 +602,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 Ok(false)
             }
             _ if !seen_digit => {
+                let site = self.capture_hot_diagnostic_site(&command);
                 self.back_input(command.materialize())?;
-                self.missing_number_error()?;
+                self.missing_number_error_at(Some(site))?;
                 finish(self, 0, false)?;
                 Ok(true)
             }
@@ -1053,9 +1056,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                         return Ok(false);
                     }
                     if !at_end {
+                        let site = self.capture_hot_diagnostic_site(&command);
                         self.back_input(command.materialize())?;
+                        self.missing_number_error_at(Some(site))?;
+                    } else {
+                        self.missing_number_error_at(None)?;
                     }
-                    self.missing_number_error()?;
                     finish_margin_kern(self, *control, 0, false)?;
                     return Ok(true);
                 }
@@ -1073,10 +1079,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                         return Ok(false);
                     }
                     if !seen_digit {
+                        let site = (!at_end).then(|| self.capture_hot_diagnostic_site(&command));
                         if !at_end {
                             self.back_input(command.materialize())?;
                         }
-                        self.missing_number_error()?;
+                        self.missing_number_error_at(site)?;
                         finish_margin_kern(self, *control, 0, negative)?;
                     } else {
                         if !at_end && !is_space {
@@ -1275,10 +1282,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                     return Ok(false);
                 }
                 _ if !seen_digit => {
+                    let site = (!at_end).then(|| self.capture_hot_diagnostic_site(&command));
                     if !at_end {
                         self.back_input(command.materialize())?;
                     }
-                    self.missing_number_error()?;
+                    self.missing_number_error_at(site)?;
                     finish_register(self, *control, target, 0, false)?;
                     return Ok(true);
                 }
@@ -1313,9 +1321,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                     return Ok(false);
                 }
                 if !at_end {
+                    let site = self.capture_hot_diagnostic_site(&command);
                     self.back_input(command.materialize())?;
+                    self.missing_number_error_at(Some(site))?;
+                } else {
+                    self.missing_number_error_at(None)?;
                 }
-                self.missing_number_error()?;
                 finish(self, *control, 0, false)?;
                 Ok(true)
             }
@@ -1336,10 +1347,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                     return Ok(false);
                 }
                 if !seen_digit {
+                    let site = (!at_end).then(|| self.capture_hot_diagnostic_site(&command));
                     if !at_end {
                         self.back_input(command.materialize())?;
                     }
-                    self.missing_number_error()?;
+                    self.missing_number_error_at(site)?;
                     finish(self, *control, 0, negative)?;
                 } else {
                     if !at_end && !is_space {

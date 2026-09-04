@@ -99,6 +99,29 @@ impl GroupFrame {
 }
 
 impl GroupKind {
+    /// Stable compact spelling used by detached diagnostic context.
+    #[must_use]
+    pub const fn diagnostic_name(self) -> &'static str {
+        match self {
+            Self::Simple => "simple",
+            Self::HBox => "hbox",
+            Self::AdjustedHBox => "adjusted-hbox",
+            Self::VBox => "vbox",
+            Self::VTop => "vtop",
+            Self::SemiSimple => "semi-simple",
+            Self::MathShift => "math-shift",
+            Self::Align => "align",
+            Self::NoAlign => "no-align",
+            Self::Output => "output",
+            Self::Math => "math",
+            Self::Disc => "disc",
+            Self::Insert => "insert",
+            Self::VCenter => "vcenter",
+            Self::MathChoice => "math-choice",
+            Self::MathLeft => "math-left",
+        }
+    }
+
     #[must_use]
     pub const fn start_text(self) -> &'static str {
         match self {

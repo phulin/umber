@@ -5,7 +5,8 @@
 //! the explicit cold entry wrappers below; they do not add another lexical
 //! path.
 
-use tex_state::meaning::Meaning;
+use tex_state::interner::Symbol;
+use tex_state::meaning::{Meaning, ResolvedMeaning};
 use tex_state::token::{Catcode, Token, TracedTokenWord};
 
 use crate::CommandReplayDelivery;
@@ -248,47 +249,12 @@ impl<G> CommandProcessor<'_, '_, G> {
         &self,
         command: &CurrentCommand<G>,
     ) -> crate::observation::ObservedToken {
-        if let Some(symbol) = command.control_sequence() {
-            // §353's `get_next` resolves an active character through its own
-            // `active_base + c` control-sequence cell and records that cell
-            // in `cur_cs`, so §365's `cur_tok` is `cs_token_flag + cur_cs`.
-            // Observations expose that identity at the current-command
-            // boundary, just as they do for escaped control sequences.  The
-            // raw token spelling remains available on `CurrentCommand<G>` for
-            // token-sensitive consumers.
-            crate::observation::ObservedToken::ControlSequence(
-                self.state.resolve(symbol).to_owned(),
-            )
-        } else if command.spelling().semantic_token().is_frozen_end_template()
-            || command.spelling().semantic_token().is_frozen_endv()
-        {
-            // TeX82 stores both inaccessible template sentinels in distinct
-            // frozen control-sequence slots whose texts are `endtemplate`
-            // (TeX.web §780). `get_next` therefore exposes that control
-            // sequence identity at the raw boundary, while §380's
-            // `get_x_token` changes only its effective command to `endv` --
-            // and §380's `x_token` does not even do that, reaching §375's
-            // separate `frozen_endv` token through §366 `expand` instead.
-            crate::observation::ObservedToken::ControlSequence("endtemplate".into())
-        } else if matches!(command.spelling().semantic_token(), Token::Frozen(_))
-            && matches!(
-                command.meaning(),
-                tex_state::ResolvedMeaning::Static(Meaning::Relax)
-            )
-        {
-            // TeX82's observer presents the inaccessible frozen `\relax`
-            // inserted by incomplete-conditional recovery as `\relax`.
-            // A `\noexpand` target has the same effective meaning but retains
-            // its original control-sequence spelling.
-            crate::observation::ObservedToken::ControlSequence("relax".into())
-        } else if matches!(command.spelling().semantic_token(), Token::Frozen(_))
-            && let tex_state::ResolvedMeaning::Static(meaning) = command.meaning()
-            && let Some(name) = self.state.primitive_name(meaning)
-        {
-            crate::observation::ObservedToken::ControlSequence(name.into())
-        } else {
-            self.observed_token(command.spelling())
-        }
+        observed_command_spelling_for(
+            self.state,
+            command.spelling(),
+            command.control_sequence(),
+            command.meaning(),
+        )
     }
 
     /// Compact counterpart of [`Self::observed_command_spelling`]. The
@@ -298,29 +264,12 @@ impl<G> CommandProcessor<'_, '_, G> {
         &self,
         command: &crate::command::HotCommand<G>,
     ) -> crate::observation::ObservedToken {
-        if let Some(symbol) = command.control_sequence() {
-            crate::observation::ObservedToken::ControlSequence(
-                self.state.resolve(symbol).to_owned(),
-            )
-        } else if command.spelling().semantic_token().is_frozen_end_template()
-            || command.spelling().semantic_token().is_frozen_endv()
-        {
-            crate::observation::ObservedToken::ControlSequence("endtemplate".into())
-        } else if matches!(command.spelling().semantic_token(), Token::Frozen(_))
-            && matches!(
-                command.resolved_meaning(),
-                tex_state::ResolvedMeaning::Static(Meaning::Relax)
-            )
-        {
-            crate::observation::ObservedToken::ControlSequence("relax".into())
-        } else if matches!(command.spelling().semantic_token(), Token::Frozen(_))
-            && let tex_state::ResolvedMeaning::Static(meaning) = command.resolved_meaning()
-            && let Some(name) = self.state.primitive_name(meaning)
-        {
-            crate::observation::ObservedToken::ControlSequence(name.into())
-        } else {
-            self.observed_token(command.spelling())
-        }
+        observed_command_spelling_for(
+            self.state,
+            command.spelling(),
+            command.control_sequence(),
+            command.resolved_meaning(),
+        )
     }
     fn observe_raw_hot_delivery(&mut self, command: &HotCommand<G>) {
         observe!(self, {
@@ -351,5 +300,49 @@ impl<G> CommandProcessor<'_, '_, G> {
                 ),
             })
         });
+    }
+}
+
+/// Projects the canonical spelling shared by rich and compact deliveries.
+/// Keeping this at the command boundary avoids materializing a rich command
+/// merely to retain a cold diagnostic token, while ensuring both delivery
+/// forms apply the same frozen-sentinel rules.
+#[inline]
+fn observed_command_spelling_for<G>(
+    state: &tex_state::CommandContext<'_, G>,
+    spelling: TracedTokenWord,
+    control_sequence: Option<Symbol>,
+    meaning: ResolvedMeaning<G>,
+) -> crate::observation::ObservedToken {
+    if let Some(symbol) = control_sequence {
+        // §353's `get_next` resolves an active character through its own
+        // `active_base + c` control-sequence cell and records that cell in
+        // `cur_cs`, so §365's `cur_tok` is `cs_token_flag + cur_cs`.
+        crate::observation::ObservedToken::ControlSequence(state.resolve(symbol).to_owned())
+    } else if spelling.semantic_token().is_frozen_end_template()
+        || spelling.semantic_token().is_frozen_endv()
+    {
+        // TeX82 stores both inaccessible template sentinels in distinct
+        // frozen control-sequence slots whose texts are `endtemplate`
+        // (TeX.web §780). Their canonical observed spelling is shared even
+        // though expanded delivery changes the effective command to `endv`.
+        crate::observation::ObservedToken::ControlSequence("endtemplate".into())
+    } else if matches!(spelling.semantic_token(), Token::Frozen(_))
+        && matches!(meaning, ResolvedMeaning::Static(Meaning::Relax))
+    {
+        // TeX82's observer presents the inaccessible frozen `\relax`
+        // inserted by incomplete-conditional recovery as `\relax`.
+        crate::observation::ObservedToken::ControlSequence("relax".into())
+    } else if matches!(spelling.semantic_token(), Token::Frozen(_))
+        && let ResolvedMeaning::Static(meaning) = meaning
+        && let Some(name) = state.primitive_name(meaning)
+    {
+        crate::observation::ObservedToken::ControlSequence(name.into())
+    } else {
+        observed_token(
+            spelling,
+            |symbol| state.resolve(symbol).to_owned(),
+            |frozen| state.frozen_primitive_name(frozen).map(str::to_owned),
+        )
     }
 }

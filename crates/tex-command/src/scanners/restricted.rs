@@ -155,6 +155,11 @@ impl<G> CommandProcessor<'_, '_, G> {
             // makes the owned report cross admission so the executor can
             // publish that trace first without exposing World here.
             let context = self.command.output_open_context(self.state);
+            let mut site = self.capture_diagnostic_site(None);
+            if scanned.provenance.primary != tex_state::token::OriginId::UNKNOWN {
+                site.origin = Some(scanned.provenance.primary);
+            }
+            let site = Some(self.complete_diagnostic_site(site));
             if self.has_pending_diagnostic_effects()
                 || !self.command.semantic_diagnostics.is_empty()
                 || self.command.expanding_deferred_write()
@@ -167,6 +172,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         help: class.help_lines(),
                         context,
                         integer_error: Some(scanned.value),
+                        site,
                     },
                 );
                 return Ok(RestrictedInteger {
@@ -179,7 +185,8 @@ impl<G> CommandProcessor<'_, '_, G> {
             let mut report = self.state.print_err(class.message());
             report.help(class.help_lines()).context(context);
             // §81's `jump_out` never returns to the interrupted scan.
-            let outcome = report.int_error(scanned.value);
+            let outcome =
+                report.int_error_with_effects_at(scanned.value, self.diagnostic_effects, site);
             self.finish_error_outcome(outcome)?;
         }
         Ok(RestrictedInteger {

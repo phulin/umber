@@ -498,6 +498,7 @@ fn diagnostic(error: CompileError) -> Result<wire::DiagnosticDto, JsValue> {
             message: error.to_string(),
             location: None,
             context: None,
+            first_recoverable: None,
         },
     };
     Ok(wire::DiagnosticDto {

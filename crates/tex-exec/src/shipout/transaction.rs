@@ -262,7 +262,7 @@ pub(crate) fn shipout_node<G>(
     // them only after the already-materialized page output.
     transaction
         .world_mut()
-        .publish_diagnostic_effects(std::mem::take(diagnostic_effects));
+        .publish_diagnostic_effects_preserving(diagnostic_effects);
     let committed_effects = transaction.world().effect_records()[effect_start..]
         .to_vec()
         .into_boxed_slice();

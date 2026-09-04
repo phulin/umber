@@ -15,6 +15,139 @@ use crate::observation::{
 use super::CommandProcessor;
 
 impl<G> CommandProcessor<'_, '_, G> {
+    /// Captures a complete command-neutral site for an error that is being
+    /// queued by the executor while the delivered command is still live.
+    /// Scanner callers use the two lower-level steps separately when TeX
+    /// backs the command up between capture and report completion.
+    pub fn current_diagnostic_site(
+        &mut self,
+        command: Option<&crate::CurrentCommand<G>>,
+    ) -> tex_state::diagnostic::DiagnosticSite {
+        self.complete_diagnostic_site(self.capture_diagnostic_site(command))
+    }
+
+    /// Captures only command-owned diagnostic facts before a scanner can move
+    /// the offending command into a backed-up input level. No live command or
+    /// context borrow crosses the report queue.
+    pub fn capture_diagnostic_site(
+        &self,
+        command: Option<&crate::CurrentCommand<G>>,
+    ) -> tex_state::diagnostic::DiagnosticSite {
+        let (command_name, command_operand, observed_token, origin) =
+            command.map_or((None, None, None, None), |command| {
+                let (name, operand) =
+                    crate::observation::canonical_current_command_identity_for_profile(
+                        self.command.profile(),
+                        command,
+                    );
+                (
+                    Some(name),
+                    operand,
+                    Some(neutral_diagnostic_token(
+                        self.observed_command_spelling(command),
+                    )),
+                    (command.origin() != tex_state::token::OriginId::UNKNOWN)
+                        .then_some(command.origin()),
+                )
+            });
+        tex_state::diagnostic::DiagnosticSite {
+            origin,
+            observed_token,
+            command: command_name,
+            command_operand,
+            context: None,
+            mode: None,
+            scanner_status: "normal",
+            interaction: Some(self.diagnostic_interaction()),
+        }
+    }
+
+    /// Captures command-owned diagnostic facts from the compact hot command
+    /// before a recovery path materializes or backs it up.
+    pub(crate) fn capture_hot_diagnostic_site(
+        &self,
+        command: &crate::command::HotCommand<G>,
+    ) -> tex_state::diagnostic::DiagnosticSite {
+        let (name, operand) = crate::observation::canonical_delivery_identity_for_profile(
+            self.command.profile(),
+            command.identity(),
+            command.resolved_meaning(),
+        );
+        tex_state::diagnostic::DiagnosticSite {
+            origin: (command.origin() != tex_state::token::OriginId::UNKNOWN)
+                .then_some(command.origin()),
+            observed_token: Some(neutral_diagnostic_token(
+                self.observed_hot_command_spelling(command),
+            )),
+            command: Some(name),
+            command_operand: operand,
+            context: None,
+            mode: None,
+            scanner_status: "normal",
+            interaction: Some(self.diagnostic_interaction()),
+        }
+    }
+
+    fn diagnostic_interaction(&self) -> tex_state::InteractionMode {
+        match self.state.interaction_mode_value() {
+            0 => tex_state::InteractionMode::Batch,
+            1 => tex_state::InteractionMode::Nonstop,
+            2 => tex_state::InteractionMode::Scroll,
+            3 => tex_state::InteractionMode::ErrorStop,
+            _ => tex_state::InteractionMode::ErrorStop,
+        }
+    }
+
+    /// Freezes the report-time context, mode, and scanner state onto a
+    /// command-neutral site. This is called after any required `back_input`,
+    /// so the context describes the same backed-up token that §82 displays.
+    pub fn complete_diagnostic_site(
+        &mut self,
+        mut site: tex_state::diagnostic::DiagnosticSite,
+    ) -> tex_state::diagnostic::DiagnosticSite {
+        let (input_frame_count, input_frame_tail) = self.command.diagnostic_input_context(8);
+        let group_tail = self
+            .state
+            .group_frames()
+            .iter()
+            .rev()
+            .take(8)
+            .map(|frame| tex_state::diagnostic::DiagnosticGroup {
+                kind: frame.kind().diagnostic_name(),
+                entered_line: frame.entered_line(),
+            })
+            .collect();
+        site.context = Some(tex_state::diagnostic::DiagnosticContext {
+            input_frame_count,
+            input_frame_tail,
+            group_depth: u32::try_from(self.state.group_frames().len()).unwrap_or(u32::MAX),
+            group_tail,
+        });
+        site.mode = Some(self.host.diagnostic_mode_name());
+        site.scanner_status =
+            crate::observation::canonical_names::scanner_status_name(self.command.scanner.status());
+        site
+    }
+
+    fn complete_first_recoverable_site(
+        &mut self,
+        site: Option<tex_state::diagnostic::DiagnosticSite>,
+    ) {
+        if !self.diagnostic_effects.first_recoverable_site_missing() {
+            return;
+        }
+        let mut site = site.unwrap_or_else(|| self.capture_diagnostic_site(None));
+        if site.command.is_none() && site.observed_token.is_none() {
+            // Reports which did not retain a command (startup/format and
+            // legacy outer seams) still get structural context, but their
+            // interaction is already fixed by ErrorReport::error_inner. Do
+            // not let the post-dialog mode overwrite that response.
+            site.interaction = None;
+        }
+        let site = self.complete_diagnostic_site(site);
+        self.diagnostic_effects.complete_first_recoverable(site);
+    }
+
     /// Reports TeX82 §1096's `hmode+par_end` recovery predicate.
     ///
     /// `align_state` belongs to raw command delivery, so the stomach asks
@@ -178,6 +311,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         outcome: tex_state::print::ErrorOutcome,
     ) -> Result<(), CommandError> {
+        self.complete_first_recoverable_site(None);
         match outcome {
             tex_state::print::ErrorOutcome::Continue => Ok(()),
             tex_state::print::ErrorOutcome::Recovery(request) => {
@@ -415,8 +549,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         message: String,
         help: &'static [&'static str],
     ) -> Result<(), CommandError> {
+        let site = self.capture_diagnostic_site(Some(&command));
         self.back_input(command)?;
         let context = self.command.output_open_context(self.state);
+        let site = Some(self.complete_diagnostic_site(site));
         self.command
             .semantic_diagnostics
             .push(crate::CommandSemanticDiagnostic::Recoverable {
@@ -426,6 +562,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 help,
                 context,
                 integer_error: None,
+                site,
             });
         Ok(())
     }
@@ -438,6 +575,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         help: &'static [&'static str],
     ) {
         let context = self.command.output_open_context(self.state);
+        let site = Some(self.current_diagnostic_site(None));
         self.command
             .semantic_diagnostics
             .push(crate::CommandSemanticDiagnostic::Recoverable {
@@ -447,6 +585,41 @@ impl<G> CommandProcessor<'_, '_, G> {
                 help,
                 context,
                 integer_error: None,
+                site,
             });
+    }
+}
+
+fn neutral_diagnostic_token(
+    token: crate::observation::ObservedToken,
+) -> tex_state::diagnostic::DiagnosticToken {
+    match token {
+        crate::observation::ObservedToken::Character { character, catcode } => {
+            tex_state::diagnostic::DiagnosticToken::Character { character, catcode }
+        }
+        crate::observation::ObservedToken::ControlSequence(value) => {
+            tex_state::diagnostic::DiagnosticToken::ControlSequence(value)
+        }
+        crate::observation::ObservedToken::MacroMatch => {
+            tex_state::diagnostic::DiagnosticToken::MacroMatch
+        }
+        crate::observation::ObservedToken::MacroEndMatch => {
+            tex_state::diagnostic::DiagnosticToken::MacroEndMatch
+        }
+        crate::observation::ObservedToken::Parameter(value) => {
+            tex_state::diagnostic::DiagnosticToken::Parameter(value)
+        }
+        crate::observation::ObservedToken::FrozenEndTemplate => {
+            tex_state::diagnostic::DiagnosticToken::FrozenEndTemplate
+        }
+        crate::observation::ObservedToken::FrozenEndV => {
+            tex_state::diagnostic::DiagnosticToken::FrozenEndV
+        }
+        crate::observation::ObservedToken::FrozenPrimitive(value) => {
+            tex_state::diagnostic::DiagnosticToken::FrozenPrimitive(value)
+        }
+        crate::observation::ObservedToken::FrozenOther => {
+            tex_state::diagnostic::DiagnosticToken::FrozenOther
+        }
     }
 }

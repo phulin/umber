@@ -1343,6 +1343,7 @@ pub(in crate::main_control) enum ColdOperation<
     IllegalLastItem {
         token: Token,
         context: String,
+        site: tex_state::diagnostic::DiagnosticSite,
     },
     BoxEndGroup {
         ships_out: bool,

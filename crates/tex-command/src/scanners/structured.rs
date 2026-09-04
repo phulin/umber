@@ -4827,8 +4827,9 @@ impl<G> CommandProcessor<'_, '_, G> {
             // TeX82 §1161: back up exactly the one rejected delivery before
             // reporting the recovery. The following source token has not
             // entered the scanner and remains untouched.
+            let site = self.capture_hot_diagnostic_site(&command);
             self.back_input_hot(command)?;
-            self.missing_delimiter_error()?;
+            self.missing_delimiter_error(Some(site))?;
             return Ok(MathDelimiterBoundary {
                 kind,
                 delimiter: ScannedMathDelimiter {
@@ -4952,8 +4953,9 @@ impl<G> CommandProcessor<'_, '_, G> {
             // TeX82 §1161: "Missing delimiter (. inserted)" reports through
             // `back_error`, which returns the offending token to the input
             // before the error and leaves the null delimiter behind.
+            let site = self.capture_diagnostic_site(Some(&command));
             self.back_input(command)?;
-            self.missing_delimiter_error()?;
+            self.missing_delimiter_error(Some(site))?;
             return Ok(ScannedMathDelimiter {
                 code: 0,
                 recovered: true,
@@ -4976,8 +4978,15 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// recoveries before §448 starts scanning `\abovewithdelims`'s rule
     /// thickness. Deferring the reports to stomach application reverses that
     /// order when the thickness itself takes §446's missing-number recovery.
-    fn missing_delimiter_error(&mut self) -> Result<(), CommandError> {
+    fn missing_delimiter_error(
+        &mut self,
+        site: Option<tex_state::diagnostic::DiagnosticSite>,
+    ) -> Result<(), CommandError> {
         let context = self.command.output_open_context(self.state);
+        let site =
+            Some(self.complete_diagnostic_site(
+                site.unwrap_or_else(|| self.capture_diagnostic_site(None)),
+            ));
         if !self.command.semantic_diagnostics.is_empty() || self.command.expanding_deferred_write()
         {
             self.command
@@ -4989,12 +4998,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                     help: MISSING_DELIMITER_HELP,
                     context,
                     integer_error: None,
+                    site,
                 });
             return Ok(());
         }
         let mut report = self.state.print_err("Missing delimiter (. inserted)");
         report.help(MISSING_DELIMITER_HELP).context(context);
-        let outcome = report.error();
+        let outcome = report.error_with_effects_at(self.diagnostic_effects, site);
         self.finish_error_outcome(outcome)?;
         Ok(())
     }

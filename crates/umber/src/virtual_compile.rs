@@ -528,6 +528,7 @@ pub struct CompileDiagnostic {
     pub message: String,
     pub location: Option<CompileSourceLocation>,
     pub context: Option<Box<tex_exec::FrozenDiagnosticContext>>,
+    pub first_recoverable: Option<Box<tex_exec::FirstRecoverableDiagnostic>>,
 }
 
 /// Live retained-memory charges for one accepted compile session.
@@ -961,13 +962,20 @@ impl CompileDiagnostic {
         error: &tex_incr::SessionError,
         candidate: Option<&RetainedExecution<'_>>,
     ) -> Self {
+        let first_recoverable = error.first_recoverable_diagnostic().cloned().map(Box::new);
         let location = error
             .frozen_diagnostic_origin()
+            .or_else(|| {
+                first_recoverable
+                    .as_deref()
+                    .and_then(|diagnostic| diagnostic.origin.as_ref())
+            })
             .and_then(|frozen| candidate?.resolve_frozen_diagnostic_primary(frozen));
         Self {
             message: error.to_string(),
             location,
             context: error.frozen_diagnostic_context().cloned().map(Box::new),
+            first_recoverable,
         }
     }
 }

@@ -177,6 +177,32 @@ pub(crate) fn report_illegal_case_with_context<G>(
     mode: Mode,
     context: Option<String>,
 ) -> Result<(), ExecError> {
+    report_illegal_case(stores, diagnostic_effects, token, mode, context, None)
+}
+
+/// The same illegal-case report with a command-neutral site captured while
+/// the delivered command was still live. Cold forbidden cases such as a
+/// standalone `\badness` retain this site because their typed operation no
+/// longer owns the original `CurrentCommand` at application time.
+pub(crate) fn report_illegal_case_with_site<G>(
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
+    token: Token,
+    mode: Mode,
+    context: Option<String>,
+    site: Option<tex_state::diagnostic::DiagnosticSite>,
+) -> Result<(), ExecError> {
+    report_illegal_case(stores, diagnostic_effects, token, mode, context, site)
+}
+
+fn report_illegal_case<G>(
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
+    token: Token,
+    mode: Mode,
+    context: Option<String>,
+    site: Option<tex_state::diagnostic::DiagnosticSite>,
+) -> Result<(), ExecError> {
     let command = tex_command::command_token_text(stores, token);
     let mode = mode_name(mode);
     // TeX82 §§82 and 1111: `report_illegal_case` installs help and then
@@ -193,7 +219,7 @@ pub(crate) fn report_illegal_case_with_context<G>(
     if let Some(context) = context {
         report.context(context);
     }
-    Ok(report.error().defer_recovery(diagnostic_effects)?)
+    Ok(report.error_and_defer_at(diagnostic_effects, site)?)
 }
 
 const fn mode_name(mode: Mode) -> &'static str {
@@ -221,6 +247,7 @@ pub(crate) fn report_undefined_control_sequence<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     context: Option<String>,
+    site: Option<tex_state::diagnostic::DiagnosticSite>,
 ) -> Result<(), ExecError> {
     let mut report = stores.print_err("Undefined control sequence");
     report.help(&[
@@ -233,7 +260,7 @@ pub(crate) fn report_undefined_control_sequence<G>(
     if let Some(context) = context {
         report.context(context);
     }
-    report.error().defer_recovery(diagnostic_effects)?;
+    report.error_and_defer_at(diagnostic_effects, site)?;
     Ok(())
 }
 

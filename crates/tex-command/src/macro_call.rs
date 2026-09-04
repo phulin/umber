@@ -269,10 +269,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // still live; in particular, §336's frozen `\par` retains its
                 // `<inserted text>` ownership until this report is complete.
                 let context = self.command.output_open_context(self.state);
+                let site =
+                    Some(self.complete_diagnostic_site(self.capture_hot_diagnostic_site(call)));
                 self.command.semantic_diagnostics.push(
                     crate::CommandSemanticDiagnostic::MacroPrefixMismatch {
                         macro_name: plan.macro_name,
                         context,
+                        site,
                     },
                 );
                 let observed_call = call.materialize();
@@ -648,6 +651,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn report_paragraph_ended_before_complete(&mut self, partial: &[TracedTokenWord]) {
         let name = self.matching_macro_name();
         let context = self.command.output_open_context(self.state);
+        let site = Some(self.current_diagnostic_site(None));
         let mut display = String::new();
         for token in partial {
             crate::processor::expand_render::append_token_list_token_text(
@@ -672,6 +676,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 ],
                 context,
                 integer_error: None,
+                site,
             });
     }
 
@@ -679,6 +684,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn report_extra_right_brace_argument(&mut self) {
         let name = self.matching_macro_name();
         let context = self.command.output_open_context(self.state);
+        let site = Some(self.current_diagnostic_site(None));
         self.command
             .semantic_diagnostics
             .push(crate::CommandSemanticDiagnostic::Recoverable {
@@ -695,6 +701,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 ],
                 context,
                 integer_error: None,
+                site,
             });
     }
 

@@ -133,8 +133,8 @@ pub use observation::{
     EffectRecord, GeneratedSourceRecord, GeometryRecord, InputReason, InputRecord, InputTransition,
     MacroRecord, MutationRecord, MutationTarget, ObservationEffectKind, ObservationValue,
     ObservedToken, OpenedSourceSnapshot, ParameterClass, RecoveryKind, RecoveryRecord,
-    ScannerRecord, ScannerStatusRecord, TokenListRecord, parameter_mutation_key,
-    parameter_mutation_key_for_dialect,
+    ScannerRecord, ScannerStatusRecord, TokenListRecord,
+    parameter_mutation_key, parameter_mutation_key_for_dialect,
 };
 pub use processor::{
     AlignmentCellDelimiter, AlignmentCellTemplates, AlignmentDelivery, AlignmentDeliveryEvent,

@@ -1257,6 +1257,42 @@ fn causal_diagnostic_line(diagnostic: &umber::CompileDiagnostic) -> String {
     } else {
         line.push_str(" input_frames=unknown input_tail=\"\" group_depth=unknown group_tail=\"\"");
     }
+    if let Some(first) = &diagnostic.first_recoverable {
+        let first_message_sha256 = Sha256::digest(first.message.as_bytes());
+        line.push_str(&format!(
+            " first_kind={} first_message_sha256={first_message_sha256:x} first_mode={:?} first_scanner_status={} first_interaction={:?}",
+            first.kind, first.mode, first.scanner_status, first.interaction
+        ));
+        if let Some(command) = &first.command {
+            let command_sha256 = Sha256::digest(command.as_bytes());
+            line.push_str(&format!(" first_command_sha256={command_sha256:x}"));
+        } else {
+            line.push_str(" first_command=unknown");
+        }
+        if let Some(token) = &first.observed_token {
+            let token_sha256 = Sha256::digest(format!("{token:?}").as_bytes());
+            line.push_str(&format!(" first_token_sha256={token_sha256:x}"));
+        } else {
+            line.push_str(" first_token=unknown");
+        }
+        if let Some(context) = &first.context {
+            line.push_str(&format!(
+                " first_cause_kind={} first_input_frames={} first_input_tail={:?} first_group_depth={} first_group_tail={:?}",
+                context.cause_kind,
+                context.input_frame_count,
+                context.input_frame_tail.join(","),
+                context.group_depth,
+                context
+                    .group_tail
+                    .iter()
+                    .map(|group| format!("{}@{}", group.kind, group.entered_line))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ));
+        } else {
+            line.push_str(" first_input_frames=unknown first_input_tail=\"\" first_group_depth=unknown first_group_tail=\"\"");
+        }
+    }
     line
 }
 
@@ -1416,6 +1452,7 @@ mod tests {
                     entered_line: 6,
                 }],
             })),
+            first_recoverable: None,
         };
 
         let line = causal_diagnostic_line(&diagnostic);
@@ -1428,6 +1465,38 @@ mod tests {
         assert!(!line.contains("private"));
         assert!(!line.contains("secret"));
         assert!(line.len() < 1024);
+    }
+
+    #[test]
+    fn causal_diagnostic_renders_first_recoverable_metadata_without_content() {
+        let diagnostic = umber::CompileDiagnostic {
+            message: "fatal aggregate".into(),
+            location: None,
+            context: None,
+            first_recoverable: Some(Box::new(tex_exec::FirstRecoverableDiagnostic {
+                kind: "undefined-control-sequence",
+                message: "secret source token".into(),
+                arguments: Vec::new(),
+                command: Some("\\secret".into()),
+                command_operand: None,
+                observed_token: Some(tex_command::ObservedToken::ControlSequence("secret".into())),
+                origin: None,
+                context: None,
+                mode: tex_exec::Mode::Vertical,
+                scanner_status: "normal",
+                interaction: tex_state::InteractionMode::Nonstop,
+            })),
+        };
+
+        let line = causal_diagnostic_line(&diagnostic);
+        assert!(line.contains("first_kind=undefined-control-sequence"));
+        assert!(line.contains("first_message_sha256="));
+        assert!(line.contains("first_command_sha256="));
+        assert!(line.contains("first_token_sha256="));
+        assert!(!line.contains("secret source token"));
+        assert!(!line.contains("\\secret"));
+        assert!(!line.contains("first_command=unknown"));
+        assert!(!line.contains("first_token=unknown"));
     }
 
     #[test]

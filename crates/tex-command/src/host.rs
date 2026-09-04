@@ -425,6 +425,12 @@ impl CommandHostCapabilities {
 pub trait CommandHostFacts<G> {
     fn conditional_state(&mut self) -> ConditionalState;
     fn space_factor(&mut self) -> Option<i32>;
+    /// Returns the executor mode name at a cold diagnostic report boundary.
+    /// Implementations must sample the live mode nest; the command core never
+    /// stores this fact in snapshots or delivery state.
+    fn diagnostic_mode_name(&mut self) -> &'static str {
+        "vertical mode"
+    }
     fn prev_depth(&mut self, state: &tex_state::CommandContext<'_, G>) -> Option<Scaled>;
     fn prev_graf(&mut self) -> Option<i32>;
     fn last_node(&mut self, state: &tex_state::CommandContext<'_, G>) -> Option<LastNodeItem>;
@@ -446,6 +452,10 @@ impl<G> CommandHostFacts<G> for InitialCommandHostFacts {
 
     fn space_factor(&mut self) -> Option<i32> {
         None
+    }
+
+    fn diagnostic_mode_name(&mut self) -> &'static str {
+        "vertical mode"
     }
 
     fn prev_depth(&mut self, _state: &tex_state::CommandContext<'_, G>) -> Option<Scaled> {
@@ -580,6 +590,16 @@ impl<'a, G> CommandHostContext<'a, G> {
                 <InitialCommandHostFacts as CommandHostFacts<G>>::space_factor(facts)
             }
             CommandHostFactAccess::Borrowed(facts) => facts.space_factor(),
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn diagnostic_mode_name(&mut self) -> &'static str {
+        match &mut self.facts {
+            CommandHostFactAccess::Initial(facts) => {
+                <InitialCommandHostFacts as CommandHostFacts<G>>::diagnostic_mode_name(facts)
+            }
+            CommandHostFactAccess::Borrowed(facts) => facts.diagnostic_mode_name(),
         }
     }
 

@@ -198,6 +198,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 super::expand_render::print_esc_text(self.state, &spelling)
             });
             let context = self.command.output_open_context(self.state);
+            let site = Some(self.current_diagnostic_site(None));
             let heading = match &status {
                 ScannerStatus::Defining(_) => "Runaway definition?",
                 ScannerStatus::Matching(_) => "Runaway argument?",
@@ -245,6 +246,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     ],
                     context,
                     integer_error: None,
+                    site,
                 });
         }
         if let ScannerStatus::Skipping(skipping) = &status {
@@ -273,6 +275,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 ]
             };
             let context = self.command.output_open_context(self.state);
+            let site = Some(self.current_diagnostic_site(None));
             self.command
                 .semantic_diagnostics
                 .push(crate::CommandSemanticDiagnostic::Recoverable {
@@ -282,6 +285,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     help,
                     context,
                     integer_error: None,
+                    site,
                 });
         }
         observe!(

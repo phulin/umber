@@ -2608,9 +2608,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         #[cfg(feature = "profiling")]
         tex_state::measurement::record_hot_core_undefined_expansion();
         let context = self.command.output_open_context(self.state);
+        let site = Some(self.complete_diagnostic_site(self.capture_hot_diagnostic_site(command)));
         self.command
             .semantic_diagnostics
-            .push(crate::CommandSemanticDiagnostic::UndefinedControlSequence { context });
+            .push(crate::CommandSemanticDiagnostic::UndefinedControlSequence { context, site });
         if !self.command.profile().capabilities().supports_etex() {
             self.observe_hot_command_diagnostic("undefined_control_sequence", command);
         }
@@ -5264,8 +5265,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                     #[cfg(feature = "profiling")]
                     tex_state::measurement::record_hot_core_undefined_expansion();
                     let context = self.command.output_open_context(self.state);
+                    let site = Some(self.current_diagnostic_site(Some(command)));
                     self.command.semantic_diagnostics.push(
-                        crate::CommandSemanticDiagnostic::UndefinedControlSequence { context },
+                        crate::CommandSemanticDiagnostic::UndefinedControlSequence {
+                            context,
+                            site,
+                        },
                     );
                     if !self.command.profile().capabilities().supports_etex() {
                         // TeX82 §370 still owns the recoverable user-visible

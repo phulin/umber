@@ -75,8 +75,8 @@ pub use engine_completion::{
 };
 pub use episode::{EpisodeCommit, EpisodeCommitBoundary, EpisodeTelemetry, SemanticEpisodeBarrier};
 pub use error::{
-    ExecError, FrozenDiagnosticContext, FrozenDiagnosticEvidence, FrozenDiagnosticGroup,
-    FrozenDiagnosticOrigin,
+    ExecError, FirstRecoverableDiagnostic, FrozenDiagnosticContext, FrozenDiagnosticEvidence,
+    FrozenDiagnosticGroup, FrozenDiagnosticOrigin,
 };
 pub use host_api::{
     FontResolver, FontSource, PdfImagePageBox, PdfImagePageSelection, PdfImageRequest,
