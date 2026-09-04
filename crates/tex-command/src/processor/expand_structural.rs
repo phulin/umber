@@ -390,6 +390,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn replay_expandafter_first(&mut self, command: CurrentCommand<G>) -> Result<(), CommandError> {
         self.conserve_input_stack_for_descendant()?;
         self.undo_alignment_delivery(&command);
+        self.invalidate_delivery_freshness();
         let level = self.command.push_token_level(
             PackedTokenSpanHandle::backed_up([BackedUpToken {
                 spelling: command.spelling(),

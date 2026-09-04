@@ -122,6 +122,22 @@ impl CharacterRunAdmission {
 
 pub(crate) use status::{ScannerState, ScannerStatus};
 
+/// The processor-local authority for one delivered command's input
+/// coordinate.
+///
+/// A resident token can prove freshness from the input row's current cursor,
+/// so that proof remains valid across sequential deliveries without another
+/// publication write.  Direct source positions, synthetic `endv`, and a
+/// command restored after a genuine suspension have no resident predecessor;
+/// they carry their one explicit stamp until an input-moving boundary
+/// consumes it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DeliveryAuthority {
+    Unavailable,
+    Resident,
+    Explicit(crate::DeliveryStamp),
+}
+
 /// Borrow-only capability facade for one bounded executor operation.
 ///
 /// The processor owns no semantic or host state and therefore cannot outlive
@@ -142,14 +158,10 @@ pub struct CommandProcessor<'episode, 'admission, G> {
     /// value affect input semantics.
     immediate_write_retirement: Option<InputLevelId>,
     pending_file_warning_context: Option<(InputLevelId, String)>,
-    /// Explicit freshness proof for the three cases without a derivable
-    /// resident predecessor: direct-source physical positions, synthetic
-    /// `endv`, and a settled command readmitted after genuine suspension.
-    explicit_delivery_stamp: Option<crate::DeliveryStamp>,
-    /// Episode-local bit permitting the authoritative resident-coordinate
-    /// proof. A fresh processor cannot claim a command merely because its
-    /// input cursor still follows a delivery from an earlier episode.
-    resident_delivery_available: bool,
+    /// Sole freshness authority for the processor episode. A fresh processor
+    /// starts unavailable; ordinary resident delivery enters `Resident` once
+    /// and leaves it there across sequential cursor advances.
+    delivery_authority: DeliveryAuthority,
     /// The non-numeric command that completed the most recent integer scan.
     /// It remains backed up in input; dimension scanning uses the semantic
     /// fact to decide whether that replay is a decimal point or a unit.
@@ -242,7 +254,9 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// Restores observation ordering for a typed retry in a fresh borrow.
     pub fn resume_delivery_cursor(&mut self, cursor: CommandDeliveryCursor) {
         self.invalidate_delivery_freshness();
-        self.next_delivery_sequence = cursor.0;
+        if self.observer.is_some() {
+            self.next_delivery_sequence = cursor.0;
+        }
     }
 
     /// Continues scanning an executor-retained settled command in a fresh
@@ -255,19 +269,26 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// later than the resumed stamp.
     pub fn resume_current_command(&mut self, command: &crate::CurrentCommand<G>) {
         let stamp = command.delivery_stamp();
-        self.resident_delivery_available = false;
-        self.explicit_delivery_stamp = Some(stamp);
+        self.delivery_authority = DeliveryAuthority::Explicit(stamp);
     }
 
     #[inline(always)]
     pub(super) fn delivery_is_fresh(&self, command: &crate::CurrentCommand<G>) -> bool {
         let stamp = command.delivery_stamp();
-        self.explicit_delivery_stamp == Some(stamp) || self.resident_delivery_is_fresh(command)
+        match self.delivery_authority {
+            DeliveryAuthority::Explicit(explicit) => explicit == stamp,
+            DeliveryAuthority::Resident => self.resident_delivery_is_fresh(command),
+            DeliveryAuthority::Unavailable => false,
+        }
     }
 
     #[inline(always)]
     pub(super) fn delivery_stamp_is_fresh(&self, stamp: crate::DeliveryStamp) -> bool {
-        self.explicit_delivery_stamp == Some(stamp) || self.resident_delivery_stamp_is_fresh(stamp)
+        match self.delivery_authority {
+            DeliveryAuthority::Explicit(explicit) => explicit == stamp,
+            DeliveryAuthority::Resident => self.resident_delivery_stamp_is_fresh(stamp),
+            DeliveryAuthority::Unavailable => false,
+        }
     }
 
     #[inline(always)]
@@ -277,9 +298,6 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     #[inline(always)]
     fn resident_delivery_stamp_is_fresh(&self, stamp: crate::DeliveryStamp) -> bool {
-        if !self.resident_delivery_available {
-            return false;
-        }
         let Some(level) = self.command.input.levels.last() else {
             return false;
         };
@@ -297,23 +315,30 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     #[inline(always)]
     pub(super) fn invalidate_delivery_freshness(&mut self) {
-        if self.explicit_delivery_stamp.is_some() {
-            self.explicit_delivery_stamp = None;
-        }
-        if self.resident_delivery_available {
-            self.resident_delivery_available = false;
+        if !matches!(self.delivery_authority, DeliveryAuthority::Unavailable) {
+            self.delivery_authority = DeliveryAuthority::Unavailable;
         }
     }
 
     #[inline(always)]
     pub(super) fn readmit_delivery_stamp(&mut self, stamp: crate::DeliveryStamp) {
-        self.resident_delivery_available = false;
-        self.explicit_delivery_stamp = Some(stamp);
+        self.delivery_authority = DeliveryAuthority::Explicit(stamp);
     }
 
     #[inline(always)]
-    pub(super) fn publish_resident_delivery(&mut self) {
-        self.resident_delivery_available = true;
+    fn enter_resident_delivery(&mut self) {
+        if !matches!(self.delivery_authority, DeliveryAuthority::Resident) {
+            self.delivery_authority = DeliveryAuthority::Resident;
+        }
+    }
+
+    /// Advances the observation-only delivery sequence. Ordinary unobserved
+    /// delivery does not maintain this metadata at all.
+    #[inline(always)]
+    pub(super) fn advance_delivery_sequence(&mut self) {
+        if self.observer.is_some() {
+            self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
+        }
     }
 
     #[inline(always)]
@@ -649,8 +674,7 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
             diagnostic_effects,
             immediate_write_retirement: None,
             pending_file_warning_context: None,
-            explicit_delivery_stamp: None,
-            resident_delivery_available: false,
+            delivery_authority: DeliveryAuthority::Unavailable,
             last_integer_terminator: None,
             next_delivery_sequence: 0,
             scanner_resume: None,

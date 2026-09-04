@@ -105,6 +105,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         first: Option<Token>,
         behavior: TokenBehavior,
     ) {
+        self.invalidate_delivery_freshness();
         let level = self.command.push_token_level(
             payload,
             behavior,

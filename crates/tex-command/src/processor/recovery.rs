@@ -163,6 +163,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     }
                 }
                 tex_state::print::ErrorRecoveryRequest::Insert(line) => {
+                    self.invalidate_delivery_freshness();
                     self.command
                         .open_error_insert_line(line.into_bytes())
                         .map_err(|_| CommandError::input_invariant())?;
@@ -308,6 +309,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// is what gives the recovery token its `<inserted text>` context while an
     /// enclosing §325 backup remains `<to be read again>`.
     pub(crate) fn push_inserted_error_token(&mut self, token: Token) {
+        self.invalidate_delivery_freshness();
         let level = self.command.push_token_level(
             PackedTokenSpanHandle::transient([TracedTokenWord::pack(token, OriginId::UNKNOWN)]),
             TokenBehavior::Recovery,

@@ -1965,6 +1965,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         tokens: tex_state::TokenListId<G>,
     ) -> Result<crate::attempt::AttemptTokenListId, CommandError> {
+        self.invalidate_delivery_freshness();
         let episode = self.command.push_output_replay_episode(self.state, tokens);
         let expanded = self
             .command
@@ -6668,6 +6669,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         tokens: impl IntoIterator<Item = Token>,
         observed: Token,
     ) -> InputLevelId {
+        self.invalidate_delivery_freshness();
         let level = self.command.push_token_level(
             PackedTokenSpanHandle::transient(
                 tokens
@@ -8163,6 +8165,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             // sentinel, replay the owned delimiter/brace tail before the
             // backed-up forbidden command can open a second runaway episode.
             self.conserve_input_stack_for_descendant()?;
+            self.invalidate_delivery_freshness();
             self.command.push_token_level(
                 PackedTokenSpanHandle::transient([
                     cr,
@@ -8255,6 +8258,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let replay = scanned
             .replay_input()
             .ok_or_else(CommandError::input_invariant)?;
+        self.invalidate_delivery_freshness();
         let level = self.command.push_token_level(
             replay,
             TokenBehavior::BackedUp(BackupTreatment::Ordinary),
@@ -8727,6 +8731,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // if_stack[in_open]:=cond_ptr`, recorded for `\tracingnesting`'s
                 // `file_warning` at this level's eventual `end_file_reading`.
                 let open_depths = self.capture_source_open_depths();
+                self.invalidate_delivery_freshness();
                 let (_, framing_name) = self
                     .command
                     .open_registered_file_with_depths(source, open_depths)

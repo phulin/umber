@@ -2785,6 +2785,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         // §328 establishes that new level with `name:=0`; the selected
         // stream classification is installed only after acquisition chooses
         // the stream rather than §484's terminal fallback.
+        self.invalidate_delivery_freshness();
         let level = self
             .command
             .begin_read_line()

@@ -42,6 +42,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .expect("everyeof is an admitted token parameter");
         let tracing_scantokens = self.state.int_param(IntParam::TRACING_SCAN_TOKENS);
         let open_depths = self.capture_source_open_depths();
+        self.invalidate_delivery_freshness();
         let (level, framing_name) = self
             .command
             .open_scantokens(
@@ -131,6 +132,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     pub(super) fn expand_endinput(&mut self) -> Result<(), CommandError> {
+        self.invalidate_delivery_freshness();
         self.command
             .end_current_source_after_current_line()
             .then_some(())

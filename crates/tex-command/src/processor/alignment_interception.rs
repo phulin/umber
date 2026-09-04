@@ -173,6 +173,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 "(interwoven alignment preambles are not allowed)",
             )));
         }
+        self.invalidate_delivery_freshness();
         self.command
             .finish_alignment_cell_after_input_proof(alignment)
             .map_err(|_| CommandError::input_invariant())

@@ -1243,10 +1243,9 @@ impl<G> CurrentCommand<G> {
 
 /// Proof of one exact input transition that delivered a current command.
 ///
-/// Position identifies the cursor slot, while `sequence` distinguishes a
-/// later delivery after that slot was rewound.  It is deliberately not a
-/// provenance identity and is valid only within the processor episode that
-/// minted it.
+/// Position identifies the pre-advance cursor slot. It is deliberately not a
+/// provenance identity; the processor-local delivery authority determines
+/// whether this coordinate is currently admitted for backup.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct DeliveryStamp {
     input_level: u64,

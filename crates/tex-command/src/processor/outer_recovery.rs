@@ -161,6 +161,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .or_else(|| Some(self.observed_token(token)))
             })
             .collect();
+        self.invalidate_delivery_freshness();
         let level = self.command.push_token_level(
             PackedTokenSpanHandle::transient(std::iter::once(first_token).chain(second_token)),
             TokenBehavior::Ordinary,

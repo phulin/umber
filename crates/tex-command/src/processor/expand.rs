@@ -588,6 +588,11 @@ impl<G> CommandProcessor<'_, '_, G> {
             });
         }
 
+        // The row cursor is the sole resident freshness proof. Enter that
+        // state only when a real resident word is selected; subsequent
+        // sequential words retain it without a per-delivery publication.
+        self.enter_resident_delivery();
+
         Ok(ResidentWordRead::Word {
             word,
             origin,
@@ -647,7 +652,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<HotCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        self.invalidate_delivery_freshness();
         let depth = self.command.transient.active_expansion_depth;
         let mut command = HotCommand::empty();
         if let Err(failure) = self.charge_command_action() {
@@ -836,11 +840,9 @@ impl<G> CommandProcessor<'_, '_, G> {
             &mut command,
             literal_catcode,
         );
-        self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
+        self.advance_delivery_sequence();
         if command.is_direct_source_delivery() {
             self.readmit_delivery_stamp(command.delivery_stamp());
-        } else {
-            self.publish_resident_delivery();
         }
         if self.command.delivery_mode.requires_slow_settlement()
             && let Err(failure) = self.settle_exceptional_delivery(&mut command)
@@ -909,7 +911,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         destination: &mut Option<HotCommand<G>>,
         initial_action: Option<ExpandedCommandAction>,
     ) -> Result<DeliveryStatus, CommandError> {
-        self.invalidate_delivery_freshness();
         let depth = self.command.transient.active_expansion_depth;
         self.command.scratch.note_delivery_entry(depth);
         let Some(active_depth) = depth.checked_add(1) else {
@@ -941,7 +942,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         let mut suppress_first_expansion_trace = delivery_expanded;
         let status = 'delivery: loop {
             if fetch {
-                self.invalidate_delivery_freshness();
                 if let Err(failure) = self.charge_command_action() {
                     return self.fail_hot_expanded_delivery(destination, depth, failure);
                 }
@@ -1194,11 +1194,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                     command_ref,
                     literal_catcode,
                 );
-                self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
+                self.advance_delivery_sequence();
                 if command_ref.is_direct_source_delivery() {
                     self.readmit_delivery_stamp(command_ref.delivery_stamp());
-                } else {
-                    self.publish_resident_delivery();
                 }
                 if self.command.delivery_mode.requires_slow_settlement()
                     && let Err(failure) = self.settle_exceptional_delivery(command_ref)
@@ -2405,7 +2403,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         literal_catcode: Option<Catcode>,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        self.fuel.charge()?;
+        if let Err(failure) = self.fuel.charge() {
+            self.invalidate_delivery_freshness();
+            return Err(failure);
+        }
         self.command.delivery_mode.begin_token(
             command.suppresses_expandable_control_sequence(),
             command.is_outer(),
@@ -2415,14 +2416,15 @@ impl<G> CommandProcessor<'_, '_, G> {
             command,
             literal_catcode,
         );
-        self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
+        self.advance_delivery_sequence();
         if command.is_direct_source_delivery() {
             self.readmit_delivery_stamp(command.delivery_stamp());
-        } else {
-            self.publish_resident_delivery();
         }
-        if self.command.delivery_mode.requires_slow_settlement() {
-            self.settle_exceptional_delivery(command)?;
+        if self.command.delivery_mode.requires_slow_settlement()
+            && let Err(failure) = self.settle_exceptional_delivery(command)
+        {
+            self.invalidate_delivery_freshness();
+            return Err(failure);
         }
         *destination = Some(command.materialize());
         Ok(DeliveryStatus::CharacterRunBoundary)
@@ -2454,6 +2456,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         loop {
             let Some(resident_index) = self.command.roots.input.levels.top.checked_sub(1) else {
                 if consumed_characters {
+                    self.invalidate_delivery_freshness();
                     #[cfg(feature = "profiling")]
                     if let Some(kind) = character_run_kind.take() {
                         self.fuel.record_raw_run(false, kind, character_run_count);
@@ -2546,7 +2549,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
             }
 
-            let selected = self.next_resident_word()?;
+            let selected = match self.next_resident_word() {
+                Ok(selected) => selected,
+                Err(failure) => {
+                    self.invalidate_delivery_freshness();
+                    return Err(failure);
+                }
+            };
             let ResidentWordRead::Word {
                 word,
                 origin,
@@ -2577,6 +2586,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         continue;
                     }
                     ResidentWordRead::Exhausted { .. } if consumed_characters => {
+                        self.invalidate_delivery_freshness();
                         #[cfg(feature = "profiling")]
                         if let Some(kind) = character_run_kind.take() {
                             self.fuel.record_raw_run(false, kind, character_run_count);
@@ -2620,7 +2630,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
             );
             if is_character && self.command.delivery_mode.allows_character_run() {
-                self.fuel.charge()?;
+                if let Err(failure) = self.fuel.charge() {
+                    self.invalidate_delivery_freshness();
+                    return Err(failure);
+                }
                 consumed_characters = true;
                 #[cfg(feature = "profiling")]
                 {
@@ -2633,6 +2646,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 if consume(self.state, self.fuel, self.diagnostic_effects, ch, origin) {
                     continue;
                 }
+                self.invalidate_delivery_freshness();
                 #[cfg(feature = "profiling")]
                 if let Some(kind) = character_run_kind.take() {
                     self.fuel.record_raw_run(false, kind, character_run_count);
@@ -2640,7 +2654,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                 return Ok(DeliveryStatus::CharacterRun);
             }
 
-            self.fuel.charge()?;
+            if let Err(failure) = self.fuel.charge() {
+                self.invalidate_delivery_freshness();
+                return Err(failure);
+            }
             #[cfg(feature = "profiling")]
             if let Some(kind) = character_run_kind.take() {
                 self.fuel.record_raw_run(false, kind, character_run_count);
@@ -2707,15 +2724,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                 &mut command,
                 resolution.literal_catcode(),
             );
-            self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
-            if command.is_direct_source_delivery() {
-                self.readmit_delivery_stamp(command.delivery_stamp());
-            } else {
-                self.publish_resident_delivery();
-            }
+            self.advance_delivery_sequence();
             if self.command.delivery_mode.requires_slow_settlement()
                 && let Err(failure) = self.settle_exceptional_delivery(&mut command)
             {
+                self.invalidate_delivery_freshness();
                 return Err(failure);
             }
             *destination = Some(command.materialize());
@@ -3346,7 +3359,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             origin,
         );
         let stamp = DeliveryStamp::new(0, 0);
-        self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
+        self.advance_delivery_sequence();
         let command = CurrentCommand::<G>::resolve(spelling, stamp, None, false, None, self.state);
         let mut destination = None;
         let status = self.active_x_token_into(command, &mut destination)?;
@@ -3766,7 +3779,13 @@ impl<G> CommandProcessor<'_, '_, G> {
             );
         }
         let result =
-            self.advance_source_borrowed_character_run(resident_index, &catcodes, admit)?;
+            match self.advance_source_borrowed_character_run(resident_index, &catcodes, admit) {
+                Ok(result) => result,
+                Err(failure) => {
+                    self.invalidate_delivery_freshness();
+                    return Err(failure);
+                }
+            };
         let Some((count, continue_run)) = result else {
             return Ok(None);
         };
@@ -4009,7 +4028,20 @@ impl<G> CommandProcessor<'_, '_, G> {
         let mut top = ResidentSourceTop { source, slot };
         let force_eof = top.force_eof(force_eof_requested);
         let identity = top.source.identity();
-        let position = top.slot.cursor.next_physical_offset;
+        // The source cursor advances the physical-line pointer when it loads
+        // a line, so `next_physical_offset` names the following line rather
+        // than this token.  Stamp the token's actual pre-advance byte cursor
+        // instead; otherwise every token on one source line would share a
+        // coordinate and a backed-up stale copy could pass after a later
+        // direct delivery.
+        let position = top
+            .slot
+            .cursor
+            .line
+            .as_ref()
+            .map_or(top.slot.cursor.next_physical_offset, |line| {
+                line.cursor.byte_cursor
+            });
         let active_source = top.source.frame.source_context();
 
         match top
@@ -4152,6 +4184,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         transition: InputFrameTransition<G>,
         command: &mut HotCommand<G>,
     ) -> Result<ResidentColdOutcome, CommandError> {
+        self.invalidate_delivery_freshness();
         let cold = match transition {
             InputFrameTransition::Boundary(boundary) => boundary,
             InputFrameTransition::Source { resident_index } => {
@@ -5092,6 +5125,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         arguments: Option<ArgumentSetId<G>>,
     ) -> InputLevelId {
         let invocation = call_site;
+        self.invalidate_delivery_freshness();
         self.command
             .push_macro_activation(name, body, arguments, invocation)
     }

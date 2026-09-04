@@ -172,6 +172,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// caller's business; pushing one here would observe a level that retires
     /// without ever delivering a token.
     pub(crate) fn back_list(&mut self, tokens: impl IntoIterator<Item = BackedUpToken>) {
+        self.invalidate_delivery_freshness();
         let level = self.command.push_token_level(
             PackedTokenSpanHandle::backed_up(tokens),
             TokenBehavior::BackedUp(BackupTreatment::Ordinary),
@@ -212,6 +213,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// that is available must have its own adjustment reversed, not one
     /// recomputed from the token.
     pub fn back_input_token(&mut self, spelling: TracedTokenWord) -> Result<(), CommandError> {
+        self.invalidate_delivery_freshness();
         self.conserve_input_stack_for_descendant()?;
         self.command
             .alignment

@@ -27,6 +27,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// only the startup filename), so the terminal stop is reported here once
     /// the stack is empty, exactly as ordinary exhaustion reports it.
     pub fn final_cleanup(&mut self) -> Vec<crate::IncompleteCondition> {
+        self.invalidate_delivery_freshness();
         let mut terminal_stopped = false;
         while let Some(retirement) = self.command.pop_input_level_at_end_of_job() {
             let terminal = matches!(retirement.action, InputRetirementAction::TerminalStop);
@@ -75,7 +76,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         if !self.delivery_stamp_is_fresh(stamp) {
             return Err(CommandError::StaleDelivery);
         }
-        self.invalidate_delivery_freshness();
         match self.retire_input_top(InputLevelId(stamp.input_level()))? {
             RetirementHandoff::Continue | RetirementHandoff::Completed(_) => Ok(()),
             RetirementHandoff::Stop | RetirementHandoff::EndV(_) => {
@@ -177,6 +177,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .expect("output routine entry requires a configured token list");
         self.report_named_token_list("output", output.clone());
         let words = self.state.token_list(output.clone());
+        self.invalidate_delivery_freshness();
         let level = self.command.push_token_level(
             PackedTokenSpanHandle::durable(words),
             TokenBehavior::Ordinary,
@@ -413,6 +414,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         pending_acquired_line: bool,
     ) -> Result<Option<crate::PhysicalLine>, CommandError> {
         let endlinechar = self.state.int_param(IntParam::END_LINE_CHAR);
+        self.invalidate_delivery_freshness();
         self.command
             .acquire_input_top_line(
                 self.state,
@@ -435,6 +437,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         identity: InputLevelId,
     ) -> Result<RetirementHandoff, CommandError> {
+        self.invalidate_delivery_freshness();
         let nesting_context = self
             .pending_file_warning_context
             .take()
