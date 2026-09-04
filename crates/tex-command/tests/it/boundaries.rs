@@ -192,7 +192,8 @@ fn command_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels
             "raw delivery must not retain the retired {retired} envelope"
         );
     }
-    assert!(expansion.contains("(HotCommand::empty(), true, false)"));
+    assert!(expansion.contains("(None, true, false)"));
+    assert!(expansion.contains("HotCommand::from_resolved_delivery"));
     let delivery_entry = expansion
         .split("pub(super) fn expanded_next(")
         .nth(1)
@@ -818,7 +819,8 @@ fn command_delivery_has_separate_concrete_loops_and_direct_input_mutation() {
     assert!(!expansion.contains("MacroCallOutcome"));
     assert!(expansion.contains("suppress_first_expansion_trace"));
     assert!(expansion.contains(".store_expansion_frame(pending)"));
-    assert!(expansion.contains("(HotCommand::empty(), true, false)"));
+    assert!(expansion.contains("(None, true, false)"));
+    assert!(expansion.contains("HotCommand::from_resolved_delivery"));
     assert!(expansion.contains("std::mem::replace(command, CurrentCommand::empty())"));
     assert!(!expansion.contains("fn expand_with_trace("));
     assert!(!expansion.contains("expand_owned_with_trace("));
@@ -1486,7 +1488,6 @@ fn expanded_delivery_entry_has_one_iterative_owner() {
         );
     }
     for control in [
-        "ExpandedDeliveryDriver",
         "TheControl",
         "SynchronousExpandAfterControl",
         "SynchronousCsNameControl",
@@ -1504,6 +1505,8 @@ fn expanded_delivery_entry_has_one_iterative_owner() {
             "control lane must declare {control}"
         );
     }
+    assert!(work.contains("ActiveControlTag"));
+    assert!(work.contains("active_control"));
     assert!(controls.contains("size_of::<SynchronousExpandAfterControl<()>>() <= 128"));
     assert!(controls.contains("size_of::<TheControl>() <= 64"));
     assert!(controls.contains("size_of::<SynchronousIfCompareControl>() <= 64"));

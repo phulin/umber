@@ -4,7 +4,8 @@ use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, ResolvedMea
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
 use crate::command::{CommandClass, DeliveryStamp, HotCommand};
-use crate::execution_scratch::ArgumentSetId;
+use crate::execution_scratch::{ArgumentSetId, ScratchError};
+use crate::expansion_work::ActiveControlTag;
 use crate::input::{
     BorrowedSourceCharacterRun, InputLevel, InputLevelId, PackedInputFrame, ResidentBoundary,
     ResidentSourceAdvance, ResidentSourceCharacterRun, ResidentSourceTop, ResidentTokenStorage,
@@ -160,6 +161,26 @@ enum ExpandedCommandAction {
     Return,
     EndTemplate,
     Expand(ExpansionDispatch),
+}
+
+/// Result of one cold continuation/action dispatch. The inline delivery loop
+/// only needs to choose whether to fetch again or return a finished command.
+enum ExpandedHotDispatch {
+    Continue,
+    Finished(DeliveryStatus),
+}
+
+#[inline(always)]
+fn active_control_probe<T>(
+    active_control: Option<ActiveControlTag>,
+    expected: ActiveControlTag,
+    probe: impl FnOnce() -> Result<Option<T>, ScratchError>,
+) -> Result<Option<T>, CommandError> {
+    if active_control == Some(expected) {
+        probe().map_err(crate::scan_toks::scratch_command_error)
+    } else {
+        Ok(None)
+    }
 }
 
 /// The exact TeX.web §366 branch selected by expanded-command
@@ -616,17 +637,45 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
+        let mut hot_destination = None;
+        let result = self.raw_next_hot(&mut hot_destination);
+        match result {
+            Ok(status) => {
+                if matches!(
+                    status,
+                    DeliveryStatus::End | DeliveryStatus::ReplayCompleted(_)
+                ) {
+                    hot_destination.take();
+                    destination.take();
+                } else {
+                    *destination = hot_destination.take().map(|command| command.materialize());
+                }
+                Ok(status)
+            }
+            Err(error) => {
+                hot_destination.take();
+                destination.take();
+                Err(error)
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn raw_next_hot(
+        &mut self,
+        destination: &mut Option<HotCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
         self.invalidate_delivery_freshness();
         let depth = self.command.transient.active_expansion_depth;
         let mut command = HotCommand::empty();
         if let Err(failure) = self.charge_command_action() {
-            return self.fail_expanded_delivery(destination, depth, failure);
+            return self.fail_hot_expanded_delivery(destination, depth, failure);
         }
         let literal_catcode = 'fetch: loop {
             let selected = match self.next_resident_word() {
                 Ok(selected) => selected,
                 Err(failure) => {
-                    return self.fail_expanded_delivery(destination, depth, failure);
+                    return self.fail_hot_expanded_delivery(destination, depth, failure);
                 }
             };
             match selected {
@@ -637,7 +686,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     ) {
                         Ok(cold) => cold,
                         Err(failure) => {
-                            return self.fail_expanded_delivery(destination, depth, failure);
+                            return self.fail_hot_expanded_delivery(destination, depth, failure);
                         }
                     };
                     match cold {
@@ -662,7 +711,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     ) {
                         Ok(cold) => cold,
                         Err(failure) => {
-                            return self.fail_expanded_delivery(destination, depth, failure);
+                            return self.fail_hot_expanded_delivery(destination, depth, failure);
                         }
                     };
                     match cold {
@@ -701,7 +750,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     ) {
                         Ok(cold) => cold,
                         Err(failure) => {
-                            return self.fail_expanded_delivery(destination, depth, failure);
+                            return self.fail_hot_expanded_delivery(destination, depth, failure);
                         }
                     };
                     match cold {
@@ -814,9 +863,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         if self.command.delivery_mode.requires_slow_settlement()
             && let Err(failure) = self.settle_exceptional_delivery(&mut command)
         {
-            return self.fail_expanded_delivery(destination, depth, failure);
+            return self.fail_hot_expanded_delivery(destination, depth, failure);
         }
-        *destination = Some(command.materialize());
+        *destination = Some(command);
         Ok(DeliveryStatus::Command)
     }
 
@@ -828,8 +877,25 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
+        self.expanded_next_with_action(destination, None)
+    }
+
+    fn expanded_next_with_action(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+        initial_action: Option<ExpandedCommandAction>,
+    ) -> Result<DeliveryStatus, CommandError> {
         let mut hot_destination = destination.take().map(HotCommand::from_current);
-        let result = self.expanded_next_hot(&mut hot_destination);
+        let result = self.expanded_next_hot(&mut hot_destination, initial_action);
+        self.finish_hot_delivery(destination, &mut hot_destination, result)
+    }
+
+    fn finish_hot_delivery(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+        hot_destination: &mut Option<HotCommand<G>>,
+        result: Result<DeliveryStatus, CommandError>,
+    ) -> Result<DeliveryStatus, CommandError> {
         match result {
             Ok(status) => {
                 if matches!(
@@ -859,6 +925,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn expanded_next_hot(
         &mut self,
         destination: &mut Option<HotCommand<G>>,
+        initial_action: Option<ExpandedCommandAction>,
     ) -> Result<DeliveryStatus, CommandError> {
         self.invalidate_delivery_freshness();
         let depth = self.command.transient.active_expansion_depth;
@@ -878,16 +945,17 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .is_some_and(crate::ScannerFrameKey::is_expansion);
         let (mut command, mut fetch, mut delivery_expanded) = if resuming {
             match self.resume_expanded_delivery(destination.take()) {
-                Ok((command, resumed_expanded)) => (command, false, resumed_expanded),
+                Ok((command, resumed_expanded)) => (Some(command), false, resumed_expanded),
                 Err(failure) => {
                     return self.fail_hot_expanded_delivery(destination, depth, failure);
                 }
             }
         } else if let Some(command) = destination.take() {
-            (command, false, false)
+            (Some(command), false, false)
         } else {
-            (HotCommand::empty(), true, false)
+            (None, true, false)
         };
+        let mut initial_action = initial_action;
         let mut suppress_first_expansion_trace = delivery_expanded;
         let status = 'delivery: loop {
             if fetch {
@@ -906,7 +974,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         ResidentWordRead::NoResident => {
                             let cold = match self.transition_input_frame(
                                 InputFrameTransition::Boundary(ResidentBoundary::Empty),
-                                &mut command,
+                                command.get_or_insert_with(HotCommand::empty),
                             ) {
                                 Ok(cold) => cold,
                                 Err(failure) => {
@@ -926,7 +994,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                     if self.finish_pdf_ximage_bbox_continuation_at_end()? {
                                         continue 'fetch;
                                     }
-                                    if self.command.scratch.driver_continuation_depth() != 0 {
+                                    if self.command.scratch.active_control_is_synchronous() {
                                         self.command
                                             .scratch
                                             .abort_synchronous_controls()
@@ -945,7 +1013,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         ResidentWordRead::Source { resident_index } => {
                             let cold = match self.transition_input_frame(
                                 InputFrameTransition::Source { resident_index },
-                                &mut command,
+                                command.get_or_insert_with(HotCommand::empty),
                             ) {
                                 Ok(cold) => cold,
                                 Err(failure) => {
@@ -965,7 +1033,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                     if self.finish_pdf_ximage_bbox_continuation_at_end()? {
                                         continue 'fetch;
                                     }
-                                    if self.command.scratch.driver_continuation_depth() != 0 {
+                                    if self.command.scratch.active_control_is_synchronous() {
                                         self.command
                                             .scratch
                                             .abort_synchronous_controls()
@@ -990,7 +1058,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 slot,
                                 arguments,
                                 active_source,
-                                &mut command,
+                                command.get_or_insert_with(HotCommand::empty),
                             )?;
                             continue 'fetch;
                         }
@@ -1003,7 +1071,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                     resident_index,
                                     identity,
                                 },
-                                &mut command,
+                                command.get_or_insert_with(HotCommand::empty),
                             ) {
                                 Ok(cold) => cold,
                                 Err(failure) => {
@@ -1023,7 +1091,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                     if self.finish_pdf_ximage_bbox_continuation_at_end()? {
                                         continue 'fetch;
                                     }
-                                    if self.command.scratch.driver_continuation_depth() != 0 {
+                                    if self.command.scratch.active_control_is_synchronous() {
                                         self.command
                                             .scratch
                                             .abort_synchronous_controls()
@@ -1087,17 +1155,33 @@ impl<G> CommandProcessor<'_, '_, G> {
                                         .saturating_add(1);
                                 }
                             }
-                            let resolution = command.write_resolved_delivery(
-                                word,
-                                origin,
-                                identity,
-                                position,
-                                active_source,
-                                false,
-                                None,
-                                suppress_expandable,
-                                self.state,
-                            );
+                            let resolution = if let Some(command) = command.as_mut() {
+                                command.write_resolved_delivery(
+                                    word,
+                                    origin,
+                                    identity,
+                                    position,
+                                    active_source,
+                                    false,
+                                    None,
+                                    suppress_expandable,
+                                    self.state,
+                                )
+                            } else {
+                                let (resolved, resolution) = HotCommand::from_resolved_delivery(
+                                    word,
+                                    origin,
+                                    identity,
+                                    position,
+                                    active_source,
+                                    false,
+                                    None,
+                                    suppress_expandable,
+                                    self.state,
+                                );
+                                command.replace(resolved);
+                                resolution
+                            };
                             #[cfg(test)]
                             if matches!(storage_kind, ResidentStorageKind::Stored) {
                                 self.command.stored_token_advance_counters.meaning_lookups = self
@@ -1116,291 +1200,368 @@ impl<G> CommandProcessor<'_, '_, G> {
                         }
                     }
                 };
+                let command_ref = command
+                    .as_mut()
+                    .expect("resident delivery initializes the hot command");
                 self.command.delivery_mode.begin_token(
-                    command.suppresses_expandable_control_sequence(),
-                    command.is_outer(),
+                    command_ref.suppresses_expandable_control_sequence(),
+                    command_ref.is_outer(),
                 );
                 self.command.roots.alignment.account_literal_brace(
                     &mut self.command.timeline,
-                    &mut command,
+                    command_ref,
                     literal_catcode,
                 );
                 self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
-                if command.is_direct_source_delivery() {
-                    self.readmit_delivery_stamp(command.delivery_stamp());
+                if command_ref.is_direct_source_delivery() {
+                    self.readmit_delivery_stamp(command_ref.delivery_stamp());
                 } else {
                     self.publish_resident_delivery();
                 }
                 if self.command.delivery_mode.requires_slow_settlement()
-                    && let Err(failure) = self.settle_exceptional_delivery(&mut command)
+                    && let Err(failure) = self.settle_exceptional_delivery(command_ref)
                 {
                     return self.fail_hot_expanded_delivery(destination, depth, failure);
                 }
             }
 
-            let action = classify_hot_command(&command);
-
-            // e-TeX `\expanded` is a balanced expanded-token collector.  Its
-            // body stays in the same hot delivery loop: expandable commands
-            // fall through to the ordinary dispatch below, while settled
-            // words are appended to the attempt-owned buffer here.  This is
-            // deliberately before the other operand controls so a nested
-            // `\the`/conditional can use the same LIFO lane.
-            let expanded_control = self
-                .command
-                .scratch
-                .top_expanded_control()
-                .map_err(crate::scan_toks::scratch_command_error)?;
-            if let Some(control) = expanded_control {
-                match control.phase {
-                    crate::expansion_work::control::SynchronousExpandedPhase::NeedOpening => {
-                        let is_space =
-                            command.character_catcode() == Some(tex_state::token::Catcode::Space);
-                        let is_relax = matches!(
-                            command.resolved_meaning(),
-                            ResolvedMeaning::Static(Meaning::Relax)
-                        );
-                        if is_space || is_relax {
-                            fetch = true;
-                            continue;
+            let command = command
+                .as_mut()
+                .expect("resident delivery initializes the hot command");
+            let action = initial_action
+                .take()
+                .unwrap_or_else(|| classify_hot_command(command));
+            let active_control = self.command.scratch.active_control_tag();
+            if active_control.is_none() {
+                match action {
+                    ExpandedCommandAction::Return => {
+                        break self.finish_expanded_command(command, delivery_expanded);
+                    }
+                    ExpandedCommandAction::EndTemplate => {
+                        if matches!(
+                            command.alignment_adjustment(),
+                            crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
+                        ) {
+                            break DeliveryStatus::AlignmentEndTemplate;
                         }
-                        if command.character_catcode()
-                            == Some(tex_state::token::Catcode::BeginGroup)
-                        {
-                            self.command
-                                .scratch
-                                .begin_expanded_body()
-                                .map_err(crate::scan_toks::scratch_command_error)?;
-                            fetch = true;
-                            continue;
+                        command.convert_end_template_to_endv(self.state.frozen_endv_token());
+                        break self.finish_expanded_command(command, delivery_expanded);
+                    }
+                    ExpandedCommandAction::Expand(ExpansionDispatch::Macro) => {
+                        // Parameterless and ordinary macro chains are the
+                        // common expandable path. Keep their compact owner
+                        // in this loop; no continuation dispatcher or rich
+                        // HotCommand -> CurrentCommand -> HotCommand bridge
+                        // is needed while the macro body is installed.
+                        delivery_expanded = true;
+                        let report_trace = !std::mem::take(&mut suppress_first_expansion_trace);
+                        let mut command_parked = false;
+                        if let Err(failure) = self.expand_classified_occupied(
+                            command,
+                            ExpansionDispatch::Macro,
+                            report_trace,
+                            delivery_expanded,
+                            &mut command_parked,
+                        ) {
+                            match failure {
+                                CommandError::ParagraphInMacroArgument
+                                | CommandError::OuterInMacroArgument => {}
+                                failure => {
+                                    return self.fail_hot_expanded_delivery(
+                                        destination,
+                                        depth,
+                                        failure,
+                                    );
+                                }
+                            }
                         }
-                        // §403's recovery backs the rejected command up,
-                        // installs the synthetic opening brace in alignment
-                        // state, and then continues this same collector.
-                        self.recover_expanded_opening(command)?;
                         fetch = true;
                         continue;
                     }
-                    crate::expansion_work::control::SynchronousExpandedPhase::Collecting => {
-                        if matches!(
-                            control.kind,
-                            crate::expansion_work::control::SynchronousExpandedKind::Unexpanded
-                                | crate::expansion_work::control::SynchronousExpandedKind::Detokenize
-                        ) {
-                            let _ = self.append_expanded_word(&command)?;
-                            fetch = true;
-                            continue;
-                        }
-                        if matches!(
-                            action,
-                            ExpandedCommandAction::Expand(ExpansionDispatch::Macro)
-                        ) && command
-                            .command_word()
-                            .flags()
-                            .contains(tex_state::meaning::MeaningFlags::PROTECTED)
-                        {
-                            // e-TeX's expanded collector suppresses protected
-                            // macros for this delivery while retaining their
-                            // original spelling in the resulting token list.
-                            command.suppress_expandable();
-                            let _ = self.append_expanded_word(&command)?;
-                            fetch = true;
-                            continue;
-                        }
-                        if matches!(
-                            action,
-                            ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate
-                        ) {
-                            let _ = self.append_expanded_word(&command)?;
-                            fetch = true;
-                            continue;
-                        }
-                    }
+                    ExpandedCommandAction::Expand(_) => {}
                 }
             }
-
-            // Starting `\expanded` itself is a control-lane transition.  A
-            // nested occurrence follows the same path and is therefore
-            // reduced iteratively rather than invoking `scan_toks` from the
-            // live delivery frame.
-            if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-                ExpandablePrimitive::Expanded,
-            )) = action
-            {
-                self.begin_expanded_continuation(command.origin())?;
-                fetch = true;
-                continue;
+            match self.dispatch_expanded_action(
+                command,
+                action,
+                active_control,
+                &mut delivery_expanded,
+                &mut suppress_first_expansion_trace,
+                destination,
+                depth,
+            )? {
+                ExpandedHotDispatch::Continue => fetch = true,
+                ExpandedHotDispatch::Finished(status) => break status,
             }
+        };
+        debug_assert_eq!(
+            self.command.transient.active_expansion_depth, active_depth,
+            "expanded delivery balances its depth"
+        );
+        self.command.transient.active_expansion_depth = depth;
+        if matches!(
+            status,
+            DeliveryStatus::End | DeliveryStatus::ReplayCompleted(_) | DeliveryStatus::CharacterRun
+        ) {
+            destination.take();
+        } else {
+            *destination = command.take();
+        }
+        Ok(status)
+    }
 
-            // Within an expanded collector, `\unexpanded` consumes a raw
-            // balanced child and splices its words into the parent's writer.
-            // Keeping that child in the same control lane avoids the legacy
-            // collector's recursive scan and preserves expandable spellings.
-            if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-                ExpandablePrimitive::Unexpanded,
-            )) = action
-                && let Some(control) = expanded_control
-                && control.kind == crate::expansion_work::control::SynchronousExpandedKind::Expanded
-            {
-                self.begin_unexpanded_continuation(command.origin(), control.writer)?;
-                fetch = true;
-                continue;
-            }
-
-            // `\detokenize` consumes its balanced child without expansion,
-            // but writes the canonical token spelling as character tokens
-            // directly into the enclosing expanded collector.
-            if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-                ExpandablePrimitive::Detokenize,
-            )) = action
-                && let Some(control) = expanded_control
-                && control.kind == crate::expansion_work::control::SynchronousExpandedKind::Expanded
-            {
-                self.begin_detokenize_continuation(command.origin(), control.writer)?;
-                fetch = true;
-                continue;
-            }
-
-            // `\expandafter` owns two raw operands but only the second one is
-            // expanded. Its compact control intercepts the first command and
-            // then lets every nested expansion continue through this same
-            // delivery loop. Once that second stream settles on a returned
-            // command, backup/replay is performed at the semantic boundary.
-            let expandafter_control = self
-                .command
-                .scratch
-                .top_expandafter_control()
-                .map_err(crate::scan_toks::scratch_command_error)?;
-            if let Some(control) = expandafter_control {
-                match control.phase {
-                    crate::expansion_work::control::SynchronousExpandAfterPhase::NeedFirst => {
+    #[cold]
+    #[inline(never)]
+    #[allow(clippy::too_many_arguments)]
+    fn dispatch_expanded_action(
+        &mut self,
+        command: &mut HotCommand<G>,
+        action: ExpandedCommandAction,
+        active_control: Option<crate::expansion_work::ActiveControlTag>,
+        delivery_expanded: &mut bool,
+        suppress_first_expansion_trace: &mut bool,
+        destination: &mut Option<HotCommand<G>>,
+        depth: u32,
+    ) -> Result<ExpandedHotDispatch, CommandError> {
+        // e-TeX `\expanded` is a balanced expanded-token collector.  Its
+        // body stays in the same hot delivery loop: expandable commands
+        // fall through to the ordinary dispatch below, while settled
+        // words are appended to the attempt-owned buffer here.  This is
+        // deliberately before the other operand controls so a nested
+        // `\the`/conditional can use the same LIFO lane.
+        let expanded_control =
+            active_control_probe(active_control, ActiveControlTag::Expanded, || {
+                self.command.scratch.top_expanded_control()
+            })?;
+        if active_control.is_some()
+            && let Some(control) = expanded_control
+        {
+            match control.phase {
+                crate::expansion_work::control::SynchronousExpandedPhase::NeedOpening => {
+                    let is_space =
+                        command.character_catcode() == Some(tex_state::token::Catcode::Space);
+                    let is_relax = matches!(
+                        command.resolved_meaning(),
+                        ResolvedMeaning::Static(Meaning::Relax)
+                    );
+                    if is_space || is_relax {
+                        return Ok(ExpandedHotDispatch::Continue);
+                    }
+                    if command.character_catcode() == Some(tex_state::token::Catcode::BeginGroup) {
                         self.command
                             .scratch
-                            .save_expandafter_first(command)
+                            .begin_expanded_body()
                             .map_err(crate::scan_toks::scratch_command_error)?;
-                        fetch = true;
-                        continue;
+                        return Ok(ExpandedHotDispatch::Continue);
                     }
-                    crate::expansion_work::control::SynchronousExpandAfterPhase::NeedSecond => {
-                        if matches!(action, ExpandedCommandAction::Return) {
-                            self.complete_expandafter_continuation(command)?;
-                            fetch = true;
-                            continue;
-                        }
+                    // §403's recovery backs the rejected command up,
+                    // installs the synthetic opening brace in alignment
+                    // state, and then continues this same collector.
+                    self.recover_expanded_opening(*command)?;
+                    return Ok(ExpandedHotDispatch::Continue);
+                }
+                crate::expansion_work::control::SynchronousExpandedPhase::Collecting => {
+                    if matches!(
+                        control.kind,
+                        crate::expansion_work::control::SynchronousExpandedKind::Unexpanded
+                            | crate::expansion_work::control::SynchronousExpandedKind::Detokenize
+                    ) {
+                        let _ = self.append_expanded_word(command)?;
+                        return Ok(ExpandedHotDispatch::Continue);
                     }
-                    crate::expansion_work::control::SynchronousExpandAfterPhase::AwaitNested => {}
+                    if matches!(
+                        action,
+                        ExpandedCommandAction::Expand(ExpansionDispatch::Macro)
+                    ) && command
+                        .command_word()
+                        .flags()
+                        .contains(tex_state::meaning::MeaningFlags::PROTECTED)
+                    {
+                        // e-TeX's expanded collector suppresses protected
+                        // macros for this delivery while retaining their
+                        // original spelling in the resulting token list.
+                        command.suppress_expandable();
+                        let _ = self.append_expanded_word(command)?;
+                        return Ok(ExpandedHotDispatch::Continue);
+                    }
+                    if matches!(
+                        action,
+                        ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate
+                    ) {
+                        let _ = self.append_expanded_word(command)?;
+                        return Ok(ExpandedHotDispatch::Continue);
+                    }
                 }
             }
+        }
+        // Starting `\expanded` itself is a control-lane transition.  A
+        // nested occurrence follows the same path and is therefore
+        // reduced iteratively rather than invoking `scan_toks` from the
+        // live delivery frame.
+        if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+            ExpandablePrimitive::Expanded,
+        )) = action
+        {
+            self.begin_expanded_continuation(command.origin())?;
+            return Ok(ExpandedHotDispatch::Continue);
+        }
 
-            // `\if` and `\ifcat` each request two expanded operands. Keep
-            // only their compact scalar projection in the control lane; an
-            // operand that is itself expandable is allowed to run normally
-            // and returns here when its result settles.
-            let if_compare_control = self
-                .command
-                .scratch
-                .top_if_compare_control()
-                .map_err(crate::scan_toks::scratch_command_error)?;
-            if let Some(control) = if_compare_control {
-                match control.phase {
-                    crate::expansion_work::control::SynchronousIfComparePhase::NeedFirst => {
-                        if matches!(action, ExpandedCommandAction::Return) {
-                            self.command
-                                .scratch
-                                .save_if_compare_first(
-                                    command.conditional_character_code(),
-                                    (control.kind == crate::conditionals::ConditionalKind::IfCat)
-                                        .then(|| command.conditional_category_code())
-                                        .flatten(),
-                                )
-                                .map_err(crate::scan_toks::scratch_command_error)?;
-                            fetch = true;
-                            continue;
-                        }
-                    }
-                    crate::expansion_work::control::SynchronousIfComparePhase::NeedSecond {
-                        ..
-                    } => {
-                        if matches!(action, ExpandedCommandAction::Return) {
-                            self.complete_if_compare_continuation(command)?;
-                            fetch = true;
-                            continue;
-                        }
-                    }
-                    crate::expansion_work::control::SynchronousIfComparePhase::AwaitFirst
-                    | crate::expansion_work::control::SynchronousIfComparePhase::AwaitSecond {
-                        ..
-                    } => {}
+        // Within an expanded collector, `\unexpanded` consumes a raw
+        // balanced child and splices its words into the parent's writer.
+        // Keeping that child in the same control lane avoids the legacy
+        // collector's recursive scan and preserves expandable spellings.
+        if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+            ExpandablePrimitive::Unexpanded,
+        )) = action
+            && let Some(control) = expanded_control
+            && control.kind == crate::expansion_work::control::SynchronousExpandedKind::Expanded
+        {
+            self.begin_unexpanded_continuation(command.origin(), control.writer)?;
+            return Ok(ExpandedHotDispatch::Continue);
+        }
+
+        // `\detokenize` consumes its balanced child without expansion,
+        // but writes the canonical token spelling as character tokens
+        // directly into the enclosing expanded collector.
+        if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+            ExpandablePrimitive::Detokenize,
+        )) = action
+            && let Some(control) = expanded_control
+            && control.kind == crate::expansion_work::control::SynchronousExpandedKind::Expanded
+        {
+            self.begin_detokenize_continuation(command.origin(), control.writer)?;
+            return Ok(ExpandedHotDispatch::Continue);
+        }
+
+        // `\expandafter` owns two raw operands but only the second one is
+        // expanded. Its compact control intercepts the first command and
+        // then lets every nested expansion continue through this same
+        // delivery loop. Once that second stream settles on a returned
+        // command, backup/replay is performed at the semantic boundary.
+        let expandafter_control =
+            active_control_probe(active_control, ActiveControlTag::ExpandAfterSync, || {
+                self.command.scratch.top_expandafter_control()
+            })?;
+        if let Some(control) = expandafter_control {
+            match control.phase {
+                crate::expansion_work::control::SynchronousExpandAfterPhase::NeedFirst => {
+                    self.command
+                        .scratch
+                        .save_expandafter_first(*command)
+                        .map_err(crate::scan_toks::scratch_command_error)?;
+                    return Ok(ExpandedHotDispatch::Continue);
                 }
+                crate::expansion_work::control::SynchronousExpandAfterPhase::NeedSecond => {
+                    if matches!(action, ExpandedCommandAction::Return) {
+                        self.complete_expandafter_continuation(*command)?;
+                        return Ok(ExpandedHotDispatch::Continue);
+                    }
+                }
+                crate::expansion_work::control::SynchronousExpandAfterPhase::AwaitNested => {}
             }
+        }
 
-            // Numeric and dimension conditionals consume their common
-            // literal form directly from the hot command.  Expandable
-            // operands remain ordinary delivery actions and return to this
-            // compact phase instead of retaining a scalar scanner frame on
-            // the Rust stack.
-            let if_number_control = self
+        // `\if` and `\ifcat` each request two expanded operands. Keep
+        // only their compact scalar projection in the control lane; an
+        // operand that is itself expandable is allowed to run normally
+        // and returns here when its result settles.
+        let if_compare_control =
+            active_control_probe(active_control, ActiveControlTag::IfCompare, || {
+                self.command.scratch.top_if_compare_control()
+            })?;
+        if let Some(control) = if_compare_control {
+            match control.phase {
+                crate::expansion_work::control::SynchronousIfComparePhase::NeedFirst => {
+                    if matches!(action, ExpandedCommandAction::Return) {
+                        self.command
+                            .scratch
+                            .save_if_compare_first(
+                                command.conditional_character_code(),
+                                (control.kind == crate::conditionals::ConditionalKind::IfCat)
+                                    .then(|| command.conditional_category_code())
+                                    .flatten(),
+                            )
+                            .map_err(crate::scan_toks::scratch_command_error)?;
+                        return Ok(ExpandedHotDispatch::Continue);
+                    }
+                }
+                crate::expansion_work::control::SynchronousIfComparePhase::NeedSecond {
+                    ..
+                } => {
+                    if matches!(action, ExpandedCommandAction::Return) {
+                        self.complete_if_compare_continuation(*command)?;
+                        return Ok(ExpandedHotDispatch::Continue);
+                    }
+                }
+                crate::expansion_work::control::SynchronousIfComparePhase::AwaitFirst
+                | crate::expansion_work::control::SynchronousIfComparePhase::AwaitSecond {
+                    ..
+                } => {}
+            }
+        }
+
+        // Numeric and dimension conditionals consume their common
+        // literal form directly from the hot command.  Expandable
+        // operands remain ordinary delivery actions and return to this
+        // compact phase instead of retaining a scalar scanner frame on
+        // the Rust stack.
+        let if_number_control =
+            active_control_probe(active_control, ActiveControlTag::IfNumber, || {
+                self.command.scratch.top_if_number_control()
+            })?;
+        if let Some(control) = if_number_control {
+            let nested_delimiter = matches!(
+                action,
+                ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+                    ExpandablePrimitive::Else | ExpandablePrimitive::Or | ExpandablePrimitive::Fi,
+                ))
+            ) && self
                 .command
-                .scratch
-                .top_if_number_control()
-                .map_err(crate::scan_toks::scratch_command_error)?;
-            if let Some(control) = if_number_control {
-                let nested_delimiter = matches!(
-                    action,
-                    ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+                .conditions
+                .current()
+                .is_some_and(|frame| frame.identity != control.condition);
+            if matches!(
+                action,
+                ExpandedCommandAction::Return
+                    | ExpandedCommandAction::EndTemplate
+                    | ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
                         ExpandablePrimitive::Else
                             | ExpandablePrimitive::Or
                             | ExpandablePrimitive::Fi,
                     ))
-                ) && self
-                    .command
-                    .conditions
-                    .current()
-                    .is_some_and(|frame| frame.identity != control.condition);
-                if matches!(
-                    action,
-                    ExpandedCommandAction::Return
-                        | ExpandedCommandAction::EndTemplate
-                        | ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-                            ExpandablePrimitive::Else
-                                | ExpandablePrimitive::Or
-                                | ExpandablePrimitive::Fi,
-                        ))
-                ) && !nested_delimiter && !matches!(
+            ) && !nested_delimiter
+                && !matches!(
                     control.phase,
                     crate::expansion_work::control::SynchronousIfNumberPhase::AwaitLeft { .. }
                         | crate::expansion_work::control::SynchronousIfNumberPhase::AwaitRelation { .. }
                         | crate::expansion_work::control::SynchronousIfNumberPhase::AwaitRight { .. }
-                ) {
-                    match self.advance_if_number_continuation(command)? {
-                        crate::conditionals::IfNumberAdvance::Continue
-                        | crate::conditionals::IfNumberAdvance::Complete => {
-                            fetch = true;
-                            continue;
-                        }
+                )
+            {
+                match self.advance_if_number_continuation(*command)? {
+                    crate::conditionals::IfNumberAdvance::Continue
+                    | crate::conditionals::IfNumberAdvance::Complete => {
+                        return Ok(ExpandedHotDispatch::Continue);
                     }
                 }
             }
+        }
 
-            let if_dimension_control = self
+        let if_dimension_control =
+            active_control_probe(active_control, ActiveControlTag::IfDimension, || {
+                self.command.scratch.top_if_dimension_control()
+            })?;
+        if let Some(control) = if_dimension_control {
+            let nested_delimiter = matches!(
+                action,
+                ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+                    ExpandablePrimitive::Else | ExpandablePrimitive::Or | ExpandablePrimitive::Fi,
+                ))
+            ) && self
                 .command
-                .scratch
-                .top_if_dimension_control()
-                .map_err(crate::scan_toks::scratch_command_error)?;
-            if let Some(control) = if_dimension_control {
-                let nested_delimiter = matches!(
-                    action,
-                    ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-                        ExpandablePrimitive::Else
-                            | ExpandablePrimitive::Or
-                            | ExpandablePrimitive::Fi,
-                    ))
-                ) && self
-                    .command
-                    .conditions
-                    .current()
-                    .is_some_and(|frame| frame.identity != control.condition);
-                if matches!(
+                .conditions
+                .current()
+                .is_some_and(|frame| frame.identity != control.condition);
+            if matches!(
                     action,
                     ExpandedCommandAction::Return
                         | ExpandedCommandAction::EndTemplate
@@ -1421,602 +1582,587 @@ impl<G> CommandProcessor<'_, '_, G> {
                             ..
                         }
                 ) {
-                    match self.advance_if_dimension_continuation(command)? {
+                    match self.advance_if_dimension_continuation(*command)? {
                         crate::conditionals::IfDimensionAdvance::Continue
                         | crate::conditionals::IfDimensionAdvance::Complete => {
-                            fetch = true;
-                            continue;
+                            return Ok(ExpandedHotDispatch::Continue);
                         }
                     }
                 }
-            }
+        }
 
-            let number_control = self
-                .command
-                .scratch
-                .top_number_control()
-                .map_err(crate::scan_toks::scratch_command_error)?;
-            if let Some(control) = number_control
-                && matches!(
-                    action,
-                    ExpandedCommandAction::Return
-                        | ExpandedCommandAction::EndTemplate
-                        | ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-                            ExpandablePrimitive::Else
-                                | ExpandablePrimitive::Or
-                                | ExpandablePrimitive::Fi,
-                        ))
-                ) && !matches!(
-                    control.phase,
-                    crate::expansion_work::control::SynchronousNumberPhase::Await { .. }
-                        | crate::expansion_work::control::SynchronousNumberPhase::RegisterIndexAwait {
-                            ..
+        let number_control =
+            active_control_probe(active_control, ActiveControlTag::Number, || {
+                self.command.scratch.top_number_control()
+            })?;
+        if let Some(control) = number_control
+            && matches!(
+                action,
+                ExpandedCommandAction::Return
+                    | ExpandedCommandAction::EndTemplate
+                    | ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+                        ExpandablePrimitive::Else
+                            | ExpandablePrimitive::Or
+                            | ExpandablePrimitive::Fi,
+                    ))
+            )
+            && !matches!(
+                control.phase,
+                crate::expansion_work::control::SynchronousNumberPhase::Await { .. }
+                    | crate::expansion_work::control::SynchronousNumberPhase::RegisterIndexAwait { .. }
+            )
+        {
+            let _complete = self.advance_number_continuation(*command)?;
+            return Ok(ExpandedHotDispatch::Continue);
+        }
+
+        let ximage_bbox_control =
+            active_control_probe(active_control, ActiveControlTag::PdfXImageBBox, || {
+                self.command.scratch.top_pdf_ximage_bbox_control()
+            })?;
+        if ximage_bbox_control.is_some()
+            && matches!(
+                action,
+                ExpandedCommandAction::Return
+                    | ExpandedCommandAction::EndTemplate
+                    | ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+                        ExpandablePrimitive::Else
+                            | ExpandablePrimitive::Or
+                            | ExpandablePrimitive::Fi,
+                    ))
+            )
+        {
+            let _ = self.advance_pdf_ximage_bbox_continuation(*command, false)?;
+            return Ok(ExpandedHotDispatch::Continue);
+        }
+
+        // `\fontname` consumes one expanded font identifier.  Keep its
+        // opener in the compact control lane so nested conversions are
+        // reduced by this loop rather than by recursively re-entering a
+        // font scanner.
+        let fontname_control =
+            active_control_probe(active_control, ActiveControlTag::FontName, || {
+                self.command.scratch.top_fontname_control()
+            })?;
+        if fontname_control.is_some() {
+            match action {
+                ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+                    primitive @ (ExpandablePrimitive::FontName
+                    | ExpandablePrimitive::PdfFontSize
+                    | ExpandablePrimitive::PdfFontName
+                    | ExpandablePrimitive::PdfFontObjectNumber),
+                )) => {
+                    match primitive {
+                        ExpandablePrimitive::FontName => {
+                            self.begin_fontname_continuation(command.origin())?;
                         }
-                )
-            {
-                let _complete = self.advance_number_continuation(command)?;
-                fetch = true;
-                continue;
-            }
-
-            let ximage_bbox_control = self
-                .command
-                .scratch
-                .top_pdf_ximage_bbox_control()
-                .map_err(crate::scan_toks::scratch_command_error)?;
-            if ximage_bbox_control.is_some()
-                && matches!(
-                    action,
-                    ExpandedCommandAction::Return
-                        | ExpandedCommandAction::EndTemplate
-                        | ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-                            ExpandablePrimitive::Else
-                                | ExpandablePrimitive::Or
-                                | ExpandablePrimitive::Fi,
-                        ))
-                )
-            {
-                let _ = self.advance_pdf_ximage_bbox_continuation(command, false)?;
-                fetch = true;
-                continue;
-            }
-
-            // `\fontname` consumes one expanded font identifier.  Keep its
-            // opener in the compact control lane so nested conversions are
-            // reduced by this loop rather than by recursively re-entering a
-            // font scanner.
-            let fontname_control = self
-                .command
-                .scratch
-                .top_fontname_control()
-                .map_err(crate::scan_toks::scratch_command_error)?;
-            if fontname_control.is_some() {
-                match action {
-                    ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-                        primitive @ (ExpandablePrimitive::FontName
-                        | ExpandablePrimitive::PdfFontSize
-                        | ExpandablePrimitive::PdfFontName
-                        | ExpandablePrimitive::PdfFontObjectNumber),
-                    )) => {
-                        match primitive {
-                            ExpandablePrimitive::FontName => {
-                                self.begin_fontname_continuation(command.origin())?;
-                            }
-                            ExpandablePrimitive::PdfFontSize => {
-                                self.begin_pdf_font_size_continuation(command.origin())?;
-                            }
-                            ExpandablePrimitive::PdfFontName => {
-                                self.begin_pdf_font_name_continuation(command.origin())?;
-                            }
-                            ExpandablePrimitive::PdfFontObjectNumber => {
-                                self.begin_pdf_font_object_number_continuation(command.origin())?;
-                            }
-                            _ => unreachable!("font control branch validates its primitive"),
+                        ExpandablePrimitive::PdfFontSize => {
+                            self.begin_pdf_font_size_continuation(command.origin())?;
                         }
-                        fetch = true;
-                        continue;
+                        ExpandablePrimitive::PdfFontName => {
+                            self.begin_pdf_font_name_continuation(command.origin())?;
+                        }
+                        ExpandablePrimitive::PdfFontObjectNumber => {
+                            self.begin_pdf_font_object_number_continuation(command.origin())?;
+                        }
+                        _ => unreachable!("font control branch validates its primitive"),
                     }
-                    ExpandedCommandAction::Expand(_) => {}
-                    ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate => {
-                        self.complete_fontname_continuation(command)?;
-                        fetch = true;
-                        continue;
-                    }
+                    return Ok(ExpandedHotDispatch::Continue);
+                }
+                ExpandedCommandAction::Expand(_) => {}
+                ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate => {
+                    self.complete_fontname_continuation(*command)?;
+                    return Ok(ExpandedHotDispatch::Continue);
                 }
             }
+        }
 
-            // The comparison controls are entered from the hot loop rather
-            // than through the legacy scalar conditional evaluator. Keeping
-            // this cutover here leaves that evaluator available to cold
-            // callers while every ordinary delivery stays on one loop.
-            if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-                primitive @ (ExpandablePrimitive::If
-                | ExpandablePrimitive::IfCat
-                | ExpandablePrimitive::IfNum
-                | ExpandablePrimitive::IfPdfAbsNum
-                | ExpandablePrimitive::IfDim
-                | ExpandablePrimitive::IfPdfAbsDim
-                | ExpandablePrimitive::IfOdd
-                | ExpandablePrimitive::IfCase
-                | ExpandablePrimitive::IfVoid
-                | ExpandablePrimitive::IfHBox
-                | ExpandablePrimitive::IfVBox
-                | ExpandablePrimitive::IfEof
-                | ExpandablePrimitive::IfFontChar),
-            )) = action
-            {
-                let kind = crate::conditionals::ConditionalKind::from_primitive(primitive)
-                    .ok_or_else(CommandError::input_invariant)?;
-                if matches!(
-                    kind,
-                    crate::conditionals::ConditionalKind::If
-                        | crate::conditionals::ConditionalKind::IfCat
-                ) {
-                    self.begin_if_compare_continuation(kind, false)?;
-                } else if matches!(
-                    kind,
-                    crate::conditionals::ConditionalKind::IfDim
-                        | crate::conditionals::ConditionalKind::IfPdfAbsDim
-                ) {
-                    self.begin_if_dimension_continuation(kind, false)?;
-                } else {
-                    self.begin_if_number_continuation(kind, false)?;
+        // The comparison controls are entered from the hot loop rather
+        // than through the legacy scalar conditional evaluator. Keeping
+        // this cutover here leaves that evaluator available to cold
+        // callers while every ordinary delivery stays on one loop.
+        if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+            primitive @ (ExpandablePrimitive::If
+            | ExpandablePrimitive::IfCat
+            | ExpandablePrimitive::IfNum
+            | ExpandablePrimitive::IfPdfAbsNum
+            | ExpandablePrimitive::IfDim
+            | ExpandablePrimitive::IfPdfAbsDim
+            | ExpandablePrimitive::IfOdd
+            | ExpandablePrimitive::IfCase
+            | ExpandablePrimitive::IfVoid
+            | ExpandablePrimitive::IfHBox
+            | ExpandablePrimitive::IfVBox
+            | ExpandablePrimitive::IfEof
+            | ExpandablePrimitive::IfFontChar),
+        )) = action
+        {
+            let kind = crate::conditionals::ConditionalKind::from_primitive(primitive)
+                .ok_or_else(CommandError::input_invariant)?;
+            if matches!(
+                kind,
+                crate::conditionals::ConditionalKind::If
+                    | crate::conditionals::ConditionalKind::IfCat
+            ) {
+                self.begin_if_compare_continuation(kind, false)?;
+            } else if matches!(
+                kind,
+                crate::conditionals::ConditionalKind::IfDim
+                    | crate::conditionals::ConditionalKind::IfPdfAbsDim
+            ) {
+                self.begin_if_dimension_continuation(kind, false)?;
+            } else {
+                self.begin_if_number_continuation(kind, false)?;
+            }
+            return Ok(ExpandedHotDispatch::Continue);
+        }
+
+        if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+            primitive @ (ExpandablePrimitive::FontName
+            | ExpandablePrimitive::PdfFontSize
+            | ExpandablePrimitive::PdfFontName
+            | ExpandablePrimitive::PdfFontObjectNumber),
+        )) = action
+        {
+            match primitive {
+                ExpandablePrimitive::FontName => {
+                    self.begin_fontname_continuation(command.origin())?;
                 }
-                fetch = true;
-                continue;
-            }
-
-            if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-                primitive @ (ExpandablePrimitive::FontName
-                | ExpandablePrimitive::PdfFontSize
-                | ExpandablePrimitive::PdfFontName
-                | ExpandablePrimitive::PdfFontObjectNumber),
-            )) = action
-            {
-                match primitive {
-                    ExpandablePrimitive::FontName => {
-                        self.begin_fontname_continuation(command.origin())?;
-                    }
-                    ExpandablePrimitive::PdfFontSize => {
-                        self.begin_pdf_font_size_continuation(command.origin())?;
-                    }
-                    ExpandablePrimitive::PdfFontName => {
-                        self.begin_pdf_font_name_continuation(command.origin())?;
-                    }
-                    ExpandablePrimitive::PdfFontObjectNumber => {
-                        self.begin_pdf_font_object_number_continuation(command.origin())?;
-                    }
-                    _ => unreachable!("font primitive branch validates its primitive"),
+                ExpandablePrimitive::PdfFontSize => {
+                    self.begin_pdf_font_size_continuation(command.origin())?;
                 }
-                fetch = true;
-                continue;
-            }
-
-            if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-                primitive @ (ExpandablePrimitive::PdfInsertHeight
-                | ExpandablePrimitive::PdfXFormName
-                | ExpandablePrimitive::PdfPageRef
-                | ExpandablePrimitive::PdfLastMatch),
-            )) = action
-            {
-                match primitive {
-                    ExpandablePrimitive::PdfInsertHeight => {
-                        self.begin_pdf_insert_height_continuation(command.origin())?;
-                    }
-                    ExpandablePrimitive::PdfXFormName => {
-                        self.begin_pdf_xform_name_continuation(command.origin())?;
-                    }
-                    ExpandablePrimitive::PdfPageRef => {
-                        self.begin_pdf_page_ref_continuation(command.origin())?;
-                    }
-                    ExpandablePrimitive::PdfLastMatch => {
-                        self.begin_pdf_last_match_continuation(command.origin())?;
-                    }
-                    _ => unreachable!("PDF integer branch validates its primitive"),
+                ExpandablePrimitive::PdfFontName => {
+                    self.begin_pdf_font_name_continuation(command.origin())?;
                 }
-                fetch = true;
-                continue;
-            }
-
-            if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-                ExpandablePrimitive::PdfXImageBBox,
-            )) = action
-            {
-                self.begin_pdf_ximage_bbox_continuation(command.origin())?;
-                fetch = true;
-                continue;
-            }
-
-            if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-                primitive @ (ExpandablePrimitive::PdfEscapeString
-                | ExpandablePrimitive::PdfEscapeHex
-                | ExpandablePrimitive::PdfUnescapeHex
-                | ExpandablePrimitive::StringCompare),
-            )) = action
-            {
-                let kind = match primitive {
-                    ExpandablePrimitive::PdfEscapeString => crate::expansion_work::control::SynchronousExpandedKind::PdfEscapeString,
-                    ExpandablePrimitive::PdfEscapeHex => crate::expansion_work::control::SynchronousExpandedKind::PdfEscapeHex,
-                    ExpandablePrimitive::PdfUnescapeHex => crate::expansion_work::control::SynchronousExpandedKind::PdfUnescapeHex,
-                    ExpandablePrimitive::StringCompare => crate::expansion_work::control::SynchronousExpandedKind::PdfStringCompareLeft,
-                    _ => unreachable!("PDF string branch validates its primitive"),
-                };
-                self.begin_pdf_string_continuation(command.origin(), kind)?;
-                fetch = true;
-                continue;
-            }
-
-            if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-                primitive @ (ExpandablePrimitive::TopMark
-                | ExpandablePrimitive::FirstMark
-                | ExpandablePrimitive::BotMark
-                | ExpandablePrimitive::SplitFirstMark
-                | ExpandablePrimitive::SplitBotMark),
-            )) = action
-            {
-                self.expand_mark(primitive)?;
-                fetch = true;
-                continue;
-            }
-
-            if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-                primitive @ (ExpandablePrimitive::TopMarks
-                | ExpandablePrimitive::FirstMarks
-                | ExpandablePrimitive::BotMarks
-                | ExpandablePrimitive::SplitFirstMarks
-                | ExpandablePrimitive::SplitBotMarks),
-            )) = action
-            {
-                self.begin_mark_class_continuation(command.origin(), primitive)?;
-                fetch = true;
-                continue;
-            }
-
-            if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-                primitive @ (ExpandablePrimitive::Number | ExpandablePrimitive::RomanNumeral),
-            )) = action
-            {
-                self.begin_number_continuation(
-                    command.origin(),
-                    primitive == ExpandablePrimitive::RomanNumeral,
-                )?;
-                fetch = true;
-                continue;
-            }
-
-            // pdfTeX's uniform-deviate conversion shares TeX's integer
-            // operand grammar. Give it the same compact accumulator so a
-            // nested enquiry returns through this driver instead of
-            // re-entering the retained scalar scanner.
-            if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-                ExpandablePrimitive::PdfUniformDeviate,
-            )) = action
-            {
-                self.begin_pdf_uniform_deviate_continuation(command.origin())?;
-                fetch = true;
-                continue;
-            }
-
-            if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-                primitive @ (ExpandablePrimitive::LeftMarginKern
-                | ExpandablePrimitive::RightMarginKern),
-            )) = action
-            {
-                let side = if primitive == ExpandablePrimitive::LeftMarginKern {
-                    tex_state::node::MarginKernSide::Left
-                } else {
-                    tex_state::node::MarginKernSide::Right
-                };
-                self.begin_pdf_margin_kern_continuation(command.origin(), side)?;
-                fetch = true;
-                continue;
-            }
-
-            // A `\the` scalar child may cross an immutable resource barrier
-            // (for example while resolving a font/register operand).  Its
-            // control has already been removed before entering the scalar
-            // scanner, so the resumed phase carries only the opener origin
-            // and re-enters this same loop with the original target command.
-            // This branch must run before ordinary classification: the
-            // restored command is the target, not a new top-level expansion.
-            let resumed_the = match self.resumed_expansion.take() {
-                Some(crate::state::PendingExpansionResume::The { opener }) => Some(opener),
-                Some(other) => {
-                    self.resumed_expansion = Some(other);
-                    None
+                ExpandablePrimitive::PdfFontObjectNumber => {
+                    self.begin_pdf_font_object_number_continuation(command.origin())?;
                 }
-                None => None,
+                _ => unreachable!("font primitive branch validates its primitive"),
+            }
+            return Ok(ExpandedHotDispatch::Continue);
+        }
+
+        if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+            primitive @ (ExpandablePrimitive::PdfInsertHeight
+            | ExpandablePrimitive::PdfXFormName
+            | ExpandablePrimitive::PdfPageRef
+            | ExpandablePrimitive::PdfLastMatch),
+        )) = action
+        {
+            match primitive {
+                ExpandablePrimitive::PdfInsertHeight => {
+                    self.begin_pdf_insert_height_continuation(command.origin())?;
+                }
+                ExpandablePrimitive::PdfXFormName => {
+                    self.begin_pdf_xform_name_continuation(command.origin())?;
+                }
+                ExpandablePrimitive::PdfPageRef => {
+                    self.begin_pdf_page_ref_continuation(command.origin())?;
+                }
+                ExpandablePrimitive::PdfLastMatch => {
+                    self.begin_pdf_last_match_continuation(command.origin())?;
+                }
+                _ => unreachable!("PDF integer branch validates its primitive"),
+            }
+            return Ok(ExpandedHotDispatch::Continue);
+        }
+
+        if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+            ExpandablePrimitive::PdfXImageBBox,
+        )) = action
+        {
+            self.begin_pdf_ximage_bbox_continuation(command.origin())?;
+            return Ok(ExpandedHotDispatch::Continue);
+        }
+
+        if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+            primitive @ (ExpandablePrimitive::PdfEscapeString
+            | ExpandablePrimitive::PdfEscapeHex
+            | ExpandablePrimitive::PdfUnescapeHex
+            | ExpandablePrimitive::StringCompare),
+        )) = action
+        {
+            let kind = match primitive {
+                ExpandablePrimitive::PdfEscapeString => {
+                    crate::expansion_work::control::SynchronousExpandedKind::PdfEscapeString
+                }
+                ExpandablePrimitive::PdfEscapeHex => {
+                    crate::expansion_work::control::SynchronousExpandedKind::PdfEscapeHex
+                }
+                ExpandablePrimitive::PdfUnescapeHex => {
+                    crate::expansion_work::control::SynchronousExpandedKind::PdfUnescapeHex
+                }
+                ExpandablePrimitive::StringCompare => {
+                    crate::expansion_work::control::SynchronousExpandedKind::PdfStringCompareLeft
+                }
+                _ => unreachable!("PDF string branch validates its primitive"),
             };
-            if let Some(opener) = resumed_the {
-                let target = command.materialize();
-                match self.complete_the_continuation(&target, opener) {
-                    Ok(()) => {
-                        fetch = true;
-                        continue;
-                    }
-                    Err(error) if error.is_resource_suspension() => {
-                        return self.park_the_continuation(
+            self.begin_pdf_string_continuation(command.origin(), kind)?;
+            return Ok(ExpandedHotDispatch::Continue);
+        }
+
+        if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+            primitive @ (ExpandablePrimitive::TopMark
+            | ExpandablePrimitive::FirstMark
+            | ExpandablePrimitive::BotMark
+            | ExpandablePrimitive::SplitFirstMark
+            | ExpandablePrimitive::SplitBotMark),
+        )) = action
+        {
+            self.expand_mark(primitive)?;
+            return Ok(ExpandedHotDispatch::Continue);
+        }
+
+        if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+            primitive @ (ExpandablePrimitive::TopMarks
+            | ExpandablePrimitive::FirstMarks
+            | ExpandablePrimitive::BotMarks
+            | ExpandablePrimitive::SplitFirstMarks
+            | ExpandablePrimitive::SplitBotMarks),
+        )) = action
+        {
+            self.begin_mark_class_continuation(command.origin(), primitive)?;
+            return Ok(ExpandedHotDispatch::Continue);
+        }
+
+        if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+            primitive @ (ExpandablePrimitive::Number | ExpandablePrimitive::RomanNumeral),
+        )) = action
+        {
+            self.begin_number_continuation(
+                command.origin(),
+                primitive == ExpandablePrimitive::RomanNumeral,
+            )?;
+            return Ok(ExpandedHotDispatch::Continue);
+        }
+
+        // pdfTeX's uniform-deviate conversion shares TeX's integer
+        // operand grammar. Give it the same compact accumulator so a
+        // nested enquiry returns through this driver instead of
+        // re-entering the retained scalar scanner.
+        if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+            ExpandablePrimitive::PdfUniformDeviate,
+        )) = action
+        {
+            self.begin_pdf_uniform_deviate_continuation(command.origin())?;
+            return Ok(ExpandedHotDispatch::Continue);
+        }
+
+        if let ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+            primitive
+            @ (ExpandablePrimitive::LeftMarginKern | ExpandablePrimitive::RightMarginKern),
+        )) = action
+        {
+            let side = if primitive == ExpandablePrimitive::LeftMarginKern {
+                tex_state::node::MarginKernSide::Left
+            } else {
+                tex_state::node::MarginKernSide::Right
+            };
+            self.begin_pdf_margin_kern_continuation(command.origin(), side)?;
+            return Ok(ExpandedHotDispatch::Continue);
+        }
+
+        // A `\the` scalar child may cross an immutable resource barrier
+        // (for example while resolving a font/register operand).  Its
+        // control has already been removed before entering the scalar
+        // scanner, so the resumed phase carries only the opener origin
+        // and re-enters this same loop with the original target command.
+        // This branch must run before ordinary classification: the
+        // restored command is the target, not a new top-level expansion.
+        let resumed_the = match self.resumed_expansion.take() {
+            Some(crate::state::PendingExpansionResume::The { opener }) => Some(opener),
+            Some(other) => {
+                self.resumed_expansion = Some(other);
+                None
+            }
+            None => None,
+        };
+        if let Some(opener) = resumed_the {
+            let target = command.materialize();
+            match self.complete_the_continuation(&target, opener) {
+                Ok(()) => {
+                    return Ok(ExpandedHotDispatch::Continue);
+                }
+                Err(error) if error.is_resource_suspension() => {
+                    return self
+                        .park_the_continuation(
                             target,
                             opener,
-                            delivery_expanded,
+                            *delivery_expanded,
                             error,
                             destination,
                             depth,
-                        );
-                    }
-                    Err(error) => {
-                        return self.fail_hot_expanded_delivery(destination, depth, error);
-                    }
+                        )
+                        .map(ExpandedHotDispatch::Finished);
+                }
+                Err(error) => {
+                    return self.fail_expanded_dispatch(destination, depth, error);
                 }
             }
+        }
 
-            // `\csname` is another expanded-token consumer. Its spelling is
-            // kept in the generation-owned name lane while this compact
-            // control remains at the top of the same delivery stack. Nested
-            // character-producing expansions therefore return here instead
-            // of entering `scan_csname_characters` recursively.
-            let csname_control = self
-                .command
-                .scratch
-                .top_csname_control()
-                .map_err(crate::scan_toks::scratch_command_error)?;
-            if csname_control.is_some() {
-                match action {
+        // `\csname` is another expanded-token consumer. Its spelling is
+        // kept in the generation-owned name lane while this compact
+        // control remains at the top of the same delivery stack. Nested
+        // character-producing expansions therefore return here instead
+        // of entering `scan_csname_characters` recursively.
+        let csname_control =
+            active_control_probe(active_control, ActiveControlTag::CsName, || {
+                self.command.scratch.top_csname_control()
+            })?;
+        if csname_control.is_some() {
+            match action {
+                ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+                    ExpandablePrimitive::CsName,
+                )) => {
+                    self.begin_csname_continuation(command.origin())?;
+                    return Ok(ExpandedHotDispatch::Continue);
+                }
+                ExpandedCommandAction::Expand(_) => {}
+                ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate => {
+                    if command.command_word().expandable_primitive()
+                        == Some(ExpandablePrimitive::EndCsName)
+                    {
+                        self.complete_csname_continuation(None)?;
+                    } else if let Some(character) = command.character_token() {
+                        self.append_csname_character(character)?;
+                        return Ok(ExpandedHotDispatch::Continue);
+                    } else {
+                        self.complete_csname_continuation(Some(command.materialize()))?;
+                    }
+                    return Ok(ExpandedHotDispatch::Continue);
+                }
+            }
+        }
+
+        // `\ifcsname` shares the expanded character stream with
+        // `\csname`, but its terminator completes a conditional frame
+        // instead of backing a control-sequence token. Keeping this
+        // predicate in the same control lane removes the recursive
+        // scanner edge while preserving the evaluating condition limit.
+        let ifcsname_control =
+            active_control_probe(active_control, ActiveControlTag::IfCsName, || {
+                self.command.scratch.top_ifcsname_control()
+            })?;
+        if ifcsname_control.is_some() {
+            match action {
+                ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
+                    ExpandablePrimitive::IfCsName,
+                )) => {
+                    self.begin_ifcsname_continuation(false)?;
+                    return Ok(ExpandedHotDispatch::Continue);
+                }
+                ExpandedCommandAction::Expand(_) => {}
+                ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate => {
+                    if command.command_word().expandable_primitive()
+                        == Some(ExpandablePrimitive::EndCsName)
+                    {
+                        self.complete_ifcsname_continuation(None)?;
+                    } else if let Some(character) = command.character_token() {
+                        self.append_csname_character(character)?;
+                        return Ok(ExpandedHotDispatch::Continue);
+                    } else {
+                        self.complete_ifcsname_continuation(Some(command.materialize()))?;
+                    }
+                    return Ok(ExpandedHotDispatch::Continue);
+                }
+            }
+        }
+
+        // A `\the` operand is itself an expanded-token request.  Keep
+        // that request in the generation-owned control lane and consume
+        // targets from this same hot loop.  In particular, a nested
+        // `\the` pushes another copy-small control and never invokes a
+        // second `expanded_next`/`get_x_token` call.  We remove the
+        // completed control before entering a scalar scanner because a
+        // register's own index probe is an independent scalar child.
+        let the_control = active_control_probe(active_control, ActiveControlTag::The, || {
+            self.command.scratch.top_the_control()
+        })?;
+        if let Some(the_control) = the_control {
+            match (the_control.phase, action) {
+                (
+                    crate::expansion_work::control::ThePhase::NeedTarget,
                     ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-                        ExpandablePrimitive::CsName,
-                    )) => {
-                        self.begin_csname_continuation(command.origin())?;
-                        fetch = true;
-                        continue;
-                    }
-                    ExpandedCommandAction::Expand(_) => {}
-                    ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate => {
-                        if command.command_word().expandable_primitive()
-                            == Some(ExpandablePrimitive::EndCsName)
-                        {
-                            self.complete_csname_continuation(None)?;
-                        } else if let Some(character) = command.character_token() {
-                            self.append_csname_character(character)?;
-                            fetch = true;
-                            continue;
-                        } else {
-                            self.complete_csname_continuation(Some(command.materialize()))?;
-                        }
-                        fetch = true;
-                        continue;
-                    }
+                        ExpandablePrimitive::The,
+                    )),
+                ) => {
+                    self.begin_the_continuation(command.origin())?;
+                    return Ok(ExpandedHotDispatch::Continue);
                 }
-            }
-
-            // `\ifcsname` shares the expanded character stream with
-            // `\csname`, but its terminator completes a conditional frame
-            // instead of backing a control-sequence token. Keeping this
-            // predicate in the same control lane removes the recursive
-            // scanner edge while preserving the evaluating condition limit.
-            let ifcsname_control = self
-                .command
-                .scratch
-                .top_ifcsname_control()
-                .map_err(crate::scan_toks::scratch_command_error)?;
-            if ifcsname_control.is_some() {
-                match action {
-                    ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-                        ExpandablePrimitive::IfCsName,
-                    )) => {
-                        self.begin_ifcsname_continuation(false)?;
-                        fetch = true;
-                        continue;
+                (
+                    crate::expansion_work::control::ThePhase::NeedTarget,
+                    ExpandedCommandAction::Expand(_),
+                ) => {}
+                (
+                    crate::expansion_work::control::ThePhase::Index { .. },
+                    ExpandedCommandAction::Expand(_),
+                ) => {}
+                (
+                    crate::expansion_work::control::ThePhase::Expression { .. },
+                    ExpandedCommandAction::Expand(_),
+                ) => {}
+                (
+                    crate::expansion_work::control::ThePhase::DimensionExpression { .. },
+                    ExpandedCommandAction::Expand(_),
+                ) => {}
+                (
+                    crate::expansion_work::control::ThePhase::Index { .. },
+                    ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate,
+                ) => {
+                    if self.advance_the_index_continuation(*command)? {
+                        return Ok(ExpandedHotDispatch::Continue);
                     }
-                    ExpandedCommandAction::Expand(_) => {}
-                    ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate => {
-                        if command.command_word().expandable_primitive()
-                            == Some(ExpandablePrimitive::EndCsName)
-                        {
-                            self.complete_ifcsname_continuation(None)?;
-                        } else if let Some(character) = command.character_token() {
-                            self.append_csname_character(character)?;
-                            fetch = true;
-                            continue;
-                        } else {
-                            self.complete_ifcsname_continuation(Some(command.materialize()))?;
-                        }
-                        fetch = true;
-                        continue;
-                    }
+                    return Ok(ExpandedHotDispatch::Continue);
                 }
-            }
-
-            // A `\the` operand is itself an expanded-token request.  Keep
-            // that request in the generation-owned control lane and consume
-            // targets from this same hot loop.  In particular, a nested
-            // `\the` pushes another copy-small control and never invokes a
-            // second `expanded_next`/`get_x_token` call.  We remove the
-            // completed control before entering a scalar scanner because a
-            // register's own index probe is an independent scalar child.
-            let the_control = self
-                .command
-                .scratch
-                .top_the_control()
-                .map_err(crate::scan_toks::scratch_command_error)?;
-            if let Some(the_control) = the_control {
-                match (the_control.phase, action) {
-                    (
-                        crate::expansion_work::control::ThePhase::NeedTarget,
-                        ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-                            ExpandablePrimitive::The,
-                        )),
-                    ) => {
-                        self.begin_the_continuation(command.origin())?;
-                        fetch = true;
-                        continue;
+                (
+                    crate::expansion_work::control::ThePhase::Expression { .. },
+                    ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate,
+                ) => {
+                    if self.advance_the_expression_continuation(*command)? {
+                        return Ok(ExpandedHotDispatch::Continue);
                     }
-                    (
-                        crate::expansion_work::control::ThePhase::NeedTarget,
-                        ExpandedCommandAction::Expand(_),
-                    ) => {}
-                    (
-                        crate::expansion_work::control::ThePhase::Index { .. },
-                        ExpandedCommandAction::Expand(_),
-                    ) => {}
-                    (
-                        crate::expansion_work::control::ThePhase::Expression { .. },
-                        ExpandedCommandAction::Expand(_),
-                    ) => {}
-                    (
-                        crate::expansion_work::control::ThePhase::DimensionExpression { .. },
-                        ExpandedCommandAction::Expand(_),
-                    ) => {}
-                    (
-                        crate::expansion_work::control::ThePhase::Index { .. },
-                        ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate,
-                    ) => {
-                        if self.advance_the_index_continuation(command)? {
-                            fetch = true;
-                            continue;
-                        }
-                        fetch = true;
-                        continue;
+                    return Ok(ExpandedHotDispatch::Continue);
+                }
+                (
+                    crate::expansion_work::control::ThePhase::DimensionExpression { .. },
+                    ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate,
+                ) => {
+                    if self.advance_the_dimension_expression_continuation(*command)? {
+                        return Ok(ExpandedHotDispatch::Continue);
                     }
-                    (
-                        crate::expansion_work::control::ThePhase::Expression { .. },
-                        ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate,
-                    ) => {
-                        if self.advance_the_expression_continuation(command)? {
-                            fetch = true;
-                            continue;
-                        }
-                        fetch = true;
-                        continue;
+                    return Ok(ExpandedHotDispatch::Continue);
+                }
+                (
+                    crate::expansion_work::control::ThePhase::NeedTarget,
+                    ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate,
+                ) => {
+                    let meaning = match command.resolved_meaning() {
+                        ResolvedMeaning::Static(meaning) => meaning,
+                        ResolvedMeaning::Macro { .. } => Meaning::Undefined,
+                    };
+                    if Self::compact_the_expression_target(meaning) {
+                        self.command.scratch.set_the_phase(
+                            crate::expansion_work::control::ThePhase::Expression {
+                                target: meaning,
+                                expression: 0,
+                                expression_sign: 1,
+                                term: 0,
+                                term_operator: 0,
+                                term_active: false,
+                                negative: false,
+                                value: 0,
+                                seen_digit: false,
+                            },
+                        )?;
+                        return Ok(ExpandedHotDispatch::Continue);
                     }
-                    (
-                        crate::expansion_work::control::ThePhase::DimensionExpression { .. },
-                        ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate,
-                    ) => {
-                        if self.advance_the_dimension_expression_continuation(command)? {
-                            fetch = true;
-                            continue;
-                        }
-                        fetch = true;
-                        continue;
+                    if Self::compact_the_dimension_expression_target(meaning) {
+                        self.command.scratch.set_the_phase(
+                            crate::expansion_work::control::ThePhase::DimensionExpression {
+                                target: meaning,
+                                as_number: false,
+                                expression: 0,
+                                expression_sign: 1,
+                                term: 0,
+                                term_operator: 0,
+                                term_active: false,
+                                negative: false,
+                                value: 0,
+                                fraction: 0,
+                                fraction_digits: 0,
+                                decimal: false,
+                                unit: 0,
+                                seen_digit: false,
+                            },
+                        )?;
+                        return Ok(ExpandedHotDispatch::Continue);
                     }
-                    (
-                        crate::expansion_work::control::ThePhase::NeedTarget,
-                        ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate,
-                    ) => {
-                        let meaning = match command.resolved_meaning() {
-                            ResolvedMeaning::Static(meaning) => meaning,
-                            ResolvedMeaning::Macro { .. } => Meaning::Undefined,
-                        };
-                        if Self::compact_the_expression_target(meaning) {
-                            self.command.scratch.set_the_phase(
-                                crate::expansion_work::control::ThePhase::Expression {
-                                    target: meaning,
-                                    expression: 0,
-                                    expression_sign: 1,
-                                    term: 0,
-                                    term_operator: 0,
-                                    term_active: false,
-                                    negative: false,
-                                    value: 0,
-                                    seen_digit: false,
-                                },
-                            )?;
-                            fetch = true;
-                            continue;
-                        }
-                        if Self::compact_the_dimension_expression_target(meaning) {
-                            self.command.scratch.set_the_phase(
-                                crate::expansion_work::control::ThePhase::DimensionExpression {
-                                    target: meaning,
-                                    as_number: false,
-                                    expression: 0,
-                                    expression_sign: 1,
-                                    term: 0,
-                                    term_operator: 0,
-                                    term_active: false,
-                                    negative: false,
-                                    value: 0,
-                                    fraction: 0,
-                                    fraction_digits: 0,
-                                    decimal: false,
-                                    unit: 0,
-                                    seen_digit: false,
-                                },
-                            )?;
-                            fetch = true;
-                            continue;
-                        }
-                        if Self::compact_the_register_target(meaning) {
-                            self.command.scratch.set_the_phase(
-                                crate::expansion_work::control::ThePhase::Index {
-                                    target: meaning,
-                                    negative: false,
-                                    value: 0,
-                                    seen_digit: false,
-                                },
-                            )?;
-                            fetch = true;
-                            continue;
-                        }
-                        if let Some(value) = self.scan_the_direct_value(meaning)? {
-                            let opener = self
-                                .command
-                                .scratch
-                                .pop_the_control()
-                                .map_err(crate::scan_toks::scratch_command_error)?;
-                            self.expand_the_value(opener, value)?;
-                            fetch = true;
-                            continue;
-                        }
-                        let _ = self
+                    if Self::compact_the_register_target(meaning) {
+                        self.command.scratch.set_the_phase(
+                            crate::expansion_work::control::ThePhase::Index {
+                                target: meaning,
+                                negative: false,
+                                value: 0,
+                                seen_digit: false,
+                            },
+                        )?;
+                        return Ok(ExpandedHotDispatch::Continue);
+                    }
+                    if let Some(value) = self.scan_the_direct_value(meaning)? {
+                        let opener = self
                             .command
                             .scratch
                             .pop_the_control()
                             .map_err(crate::scan_toks::scratch_command_error)?;
-                        let target = command.materialize();
-                        match self.complete_the_continuation(&target, the_control.opener) {
-                            Ok(()) => {
-                                fetch = true;
-                                continue;
-                            }
-                            Err(error) if error.is_resource_suspension() => {
-                                return self.park_the_continuation(
+                        self.expand_the_value(opener, value)?;
+                        return Ok(ExpandedHotDispatch::Continue);
+                    }
+                    let _ = self
+                        .command
+                        .scratch
+                        .pop_the_control()
+                        .map_err(crate::scan_toks::scratch_command_error)?;
+                    let target = command.materialize();
+                    match self.complete_the_continuation(&target, the_control.opener) {
+                        Ok(()) => {
+                            return Ok(ExpandedHotDispatch::Continue);
+                        }
+                        Err(error) if error.is_resource_suspension() => {
+                            return self
+                                .park_the_continuation(
                                     target,
                                     the_control.opener,
-                                    delivery_expanded,
+                                    *delivery_expanded,
                                     error,
                                     destination,
                                     depth,
-                                );
-                            }
-                            Err(error) => {
-                                return self.fail_hot_expanded_delivery(destination, depth, error);
-                            }
+                                )
+                                .map(ExpandedHotDispatch::Finished);
+                        }
+                        Err(error) => {
+                            return self.fail_expanded_dispatch(destination, depth, error);
                         }
                     }
                 }
             }
-            match action {
-                ExpandedCommandAction::Return => {
-                    break 'delivery self.finish_expanded_command(&command, delivery_expanded);
+        }
+        match action {
+            ExpandedCommandAction::Return => Ok(ExpandedHotDispatch::Finished(
+                self.finish_expanded_command(command, *delivery_expanded),
+            )),
+            ExpandedCommandAction::EndTemplate => {
+                if matches!(
+                    command.alignment_adjustment(),
+                    crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
+                ) {
+                    return Ok(ExpandedHotDispatch::Finished(
+                        DeliveryStatus::AlignmentEndTemplate,
+                    ));
                 }
-                ExpandedCommandAction::EndTemplate => {
-                    if matches!(
-                        command.alignment_adjustment(),
-                        crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
-                    ) {
-                        break 'delivery DeliveryStatus::AlignmentEndTemplate;
-                    }
-                    command.convert_end_template_to_endv(self.state.frozen_endv_token());
-                    break 'delivery self.finish_expanded_command(&command, delivery_expanded);
-                }
-                ExpandedCommandAction::Expand(dispatch) => {
-                    delivery_expanded = true;
-                    let report_trace = !std::mem::take(&mut suppress_first_expansion_trace);
-                    let macro_input_before = (dispatch == ExpansionDispatch::Macro)
-                        .then(|| self.command.top_input_level_identity());
-                    let expandafter_was_awaiting = self.expandafter_awaiting_nested()?;
-                    let expandafter_should_await = self.expandafter_second_pending()?
+                command.convert_end_template_to_endv(self.state.frozen_endv_token());
+                Ok(ExpandedHotDispatch::Finished(
+                    self.finish_expanded_command(command, *delivery_expanded),
+                ))
+            }
+            ExpandedCommandAction::Expand(dispatch) => {
+                *delivery_expanded = true;
+                let report_trace = !std::mem::take(suppress_first_expansion_trace);
+                let macro_input_before = (dispatch == ExpansionDispatch::Macro)
+                    .then(|| self.command.top_input_level_identity());
+                let expandafter_was_awaiting = if matches!(
+                    active_control,
+                    Some(crate::expansion_work::ActiveControlTag::ExpandAfterSync)
+                ) {
+                    self.expandafter_awaiting_nested()?
+                } else {
+                    false
+                };
+                let expandafter_should_await = if matches!(
+                    active_control,
+                    Some(crate::expansion_work::ActiveControlTag::ExpandAfterSync)
+                ) {
+                    self.expandafter_second_pending()?
                         && !matches!(
                             dispatch,
                             ExpansionDispatch::Macro
@@ -2028,285 +2174,241 @@ impl<G> CommandProcessor<'_, '_, G> {
                                         | ExpandablePrimitive::IfCsName
                                         | ExpandablePrimitive::The
                                 )
-                        );
-                    if expandafter_should_await {
-                        self.await_expandafter_nested()?;
-                    }
-                    let if_compare_was_awaiting = self
-                        .command
-                        .scratch
-                        .top_if_compare_control()
-                        .map_err(crate::scan_toks::scratch_command_error)?
-                        .is_some_and(|control| {
-                            matches!(
-                                control.phase,
-                                crate::expansion_work::control::SynchronousIfComparePhase::
-                                    AwaitFirst
-                                    | crate::expansion_work::control::SynchronousIfComparePhase::
-                                        AwaitSecond { .. }
-                            )
-                        });
-                    let if_compare_should_await = self
-                        .command
-                        .scratch
-                        .top_if_compare_control()
-                        .map_err(crate::scan_toks::scratch_command_error)?
-                        .is_some_and(|control| {
-                            matches!(
-                                control.phase,
-                                crate::expansion_work::control::SynchronousIfComparePhase::
-                                    NeedFirst
-                                    | crate::expansion_work::control::SynchronousIfComparePhase::
-                                        NeedSecond { .. }
-                            )
-                        });
-                    let if_number_was_awaiting = self
-                        .command
-                        .scratch
-                        .top_if_number_control()
-                        .map_err(crate::scan_toks::scratch_command_error)?
-                        .is_some_and(|control| {
-                            matches!(
-                                control.phase,
-                                crate::expansion_work::control::SynchronousIfNumberPhase::AwaitLeft {
-                                    ..
-                                }
-                                    | crate::expansion_work::control::SynchronousIfNumberPhase::AwaitRelation {
-                                        ..
-                                    }
-                                    | crate::expansion_work::control::SynchronousIfNumberPhase::AwaitRight {
-                                        ..
-                                    }
-                                    | crate::expansion_work::control::SynchronousIfNumberPhase::RegisterIndexAwait {
-                                        ..
-                                    }
-                            )
-                        });
-                    let if_number_should_await = self
-                        .command
-                        .scratch
-                        .top_if_number_control()
-                        .map_err(crate::scan_toks::scratch_command_error)?
-                        .is_some_and(|control| {
-                            matches!(
-                                control.phase,
-                                crate::expansion_work::control::SynchronousIfNumberPhase::NeedLeft
-                                    | crate::expansion_work::control::SynchronousIfNumberPhase::Left {
-                                        ..
-                                    }
-                                    | crate::expansion_work::control::SynchronousIfNumberPhase::NeedRelation {
-                                        ..
-                                    }
-                                    | crate::expansion_work::control::SynchronousIfNumberPhase::Right {
-                                        ..
-                                    }
-                                    | crate::expansion_work::control::SynchronousIfNumberPhase::RegisterIndex {
-                                        ..
-                                    }
-                            )
-                        });
-                    let if_dimension_was_awaiting = self
-                        .command
-                        .scratch
-                        .top_if_dimension_control()
-                        .map_err(crate::scan_toks::scratch_command_error)?
-                        .is_some_and(|control| {
-                            matches!(
-                                control.phase,
-                                crate::expansion_work::control::SynchronousIfDimensionPhase::AwaitLeft {
-                                    ..
-                                }
-                                    | crate::expansion_work::control::SynchronousIfDimensionPhase::AwaitRelation {
-                                        ..
-                                    }
-                                    | crate::expansion_work::control::SynchronousIfDimensionPhase::AwaitRight {
-                                        ..
-                                    }
-                                    | crate::expansion_work::control::SynchronousIfDimensionPhase::RegisterIndexAwait {
-                                        ..
-                                    }
-                            )
-                        });
-                    let if_dimension_should_await = self
-                        .command
-                        .scratch
-                        .top_if_dimension_control()
-                        .map_err(crate::scan_toks::scratch_command_error)?
-                        .is_some_and(|control| {
-                            matches!(
-                                control.phase,
-                                crate::expansion_work::control::SynchronousIfDimensionPhase::NeedLeft
-                                    | crate::expansion_work::control::SynchronousIfDimensionPhase::Left {
-                                        ..
-                                    }
-                                    | crate::expansion_work::control::SynchronousIfDimensionPhase::NeedRelation {
-                                        ..
-                                    }
-                                    | crate::expansion_work::control::SynchronousIfDimensionPhase::Right {
-                                        ..
-                                    }
-                                    | crate::expansion_work::control::SynchronousIfDimensionPhase::RegisterIndex {
-                                        ..
-                                    }
-                            )
-                        });
-                    let number_was_awaiting = self
-                        .command
-                        .scratch
-                        .top_number_control()
-                        .map_err(crate::scan_toks::scratch_command_error)?
-                        .is_some_and(|control| {
-                            matches!(
-                                control.phase,
-                                crate::expansion_work::control::SynchronousNumberPhase::Await { .. }
-                            )
-                        });
-                    let number_should_await = self
-                        .command
-                        .scratch
-                        .top_number_control()
-                        .map_err(crate::scan_toks::scratch_command_error)?
-                        .is_some_and(|control| {
-                            matches!(
-                                control.phase,
-                            crate::expansion_work::control::SynchronousNumberPhase::Need
-                                | crate::expansion_work::control::SynchronousNumberPhase::Accumulating {
-                                        ..
-                                    }
-                                | crate::expansion_work::control::SynchronousNumberPhase::RegisterIndex {
-                                    ..
-                                }
                         )
-                        });
-                    if if_compare_should_await {
-                        self.command
-                            .scratch
-                            .await_if_compare_operand()
-                            .map_err(crate::scan_toks::scratch_command_error)?;
-                    }
-                    if if_number_should_await {
-                        self.command
-                            .scratch
-                            .await_if_number_operand()
-                            .map_err(crate::scan_toks::scratch_command_error)?;
-                    }
-                    if if_dimension_should_await {
-                        self.command
-                            .scratch
-                            .await_if_dimension_operand()
-                            .map_err(crate::scan_toks::scratch_command_error)?;
-                    }
-                    if number_should_await {
-                        self.command
-                            .scratch
-                            .await_number_operand()
-                            .map_err(crate::scan_toks::scratch_command_error)?;
-                    }
-                    let mut command_parked = false;
-                    let failure = match self.expand_classified_occupied(
-                        &mut command,
-                        dispatch,
-                        report_trace,
-                        delivery_expanded,
-                        &mut command_parked,
-                    ) {
-                        Ok(()) => {
-                            if expandafter_should_await || expandafter_was_awaiting {
-                                self.resume_expandafter_second()?;
+                } else {
+                    false
+                };
+                if expandafter_should_await {
+                    self.await_expandafter_nested()?;
+                }
+                let if_compare_control =
+                    active_control_probe(active_control, ActiveControlTag::IfCompare, || {
+                        self.command.scratch.top_if_compare_control()
+                    })?;
+                let if_compare_was_awaiting = if_compare_control.is_some_and(|control| {
+                    matches!(
+                        control.phase,
+                        crate::expansion_work::control::SynchronousIfComparePhase::AwaitFirst
+                            | crate::expansion_work::control::SynchronousIfComparePhase::
+                                AwaitSecond { .. }
+                    )
+                });
+                let if_compare_should_await = if_compare_control.is_some_and(|control| {
+                    matches!(
+                        control.phase,
+                        crate::expansion_work::control::SynchronousIfComparePhase::NeedFirst
+                            | crate::expansion_work::control::SynchronousIfComparePhase::
+                                NeedSecond { .. }
+                    )
+                });
+                let if_number_control =
+                    active_control_probe(active_control, ActiveControlTag::IfNumber, || {
+                        self.command.scratch.top_if_number_control()
+                    })?;
+                let if_number_was_awaiting = if_number_control.is_some_and(|control| {
+                    matches!(
+                        control.phase,
+                        crate::expansion_work::control::SynchronousIfNumberPhase::AwaitLeft {
+                            ..
+                        } | crate::expansion_work::control::SynchronousIfNumberPhase::AwaitRelation {
+                            ..
+                        } | crate::expansion_work::control::SynchronousIfNumberPhase::AwaitRight {
+                            ..
+                        } | crate::expansion_work::control::SynchronousIfNumberPhase::RegisterIndexAwait {
+                            ..
+                        }
+                    )
+                });
+                let if_number_should_await = if_number_control.is_some_and(|control| {
+                    matches!(
+                        control.phase,
+                        crate::expansion_work::control::SynchronousIfNumberPhase::NeedLeft
+                            | crate::expansion_work::control::SynchronousIfNumberPhase::Left {
+                                ..
                             }
-                            if if_compare_should_await || if_compare_was_awaiting {
-                                self.command
-                                    .scratch
-                                    .resume_if_compare_operand()
-                                    .map_err(crate::scan_toks::scratch_command_error)?;
+                            | crate::expansion_work::control::SynchronousIfNumberPhase::NeedRelation {
+                                ..
                             }
-                            if if_number_should_await || if_number_was_awaiting {
-                                self.command
-                                    .scratch
-                                    .resume_if_number_operand()
-                                    .map_err(crate::scan_toks::scratch_command_error)?;
+                            | crate::expansion_work::control::SynchronousIfNumberPhase::Right {
+                                ..
                             }
-                            if if_dimension_should_await || if_dimension_was_awaiting {
-                                self.command
-                                    .scratch
-                                    .resume_if_dimension_operand()
-                                    .map_err(crate::scan_toks::scratch_command_error)?;
+                            | crate::expansion_work::control::SynchronousIfNumberPhase::RegisterIndex {
+                                ..
                             }
-                            if number_should_await || number_was_awaiting {
-                                self.command
-                                    .scratch
-                                    .resume_number_operand()
-                                    .map_err(crate::scan_toks::scratch_command_error)?;
+                    )
+                });
+                let if_dimension_control =
+                    active_control_probe(active_control, ActiveControlTag::IfDimension, || {
+                        self.command.scratch.top_if_dimension_control()
+                    })?;
+                let if_dimension_was_awaiting = if_dimension_control.is_some_and(|control| {
+                    matches!(
+                        control.phase,
+                        crate::expansion_work::control::SynchronousIfDimensionPhase::AwaitLeft {
+                            ..
+                        } | crate::expansion_work::control::SynchronousIfDimensionPhase::AwaitRelation {
+                            ..
+                        } | crate::expansion_work::control::SynchronousIfDimensionPhase::AwaitRight {
+                            ..
+                        } | crate::expansion_work::control::SynchronousIfDimensionPhase::RegisterIndexAwait {
+                            ..
+                        }
+                    )
+                });
+                let if_dimension_should_await = if_dimension_control.is_some_and(|control| {
+                    matches!(
+                        control.phase,
+                        crate::expansion_work::control::SynchronousIfDimensionPhase::NeedLeft
+                            | crate::expansion_work::control::SynchronousIfDimensionPhase::Left {
+                                ..
                             }
-                            // Some expandable commands consume themselves
-                            // without putting a command back on input. In an
-                            // `\expandafter` second-operand phase, replay the
-                            // saved first token now instead of consuming an
-                            // unrelated third token as the second result.
-                            let no_output = match dispatch {
-                                ExpansionDispatch::Undefined => true,
-                                ExpansionDispatch::Primitive(primitive)
-                                    if crate::conditionals::ConditionalKind::from_primitive(
-                                        primitive,
-                                    )
-                                    .is_some_and(|kind| {
-                                        kind != crate::conditionals::ConditionalKind::IfCsName
-                                    }) =>
-                                {
-                                    true
-                                }
-                                ExpansionDispatch::Primitive(
-                                    ExpandablePrimitive::Else
-                                    | ExpandablePrimitive::Or
-                                    | ExpandablePrimitive::Fi,
+                            | crate::expansion_work::control::SynchronousIfDimensionPhase::NeedRelation {
+                                ..
+                            }
+                            | crate::expansion_work::control::SynchronousIfDimensionPhase::Right {
+                                ..
+                            }
+                            | crate::expansion_work::control::SynchronousIfDimensionPhase::RegisterIndex {
+                                ..
+                            }
+                    )
+                });
+                let number_control =
+                    active_control_probe(active_control, ActiveControlTag::Number, || {
+                        self.command.scratch.top_number_control()
+                    })?;
+                let number_was_awaiting = number_control.is_some_and(|control| {
+                    matches!(
+                        control.phase,
+                        crate::expansion_work::control::SynchronousNumberPhase::Await { .. }
+                    )
+                });
+                let number_should_await = number_control.is_some_and(|control| {
+                    matches!(
+                        control.phase,
+                        crate::expansion_work::control::SynchronousNumberPhase::Need
+                            | crate::expansion_work::control::SynchronousNumberPhase::Accumulating {
+                                ..
+                            }
+                            | crate::expansion_work::control::SynchronousNumberPhase::RegisterIndex {
+                                ..
+                            }
+                    )
+                });
+                if if_compare_should_await {
+                    self.command
+                        .scratch
+                        .await_if_compare_operand()
+                        .map_err(crate::scan_toks::scratch_command_error)?;
+                }
+                if if_number_should_await {
+                    self.command
+                        .scratch
+                        .await_if_number_operand()
+                        .map_err(crate::scan_toks::scratch_command_error)?;
+                }
+                if if_dimension_should_await {
+                    self.command
+                        .scratch
+                        .await_if_dimension_operand()
+                        .map_err(crate::scan_toks::scratch_command_error)?;
+                }
+                if number_should_await {
+                    self.command
+                        .scratch
+                        .await_number_operand()
+                        .map_err(crate::scan_toks::scratch_command_error)?;
+                }
+                let mut command_parked = false;
+                let failure = match self.expand_classified_occupied(
+                    command,
+                    dispatch,
+                    report_trace,
+                    *delivery_expanded,
+                    &mut command_parked,
+                ) {
+                    Ok(()) => {
+                        if expandafter_should_await || expandafter_was_awaiting {
+                            self.resume_expandafter_second()?;
+                        }
+                        if if_compare_should_await || if_compare_was_awaiting {
+                            self.command
+                                .scratch
+                                .resume_if_compare_operand()
+                                .map_err(crate::scan_toks::scratch_command_error)?;
+                        }
+                        if if_number_should_await || if_number_was_awaiting {
+                            self.command
+                                .scratch
+                                .resume_if_number_operand()
+                                .map_err(crate::scan_toks::scratch_command_error)?;
+                        }
+                        if if_dimension_should_await || if_dimension_was_awaiting {
+                            self.command
+                                .scratch
+                                .resume_if_dimension_operand()
+                                .map_err(crate::scan_toks::scratch_command_error)?;
+                        }
+                        if number_should_await || number_was_awaiting {
+                            self.command
+                                .scratch
+                                .resume_number_operand()
+                                .map_err(crate::scan_toks::scratch_command_error)?;
+                        }
+                        // Some expandable commands consume themselves
+                        // without putting a command back on input. In an
+                        // `\expandafter` second-operand phase, replay the
+                        // saved first token now instead of consuming an
+                        // unrelated third token as the second result.
+                        let no_output = match dispatch {
+                            ExpansionDispatch::Undefined => true,
+                            ExpansionDispatch::Primitive(primitive)
+                                if crate::conditionals::ConditionalKind::from_primitive(
+                                    primitive,
                                 )
-                                | ExpansionDispatch::Primitive(ExpandablePrimitive::Unless) => true,
-                                ExpansionDispatch::Macro => {
-                                    let input_changed = macro_input_before.flatten()
-                                        != self.command.top_input_level_identity();
-                                    !(input_changed
-                                        && self.command.input.levels.last().is_some_and(|level| {
-                                            level
-                                                .macro_body()
-                                                .is_some_and(|body| !body.body.is_empty())
-                                        }))
-                                }
-                                _ => false,
-                            };
-                            if no_output && self.expandafter_second_pending()? {
-                                self.complete_expandafter_without_second()?;
+                                .is_some_and(|kind| {
+                                    kind != crate::conditionals::ConditionalKind::IfCsName
+                                }) =>
+                            {
+                                true
                             }
-                            fetch = true;
-                            continue;
+                            ExpansionDispatch::Primitive(
+                                ExpandablePrimitive::Else
+                                | ExpandablePrimitive::Or
+                                | ExpandablePrimitive::Fi,
+                            )
+                            | ExpansionDispatch::Primitive(ExpandablePrimitive::Unless) => true,
+                            ExpansionDispatch::Macro => {
+                                let input_changed = macro_input_before.flatten()
+                                    != self.command.top_input_level_identity();
+                                !(input_changed
+                                    && self.command.input.levels.last().is_some_and(|level| {
+                                        level.macro_body().is_some_and(|body| !body.body.is_empty())
+                                    }))
+                            }
+                            _ => false,
+                        };
+                        if no_output
+                            && matches!(
+                                active_control,
+                                Some(crate::expansion_work::ActiveControlTag::ExpandAfterSync)
+                            )
+                            && self.expandafter_second_pending()?
+                        {
+                            self.complete_expandafter_without_second()?;
                         }
-                        Err(failure) => failure,
-                    };
-                    match failure {
-                        CommandError::ParagraphInMacroArgument
-                        | CommandError::OuterInMacroArgument => {
-                            fetch = true;
-                        }
-                        failure => {
-                            return self.fail_hot_expanded_delivery(destination, depth, failure);
-                        }
+                        return Ok(ExpandedHotDispatch::Continue);
                     }
+                    Err(failure) => failure,
+                };
+                match failure {
+                    CommandError::ParagraphInMacroArgument | CommandError::OuterInMacroArgument => {
+                        Ok(ExpandedHotDispatch::Continue)
+                    }
+                    failure => self.fail_expanded_dispatch(destination, depth, failure),
                 }
             }
-        };
-        debug_assert_eq!(
-            self.command.transient.active_expansion_depth, active_depth,
-            "expanded delivery balances its depth"
-        );
-        self.command.transient.active_expansion_depth = depth;
-        if matches!(
-            status,
-            DeliveryStatus::End | DeliveryStatus::ReplayCompleted(_) | DeliveryStatus::CharacterRun
-        ) {
-            destination.take();
-        } else {
-            *destination = Some(command);
         }
-        Ok(status)
     }
 
     /// Completes a source or synthetic `endv` command after the main-loop
@@ -2807,6 +2909,15 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
+        self.x_token_next_with_action(destination, None)
+    }
+
+    fn x_token_next_with_action(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+        initial_action: Option<ExpandedCommandAction>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        let mut initial_action = initial_action;
         if destination.as_ref().is_some_and(|command| {
             matches!(
                 command.meaning_ref(),
@@ -2826,8 +2937,9 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
             destination.take();
             self.insert_frozen_endv()?;
+            initial_action = None;
         }
-        self.expanded_next(destination)
+        self.expanded_next_with_action(destination, initial_action)
     }
 
     /// Main-control lookahead first returns a raw character without expansion;
@@ -2853,9 +2965,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         if hot.command_word().is_main_loop_character() {
             return Ok(DeliveryStatus::Command);
         }
-        if !matches!(classify_hot_command(&hot), ExpandedCommandAction::Return) {
+        let action = classify_hot_command(&hot);
+        if !matches!(action, ExpandedCommandAction::Return) {
             let pending = destination.take();
-            return self.x_token_from_into(pending, destination);
+            return self.x_token_from_into_with_action(pending, destination, Some(action));
         }
         self.observe_expanded_delivery(command);
         Ok(DeliveryStatus::Command)
@@ -2870,22 +2983,44 @@ impl<G> CommandProcessor<'_, '_, G> {
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
         loop {
+            let mut hot_destination = None;
+            let mut initial_action = None;
             if destination.is_none() {
-                match self.raw_next(destination)? {
+                match self.raw_next_hot(&mut hot_destination)? {
                     DeliveryStatus::Command => {}
                     status => return Ok(status),
                 }
             }
-            let command = destination
-                .as_ref()
-                .ok_or_else(CommandError::input_invariant)?;
-            if !is_expandable_command(command) {
-                let _ = classify_expanded_command(command);
-                self.observe_expanded_delivery(command);
+            if hot_destination.is_none() {
+                let command = destination
+                    .as_ref()
+                    .ok_or_else(CommandError::input_invariant)?;
+                let action = classify_hot_command(&HotCommand::from_current_ref(command));
+                if matches!(action, ExpandedCommandAction::Return) {
+                    self.observe_expanded_delivery(command);
+                    return Ok(DeliveryStatus::Command);
+                }
+                initial_action = Some(action);
+                hot_destination = destination.take().map(HotCommand::from_current);
+            }
+            let initial_action = initial_action.unwrap_or_else(|| {
+                classify_hot_command(
+                    hot_destination
+                        .as_ref()
+                        .expect("raw delivery initializes the hot command"),
+                )
+            });
+            if matches!(initial_action, ExpandedCommandAction::Return) {
+                let command = hot_destination
+                    .take()
+                    .ok_or_else(CommandError::input_invariant)?
+                    .materialize();
+                self.observe_expanded_delivery(&command);
+                *destination = Some(command);
                 return Ok(DeliveryStatus::Command);
             }
-            let pending = destination.take();
-            match self.expanded_next_from_pending(pending, destination)? {
+            let result = self.expanded_next_hot(&mut hot_destination, Some(initial_action));
+            match self.finish_hot_delivery(destination, &mut hot_destination, result)? {
                 DeliveryStatus::PendingExpanded | DeliveryStatus::AlignmentClosingBrace => {
                     return Ok(DeliveryStatus::Command);
                 }
@@ -3012,15 +3147,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
     }
 
-    fn expanded_next_from_pending(
-        &mut self,
-        pending: Option<CurrentCommand<G>>,
-        destination: &mut Option<CurrentCommand<G>>,
-    ) -> Result<DeliveryStatus, CommandError> {
-        *destination = pending;
-        self.expanded_next(destination)
-    }
-
     /// Delivers one ordinary expanded command through TeX.web's `get_x_token`.
     ///
     /// This thin canonical entry point enters the ordinary expanded loop.
@@ -3130,9 +3256,18 @@ impl<G> CommandProcessor<'_, '_, G> {
         pending: Option<CurrentCommand<G>>,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
+        self.x_token_from_into_with_action(pending, destination, None)
+    }
+
+    fn x_token_from_into_with_action(
+        &mut self,
+        pending: Option<CurrentCommand<G>>,
+        destination: &mut Option<CurrentCommand<G>>,
+        initial_action: Option<ExpandedCommandAction>,
+    ) -> Result<DeliveryStatus, CommandError> {
         debug_assert!(destination.is_none());
         *destination = pending;
-        let result = self.x_token_next(destination)?;
+        let result = self.x_token_next_with_action(destination, initial_action)?;
         debug_assert!(matches!(
             result,
             DeliveryStatus::End
@@ -3297,7 +3432,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<DeliveryStatus, CommandError> {
         debug_assert!(destination.is_none());
         loop {
-            match self.expanded_next_hot(destination)? {
+            match self.expanded_next_hot(destination, None)? {
                 DeliveryStatus::ReplayCompleted(_) => continue,
                 DeliveryStatus::End => return Ok(DeliveryStatus::End),
                 DeliveryStatus::Command
@@ -3796,16 +3931,14 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     #[cold]
     #[inline(never)]
-    fn fail_expanded_delivery(
+    fn fail_expanded_dispatch(
         &mut self,
-        destination: &mut Option<CurrentCommand<G>>,
+        destination: &mut Option<HotCommand<G>>,
         depth: u32,
         failure: CommandError,
-    ) -> Result<DeliveryStatus, CommandError> {
-        destination.take();
-        self.command.transient.active_expansion_depth = depth;
-        self.invalidate_delivery_freshness();
-        Err(failure)
+    ) -> Result<ExpandedHotDispatch, CommandError> {
+        self.fail_hot_expanded_delivery(destination, depth, failure)
+            .map(ExpandedHotDispatch::Finished)
     }
 
     /// Parks a completed `\the` target and its scalar child at the one cold

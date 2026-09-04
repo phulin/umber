@@ -589,6 +589,61 @@ impl<G> PackedCommandTarget<G> for HotCommand<G> {
 }
 
 impl<G> HotCommand<G> {
+    /// Resolves a resident word into a newly-owned hot command without first
+    /// constructing an empty destination. The command word is initialized to
+    /// a valid value before the packed resolver overwrites it; unlike
+    /// [`Self::empty`], no placeholder token or delivery stamp is installed.
+    #[allow(clippy::too_many_arguments)]
+    #[inline(always)]
+    pub(crate) fn from_resolved_delivery(
+        word: TokenWord,
+        origin: OriginId,
+        input_level: u64,
+        position: u64,
+        active_source: Option<tex_state::packed_input::SourceContext>,
+        direct_source: bool,
+        direct_source_line: Option<u32>,
+        suppress_expandable: bool,
+        state: &CommandContext<'_, G>,
+    ) -> (Self, tex_state::token::PackedMeaningResolution) {
+        #[cfg(any(test, feature = "profiling"))]
+        update_command_ownership_counters(|counters| {
+            counters.resolved_writes = counters.resolved_writes.saturating_add(1);
+            counters.delivery_stamp_writes = counters.delivery_stamp_writes.saturating_add(1);
+        });
+        let mut command = Self {
+            token: HotToken {
+                word,
+                origin,
+                site: DeliverySite {
+                    delivery: DeliveryStamp::new(input_level, position),
+                    control_sequence: None,
+                    active_source_role: active_source.map(|source| source.role()),
+                    direct_source_line: direct_source_line.unwrap_or(0),
+                    alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment::None,
+                    delivery_flags: CommandDeliveryFlags::default(),
+                },
+            },
+            command: CommandWord::from_static_word(Meaning::Undefined.encode()),
+            font: None,
+        };
+        command
+            .token
+            .site
+            .delivery_flags
+            .set(CommandDeliveryFlags::DIRECT_SOURCE, direct_source);
+        command.token.site.delivery_flags.set(
+            CommandDeliveryFlags::HAS_DIRECT_SOURCE_LINE,
+            direct_source_line.is_some(),
+        );
+        command.token.site.delivery_flags.set(
+            CommandDeliveryFlags::SUPPRESS_EXPANDABLE,
+            suppress_expandable,
+        );
+        let resolution = state.write_packed_token_command_into(word, &mut command);
+        (command, resolution)
+    }
+
     #[inline(always)]
     pub(crate) fn empty() -> Self {
         Self {

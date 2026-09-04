@@ -1070,6 +1070,17 @@ pub(crate) struct ExecutionScratchTransientMark {
 }
 
 impl<G> ExecutionScratch<G> {
+    /// Reads the one authoritative continuation owner. The selected payload
+    /// stays in `ExpansionWork`; callers dispatch by this tag before touching
+    /// any typed control lane.
+    pub(crate) fn active_control_tag(&self) -> Option<crate::expansion_work::ActiveControlTag> {
+        self.expansion_work.active_control_tag()
+    }
+
+    pub(crate) fn active_control_is_synchronous(&self) -> bool {
+        self.expansion_work.active_control_is_synchronous()
+    }
+
     pub(crate) fn note_delivery_entry(&mut self, active_depth: u32) {
         self.expansion_work.note_delivery_entry(active_depth);
     }
@@ -1801,6 +1812,7 @@ impl<G> ExecutionScratch<G> {
         self.expansion_work.abort_synchronous_controls()
     }
 
+    #[cfg(test)]
     pub(crate) fn driver_continuation_depth(&self) -> u32 {
         self.expansion_work.driver_continuation_depth()
     }

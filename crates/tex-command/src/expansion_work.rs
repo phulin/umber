@@ -21,41 +21,27 @@ const COMMANDS_PER_CHUNK: usize = 32;
 const CONTROLS_PER_CHUNK: usize = 32;
 const NAME_BYTES_PER_CHUNK: usize = 1_024;
 
-/// Bounded state for the one synchronous expanded-delivery interpreter.
-///
-/// The interpreter's hot token/command pair remains in the processor loop;
-/// this sidecar owns only its typed continuation depth.  A continuation is
-/// therefore represented by a fixed-width control-lane record instead of a
-/// Rust call frame.  The checked increment is the static recursion guard: a
-/// malformed input can exhaust the generation-scoped coordinate space, but it
-/// cannot recurse through the host stack.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct ExpandedDeliveryDriver {
-    continuation_depth: u32,
-}
-
-const _: () = assert!(core::mem::size_of::<ExpandedDeliveryDriver>() <= 16);
-
-impl ExpandedDeliveryDriver {
-    fn push_continuation(&mut self) -> Result<(), ScratchError> {
-        self.continuation_depth = self
-            .continuation_depth
-            .checked_add(1)
-            .ok_or(ScratchError::CapacityOverflow)?;
-        Ok(())
-    }
-
-    fn pop_continuation(&mut self) -> Result<(), ScratchError> {
-        self.continuation_depth = self
-            .continuation_depth
-            .checked_sub(1)
-            .ok_or(ScratchError::InvalidCoordinate)?;
-        Ok(())
-    }
-
-    fn continuation_depth(&self) -> u32 {
-        self.continuation_depth
-    }
+/// The only hot-side fact needed to decide whether a continuation owns the
+/// next expanded token. The payload remains in the typed control lane; this
+/// tag and its lane coordinate are the authoritative owner of that lane's
+/// top row.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ActiveControlTag {
+    Dispatch,
+    Suspended,
+    ExpandAfter,
+    The,
+    CsName,
+    IfCsName,
+    ExpandAfterSync,
+    IfCompare,
+    IfNumber,
+    IfDimension,
+    Number,
+    FontName,
+    PdfXImageBBox,
+    Expanded,
+    Primitive,
 }
 
 static NEXT_WORK_OWNER: AtomicU64 = AtomicU64::new(1);
@@ -113,6 +99,45 @@ impl<G> PartialEq for LaneId<G> {
     }
 }
 impl<G> Eq for LaneId<G> {}
+
+type ActiveControl<G> = (ActiveControlTag, LaneId<G>);
+
+fn active_control_tag<G>(control: &ExpansionControl<G>) -> ActiveControlTag {
+    match control {
+        ExpansionControl::Dispatch { .. } => ActiveControlTag::Dispatch,
+        ExpansionControl::Suspended { .. } => ActiveControlTag::Suspended,
+        ExpansionControl::ExpandAfter(_) => ActiveControlTag::ExpandAfter,
+        ExpansionControl::The(_) => ActiveControlTag::The,
+        ExpansionControl::CsName(_) => ActiveControlTag::CsName,
+        ExpansionControl::IfCsName(_) => ActiveControlTag::IfCsName,
+        ExpansionControl::ExpandAfterSync(_) => ActiveControlTag::ExpandAfterSync,
+        ExpansionControl::IfCompare(_) => ActiveControlTag::IfCompare,
+        ExpansionControl::IfNumber(_) => ActiveControlTag::IfNumber,
+        ExpansionControl::IfDimension(_) => ActiveControlTag::IfDimension,
+        ExpansionControl::Number(_) => ActiveControlTag::Number,
+        ExpansionControl::FontName(_) => ActiveControlTag::FontName,
+        ExpansionControl::PdfXImageBBox(_) => ActiveControlTag::PdfXImageBBox,
+        ExpansionControl::Expanded(_) => ActiveControlTag::Expanded,
+        ExpansionControl::Primitive(_) => ActiveControlTag::Primitive,
+    }
+}
+
+fn is_synchronous_control(tag: ActiveControlTag) -> bool {
+    matches!(
+        tag,
+        ActiveControlTag::The
+            | ActiveControlTag::CsName
+            | ActiveControlTag::IfCsName
+            | ActiveControlTag::ExpandAfterSync
+            | ActiveControlTag::IfCompare
+            | ActiveControlTag::IfNumber
+            | ActiveControlTag::IfDimension
+            | ActiveControlTag::Number
+            | ActiveControlTag::FontName
+            | ActiveControlTag::PdfXImageBBox
+            | ActiveControlTag::Expanded
+    )
+}
 
 #[derive(Debug)]
 struct LaneSlot<T> {
@@ -471,9 +496,9 @@ pub(crate) struct ExpansionWork<G> {
     owner: NonZeroU64,
     commands: FixedChunkLane<CurrentCommand<G>, G, COMMANDS_PER_CHUNK>,
     controls: FixedChunkLane<ExpansionControl<G>, G, CONTROLS_PER_CHUNK>,
+    active_control: Option<ActiveControl<G>>,
     names: ExpansionNameLane,
     active_roots: Vec<LaneId<G>>,
-    driver: ExpandedDeliveryDriver,
     counters: ExpansionWorkCounters,
 }
 
@@ -486,8 +511,8 @@ impl<G> PartialEq for ExpansionWork<G> {
             && self.active_roots == other.active_roots
             && self.commands.len() == other.commands.len()
             && self.controls.len() == other.controls.len()
+            && self.active_control == other.active_control
             && self.names.len == other.names.len
-            && self.driver == other.driver
     }
 }
 
@@ -499,15 +524,52 @@ impl<G> Default for ExpansionWork<G> {
             owner: next_work_owner(),
             commands: FixedChunkLane::default(),
             controls: FixedChunkLane::default(),
+            active_control: None,
             names: ExpansionNameLane::default(),
             active_roots: Vec::new(),
-            driver: ExpandedDeliveryDriver::default(),
             counters: ExpansionWorkCounters::default(),
         }
     }
 }
 
 impl<G> ExpansionWork<G> {
+    /// Returns the compact owner tag for the current top control. This is the
+    /// sole continuation-active test used by the expanded delivery loop; the
+    /// typed payload is touched only after a dispatcher has selected a tag.
+    pub(crate) fn active_control_tag(&self) -> Option<ActiveControlTag> {
+        self.active_control.map(|active| active.0)
+    }
+
+    /// Reports whether the authoritative top control belongs to the
+    /// synchronous delivery stack. This is the cold end-of-input cleanup
+    /// check; it never scans the heterogeneous lane.
+    pub(crate) fn active_control_is_synchronous(&self) -> bool {
+        self.active_control
+            .is_some_and(|active| is_synchronous_control(active.0))
+    }
+
+    fn active_lane(&self, expected: ActiveControlTag) -> Result<Option<LaneId<G>>, ScratchError> {
+        let Some(active) = self.active_control else {
+            return Ok(None);
+        };
+        if active.0 != expected {
+            return Ok(None);
+        }
+        if active.1.index().checked_add(1) != Some(self.controls.len()) {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        Ok(Some(active.1))
+    }
+
+    fn refresh_active_control(&mut self) -> Result<(), ScratchError> {
+        self.active_control = match self.controls.top_id() {
+            Ok(lane) => Some((active_control_tag(self.controls.get(lane)?), lane)),
+            Err(ScratchError::InvalidCoordinate) => None,
+            Err(error) => return Err(error),
+        };
+        Ok(())
+    }
+
     /// Records an expanded-delivery entry against the one driver owner.  A
     /// nonzero active depth means that a scanner re-entered delivery instead
     /// of yielding a typed request; keeping this check beside the owner makes
@@ -518,7 +580,7 @@ impl<G> ExpansionWork<G> {
         }
         self.counters.recursive_delivery_entries =
             self.counters.recursive_delivery_entries.saturating_add(1);
-        if self.driver.continuation_depth != 0 {
+        if self.synchronous_control_depth() != 0 {
             self.counters.recursive_delivery_entries_with_control = self
                 .counters
                 .recursive_delivery_entries_with_control
@@ -534,16 +596,10 @@ impl<G> ExpansionWork<G> {
         &mut self,
         opener: tex_state::token::OriginId,
     ) -> Result<(), ScratchError> {
-        self.driver.push_continuation()?;
-        if let Err(error) = self.push_control(ExpansionControl::The(TheControl {
+        self.push_control(ExpansionControl::The(TheControl {
             opener,
             phase: ThePhase::NeedTarget,
-        })) {
-            self.driver
-                .pop_continuation()
-                .expect("failed the-control push restores driver depth");
-            return Err(error);
-        }
+        }))?;
         Ok(())
     }
 
@@ -556,17 +612,11 @@ impl<G> ExpansionWork<G> {
         previous_in_csname: bool,
     ) -> Result<(), ScratchError> {
         let name = self.synchronous_name_mark()?;
-        self.driver.push_continuation()?;
-        if let Err(error) = self.push_control(ExpansionControl::CsName(SynchronousCsNameControl {
+        self.push_control(ExpansionControl::CsName(SynchronousCsNameControl {
             opener,
             name,
             previous_in_csname,
-        })) {
-            self.driver
-                .pop_continuation()
-                .expect("failed csname-control push restores driver depth");
-            return Err(error);
-        }
+        }))?;
         Ok(())
     }
 
@@ -578,20 +628,12 @@ impl<G> ExpansionWork<G> {
         previous_in_csname: bool,
     ) -> Result<(), ScratchError> {
         let name = self.synchronous_name_mark()?;
-        self.driver.push_continuation()?;
-        if let Err(error) =
-            self.push_control(ExpansionControl::IfCsName(SynchronousIfCsNameControl {
-                condition,
-                inverted,
-                name,
-                previous_in_csname,
-            }))
-        {
-            self.driver
-                .pop_continuation()
-                .expect("failed ifcsname-control push restores driver depth");
-            return Err(error);
-        }
+        self.push_control(ExpansionControl::IfCsName(SynchronousIfCsNameControl {
+            condition,
+            inverted,
+            name,
+            previous_in_csname,
+        }))?;
         Ok(())
     }
 
@@ -602,19 +644,13 @@ impl<G> ExpansionWork<G> {
         &mut self,
         opener: tex_state::token::OriginId,
     ) -> Result<(), ScratchError> {
-        self.driver.push_continuation()?;
-        if let Err(error) = self.push_control(ExpansionControl::ExpandAfterSync(
+        self.push_control(ExpansionControl::ExpandAfterSync(
             SynchronousExpandAfterControl {
                 opener,
                 saved_first: None,
                 phase: SynchronousExpandAfterPhase::NeedFirst,
             },
-        )) {
-            self.driver
-                .pop_continuation()
-                .expect("failed expandafter-control push restores driver depth");
-            return Err(error);
-        }
+        ))?;
         Ok(())
     }
 
@@ -622,10 +658,8 @@ impl<G> ExpansionWork<G> {
     /// at the top of the control lane is one.  Looking at the lane's top slot
     /// avoids a parallel stack of continuation pointers.
     pub(crate) fn top_the_control(&self) -> Result<Option<TheControl>, ScratchError> {
-        let id = match self.controls.top_id() {
-            Ok(id) => id,
-            Err(ScratchError::InvalidCoordinate) => return Ok(None),
-            Err(error) => return Err(error),
+        let Some(id) = self.active_lane(ActiveControlTag::The)? else {
+            return Ok(None);
         };
         match self.controls.get(id)? {
             ExpansionControl::The(control) => Ok(Some(*control)),
@@ -634,7 +668,9 @@ impl<G> ExpansionWork<G> {
     }
 
     pub(crate) fn set_the_phase(&mut self, phase: ThePhase) -> Result<(), ScratchError> {
-        let id = self.controls.top_id()?;
+        let id = self
+            .active_lane(ActiveControlTag::The)?
+            .ok_or(ScratchError::InvalidCoordinate)?;
         let control = self.controls.get_mut(id)?;
         let ExpansionControl::The(control) = control else {
             return Err(ScratchError::InvalidCoordinate);
@@ -645,16 +681,17 @@ impl<G> ExpansionWork<G> {
 
     /// Pops exactly one completed synchronous `\the` continuation.
     pub(crate) fn pop_the_control(&mut self) -> Result<tex_state::token::OriginId, ScratchError> {
-        let id = self.controls.top_id()?;
+        let id = self
+            .active_lane(ActiveControlTag::The)?
+            .ok_or(ScratchError::InvalidCoordinate)?;
         match self.controls.get(id)? {
             ExpansionControl::The(_) => {}
             _ => return Err(ScratchError::InvalidCoordinate),
         }
-        let opener = match self.controls.take_top(id)? {
+        let opener = match self.take_active_control(id)? {
             ExpansionControl::The(control) => control.opener,
             _ => unreachable!("validated top control remains a the continuation"),
         };
-        self.driver.pop_continuation()?;
         Ok(opener)
     }
 
@@ -668,23 +705,15 @@ impl<G> ExpansionWork<G> {
         attempt_opening: crate::attempt::AttemptMark,
         writer: crate::attempt::AttemptTokenBufferId,
     ) -> Result<(), ScratchError> {
-        self.driver.push_continuation()?;
-        if let Err(error) =
-            self.push_control(ExpansionControl::Expanded(SynchronousExpandedControl {
-                opener,
-                attempt_opening,
-                writer,
-                cursor: crate::scanner_kernel::ScannerCursor::default(),
-                phase: SynchronousExpandedPhase::NeedOpening,
-                kind: SynchronousExpandedKind::Expanded,
-                left: None,
-            }))
-        {
-            self.driver
-                .pop_continuation()
-                .expect("failed expanded-control push restores driver depth");
-            return Err(error);
-        }
+        self.push_control(ExpansionControl::Expanded(SynchronousExpandedControl {
+            opener,
+            attempt_opening,
+            writer,
+            cursor: crate::scanner_kernel::ScannerCursor::default(),
+            phase: SynchronousExpandedPhase::NeedOpening,
+            kind: SynchronousExpandedKind::Expanded,
+            left: None,
+        }))?;
         Ok(())
     }
 
@@ -698,23 +727,15 @@ impl<G> ExpansionWork<G> {
         attempt_opening: crate::attempt::AttemptMark,
         writer: crate::attempt::AttemptTokenBufferId,
     ) -> Result<(), ScratchError> {
-        self.driver.push_continuation()?;
-        if let Err(error) =
-            self.push_control(ExpansionControl::Expanded(SynchronousExpandedControl {
-                opener,
-                attempt_opening,
-                writer,
-                cursor: crate::scanner_kernel::ScannerCursor::default(),
-                phase: SynchronousExpandedPhase::NeedOpening,
-                kind: SynchronousExpandedKind::Unexpanded,
-                left: None,
-            }))
-        {
-            self.driver
-                .pop_continuation()
-                .expect("failed unexpanded-control push restores driver depth");
-            return Err(error);
-        }
+        self.push_control(ExpansionControl::Expanded(SynchronousExpandedControl {
+            opener,
+            attempt_opening,
+            writer,
+            cursor: crate::scanner_kernel::ScannerCursor::default(),
+            phase: SynchronousExpandedPhase::NeedOpening,
+            kind: SynchronousExpandedKind::Unexpanded,
+            left: None,
+        }))?;
         Ok(())
     }
 
@@ -728,23 +749,15 @@ impl<G> ExpansionWork<G> {
         attempt_opening: crate::attempt::AttemptMark,
         writer: crate::attempt::AttemptTokenBufferId,
     ) -> Result<(), ScratchError> {
-        self.driver.push_continuation()?;
-        if let Err(error) =
-            self.push_control(ExpansionControl::Expanded(SynchronousExpandedControl {
-                opener,
-                attempt_opening,
-                writer,
-                cursor: crate::scanner_kernel::ScannerCursor::default(),
-                phase: SynchronousExpandedPhase::NeedOpening,
-                kind: SynchronousExpandedKind::Detokenize,
-                left: None,
-            }))
-        {
-            self.driver
-                .pop_continuation()
-                .expect("failed detokenize-control push restores driver depth");
-            return Err(error);
-        }
+        self.push_control(ExpansionControl::Expanded(SynchronousExpandedControl {
+            opener,
+            attempt_opening,
+            writer,
+            cursor: crate::scanner_kernel::ScannerCursor::default(),
+            phase: SynchronousExpandedPhase::NeedOpening,
+            kind: SynchronousExpandedKind::Detokenize,
+            left: None,
+        }))?;
         Ok(())
     }
 
@@ -770,23 +783,15 @@ impl<G> ExpansionWork<G> {
         ) {
             return Err(ScratchError::InvalidCoordinate);
         }
-        self.driver.push_continuation()?;
-        if let Err(error) =
-            self.push_control(ExpansionControl::Expanded(SynchronousExpandedControl {
-                opener,
-                attempt_opening,
-                writer,
-                cursor: crate::scanner_kernel::ScannerCursor::default(),
-                phase: SynchronousExpandedPhase::NeedOpening,
-                kind,
-                left,
-            }))
-        {
-            self.driver
-                .pop_continuation()
-                .expect("failed pdf-string control push restores driver depth");
-            return Err(error);
-        }
+        self.push_control(ExpansionControl::Expanded(SynchronousExpandedControl {
+            opener,
+            attempt_opening,
+            writer,
+            cursor: crate::scanner_kernel::ScannerCursor::default(),
+            phase: SynchronousExpandedPhase::NeedOpening,
+            kind,
+            left,
+        }))?;
         Ok(())
     }
 
@@ -794,10 +799,8 @@ impl<G> ExpansionWork<G> {
     pub(crate) fn top_expanded_control(
         &self,
     ) -> Result<Option<SynchronousExpandedControl>, ScratchError> {
-        let id = match self.controls.top_id() {
-            Ok(id) => id,
-            Err(ScratchError::InvalidCoordinate) => return Ok(None),
-            Err(error) => return Err(error),
+        let Some(id) = self.active_lane(ActiveControlTag::Expanded)? else {
+            return Ok(None);
         };
         match self.controls.get(id)? {
             ExpansionControl::Expanded(control) => Ok(Some(*control)),
@@ -809,7 +812,9 @@ impl<G> ExpansionWork<G> {
     /// settled.  The cursor remains in the control lane and is advanced by
     /// the same hot loop that delivers each body token.
     pub(crate) fn begin_expanded_body(&mut self) -> Result<(), ScratchError> {
-        let id = self.controls.top_id()?;
+        let id = self
+            .active_lane(ActiveControlTag::Expanded)?
+            .ok_or(ScratchError::InvalidCoordinate)?;
         let control = self.controls.get_mut(id)?;
         let ExpansionControl::Expanded(control) = control else {
             return Err(ScratchError::InvalidCoordinate);
@@ -829,7 +834,9 @@ impl<G> ExpansionWork<G> {
         &mut self,
         word: tex_state::token::TokenWord,
     ) -> Result<bool, ScratchError> {
-        let id = self.controls.top_id()?;
+        let id = self
+            .active_lane(ActiveControlTag::Expanded)?
+            .ok_or(ScratchError::InvalidCoordinate)?;
         let control = self.controls.get_mut(id)?;
         let ExpansionControl::Expanded(control) = control else {
             return Err(ScratchError::InvalidCoordinate);
@@ -845,7 +852,9 @@ impl<G> ExpansionWork<G> {
     pub(crate) fn pop_expanded_control(
         &mut self,
     ) -> Result<SynchronousExpandedControl, ScratchError> {
-        let id = self.controls.top_id()?;
+        let id = self
+            .active_lane(ActiveControlTag::Expanded)?
+            .ok_or(ScratchError::InvalidCoordinate)?;
         let control = match self.controls.get(id)? {
             ExpansionControl::Expanded(control) => *control,
             _ => return Err(ScratchError::InvalidCoordinate),
@@ -853,8 +862,7 @@ impl<G> ExpansionWork<G> {
         if control.phase != SynchronousExpandedPhase::Collecting {
             return Err(ScratchError::InvalidCoordinate);
         }
-        let _ = self.controls.take_top(id)?;
-        self.driver.pop_continuation()?;
+        let _ = self.take_active_control(id)?;
         Ok(control)
     }
 
@@ -866,9 +874,9 @@ impl<G> ExpansionWork<G> {
             return Err(ScratchError::InvalidCoordinate);
         }
         self.controls.truncate(0)?;
+        self.active_control = None;
         self.commands.truncate(0)?;
         self.names.truncate(0)?;
-        self.driver = ExpandedDeliveryDriver::default();
         Ok(())
     }
 
@@ -877,10 +885,8 @@ impl<G> ExpansionWork<G> {
     pub(crate) fn top_csname_control(
         &self,
     ) -> Result<Option<SynchronousCsNameControl>, ScratchError> {
-        let id = match self.controls.top_id() {
-            Ok(id) => id,
-            Err(ScratchError::InvalidCoordinate) => return Ok(None),
-            Err(error) => return Err(error),
+        let Some(id) = self.active_lane(ActiveControlTag::CsName)? else {
+            return Ok(None);
         };
         match self.controls.get(id)? {
             ExpansionControl::CsName(control) => Ok(Some(*control)),
@@ -890,14 +896,15 @@ impl<G> ExpansionWork<G> {
 
     /// Pops one completed `\csname`, retiring only its name-lane suffix.
     pub(crate) fn pop_csname_control(&mut self) -> Result<SynchronousCsNameControl, ScratchError> {
-        let id = self.controls.top_id()?;
+        let id = self
+            .active_lane(ActiveControlTag::CsName)?
+            .ok_or(ScratchError::InvalidCoordinate)?;
         let control = match self.controls.get(id)? {
             ExpansionControl::CsName(control) => *control,
             _ => return Err(ScratchError::InvalidCoordinate),
         };
-        let _ = self.controls.take_top(id)?;
+        let _ = self.take_active_control(id)?;
         self.names.truncate(control.name.offset)?;
-        self.driver.pop_continuation()?;
         Ok(control)
     }
 
@@ -905,10 +912,8 @@ impl<G> ExpansionWork<G> {
     pub(crate) fn top_ifcsname_control(
         &self,
     ) -> Result<Option<SynchronousIfCsNameControl>, ScratchError> {
-        let id = match self.controls.top_id() {
-            Ok(id) => id,
-            Err(ScratchError::InvalidCoordinate) => return Ok(None),
-            Err(error) => return Err(error),
+        let Some(id) = self.active_lane(ActiveControlTag::IfCsName)? else {
+            return Ok(None);
         };
         match self.controls.get(id)? {
             ExpansionControl::IfCsName(control) => Ok(Some(*control)),
@@ -920,14 +925,15 @@ impl<G> ExpansionWork<G> {
     pub(crate) fn pop_ifcsname_control(
         &mut self,
     ) -> Result<SynchronousIfCsNameControl, ScratchError> {
-        let id = self.controls.top_id()?;
+        let id = self
+            .active_lane(ActiveControlTag::IfCsName)?
+            .ok_or(ScratchError::InvalidCoordinate)?;
         let control = match self.controls.get(id)? {
             ExpansionControl::IfCsName(control) => *control,
             _ => return Err(ScratchError::InvalidCoordinate),
         };
-        let _ = self.controls.take_top(id)?;
+        let _ = self.take_active_control(id)?;
         self.names.truncate(control.name.offset)?;
-        self.driver.pop_continuation()?;
         Ok(control)
     }
 
@@ -935,10 +941,8 @@ impl<G> ExpansionWork<G> {
     pub(crate) fn top_expandafter_control(
         &self,
     ) -> Result<Option<SynchronousExpandAfterControl<G>>, ScratchError> {
-        let id = match self.controls.top_id() {
-            Ok(id) => id,
-            Err(ScratchError::InvalidCoordinate) => return Ok(None),
-            Err(error) => return Err(error),
+        let Some(id) = self.active_lane(ActiveControlTag::ExpandAfterSync)? else {
+            return Ok(None);
         };
         match self.controls.get(id)? {
             ExpansionControl::ExpandAfterSync(control) => Ok(Some(*control)),
@@ -953,7 +957,9 @@ impl<G> ExpansionWork<G> {
         &mut self,
         first: crate::command::HotCommand<G>,
     ) -> Result<(), ScratchError> {
-        let id = self.controls.top_id()?;
+        let id = self
+            .active_lane(ActiveControlTag::ExpandAfterSync)?
+            .ok_or(ScratchError::InvalidCoordinate)?;
         let control = self.controls.get_mut(id)?;
         let ExpansionControl::ExpandAfterSync(control) = control else {
             return Err(ScratchError::InvalidCoordinate);
@@ -975,7 +981,9 @@ impl<G> ExpansionWork<G> {
     /// the expanded-token request lane. The parent control remains parked but
     /// is ignored by nested delivery until that scanner returns.
     pub(crate) fn await_expandafter_nested(&mut self) -> Result<(), ScratchError> {
-        let id = self.controls.top_id()?;
+        let id = self
+            .active_lane(ActiveControlTag::ExpandAfterSync)?
+            .ok_or(ScratchError::InvalidCoordinate)?;
         let control = self.controls.get_mut(id)?;
         let ExpansionControl::ExpandAfterSync(control) = control else {
             return Err(ScratchError::InvalidCoordinate);
@@ -992,7 +1000,9 @@ impl<G> ExpansionWork<G> {
     /// has returned. The scanner's result, if any, is then consumed by the
     /// normal top-control branch of the delivery loop.
     pub(crate) fn resume_expandafter_second(&mut self) -> Result<(), ScratchError> {
-        let id = self.controls.top_id()?;
+        let id = self
+            .active_lane(ActiveControlTag::ExpandAfterSync)?
+            .ok_or(ScratchError::InvalidCoordinate)?;
         let control = self.controls.get_mut(id)?;
         let ExpansionControl::ExpandAfterSync(control) = control else {
             return Err(ScratchError::InvalidCoordinate);
@@ -1012,7 +1022,9 @@ impl<G> ExpansionWork<G> {
     pub(crate) fn pop_expandafter_control(
         &mut self,
     ) -> Result<SynchronousExpandAfterControl<G>, ScratchError> {
-        let id = self.controls.top_id()?;
+        let id = self
+            .active_lane(ActiveControlTag::ExpandAfterSync)?
+            .ok_or(ScratchError::InvalidCoordinate)?;
         let control = match self.controls.get(id)? {
             ExpansionControl::ExpandAfterSync(control) => *control,
             _ => return Err(ScratchError::InvalidCoordinate),
@@ -1021,8 +1033,7 @@ impl<G> ExpansionWork<G> {
         {
             return Err(ScratchError::InvalidCoordinate);
         }
-        let _ = self.controls.take_top(id)?;
-        self.driver.pop_continuation()?;
+        let _ = self.take_active_control(id)?;
         crate::command::record_expansion_command_move_out();
         Ok(control)
     }
@@ -1034,20 +1045,12 @@ impl<G> ExpansionWork<G> {
         kind: crate::conditionals::ConditionalKind,
         inverted: bool,
     ) -> Result<(), ScratchError> {
-        self.driver.push_continuation()?;
-        if let Err(error) =
-            self.push_control(ExpansionControl::IfCompare(SynchronousIfCompareControl {
-                condition,
-                kind,
-                inverted,
-                phase: SynchronousIfComparePhase::NeedFirst,
-            }))
-        {
-            self.driver
-                .pop_continuation()
-                .expect("failed if-compare push restores driver depth");
-            return Err(error);
-        }
+        self.push_control(ExpansionControl::IfCompare(SynchronousIfCompareControl {
+            condition,
+            kind,
+            inverted,
+            phase: SynchronousIfComparePhase::NeedFirst,
+        }))?;
         Ok(())
     }
 
@@ -1055,10 +1058,8 @@ impl<G> ExpansionWork<G> {
     pub(crate) fn top_if_compare_control(
         &self,
     ) -> Result<Option<SynchronousIfCompareControl>, ScratchError> {
-        let id = match self.controls.top_id() {
-            Ok(id) => id,
-            Err(ScratchError::InvalidCoordinate) => return Ok(None),
-            Err(error) => return Err(error),
+        let Some(id) = self.active_lane(ActiveControlTag::IfCompare)? else {
+            return Ok(None);
         };
         match self.controls.get(id)? {
             ExpansionControl::IfCompare(control) => Ok(Some(*control)),
@@ -1073,7 +1074,9 @@ impl<G> ExpansionWork<G> {
         character: u32,
         category: Option<tex_state::token::Catcode>,
     ) -> Result<(), ScratchError> {
-        let id = self.controls.top_id()?;
+        let id = self
+            .active_lane(ActiveControlTag::IfCompare)?
+            .ok_or(ScratchError::InvalidCoordinate)?;
         let control = self.controls.get_mut(id)?;
         let ExpansionControl::IfCompare(control) = control else {
             return Err(ScratchError::InvalidCoordinate);
@@ -1091,7 +1094,9 @@ impl<G> ExpansionWork<G> {
     /// Hides the comparison parent while one operand's nested scanner invokes
     /// expanded-token requests.
     pub(crate) fn await_if_compare_operand(&mut self) -> Result<(), ScratchError> {
-        let id = self.controls.top_id()?;
+        let id = self
+            .active_lane(ActiveControlTag::IfCompare)?
+            .ok_or(ScratchError::InvalidCoordinate)?;
         let control = self.controls.get_mut(id)?;
         let ExpansionControl::IfCompare(control) = control else {
             return Err(ScratchError::InvalidCoordinate);
@@ -1116,7 +1121,9 @@ impl<G> ExpansionWork<G> {
     /// Restores the comparison's operand phase once the nested primitive
     /// scanner has returned to the driver.
     pub(crate) fn resume_if_compare_operand(&mut self) -> Result<(), ScratchError> {
-        let id = self.controls.top_id()?;
+        let id = self
+            .active_lane(ActiveControlTag::IfCompare)?
+            .ok_or(ScratchError::InvalidCoordinate)?;
         let control = self.controls.get_mut(id)?;
         let ExpansionControl::IfCompare(control) = control else {
             return Err(ScratchError::InvalidCoordinate);
@@ -1141,7 +1148,9 @@ impl<G> ExpansionWork<G> {
     pub(crate) fn pop_if_compare_control(
         &mut self,
     ) -> Result<SynchronousIfCompareControl, ScratchError> {
-        let id = self.controls.top_id()?;
+        let id = self
+            .active_lane(ActiveControlTag::IfCompare)?
+            .ok_or(ScratchError::InvalidCoordinate)?;
         let control = match self.controls.get(id)? {
             ExpansionControl::IfCompare(control) => *control,
             _ => return Err(ScratchError::InvalidCoordinate),
@@ -1149,8 +1158,7 @@ impl<G> ExpansionWork<G> {
         if !matches!(control.phase, SynchronousIfComparePhase::NeedSecond { .. }) {
             return Err(ScratchError::InvalidCoordinate);
         }
-        let _ = self.controls.take_top(id)?;
-        self.driver.pop_continuation()?;
+        let _ = self.take_active_control(id)?;
         Ok(control)
     }
 
@@ -1161,20 +1169,12 @@ impl<G> ExpansionWork<G> {
         kind: crate::conditionals::ConditionalKind,
         inverted: bool,
     ) -> Result<(), ScratchError> {
-        self.driver.push_continuation()?;
-        if let Err(error) =
-            self.push_control(ExpansionControl::IfNumber(SynchronousIfNumberControl {
-                condition,
-                kind,
-                inverted,
-                phase: SynchronousIfNumberPhase::NeedLeft,
-            }))
-        {
-            self.driver
-                .pop_continuation()
-                .expect("failed if-number-control push restores driver depth");
-            return Err(error);
-        }
+        self.push_control(ExpansionControl::IfNumber(SynchronousIfNumberControl {
+            condition,
+            kind,
+            inverted,
+            phase: SynchronousIfNumberPhase::NeedLeft,
+        }))?;
         Ok(())
     }
 
@@ -1182,10 +1182,8 @@ impl<G> ExpansionWork<G> {
     pub(crate) fn top_if_number_control(
         &self,
     ) -> Result<Option<SynchronousIfNumberControl>, ScratchError> {
-        let id = match self.controls.top_id() {
-            Ok(id) => id,
-            Err(ScratchError::InvalidCoordinate) => return Ok(None),
-            Err(error) => return Err(error),
+        let Some(id) = self.active_lane(ActiveControlTag::IfNumber)? else {
+            return Ok(None);
         };
         match self.controls.get(id)? {
             ExpansionControl::IfNumber(control) => Ok(Some(*control)),
@@ -1200,7 +1198,9 @@ impl<G> ExpansionWork<G> {
         &mut self,
         phase: SynchronousIfNumberPhase,
     ) -> Result<(), ScratchError> {
-        let id = self.controls.top_id()?;
+        let id = self
+            .active_lane(ActiveControlTag::IfNumber)?
+            .ok_or(ScratchError::InvalidCoordinate)?;
         let control = self.controls.get_mut(id)?;
         let ExpansionControl::IfNumber(control) = control else {
             return Err(ScratchError::InvalidCoordinate);
@@ -1212,7 +1212,9 @@ impl<G> ExpansionWork<G> {
     /// Hides a numeric operand parent while a nested expandable command is
     /// being interpreted by the same delivery loop.
     pub(crate) fn await_if_number_operand(&mut self) -> Result<(), ScratchError> {
-        let id = self.controls.top_id()?;
+        let id = self
+            .active_lane(ActiveControlTag::IfNumber)?
+            .ok_or(ScratchError::InvalidCoordinate)?;
         let control = self.controls.get_mut(id)?;
         let ExpansionControl::IfNumber(control) = control else {
             return Err(ScratchError::InvalidCoordinate);
@@ -1278,7 +1280,9 @@ impl<G> ExpansionWork<G> {
 
     /// Restores a numeric operand phase after its nested expansion settled.
     pub(crate) fn resume_if_number_operand(&mut self) -> Result<(), ScratchError> {
-        let id = self.controls.top_id()?;
+        let id = self
+            .active_lane(ActiveControlTag::IfNumber)?
+            .ok_or(ScratchError::InvalidCoordinate)?;
         let control = self.controls.get_mut(id)?;
         let ExpansionControl::IfNumber(control) = control else {
             return Err(ScratchError::InvalidCoordinate);
@@ -1340,7 +1344,9 @@ impl<G> ExpansionWork<G> {
     pub(crate) fn pop_if_number_control(
         &mut self,
     ) -> Result<SynchronousIfNumberControl, ScratchError> {
-        let id = self.controls.top_id()?;
+        let id = self
+            .active_lane(ActiveControlTag::IfNumber)?
+            .ok_or(ScratchError::InvalidCoordinate)?;
         let control = match self.controls.get(id)? {
             ExpansionControl::IfNumber(control) => *control,
             _ => return Err(ScratchError::InvalidCoordinate),
@@ -1360,8 +1366,7 @@ impl<G> ExpansionWork<G> {
         ) {
             return Err(ScratchError::InvalidCoordinate);
         }
-        let _ = self.controls.take_top(id)?;
-        self.driver.pop_continuation()?;
+        let _ = self.take_active_control(id)?;
         Ok(control)
     }
 
@@ -1372,30 +1377,22 @@ impl<G> ExpansionWork<G> {
         kind: crate::conditionals::ConditionalKind,
         inverted: bool,
     ) -> Result<(), ScratchError> {
-        self.driver.push_continuation()?;
-        if let Err(error) = self.push_control(ExpansionControl::IfDimension(
+        self.push_control(ExpansionControl::IfDimension(
             SynchronousIfDimensionControl {
                 condition,
                 kind,
                 inverted,
                 phase: SynchronousIfDimensionPhase::NeedLeft,
             },
-        )) {
-            self.driver
-                .pop_continuation()
-                .expect("failed if-dimension-control push restores driver depth");
-            return Err(error);
-        }
+        ))?;
         Ok(())
     }
 
     pub(crate) fn top_if_dimension_control(
         &self,
     ) -> Result<Option<SynchronousIfDimensionControl>, ScratchError> {
-        let id = match self.controls.top_id() {
-            Ok(id) => id,
-            Err(ScratchError::InvalidCoordinate) => return Ok(None),
-            Err(error) => return Err(error),
+        let Some(id) = self.active_lane(ActiveControlTag::IfDimension)? else {
+            return Ok(None);
         };
         match self.controls.get(id)? {
             ExpansionControl::IfDimension(control) => Ok(Some(*control)),
@@ -1407,7 +1404,9 @@ impl<G> ExpansionWork<G> {
         &mut self,
         phase: SynchronousIfDimensionPhase,
     ) -> Result<(), ScratchError> {
-        let id = self.controls.top_id()?;
+        let id = self
+            .active_lane(ActiveControlTag::IfDimension)?
+            .ok_or(ScratchError::InvalidCoordinate)?;
         let control = self.controls.get_mut(id)?;
         let ExpansionControl::IfDimension(control) = control else {
             return Err(ScratchError::InvalidCoordinate);
@@ -1417,7 +1416,9 @@ impl<G> ExpansionWork<G> {
     }
 
     pub(crate) fn await_if_dimension_operand(&mut self) -> Result<(), ScratchError> {
-        let id = self.controls.top_id()?;
+        let id = self
+            .active_lane(ActiveControlTag::IfDimension)?
+            .ok_or(ScratchError::InvalidCoordinate)?;
         let control = self.controls.get_mut(id)?;
         let ExpansionControl::IfDimension(control) = control else {
             return Err(ScratchError::InvalidCoordinate);
@@ -1497,7 +1498,9 @@ impl<G> ExpansionWork<G> {
     }
 
     pub(crate) fn resume_if_dimension_operand(&mut self) -> Result<(), ScratchError> {
-        let id = self.controls.top_id()?;
+        let id = self
+            .active_lane(ActiveControlTag::IfDimension)?
+            .ok_or(ScratchError::InvalidCoordinate)?;
         let control = self.controls.get_mut(id)?;
         let ExpansionControl::IfDimension(control) = control else {
             return Err(ScratchError::InvalidCoordinate);
@@ -1569,7 +1572,9 @@ impl<G> ExpansionWork<G> {
     pub(crate) fn pop_if_dimension_control(
         &mut self,
     ) -> Result<SynchronousIfDimensionControl, ScratchError> {
-        let id = self.controls.top_id()?;
+        let id = self
+            .active_lane(ActiveControlTag::IfDimension)?
+            .ok_or(ScratchError::InvalidCoordinate)?;
         let control = match self.controls.get(id)? {
             ExpansionControl::IfDimension(control) => *control,
             _ => return Err(ScratchError::InvalidCoordinate),
@@ -1582,8 +1587,7 @@ impl<G> ExpansionWork<G> {
         ) {
             return Err(ScratchError::InvalidCoordinate);
         }
-        let _ = self.controls.take_top(id)?;
-        self.driver.pop_continuation()?;
+        let _ = self.take_active_control(id)?;
         Ok(control)
     }
 
@@ -1678,8 +1682,7 @@ impl<G> ExpansionWork<G> {
         &mut self,
         opener: tex_state::token::OriginId,
     ) -> Result<(), ScratchError> {
-        self.driver.push_continuation()?;
-        if let Err(error) = self.push_control(ExpansionControl::PdfXImageBBox(
+        self.push_control(ExpansionControl::PdfXImageBBox(
             SynchronousPdfXImageBBoxControl {
                 opener,
                 phase: SynchronousPdfXImageBBoxPhase::Object {
@@ -1688,12 +1691,7 @@ impl<G> ExpansionWork<G> {
                     seen_digit: false,
                 },
             },
-        )) {
-            self.driver
-                .pop_continuation()
-                .expect("failed ximage-bbox push restores driver depth");
-            return Err(error);
-        }
+        ))?;
         Ok(())
     }
 
@@ -1702,27 +1700,19 @@ impl<G> ExpansionWork<G> {
         opener: tex_state::token::OriginId,
         purpose: SynchronousNumberPurpose,
     ) -> Result<(), ScratchError> {
-        self.driver.push_continuation()?;
-        if let Err(error) = self.push_control(ExpansionControl::Number(SynchronousNumberControl {
+        self.push_control(ExpansionControl::Number(SynchronousNumberControl {
             opener,
             purpose,
             phase: SynchronousNumberPhase::Need,
-        })) {
-            self.driver
-                .pop_continuation()
-                .expect("failed number-control push restores driver depth");
-            return Err(error);
-        }
+        }))?;
         Ok(())
     }
 
     pub(crate) fn top_number_control(
         &self,
     ) -> Result<Option<SynchronousNumberControl>, ScratchError> {
-        let id = match self.controls.top_id() {
-            Ok(id) => id,
-            Err(ScratchError::InvalidCoordinate) => return Ok(None),
-            Err(error) => return Err(error),
+        let Some(id) = self.active_lane(ActiveControlTag::Number)? else {
+            return Ok(None);
         };
         match self.controls.get(id)? {
             ExpansionControl::Number(control) => Ok(Some(*control)),
@@ -1734,7 +1724,9 @@ impl<G> ExpansionWork<G> {
         &mut self,
         phase: SynchronousNumberPhase,
     ) -> Result<(), ScratchError> {
-        let id = self.controls.top_id()?;
+        let id = self
+            .active_lane(ActiveControlTag::Number)?
+            .ok_or(ScratchError::InvalidCoordinate)?;
         let control = self.controls.get_mut(id)?;
         let ExpansionControl::Number(control) = control else {
             return Err(ScratchError::InvalidCoordinate);
@@ -1744,7 +1736,9 @@ impl<G> ExpansionWork<G> {
     }
 
     pub(crate) fn await_number_operand(&mut self) -> Result<(), ScratchError> {
-        let id = self.controls.top_id()?;
+        let id = self
+            .active_lane(ActiveControlTag::Number)?
+            .ok_or(ScratchError::InvalidCoordinate)?;
         let control = self.controls.get_mut(id)?;
         let ExpansionControl::Number(control) = control else {
             return Err(ScratchError::InvalidCoordinate);
@@ -1786,7 +1780,9 @@ impl<G> ExpansionWork<G> {
     }
 
     pub(crate) fn resume_number_operand(&mut self) -> Result<(), ScratchError> {
-        let id = self.controls.top_id()?;
+        let id = self
+            .active_lane(ActiveControlTag::Number)?
+            .ok_or(ScratchError::InvalidCoordinate)?;
         let control = self.controls.get_mut(id)?;
         let ExpansionControl::Number(control) = control else {
             return Err(ScratchError::InvalidCoordinate);
@@ -1822,7 +1818,9 @@ impl<G> ExpansionWork<G> {
     }
 
     pub(crate) fn pop_number_control(&mut self) -> Result<SynchronousNumberControl, ScratchError> {
-        let id = self.controls.top_id()?;
+        let id = self
+            .active_lane(ActiveControlTag::Number)?
+            .ok_or(ScratchError::InvalidCoordinate)?;
         let control = match self.controls.get(id)? {
             ExpansionControl::Number(control) => *control,
             _ => return Err(ScratchError::InvalidCoordinate),
@@ -1836,8 +1834,7 @@ impl<G> ExpansionWork<G> {
         ) {
             return Err(ScratchError::InvalidCoordinate);
         }
-        let _ = self.controls.take_top(id)?;
-        self.driver.pop_continuation()?;
+        let _ = self.take_active_control(id)?;
         Ok(control)
     }
 
@@ -1878,28 +1875,18 @@ impl<G> ExpansionWork<G> {
         opener: tex_state::token::OriginId,
         purpose: SynchronousFontPurpose,
     ) -> Result<(), ScratchError> {
-        self.driver.push_continuation()?;
-        if let Err(error) =
-            self.push_control(ExpansionControl::FontName(SynchronousFontNameControl {
-                opener,
-                purpose,
-            }))
-        {
-            self.driver
-                .pop_continuation()
-                .expect("failed fontname-control push restores driver depth");
-            return Err(error);
-        }
+        self.push_control(ExpansionControl::FontName(SynchronousFontNameControl {
+            opener,
+            purpose,
+        }))?;
         Ok(())
     }
 
     pub(crate) fn top_fontname_control(
         &self,
     ) -> Result<Option<SynchronousFontNameControl>, ScratchError> {
-        let id = match self.controls.top_id() {
-            Ok(id) => id,
-            Err(ScratchError::InvalidCoordinate) => return Ok(None),
-            Err(error) => return Err(error),
+        let Some(id) = self.active_lane(ActiveControlTag::FontName)? else {
+            return Ok(None);
         };
         match self.controls.get(id)? {
             ExpansionControl::FontName(control) => Ok(Some(*control)),
@@ -1910,10 +1897,8 @@ impl<G> ExpansionWork<G> {
     pub(crate) fn top_pdf_ximage_bbox_control(
         &self,
     ) -> Result<Option<SynchronousPdfXImageBBoxControl>, ScratchError> {
-        let id = match self.controls.top_id() {
-            Ok(id) => id,
-            Err(ScratchError::InvalidCoordinate) => return Ok(None),
-            Err(error) => return Err(error),
+        let Some(id) = self.active_lane(ActiveControlTag::PdfXImageBBox)? else {
+            return Ok(None);
         };
         match self.controls.get(id)? {
             ExpansionControl::PdfXImageBBox(control) => Ok(Some(*control)),
@@ -1925,7 +1910,9 @@ impl<G> ExpansionWork<G> {
         &mut self,
         phase: SynchronousPdfXImageBBoxPhase,
     ) -> Result<(), ScratchError> {
-        let id = self.controls.top_id()?;
+        let id = self
+            .active_lane(ActiveControlTag::PdfXImageBBox)?
+            .ok_or(ScratchError::InvalidCoordinate)?;
         let control = self.controls.get_mut(id)?;
         let ExpansionControl::PdfXImageBBox(control) = control else {
             return Err(ScratchError::InvalidCoordinate);
@@ -1937,26 +1924,28 @@ impl<G> ExpansionWork<G> {
     pub(crate) fn pop_pdf_ximage_bbox_control(
         &mut self,
     ) -> Result<SynchronousPdfXImageBBoxControl, ScratchError> {
-        let id = self.controls.top_id()?;
+        let id = self
+            .active_lane(ActiveControlTag::PdfXImageBBox)?
+            .ok_or(ScratchError::InvalidCoordinate)?;
         let control = match self.controls.get(id)? {
             ExpansionControl::PdfXImageBBox(control) => *control,
             _ => return Err(ScratchError::InvalidCoordinate),
         };
-        let _ = self.controls.take_top(id)?;
-        self.driver.pop_continuation()?;
+        let _ = self.take_active_control(id)?;
         Ok(control)
     }
 
     pub(crate) fn pop_fontname_control(
         &mut self,
     ) -> Result<SynchronousFontNameControl, ScratchError> {
-        let id = self.controls.top_id()?;
+        let id = self
+            .active_lane(ActiveControlTag::FontName)?
+            .ok_or(ScratchError::InvalidCoordinate)?;
         let control = match self.controls.get(id)? {
             ExpansionControl::FontName(control) => *control,
             _ => return Err(ScratchError::InvalidCoordinate),
         };
-        let _ = self.controls.take_top(id)?;
-        self.driver.pop_continuation()?;
+        let _ = self.take_active_control(id)?;
         Ok(control)
     }
 
@@ -1978,8 +1967,29 @@ impl<G> ExpansionWork<G> {
         }
     }
 
+    /// Counts the synchronous records only on cold compatibility/diagnostic
+    /// paths.  The expanded token loop uses `active_control` directly and
+    /// never scans this lane.
+    fn synchronous_control_depth(&self) -> u32 {
+        let mut depth = 0_u32;
+        for index in 0..self.controls.len {
+            let Ok(slot) = self.controls.slot_by_index(index) else {
+                break;
+            };
+            if slot
+                .value
+                .as_ref()
+                .is_some_and(|control| is_synchronous_control(active_control_tag(control)))
+            {
+                depth = depth.saturating_add(1);
+            }
+        }
+        depth
+    }
+
+    #[cfg(test)]
     pub(crate) fn driver_continuation_depth(&self) -> u32 {
-        self.driver.continuation_depth()
+        self.synchronous_control_depth()
     }
 
     /// Parks the one command owner only after expansion has produced a real
@@ -2154,7 +2164,9 @@ impl<G> ExpansionWork<G> {
         &mut self,
         control: ExpansionControl<G>,
     ) -> Result<ExpansionControlSlot<G>, ScratchError> {
+        let tag = active_control_tag(&control);
         let id = self.controls.push(control)?;
+        self.active_control = Some((tag, id));
         self.counters.control_pushes = self.counters.control_pushes.saturating_add(1);
         self.counters.max_control_depth = self.counters.max_control_depth.max(self.controls.len());
         Ok(ExpansionControlSlot {
@@ -2167,7 +2179,9 @@ impl<G> ExpansionWork<G> {
         &mut self,
         control: &mut Option<ExpansionControl<G>>,
     ) -> Result<ExpansionControlSlot<G>, ScratchError> {
+        let tag = active_control_tag(control.as_ref().ok_or(ScratchError::InvalidCoordinate)?);
         let id = self.controls.push_from(control)?;
+        self.active_control = Some((tag, id));
         self.counters.control_pushes = self.counters.control_pushes.saturating_add(1);
         self.counters.max_control_depth = self.counters.max_control_depth.max(self.controls.len());
         Ok(ExpansionControlSlot {
@@ -2184,12 +2198,21 @@ impl<G> ExpansionWork<G> {
         self.controls.get_mut(id)
     }
 
+    fn take_active_control(&mut self, id: LaneId<G>) -> Result<ExpansionControl<G>, ScratchError> {
+        if self.active_control.map(|active| active.1) != Some(id) {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        let control = self.controls.take_top(id)?;
+        self.refresh_active_control()?;
+        Ok(control)
+    }
+
     pub(crate) fn pop_control(
         &mut self,
         slot: ExpansionControlSlot<G>,
     ) -> Result<ExpansionControl<G>, ScratchError> {
         let id = self.validate_control_slot(slot)?;
-        self.controls.take_top(id)
+        self.take_active_control(id)
     }
 
     pub(crate) fn name_mark(&self) -> Result<ExpansionNameMark, ScratchError> {
@@ -2249,7 +2272,7 @@ impl<G> ExpansionWork<G> {
             // control as part of the same deepest-first abort rather than
             // leaking a continuation into the next processor episode.
             self.controls.truncate(0)?;
-            self.driver = ExpandedDeliveryDriver::default();
+            self.active_control = None;
         }
         self.counters.aborted_roots = self.counters.aborted_roots.saturating_add(1);
         Ok(())
@@ -2258,9 +2281,9 @@ impl<G> ExpansionWork<G> {
     pub(crate) fn is_quiescent(&self) -> bool {
         self.active_roots.is_empty()
             && self.controls.len() == 0
+            && self.active_control.is_none()
             && self.commands.len() == 0
             && self.names.len == 0
-            && self.driver.continuation_depth == 0
     }
 
     pub(crate) const fn counters(&self) -> ExpansionWorkCounters {
@@ -2357,6 +2380,7 @@ impl<G> ExpansionWork<G> {
 
     fn truncate_to(&mut self, mark: ExpansionMark) -> Result<(), ScratchError> {
         self.controls.truncate(mark.controls)?;
+        self.refresh_active_control()?;
         self.commands.truncate(mark.commands)?;
         self.names.truncate(mark.name_bytes)
     }
