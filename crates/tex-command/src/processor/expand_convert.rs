@@ -1627,6 +1627,12 @@ impl<G> CommandProcessor<'_, '_, G> {
         {
             let left = control.left.ok_or_else(CommandError::input_invariant)?;
             self.finish_pdf_string_compare_continuation(left, list, control.opener)?;
+            if let Some(parent) = parent {
+                self.command
+                    .scratch
+                    .resume_expansion_control_parent(parent)
+                    .map_err(crate::scan_toks::scratch_command_error)?;
+            }
             return Ok(true);
         }
         if matches!(

@@ -3,7 +3,29 @@ use tex_state::env::AssignmentScope;
 use tex_state::meaning::{MeaningFlags, MeaningWord};
 use tex_state::token::{Catcode, Token, TokenWord};
 
-use crate::{CommandHostCapabilities, CommandSemanticDiagnostic, DeliveryStatus};
+use crate::{
+    CommandHostCapabilities, CommandObservation, CommandObserver, CommandSemanticDiagnostic,
+    DeliveryStatus, InputReason, InputTransition,
+};
+
+#[derive(Default)]
+struct InsertedRowBalanceObserver {
+    pushes: usize,
+    retires: usize,
+}
+
+impl CommandObserver for InsertedRowBalanceObserver {
+    fn committed(&mut self, observation: CommandObservation) {
+        let CommandObservation::Input(record) = observation else {
+            return;
+        };
+        match (record.transition, record.reason) {
+            (InputTransition::Recovery, InputReason::Recovery) => self.pushes += 1,
+            (InputTransition::Retire, InputReason::Recovery) => self.retires += 1,
+            _ => {}
+        }
+    }
+}
 
 fn other(ch: char) -> Token {
     Token::Char {
@@ -292,6 +314,75 @@ fn if_and_ifcat_operands_stay_in_the_shared_delivery_lane() {
         assert_eq!(next_character(&mut processor), 'N');
         assert_expanded_end(&mut processor);
         assert_eq!(processor.command.scratch.driver_continuation_depth(), 0);
+    });
+}
+
+#[test]
+fn if_operand_string_compare_completes_its_exact_parent_once() {
+    crate::test_harness::with_universe(|universe| {
+        let if_test = install(universe, "if-string-compare", ExpandablePrimitive::If);
+        let string_compare = install(
+            universe,
+            "string-compare-if-operand",
+            ExpandablePrimitive::StringCompare,
+        );
+        let otherwise = install(universe, "else-string-compare", ExpandablePrimitive::Else);
+        let fi = install(universe, "fi-string-compare", ExpandablePrimitive::Fi);
+        let mut command = CommandState::default();
+        crate::test_harness::push(
+            &mut command,
+            [
+                if_test,
+                other('0'),
+                string_compare,
+                Token::Char {
+                    ch: '{',
+                    cat: Catcode::BeginGroup,
+                },
+                other('a'),
+                Token::Char {
+                    ch: '}',
+                    cat: Catcode::EndGroup,
+                },
+                Token::Char {
+                    ch: '{',
+                    cat: Catcode::BeginGroup,
+                },
+                other('a'),
+                Token::Char {
+                    ch: '}',
+                    cat: Catcode::EndGroup,
+                },
+                other('T'),
+                otherwise,
+                other('F'),
+                fi,
+            ],
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::new(256).expect("bounded fuel ledger");
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut observer = InsertedRowBalanceObserver::default();
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        )
+        .with_observer(&mut observer);
+
+        assert_eq!(next_character(&mut processor), 'T');
+        assert_expanded_end(&mut processor);
+        assert!(processor.command.conditions.current().is_none());
+        assert_eq!(processor.command.scratch.driver_continuation_depth(), 0);
+        assert_eq!(processor.command.input_level_count(), 0);
+        drop(processor);
+        // The comparison result is one inserted expansion row. Its exact
+        // parent consumes that row, and the row retires once rather than
+        // entering incomplete-conditional recovery.
+        assert_eq!((observer.pushes, observer.retires), (1, 1));
     });
 }
 
