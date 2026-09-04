@@ -349,7 +349,27 @@ fn command_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels
     assert!(frame_read.contains("frame.position()"));
     assert!(frame_read.contains("frame.limit()"));
     assert!(frame_read.contains("load(position)?"));
-    assert!(frame_read.contains("frame.advance_resident()"));
+    assert_eq!(
+        frame_read
+            .matches("let consumed = frame.advance_resident();")
+            .count(),
+        1,
+        "ordinary resident delivery must advance outside its debug assertion"
+    );
+    assert!(frame_read.contains("debug_assert_eq!(consumed, position);"));
+    let macro_frame_read = expansion
+        .split("fn next_macro_body_word_from_current_frame<G>(")
+        .nth(1)
+        .and_then(|tail| tail.split("fn static_meaning").next())
+        .expect("locate tiny macro-body frame read");
+    assert_eq!(
+        macro_frame_read
+            .matches("let consumed = frame.advance_resident();")
+            .count(),
+        1,
+        "macro-body delivery must advance outside its debug assertion"
+    );
+    assert!(macro_frame_read.contains("debug_assert_eq!(consumed, position);"));
     let macro_argument_cursor = levels
         .split("impl<G> MacroArgumentCursor<G>")
         .nth(1)

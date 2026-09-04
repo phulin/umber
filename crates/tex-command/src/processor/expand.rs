@@ -112,7 +112,8 @@ fn next_word_from_current_frame(
         return None;
     }
     let (word, origin) = load(position)?;
-    debug_assert_eq!(frame.advance_resident(), position);
+    let consumed = frame.advance_resident();
+    debug_assert_eq!(consumed, position);
     Some(CurrentFrameWord {
         word,
         origin,
@@ -137,7 +138,8 @@ fn next_macro_body_word_from_current_frame<G>(
         return None;
     }
     let word = body.body.load_current_word()?;
-    debug_assert_eq!(frame.advance_resident(), position);
+    let consumed = frame.advance_resident();
+    debug_assert_eq!(consumed, position);
     let boundary = body.body.advance_current_word();
     if boundary && frame.position() < frame.limit() {
         body.body.advance_chunk_cold(frame.position());
