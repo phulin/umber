@@ -1234,6 +1234,63 @@ fn native_virtual_font_resolution_preserves_typed_identity_and_reuses_cache() {
 }
 
 #[test]
+fn native_shared_catalog_payload_admits_distinct_prefetch_file_kinds() {
+    let directory = TempDir::new().expect("distribution tempdir");
+    let bytes = b"shared typed payload";
+    let digest = hex_digest(bytes);
+    let object = format!("ahash64-v1-{digest}");
+    let objects = directory.path().join("objects");
+    std::fs::create_dir_all(&objects).expect("objects directory");
+    std::fs::write(objects.join(&object), bytes).expect("shared object");
+    let shard = format!(
+        "{{\"schema\":3,\"distribution\":\"shared-kind\",\"index\":0,\"files\":{{\"tex:shared\":{{\"virtualPath\":\"/texlive/shared\",\"object\":\"{object}\",\"ahash64\":\"{digest}\",\"bytes\":{}}}}}}}\n",
+        bytes.len()
+    );
+    write_sharded_root(
+        directory.path(),
+        "shared-kind",
+        0,
+        &[(shard.as_str(), true)],
+    );
+    let vf = FileRequest::new(
+        crate::FileRequestKey::new(FileKind::VirtualFont, "shared").expect("VF key"),
+        "shared",
+    );
+    let pdf = FileRequest::new(
+        crate::FileRequestKey::new(FileKind::PdfFontProgram, "shared").expect("PDF key"),
+        "shared",
+    );
+    let mut resolver = DistributionResolver::new(
+        ObjectCache::new(directory.path().join("cache")),
+        Some(directory.path().to_string_lossy().into_owned()),
+        None,
+        true,
+    );
+    let responses = resolver
+        .resolve_batch(
+            &local_resolver(directory.path()),
+            &NeedResources {
+                required: vec![ResourceRequest::File(vf.clone())],
+                probes: Vec::new(),
+                prefetch_hints: vec![ResourceRequest::File(pdf.clone())],
+            },
+            &FetchCancellation::new(),
+        )
+        .expect("shared payload batch");
+    assert_eq!(responses.len(), 2);
+    assert!(responses.iter().any(|response| matches!(
+        response,
+        ResourceResponse::File(file)
+            if file.request == *vf.key() && file.bytes == bytes
+    )));
+    assert!(responses.iter().any(|response| matches!(
+        response,
+        ResourceResponse::File(file)
+            if file.request == *pdf.key() && file.bytes == bytes
+    )));
+}
+
+#[test]
 fn explicit_local_distribution_resolves_nested_ec_tfm_record() {
     let directory = TempDir::new().expect("distribution tempdir");
     let metric = b"EC typewriter metric";

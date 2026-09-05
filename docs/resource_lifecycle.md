@@ -370,7 +370,11 @@ platform-specific cache and transport adapters. The concrete policy owner is
 `PrefetchPlanner` and to authored WASM JavaScript through its thin Rust DTO
 binding. It owns extraction, canonical queue/deduplication, bounded closure,
 budget selection, and replay-region escalation; JavaScript does not maintain a
-second production predictor.
+second production predictor. Queue identity is the complete file
+domain/kind/normalized-name plus lookup context, carried beside the
+many-to-one catalogue transport key. Per-run payload reservations are tracked
+separately from semantic admissions, so one verified object can serve several
+distinct typed requests without making them aliases.
 
 Runtime closure is fed only by the successful engine-VFS admission callback.
 The callback carries the canonical request, retained path, admitted bytes, and
