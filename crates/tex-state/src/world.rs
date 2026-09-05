@@ -1402,6 +1402,7 @@ pub struct WorldError {
     operation: &'static str,
     path: Option<PathBuf>,
     message: String,
+    io_error_kind: Option<io::ErrorKind>,
     committed_effects_through: Option<EffectPos>,
     retry_safety: EffectRetrySafety,
     stream_open_unavailable: Option<Box<StreamOpenFailure>>,
@@ -1521,10 +1522,27 @@ impl WorldError {
             operation,
             path,
             message: message.into(),
+            io_error_kind: None,
             committed_effects_through: None,
             retry_safety: EffectRetrySafety::NotAnEffectCommit,
             stream_open_unavailable: None,
         }
+    }
+
+    pub(crate) fn from_io_error(
+        operation: &'static str,
+        path: Option<PathBuf>,
+        error: &io::Error,
+    ) -> Self {
+        let mut world_error = Self::new(operation, path, error.to_string());
+        world_error.io_error_kind = Some(error.kind());
+        world_error
+    }
+
+    pub(crate) fn not_found(operation: &'static str, path: Option<PathBuf>) -> Self {
+        let mut world_error = Self::new(operation, path, "not found in memory world");
+        world_error.io_error_kind = Some(io::ErrorKind::NotFound);
+        world_error
     }
 
     pub(crate) fn pdf_object_ids_exhausted() -> Self {
@@ -1560,6 +1578,16 @@ impl WorldError {
     #[must_use]
     pub const fn retry_safety(&self) -> EffectRetrySafety {
         self.retry_safety
+    }
+
+    /// Returns the host I/O classification when this error originated from a
+    /// filesystem operation.  The host error payload remains erased at the
+    /// World boundary, but callers that implement ordered search need to
+    /// distinguish an authoritative missing candidate from an inaccessible
+    /// one.
+    #[must_use]
+    pub const fn io_error_kind(&self) -> Option<io::ErrorKind> {
+        self.io_error_kind
     }
 }
 
@@ -3258,7 +3286,7 @@ impl World {
         match &self.backend {
             WorldBackend::Real { .. } => {
                 Ok(SharedBytes::from(std::fs::read(path).map_err(|err| {
-                    WorldError::new("read file", Some(path.to_owned()), err.to_string())
+                    WorldError::from_io_error("read file", Some(path.to_owned()), &err)
                 })?))
             }
             WorldBackend::Memory(memory) => memory
@@ -3266,13 +3294,7 @@ impl World {
                 .get(path)
                 .map(|bytes| SharedBytes::from(bytes.as_slice()))
                 .or_else(|| memory.files.get(path).cloned())
-                .ok_or_else(|| {
-                    WorldError::new(
-                        "read file",
-                        Some(path.to_owned()),
-                        "not found in memory world",
-                    )
-                }),
+                .ok_or_else(|| WorldError::not_found("read file", Some(path.to_owned()))),
         }
     }
 
@@ -4970,10 +4992,10 @@ impl World {
         for record in self.external_input_records() {
             let current = match &self.backend {
                 WorldBackend::Real { .. } => std::fs::read(record.path()).map_err(|error| {
-                    WorldError::new(
+                    WorldError::from_io_error(
                         "validate retained input",
                         Some(record.path().to_owned()),
-                        error.to_string(),
+                        &error,
                     )
                 })?,
                 WorldBackend::Memory(memory) => memory

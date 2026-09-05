@@ -63,9 +63,18 @@ fn prefetch_identity_uses_format_content_and_pinned_root() {
     let different_format_same_size =
         native_prefetch_identity(&options, Some(b"wxyz"), Some("root-a"));
     let different_root = native_prefetch_identity(&options, Some(b"abcd"), Some("root-b"));
+    let different_input_area = native_prefetch_identity(
+        &NativeRunOptions {
+            input: directory.path().join("nested/main.tex"),
+            ..options.clone()
+        },
+        Some(b"abcd"),
+        Some("root-a"),
+    );
     assert_eq!(first, same_content_different_path);
     assert_ne!(first, different_format_same_size);
     assert_ne!(first, different_root);
+    assert_ne!(first, different_input_area);
 }
 
 #[test]
@@ -592,6 +601,10 @@ fn local_resolver(root: &Path) -> LocalResolver {
     LocalResolver {
         base: root.to_owned(),
         roots: vec![root.to_owned()],
+        input_areas: Vec::new(),
+        font_areas: Vec::new(),
+        bib_areas: Vec::new(),
+        bst_areas: Vec::new(),
         input: TexInputSearchPath::new(root, Vec::new()),
         font: TexFontSearchPath::new(root.to_owned(), Vec::new()),
         input_paths: RefCell::new(BTreeMap::new()),
@@ -615,8 +628,52 @@ fn local_resolver_handles_each_classic_bibliography_kind() {
             crate::FileRequestKey::new(kind, name).expect("classic request"),
             name,
         );
-        assert_eq!(resolver.resolve(&request).expect("resolved").bytes, bytes);
+        assert_eq!(
+            resolver
+                .resolve(&request)
+                .expect("local lookup")
+                .expect("resolved")
+                .bytes,
+            bytes
+        );
     }
+}
+
+#[test]
+fn local_true_absence_remains_an_authoritative_search_miss() {
+    let directory = TempDir::new().expect("temporary directory");
+    let resolver = local_resolver(directory.path());
+    let request = FileRequest::new(
+        crate::FileRequestKey::new(FileKind::TexInput, "missing").expect("request key"),
+        "missing",
+    );
+
+    assert!(
+        resolver
+            .resolve(&request)
+            .expect("missing lookup should not fail")
+            .is_none()
+    );
+}
+
+#[test]
+fn local_io_error_does_not_become_an_authoritative_miss() {
+    let directory = TempDir::new().expect("temporary directory");
+    std::fs::create_dir(directory.path().join("blocked.tex")).expect("blocked directory");
+    let resolver = local_resolver(directory.path());
+    let request = FileRequest::new(
+        crate::FileRequestKey::new(FileKind::TexInput, "blocked").expect("request key"),
+        "blocked",
+    );
+
+    let error = resolver
+        .resolve(&request)
+        .expect_err("directory read must propagate as a host error");
+    assert!(matches!(
+        error,
+        NativeRunError::Io { source, .. }
+            if source.kind() == std::io::ErrorKind::IsADirectory
+    ));
 }
 
 #[test]
@@ -1231,7 +1288,10 @@ fn local_resolution_owns_virtual_and_request_path_receipt_aliases() {
         "owned.ltx",
     );
 
-    let resolved = resolver.resolve(&request).expect("resolve local input");
+    let resolved = resolver
+        .resolve(&request)
+        .expect("resolve local input")
+        .expect("local input exists");
     let path_map = resolver.input_path_map();
 
     assert_eq!(path_map.get(Path::new("owned.ltx")), Some(&path));

@@ -887,6 +887,28 @@ test("prefetch identity invalidates same-size formats and authenticated roots", 
 	differentRoot.discardRun();
 });
 
+test("prefetch identity invalidates a changed composite provider order", async () => {
+	const data = await fixture();
+	const cache = new MemoryObjectCache();
+	const first = resolverFor(data, { cacheStore: cache }).resolver;
+	const options = {
+		engine: "tex82",
+		outputs: ["dvi"],
+		providerPrecedence: "0:project>1:distribution",
+	};
+	await first.beginRun({ options, source: "" });
+	await first.resolve([{ kind: "tex", name: "plain.tex" }]);
+	await first.commitRun();
+
+	const changed = resolverFor(data, { cacheStore: cache }).resolver;
+	const startup = await changed.beginRun({
+		options: { ...options, providerPrecedence: "0:distribution>1:project" },
+		source: "",
+	});
+	assert(!startup.hints.some(({ name }) => name === "plain.tex"));
+	changed.discardRun();
+});
+
 test("does not persist format history when the format schema is unavailable", async () => {
 	const data = await fixture();
 	const cache = new MemoryObjectCache();

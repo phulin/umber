@@ -1,7 +1,74 @@
+use std::io;
 use std::path::{Path, PathBuf};
 
 use tex_state::World;
 use tex_state::{FileContent, InputReadState};
+
+/// Ordered search can continue past a candidate that is absent, but an
+/// inaccessible candidate must not be reported as an authoritative miss.
+/// Keep every candidate error so a later candidate can still win according to
+/// the existing search order while preserving the first real host failure if
+/// no candidate succeeds.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct WorldSearchError {
+    pub(crate) failures: Vec<(PathBuf, tex_state::WorldError)>,
+}
+
+impl WorldSearchError {
+    #[must_use]
+    pub(crate) fn is_authoritative_not_found(&self) -> bool {
+        !self.failures.is_empty()
+            && self
+                .failures
+                .iter()
+                .all(|(_, error)| error.io_error_kind() == Some(io::ErrorKind::NotFound))
+    }
+
+    #[must_use]
+    pub(crate) fn first_non_not_found(
+        &self,
+    ) -> Option<(&Path, io::ErrorKind, &tex_state::WorldError)> {
+        self.failures.iter().find_map(|(path, error)| {
+            (error.io_error_kind() != Some(io::ErrorKind::NotFound)).then_some((
+                path.as_path(),
+                error.io_error_kind().unwrap_or(io::ErrorKind::Other),
+                error,
+            ))
+        })
+    }
+}
+
+impl std::fmt::Display for WorldSearchError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut failures = self.failures.iter();
+        if let Some((path, error)) = failures.next() {
+            write!(formatter, "{} ({error})", path.display())?;
+        }
+        for (path, error) in failures {
+            write!(formatter, "; {} ({error})", path.display())?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for WorldSearchError {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum RestrictedPipeError {
+    Invalid(String),
+    Search(WorldSearchError),
+}
+
+impl std::fmt::Display for RestrictedPipeError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Invalid(message) => formatter.write_str(message),
+            Self::Search(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl std::error::Error for RestrictedPipeError {}
 
 /// Ordered host-side policy for resolving TeX `\input` files.
 ///
@@ -61,6 +128,15 @@ impl TexInputSearchPath {
     }
 
     pub fn read_from_world(&self, world: &mut World, name: &str) -> Result<FileContent, String> {
+        self.read_from_world_detailed(world, name)
+            .map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn read_from_world_detailed(
+        &self,
+        world: &mut World,
+        name: &str,
+    ) -> Result<FileContent, WorldSearchError> {
         let name = Path::new(name);
         let requested = with_default_extension(name, "tex");
         let mut candidates = search_candidates(&self.user_area, &self.system_areas, &requested);
@@ -75,7 +151,7 @@ impl TexInputSearchPath {
                 }
             }
         }
-        read_first_world(world, candidates)
+        read_first_world_detailed(world, candidates)
     }
 
     pub(crate) fn read_from_resource_world(
@@ -83,6 +159,15 @@ impl TexInputSearchPath {
         world: &mut crate::ResourceWorld<'_>,
         name: &str,
     ) -> Result<FileContent, String> {
+        self.read_from_resource_world_detailed(world, name)
+            .map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn read_from_resource_world_detailed(
+        &self,
+        world: &mut crate::ResourceWorld<'_>,
+        name: &str,
+    ) -> Result<FileContent, WorldSearchError> {
         let name = Path::new(name);
         let requested = with_default_extension(name, "tex");
         let mut candidates = search_candidates(&self.user_area, &self.system_areas, &requested);
@@ -97,7 +182,7 @@ impl TexInputSearchPath {
                 }
             }
         }
-        read_first_resource(world, candidates)
+        read_first_resource_detailed(world, candidates)
     }
 
     pub(crate) fn read_exact_from_resource_world(
@@ -105,7 +190,16 @@ impl TexInputSearchPath {
         world: &mut crate::ResourceWorld<'_>,
         name: &str,
     ) -> Result<FileContent, String> {
-        read_first_resource(
+        self.read_exact_from_resource_world_detailed(world, name)
+            .map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn read_exact_from_resource_world_detailed(
+        &self,
+        world: &mut crate::ResourceWorld<'_>,
+        name: &str,
+    ) -> Result<FileContent, WorldSearchError> {
+        read_first_resource_detailed(
             world,
             search_candidates(&self.user_area, &self.system_areas, Path::new(name)),
         )
@@ -149,16 +243,26 @@ impl TexInputSearchPath {
         world: &mut crate::ResourceWorld<'_>,
         name: &str,
     ) -> Option<Result<String, String>> {
+        self.read_restricted_pipe_from_resource_world_detailed(world, name)
+            .map(|result| result.map_err(|error| error.to_string()))
+    }
+
+    pub(crate) fn read_restricted_pipe_from_resource_world_detailed(
+        &self,
+        world: &mut crate::ResourceWorld<'_>,
+        name: &str,
+    ) -> Option<Result<String, RestrictedPipeError>> {
         let command = name.trim();
         let requested = command.strip_prefix("|kpsewhich ")?;
         if requested.is_empty() || requested.chars().any(char::is_whitespace) {
-            return Some(Err(
-                "restricted kpsewhich pipe requires one TeX filename".to_owned()
-            ));
+            return Some(Err(RestrictedPipeError::Invalid(
+                "restricted kpsewhich pipe requires one TeX filename".to_owned(),
+            )));
         }
         Some(
-            self.read_from_resource_world(world, requested)
-                .map(|content| format!("{}\n", content.path().display())),
+            self.read_from_resource_world_detailed(world, requested)
+                .map(|content| format!("{}\n", content.path().display()))
+                .map_err(RestrictedPipeError::Search),
         )
     }
 }
@@ -194,8 +298,17 @@ impl TexFontSearchPath {
     }
 
     pub fn read_from_world(&self, world: &mut World, path: &Path) -> Result<FileContent, String> {
+        self.read_from_world_detailed(world, path)
+            .map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn read_from_world_detailed(
+        &self,
+        world: &mut World,
+        path: &Path,
+    ) -> Result<FileContent, WorldSearchError> {
         let requested = with_default_extension(path, "tfm");
-        read_first_world(
+        read_first_world_detailed(
             world,
             font_candidates(&self.user_area, &self.system_areas, &requested),
         )
@@ -206,8 +319,17 @@ impl TexFontSearchPath {
         world: &mut crate::ResourceWorld<'_>,
         path: &Path,
     ) -> Result<FileContent, String> {
+        self.read_from_resource_world_detailed(world, path)
+            .map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn read_from_resource_world_detailed(
+        &self,
+        world: &mut crate::ResourceWorld<'_>,
+        path: &Path,
+    ) -> Result<FileContent, WorldSearchError> {
         let requested = with_default_extension(path, "tfm");
-        read_first_resource(
+        read_first_resource_detailed(
             world,
             font_candidates(&self.user_area, &self.system_areas, &requested),
         )
@@ -229,30 +351,41 @@ impl TexFontSearchPath {
         world: &mut World,
         path: &Path,
     ) -> Result<FileContent, String> {
+        self.read_program_from_world_detailed(world, path)
+            .map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn read_program_from_world_detailed(
+        &self,
+        world: &mut World,
+        path: &Path,
+    ) -> Result<FileContent, WorldSearchError> {
         let candidates = font_candidates(&self.user_area, &self.system_areas, path);
-        let mut failures = Vec::with_capacity(candidates.len());
-        for candidate in candidates {
-            match world.read_file(&candidate) {
-                Ok(content) => return Ok(content),
-                Err(error) => failures.push(format!("{}: {error}", candidate.display())),
-            }
-        }
-        Err(failures.join("; "))
+        read_first_world_detailed(world, candidates)
+    }
+
+    pub(crate) fn read_program_from_resource_world_detailed(
+        &self,
+        world: &mut crate::ResourceWorld<'_>,
+        path: &Path,
+    ) -> Result<FileContent, WorldSearchError> {
+        let candidates = font_candidates(&self.user_area, &self.system_areas, path);
+        read_first_resource_detailed(world, candidates)
     }
 }
 
-fn read_first_resource(
+fn read_first_resource_detailed(
     world: &mut crate::ResourceWorld<'_>,
     candidates: Vec<PathBuf>,
-) -> Result<FileContent, String> {
+) -> Result<FileContent, WorldSearchError> {
     let mut failures = Vec::with_capacity(candidates.len());
     for candidate in candidates {
         match world.read_file(&candidate) {
             Ok(content) => return Ok(content),
-            Err(error) => failures.push(format!("{}: {error}", candidate.display())),
+            Err(error) => failures.push((candidate, error)),
         }
     }
-    Err(failures.join("; "))
+    Err(WorldSearchError { failures })
 }
 
 fn with_default_extension(path: &Path, extension: &str) -> PathBuf {
@@ -313,15 +446,18 @@ fn read_first<C: InputReadState + ?Sized>(
     Err(failures.join("; "))
 }
 
-fn read_first_world(world: &mut World, candidates: Vec<PathBuf>) -> Result<FileContent, String> {
+pub(crate) fn read_first_world_detailed(
+    world: &mut World,
+    candidates: Vec<PathBuf>,
+) -> Result<FileContent, WorldSearchError> {
     let mut failures = Vec::with_capacity(candidates.len());
     for path in candidates {
         match world.read_file(&path) {
             Ok(content) => return Ok(content),
-            Err(error) => failures.push(format!("{} ({error})", path.display())),
+            Err(error) => failures.push((path, error)),
         }
     }
-    Err(failures.join("; "))
+    Err(WorldSearchError { failures })
 }
 
 fn has_explicit_area(path: &Path) -> bool {

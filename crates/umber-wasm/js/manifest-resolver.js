@@ -443,12 +443,15 @@ export class HttpManifestResolver {
 			context.options?.formatSchema,
 		);
 		const persistable = format !== "unavailable";
+		const providerPrecedence =
+			context.options?.providerPrecedence ??
+			"project/generated/local/distribution";
 		const identity = makePrefetchIdentity({
 			engine: context.options?.engine ?? "tex82",
 			format,
 			options: stableOptionsIdentity(context.options),
 			distribution: `root:${this.rootAHash64}`,
-			searchPolicy: `${this.prefetchPolicyVersion};providers=project/generated/local/distribution;precedence=v1`,
+			searchPolicy: `${this.prefetchPolicyVersion};providers=${providerPrecedence};precedence=v1`,
 		});
 		let prior;
 		if (persistable && this.persistentStore !== undefined) {

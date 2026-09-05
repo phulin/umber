@@ -4283,9 +4283,8 @@ struct DirectResourceHost;
 impl ResourceHost for DirectResourceHost {
     fn fulfill(&mut self, world: &mut ResourceWorld<'_>, need: &ResourceNeed) -> ResourceOutcome {
         match need {
-            ResourceNeed::Input { name, .. } => world.read_file(Path::new(name)).ok().map_or(
-                ResourceOutcome::Unavailable,
-                |content| {
+            ResourceNeed::Input { name, .. } => match world.read_file(Path::new(name)) {
+                Ok(content) => {
                     let role = if Path::new(name)
                         .extension()
                         .and_then(std::ffi::OsStr::to_str)
@@ -4298,31 +4297,42 @@ impl ResourceHost for DirectResourceHost {
                     ResourceOutcome::Fulfilled(ResourceFulfillment::world_input_with_role(
                         name, content, role,
                     ))
-                },
-            ),
-            ResourceNeed::InputProbe { request } => world
-                .read_file(Path::new(&request.name))
-                .ok()
-                .map_or(ResourceOutcome::Unavailable, |content| {
-                    ResourceOutcome::Fulfilled(ResourceFulfillment::world_input_probe(
-                        request.clone(),
-                        content,
-                    ))
-                }),
-            ResourceNeed::Font { request } => world
-                .read_file(canonical_font_resource_path(&request.name))
-                .ok()
-                .map_or(ResourceOutcome::Unavailable, |metrics| {
-                    ResourceOutcome::Fulfilled(ResourceFulfillment::Font {
+                }
+                Err(error) => direct_resource_error_outcome(error),
+            },
+            ResourceNeed::InputProbe { request } => {
+                match world.read_file(Path::new(&request.name)) {
+                    Ok(content) => ResourceOutcome::Fulfilled(
+                        ResourceFulfillment::world_input_probe(request.clone(), content),
+                    ),
+                    Err(error) => direct_resource_error_outcome(error),
+                }
+            }
+            ResourceNeed::Font { request } => {
+                match world.read_file(canonical_font_resource_path(&request.name)) {
+                    Ok(metrics) => ResourceOutcome::Fulfilled(ResourceFulfillment::Font {
                         request: request.clone(),
                         resource: Box::new(tex_command::FontResource::Tfm {
                             metrics,
                             opentype: None,
                         }),
-                    })
-                }),
+                    }),
+                    Err(error) => direct_resource_error_outcome(error),
+                }
+            }
             ResourceNeed::PdfImage { .. } => ResourceOutcome::Unavailable,
         }
+    }
+}
+
+fn direct_resource_error_outcome(error: tex_state::WorldError) -> ResourceOutcome {
+    if error.io_error_kind() == Some(std::io::ErrorKind::NotFound) {
+        ResourceOutcome::Unavailable
+    } else {
+        // A host access/read failure is unresolved, not an authoritative
+        // negative. The retained session can retry or surface the host
+        // failure without poisoning accepted lookup history.
+        ResourceOutcome::Declined
     }
 }
 

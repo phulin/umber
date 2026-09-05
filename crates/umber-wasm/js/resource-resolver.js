@@ -26,9 +26,17 @@ export class CompositeResourceResolver {
 	/** Starts accepted-run prediction on providers that own immutable catalogs. */
 	async beginRun(context = {}) {
 		const hints = [];
+		const providerPrecedence = this.providers
+			.map((provider, index) => `${index}:${providerIdentity(provider, index)}`)
+			.join(">");
+		const options = {
+			...(context.options ?? {}),
+			providerPrecedence,
+		};
+		const providerContext = { ...context, options };
 		for (const provider of this.providers) {
 			if (typeof provider.beginRun !== "function") continue;
-			const result = (await provider.beginRun(context)) ?? {};
+			const result = (await provider.beginRun(providerContext)) ?? {};
 			if (Array.isArray(result.hints)) hints.push(...result.hints);
 		}
 		return { hints };
@@ -167,6 +175,14 @@ export class CompositeResourceResolver {
 			);
 		return responses.concat([...speculative.values()]);
 	}
+}
+
+function providerIdentity(provider, index) {
+	const configured = provider.prefetchProviderIdentity;
+	const identity =
+		typeof configured === "function" ? configured.call(provider) : configured;
+	if (typeof identity === "string" && identity.length > 0) return identity;
+	return provider?.constructor?.name || `provider-${index}`;
 }
 
 function responseToRequest(response) {

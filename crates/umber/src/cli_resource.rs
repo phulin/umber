@@ -24,6 +24,7 @@ use umber_fetch::{
 };
 use umber_hash::{AHash64, HashDomain};
 
+use crate::input_search::{WorldSearchError, read_first_world_detailed};
 use crate::prefetch::{PREFETCH_POLICY_VERSION, PrefetchPlanner};
 use crate::{
     AcceptedFinalization, CompileAttemptResult, CompileError, CompileTelemetry, EngineMode,
@@ -501,6 +502,7 @@ impl<'owner> NativeCompileSession<'owner> {
             Ok(source) => source,
             Err(error) => error.into_bytes().into_iter().map(char::from).collect(),
         };
+        let local = LocalResolver::from_environment(&options.input);
         distribution
             .set_project_revision(AHash64::for_bytes(HashDomain::DistributionContent, &main).hex());
         let source_read_ns = source_started.elapsed().as_nanos();
@@ -521,8 +523,12 @@ impl<'owner> NativeCompileSession<'owner> {
         };
         let format_read_ns = format_started.elapsed().as_nanos();
         let distribution_root = distribution.prefetch_root_identity()?;
-        let prefetch_identity =
-            native_prefetch_identity(options, format.as_deref(), distribution_root.as_deref());
+        let prefetch_identity = native_prefetch_identity_with_search_policy(
+            options,
+            format.as_deref(),
+            distribution_root.as_deref(),
+            &local.search_policy_identity(),
+        );
         let prior_manifest = if distribution_root.is_some() {
             distribution.load_lookup_manifest(&prefetch_identity)?
         } else {
@@ -637,7 +643,6 @@ impl<'owner> NativeCompileSession<'owner> {
         session
             .add_user_file(name, main.clone())
             .map_err(|error| NativeRunError::Compile(error.to_string()))?;
-        let local = LocalResolver::from_environment(&options.input);
         if env::var_os("UMBER_RESOURCE_TELEMETRY").is_some_and(|value| value == "1") {
             eprintln!(
                 "RESOURCE_STARTUP_TELEMETRY source_read_ns={} format_read_ns={} format_restore_ns={} setup_ns={}",
@@ -874,6 +879,21 @@ fn native_prefetch_identity(
     format_bytes: Option<&[u8]>,
     distribution_root: Option<&str>,
 ) -> PrefetchIdentity {
+    let local = LocalResolver::from_environment(&options.input);
+    native_prefetch_identity_with_search_policy(
+        options,
+        format_bytes,
+        distribution_root,
+        &local.search_policy_identity(),
+    )
+}
+
+fn native_prefetch_identity_with_search_policy(
+    options: &NativeRunOptions,
+    format_bytes: Option<&[u8]>,
+    distribution_root: Option<&str>,
+    search_policy: &str,
+) -> PrefetchIdentity {
     let format = format_bytes.map_or_else(
         || "none".to_owned(),
         |bytes| {
@@ -896,26 +916,43 @@ fn native_prefetch_identity(
             options.engine.name(),
         ),
         distribution,
-        format!(
-            "{PREFETCH_POLICY_VERSION};providers=project/generated/local/distribution;precedence=v1;TEXINPUTS={};TEXFONTS={}",
-            native_search_path_identity("TEXINPUTS"),
-            native_search_path_identity("TEXFONTS"),
-        ),
+        format!("{PREFETCH_POLICY_VERSION};{search_policy}"),
     )
     .expect("native prefetch identity fields are bounded by CLI options")
 }
 
-fn native_search_path_identity(name: &str) -> String {
-    env::var_os(name).map_or_else(
-        || "none".to_owned(),
-        |value| {
-            AHash64::for_bytes(
-                HashDomain::DistributionTree,
-                value.to_string_lossy().as_bytes(),
-            )
-            .hex()
-        },
+impl LocalResolver {
+    /// Fingerprints the concrete ordered host search inputs used by this
+    /// resolver.  A predictor may be reused across source edits, but not when
+    /// the principal input area or any configured search area changes.
+    fn search_policy_identity(&self) -> String {
+        format!(
+            "providers=project/generated/local/distribution;precedence=v1;base={};roots={};TEXINPUTS={};TEXFONTS={};BIBINPUTS={};BSTINPUTS={}",
+            native_path_identity(&self.base),
+            native_paths_identity(&self.roots),
+            native_paths_identity(&self.input_areas),
+            native_paths_identity(&self.font_areas),
+            native_paths_identity(&self.bib_areas),
+            native_paths_identity(&self.bst_areas),
+        )
+    }
+}
+
+fn native_path_identity(path: &Path) -> String {
+    AHash64::for_bytes(
+        HashDomain::DistributionTree,
+        path.to_string_lossy().as_bytes(),
     )
+    .hex()
+}
+
+fn native_paths_identity(paths: &[PathBuf]) -> String {
+    let mut encoded = Vec::new();
+    for path in paths {
+        encoded.extend_from_slice(path.to_string_lossy().as_bytes());
+        encoded.push(0);
+    }
+    AHash64::for_bytes(HashDomain::DistributionTree, &encoded).hex()
 }
 
 fn selected_limit_value(
@@ -959,6 +996,10 @@ fn contiguous_edit(old: &str, new: &str) -> (std::ops::Range<usize>, String) {
 struct LocalResolver {
     base: PathBuf,
     roots: Vec<PathBuf>,
+    input_areas: Vec<PathBuf>,
+    font_areas: Vec<PathBuf>,
+    bib_areas: Vec<PathBuf>,
+    bst_areas: Vec<PathBuf>,
     input: TexInputSearchPath,
     font: TexFontSearchPath,
     input_paths: RefCell<BTreeMap<PathBuf, PathBuf>>,
@@ -979,12 +1020,18 @@ impl LocalResolver {
         let base = main.parent().unwrap_or_else(|| Path::new(".")).to_owned();
         let input_areas = areas("TEXINPUTS");
         let font_areas = areas("TEXFONTS");
+        let bib_areas = areas("BIBINPUTS");
+        let bst_areas = areas("BSTINPUTS");
         let mut roots = vec![base.clone()];
         roots.extend(input_areas.iter().cloned());
         roots.extend(font_areas.iter().cloned());
         Self {
             base: base.clone(),
             roots,
+            input_areas: input_areas.clone(),
+            font_areas: font_areas.clone(),
+            bib_areas,
+            bst_areas,
             input: TexInputSearchPath::new(&base, input_areas),
             font: TexFontSearchPath::new(base, font_areas),
             input_paths: RefCell::new(BTreeMap::new()),
@@ -992,7 +1039,7 @@ impl LocalResolver {
         }
     }
 
-    fn resolve(&self, request: &FileRequest) -> Option<ResolvedFile> {
+    fn resolve(&self, request: &FileRequest) -> Result<Option<ResolvedFile>, NativeRunError> {
         if matches!(
             request.key().kind(),
             FileKind::BibAux | FileKind::ClassicBibData | FileKind::BibStyle
@@ -1000,23 +1047,27 @@ impl LocalResolver {
             return self.resolve_classic_bibliography(request);
         }
         let mut world = World::real();
-        let content = match request.key().kind() {
+        let read = match request.key().kind() {
             FileKind::TexInput | FileKind::Image => self
                 .input
-                .read_from_world(&mut world, request.original_name()),
+                .read_from_world_detailed(&mut world, request.original_name()),
             FileKind::Tfm => self
                 .font
-                .read_from_world(&mut world, Path::new(request.original_name())),
+                .read_from_world_detailed(&mut world, Path::new(request.original_name())),
             FileKind::GenericAsset
             | FileKind::VirtualFont
             | FileKind::PdfFontMap
             | FileKind::PdfEncoding
             | FileKind::PdfFontProgram => self
                 .font
-                .read_program_from_world(&mut world, Path::new(request.original_name())),
-            _ => return None,
-        }
-        .ok()?;
+                .read_program_from_world_detailed(&mut world, Path::new(request.original_name())),
+            _ => return Ok(None),
+        };
+        let content = match read {
+            Ok(content) => content,
+            Err(error) if error.is_authoritative_not_found() => return Ok(None),
+            Err(error) => return Err(local_world_error(error)),
+        };
         let bytes = content.shared_bytes();
         self.resolved_inputs
             .borrow_mut()
@@ -1031,12 +1082,12 @@ impl LocalResolver {
             resolved_path.clone(),
         );
         input_paths.insert(PathBuf::from(request.key().name()), resolved_path);
-        Some(ResolvedFile {
+        Ok(Some(ResolvedFile {
             request: request.key().clone(),
             virtual_path: virtual_path.to_string_lossy().into_owned(),
             expected_digest: Some(digest),
             bytes,
-        })
+        }))
     }
 
     fn resolve_font(
@@ -1047,13 +1098,22 @@ impl LocalResolver {
         Ok(None)
     }
 
-    fn resolve_pk_font(&self, request: &tex_fonts::PdfPkFontRequest) -> Option<ResolvedPkFont> {
-        let name = String::from_utf8(request.logical_name()).ok()?;
+    fn resolve_pk_font(
+        &self,
+        request: &tex_fonts::PdfPkFontRequest,
+    ) -> Result<Option<ResolvedPkFont>, NativeRunError> {
+        let Ok(name) = String::from_utf8(request.logical_name()) else {
+            return Ok(None);
+        };
         let mut world = World::real();
-        let content = self
+        let content = match self
             .font
-            .read_program_from_world(&mut world, Path::new(&name))
-            .ok()?;
+            .read_program_from_world_detailed(&mut world, Path::new(&name))
+        {
+            Ok(content) => content,
+            Err(error) if error.is_authoritative_not_found() => return Ok(None),
+            Err(error) => return Err(local_world_error(error)),
+        };
         let bytes = content.bytes().to_vec();
         self.resolved_inputs
             .borrow_mut()
@@ -1065,12 +1125,12 @@ impl LocalResolver {
             content.path(),
             FileContentId::for_bytes(&bytes),
         );
-        Some(ResolvedPkFont {
+        Ok(Some(ResolvedPkFont {
             request: request.clone(),
             virtual_path: virtual_path.to_string_lossy().into_owned(),
             bytes,
             expected_ahash64: Some(digest),
-        })
+        }))
     }
 
     fn virtual_path(&self, kind: FileKind, path: &Path, digest: FileContentId) -> PathBuf {
@@ -1089,22 +1149,28 @@ impl LocalResolver {
         )
     }
 
-    fn resolve_classic_bibliography(&self, request: &FileRequest) -> Option<ResolvedFile> {
-        let (variable, extension) = match request.key().kind() {
-            FileKind::BibAux => ("TEXINPUTS", ".aux"),
-            FileKind::ClassicBibData => ("BIBINPUTS", ".bib"),
-            FileKind::BibStyle => ("BSTINPUTS", ".bst"),
-            _ => return None,
+    fn resolve_classic_bibliography(
+        &self,
+        request: &FileRequest,
+    ) -> Result<Option<ResolvedFile>, NativeRunError> {
+        let (areas, extension) = match request.key().kind() {
+            FileKind::BibAux => (&self.input_areas, ".aux"),
+            FileKind::ClassicBibData => (&self.bib_areas, ".bib"),
+            FileKind::BibStyle => (&self.bst_areas, ".bst"),
+            _ => return Ok(None),
         };
         let mut world = World::real();
-        let content = read_classic_bib_resource(
+        let content = match read_classic_bib_resource(
             &mut world,
             &self.base,
-            variable,
+            areas,
             request.original_name(),
             extension,
-        )
-        .ok()?;
+        ) {
+            Ok(content) => content,
+            Err(error) if error.is_authoritative_not_found() => return Ok(None),
+            Err(error) => return Err(local_world_error(error)),
+        };
         let path = content.path().to_owned();
         let bytes = content.shared_bytes();
         self.resolved_inputs
@@ -1115,12 +1181,12 @@ impl LocalResolver {
         self.input_paths
             .borrow_mut()
             .insert(virtual_path.clone(), path);
-        Some(ResolvedFile {
+        Ok(Some(ResolvedFile {
             request: request.key().clone(),
             virtual_path: virtual_path.to_string_lossy().into_owned(),
             expected_digest: Some(digest),
             bytes,
-        })
+        }))
     }
 
     fn input_path_map(&self) -> BTreeMap<PathBuf, PathBuf> {
@@ -1135,33 +1201,41 @@ impl LocalResolver {
 fn read_classic_bib_resource(
     world: &mut World,
     base: &Path,
-    variable: &str,
+    areas: &[PathBuf],
     original: &str,
     extension: &str,
-) -> Result<tex_state::FileContent, String> {
+) -> Result<tex_state::FileContent, WorldSearchError> {
     let name = Path::new(original);
     let mut candidates = Vec::new();
+    let mut failures = Vec::new();
     if name.is_absolute() {
         candidates.push(name.to_owned());
     } else {
         candidates.push(base.join(name));
-        if let Some(areas) = env::var_os(variable) {
-            candidates.extend(
-                env::split_paths(&areas)
-                    .filter(|area| !area.as_os_str().is_empty())
-                    .map(|area| area.join(name)),
-            );
-        }
+        candidates.extend(areas.iter().map(|area| area.join(name)));
     }
     for mut candidate in candidates {
         if candidate.extension().is_none() {
             candidate.set_extension(extension.trim_start_matches('.'));
         }
-        if let Ok(content) = world.read_file(&candidate) {
-            return Ok(content);
+        // Keep the classic bibliography extension and area ordering in one
+        // host search, while retaining typed I/O failures for LocalResolver.
+        match read_first_world_detailed(world, vec![candidate]) {
+            Ok(content) => return Ok(content),
+            Err(error) => failures.extend(error.failures),
         }
     }
-    Err(format!("{original} was not found in {variable}"))
+    Err(WorldSearchError { failures })
+}
+
+fn local_world_error(error: WorldSearchError) -> NativeRunError {
+    let (path, kind, source) = error
+        .first_non_not_found()
+        .expect("a non-not-found search error has one host failure");
+    NativeRunError::Io {
+        path: path.to_owned(),
+        source: std::io::Error::new(kind, source.to_string()),
+    }
 }
 
 #[derive(Clone)]
@@ -1656,7 +1730,7 @@ impl DistributionResolver {
                 ResourceRequest::File(request) => {
                     let started = Instant::now();
                     telemetry.local_lookups = telemetry.local_lookups.saturating_add(1);
-                    let resolved = local.resolve(request);
+                    let resolved = local.resolve(request)?;
                     telemetry.local_lookup_time = telemetry
                         .local_lookup_time
                         .saturating_add(started.elapsed());
@@ -1693,7 +1767,7 @@ impl DistributionResolver {
                 ResourceRequest::PkFont(request) => {
                     let started = Instant::now();
                     telemetry.local_lookups = telemetry.local_lookups.saturating_add(1);
-                    let resolved = local.resolve_pk_font(request);
+                    let resolved = local.resolve_pk_font(request)?;
                     telemetry.local_lookup_time = telemetry
                         .local_lookup_time
                         .saturating_add(started.elapsed());
@@ -1732,7 +1806,7 @@ impl DistributionResolver {
             };
             let started = Instant::now();
             telemetry.local_lookups = telemetry.local_lookups.saturating_add(1);
-            let resolved = local.resolve(request);
+            let resolved = local.resolve(request)?;
             telemetry.local_lookup_time = telemetry
                 .local_lookup_time
                 .saturating_add(started.elapsed());
@@ -1948,7 +2022,7 @@ impl DistributionResolver {
             }
             let started = Instant::now();
             telemetry.local_lookups = telemetry.local_lookups.saturating_add(1);
-            let resolved = local.resolve(&request);
+            let resolved = local.resolve(&request)?;
             telemetry.local_lookup_time = telemetry
                 .local_lookup_time
                 .saturating_add(started.elapsed());

@@ -53,6 +53,33 @@ test("higher-precedence positives shadow later providers and misses fall through
 	]);
 });
 
+test("beginRun fingerprints the concrete provider order", async () => {
+	const seen = [];
+	const first = {
+		prefetchProviderIdentity: "project",
+		async beginRun({ options }) {
+			seen.push(options.providerPrecedence);
+			return {};
+		},
+		async resolve() {
+			return [];
+		},
+	};
+	const second = {
+		prefetchProviderIdentity: "distribution",
+		async resolve() {
+			return [];
+		},
+	};
+	await new CompositeResourceResolver([first, second]).beginRun({
+		options: { engine: "tex82" },
+	});
+	await new CompositeResourceResolver([second, first]).beginRun({
+		options: { engine: "tex82" },
+	});
+	assert.deepEqual(seen, ["0:project>1:distribution", "0:distribution>1:project"]);
+});
+
 test("absence becomes authoritative only after every provider misses", async () => {
 	const request = file("cmr17.tfm", "tfm");
 	let calls = 0;

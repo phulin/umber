@@ -340,70 +340,77 @@ impl ResourceHost for FileSessionResolvers {
                 if let Some(result) = self
                     .input
                     .0
-                    .read_restricted_pipe_from_resource_world(world, name)
+                    .read_restricted_pipe_from_resource_world_detailed(world, name)
                 {
-                    return result.map_or(ResourceOutcome::Unavailable, |text| {
-                        ResourceOutcome::Fulfilled(ResourceFulfillment::input_with_role(
-                            name,
-                            RegisteredSourceKind::Generated,
-                            Arc::from(text.into_bytes()),
-                            tex_command::SourceRole::GeneratedInput,
-                        ))
-                    });
+                    return match result {
+                        Ok(text) => {
+                            ResourceOutcome::Fulfilled(ResourceFulfillment::input_with_role(
+                                name,
+                                RegisteredSourceKind::Generated,
+                                Arc::from(text.into_bytes()),
+                                tex_command::SourceRole::GeneratedInput,
+                            ))
+                        }
+                        Err(crate::input_search::RestrictedPipeError::Invalid(_)) => {
+                            ResourceOutcome::Unavailable
+                        }
+                        Err(crate::input_search::RestrictedPipeError::Search(error)) => {
+                            resource_search_outcome(error)
+                        }
+                    };
                 }
-                self.input
-                    .0
-                    .read_from_resource_world(world, name)
-                    .ok()
-                    .map_or(ResourceOutcome::Unavailable, |content| {
+                match self.input.0.read_from_resource_world_detailed(world, name) {
+                    Ok(content) => {
                         let role = self.input.0.source_role(&content);
                         ResourceOutcome::Fulfilled(ResourceFulfillment::world_input_with_role(
                             name, content, role,
                         ))
-                    })
+                    }
+                    Err(error) => resource_search_outcome(error),
+                }
             }
-            tex_exec::ResourceNeed::InputProbe { request } => self
-                .input
-                .0
-                .read_from_resource_world(world, &request.name)
-                .ok()
-                .map_or(ResourceOutcome::Unavailable, |content| {
-                    ResourceOutcome::Fulfilled(ResourceFulfillment::world_input_probe(
-                        request.clone(),
-                        content,
-                    ))
-                }),
+            tex_exec::ResourceNeed::InputProbe { request } => {
+                match self
+                    .input
+                    .0
+                    .read_from_resource_world_detailed(world, &request.name)
+                {
+                    Ok(content) => ResourceOutcome::Fulfilled(
+                        ResourceFulfillment::world_input_probe(request.clone(), content),
+                    ),
+                    Err(error) => resource_search_outcome(error),
+                }
+            }
             tex_exec::ResourceNeed::Font { request } => {
                 let mut path = PathBuf::from(&request.name);
                 if path.extension().is_none() {
                     path.set_extension("tfm");
                 }
-                ResourceOutcome::Fulfilled(
-                    self.font
-                        .0
-                        .read_from_resource_world(world, &path)
-                        .map_or_else(
-                            |_| ResourceFulfillment::Font {
-                                request: request.clone(),
-                                resource: Box::new(FontResource::Unavailable),
-                            },
-                            |metrics| ResourceFulfillment::Font {
-                                request: request.clone(),
-                                resource: Box::new(FontResource::Tfm {
-                                    metrics,
-                                    opentype: None,
-                                }),
-                            },
-                        ),
-                )
+                match self.font.0.read_from_resource_world_detailed(world, &path) {
+                    Ok(metrics) => ResourceOutcome::Fulfilled(ResourceFulfillment::Font {
+                        request: request.clone(),
+                        resource: Box::new(FontResource::Tfm {
+                            metrics,
+                            opentype: None,
+                        }),
+                    }),
+                    Err(error) if error.is_authoritative_not_found() => {
+                        ResourceOutcome::Fulfilled(ResourceFulfillment::Font {
+                            request: request.clone(),
+                            resource: Box::new(FontResource::Unavailable),
+                        })
+                    }
+                    Err(_) => ResourceOutcome::Declined,
+                }
             }
             tex_exec::ResourceNeed::PdfImage { request } => {
-                let Ok(content) = self
+                let content = match self
                     .image
                     .0
-                    .read_exact_from_resource_world(world, &request.name)
-                else {
-                    return ResourceOutcome::Unavailable;
+                    .read_exact_from_resource_world_detailed(world, &request.name)
+                {
+                    Ok(content) => content,
+                    Err(error) => return resource_search_outcome(error),
                 };
                 let legacy = OutputPdfImageRequest {
                     name: request.name.clone(),
@@ -436,6 +443,17 @@ impl ResourceHost for FileSessionResolvers {
                 })
             }
         }
+    }
+}
+
+fn resource_search_outcome(error: crate::input_search::WorldSearchError) -> ResourceOutcome {
+    if error.is_authoritative_not_found() {
+        ResourceOutcome::Unavailable
+    } else {
+        // A host access/transport failure is not an authoritative negative.
+        // Leave the request unresolved so the surrounding session can retry
+        // or surface its host-side failure instead of caching false absence.
+        ResourceOutcome::Declined
     }
 }
 
