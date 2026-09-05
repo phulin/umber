@@ -560,60 +560,118 @@ impl DefinitionRegion {
     }
 }
 
-/// One fixed physical word block.
+/// The eight words shared by every semantic region.
 ///
-/// The cells are private to the definition arena. Builders are the only code
-/// which can write them, while admitted readers retain an `Rc` to this block
-/// and load a slot without borrowing the region directory. The two variants
-/// keep the small common prefix cheap while giving overflow blocks a uniform
-/// per-physical-chunk handle. Overflow payloads live inline in the reference-
-/// counted object so each physical chunk has exactly one heap allocation.
-#[allow(
-    clippy::large_enum_variant,
-    reason = "the fixed overflow payload must remain inline in its Rc allocation"
-)]
-enum DefinitionWordChunk {
-    Inline([Cell<TokenWord>; INLINE_DEFINITION_WORD_CAPACITY]),
-    Overflow([Cell<TokenWord>; DEFINITION_WORD_CHUNK_CAPACITY]),
+/// This remains a separate small allocation so creating an overflow chunk
+/// cannot make every region owner carry a 4,096-word payload.
+struct InlineDefinitionWordChunk {
+    words: [Cell<TokenWord>; INLINE_DEFINITION_WORD_CAPACITY],
 }
 
-impl DefinitionWordChunk {
-    fn new_inline() -> Self {
-        Self::Inline(std::array::from_fn(|_| Cell::new(TokenWord::from_raw(0))))
-    }
-
-    /// Initializes one cold overflow payload before moving it into its single
-    /// `Rc` allocation. The bounded stack temporary is released when this
-    /// non-recursive constructor returns; it is never retained per chunk.
-    #[cold]
-    #[inline(never)]
-    fn new_overflow() -> Self {
-        Self::Overflow(std::array::from_fn(|_| Cell::new(TokenWord::from_raw(0))))
-    }
-
-    #[inline(always)]
-    fn get(&self, slot: usize) -> Option<TokenWord> {
-        match self {
-            Self::Inline(words) => words.get(slot).map(Cell::get),
-            Self::Overflow(words) => words.get(slot).map(Cell::get),
+impl InlineDefinitionWordChunk {
+    fn new() -> Self {
+        Self {
+            words: std::array::from_fn(|_| Cell::new(TokenWord::from_raw(0))),
         }
     }
 
     #[inline(always)]
+    fn get(&self, slot: usize) -> Option<TokenWord> {
+        self.words.get(slot).map(Cell::get)
+    }
+
+    #[inline(always)]
     fn set(&self, slot: usize, word: TokenWord) -> Option<()> {
-        let cell = match self {
-            Self::Inline(words) => words.get(slot),
-            Self::Overflow(words) => words.get(slot),
-        }?;
+        let cell = self.words.get(slot)?;
         cell.set(word);
         Some(())
     }
 
     #[inline(always)]
     fn cells(&self) -> &[Cell<TokenWord>] {
+        &self.words
+    }
+}
+
+/// One fixed overflow block.
+///
+/// The payload is inline in this `Rc` allocation. Builders write through the
+/// shared cells and resident readers retain only this block's handle, so a
+/// new 4,096-word chunk has one payload/control allocation rather than a
+/// payload allocation plus a second wrapper allocation.
+struct OverflowDefinitionWordChunk {
+    words: [Cell<TokenWord>; DEFINITION_WORD_CHUNK_CAPACITY],
+}
+
+impl OverflowDefinitionWordChunk {
+    /// Initializes one cold overflow payload before moving it into its single
+    /// `Rc` allocation. The bounded stack temporary is released when this
+    /// non-recursive constructor returns; it is never retained per chunk.
+    #[cold]
+    #[inline(never)]
+    fn new() -> Self {
+        Self {
+            words: std::array::from_fn(|_| Cell::new(TokenWord::from_raw(0))),
+        }
+    }
+
+    #[inline(always)]
+    fn get(&self, slot: usize) -> Option<TokenWord> {
+        self.words.get(slot).map(Cell::get)
+    }
+
+    #[inline(always)]
+    fn set(&self, slot: usize, word: TokenWord) -> Option<()> {
+        let cell = self.words.get(slot)?;
+        cell.set(word);
+        Some(())
+    }
+
+    #[inline(always)]
+    fn cells(&self) -> &[Cell<TokenWord>] {
+        &self.words
+    }
+}
+
+/// One physical chunk stored behind its resident handle.
+///
+/// The tag is selected only when the cursor is admitted or crosses a chunk
+/// boundary. The `Rc` handle itself remains one word through its niche, so the
+/// resident body keeps its compact layout while ordinary reads retain a direct
+/// pointer to the inline or overflow payload.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "the fixed overflow payload must remain inline in its Rc allocation"
+)]
+enum DefinitionChunk {
+    Inline(InlineDefinitionWordChunk),
+    Overflow(OverflowDefinitionWordChunk),
+}
+
+type DefinitionChunkHandle = Rc<DefinitionChunk>;
+
+impl DefinitionChunk {
+    #[inline(always)]
+    fn get(&self, slot: usize) -> Option<TokenWord> {
         match self {
-            Self::Inline(words) => words.as_slice(),
-            Self::Overflow(words) => words.as_slice(),
+            Self::Inline(chunk) => chunk.get(slot),
+            Self::Overflow(chunk) => chunk.get(slot),
+        }
+    }
+
+    #[inline(always)]
+    fn set(&self, slot: usize, word: TokenWord) -> Option<()> {
+        match self {
+            Self::Inline(chunk) => chunk.set(slot, word),
+            Self::Overflow(chunk) => chunk.set(slot, word),
+        }
+    }
+
+    #[inline(always)]
+    fn cells(&self) -> &[Cell<TokenWord>] {
+        match self {
+            Self::Inline(chunk) => chunk.cells(),
+            Self::Overflow(chunk) => chunk.cells(),
         }
     }
 
@@ -635,14 +693,14 @@ struct DefinitionRegionOwner {
     /// constant-time slot access instead of a linked-page walk. Tiny regions
     /// never acquire an overflow block. Each overflow payload is part of its
     /// `Rc` allocation and has no owner or lifetime independent of this region.
-    inline_words: Rc<DefinitionWordChunk>,
-    overflow_words: RefCell<Vec<Rc<DefinitionWordChunk>>>,
+    inline_words: DefinitionChunkHandle,
+    overflow_words: RefCell<Vec<DefinitionChunkHandle>>,
 }
 
 impl DefinitionRegionOwner {
     fn new() -> Self {
         Self {
-            inline_words: Rc::new(DefinitionWordChunk::new_inline()),
+            inline_words: Rc::new(DefinitionChunk::Inline(InlineDefinitionWordChunk::new())),
             overflow_words: RefCell::new(Vec::new()),
         }
     }
@@ -672,7 +730,9 @@ impl DefinitionRegionOwner {
                 .try_reserve_exact(additional)
                 .map_err(|_| DefinitionBuildError::AllocationFailed)?;
             while words.len() <= chunk {
-                words.push(Rc::new(DefinitionWordChunk::new_overflow()));
+                words.push(Rc::new(DefinitionChunk::Overflow(
+                    OverflowDefinitionWordChunk::new(),
+                )));
             }
         }
         Ok(())
@@ -729,7 +789,7 @@ impl DefinitionRegionOwner {
     ///
     /// The directory borrow ends before the handle reaches the resident row;
     /// subsequent word reads therefore touch only the retained chunk.
-    fn chunk_handle(&self, chunk: u32) -> Option<Rc<DefinitionWordChunk>> {
+    fn chunk_handle(&self, chunk: u32) -> Option<DefinitionChunkHandle> {
         if chunk == 0 {
             return Some(Rc::clone(&self.inline_words));
         }
@@ -1294,7 +1354,7 @@ pub struct ResidentMacroBody<G> {
     /// remaining span fit beside the chunk index without a word-sized hole.
     chunk_slot: u16,
     remaining_in_chunk: u16,
-    current_chunk: Option<Rc<DefinitionWordChunk>>,
+    current_chunk: Option<DefinitionChunkHandle>,
 }
 
 /// One immutable macro definition admitted for activation.
@@ -1745,7 +1805,7 @@ struct ActiveDefinitionBuild {
 pub struct DefinitionBuildWriter<G> {
     build: ActiveDefinitionBuild,
     owner: Rc<DefinitionRegionOwner>,
-    current_chunk: Rc<DefinitionWordChunk>,
+    current_chunk: DefinitionChunkHandle,
     next_word: u32,
     chunk_index: u32,
     chunk_slot: usize,

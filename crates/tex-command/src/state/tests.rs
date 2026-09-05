@@ -766,6 +766,7 @@ fn warmed_single_definition_promotion_ignores_the_large_live_attempt_arena() {
 fn one_and_4096_resident_promotions_use_bounded_region_growth_and_keep_owners_stationary() {
     fn evidence(
         repetitions: usize,
+        pre_reserve: bool,
     ) -> (
         tex_state::measurement::HotCoreAllocationMeasurement,
         usize,
@@ -782,6 +783,14 @@ fn one_and_4096_resident_promotions_use_bounded_region_growth_and_keep_owners_st
                 .promote_attempt_roots_into(universe, &mut warm_destination)
                 .expect("warm resident promotion");
             drop(warm_destination);
+
+            if pre_reserve {
+                universe
+                    .command_context()
+                    .expect("definition arena reserve context")
+                    .profile_reserve_definition_arena(repetitions, repetitions)
+                    .expect("pre-reserve definition arena capacity");
+            }
 
             let definitions: Vec<_> = (0..repetitions)
                 .map(|_| attempt_definition(&mut state, &[], &[word('x')]))
@@ -810,7 +819,7 @@ fn one_and_4096_resident_promotions_use_bounded_region_growth_and_keep_owners_st
                 (after.calls - before.calls) as usize,
                 "every measured semantic-apply allocation has one trace entry"
             );
-            if repetitions == 4_096 {
+            if repetitions == 4_096 && !pre_reserve {
                 let payload_bytes = 4_096 * std::mem::size_of::<tex_state::token::TokenWord>();
                 let combined_chunk_lower_bound = payload_bytes + 2 * std::mem::size_of::<usize>();
                 assert!(
@@ -826,6 +835,11 @@ fn one_and_4096_resident_promotions_use_bounded_region_growth_and_keep_owners_st
                         .iter()
                         .any(|entry| entry.requested_bytes == payload_bytes),
                     "no standalone fixed overflow payload allocation: {trace_entries:?}"
+                );
+            } else {
+                assert!(
+                    trace_entries.is_empty(),
+                    "the pre-reserved warm promotion must not allocate: {trace_entries:?}"
                 );
             }
 
@@ -857,18 +871,23 @@ fn one_and_4096_resident_promotions_use_bounded_region_growth_and_keep_owners_st
         })
     }
 
-    let (one_allocations, one_address_changes, one_checksum) = evidence(1);
-    let (many_allocations, many_address_changes, many_checksum) = evidence(4_096);
+    let (one_allocations, one_address_changes, one_checksum) = evidence(1, false);
+    let (many_allocations, many_address_changes, many_checksum) = evidence(4_096, false);
+    let (reserved_allocations, reserved_address_changes, reserved_checksum) = evidence(4_096, true);
     assert_eq!(one_allocations.calls, 0);
     assert_eq!(one_allocations.requested_bytes, 0);
     assert_eq!(
-        many_allocations.calls, 4,
-        "one word chunk, its flat directory, and the live/owner header directories grow"
+        many_allocations.calls, 3,
+        "one overflow chunk, its flat directory, and the canonical header directory grow"
     );
     assert!(many_allocations.requested_bytes > 0);
+    assert_eq!(reserved_allocations.calls, 0);
+    assert_eq!(reserved_allocations.requested_bytes, 0);
     assert_eq!(one_address_changes, 0);
     assert_eq!(many_address_changes, 0);
+    assert_eq!(reserved_address_changes, 0);
     assert_ne!(one_checksum, many_checksum);
+    assert_eq!(many_checksum, reserved_checksum);
 }
 
 #[test]
