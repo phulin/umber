@@ -198,11 +198,11 @@ export class HttpManifestResolver {
 		requests: readonly (ResourceRequest | LegacyMappingRequest)[],
 		options?:
 			| AbortSignal
-				| {
-						signal?: AbortSignal;
-						prefetchHints?: readonly ResourceRequest[];
-						admitPrefetch?: boolean;
-				  },
+			| {
+					signal?: AbortSignal;
+					prefetchHints?: readonly ResourceRequest[];
+					admitPrefetch?: boolean;
+			  },
 	): Promise<
 		readonly (
 			| ResolvedDownload

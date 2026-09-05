@@ -8,23 +8,23 @@ import {
 } from "./manifest-schema.js";
 import { IndexedDbObjectCache } from "./persistent-cache.js";
 import {
-	PREFETCH_POLICY_VERSION,
-	LookupManifest,
 	extractLiteralHints,
+	LookupManifest,
 	literalHintRequest,
 	makePrefetchIdentity,
+	PREFETCH_POLICY_VERSION,
 	prefetchManifestCacheKey,
 	typedRequestIdentity,
 } from "./prefetch.js";
 
 export { ManifestResolverError } from "./manifest-schema.js";
 export {
-	LookupManifest,
-	PREFETCH_POLICY_VERSION,
-	ResourceReadiness,
 	classifyReadiness,
 	extractLiteralHints,
+	LookupManifest,
 	makePrefetchIdentity,
+	PREFETCH_POLICY_VERSION,
+	ResourceReadiness,
 } from "./prefetch.js";
 
 const DIGEST_PATTERN = /^[0-9a-f]{16}$/;
@@ -253,11 +253,7 @@ export class HttpManifestResolver {
 		}));
 		for (const miss of required.misses) {
 			this.readiness.set(typedRequestIdentity(miss.request), "absent");
-			this.#recordAbsent(
-				miss.request,
-				roleFor(miss.request),
-				miss.manifestKey,
-			);
+			this.#recordAbsent(miss.request, roleFor(miss.request), miss.manifestKey);
 		}
 		validateJobBudget(required.jobs, this.maxFiles, this.maxBytes);
 		const jobs = mergeJobs(
@@ -275,13 +271,11 @@ export class HttpManifestResolver {
 				const group = groups[next++];
 				try {
 					const bytes = await this.#object(group[0].entry, signal);
-					if (admitPrefetch && followupHints.length < MAX_PACKAGE_FOLLOWUP_HINTS)
-						collectPackageHints(
-							group,
-							bytes,
-							prefetchTrace,
-							followupHints,
-						);
+					if (
+						admitPrefetch &&
+						followupHints.length < MAX_PACKAGE_FOLLOWUP_HINTS
+					)
+						collectPackageHints(group, bytes, prefetchTrace, followupHints);
 					for (const job of group) {
 						this.readiness.set(job.key, "ready");
 						if (job.request !== undefined)
@@ -295,8 +289,8 @@ export class HttpManifestResolver {
 								? {
 										type: "file",
 										...(() => {
-									const identity =
-										job.request ?? decodeKey(job.manifestKey);
+											const identity =
+												job.request ?? decodeKey(job.manifestKey);
 											return {
 												domain:
 													identity.domain ?? resourceDomain(identity.kind),
@@ -547,13 +541,13 @@ export class HttpManifestResolver {
 					}));
 				}),
 				misses: plan.misses.flatMap((index) =>
-					(descriptorsByCatalogKey.get(descriptors[index].catalogKey) ?? []).map(
-						(descriptor) => ({
-							type: descriptor.type,
-							request: descriptor.request,
-							manifestKey: descriptor.catalogKey,
-						}),
-					),
+					(
+						descriptorsByCatalogKey.get(descriptors[index].catalogKey) ?? []
+					).map((descriptor) => ({
+						type: descriptor.type,
+						request: descriptor.request,
+						manifestKey: descriptor.catalogKey,
+					})),
 				),
 			};
 		} catch (error) {
@@ -796,9 +790,16 @@ function deduplicateTypedRequests(requests) {
 }
 
 function collectPackageHints(group, bytes, trace, output) {
-	if (!(bytes instanceof Uint8Array) || bytes.byteLength > MAX_PACKAGE_SCAN_BYTES)
+	if (
+		!(bytes instanceof Uint8Array) ||
+		bytes.byteLength > MAX_PACKAGE_SCAN_BYTES
+	)
 		return;
-	if (!group.some((job) => job.type === "file" && isSmallRuntimeKey(job.manifestKey)))
+	if (
+		!group.some(
+			(job) => job.type === "file" && isSmallRuntimeKey(job.manifestKey),
+		)
+	)
 		return;
 	if (group.some((job) => trace.has(job.key))) return;
 	for (const job of group) trace.add(job.key);

@@ -29,7 +29,9 @@ export function makePrefetchIdentity({
 			values.options,
 			values.distribution,
 			values.searchPolicy,
-		].map(escapeIdentity).join("|"),
+		]
+			.map(escapeIdentity)
+			.join("|"),
 	});
 }
 
@@ -62,7 +64,9 @@ export class LookupManifest {
 		return this.records
 			.filter((record) => record.outcome?.kind === "resolved")
 			.map((record) => {
-				const name = record.requestKey.slice(record.requestKey.indexOf(":") + 1);
+				const name = record.requestKey.slice(
+					record.requestKey.indexOf(":") + 1,
+				);
 				return {
 					type: "file",
 					domain: resourceDomain(record.resourceKind),
@@ -75,7 +79,7 @@ export class LookupManifest {
 
 	encode() {
 		return new TextEncoder().encode(
-			JSON.stringify({
+			`${JSON.stringify({
 				schema: 1,
 				identity: {
 					engine: this.identity.engine,
@@ -85,7 +89,7 @@ export class LookupManifest {
 					searchPolicy: this.identity.searchPolicy,
 				},
 				records: this.records,
-			}) + "\n",
+			})}\n`,
 		);
 	}
 
@@ -93,7 +97,9 @@ export class LookupManifest {
 		if (!(bytes instanceof Uint8Array)) return undefined;
 		let value;
 		try {
-			value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+			value = JSON.parse(
+				new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+			);
 		} catch {
 			return undefined;
 		}
@@ -192,7 +198,10 @@ export function extractLiteralHints(source, limits = {}) {
 			if (
 				name.length === 0 ||
 				new TextEncoder().encode(name).byteLength > maxNameBytes ||
-				/[\u0000-\u001f\u007f]/.test(name)
+				[...name].some((character) => {
+					const code = character.codePointAt(0);
+					return code <= 0x1f || code === 0x7f;
+				})
 			)
 				continue;
 			hints.push({
@@ -272,20 +281,21 @@ function literalArgument(source, start, maxNameBytes) {
 			: undefined;
 	}
 	let end = start;
-	while (
-		end < source.length &&
-		!/[\s%\\]/.test(source[end])
-	)
-		end += 1;
+	while (end < source.length && !/[\s%\\]/.test(source[end])) end += 1;
 	const value = source.slice(start, end);
-	return value.length > 0 && new TextEncoder().encode(value).byteLength <= maxNameBytes
+	return value.length > 0 &&
+		new TextEncoder().encode(value).byteLength <= maxNameBytes
 		? { value, end }
 		: undefined;
 }
 
 function isEscaped(source, index) {
 	let count = 0;
-	for (let cursor = index - 1; cursor >= 0 && source[cursor] === "\\"; cursor -= 1)
+	for (
+		let cursor = index - 1;
+		cursor >= 0 && source[cursor] === "\\";
+		cursor -= 1
+	)
 		count += 1;
 	return count % 2 === 1;
 }
@@ -307,17 +317,22 @@ function structuredRecord(record) {
 		requestKey: String(record.requestKey ?? ""),
 		resourceKind: String(record.resourceKind ?? "tex"),
 		searchContext: String(record.searchContext ?? "distribution"),
-		role: record.role === "required" || record.role === "probe" ? record.role : "hint",
+		role:
+			record.role === "required" || record.role === "probe"
+				? record.role
+				: "hint",
 		outcome:
 			record.outcome?.kind === "resolved"
 				? {
-					kind: "resolved",
-					manifestKey: String(record.outcome.manifestKey ?? record.requestKey),
-					virtualPath: record.outcome.virtualPath,
-					object: String(record.outcome.object ?? ""),
-					ahash64: String(record.outcome.ahash64 ?? ""),
-					bytes: Number(record.outcome.bytes ?? 0),
-				}
+						kind: "resolved",
+						manifestKey: String(
+							record.outcome.manifestKey ?? record.requestKey,
+						),
+						virtualPath: record.outcome.virtualPath,
+						object: String(record.outcome.object ?? ""),
+						ahash64: String(record.outcome.ahash64 ?? ""),
+						bytes: Number(record.outcome.bytes ?? 0),
+					}
 				: { kind: "absent", scope: String(record.outcome?.scope ?? "") },
 	};
 }

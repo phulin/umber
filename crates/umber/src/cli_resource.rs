@@ -1724,9 +1724,7 @@ impl DistributionResolver {
                     virtual_path: entry.virtual_path.clone(),
                     bytes: data.clone(),
                 };
-                telemetry.demand_bytes = telemetry
-                    .demand_bytes
-                    .saturating_add(data.len() as u64);
+                telemetry.demand_bytes = telemetry.demand_bytes.saturating_add(data.len() as u64);
                 self.record_readiness(telemetry, umber_distribution::Readiness::Ready);
                 self.record_file_resolved(
                     &request,

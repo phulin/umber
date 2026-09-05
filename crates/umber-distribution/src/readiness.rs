@@ -367,7 +367,7 @@ impl LookupManifest {
     /// Returns resolved identities in stable manifest order for startup
     /// scheduling.  Absence records remain available to a resolver as
     /// metadata probes, but never cause a payload fetch.
-    #[must_use]
+    #[must_use = "iterate the accepted resolved lookup records"]
     pub fn resolved_records(&self) -> impl Iterator<Item = &LookupRecord> {
         self.records
             .iter()

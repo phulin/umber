@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-	ResourceReadiness,
 	classifyReadiness,
 	extractLiteralHints,
 	literalHintRequest,
+	ResourceReadiness,
 } from "./prefetch.js";
 
 test("literal source hints ignore comments, malformed arguments, and dynamic forms", () => {

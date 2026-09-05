@@ -155,16 +155,16 @@ function validateResourceWait(result, phase) {
 async function resolveBatch(resolver, attempt, signal) {
 	let downloads;
 	try {
-				downloads = await resolver.resolve(attempt.required, {
-					signal,
-					probes: attempt.probes,
-					prefetchHints: attempt.prefetchHints,
-					// Successful speculative payloads are admitted into the
-					// engine-owned VFS in this same retry transaction.  Providers
-					// may still omit speculative misses; only blocking misses are
-					// represented as unavailable responses.
-					admitPrefetch: true,
-				});
+		downloads = await resolver.resolve(attempt.required, {
+			signal,
+			probes: attempt.probes,
+			prefetchHints: attempt.prefetchHints,
+			// Successful speculative payloads are admitted into the
+			// engine-owned VFS in this same retry transaction.  Providers
+			// may still omit speculative misses; only blocking misses are
+			// represented as unavailable responses.
+			admitPrefetch: true,
+		});
 	} catch (error) {
 		if (signal.aborted) throw signal.reason;
 		throw new SessionDriverError(

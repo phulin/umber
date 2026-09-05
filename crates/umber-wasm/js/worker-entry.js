@@ -90,11 +90,11 @@ function composeResolver(message, manifestResolver) {
 							.concat(options?.probes ?? [])
 							.concat(options?.prefetchHints ?? [])
 							.map(
-							(request) =>
-								resourceResponses.get(resourceRequestIdentity(request)) ?? {
-									...request,
-									type: `${request.type}-unavailable`,
-								},
+								(request) =>
+									resourceResponses.get(resourceRequestIdentity(request)) ?? {
+										...request,
+										type: `${request.type}-unavailable`,
+									},
 							);
 					},
 				},

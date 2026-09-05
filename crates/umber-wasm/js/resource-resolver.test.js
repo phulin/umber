@@ -186,14 +186,14 @@ test("speculative hints retain provider precedence and are admitted only on requ
 		},
 	};
 	const resolver = new CompositeResourceResolver([first, second]);
-	assert.deepEqual(
-		await resolver.resolve([], { prefetchHints: [hint] }),
-		[],
-	);
+	assert.deepEqual(await resolver.resolve([], { prefetchHints: [hint] }), []);
 	const admitted = await resolver.resolve([], {
 		prefetchHints: [hint],
 		admitPrefetch: true,
 	});
-	assert.deepEqual(admitted.map(({ bytes }) => [...bytes]), [[7]]);
+	assert.deepEqual(
+		admitted.map(({ bytes }) => [...bytes]),
+		[[7]],
+	);
 	assert.equal(calls.at(-1)[0], "first");
 });

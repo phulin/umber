@@ -44,7 +44,12 @@ export async function compile(options, userFiles, resolver, signal, bindings) {
 		options?.bibliography !== undefined,
 	);
 	throwIfAborted(signal);
-	const prepared = await prepareResolverRun(resolver, options, userFiles, limits);
+	const prepared = await prepareResolverRun(
+		resolver,
+		options,
+		userFiles,
+		limits,
+	);
 	const sessionOptions = prepared.options;
 	const session = new Session(sessionOptions);
 	const driver = new SessionDriver(session, resolver);
@@ -89,7 +94,12 @@ export async function createEditorSession(
 		);
 	}
 	throwIfAborted(signal);
-	const prepared = await prepareResolverRun(resolver, options, userFiles, limits);
+	const prepared = await prepareResolverRun(
+		resolver,
+		options,
+		userFiles,
+		limits,
+	);
 	const sessionOptions = prepared.options;
 	const session = new module.EditorSession(sessionOptions);
 	try {
