@@ -216,7 +216,9 @@ pub struct SessionOptions {
     pub authored_root_name: Option<String>,
     pub format: Option<Vec<u8>>,
     /// Validated, transport-only requests likely to be needed by the compile.
-    /// They are emitted once, with the first required resource batch.
+    /// They are emitted once in the startup resource-provider round before the
+    /// engine begins execution (or alongside the first later miss when no
+    /// startup round is needed).
     pub initial_prefetch_hints: Option<Box<[ResourceRequest]>>,
     pub engine: EngineMode,
     /// Optional pdftex.web §1515 process-level output-mode override, applied
@@ -830,6 +832,11 @@ pub struct VirtualCompileSession<'store> {
     attempts: u32,
     attempts_without_progress: u32,
     awaiting: Option<BTreeSet<ResourceRequestKey>>,
+    /// Response-generation marker for the one startup prefetch round.  A
+    /// startup batch has no blocking requests, so the ordinary `awaiting`
+    /// binding check cannot distinguish an unanswered provider round from a
+    /// completed round with only false-positive hints.
+    startup_prefetch_generation: Option<u64>,
     non_file_admission: ResourceLifecycle<NonFileResourceKey, NonFileAdmission>,
     font_requests: BTreeMap<FontRequestKey, FontRequest>,
     resolved_fonts: BTreeMap<FontRequestKey, OpenTypeFont>,
@@ -1153,6 +1160,7 @@ impl<'store> VirtualCompileSession<'store> {
             attempts: 0,
             attempts_without_progress: 0,
             awaiting: None,
+            startup_prefetch_generation: None,
             non_file_admission: ResourceLifecycle::default(),
             font_requests: BTreeMap::new(),
             resolved_fonts: BTreeMap::new(),
@@ -1356,6 +1364,7 @@ impl<'store> VirtualCompileSession<'store> {
         if cancelled {
             self.candidate = None;
             self.awaiting = None;
+            self.startup_prefetch_generation = None;
             self.attempts = 0;
             self.attempts_without_progress = 0;
         }
@@ -1369,6 +1378,7 @@ impl<'store> VirtualCompileSession<'store> {
         let discarded = self.candidate.take().is_some();
         if discarded {
             self.awaiting = None;
+            self.startup_prefetch_generation = None;
             self.attempts_without_progress = 0;
         }
         discarded
@@ -1696,6 +1706,7 @@ impl<'store> VirtualCompileSession<'store> {
                 .filter(|key| self.resource_is_bound(key))
                 .count()
         });
+        let startup_prefetch_round = self.startup_prefetch_generation.is_some();
         let mut staged_workspace = self.workspace.clone();
         let mut staged_fonts = self.resolved_fonts.clone();
         let mut staged_admission = self.non_file_admission.clone();
@@ -1749,7 +1760,15 @@ impl<'store> VirtualCompileSession<'store> {
                     .filter(|key| self.resource_is_bound(key))
                     .count()
             });
-            if awaited_before
+            if startup_prefetch_round {
+                // A startup batch intentionally has no blocking requests.  A
+                // successful empty response is still the provider's explicit
+                // acknowledgement that speculative work was attempted; this
+                // lets false-positive hints fall through to execution.
+                self.startup_prefetch_generation = None;
+                self.response_generation = self.response_generation.saturating_add(1);
+                self.finish_resource_wait();
+            } else if awaited_before
                 .zip(awaited_after)
                 .is_some_and(|(before, after)| after > before)
             {
@@ -2091,12 +2110,18 @@ impl<'store> VirtualCompileSession<'store> {
             return CompileAttemptResult::Complete(output.clone());
         }
         if let Some(awaiting) = &self.awaiting {
-            let progressed = self.candidate.as_ref().map_or_else(
-                || awaiting.iter().any(|key| self.resource_is_bound(key)),
-                |candidate| self.response_generation > candidate.response_generation,
+            let progressed = self.startup_prefetch_generation.map_or_else(
+                || {
+                    self.candidate.as_ref().map_or_else(
+                        || awaiting.iter().any(|key| self.resource_is_bound(key)),
+                        |candidate| self.response_generation > candidate.response_generation,
+                    )
+                },
+                |generation| self.response_generation > generation,
             );
             if !progressed {
                 self.candidate = None;
+                self.startup_prefetch_generation = None;
                 if self.accepted_output.is_some() {
                     self.pending_patch = None;
                 }
@@ -2114,6 +2139,7 @@ impl<'store> VirtualCompileSession<'store> {
             });
         }
         self.awaiting = None;
+        self.startup_prefetch_generation = None;
         self.attempts += 1;
         self.attempts_without_progress += 1;
         match self.run_attempt() {
@@ -2271,6 +2297,37 @@ impl<'store> VirtualCompileSession<'store> {
                 .candidate_restore_time
                 .saturating_add(candidate_restore_started.elapsed());
         }
+        if self.initial_prefetch_hints.is_some() {
+            let prefetch_hints = self.take_prefetch_hints(&[], &[]);
+            if !prefetch_hints.is_empty() {
+                generated_transaction.discard();
+                check_resource_batch_limit(&[], &[], &prefetch_hints, self.limits.resolved_files)?;
+                self.workspace.expect(&FileRequestBatch::with_probes(
+                    std::iter::empty(),
+                    std::iter::empty(),
+                    prefetch_hints.iter().filter_map(|request| match request {
+                        ResourceRequest::File(request) => Some(request.clone()),
+                        ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => None,
+                    }),
+                ));
+                self.begin_non_file_batch(&[], &[], &prefetch_hints);
+                self.awaiting = Some(BTreeSet::new());
+                self.startup_prefetch_generation = Some(self.response_generation);
+                retained.workspace = pending_workspace;
+                retained.response_generation = self.response_generation;
+                retained.suspension_serial = match &retained.execution {
+                    RetainedExecution::Initial { candidate, .. }
+                    | RetainedExecution::Pending(candidate) => candidate.suspension_serial(),
+                };
+                self.candidate = Some(retained);
+                self.start_resource_wait();
+                return Ok(CompileAttemptResult::NeedResources(NeedResources {
+                    required: Vec::new(),
+                    probes: Vec::new(),
+                    prefetch_hints,
+                }));
+            }
+        }
         let unavailable_fonts = self.unavailable_font_keys();
         let font_responses = self.font_response_fingerprints();
         let mut resolvers = VirtualRunResolvers::new(
@@ -2349,60 +2406,7 @@ impl<'store> VirtualCompileSession<'store> {
                 return Err(CompileError::NoProgress);
             }
             self.awaiting = Some(awaiting);
-            let prefetch_hints = if let Some(hints) = self.initial_prefetch_hints.take() {
-                let required_keys = required
-                    .iter()
-                    .chain(&probes)
-                    .map(|request| match request {
-                        ResourceRequest::File(request) => {
-                            ResourceRequestKey::File(request.key().clone())
-                        }
-                        ResourceRequest::Font(request) => {
-                            ResourceRequestKey::Font(request.key.clone())
-                        }
-                        ResourceRequest::PkFont(request) => {
-                            ResourceRequestKey::PkFont(request.clone())
-                        }
-                    })
-                    .collect::<BTreeSet<_>>();
-                hints
-                    .into_vec()
-                    .into_iter()
-                    .filter(|request| {
-                        let key = match request {
-                            ResourceRequest::File(request) => {
-                                if self.workspace.get(request.key()).is_some()
-                                    || self.workspace.is_unavailable(request.key())
-                                    || user_path_for_key(request.key())
-                                        .is_ok_and(|path| self.workspace.contains_user(&path))
-                                {
-                                    return false;
-                                }
-                                ResourceRequestKey::File(request.key().clone())
-                            }
-                            ResourceRequest::Font(request) => {
-                                if self.resolved_fonts.contains_key(&request.key)
-                                    || self.font_is_unavailable(&request.key)
-                                {
-                                    return false;
-                                }
-                                ResourceRequestKey::Font(request.key.clone())
-                            }
-                            ResourceRequest::PkFont(request) => {
-                                if self.resolved_pk_fonts.contains_key(request)
-                                    || self.pk_font_is_unavailable(request)
-                                {
-                                    return false;
-                                }
-                                ResourceRequestKey::PkFont(request.clone())
-                            }
-                        };
-                        !required_keys.contains(&key)
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            };
+            let prefetch_hints = self.take_prefetch_hints(&required, &probes);
             check_resource_batch_limit(
                 &required,
                 &probes,
@@ -2861,6 +2865,33 @@ impl<'store> VirtualCompileSession<'store> {
         );
     }
 
+    /// Takes the one-shot startup prediction list and removes requests that
+    /// are already bound or have become authoritative blocking requests.
+    /// Keeping this filtering at the shared session boundary makes native and
+    /// WASM hosts use the same admission and precedence rules.
+    fn take_prefetch_hints(
+        &mut self,
+        required: &[ResourceRequest],
+        probes: &[ResourceRequest],
+    ) -> Vec<ResourceRequest> {
+        let Some(hints) = self.initial_prefetch_hints.take() else {
+            return Vec::new();
+        };
+        let blocking = required
+            .iter()
+            .chain(probes)
+            .map(resource_request_key)
+            .collect::<BTreeSet<_>>();
+        hints
+            .into_vec()
+            .into_iter()
+            .filter(|request| {
+                let key = resource_request_key(request);
+                !blocking.contains(&key) && !self.resource_is_bound(&key)
+            })
+            .collect()
+    }
+
     pub fn clear_distribution_cache(&mut self) -> Result<(), CompileError> {
         if let Some(session) = &self.incremental {
             let latest = session.source().as_bytes().to_vec();
@@ -2876,6 +2907,7 @@ impl<'store> VirtualCompileSession<'store> {
         self.font_requests.clear();
         self.font_cached_bytes = 0;
         self.awaiting = None;
+        self.startup_prefetch_generation = None;
         self.attempts_without_progress = 0;
         self.incremental = None;
         self.accepted_output = None;

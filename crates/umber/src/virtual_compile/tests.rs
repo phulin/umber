@@ -3721,76 +3721,84 @@ fn modern_policy_rejects_classic_preloaded_format_fonts_before_execution() {
 }
 
 #[test]
-fn source_session_installs_positive_prefetch_responses_for_the_next_attempt() {
+fn startup_prefetch_round_admits_predicted_input_before_engine_execution() {
     let request = |name: &str| {
         ResourceRequest::File(FileRequest::new(
             FileRequestKey::new(FileKind::TexInput, name).expect("request key"),
             name,
         ))
     };
-    let mut formatted = VirtualCompileSession::new(SessionOptions {
-        initial_prefetch_hints: Some(
-            vec![
-                request("remote.tex"),
-                request("required.tex"),
-                request("local.tex"),
-                request("remote.tex"),
-            ]
-            .into_boxed_slice(),
-        ),
+    for format in [
+        None,
+        Some(construct_test_format(EngineMode::Tex82, "\\dump").into_bytes()),
+    ] {
+        let mut formatted = VirtualCompileSession::new(SessionOptions {
+            format,
+            initial_prefetch_hints: Some(vec![request("predicted.tex")].into_boxed_slice()),
+            ..SessionOptions::default()
+        })
+        .expect("formatted session");
+        formatted
+            .add_user_file("main.tex", b"\\input predicted \\end".to_vec())
+            .expect("main");
+
+        let CompileAttemptResult::NeedResources(first) = formatted.compile_attempt() else {
+            panic!("startup predictions should be requested before engine execution");
+        };
+        assert!(first.required.is_empty());
+        assert!(first.probes.is_empty());
+        let ResourceRequest::File(predicted) = first.prefetch_hints[0].clone() else {
+            unreachable!();
+        };
+
+        formatted
+            .provide_resources(vec![ResourceResponse::File(ResolvedFile {
+                request: predicted.key().clone(),
+                virtual_path: "/texlive/predicted.tex".into(),
+                bytes: b"\\message{startup-prefetch}\\endinput".to_vec().into(),
+                expected_digest: None,
+            })])
+            .expect("predicted response");
+        let CompileAttemptResult::Complete(output) = formatted.compile_attempt() else {
+            panic!("the predicted input should be readable on the first engine drive");
+        };
+        assert!(String::from_utf8_lossy(&output.terminal).contains("startup-prefetch"));
+        assert_eq!(formatted.attempts(), 2);
+    }
+}
+
+#[test]
+fn missing_startup_prefetch_hint_is_one_shot_and_nonblocking() {
+    let request = ResourceRequest::File(FileRequest::new(
+        FileRequestKey::new(FileKind::TexInput, "false-positive.tex").expect("request key"),
+        "false-positive",
+    ));
+    let mut session = VirtualCompileSession::new(SessionOptions {
+        initial_prefetch_hints: Some(vec![request].into_boxed_slice()),
         ..SessionOptions::default()
     })
-    .expect("formatted session");
-    formatted
-        .add_user_file("main.tex", b"\\input required \\end".to_vec())
+    .expect("session");
+    session
+        .add_user_file("main.tex", b"\\end".to_vec())
         .expect("main");
-    formatted
-        .add_user_file("local.tex", b"local".to_vec())
-        .expect("local closure override");
 
-    let CompileAttemptResult::NeedResources(first) = formatted.compile_attempt() else {
-        panic!("first format miss should request resources");
+    let CompileAttemptResult::NeedResources(first) = session.compile_attempt() else {
+        panic!("false-positive hint should still receive one provider round");
     };
-    assert_eq!(first.required.len(), 1);
-    let ResourceRequest::File(required) = &first.required[0] else {
-        unreachable!();
-    };
-    assert_eq!(required.key().name(), "required.tex");
-    assert_eq!(required.original_name(), "required");
-    assert_eq!(first.prefetch_hints, vec![request("remote.tex")]);
-
-    let ResourceRequest::File(required) = first.required[0].clone() else {
-        unreachable!();
-    };
-    let ResourceRequest::File(remote) = first.prefetch_hints[0].clone() else {
-        unreachable!();
-    };
+    assert!(first.required.is_empty());
+    assert_eq!(first.prefetch_hints.len(), 1);
+    session
+        .provide_resources(Vec::new())
+        .expect("an empty speculative response acknowledges the round");
     assert!(matches!(
-        formatted.provide_resources(vec![ResourceResponse::FileUnavailable(
-            remote.key().clone()
-        )]),
-        Err(CompileError::UnexpectedResourceResponse(name)) if name == "remote.tex"
+        session.compile_attempt(),
+        CompileAttemptResult::Complete(_)
     ));
-    formatted
-        .provide_resources(vec![
-            ResourceResponse::File(ResolvedFile {
-                request: required.key().clone(),
-                virtual_path: "/texlive/required.tex".into(),
-                bytes: b"\\input remote \\endinput".to_vec().into(),
-                expected_digest: None,
-            }),
-            ResourceResponse::File(ResolvedFile {
-                request: remote.key().clone(),
-                virtual_path: "/texlive/remote.tex".into(),
-                bytes: b"prefetched".to_vec().into(),
-                expected_digest: None,
-            }),
-        ])
-        .expect("required response");
-    let CompileAttemptResult::Complete(_) = formatted.compile_attempt() else {
-        panic!("the prefetched closure should complete on attempt two");
-    };
-    assert_eq!(formatted.attempts(), 2);
+    assert_eq!(session.attempts(), 2);
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::Complete(_)
+    ));
 }
 
 #[test]
