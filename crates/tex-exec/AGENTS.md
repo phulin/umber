@@ -40,8 +40,9 @@ Command operands are scanned by `tex-command` into typed request and result valu
   destinations.
 - `src/main_control/command_episode.rs`: the singular stationary
   `CommandEpisode`, compact delivery/scanner phases, adjacent caller-owned
-  typed cold slot, borrow-typed hot/cold execution episodes, and the move-only
-  `OperationFrame` constructed only at genuine suspension boundaries.
+  typed cold slot, and borrow-typed hot/cold execution episodes. Resource
+  misses unwind command processing; no parked expansion or scanner frame is
+  retained here.
 - `src/main_control/settlement.rs`: direct-operation evidence ownership,
   begin/commit/rollback, resource and diagnostic retry settlement, ordered
   semantic/effect/artifact publication, and exact-cut main-source paragraph
@@ -56,9 +57,9 @@ Command operands are scanned by `tex-command` into typed request and result valu
   delivery, retry, and checked-save state across admitted stages; it contains
   no command classification. No live fact or provider survives a processor
   episode or enters suspension.
-- The resident `CommandEpisode` owns the admitted current command, parked
-  expansion, scalar phase, delivery cursor, scanner child, partial direct scan,
-  and the completed hot-family operand. An adjacent caller-owned typed cold
+- The resident `CommandEpisode` owns the admitted current command, scalar
+  phase, delivery cursor, scanner-local facts, partial direct scan, and the
+  completed hot-family operand. An adjacent caller-owned typed cold
   slot owns uncommon leaves without entering the resident command layout.
   Canonical dispatch applies ordinary character, spacing, paragraph-start,
   grouping, definition, let, and catcode results directly in one context
@@ -75,10 +76,10 @@ Command operands are scanned by `tex-command` into typed request and result valu
   cache: command delivery journals and advances input, and the builder consumes
   each `(char, origin)` before the borrow returns. Every semantic or
   instrumentation boundary remains on scalar dispatch.
-  A move-only `OperationFrame` packages the resident episode and cold slot only
-  when resource, diagnostic, or exact rollback suspension must outlive the
-  call. Do not recreate a nested preflight command, generic operation payload,
-  readiness status, or prepare/apply handoff.
+  A resource need unwinds this episode and the host later restores a full
+  checkpoint before calling ordinary delivery again. Do not recreate a nested
+  preflight command, generic operation payload, readiness status, or
+  prepare/apply handoff.
 - Executor host facts are demand-only borrows of the authoritative live mode
   and page state. Conditional mode, auxiliary values, and effective-tail
   quantities are sampled at their consuming scanner/primitive; only the

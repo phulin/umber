@@ -3430,7 +3430,7 @@ impl<G> MainControl<G> {
                 // when that scanner requests one.
                 PreflightReadiness::Ready
             } else if let Some(delivery) = initial_delivery.take() {
-                host_preparation.fill_delivery(delivery, None, None);
+                host_preparation.fill_delivery(delivery, None);
                 PreflightReadiness::Ready
             } else {
                 let mut admitted_operation_mark = Some(operation_mark);
@@ -4213,7 +4213,7 @@ impl<G> MainControl<G> {
                 return Ok(DiagnosticStepResult::Progress(step));
             }
             command_episode.admit_settled(command, Some(cursor));
-            host_preparation.fill_delivery(OperationDelivery::Command, None, None);
+            host_preparation.fill_delivery(OperationDelivery::Command, None);
         }
         let mode_mark = self.modes.begin_journal();
         let applied = match self.execute_typed_operation(
@@ -6382,7 +6382,7 @@ impl<G> MainControl<G> {
             OperationDelivery::Replay
         };
         let mut host_preparation = OperationPreparation::new();
-        host_preparation.fill_delivery(delivery, None, None);
+        host_preparation.fill_delivery(delivery, None);
         let result = self.execute_typed_operation(
             stores,
             &mut host_preparation,
@@ -6470,7 +6470,6 @@ impl<G> MainControl<G> {
         // preparation payloads are deliberately drained and discarded; no
         // scanner or expansion continuation crosses a host boundary.
         let _ = host_preparation.take_scanner();
-        let _ = host_preparation.take_expansion();
         if matches!(
             &delivery,
             OperationDelivery::SuspendedCold { .. } | OperationDelivery::ResidentCold
@@ -6486,7 +6485,6 @@ impl<G> MainControl<G> {
         } else if matches!(&delivery, OperationDelivery::AppliedDirect) {
             assert!(
                 frame.command.is_none()
-                    && frame.expansion.is_none()
                     && frame.phase.is_none()
                     && frame.cursor.is_none()
                     && frame.scanner.is_none()

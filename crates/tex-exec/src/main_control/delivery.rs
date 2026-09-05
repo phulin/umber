@@ -107,7 +107,6 @@ pub(super) fn operation_barrier<G>(
                     Meaning::UnexpandablePrimitive(primitive),
                 )
             }
-            Some(PreflightCommandPhase::Expanding { .. }) => None,
             _ => frame.current_option().and_then(|command| {
                 crate::transaction_protocol::canonical_command_barrier(command.meaning())
             }),
@@ -152,9 +151,6 @@ pub(super) fn command_requires_transaction_from_facts<G>(
             )
         })
     {
-        return true;
-    }
-    if matches!(frame.phase, Some(PreflightCommandPhase::Expanding { .. })) {
         return true;
     }
     // A brace packaging an active box can enter page or shipout work. Braces
@@ -223,7 +219,7 @@ impl<G> MainControl<G> {
                     || (mode == Mode::DisplayMath
                         && self.modes.current_list().has_display_alignment())
                 {
-                    host_preparation.fill_delivery(OperationDelivery::Replay, None, None);
+                    host_preparation.fill_delivery(OperationDelivery::Replay, None);
                     return PreflightReadiness::Ready;
                 }
 
@@ -464,11 +460,8 @@ impl<G> MainControl<G> {
                                     if frame.unavailable(cold).executes_directly() {
                                         direct_cold_operation = true;
                                     } else {
-                                        host_preparation.fill_delivery(
-                                            OperationDelivery::ResidentCold,
-                                            None,
-                                            None,
-                                        );
+                                        host_preparation
+                                            .fill_delivery(OperationDelivery::ResidentCold, None);
                                     }
                                 }
                                 Err(error) => {
@@ -652,13 +645,13 @@ impl<G> MainControl<G> {
             tex_command::DeliveryStatus::End => {
                 debug_assert!(frame.command.is_none());
                 frame.write_unavailable(cold, ColdOperation::<G>::EndOfInput);
-                host_preparation.fill_delivery(OperationDelivery::ResidentCold, None, None);
+                host_preparation.fill_delivery(OperationDelivery::ResidentCold, None);
                 return PreflightReadiness::Ready;
             }
             tex_command::DeliveryStatus::ReplayCompleted(episode) => {
                 debug_assert!(frame.command.is_none());
                 frame.write_unavailable(cold, ColdOperation::<G>::ReplayCompleted(episode));
-                host_preparation.fill_delivery(OperationDelivery::ResidentCold, None, None);
+                host_preparation.fill_delivery(OperationDelivery::ResidentCold, None);
                 return PreflightReadiness::Ready;
             }
             tex_command::DeliveryStatus::Command => {}
@@ -720,7 +713,7 @@ impl<G> MainControl<G> {
             );
             frame.retain_source_role();
             frame.discard_resident_command();
-            host_preparation.fill_delivery(OperationDelivery::ResidentCold, None, None);
+            host_preparation.fill_delivery(OperationDelivery::ResidentCold, None);
             return PreflightReadiness::Ready;
         }
         assert!(
@@ -731,7 +724,7 @@ impl<G> MainControl<G> {
             matches!(frame.phase, Some(PreflightCommandPhase::Raw)),
             raw_main_loop_delivery && continues_main_loop
         );
-        host_preparation.fill_delivery(OperationDelivery::Command, None, None);
+        host_preparation.fill_delivery(OperationDelivery::Command, None);
         PreflightReadiness::Ready
     }
 }
@@ -1325,39 +1318,6 @@ pub(super) fn scan_alignment_delivery_event<G>(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn settle_preflight_step<G>(
-    processor: &mut CommandProcessor<'_, '_, G>,
-    command: &mut CommandEpisode<G>,
-    cold: &mut ColdOperationSlot<G>,
-    main_loop: bool,
-    mode: Mode,
-    boxes: &ReplayBoxes<G>,
-    innermost_group: Option<GroupKind>,
-    job_is_all_over: bool,
-    display_eq_no: bool,
-    shown_mode: &mut Option<Mode>,
-    diagnostics: &mut Vec<PendingDiagnostic<G>>,
-) -> Result<ScannedOperation<G>, ExecError> {
-    let _ = (
-        processor,
-        command,
-        cold,
-        main_loop,
-        mode,
-        boxes,
-        innermost_group,
-        job_is_all_over,
-        display_eq_no,
-        shown_mode,
-        diagnostics,
-    );
-    // Expansion is now completed by the ordinary synchronous delivery call.
-    // A parked expansion reaching this adapter is stale state from the
-    // retired continuation protocol and must never be resumed.
-    unreachable!("parked expansion cannot cross checkpoint replay")
-}
-
-#[allow(clippy::too_many_arguments)]
 pub(super) fn scan_preflight_command<G>(
     processor: &mut CommandProcessor<'_, '_, G>,
     command: &mut CommandEpisode<G>,
@@ -1392,22 +1352,6 @@ pub(super) fn scan_preflight_command<G>(
                 diagnostics,
                 None,
                 true,
-            )
-        }
-        PreflightCommandPhase::Expanding { main_loop } => {
-            prepare_command_trace(processor, mode, *shown_mode);
-            settle_preflight_step(
-                processor,
-                command,
-                cold,
-                main_loop,
-                mode,
-                boxes,
-                innermost_group,
-                job_is_all_over,
-                display_eq_no,
-                shown_mode,
-                diagnostics,
             )
         }
         PreflightCommandPhase::OperationScan => {

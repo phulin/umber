@@ -41,9 +41,6 @@ pub(super) enum OperationDelivery {
 pub(super) enum PreflightCommandPhase {
     Settled,
     Raw,
-    Expanding {
-        main_loop: bool,
-    },
     OperationScan,
     PrefixedCommandScan {
         global: bool,
@@ -374,7 +371,6 @@ impl TypedOperationError {
 pub(super) struct CommandEpisode<G> {
     pub(super) error: Option<ExecError>,
     pub(super) command: Option<tex_command::CurrentCommand<G>>,
-    pub(super) expansion: Option<tex_command::ExpansionWorkKey<G>>,
     pub(super) phase: Option<PreflightCommandPhase>,
     pub(super) cursor: Option<tex_command::CommandDeliveryCursor>,
     /// Retained only as an empty compatibility slot while the outer replay
@@ -394,7 +390,6 @@ impl<G> Default for CommandEpisode<G> {
         Self {
             error: None,
             command: None,
-            expansion: None,
             phase: None,
             cursor: None,
             scanner: None,
@@ -423,7 +418,6 @@ impl<G> CommandEpisode<G> {
     ) {
         assert!(self.scalar.is_empty());
         assert!(self.command.replace(command).is_none());
-        assert!(self.expansion.is_none());
         assert!(self.phase.replace(phase).is_none());
         self.cursor = cursor;
         self.scanner = None;
@@ -443,7 +437,6 @@ impl<G> CommandEpisode<G> {
     ) {
         assert!(self.scalar.is_empty());
         assert!(self.command.is_some());
-        assert!(self.expansion.is_none());
         assert!(self.phase.replace(phase).is_none());
         self.cursor = cursor;
         self.scanner = None;
@@ -461,29 +454,9 @@ impl<G> CommandEpisode<G> {
         self.mark_resident_command(PreflightCommandPhase::Raw, cursor);
     }
 
-    pub(super) fn admit_expanding(
-        &mut self,
-        expansion: tex_command::ExpansionWorkKey<G>,
-        main_loop: bool,
-        cursor: tex_command::CommandDeliveryCursor,
-    ) {
-        assert!(self.scalar.is_empty());
-        assert!(self.command.is_none());
-        assert!(self.expansion.replace(expansion).is_none());
-        assert!(
-            self.phase
-                .replace(PreflightCommandPhase::Expanding { main_loop })
-                .is_none()
-        );
-        self.cursor = Some(cursor);
-        self.scanner = None;
-        self.operation_scan = None;
-    }
-
     pub(super) fn admit_immediate_pdf(&mut self, primitive: UnexpandablePrimitive) {
         assert!(self.scalar.is_empty());
         assert!(self.command.is_none());
-        assert!(self.expansion.is_none());
         assert!(
             self.phase
                 .replace(PreflightCommandPhase::ImmediatePdfRetry(primitive))
@@ -510,19 +483,12 @@ impl<G> CommandEpisode<G> {
             .expect("live operation frame owns its admitted command")
     }
 
-    pub(super) fn take_expansion(&mut self) -> tex_command::ExpansionWorkKey<G> {
-        self.expansion
-            .take()
-            .expect("expanding operation frame owns its parked expansion")
-    }
-
     pub(super) fn replace_current(&mut self, command: tex_command::CurrentCommand<G>) {
         self.command = Some(command);
     }
 
     pub(super) fn settle_resident(&mut self) {
         assert!(self.command.is_some());
-        assert!(self.expansion.is_none());
         self.phase = Some(PreflightCommandPhase::Settled);
         self.operation_scan = None;
     }
@@ -570,7 +536,6 @@ impl<G> CommandEpisode<G> {
     pub(super) fn clear_preflight(&mut self) {
         assert!(self.scalar.is_empty());
         let _ = self.command.take();
-        let _ = self.expansion.take();
         self.phase = None;
         self.cursor = None;
         self.scanner = None;
@@ -597,7 +562,6 @@ impl<G> CommandEpisode<G> {
         assert!(
             self.error.is_none()
                 && self.command.is_none()
-                && self.expansion.is_none()
                 && self.phase.is_none()
                 && self.cursor.is_none()
                 && self.scanner.is_none()

@@ -6,17 +6,14 @@ use super::*;
 pub(super) struct OperationPreparation<G> {
     checked_save_stack_words: Option<usize>,
     delivery: Option<OperationDelivery>,
-    resume: Option<OperationResume<G>>,
+    resume: Option<OperationResume>,
     delivery_status: Option<tex_command::DeliveryStatus>,
     trace_reported: bool,
+    _generation: core::marker::PhantomData<fn(&G) -> &G>,
 }
 
-struct OperationResume<G> {
-    // The command core now unwinds on a resource need. Keep this type-only
-    // slot until the surrounding delivery owner is retired; it can never
-    // contain a scanner continuation.
+struct OperationResume {
     scanner: Option<()>,
-    expansion: Option<tex_command::ExpansionWorkKey<G>>,
 }
 
 impl<G> OperationPreparation<G> {
@@ -27,22 +24,18 @@ impl<G> OperationPreparation<G> {
             resume: None,
             delivery_status: None,
             trace_reported: false,
+            _generation: core::marker::PhantomData,
         }
     }
 
-    pub(super) fn fill_delivery(
-        &mut self,
-        delivery: OperationDelivery,
-        scanner: Option<()>,
-        expansion: Option<tex_command::ExpansionWorkKey<G>>,
-    ) {
+    pub(super) fn fill_delivery(&mut self, delivery: OperationDelivery, scanner: Option<()>) {
         assert!(
             self.delivery.is_none() && self.resume.is_none(),
             "one operation preparation owns one direct dispatch result"
         );
         self.delivery = Some(delivery);
-        if scanner.is_some() || expansion.is_some() {
-            self.resume = Some(OperationResume { scanner, expansion });
+        if scanner.is_some() {
+            self.resume = Some(OperationResume { scanner });
         }
     }
 
@@ -51,7 +44,7 @@ impl<G> OperationPreparation<G> {
     }
 
     pub(super) fn fill_applied_direct(&mut self) {
-        self.fill_delivery(OperationDelivery::AppliedDirect, None, None);
+        self.fill_delivery(OperationDelivery::AppliedDirect, None);
     }
 
     pub(super) fn delivery(&self) -> &OperationDelivery {
@@ -70,10 +63,6 @@ impl<G> OperationPreparation<G> {
         self.resume
             .as_mut()
             .and_then(|resume| resume.scanner.take())
-    }
-
-    pub(super) fn take_expansion(&mut self) -> Option<tex_command::ExpansionWorkKey<G>> {
-        self.resume.take().and_then(|resume| resume.expansion)
     }
 
     pub(super) fn record_delivery_status(
@@ -309,7 +298,7 @@ mod layout_tests {
     #[test]
     fn operation_preparation_initializes_only_direct_delivery_state() {
         let mut preparation: OperationPreparation<()> = OperationPreparation::new();
-        preparation.fill_delivery(OperationDelivery::Replay, None, None);
+        preparation.fill_delivery(OperationDelivery::Replay, None);
         assert!(preparation.resume.is_none());
     }
 }
