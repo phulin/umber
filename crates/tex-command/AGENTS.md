@@ -13,7 +13,7 @@ unexpandable commands.
 
 `docs/expansion_memory_lifetimes.md` is the current implementation map and
 retention audit for command-state generations, execution scratch, macro and
-  scanner nesting, input ownership, and checkpoint replay. Update it whenever this
+scanner nesting, input ownership, and checkpoint replay. Update it whenever this
 crate changes an owner or exact reclamation point.
 
 Host capabilities are borrow-scoped through `CommandHostContext` and must
