@@ -1,4 +1,4 @@
-import { decodeKey, encodeRequest, resourceDomain } from "./manifest-schema.js";
+import { encodeRequest, resourceDomain } from "./manifest-schema.js";
 
 /** Shared names for the three states used by catalog/VFS adapters. */
 export const ResourceReadiness = Object.freeze({
@@ -17,6 +17,9 @@ function rustRequestInput(request, required = false) {
 	const className = prefetchClassForRequest(request);
 	return {
 		key: encodeRequest(request),
+		domain: request.domain ?? resourceDomain(request.kind),
+		kind: request.kind,
+		name: request.name,
 		originalSpelling: request.originalName ?? request.name ?? "",
 		searchContext: request.searchContext ?? "literal",
 		...(className === undefined ? {} : { class: className }),
@@ -29,20 +32,21 @@ function rustRequestInput(request, required = false) {
 }
 
 function rustRequestOutput(request) {
-	if (!request || typeof request.key !== "string") return undefined;
-	let decoded;
-	try {
-		decoded = decodeKey(request.key);
-	} catch {
+	if (
+		!request ||
+		typeof request.key !== "string" ||
+		typeof request.domain !== "string" ||
+		typeof request.kind !== "string" ||
+		typeof request.name !== "string"
+	)
+		// A transport key cannot safely recover the semantic request kind.
 		return undefined;
-	}
-	const kind = request.class === "image" ? "image" : decoded.kind;
 	return {
 		type: "file",
-		domain: resourceDomain(kind),
-		kind,
-		name: decoded.name,
-		originalName: request.originalSpelling ?? decoded.name,
+		domain: request.domain,
+		kind: request.kind,
+		name: request.name,
+		originalName: request.originalSpelling ?? request.name,
 		searchContext: request.searchContext ?? "literal",
 		depth: request.depth ?? 0,
 	};
@@ -96,6 +100,11 @@ export function createRustPrefetchPolicy(bindings) {
 				enqueueLiteralHints(source) {
 					return state.enqueueLiteralHints(source);
 				},
+				select(required, candidates, budget) {
+					if (typeof state.select !== "function")
+						return bindings.prefetchSelect(required, candidates, budget);
+					return state.select(required, candidates, budget);
+				},
 				drain(limit) {
 					return state
 						.drain(limit)
@@ -103,6 +112,11 @@ export function createRustPrefetchPolicy(bindings) {
 						.filter((request) => request !== undefined);
 				},
 				dependencyClosure(request, tier) {
+					if (typeof state.dependencyClosureRequest === "function")
+						return state
+							.dependencyClosureRequest(rustRequestInput(request), tier)
+							.map(rustRequestOutput)
+							.filter((value) => value !== undefined);
 					return state
 						.dependencyClosure(encodeRequest(request), tier)
 						.map(rustRequestOutput)
@@ -113,6 +127,16 @@ export function createRustPrefetchPolicy(bindings) {
 					const encodedDependencies = dependencies.map((dependency) =>
 						rustRequestInput(dependency),
 					);
+					if (typeof state.admitRequest === "function") {
+						state.admitRequest(
+							rustRequestInput(request),
+							virtualPath ?? "",
+							bytes,
+							request.kind === "image" ? "image" : undefined,
+							encodedDependencies,
+						);
+						return;
+					}
 					if (typeof state.admitWithClass === "function") {
 						state.admitWithClass(
 							key,
@@ -126,6 +150,12 @@ export function createRustPrefetchPolicy(bindings) {
 					}
 				},
 				noteReplay(region, request, discardedWork) {
+					if (typeof state.noteReplayRequest === "function")
+						return state.noteReplayRequest(
+							region,
+							rustRequestInput(request),
+							discardedWork,
+						);
 					return state.noteReplay(
 						region,
 						encodeRequest(request),

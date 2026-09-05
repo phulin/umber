@@ -25,6 +25,9 @@ test("Rust policy adapter keeps request identity at the WASM boundary", () => {
 			return [
 				{
 					key: "tex:child.sty",
+					domain: "tex",
+					kind: "tex",
+					name: "child.sty",
 					originalSpelling: "./child.sty",
 					searchContext: "runtime",
 					class: "small-runtime",
@@ -86,6 +89,14 @@ test("Rust policy adapter keeps request identity at the WASM boundary", () => {
 	});
 	assert.equal(calls[0][0], "enqueue");
 	assert.equal(calls[0][1][0].key, "tex:foo.sty");
+	assert.deepEqual(
+		{
+			domain: calls[0][1][0].domain,
+			kind: calls[0][1][0].kind,
+			name: calls[0][1][0].name,
+		},
+		{ domain: "tex", kind: "tex", name: "foo.sty" },
+	);
 	assert.equal(calls.at(-1)[0], "replay");
 });
 

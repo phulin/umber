@@ -72,7 +72,6 @@ export function resourceDomain(kind) {
 		"tex",
 		"tfm",
 		"format",
-		"asset",
 		"image",
 		"vf",
 		"font-map",
@@ -80,7 +79,9 @@ export function resourceDomain(kind) {
 		"font-program",
 	].includes(kind)
 		? "tex"
-		: "bibliography";
+		: kind === "asset"
+			? "generic"
+			: "bibliography";
 }
 
 export function fontRequestIdentity(request) {

@@ -222,6 +222,16 @@ negative answers; those variants carry only their complete request key.
 The facade therefore has no file-kind table, path canonicalizer, duplicate
 map, or resource-byte counter that could drift from native behavior.
 
+Prefetch DTOs carry the complete file identity (`domain`, semantic `kind`, and
+normalized `name`) alongside the catalogue transport key, original spelling,
+and search context. The transport key is only a provider lookup token: VF,
+PDF-font, image, and asset requests that share `tex:<name>` remain distinct
+semantic admissions. The optional prefetch class is used only for budget
+accounting. Native and WASM use one per-run reservation ledger for cumulative
+file, total-byte, and class ceilings; duplicate object/digest/length payloads
+are charged once while distinct semantic requests are still returned and
+admitted separately.
+
 The application or its resolver decides whether to use memory caches,
 in-flight joining, HTTP caching, IndexedDB, a service worker, verified
 fetches, local user files, or another transport. Reusable helper modules may
@@ -343,6 +353,12 @@ transitive dependency prefetches. Rust has already removed registered and user
 inputs from the authorized set; the resolver omits absent, failed, and
 over-budget speculation. Hints therefore cannot override user inputs, create
 unavailable bindings, or affect retry progress.
+
+Draining a prefetch batch transfers its semantic keys to the run's attempted
+set. A failed, declined, or unadmitted optional hint is therefore not
+rediscovered by a later scan or region cycle; a direct required request remains
+independent and is still allowed. The attempted and reservation sets reset
+only when a new run/context is started or the current run is discarded.
 
 ## Client-owned distribution
 

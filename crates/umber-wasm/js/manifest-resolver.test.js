@@ -469,12 +469,23 @@ test("canonical catalog aliases still preserve every semantic file kind", async 
 	const responses = await resolver.resolve([
 		{ type: "file", domain: "tex", kind: "tex", name: "plain.tex" },
 		{ type: "file", domain: "tex", kind: "image", name: "plain.tex" },
+		{ type: "file", domain: "tex", kind: "vf", name: "plain.tex" },
+		{
+			type: "file",
+			domain: "tex",
+			kind: "font-program",
+			name: "plain.tex",
+		},
+		{ type: "file", domain: "generic", kind: "asset", name: "plain.tex" },
 	]);
 	assert.deepEqual(
-		responses.map(({ kind, name }) => ({ kind, name })),
+		responses.map(({ domain, kind, name }) => ({ domain, kind, name })),
 		[
-			{ kind: "tex", name: "plain.tex" },
-			{ kind: "image", name: "plain.tex" },
+			{ domain: "tex", kind: "tex", name: "plain.tex" },
+			{ domain: "tex", kind: "image", name: "plain.tex" },
+			{ domain: "tex", kind: "vf", name: "plain.tex" },
+			{ domain: "tex", kind: "font-program", name: "plain.tex" },
+			{ domain: "generic", kind: "asset", name: "plain.tex" },
 		],
 	);
 });

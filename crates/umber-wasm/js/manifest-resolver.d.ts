@@ -33,15 +33,25 @@ export function extractLiteralHints(
 export type FileKind =
 	| "tex"
 	| "tfm"
+	| "format"
+	| "bib-control"
+	| "bib-data"
+	| "bib-configuration"
+	| "xml-schema"
+	| "asset"
+	| "image"
+	| "bib-aux"
 	| "vf"
 	| "font-map"
 	| "font-encoding"
 	| "font-program"
-	| "bib-aux"
 	| "classic-bib-data"
 	| "bib-style";
 
+export type ResourceDomain = "tex" | "bibliography" | "generic";
+
 export interface FileRequestKey {
+	domain: ResourceDomain;
 	kind: FileKind;
 	name: string;
 }

@@ -219,6 +219,7 @@ export class HttpManifestResolver {
 		this.prefetchState = undefined;
 		this.prefetchQueue = [];
 		this.prefetchQueued = new Set();
+		this.prefetchAttempted = new Set();
 		this.prefetchAdmittedRequests = new Set();
 		this.prefetchDepths = new Map();
 		this.prefetchScanned = new Set();
@@ -415,20 +416,49 @@ export class HttpManifestResolver {
 		const candidates = inlineHints.concat(hinted);
 		const candidate = (job, requiredFlag) => ({
 			key: job.manifestKey,
+			domain:
+				job.request?.domain ??
+				resourceDomain(job.request?.kind ?? decodeKey(job.manifestKey).kind),
+			kind: job.request?.kind ?? decodeKey(job.manifestKey).kind,
+			name: job.request?.name ?? decodeKey(job.manifestKey).name,
 			object: job.entry.object,
 			ahash64: job.entry.ahash64,
 			bytes: job.entry.bytes,
 			required: requiredFlag,
 		});
-		const selection = this.prefetchPolicy.select(
+		const select =
+			this.prefetchState !== undefined &&
+			typeof this.prefetchState.select === "function"
+				? this.prefetchState.select.bind(this.prefetchState)
+				: this.prefetchPolicy.select;
+		const selection = select(
 			blocking.map((job) => candidate(job, true)),
 			candidates.map((job) => candidate(job, false)),
 			SHARED_PREFETCH_BUDGET,
 		);
-		const allowed = new Set(selection.hintKeys);
+		const allowed = new Set(selection.hintKeys ?? []);
+		const allowedFileKeys = new Set(
+			(selection.hintFileKeys ?? []).map((key) =>
+				JSON.stringify([key.domain, key.kind, key.name]),
+			),
+		);
 		return mergeSelectedJobs(
 			blocking,
-			candidates.filter((job) => allowed.has(job.manifestKey)),
+			candidates.filter(
+				(job) =>
+					(allowedFileKeys.size > 0 &&
+						allowedFileKeys.has(
+							JSON.stringify([
+								job.request?.domain ??
+									resourceDomain(
+										job.request?.kind ?? decodeKey(job.manifestKey).kind,
+									),
+								job.request?.kind ?? decodeKey(job.manifestKey).kind,
+								job.request?.name ?? decodeKey(job.manifestKey).name,
+							]),
+						)) ||
+					allowed.has(job.manifestKey),
+			),
 		);
 	}
 
@@ -527,7 +557,10 @@ export class HttpManifestResolver {
 	takePrefetchHints(limit = SHARED_PREFETCH_BUDGET.maxFiles) {
 		if (this.prefetchState !== undefined)
 			return this.prefetchState.drain(limit);
-		return this.prefetchQueue.splice(0, Math.max(0, limit));
+		const output = this.prefetchQueue.splice(0, Math.max(0, limit));
+		for (const request of output)
+			this.prefetchAttempted.add(typedRequestIdentity(request));
+		return output;
 	}
 
 	noteReplay(context, requests = []) {
@@ -630,6 +663,7 @@ export class HttpManifestResolver {
 		const identity = typedRequestIdentity(request);
 		if (
 			this.prefetchQueued.has(identity) ||
+			this.prefetchAttempted.has(identity) ||
 			this.prefetchAdmittedRequests.has(identity) ||
 			this.prefetchQueue.length >= SHARED_PREFETCH_BUDGET.maxFiles
 		)
@@ -656,6 +690,7 @@ export class HttpManifestResolver {
 		this.prefetchUsed.clear();
 		this.prefetchQueue = [];
 		this.prefetchQueued.clear();
+		this.prefetchAttempted.clear();
 		this.prefetchAdmittedRequests.clear();
 		this.prefetchDepths.clear();
 		this.prefetchScanned.clear();
@@ -762,6 +797,7 @@ export class HttpManifestResolver {
 		this.prefetchUsed.clear();
 		this.prefetchQueue = [];
 		this.prefetchQueued.clear();
+		this.prefetchAttempted.clear();
 		this.prefetchAdmittedRequests.clear();
 		this.prefetchDepths.clear();
 		this.prefetchScanned.clear();
@@ -1122,7 +1158,8 @@ function mergeJobs(required, hinted, maxFiles, maxBytes) {
 		[hinted, false],
 	]) {
 		for (const job of source) {
-			const existing = indexes.get(job.key);
+			const identity = jobIdentity(job);
+			const existing = indexes.get(identity);
 			const requested = job.requested;
 			if (existing !== undefined) {
 				jobs[existing].blocking ||= blocking && requested;
@@ -1135,7 +1172,7 @@ function mergeJobs(required, hinted, maxFiles, maxBytes) {
 				(jobs.length >= maxFiles || bytes + pathBytes > maxBytes)
 			)
 				continue;
-			indexes.set(job.key, jobs.length);
+			indexes.set(identity, jobs.length);
 			jobs.push({ ...job, requested, blocking: blocking && requested });
 			paths.add(job.entry.virtualPath);
 			bytes += pathBytes;
@@ -1152,13 +1189,14 @@ function mergeSelectedJobs(required, hinted) {
 		[hinted, false],
 	]) {
 		for (const job of source) {
-			const existing = indexes.get(job.key);
+			const identity = jobIdentity(job);
+			const existing = indexes.get(identity);
 			if (existing !== undefined) {
 				jobs[existing].blocking ||= blocking && job.requested;
 				jobs[existing].requested ||= job.requested;
 				continue;
 			}
-			indexes.set(job.key, jobs.length);
+			indexes.set(identity, jobs.length);
 			jobs.push({
 				...job,
 				requested: job.requested,
@@ -1167,6 +1205,12 @@ function mergeSelectedJobs(required, hinted) {
 		}
 	}
 	return jobs;
+}
+
+function jobIdentity(job) {
+	return job.request === undefined
+		? `catalog:${job.manifestKey}`
+		: typedRequestIdentity(job.request);
 }
 
 function groupByObject(jobs) {

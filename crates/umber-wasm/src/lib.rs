@@ -157,6 +157,12 @@ struct JsPrefetchCandidate {
     bytes: u64,
     #[serde(default)]
     class: Option<String>,
+    #[serde(default)]
+    domain: Option<String>,
+    #[serde(default)]
+    kind: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
     required: bool,
 }
 
@@ -176,14 +182,29 @@ struct JsPrefetchBudget {
 struct JsPrefetchSelection {
     required_keys: Vec<String>,
     hint_keys: Vec<String>,
+    hint_file_keys: Vec<JsPrefetchFileKey>,
     demand_bytes: u64,
     prefetch_bytes: u64,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JsPrefetchFileKey {
+    domain: String,
+    kind: String,
+    name: String,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct JsPrefetchRequest {
     key: String,
+    #[serde(default)]
+    domain: Option<String>,
+    #[serde(default)]
+    kind: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
     original_spelling: String,
     search_context: String,
     #[serde(default)]
@@ -196,6 +217,12 @@ struct JsPrefetchRequest {
 #[serde(rename_all = "camelCase")]
 struct JsPrefetchRequestOutput {
     key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    domain: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
     original_spelling: String,
     search_context: String,
     class: String,
@@ -231,29 +258,122 @@ fn prefetch_class_name(class: umber_distribution::PrefetchClass) -> &'static str
 }
 
 fn prefetch_request(request: JsPrefetchRequest) -> umber_distribution::PrefetchRequest {
+    let file_key = request
+        .domain
+        .as_deref()
+        .zip(request.kind.as_deref())
+        .zip(request.name.as_deref())
+        .and_then(|((domain, kind), name)| {
+            umber_distribution::PrefetchFileKey::new(domain, kind, name)
+        });
     let class = request.class.as_deref().map_or_else(
         || umber_distribution::PrefetchClass::for_key(&request.key),
         prefetch_class,
     );
-    umber_distribution::PrefetchRequest::new(
-        request.key,
-        request.original_spelling,
-        request.search_context,
-        request.required,
-    )
-    .with_class(class)
-    .with_depth(request.depth)
+    let output = file_key
+        .map_or_else(
+            || {
+                umber_distribution::PrefetchRequest::new(
+                    request.key.clone(),
+                    request.original_spelling.clone(),
+                    request.search_context.clone(),
+                    request.required,
+                )
+            },
+            |file_key| {
+                umber_distribution::PrefetchRequest::for_file_key(
+                    file_key,
+                    request.key.clone(),
+                    request.original_spelling.clone(),
+                    request.search_context.clone(),
+                    request.required,
+                )
+            },
+        )
+        .with_class(class)
+        .with_depth(request.depth);
+    output
 }
 
 fn prefetch_request_value(request: umber_distribution::PrefetchRequest) -> JsPrefetchRequestOutput {
     let depth = request.depth();
     JsPrefetchRequestOutput {
         key: request.key,
+        domain: request.file_key.as_ref().map(|key| key.domain.clone()),
+        kind: request.file_key.as_ref().map(|key| key.kind.clone()),
+        name: request
+            .file_key
+            .as_ref()
+            .map(|key| key.normalized_name.clone()),
         original_spelling: request.original_spelling,
         search_context: request.search_context,
         class: prefetch_class_name(request.class).to_owned(),
         required: request.required,
         depth,
+    }
+}
+
+fn prefetch_candidate(candidate: JsPrefetchCandidate) -> umber_distribution::PrefetchCandidate {
+    let class = candidate.class.as_deref().map_or_else(
+        || umber_distribution::PrefetchClass::for_key(&candidate.key),
+        prefetch_class,
+    );
+    let file_key = candidate
+        .domain
+        .as_deref()
+        .zip(candidate.kind.as_deref())
+        .zip(candidate.name.as_deref())
+        .and_then(|((domain, kind), name)| {
+            umber_distribution::PrefetchFileKey::new(domain, kind, name)
+        });
+    umber_distribution::PrefetchCandidate {
+        key: candidate.key,
+        object: umber_distribution::ObjectEntry {
+            object: candidate.object,
+            ahash64: candidate.ahash64,
+            bytes: candidate.bytes,
+        },
+        class,
+        required: candidate.required,
+        file_key,
+    }
+}
+
+fn prefetch_budget(budget: JsPrefetchBudget) -> umber_distribution::PrefetchBudget {
+    umber_distribution::PrefetchBudget {
+        max_files: budget.max_files,
+        max_bytes: budget.max_bytes,
+        max_runtime_bytes: budget.max_runtime_bytes,
+        max_font_bytes: budget.max_font_bytes,
+        max_image_bytes: budget.max_image_bytes,
+        max_document_bytes: budget.max_document_bytes,
+        ..umber_distribution::PrefetchBudget::default()
+    }
+}
+
+fn prefetch_selection_value(
+    selection: umber_distribution::PrefetchSelection,
+) -> JsPrefetchSelection {
+    let hint_file_keys = selection
+        .hints
+        .iter()
+        .filter_map(|item| item.file_key.as_ref())
+        .map(|key| JsPrefetchFileKey {
+            domain: key.domain.clone(),
+            kind: key.kind.clone(),
+            name: key.normalized_name.clone(),
+        })
+        .collect();
+    JsPrefetchSelection {
+        required_keys: selection
+            .required
+            .into_iter()
+            .map(|item| item.key)
+            .collect(),
+        hint_keys: selection.hints.into_iter().map(|item| item.key).collect(),
+        hint_file_keys,
+        demand_bytes: selection.demand_bytes,
+        prefetch_bytes: selection.prefetch_bytes,
     }
 }
 
@@ -265,6 +385,7 @@ fn prefetch_request_value(request: umber_distribution::PrefetchRequest) -> JsPre
 #[wasm_bindgen(js_name = PrefetchPolicySession)]
 pub struct PrefetchPolicySession {
     policy: umber_distribution::PrefetchPolicy,
+    budget_configured: bool,
 }
 
 #[wasm_bindgen]
@@ -275,6 +396,7 @@ impl PrefetchPolicySession {
             policy: umber_distribution::PrefetchPolicy::new(
                 umber_distribution::PrefetchBudget::default(),
             ),
+            budget_configured: false,
         }
     }
 
@@ -304,6 +426,32 @@ impl PrefetchPolicySession {
         self.policy.enqueue_literal_hints(source)
     }
 
+    #[wasm_bindgen(js_name = select)]
+    pub fn select(
+        &mut self,
+        required: JsValue,
+        candidates: JsValue,
+        budget: JsValue,
+    ) -> Result<JsValue, JsValue> {
+        let required = from_value::<Vec<JsPrefetchCandidate>>(required)
+            .map_err(|error| js_error(&format!("invalid required prefetch candidates: {error}")))?
+            .into_iter()
+            .map(prefetch_candidate);
+        let candidates = from_value::<Vec<JsPrefetchCandidate>>(candidates)
+            .map_err(|error| js_error(&format!("invalid prefetch candidates: {error}")))?
+            .into_iter()
+            .map(prefetch_candidate);
+        let budget = from_value::<JsPrefetchBudget>(budget)
+            .map_err(|error| js_error(&format!("invalid prefetch budget: {error}")))?;
+        if !self.budget_configured {
+            self.policy.configure_budget(prefetch_budget(budget));
+            self.budget_configured = true;
+        }
+        let selection = self.policy.select_prefetch_group(required, candidates);
+        to_value(&prefetch_selection_value(selection))
+            .map_err(|error| js_error(&format!("failed to encode prefetch selection: {error}")))
+    }
+
     #[wasm_bindgen(js_name = drain)]
     pub fn drain(&mut self, limit: usize) -> Result<JsValue, JsValue> {
         let requests = self
@@ -321,6 +469,29 @@ impl PrefetchPolicySession {
         let requests = self
             .policy
             .dependency_closure(key, tier)
+            .into_iter()
+            .map(prefetch_request_value)
+            .collect::<Vec<_>>();
+        to_value(&requests)
+            .map_err(|error| js_error(&format!("failed to encode dependency closure: {error}")))
+    }
+
+    #[wasm_bindgen(js_name = dependencyClosureRequest)]
+    pub fn dependency_closure_request(
+        &self,
+        request: JsValue,
+        tier: u8,
+    ) -> Result<JsValue, JsValue> {
+        let request = from_value::<JsPrefetchRequest>(request)
+            .map_err(|error| js_error(&format!("invalid dependency request: {error}")))?;
+        let request = prefetch_request(request);
+        let file_key = request
+            .file_key
+            .as_ref()
+            .ok_or_else(|| js_error("dependency request is missing semantic file key"))?;
+        let requests = self
+            .policy
+            .dependency_closure_for_file_key(file_key, tier)
             .into_iter()
             .map(prefetch_request_value)
             .collect::<Vec<_>>();
@@ -353,6 +524,36 @@ impl PrefetchPolicySession {
         dependencies: Option<JsValue>,
     ) -> Result<(), JsValue> {
         self.admit_impl(key, virtual_path, bytes, class.as_deref(), dependencies)
+    }
+
+    #[wasm_bindgen(js_name = admitRequest)]
+    pub fn admit_request(
+        &mut self,
+        request: JsValue,
+        virtual_path: &str,
+        bytes: &Uint8Array,
+        class: Option<String>,
+        dependencies: Option<JsValue>,
+    ) -> Result<(), JsValue> {
+        let request = from_value::<JsPrefetchRequest>(request)
+            .map_err(|error| js_error(&format!("invalid admitted prefetch request: {error}")))?;
+        let request = prefetch_request(request);
+        let dependencies = dependencies
+            .filter(|value| !value.is_undefined() && !value.is_null())
+            .map(|value| {
+                from_value::<Vec<JsPrefetchRequest>>(value).map_err(|error| {
+                    js_error(&format!("invalid admitted prefetch dependencies: {error}"))
+                })
+            })
+            .transpose()?
+            .unwrap_or_default()
+            .into_iter()
+            .map(prefetch_request);
+        let class = class.as_deref().map_or(request.class, prefetch_class);
+        let _ = virtual_path;
+        self.policy
+            .admitted_request_with_class(&request, class, &bytes.to_vec(), dependencies);
+        Ok(())
     }
 
     fn admit_impl(
@@ -400,6 +601,34 @@ impl PrefetchPolicySession {
             return Ok(JsValue::NULL);
         };
         let escalation = self.policy.note_replay(region, request_key, discarded_work);
+        escalation.map_or(Ok(JsValue::NULL), |escalation| {
+            to_value(&JsPrefetchEscalation {
+                tier: escalation.tier,
+                discarded_work_delta: escalation.discarded_work_delta,
+            })
+            .map_err(|error| js_error(&format!("failed to encode prefetch escalation: {error}")))
+        })
+    }
+
+    #[wasm_bindgen(js_name = noteReplayRequest)]
+    pub fn note_replay_request(
+        &mut self,
+        region: &str,
+        request: JsValue,
+        discarded_work: u64,
+    ) -> Result<JsValue, JsValue> {
+        let request = from_value::<JsPrefetchRequest>(request)
+            .map_err(|error| js_error(&format!("invalid replay request: {error}")))?;
+        let request = prefetch_request(request);
+        let Some(file_key) = request.file_key.as_ref() else {
+            return Ok(JsValue::NULL);
+        };
+        let Some(region) = umber_distribution::PrefetchRegionKey::new(region.to_owned()) else {
+            return Ok(JsValue::NULL);
+        };
+        let escalation = self
+            .policy
+            .note_replay_for_file_key(region, file_key, discarded_work);
         escalation.map_or(Ok(JsValue::NULL), |escalation| {
             to_value(&JsPrefetchEscalation {
                 tier: escalation.tier,
@@ -477,46 +706,13 @@ pub fn prefetch_select(
         .map_err(|error| js_error(&format!("invalid prefetch candidates: {error}")))?;
     let budget = from_value::<JsPrefetchBudget>(budget)
         .map_err(|error| js_error(&format!("invalid prefetch budget: {error}")))?;
-    let convert = |candidate: JsPrefetchCandidate| {
-        let class = candidate.class.as_deref().map_or_else(
-            || umber_distribution::PrefetchClass::for_key(&candidate.key),
-            prefetch_class,
-        );
-        umber_distribution::PrefetchCandidate {
-            key: candidate.key,
-            object: umber_distribution::ObjectEntry {
-                object: candidate.object,
-                ahash64: candidate.ahash64,
-                bytes: candidate.bytes,
-            },
-            class,
-            required: candidate.required,
-        }
-    };
     let selection = umber_distribution::select_prefetch_group(
-        required.into_iter().map(convert),
-        candidates.into_iter().map(convert),
-        umber_distribution::PrefetchBudget {
-            max_files: budget.max_files,
-            max_bytes: budget.max_bytes,
-            max_runtime_bytes: budget.max_runtime_bytes,
-            max_font_bytes: budget.max_font_bytes,
-            max_image_bytes: budget.max_image_bytes,
-            max_document_bytes: budget.max_document_bytes,
-            ..umber_distribution::PrefetchBudget::default()
-        },
+        required.into_iter().map(prefetch_candidate),
+        candidates.into_iter().map(prefetch_candidate),
+        prefetch_budget(budget),
     );
-    to_value(&JsPrefetchSelection {
-        required_keys: selection
-            .required
-            .into_iter()
-            .map(|item| item.key)
-            .collect(),
-        hint_keys: selection.hints.into_iter().map(|item| item.key).collect(),
-        demand_bytes: selection.demand_bytes,
-        prefetch_bytes: selection.prefetch_bytes,
-    })
-    .map_err(|error| js_error(&format!("failed to encode prefetch selection: {error}")))
+    to_value(&prefetch_selection_value(selection))
+        .map_err(|error| js_error(&format!("failed to encode prefetch selection: {error}")))
 }
 
 #[wasm_bindgen]
