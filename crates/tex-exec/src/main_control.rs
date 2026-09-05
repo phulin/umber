@@ -65,22 +65,15 @@ use crate::vertical::is_outer_vertical;
 use crate::{ExecError, Mode, ModeNest};
 
 /// Consumes one destination-directed scalar result at its producing call
-/// site. The successful path moves only the typed value; a real cold edge
-/// moves the error into the surrounding operation result and leaves the exact
-/// scanner child in the operation frame's existing continuation field.
+/// site. Scalar scanners are ordinary synchronous calls: a resource error
+/// unwinds the whole operation and is handled by checkpoint replay. No
+/// scanner child or caller phase is retained here.
 macro_rules! take_operation_scalar {
     ($frame:expr, $status:expr, $phase:expr, $suspended:expr, $take:ident) => {{
+        let _ = $suspended;
         match $status {
-            tex_command::ScalarScanStatus::Complete => {
-                *$suspended = None;
-                $frame.$take()
-            }
-            tex_command::ScalarScanStatus::Suspended => {
-                *$suspended = Some($phase);
-                return Err(command_error($frame.take_error()));
-            }
+            tex_command::ScalarScanStatus::Complete => $frame.$take(),
             tex_command::ScalarScanStatus::Failed => {
-                *$suspended = None;
                 return Err(command_error($frame.take_error()));
             }
         }
@@ -392,14 +385,6 @@ pub struct MainControl<G> {
     /// Live-store boundaries used to close the typed receipt before the
     /// direct operation commits. Absent for ordinary execution.
     operation_receipt_start: Option<OperationReceiptStart>,
-    /// Observation evidence moved across a typed resource suspension.
-    ///
-    /// Preflight has committed delivery and scanning when one of the narrow
-    /// resource continuations is installed, so an observed retry cannot
-    /// discard that prefix and reconstruct it by replay. Moving the sole
-    /// buffer owner keeps publication atomic without cloning any evidence
-    /// operation.
-    suspended_operation_observation: Option<(ObservationBuffer, OperationReceiptStart)>,
     completed_replay_episode: Option<tex_command::CommandReplayEpisode>,
     /// Detached DVI receipts whose artifact commits have survived an entire
     /// direct operation. This replay state is published only after its
@@ -427,19 +412,12 @@ pub struct MainControl<G> {
     /// retained outside snapshots so a host protocol no-progress invariant
     /// can still identify the command whose retry failed to advance.
     pending_resource_site: Option<OriginId>,
-    /// Exact direct-operation capability and caller destination retained
-    /// across a typed delivery retry. Preflight has already committed its
-    /// delivery, so retry resumes without reconstructing owner coordinates
-    /// from command state or inspecting unrelated pending slots.
-    pending_direct_operation: Option<PendingDirectOperation<G>>,
-    /// Fully scanned resource operation retained across host acquisition.
-    /// The command/input cursor is already committed, so retry resolves this
-    /// typed operand and never replays delivery or scanning work.
-    pending_resource_operation: Option<PendingResourceOperation<G>>,
-    /// Diagnostic-host assignment retained after expanded delivery has
-    /// committed. Retrying resumes either its exact settled command/cursor or
-    /// its fully scanned operation without fetching another diagnostic token.
-    pending_diagnostic_operation: Option<PendingDiagnosticOperation<G>>,
+    /// A direct operation has been fully unwound at a resource boundary.
+    /// Only aggregate checkpoint replay clears this latch; answering the
+    /// detached request in-place must not make the old execution object look
+    /// resumable, since executor-side alignment/output/scanner roots are not
+    /// part of the direct-operation rollback mark.
+    resource_replay_required: bool,
     /// First recoverable evidence retained with whichever typed operation is
     /// currently suspended. This is run-owned, never checkpointed, and is
     /// restored into that operation's DiagnosticEffects exactly once.
@@ -1222,7 +1200,6 @@ impl<G> Default for MainControl<G> {
             page_output_observations: ObservationBuffer::default(),
             operation_observations: None,
             operation_receipt_start: None,
-            suspended_operation_observation: None,
             completed_replay_episode: None,
             prepared_dvi_pages: PreparedDviPages::default(),
             immediate_prints: Vec::new(),
@@ -1232,9 +1209,7 @@ impl<G> Default for MainControl<G> {
             paragraph_checkpoint_cut: false,
             job_start_eligibility: Some(crate::checkpoint::CheckpointEligibility::job_start()),
             pending_resource_site: None,
-            pending_direct_operation: None,
-            pending_resource_operation: None,
-            pending_diagnostic_operation: None,
+            resource_replay_required: false,
             pending_first_recoverable_diagnostic: None,
             ended: false,
             fatal: None,
@@ -1345,42 +1320,15 @@ impl<G> MainControl<G> {
         self
     }
 
-    /// Discards any candidate-only direct-operation continuation before the
-    /// command timeline returns to its accepted checkpoint lineage.
-    ///
-    /// Resource suspension deliberately keeps the sole command-attempt owner
-    /// live while committing the state and mode operation journals. Aggregate
-    /// rejection must therefore return the moved attempt arena and roll back
-    /// that exact operation before rejecting the command checkpoint fork.
+    /// Clears detached diagnostic evidence before the command timeline returns
+    /// to its accepted checkpoint lineage. Resource operations are already
+    /// fully unwound at the NeedResource boundary, so no command attempt or
+    /// caller continuation needs a second settlement path here.
     pub(crate) fn cancel_external_attempt_for_checkpoint_settlement(
         &mut self,
-        stores: &Universe<G>,
+        _stores: &Universe<G>,
     ) {
         self.pending_first_recoverable_diagnostic = None;
-        let operation = if let Some(pending) = self.pending_resource_operation.take() {
-            let (operation, resume, _pending) = self
-                .command
-                .resume_attempt(stores, pending.attempt)
-                .unwrap_or_else(|_| {
-                    panic!("resource continuation belongs to the rejected generation")
-                });
-            debug_assert_eq!(resume, SUSPENDED_RESOURCE_RESUME);
-            Some(operation)
-        } else if let Some(pending) = self.pending_direct_operation.take() {
-            match pending.state {
-                PendingDirectState::Fresh => None,
-                PendingDirectState::Retained(operation) => Some(operation),
-            }
-        } else {
-            self.pending_diagnostic_operation
-                .take()
-                .map(|pending| pending.operation)
-        };
-        if let Some(operation) = operation {
-            self.command
-                .rollback_attempt_operation(operation)
-                .expect("rejected continuation owns its command-attempt operation");
-        }
     }
 
     pub(crate) fn into_rejected_checkpoint_command_with_state(
@@ -1396,16 +1344,14 @@ impl<G> MainControl<G> {
 
     pub(crate) fn terminal_is_quiescent(&self, stores: &mut Universe<G>) -> bool {
         self.command.named_boundary_is_quiescent()
-            && !self.has_external_attempt_owner()
             && self.active_alignment.is_none()
             && self.operation_observations.is_none()
             && self.operation_receipt_start.is_none()
-            && self.suspended_operation_observation.is_none()
             && self.prepared_shipout.is_none()
             && !self.page_region_succession_pending
             && self.immediate_prints.is_empty()
             && self.pending_resource_site.is_none()
-            && self.pending_direct_operation.is_none()
+            && !self.resource_replay_required
             && self.pending_first_recoverable_diagnostic.is_none()
             && !self.boxes.output_routine_active
             && !PendingPageOutputFacts::capture(
@@ -1763,8 +1709,7 @@ impl<G> MainControl<G> {
         if !self.command.format_dump_is_quiescent() {
             return Err(crate::FormatDumpError::LiveCommandState);
         }
-        if self.has_external_attempt_owner()
-            || self.active_alignment.is_some()
+        if self.active_alignment.is_some()
             || !self.boxes.format_dump_is_quiescent()
             || !self.active_discretionaries.is_empty()
             || !self.active_math_choices.is_empty()
@@ -1775,13 +1720,11 @@ impl<G> MainControl<G> {
             || self.set_box_forbidden_depth != 0
             || self.operation_observations.is_some()
             || self.operation_receipt_start.is_some()
-            || self.suspended_operation_observation.is_some()
             || self.prepared_shipout.is_some()
             || self.page_region_succession_pending
             || !self.prepared_dvi_pages.is_empty()
             || !self.immediate_prints.is_empty()
             || self.pending_resource_site.is_some()
-            || self.pending_direct_operation.is_some()
         {
             return Err(crate::FormatDumpError::LiveExecutorState);
         }
@@ -1808,9 +1751,6 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         budget_counters: crate::ExecutionBudgetCounters,
     ) -> Result<crate::EngineCheckpoint<G>, tex_command::CommandSummaryError> {
-        if self.has_external_attempt_owner() {
-            return Err(tex_command::CommandSummaryError::AttemptSuspended);
-        }
         if !stores.checkpoint_eligible() {
             return Err(tex_command::CommandSummaryError::CheckpointIneligible);
         }
@@ -1838,9 +1778,6 @@ impl<G> MainControl<G> {
         budget_counters: crate::ExecutionBudgetCounters,
         wants_reachable_state_identity: bool,
     ) -> Result<crate::EngineCheckpoint<G>, tex_command::CommandSummaryError> {
-        if self.has_external_attempt_owner() {
-            return Err(tex_command::CommandSummaryError::AttemptSuspended);
-        }
         if !stores.checkpoint_eligible() {
             return Err(tex_command::CommandSummaryError::CheckpointIneligible);
         }
@@ -1888,44 +1825,28 @@ impl<G> MainControl<G> {
         checkpoint: &crate::EngineCheckpoint<G>,
         stores: &mut Universe<G>,
     ) -> Result<(), crate::CheckpointRestoreError> {
-        if self.has_external_attempt_owner() {
-            return Err(crate::CheckpointRestoreError::AttemptSuspended);
-        }
-        self.restore_checkpoint_roots(checkpoint, stores)
+        self.restore_checkpoint_roots(checkpoint, stores, false)
     }
 
-    /// Restores aggregate roots while a resource operation is still parked.
-    ///
-    /// Resource replay deliberately restores semantic state before returning
-    /// the attempt arena through its normal settlement barrier. The public
-    /// restore path rejects such an owner because ordinary callers must not
-    /// bypass that barrier; this narrower crate-internal entry point is used
-    /// only by the retained-generation replay transaction.
-    pub(crate) fn restore_checkpoint_for_replay(
+    pub(crate) fn restore_checkpoint_after_replay(
         &mut self,
         checkpoint: &crate::EngineCheckpoint<G>,
         stores: &mut Universe<G>,
     ) -> Result<(), crate::CheckpointRestoreError> {
-        if self.command.checkpoint_candidate_active() {
-            checkpoint.restore_state_for_replay(&mut self.command, &mut self.modes, stores)?;
-        } else {
-            self.restore_checkpoint_roots(checkpoint, stores)?;
-        }
-        self.active_alignment = None;
-        self.boxes = ReplayBoxes::default();
-        self.paragraph_checkpoint_demand = None;
-        self.paragraph_checkpoint_cut = false;
-        self.fatal = None;
-        self.captured_fatal_origin = None;
-        Ok(())
+        self.restore_checkpoint_roots(checkpoint, stores, true)
     }
 
     fn restore_checkpoint_roots(
         &mut self,
         checkpoint: &crate::EngineCheckpoint<G>,
         stores: &mut Universe<G>,
+        after_direct_replay_discard: bool,
     ) -> Result<(), crate::CheckpointRestoreError> {
-        checkpoint.restore_state(&mut self.command, &mut self.modes, stores)?;
+        if after_direct_replay_discard {
+            checkpoint.restore_state_after_replay(&mut self.command, &mut self.modes, stores)?;
+        } else {
+            checkpoint.restore_state(&mut self.command, &mut self.modes, stores)?;
+        }
         self.active_alignment = None;
         self.boxes = ReplayBoxes::default();
         self.paragraph_checkpoint_demand = None;
@@ -1963,7 +1884,6 @@ impl<G> MainControl<G> {
         self.page_output_observations = ObservationBuffer::default();
         self.operation_observations = None;
         self.operation_receipt_start = None;
-        self.suspended_operation_observation = None;
         self.completed_replay_episode = None;
         self.prepared_dvi_pages = PreparedDviPages::default();
         self.immediate_prints.clear();
@@ -1972,6 +1892,7 @@ impl<G> MainControl<G> {
         self.paragraph_checkpoint_demand = None;
         self.paragraph_checkpoint_cut = false;
         self.pending_resource_site = None;
+        self.resource_replay_required = false;
         self.ended = false;
         self.fatal = None;
         self.captured_fatal_origin = None;
@@ -1980,46 +1901,6 @@ impl<G> MainControl<G> {
         self.job = crate::job::JobFraming::default();
         self.job_body_effect_end = None;
         self.pdf_navigation_finalized = false;
-    }
-
-    /// Drops a resource continuation after aggregate roots have been restored.
-    /// The continuation's attempt coordinates belong to the discarded suffix
-    /// and must not be handed to the restored command arena.
-    pub(crate) fn abandon_external_attempt_for_replay(&mut self) {
-        self.pending_first_recoverable_diagnostic = None;
-        self.pending_resource_operation = None;
-        self.pending_direct_operation = None;
-        self.pending_diagnostic_operation = None;
-        self.command.abandon_attempt_after_checkpoint_restore();
-    }
-
-    /// Reinstalls a moved resource attempt just long enough for aggregate
-    /// checkpoint validation to see its original command coordinate. The
-    /// continuation frame is then dropped; aggregate restore owns the actual
-    /// suffix rollback and the follow-up abandon method clears the operation.
-    pub(crate) fn prepare_external_attempt_for_replay(&mut self, stores: &Universe<G>) {
-        let Some(pending) = self.pending_resource_operation.take() else {
-            return;
-        };
-        let (operation, resume, _pending) = self
-            .command
-            .resume_attempt(stores, pending.attempt)
-            .unwrap_or_else(|_| panic!("resource continuation belongs to the replay generation"));
-        debug_assert_eq!(resume, SUSPENDED_RESOURCE_RESUME);
-        drop(operation);
-    }
-
-    /// Reports command-operation owners retained by executor continuations.
-    /// These owners must be rejected before a named checkpoint asks command
-    /// state to census and reclaim its roots. A prepared resource continuation
-    /// moves out the complete attempt; direct and diagnostic continuations
-    /// leave the arena installed but move its non-`Copy` operation capability
-    /// together with the exact caller destination. Command state's validating
-    /// coordinate cannot reconstruct that caller owner.
-    fn has_external_attempt_owner(&self) -> bool {
-        self.pending_resource_operation.is_some()
-            || self.pending_diagnostic_operation.is_some()
-            || self.pending_direct_operation.is_some()
     }
 
     /// Borrows executor-installed host capabilities for the next operation.
@@ -2675,10 +2556,19 @@ impl<G> MainControl<G> {
     }
 
     /// Releases the diagnostic-only site retained for the resource need that
-    /// has just been answered by the outer ledger. The command attempt itself
-    /// remains installed until the next canonical step resumes it.
+    /// has just been answered by the outer ledger. The answer does not revive
+    /// this direct execution; aggregate checkpoint replay clears the
+    /// invalidation latch below.
     pub(crate) fn acknowledge_resource_need(&mut self) {
         self.pending_resource_site = None;
+    }
+
+    fn ensure_resource_replay_boundary(&self) -> Result<(), ExecError> {
+        if self.resource_replay_required {
+            Err(ExecError::ResourceReplayRequired)
+        } else {
+            Ok(())
+        }
     }
 
     /// Drains committed shipout receipts in artifact order.
@@ -2707,18 +2597,14 @@ impl<G> MainControl<G> {
         let wants_identity = self.paragraph_checkpoint_demand.take()?;
         let restartable = stores.checkpoint_eligible()
             && self.command.named_boundary_is_quiescent()
-            && !self.has_external_attempt_owner()
             && self.active_alignment.is_none()
             && self.operation_observations.is_none()
             && self.operation_receipt_start.is_none()
-            && self.suspended_operation_observation.is_none()
             && self.prepared_shipout.is_none()
             && !self.page_region_succession_pending
             && self.immediate_prints.is_empty()
             && self.pending_resource_site.is_none()
-            && self.pending_direct_operation.is_none()
-            && self.pending_resource_operation.is_none()
-            && self.pending_diagnostic_operation.is_none()
+            && !self.resource_replay_required
             && !self.boxes.output_routine_active
             && self.modes.restart_checkpoint_is_quiescent();
         restartable.then(|| {
@@ -2773,6 +2659,7 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         request: AlignmentRequest,
     ) -> Result<(), ExecError> {
+        self.ensure_resource_replay_boundary()?;
         let finished = matches!(request, AlignmentRequest::Finish(_));
         let preamble = matches!(request, AlignmentRequest::Preamble(_));
         let identity = match request {
@@ -2851,6 +2738,7 @@ impl<G> MainControl<G> {
         alignment: AlignmentIdentity,
         stores: &mut Universe<G>,
     ) -> Result<ReplayStep, ExecError> {
+        self.ensure_resource_replay_boundary()?;
         match self.execute_operation(
             stores,
             OperationDelivery::Alignment(alignment),
@@ -3459,88 +3347,11 @@ impl<G> MainControl<G> {
 
         loop {
             let mut host_preparation = OperationPreparation::new();
-            // Private revisions require every scanner-time immutable
-            // allocation to belong to one fixed-size operation suffix. The
-            // scope therefore opens before delivery preflight, while a
-            // resource retry reuses the exact scope moved into its
-            // continuation instead of nesting another owner around it.
-            let resumed_resource = self.pending_resource_operation.take().map(|pending| {
-                let (operation, resume, pending) = self
-                    .command
-                    .resume_attempt(stores, pending.attempt)
-                    .unwrap_or_else(|_| {
-                        panic!("resource continuation belongs to the admitted generation")
-                    });
-                assert_eq!(
-                    resume, SUSPENDED_RESOURCE_RESUME,
-                    "resource continuation resumes at its prepared-operation cursor"
-                );
-                (operation, pending)
-            });
-            // Drain an occupied retry in place. Keeping the outer Option and
-            // destination aggregate out of locals prevents ordinary delivery
-            // from copying the frame-sized vacant representation. A genuine
-            // retry moves only its operation capability and exact destination
-            // fields into the caller-owned slots used by this iteration.
-            let retained_operation = if resumed_resource.is_some() {
-                debug_assert!(self.pending_direct_operation.is_none());
-                None
-            } else if let Some(pending) = self.pending_direct_operation.as_mut() {
-                let operation =
-                    match std::mem::replace(&mut pending.state, PendingDirectState::Fresh) {
-                        PendingDirectState::Fresh => None,
-                        PendingDirectState::Retained(operation) => Some(operation),
-                    };
-                match &mut pending.destination {
-                    PendingDirectDestination::Alignment(pending) => {
-                        host_preparation.fill_delivery(
-                            OperationDelivery::AlignmentRetry {
-                                alignment: pending.alignment,
-                                cursor: pending.cursor,
-                            },
-                            pending.scanner.take(),
-                            pending.expansion.take(),
-                        );
-                    }
-                    PendingDirectDestination::Frame(pending) => {
-                        (command_episode, cold_operation) = pending.frame.take_parts();
-                        match pending.resume {
-                            PendingFrameResume::Delivery => host_preparation.fill_delivery(
-                                OperationDelivery::Command,
-                                None,
-                                None,
-                            ),
-                            PendingFrameResume::ColdExecution(barrier) => {
-                                host_preparation.fill_delivery(
-                                    OperationDelivery::SuspendedCold { barrier },
-                                    None,
-                                    None,
-                                );
-                            }
-                        }
-                    }
-                };
-                self.pending_direct_operation = None;
-                operation
-            } else {
-                None
-            };
-            let operation = match resumed_resource {
-                Some((operation, pending)) => {
-                    (command_episode, cold_operation) = pending.frame.into_parts();
-                    let _ = command_episode.error.take();
-                    host_preparation.fill_delivery(
-                        OperationDelivery::SuspendedCold {
-                            barrier: pending.barrier,
-                        },
-                        None,
-                        None,
-                    );
-                    Some(operation)
-                }
-                None => retained_operation,
-            };
-            let mut operation_mark = self.begin_direct_operation(stores, operation);
+            // Resource misses unwind this entire direct operation. The next
+            // host drive starts from the retained full checkpoint (or, for a
+            // direct caller, from the ordinary semantic rollback point); no
+            // command, scanner, expansion, or caller frame is parked here.
+            let mut operation_mark = self.begin_direct_operation(stores, None);
             let mut diagnostic_effects = DiagnosticEffects::new();
             self.restore_first_recoverable_after_retry(&mut diagnostic_effects);
             // A cascading §1026 page break can become ready while the prior
@@ -3656,40 +3467,12 @@ impl<G> MainControl<G> {
                         .record_rollback(crate::SemanticEpisodeBarrier::Resource);
                 }
                 if matches!(result, Ok(StepResult::Suspended(_))) {
-                    assert!(
-                        command_episode.has_preflight(),
-                        "resource delivery retains its exact retry frame"
-                    );
-                    let destination = PendingDirectDestination::Frame(PendingFrameDestination {
-                        frame: OperationFrame::new(command_episode, cold_operation),
-                        resume: PendingFrameResume::Delivery,
-                    });
-                    let operation = self.retain_direct_operation_for_retry(
-                        stores,
-                        operation_mark,
-                        &mut diagnostic_effects,
-                    );
-                    self.pending_direct_operation = Some(PendingDirectOperation {
-                        state: PendingDirectState::Retained(operation),
-                        destination,
-                    });
+                    self.discard_direct_operation(stores, operation_mark);
                 } else {
                     self.commit_direct_operation(stores, operation_mark, &mut diagnostic_effects);
                 }
                 return result;
             }
-            let alignment_delivery = match host_preparation.delivery() {
-                OperationDelivery::Alignment(alignment) => Some(Some(*alignment)),
-                OperationDelivery::AlignmentRetry { alignment, .. } => Some(*alignment),
-                OperationDelivery::Replay
-                    if self.active_alignment.is_some()
-                        || (self.modes.current_mode() == Mode::DisplayMath
-                            && self.modes.current_list().has_display_alignment()) =>
-                {
-                    Some(None)
-                }
-                _ => None,
-            };
             // The admitted delivery callback has already executed and settled
             // an ordinary direct operation. Do not send that caller-owned result
             // back through command classification or the typed executor.
@@ -3768,20 +3551,7 @@ impl<G> MainControl<G> {
                             &mut diagnostic_effects,
                         );
                         if matches!(result, Ok(StepResult::Suspended(_))) {
-                            let alignment_scanner = command_episode.alignment_scanner.take();
-                            let destination = own_alignment_retry_child(
-                                alignment_delivery,
-                                command_episode,
-                                cold_operation,
-                                alignment_scanner,
-                            )
-                            .expect("resource suspension retains one direct caller destination");
-                            self.retain_direct_delivery_for_retry(
-                                stores,
-                                operation_mark,
-                                destination,
-                                &mut diagnostic_effects,
-                            );
+                            self.discard_direct_operation(stores, operation_mark);
                             self.advance_telemetry.rollbacks += 1;
                             #[cfg(feature = "profiling")]
                             self.episode_telemetry
@@ -3918,22 +3688,7 @@ impl<G> MainControl<G> {
                         );
                         match result {
                             Ok(step @ StepResult::Suspended(_)) => {
-                                let alignment_scanner = command_episode.alignment_scanner.take();
-                                let destination = own_alignment_retry_child(
-                                    alignment_delivery,
-                                    command_episode,
-                                    cold_operation,
-                                    alignment_scanner,
-                                )
-                                .expect(
-                                    "resource suspension retains one direct caller destination",
-                                );
-                                self.retain_direct_delivery_for_retry(
-                                    stores,
-                                    operation_mark,
-                                    destination,
-                                    &mut diagnostic_effects,
-                                );
+                                self.discard_direct_operation(stores, operation_mark);
                                 return Ok(step);
                             }
                             Ok(step) => {
@@ -3945,20 +3700,7 @@ impl<G> MainControl<G> {
                                 return Ok(step);
                             }
                             Err(error) => {
-                                let alignment_scanner = command_episode.alignment_scanner.take();
-                                let destination = own_alignment_retry_child(
-                                    alignment_delivery,
-                                    command_episode,
-                                    cold_operation,
-                                    alignment_scanner,
-                                )
-                                .expect("retained failure owns one direct caller destination");
-                                self.retain_direct_delivery_for_retry(
-                                    stores,
-                                    operation_mark,
-                                    destination,
-                                    &mut diagnostic_effects,
-                                );
+                                self.discard_direct_operation(stores, operation_mark);
                                 Self::publish_pdf_fatal_error(stores, &error)?;
                                 return Err(error);
                             }
@@ -4008,21 +3750,6 @@ impl<G> MainControl<G> {
                             ) {
                                 command_episode.clear_cold(&mut cold_operation);
                             }
-                            self.pending_direct_operation =
-                                command_episode
-                                    .has_preflight()
-                                    .then(|| PendingDirectOperation {
-                                        state: PendingDirectState::Fresh,
-                                        destination: PendingDirectDestination::Frame(
-                                            PendingFrameDestination {
-                                                frame: OperationFrame::new(
-                                                    command_episode,
-                                                    ColdOperationSlot::default(),
-                                                ),
-                                                resume: PendingFrameResume::Delivery,
-                                            },
-                                        ),
-                                    });
                             self.discard_direct_operation(stores, operation_mark);
                             self.advance_telemetry.commits += 1;
                             let error = {
@@ -4144,22 +3871,7 @@ impl<G> MainControl<G> {
                                 &mut diagnostic_effects,
                             );
                             if matches!(result, Ok(StepResult::Suspended(_))) {
-                                let alignment_scanner = command_episode.alignment_scanner.take();
-                                let destination = own_alignment_retry_child(
-                                    alignment_delivery,
-                                    command_episode,
-                                    cold_operation,
-                                    alignment_scanner,
-                                )
-                                .expect(
-                                    "resource suspension retains one direct caller destination",
-                                );
-                                self.retain_direct_delivery_for_retry(
-                                    stores,
-                                    operation_mark,
-                                    destination,
-                                    &mut diagnostic_effects,
-                                );
+                                self.discard_direct_operation(stores, operation_mark);
                             } else {
                                 self.commit_direct_operation(
                                     stores,
@@ -4233,18 +3945,9 @@ impl<G> MainControl<G> {
                         if matches!(result, Ok(StepResult::Suspended(_))) {
                             assert!(
                                 command_episode.has_unavailable(&cold_operation),
-                                "nested resource suspension retains its enclosing operation"
+                                "nested resource suspension reports its enclosing operation"
                             );
                             self.discard_direct_operation(stores, operation_mark);
-                            self.pending_direct_operation = Some(PendingDirectOperation {
-                                state: PendingDirectState::Fresh,
-                                destination: PendingDirectDestination::Frame(
-                                    PendingFrameDestination {
-                                        frame: OperationFrame::new(command_episode, cold_operation),
-                                        resume: PendingFrameResume::ColdExecution(barrier),
-                                    },
-                                ),
-                            });
                             self.retain_first_recoverable_for_retry(&mut diagnostic_effects);
                             self.advance_telemetry.rollbacks += 1;
                             #[cfg(feature = "profiling")]
@@ -4316,13 +4019,6 @@ impl<G> MainControl<G> {
         // produce job-start restart eligibility even if the caller skipped
         // the ordinary initial publication hook.
         self.job_start_eligibility = None;
-        if self.operation_observations.is_none() {
-            // A caller may resume an observed resource suspension through
-            // the unobserved API. The semantic continuation is independent
-            // of instrumentation, so drop the moved evidence owner instead
-            // of publishing it into some later unrelated observed step.
-            self.suspended_operation_observation = None;
-        }
         let initial_delivery =
             matches!(transaction, OperationTransaction::Alignment).then_some(delivery);
         self.execute_direct_episode(stores, max_operations, initial_delivery, tracked_region)
@@ -4331,13 +4027,14 @@ impl<G> MainControl<G> {
     /// Attempts one atomic main-control operation.
     ///
     /// Missing retained input is returned as a typed suspension after the
-    /// exact command/input continuation has been retained. The next call
-    /// creates a fresh processor borrow and resumes that continuation without
-    /// redelivering the command.
+    /// direct operation has unwound completely. The outer checkpoint owner
+    /// must restore a full checkpoint before entering this control again;
+    /// this object never resumes a parked scanner or caller frame.
     pub fn advance(&mut self, stores: &mut Universe<G>) -> Result<StepResult, ExecError> {
         if self.ended {
             return Err(ExecError::ExecutionAlreadyTerminated);
         }
+        self.ensure_resource_replay_boundary()?;
         if !self.pure_memo_initialized {
             let runtime = stores.take_pure_memo_config().map_or_else(
                 tex_state::PureMemoRuntime::default,
@@ -4365,6 +4062,7 @@ impl<G> MainControl<G> {
         if self.ended {
             return Err(ExecError::ExecutionAlreadyTerminated);
         }
+        self.ensure_resource_replay_boundary()?;
         if !self.pure_memo_initialized {
             let runtime = stores.take_pure_memo_config().map_or_else(
                 tex_state::PureMemoRuntime::default,
@@ -4398,6 +4096,7 @@ impl<G> MainControl<G> {
         if self.ended {
             return Err(ExecError::ExecutionAlreadyTerminated);
         }
+        self.ensure_resource_replay_boundary()?;
         if !self.pure_memo_initialized {
             let runtime = stores.take_pure_memo_config().map_or_else(
                 tex_state::PureMemoRuntime::default,
@@ -4431,36 +4130,16 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &mut Universe<G>,
     ) -> Result<DiagnosticStepResult, ExecError> {
-        let continuation = self.pending_diagnostic_operation.take();
+        self.ensure_resource_replay_boundary()?;
         let mut command_episode = CommandEpisode::default();
         let mut cold_operation = ColdOperationSlot::default();
         let mut host_preparation = OperationPreparation::new();
-        let retained_attempt = match continuation {
-            Some(PendingDiagnosticOperation {
-                operation,
-                destination: PendingDiagnosticDestination::<G> { frame, barrier },
-            }) => {
-                (command_episode, cold_operation) = frame.into_parts();
-                let _ = command_episode.error.take();
-                if command_episode.has_unavailable(&cold_operation) {
-                    host_preparation.fill_delivery(
-                        OperationDelivery::SuspendedCold { barrier },
-                        None,
-                        None,
-                    );
-                } else {
-                    host_preparation.fill_delivery(OperationDelivery::Command, None, None);
-                }
-                Some(operation)
-            }
-            None => None,
-        };
-        let operation_mark = self.begin_direct_operation(stores, retained_attempt);
+        let operation_mark = self.begin_direct_operation(stores, None);
         let mut diagnostic_effects = DiagnosticEffects::new();
         self.restore_first_recoverable_after_retry(&mut diagnostic_effects);
         if !host_preparation.has_delivery() {
             self.ensure_primitive_handles(stores);
-            let (command, cursor, retry_expansion, source_provenance) = {
+            let (command, cursor, source_provenance) = {
                 let mut context = stores.command_context().expect("live generation");
                 let mut host_facts = ExecutorHostFacts {
                     modes: &self.modes,
@@ -4480,16 +4159,12 @@ impl<G> MainControl<G> {
                     .get_x_token_preserving_undefined()
                     .map_err(command_error);
                 let cursor = processor.delivery_cursor();
-                let retry_expansion = command
-                    .as_ref()
-                    .err()
-                    .and_then(|_| processor.take_pending_expansion_work());
                 let source_provenance = command
                     .as_ref()
                     .ok()
                     .and_then(Option::as_ref)
                     .and_then(|command| processor.source_provenance(command));
-                (command, cursor, retry_expansion, source_provenance)
+                (command, cursor, source_provenance)
             };
             let command = match command {
                 Ok(command) => command,
@@ -4500,22 +4175,9 @@ impl<G> MainControl<G> {
                         &mut diagnostic_effects,
                     );
                     if matches!(result, Ok(StepResult::Suspended(_))) {
-                        let expansion = retry_expansion
-                            .expect("resource expansion retains its exact parked root");
-                        let operation = self.retain_direct_operation_for_retry(
-                            stores,
-                            operation_mark,
-                            &mut diagnostic_effects,
-                        );
-                        let mut frame = CommandEpisode::default();
-                        frame.admit_expanding(expansion, false, cursor);
-                        self.pending_diagnostic_operation = Some(PendingDiagnosticOperation {
-                            operation,
-                            destination: PendingDiagnosticDestination {
-                                frame: OperationFrame::new(frame, ColdOperationSlot::default()),
-                                barrier: None,
-                            },
-                        });
+                        // The host retry starts from a retained full
+                        // checkpoint; no expansion or caller frame survives.
+                        self.discard_direct_operation(stores, operation_mark);
                     } else {
                         self.commit_direct_operation(
                             stores,
@@ -4549,7 +4211,6 @@ impl<G> MainControl<G> {
             host_preparation.fill_delivery(OperationDelivery::Command, None, None);
         }
         let mode_mark = self.modes.begin_journal();
-        let barrier = operation_barrier(host_preparation.delivery(), &command_episode);
         let applied = match self.execute_typed_operation(
             stores,
             &mut host_preparation,
@@ -4574,25 +4235,9 @@ impl<G> MainControl<G> {
                     .rollback_journal(mode_mark)
                     .expect("diagnostic assignment owns the mode mark");
                 if matches!(result, Ok(StepResult::Suspended(_))) {
-                    assert!(
-                        unavailable || command_episode.has_preflight(),
-                        "diagnostic resource suspension owns an exact retry"
-                    );
-                    let destination = PendingDiagnosticDestination {
-                        frame: OperationFrame::new(command_episode, cold_operation),
-                        barrier,
-                    };
-                    let operation = self.retain_direct_operation_for_retry(
-                        stores,
-                        operation_mark,
-                        &mut diagnostic_effects,
-                    );
-                    self.pending_diagnostic_operation = Some(PendingDiagnosticOperation {
-                        operation,
-                        destination,
-                    });
+                    let _ = unavailable;
+                    self.discard_direct_operation(stores, operation_mark);
                 } else {
-                    self.pending_diagnostic_operation = None;
                     self.commit_direct_operation(stores, operation_mark, &mut diagnostic_effects);
                 }
                 return match result? {
@@ -6568,6 +6213,7 @@ impl<G> MainControl<G> {
         if self.ended {
             return Err(ExecError::ExecutionAlreadyTerminated);
         }
+        self.ensure_resource_replay_boundary()?;
         if !self.pure_memo_initialized {
             let runtime = stores.take_pure_memo_config().map_or_else(
                 tex_state::PureMemoRuntime::default,
@@ -6584,16 +6230,11 @@ impl<G> MainControl<G> {
         // Occupying the slot is what makes this operation observed. Every
         // command-processor episode the operation runs, including the nested
         // ones a host-applied step runs, publishes into this one buffer.
-        if let Some((pending, start)) = self.suspended_operation_observation.take() {
-            self.operation_observations = Some(pending);
-            self.operation_receipt_start = Some(start);
-        } else {
-            self.operation_observations = Some(ObservationBuffer::default());
-            self.operation_receipt_start = Some(OperationReceiptStart {
-                effect: effect_start.raw(),
-                artifact: artifact_start,
-            });
-        }
+        self.operation_observations = Some(ObservationBuffer::default());
+        self.operation_receipt_start = Some(OperationReceiptStart {
+            effect: effect_start.raw(),
+            artifact: artifact_start,
+        });
         let stepped = self.execute_operation(
             stores,
             OperationDelivery::Replay,
@@ -6602,15 +6243,7 @@ impl<G> MainControl<G> {
             None,
         );
         let mut pending = self.operation_observations.take().unwrap_or_default();
-        let receipt_start = self.operation_receipt_start.take();
-        if matches!(stepped, Ok(StepResult::Suspended(_)))
-            && (self.pending_resource_operation.is_some()
-                || self.pending_direct_operation.is_some())
-        {
-            let start = receipt_start.expect("observed operation owns a receipt start");
-            self.suspended_operation_observation = Some((pending, start));
-            return stepped;
-        }
+        self.operation_receipt_start.take();
         match &stepped {
             Ok(StepResult::Progress(_)) => {}
             Ok(StepResult::Suspended(_)) => {}
@@ -6828,8 +6461,11 @@ impl<G> MainControl<G> {
         tracked_region_is_active: bool,
     ) -> Result<ReplayStep, TypedOperationError> {
         let delivery = host_preparation.take_delivery();
-        let scanner_resume = host_preparation.take_scanner();
-        let expansion_resume = host_preparation.take_expansion();
+        // Resource retries replay the aggregate checkpoint. These former
+        // preparation payloads are deliberately drained and discarded; no
+        // scanner or expansion continuation crosses a host boundary.
+        let _ = host_preparation.take_scanner();
+        let _ = host_preparation.take_expansion();
         if matches!(
             &delivery,
             OperationDelivery::SuspendedCold { .. } | OperationDelivery::ResidentCold
@@ -6985,15 +6621,6 @@ impl<G> MainControl<G> {
                     diagnostic_effects,
                     context,
                 );
-                let scanner_resume = if matches!(&delivery, OperationDelivery::Command) {
-                    frame.scanner.take()
-                } else {
-                    scanner_resume
-                };
-                processor.install_scanner_resume(scanner_resume);
-                if let Some(expansion) = expansion_resume {
-                    processor.install_expansion_resume(expansion);
-                }
                 processor.set_output_routine_active(self.boxes.output_routine_active);
                 let display_alignment_tail = matches!(&delivery, OperationDelivery::Replay)
                     && mode == Mode::DisplayMath
@@ -7132,33 +6759,10 @@ impl<G> MainControl<G> {
                     })
                 })();
                 let cursor = processor.delivery_cursor();
-                let retry_expansion = processor.take_pending_expansion_work();
-                let scanner_resume = processor.take_scanner_resume();
-                let retained_command_scan = frame.is_command_scan();
-                let alignment_scanner = if retained_command_scan {
-                    assert!(
-                        scanner_resume.is_none(),
-                        "the direct-operation parent already owns its exact scanner child"
-                    );
-                    None
-                } else if let Some(expansion) = retry_expansion {
-                    frame.clear_preflight();
-                    frame.admit_expanding(expansion, self.main_loop_active, cursor);
-                    assert!(
-                        scanner_resume.is_none(),
-                        "parked expansion owns its scanner child internally"
-                    );
-                    None
-                } else if frame.has_preflight() {
-                    frame.retain_scanner(cursor, scanner_resume);
-                    None
-                } else {
-                    scanner_resume
-                };
                 let scanned = match scanned {
                     Ok(scanned) => scanned,
                     Err(error) => {
-                        frame.write_retry_failure(error, cursor, alignment_scanner);
+                        frame.write_retry_failure(error, cursor, None);
                         return Err(TypedOperationError::Preparation(frame.take_error()));
                     }
                 };

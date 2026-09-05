@@ -64,11 +64,11 @@ impl<'a, G> AttachedCheckpointControl<'a, G> {
 
     /// Rewinds the attached candidate to a retained full checkpoint.
     ///
-    /// The active command attempt is first cancelled through its normal
-    /// settlement barrier.  The aggregate checkpoint then restores command,
-    /// mode, world, page, PDF, and dependency roots, while the output ledger
-    /// truncates its current fork to the same sealed mark.  No scanner or
-    /// expansion continuation survives this method.
+    /// The resource boundary has already discarded the active direct attempt
+    /// and detached the owned need. The aggregate checkpoint then restores
+    /// command, mode, world, page, PDF, and dependency roots, while the output
+    /// ledger truncates its current fork to the same sealed mark. No scanner,
+    /// expansion, or caller continuation survives this method.
     pub fn rewind_to_checkpoint(
         &mut self,
         key: &RetainedCheckpointKey,
@@ -87,15 +87,13 @@ impl<'a, G> AttachedCheckpointControl<'a, G> {
             .control
             .as_mut()
             .ok_or(RetainedEngineAccessError::StaleAttachment)?;
-        control.prepare_external_attempt_for_replay(self.universe);
         if control
-            .restore_checkpoint_for_replay(checkpoint, self.universe)
+            .restore_checkpoint_after_replay(checkpoint, self.universe)
             .is_err()
         {
             return Err(RetainedEngineAccessError::StaleCheckpoint);
         }
         control.reset_checkpoint_replay_runtime(checkpoint.boundary());
-        control.abandon_external_attempt_for_replay();
         let rewind = self
             .sidecars
             .ledger

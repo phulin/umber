@@ -33,8 +33,10 @@ delivered only after that bounded operation chunk returns successfully.
 The command core retains its bounded traced-token scratch pool outside
 `MainControl`, semantic state, direct-operation cursors, and named checkpoints.
 Font, image, and read-recorder host capabilities remain borrow-scoped.
-Typed prepared continuations own resource retry, while validated
-`CommandSummary` is the only durable named-checkpoint continuation.
+Ordinary scanners unwind completely on a resource need. Resource retry belongs
+only to the retained candidate's full checkpoint; no scanner, scalar,
+expansion, caller, or prepared-operation continuation crosses the host
+boundary.
 
 `MainControl` preflights each settled command before operand scanning.
 Successful ordinary commands run directly after advancing the environment
@@ -51,12 +53,15 @@ apply it immediately; executor-side reports carry one outcome in the existing
 operation-local diagnostic handoff to the canonical processor seam. Ordinary
 raw and expanded delivery never inspect world error state.
 `CanonicalStepRunner` and its `OutputLedger` are the shared native/incremental
-publication protocol above that transition. A typed resource need restores the matching `Universe`,
-command-state, mode-nest, execution, statistics, checkpoint-publisher, prepared
-page, diagnostic/effect/artifact, and lifecycle roots before returning
-`AwaitingResources`; the suspension serial remains monotonic and replay uses
-the original logical resolution index. Named checkpoints and external read
-observations are staged and delivered only after the candidate commits.
+publication protocol above that transition. A resource need discards the
+current direct operation and returns only a detached `ResourceNeed`. The
+retained candidate then restores the latest full `Universe`, command-state,
+mode-nest, execution, statistics, checkpoint-publisher, prepared page,
+diagnostic/effect/artifact, and lifecycle roots before returning
+`AwaitingResources`; a later drive attaches a fresh control object. The
+suspension serial remains monotonic and replay uses the original logical
+resolution index. Named checkpoints and external read observations are staged
+and delivered only after the candidate commits.
 
 `tex-incr::RevisionCandidate` and `umber::EngineSession` now provide
 the host-session retention layer. A candidate begins from an accepted
@@ -173,7 +178,7 @@ Created(JobStart)
 Ready(MainControl) -- ordinary progress --> Ready(MainControl)
     | resource need                         | \end or \dump
     v                                       v
-AwaitingResources --------------------> Ready(same step)   Ready(FinishEnd)
+AwaitingResources --------------------> Ready(fresh replay) Ready(FinishEnd)
     | cancellation / hard error                  |             |
     v                                            |             v
 Cancelled or Failed <----------------------------+       Ready(Finalize)
@@ -187,12 +192,13 @@ goes through `FinishEnd`. `\dump` also goes through the explicit end path, then
 `Finalize` clears the input summary and resets job-local page state exactly as
 the current loop does.
 
-`AwaitingResources` always names the same next `ExecutionStep` that was rolled
-back. Resource registration changes only the workspace's immutable
-resource generation. A complete or partial response batch moves the host
-session back to `Ready`; replay may suspend again with the remaining or newly
-discovered requests. Retrying without a newly bound positive or authoritative
-negative answer is the existing typed no-progress failure.
+`AwaitingResources` names the full checkpoint and the logical request that
+caused the rollback. Resource registration changes only the workspace's
+immutable resource generation. A complete or partial response batch moves the
+host session back to `Ready`; replay attaches a fresh control object and may
+suspend again with the remaining or newly discovered requests. Retrying
+without a newly bound positive or authoritative negative answer is the
+existing typed no-progress failure.
 
 Named checkpoint stop requests are honored only after the candidate step and
 the named checkpoint have committed. They return ordinary `Progress`; they do
@@ -238,28 +244,30 @@ they are not made interruptible by retaining an iterator frame.
 
 ## Direct operation and rollback protocol
 
-Production execution has no aggregate step savepoint. Ordinary, resource,
+Production execution has no per-command aggregate step savepoint. Ordinary, resource,
 effect, PDF/page, ErrorStop, observed, tracked, checkpoint-crossing,
 active-alignment, diagnostic-expansion, and output-capable box-closing commands
-settle delivery and scanning before direct semantic apply. Typed resource
-continuations retain completed operands without restoring command input; an
-observed continuation also moves its unpublished evidence and opaque
-delivery-order cursor rather than cloning or reconstructing them.
+settle delivery and scanning before direct semantic apply. A resource miss
+discards the direct operation after detaching diagnostic/request provenance;
+the outer retained candidate alone restores the latest full checkpoint. No
+completed operand, scanner, expansion, or delivery-order cursor is retained
+for a host retry.
 
-`DirectOperationMark` is fixed-size and non-restoring. It owns the current
+`DirectOperationMark` is fixed-size and operation-local. It owns the current
 environment-journal cursor and, for an incremental candidate, disposable
 private-allocation watermarks. Its command-attempt member is a move-only,
 coordinate-free lifecycle capability: `CommandState` retains the sole ordinary
-opening mark and settles it directly at commit or rollback. Only a genuine
-resource suspension cold-materializes that mark in the pending package for
-owner-exact readmission. It registers no aggregate rollback root and
-does not construct or advance semantic state identity. A successful operation
+opening mark and settles it directly at commit or rollback. A genuine resource
+suspension discards that mark before the need escapes; the outer checkpoint
+owner later restores aggregate roots and creates a fresh operation. The mark
+registers no aggregate rollback root and does not construct or advance
+semantic state identity. A successful operation
 closes the private mark and may establish a new level-zero journal baseline
 only when no named checkpoint or fork prefix retains the old one. Open groups,
 delivered checkpoints, and inherited fork authority preserve their exact
 restoration records. A failed operation drops unpublished scratch allocations;
-canonical partial semantic state and an already prepared resource
-continuation remain authoritative.
+canonical partial semantic state is discarded with the operation; only the
+detached need and its provenance remain authoritative.
 
 The episode returns after a world effect so the host can publish same-run
 output before a later command probes it and can enforce the pending-effect
@@ -281,22 +289,15 @@ must decline it through `wants_checkpoint` before capture; it cannot make an
 already committed TeX step fail. A checkpoint sink's stop decision is sampled
 for the next return only.
 
-On a typed resource need, the run retains the prepared request and enters
+On a resource need, the run discards the direct operation, retains the
+detached request/provenance outside the rewind, and enters
 `AwaitingResources`. No restoration calls host policy. A diagnostic-oriented
 runner returns a captured TeX82 §93 fatal with its source site after closing
-the failed direct operation.
-
-Command-side suspension is a structural ownership chain, not a retry-order
-queue. The pending operation, preflight, diagnostic, or alignment phase owns
-one move-only root continuation key. Each nested scanner or expansion frame
-owns its exact child key and return destination in the current generation's
-ABA-tagged reusable scratch lane. Resume consumes the caller edge directly;
-abort closes children before parents. A scanner configuration mismatch is an
-invariant failure, never permission to search, repair, rehome, or skip a frame.
-The retained complete-job owner instead uses the runner's fatal-completing
-entry: §81's `jump_out` latches semantic completion at §1332's `end_of_TEX`,
-then the owner performs §1333 cleanup. Neither path retries the unavailable
-input. Host-protocol and execution-budget failures enter `Failed`.
+the failed direct operation. The retained complete-job owner instead uses the
+runner's fatal-completing entry: §81's `jump_out` latches semantic completion
+at §1332's `end_of_TEX`, then the owner performs §1333 cleanup. Neither path
+resumes an unavailable scanner in place. Host-protocol and execution-budget
+failures enter `Failed`.
 Cancellation is checked before mutation. A Rust panic is not a supported
 suspension and does not promise recovery.
 
@@ -473,11 +474,13 @@ by rollback.
 ## Native, WASM, and build composition
 
 Both hosts drive the same Rust `CanonicalStepRunner` and typed result values. A native
-adapter may satisfy a request immediately and call `step` again on the same
-thread. WASM serializes `ResourceSuspension`, returns to JavaScript for
-asynchronous acquisition, registers validated responses through the shared
-session, and calls the same `step` again. Rust never blocks on a future, derives
-a URL, or retains a JavaScript resolver.
+adapter may satisfy a request immediately, but the retained candidate still
+replays from its full checkpoint before another direct operation. WASM
+serializes `ResourceSuspension`, returns to JavaScript for asynchronous
+acquisition, registers validated responses through the shared session, and
+drives the same checkpoint replay. Rust never blocks on a future, derives a
+URL, or retains a JavaScript resolver; a discarded direct control object is
+never resumed in place.
 
 The run lives inside one private `umber-vfs` build stage. Committed executor
 steps may append virtual generated effects that are visible to later steps of
@@ -497,8 +500,8 @@ that would need to be undone.
 ## Command-state cutover
 
 The cutover is complete: canonical candidates retain `CommandState`, resource
-suspension moves typed scanner or expansion continuations, and named
-checkpoints store a validated `CommandSummary`. Isolated shipout text expansion
+suspension discards the direct scanner operation, and named checkpoints store
+a validated `CommandSummary`. Isolated shipout text expansion
 may snapshot and restore only its nested synthetic input transaction; it is not
 a main-control retry authority. `tex-incr` and Umber resume through the durable
 checkpoint plus explicit executor/runtime roots. There is no lexer/expander

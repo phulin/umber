@@ -904,7 +904,10 @@ fn resource_replay_reuses_latest_candidate_checkpoint() {
             .expect("initial host yield"),
         RevisionCandidateResult::AwaitingResources(ResourceNeed::Input { .. })
     ));
-    assert_eq!(candidate.execution_telemetry().resource_restarts, 0);
+    let suspended = candidate.execution_telemetry();
+    assert_eq!(suspended.resource_restarts, 1);
+    assert_eq!(suspended.replayed_dispatches, 1);
+    assert!(suspended.discarded_fuel > 0);
 
     assert!(matches!(
         candidate
@@ -913,7 +916,8 @@ fn resource_replay_reuses_latest_candidate_checkpoint() {
         RevisionCandidateResult::Complete
     ));
     let telemetry = candidate.execution_telemetry();
-    assert_eq!(telemetry.resource_restarts, 1);
+    assert_eq!(telemetry.resource_restarts, 2);
+    assert_eq!(telemetry.replayed_dispatches, 2);
     assert!(telemetry.discarded_fuel > 0);
     let replayed = incremental
         .accept_cold_candidate(candidate)
@@ -932,6 +936,87 @@ fn resource_replay_reuses_latest_candidate_checkpoint() {
         .accept_cold_candidate(expected)
         .expect("cold comparison accepts");
     assert_detached_output_eq(&replayed, &expected);
+}
+
+struct DeclineOnceInputProbe(bool);
+
+impl ResourceHost for DeclineOnceInputProbe {
+    fn fulfill(&mut self, world: &mut ResourceWorld<'_>, need: &ResourceNeed) -> ResourceOutcome {
+        let ResourceNeed::InputProbe { request } = need else {
+            return ResourceOutcome::Unavailable;
+        };
+        if !self.0 {
+            self.0 = true;
+            return ResourceOutcome::Declined;
+        }
+        world.read_file(Path::new(&request.name)).ok().map_or(
+            ResourceOutcome::Unavailable,
+            |content| {
+                ResourceOutcome::Fulfilled(ResourceFulfillment::world_input_probe(
+                    request.clone(),
+                    content,
+                ))
+            },
+        )
+    }
+}
+
+#[test]
+fn alignment_preamble_resource_replays_from_latest_paragraph_checkpoint() {
+    let source =
+        "A\\par\n\\setbox0=\\vbox{\\halign{\\span\\pdffiledump length 2{second}#\\cr X\\cr}}\\end";
+
+    let mut staged = session(RevisionId::new(1), source);
+    staged.set_command_profile(CommandProfile::PDFTEX14029, true);
+    staged
+        .register_input_file(Path::new("second"), b"AB".to_vec())
+        .expect("probe resource registers");
+    let mut staged_candidate = staged.start_cold_candidate().expect("candidate");
+    let mut staged_host = DeclineOnceInputProbe(false);
+    assert!(matches!(
+        staged_candidate
+            .drive_with_resource_resolvers(&mut staged_host, &Cancellation::new())
+            .expect("initial alignment host yield"),
+        RevisionCandidateResult::AwaitingResources(ResourceNeed::InputProbe { .. })
+    ));
+    let suspended = staged_candidate.execution_telemetry();
+    assert_eq!(suspended.resource_restarts, 1);
+    assert_eq!(suspended.replayed_dispatches, 1);
+    assert!(suspended.discarded_fuel > 0);
+    assert!(matches!(
+        staged_candidate
+            .drive_with_resource_resolvers(&mut staged_host, &Cancellation::new())
+            .expect("alignment checkpoint replay"),
+        RevisionCandidateResult::Complete
+    ));
+    let staged_telemetry = staged_candidate.execution_telemetry();
+    assert_eq!(staged_telemetry.resource_restarts, 2);
+    assert_eq!(staged_telemetry.replayed_dispatches, 2);
+    assert!(staged_telemetry.discarded_fuel > suspended.discarded_fuel);
+    let staged_output = staged
+        .accept_cold_candidate(staged_candidate)
+        .expect("staged alignment candidate accepts");
+
+    let mut immediate = session(RevisionId::new(1), source);
+    immediate.set_command_profile(CommandProfile::PDFTEX14029, true);
+    immediate
+        .register_input_file(Path::new("second"), b"AB".to_vec())
+        .expect("probe resource registers");
+    let mut immediate_candidate = immediate.start_cold_candidate().expect("candidate");
+    assert!(matches!(
+        immediate_candidate
+            .drive_with_resource_resolvers(&mut DirectResourceHost, &Cancellation::new())
+            .expect("immediate alignment replay"),
+        RevisionCandidateResult::Complete
+    ));
+    let immediate_telemetry = immediate_candidate.execution_telemetry();
+    assert_eq!(immediate_telemetry.resource_restarts, 1);
+    assert_eq!(immediate_telemetry.replayed_dispatches, 1);
+    assert!(immediate_telemetry.discarded_fuel > 0);
+    let immediate_output = immediate
+        .accept_cold_candidate(immediate_candidate)
+        .expect("immediate alignment candidate accepts");
+    assert_detached_output_eq(&staged_output, &immediate_output);
 }
 
 #[test]

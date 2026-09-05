@@ -1880,6 +1880,26 @@ impl<G> DenseState<G> {
     /// Atomically restores all banks and open-group state to `cursor`.
     pub(crate) fn restore(&mut self, cursor: JournalCursor<G>) -> Result<(), StateError> {
         self.validate_restore(cursor)?;
+        self.restore_validated(cursor, false)
+    }
+
+    /// Restores an aggregate checkpoint after the direct execution attempt
+    /// which requested a resource has been discarded.  The checkpoint target
+    /// remains an outer level-zero mark, while the current candidate may still
+    /// carry scanner-created group records that this full restore replaces.
+    pub(crate) fn restore_after_replay(
+        &mut self,
+        cursor: JournalCursor<G>,
+    ) -> Result<(), StateError> {
+        self.validate_restore_after_replay(cursor)?;
+        self.restore_validated(cursor, true)
+    }
+
+    fn restore_validated(
+        &mut self,
+        cursor: JournalCursor<G>,
+        after_replay: bool,
+    ) -> Result<(), StateError> {
         let mut journal = self
             .journal
             .take()
@@ -1888,7 +1908,11 @@ impl<G> DenseState<G> {
             self.swap_checkpoint_delta(delta)
                 .expect("validated dense checkpoint value swaps in place");
         });
-        let RestoredGroups::Truncate(len) = journal.restore_group_cursor(cursor);
+        let RestoredGroups::Truncate(len) = if after_replay {
+            journal.restore_group_cursor_after_replay(cursor)
+        } else {
+            journal.restore_group_cursor(cursor)
+        };
         self.groups.truncate(len);
         journal.truncate_checkpoint(cursor);
         self.journal = Some(journal);
@@ -2319,7 +2343,27 @@ impl<G> DenseState<G> {
         if !self.checkpoint_eligible() {
             return Err(StateError::CheckpointIneligible);
         }
-        if !self.journal().validate_cursor(cursor) {
+        self.validate_restore_cursor(cursor, false)
+    }
+
+    pub(crate) fn validate_restore_after_replay(
+        &self,
+        cursor: JournalCursor<G>,
+    ) -> Result<(), StateError> {
+        self.validate_restore_cursor(cursor, true)
+    }
+
+    fn validate_restore_cursor(
+        &self,
+        cursor: JournalCursor<G>,
+        after_replay: bool,
+    ) -> Result<(), StateError> {
+        let valid_cursor = if after_replay {
+            self.journal().validate_cursor_after_replay(cursor)
+        } else {
+            self.journal().validate_cursor(cursor)
+        };
+        if !valid_cursor {
             return Err(StateError::InvalidCursor);
         }
         let mut words_match = true;

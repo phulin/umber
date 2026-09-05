@@ -408,8 +408,7 @@ fn math_choice_nested_font_definition_suspends_and_resumes_once() {
 
         assert_eq!(stores.count(0).expect("count register"), 1);
         assert_eq!(stores.count(1).expect("count register"), 23);
-        assert!(control.pending_direct_operation.is_none());
-        assert!(control.pending_resource_operation.is_none());
+        assert_eq!(control.pending_resource_site(), None);
     });
 }
 
@@ -6559,7 +6558,7 @@ fn superscript_math_group_propagates_and_resumes_input_probe() {
         assert_eq!(stores.count(0).expect("count register"), 1);
         assert_eq!(stores.count(1).expect("count register"), 23);
         assert!(control.active_math_fields.is_empty());
-        assert!(control.pending_resource_operation.is_none());
+        assert!(control.pending_resource_site().is_none());
         assert_eq!(
             control
                 .advance_telemetry()
@@ -6867,32 +6866,9 @@ fn directly_delivered_edef_resumes_its_inner_expanded_scanner() {
     assert_eq!(staged_requests, ["second"]);
     assert_eq!(staged_terminal, preloaded_terminal);
 
-    crate::test_harness::with_nonstop_plain_universe(|stores| {
-        let mut control = pdftex_initex(stores);
-        register_source(&mut control, source);
-        loop {
-            if matches!(
-                control.advance_episode(stores).expect("alignment advances"),
-                StepResult::Suspended(ResourceNeed::InputProbe { .. })
-            ) {
-                break;
-            }
-        }
-        assert!(matches!(
-            control.pending_direct_operation.as_ref(),
-            Some(PendingDirectOperation {
-                state: PendingDirectState::Retained(_),
-                destination: PendingDirectDestination::Frame(frame),
-            }) if frame.frame.episode.as_ref().is_some_and(|episode| episode.scanner.is_some())
-                && frame.frame.episode.as_ref().is_some_and(CommandEpisode::is_command_scan)
-                && matches!(
-                    frame.frame.episode.as_ref().expect("suspended frame owns its episode").current().meaning(),
-                    ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
-                        UnexpandablePrimitive::Edef
-                    ))
-                )
-        ));
-    });
+    // The old same-stack assertion was intentionally removed: a resource
+    // miss now discards this direct operation, and the retained-generation
+    // tests cover the full-checkpoint replay contract.
 }
 
 #[cfg(feature = "profiling")]
@@ -6903,11 +6879,9 @@ fn ordinary_command_episode_evidence(
     usize,
     usize,
     usize,
-    u64,
 ) {
     let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
     let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
-    let frames_before = operation_frame_constructions();
     let mut scalar_transitions = 0;
     let mut whole_frame_copies = 0;
     let mut overlapping_frame_moves = 0;
@@ -6943,7 +6917,6 @@ fn ordinary_command_episode_evidence(
         overlapping_frame_moves += 0;
     }
     let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
-    let frames_after = operation_frame_constructions();
     (
         tex_state::measurement::HotCoreAllocationMeasurement {
             calls: after.calls - before.calls,
@@ -6952,50 +6925,6 @@ fn ordinary_command_episode_evidence(
         scalar_transitions,
         whole_frame_copies,
         overlapping_frame_moves,
-        frames_after - frames_before,
-    )
-}
-
-#[cfg(feature = "profiling")]
-fn suspended_operation_frame_evidence(
-    repetitions: usize,
-) -> (
-    tex_state::measurement::HotCoreAllocationMeasurement,
-    u64,
-    u64,
-) {
-    let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
-    let allocations_before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
-    let frames_before = operation_frame_constructions();
-    let mut checksum = 0_u64;
-    {
-        let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
-        for index in 0..repetitions {
-            let mut episode = CommandEpisode::<()>::default();
-            episode.admit_immediate_pdf(UnexpandablePrimitive::PdfObject);
-            let frame = OperationFrame::new(episode, ColdOperationSlot::default());
-            let (mut resumed, cold) = std::hint::black_box(frame).into_parts();
-            checksum = checksum.wrapping_add(
-                resumed
-                    .phase
-                    .is_some()
-                    .then_some((index as u64).rotate_left(11))
-                    .unwrap_or_default(),
-            );
-            resumed.clear_preflight();
-            resumed.assert_empty();
-            assert!(cold.operation.is_none());
-        }
-    }
-    let allocations_after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
-    let frames_after = operation_frame_constructions();
-    (
-        tex_state::measurement::HotCoreAllocationMeasurement {
-            calls: allocations_after.calls - allocations_before.calls,
-            requested_bytes: allocations_after.requested_bytes - allocations_before.requested_bytes,
-        },
-        frames_after - frames_before,
-        std::hint::black_box(checksum),
     )
 }
 
@@ -7069,25 +6998,12 @@ fn resident_cold_scan_evidence(
     )
 }
 
-#[test]
-fn command_episode_and_suspension_frame_have_separate_lifetimes() {
-    assert_eq!(
-        std::mem::size_of::<OperationFrame<()>>(),
-        std::mem::size_of::<Option<CommandEpisode<()>>>()
-            + std::mem::size_of::<Option<ColdOperationSlot<()>>>()
-    );
-    assert!(
-        std::mem::size_of::<CommandEpisode<()>>() < std::mem::size_of::<OperationFrame<()>>(),
-        "ordinary command episodes do not reserve the suspension-only cold slot"
-    );
-}
-
 #[cfg(feature = "profiling")]
 #[test]
 fn one_and_4096_ordinary_episodes_construct_zero_operation_frames() {
-    let (one_allocations, one_transitions, one_copies, one_overlapping_moves, one_frames) =
+    let (one_allocations, one_transitions, one_copies, one_overlapping_moves) =
         ordinary_command_episode_evidence(1);
-    let (many_allocations, many_transitions, many_copies, many_overlapping_moves, many_frames) =
+    let (many_allocations, many_transitions, many_copies, many_overlapping_moves) =
         ordinary_command_episode_evidence(4_096);
 
     assert_eq!(one_allocations.calls, 0);
@@ -7100,50 +7016,6 @@ fn one_and_4096_ordinary_episodes_construct_zero_operation_frames() {
     assert_eq!(many_copies, 0);
     assert_eq!(one_overlapping_moves, 0);
     assert_eq!(many_overlapping_moves, 0);
-    assert_eq!(one_frames, 0);
-    assert_eq!(many_frames, 0);
-}
-
-#[cfg(feature = "profiling")]
-#[test]
-fn one_and_4096_suspensions_construct_exactly_one_frame_each() {
-    let (one_allocations, one_frames, one_checksum) = suspended_operation_frame_evidence(1);
-    let (many_allocations, many_frames, many_checksum) = suspended_operation_frame_evidence(4_096);
-
-    assert_eq!(one_allocations.calls, 0);
-    assert_eq!(one_allocations.requested_bytes, 0);
-    assert_eq!(many_allocations.calls, 0);
-    assert_eq!(many_allocations.requested_bytes, 0);
-    assert_eq!(one_frames, 1);
-    assert_eq!(many_frames, 4_096);
-    assert_ne!(one_checksum, many_checksum);
-}
-
-#[cfg(feature = "profiling")]
-fn executed_relax_frame_count(repetitions: usize) -> u64 {
-    crate::test_harness::with_nonstop_plain_universe(|stores| {
-        let mut source = Vec::with_capacity(repetitions * b"\\relax".len());
-        for _ in 0..repetitions {
-            source.extend_from_slice(br"\relax");
-        }
-        let mut control = MainControl::tex82_initex(stores);
-        register_source(&mut control, &source);
-        let before = operation_frame_constructions();
-        for _ in 0..repetitions {
-            assert_eq!(
-                control.advance(stores).expect("relax executes"),
-                StepResult::Progress(MainControlStep::Continue)
-            );
-        }
-        operation_frame_constructions() - before
-    })
-}
-
-#[cfg(feature = "profiling")]
-#[test]
-fn one_and_4096_executed_simple_primitives_use_zero_suspension_frames() {
-    assert_eq!(executed_relax_frame_count(1), 0);
-    assert_eq!(executed_relax_frame_count(4_096), 0);
 }
 
 #[cfg(feature = "profiling")]
@@ -7155,13 +7027,11 @@ fn synchronous_assignment_mode_and_list_families_preserve_semantics_without_fram
             &mut control,
             br"\count0=7\advance\count0 by5\begingroup\count0=2\endgroup\setbox0=\hbox{\kern1pt}\end",
         );
-        let before = operation_frame_constructions();
         run_to_end(&mut control, stores);
 
         assert_eq!(stores.count(0).expect("count register"), 12);
         assert!(stores.copy_box_to_page(0).is_some());
         assert_eq!(control.modes.current_mode(), Mode::Vertical);
-        assert_eq!(operation_frame_constructions() - before, 0);
     });
 }
 
@@ -7579,8 +7449,8 @@ fn scalar_operation_retry_fuel_abort_releases_parent_and_deepest_child() {
             "unexpected scalar operation abort: {aborted:?}"
         );
         assert!(
-            control.pending_direct_operation.is_none(),
-            "fuel abort must recursively close the scalar child before its operation parent"
+            control.pending_resource_site().is_none(),
+            "fuel abort must leave no resource site after the direct operation is discarded"
         );
     });
 }
@@ -7878,8 +7748,8 @@ fn prefixed_definition_scanner_fuel_abort_releases_its_operation_child() {
             "unexpected prefixed-definition abort: {aborted:?}"
         );
         assert!(
-            control.pending_direct_operation.is_none(),
-            "fuel abort closes the scanner child before its operation parent"
+            control.pending_resource_site().is_none(),
+            "fuel abort leaves no resource site after the direct operation is discarded"
         );
     });
 }
@@ -8019,18 +7889,8 @@ fn observed_alignment_resource_retry_resumes_the_exact_delivery_once() {
             }
         }
         assert!(
-            matches!(
-                retried_control.pending_direct_operation.as_ref(),
-                Some(PendingDirectOperation {
-                    state: PendingDirectState::Retained(_),
-                    destination: PendingDirectDestination::Alignment(PendingAlignmentDelivery {
-                        scanner: None,
-                        expansion: Some(_),
-                        ..
-                    }),
-                })
-            ),
-            "alignment retry must own only its exact parked expansion key"
+            retried_control.pending_resource_site().is_some(),
+            "alignment resource miss retains only detached need provenance"
         );
         retried_control
             .capabilities_mut()
@@ -8068,26 +7928,48 @@ fn observed_alignment_resource_retry_resumes_the_exact_delivery_once() {
 }
 
 #[test]
-fn alignment_preamble_span_expansion_resumes_its_resource_child() {
-    for (source, resources) in [
-        (
-            br"\setbox0=\vbox{\halign{\span\pdffiledump length 2{second}#\cr X\cr}}\end"
-                .as_slice(),
-            &["second"][..],
-        ),
-        (
-            br"\setbox0=\vbox{\halign{\span\expanded{\pdffiledump length 2{second}\pdffiledump length 2{third}}#\cr X\cr}}\end"
-                .as_slice(),
-            &["second", "third"][..],
-        ),
+fn alignment_preamble_span_expansion_rejects_same_stack_retry() {
+    // Ordinary scanner calls unwind completely on a resource miss. A direct
+    // MainControl caller has no retained full-checkpoint owner, so answering
+    // the detached need cannot revive this execution object; the incremental
+    // production path below tex-incr owns the checkpoint replay and compares
+    // the preavailable-resource output.
+    for source in [
+        br"\setbox0=\vbox{\halign{\span\pdffiledump length 2{second}#\cr X\cr}}\end"
+            .as_slice(),
+        br"\setbox0=\vbox{\halign{\span\expanded{\pdffiledump length 2{second}\pdffiledump length 2{third}}#\cr X\cr}}\end"
+            .as_slice(),
     ] {
-        let (preloaded_terminal, preloaded_requests) =
-            run_pdftex_file_probe_job(source, resources);
-        assert!(preloaded_requests.is_empty());
-
-        let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
-        assert_eq!(staged_requests, resources);
-        assert_eq!(staged_terminal, preloaded_terminal);
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = pdftex_initex(stores);
+            register_source(&mut control, source);
+            let request = loop {
+                match control.advance_episode(stores) {
+                    Ok(StepResult::Suspended(ResourceNeed::InputProbe { request })) => {
+                        break request
+                    }
+                    Ok(StepResult::Progress(_)) => {}
+                    Ok(StepResult::Suspended(need)) => {
+                        panic!("unexpected alignment resource: {need:?}")
+                    }
+                    Err(error) => panic!("unexpected alignment preflight error: {error:?}"),
+                }
+            };
+            control.capabilities_mut().register_input_probe(
+                request.name.clone(),
+                tex_command::FileEnquiryResource::new(
+                    SourceRegistration::new(
+                        RegisteredSourceKind::Generated,
+                        Arc::<[u8]>::from(&b"AB"[..]),
+                    ),
+                    None,
+                ),
+            );
+            assert!(matches!(
+                control.advance_episode(stores),
+                Err(ExecError::ResourceReplayRequired)
+            ));
+        });
     }
 }
 
@@ -8134,8 +8016,8 @@ fn alignment_preamble_span_expansion_abort_releases_its_resource_child() {
             "unexpected preamble abort: {aborted:?}"
         );
         assert!(
-            control.pending_direct_operation.is_none(),
-            "aborted preamble scanner must release its retained direct operation"
+            control.pending_resource_site().is_none(),
+            "aborted preamble scanner must leave no resource site after discard"
         );
     });
 }

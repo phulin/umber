@@ -918,6 +918,16 @@ impl<G> Universe<G> {
             checkpoint,
             self.durable_boxes
                 .validates_cursor(*checkpoint.state.mark().durable()),
+            false,
+        )
+    }
+
+    fn checkpoint_state_is_ready_after_replay(&self, checkpoint: &RuntimeCheckpoint<G>) -> bool {
+        self.checkpoint_state_is_ready_with_durable(
+            checkpoint,
+            self.durable_boxes
+                .validates_cursor(*checkpoint.state.mark().durable()),
+            true,
         )
     }
 
@@ -925,13 +935,20 @@ impl<G> Universe<G> {
         &self,
         checkpoint: &RuntimeCheckpoint<G>,
         durable_ready: bool,
+        after_direct_replay_discard: bool,
     ) -> bool {
         let mark = checkpoint.state.mark();
         let Some(core) = self.core.as_ref() else {
             return false;
         };
         core.owns_generation(checkpoint.state.owner().generation())
-            && core.state().validate_restore(*mark.journal()).is_ok()
+            && if after_direct_replay_discard {
+                core.state()
+                    .validate_restore_after_replay(*mark.journal())
+                    .is_ok()
+            } else {
+                core.state().validate_restore(*mark.journal()).is_ok()
+            }
             && core.state().validate_checkpoint_cursor(*mark.input())
             && durable_ready
             && core.validates_generation_cursor(checkpoint.generation)
@@ -943,11 +960,16 @@ impl<G> Universe<G> {
     fn activate_checkpoint_state(
         &mut self,
         checkpoint: &RuntimeCheckpoint<G>,
+        after_direct_replay_discard: bool,
     ) -> Result<(), UniverseError> {
         let mark = *checkpoint.state.mark();
         {
             let core = self.core.as_mut().ok_or(UniverseError::Retired)?;
-            core.state_mut().restore(*mark.journal())?;
+            if after_direct_replay_discard {
+                core.state_mut().restore_after_replay(*mark.journal())?;
+            } else {
+                core.state_mut().restore(*mark.journal())?;
+            }
             core.state_mut().restore_checkpoint_cursor(*mark.input());
             core.restore_generation_cursor(checkpoint.generation);
         }
@@ -3043,7 +3065,7 @@ impl<G> Universe<G> {
                     .snapshot_is_retained(&checkpoint.pdf)
                 && self.command_retained.fonts.validates(checkpoint.fonts)
                 && self.command_retained.sources.validates(checkpoint.sources)
-                && self.checkpoint_state_is_ready_with_durable(checkpoint, durable_ready)
+                && self.checkpoint_state_is_ready_with_durable(checkpoint, durable_ready, false)
                 && self.page_region.validates_checkpoint(checkpoint.page)
         };
         if !retained(released) || oldest_retained.is_some_and(|checkpoint| !retained(checkpoint)) {
@@ -3139,7 +3161,30 @@ impl<G> Universe<G> {
         checkpoint: &RuntimeCheckpoint<G>,
         transfer_external_roots: impl FnOnce(),
     ) -> Result<(), UniverseError> {
-        self.restore_runtime_checkpoint_with_roots_mode(checkpoint, transfer_external_roots, false)
+        self.restore_runtime_checkpoint_with_roots_mode(
+            checkpoint,
+            transfer_external_roots,
+            false,
+            false,
+        )
+    }
+
+    /// Restores a retained aggregate checkpoint after the direct execution
+    /// attempt has already been discarded.  The current candidate may still
+    /// contain semantic group/page suffixes from nested scanning; those are
+    /// precisely the roots this replay restore replaces.  No live operation
+    /// may enter this seam: callers must first unwind their direct mark.
+    pub fn restore_runtime_checkpoint_after_replay_with_roots(
+        &mut self,
+        checkpoint: &RuntimeCheckpoint<G>,
+        transfer_external_roots: impl FnOnce(),
+    ) -> Result<(), UniverseError> {
+        self.restore_runtime_checkpoint_with_roots_mode(
+            checkpoint,
+            transfer_external_roots,
+            false,
+            true,
+        )
     }
 
     fn restore_runtime_checkpoint_with_roots_mode(
@@ -3147,14 +3192,17 @@ impl<G> Universe<G> {
         checkpoint: &RuntimeCheckpoint<G>,
         transfer_external_roots: impl FnOnce(),
         generation_fork: bool,
+        after_direct_replay_discard: bool,
     ) -> Result<(), UniverseError> {
         if self.core.is_none() {
             return Err(UniverseError::Retired);
         }
-        if !self.checkpoint_eligible() {
+        if self.restore_owner.is_some()
+            || (!after_direct_replay_discard && !self.checkpoint_eligible())
+        {
             return Err(UniverseError::State(StateError::CheckpointIneligible));
         }
-        if !(if generation_fork {
+        let roots_ready = (if generation_fork {
             self.command_retained
                 .world
                 .snapshot_is_forkable(&checkpoint.world)
@@ -3162,18 +3210,22 @@ impl<G> Universe<G> {
             self.command_retained
                 .world
                 .snapshot_is_retained(&checkpoint.world)
-        }) || !self
+        }) && self
             .command_retained
             .pdf
             .snapshot_is_retained(&checkpoint.pdf)
-            || !self.command_retained.fonts.validates(checkpoint.fonts)
-            || !self.command_retained.sources.validates(checkpoint.sources)
-            || !self.checkpoint_state_is_ready(checkpoint)
-            || !self.page_region.validates_checkpoint(checkpoint.page)
-        {
+            && self.command_retained.fonts.validates(checkpoint.fonts)
+            && self.command_retained.sources.validates(checkpoint.sources)
+            && if after_direct_replay_discard {
+                self.checkpoint_state_is_ready_after_replay(checkpoint)
+            } else {
+                self.checkpoint_state_is_ready(checkpoint)
+            }
+            && self.page_region.validates_checkpoint(checkpoint.page);
+        if !roots_ready {
             return Err(UniverseError::State(StateError::InvalidCursor));
         }
-        self.activate_checkpoint_state(checkpoint)?;
+        self.activate_checkpoint_state(checkpoint, after_direct_replay_discard)?;
         self.page_region
             .restore_checkpoint(checkpoint.page)
             .expect("runtime restore prevalidated the page-region checkpoint");

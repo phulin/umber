@@ -313,74 +313,6 @@ pub(super) enum PendingOperationScanPhase {
     },
 }
 
-pub(super) fn own_alignment_retry_child<G>(
-    alignment: Option<Option<AlignmentIdentity>>,
-    mut episode: CommandEpisode<G>,
-    cold: ColdOperationSlot<G>,
-    alignment_scanner: Option<tex_command::ScannerFrameKey<G>>,
-) -> Option<PendingDirectDestination<G>> {
-    let Some((alignment, cursor)) = alignment.zip(episode.cursor) else {
-        assert!(
-            alignment_scanner.is_none(),
-            "a detached scanner continuation requires its typed alignment destination"
-        );
-        return episode
-            .has_preflight()
-            .then_some(PendingDirectDestination::Frame(PendingFrameDestination {
-                frame: OperationFrame::new(episode, cold),
-                resume: PendingFrameResume::Delivery,
-            }));
-    };
-    match episode.phase {
-        // Alignment remains the caller of its suspended expanded delivery,
-        // but it retains only the exact parked root rather than a command
-        // projection or scanner wrapper.
-        Some(PreflightCommandPhase::Expanding { .. }) if episode.command.is_none() => {
-            assert!(
-                alignment_scanner.is_none(),
-                "an expansion child and alignment retry cannot share scanner capabilities"
-            );
-            assert!(
-                episode.scanner.is_none(),
-                "parked expansion owns its scanner child internally"
-            );
-            let expansion = episode.take_expansion();
-            episode.clear_preflight();
-            Some(PendingDirectDestination::Alignment(
-                PendingAlignmentDelivery {
-                    alignment,
-                    cursor,
-                    scanner: None,
-                    expansion: Some(expansion),
-                },
-            ))
-        }
-        // A settled/raw command has already crossed alignment delivery. Its
-        // operand scanner, command, and cursor are the exact next caller; an
-        // alignment retry would fetch past it and strand that scanner child.
-        Some(retry) => {
-            assert!(
-                alignment_scanner.is_none(),
-                "a command retry and alignment retry cannot share one scanner capability"
-            );
-            let _ = retry;
-            Some(PendingDirectDestination::Frame(PendingFrameDestination {
-                frame: OperationFrame::new(episode, cold),
-                resume: PendingFrameResume::Delivery,
-            }))
-        }
-        // Alignment itself suspended without a command-owned continuation.
-        None => Some(PendingDirectDestination::Alignment(
-            PendingAlignmentDelivery {
-                alignment,
-                cursor,
-                scanner: alignment_scanner,
-                expansion: None,
-            },
-        )),
-    }
-}
-
 /// Caller-owned storage for the uncommon operation leaf.
 ///
 /// The resident frame carries only the mutually exclusive payload tag and the
@@ -437,18 +369,20 @@ impl TypedOperationError {
 ///
 /// This value is resident in the executor loop only for delivery and scanner
 /// state. Completed hot operands return directly to their admitted caller and
-/// never enter it. A genuine suspension packages the remaining state in
-/// [`OperationFrame`] exactly once.
+/// never enter it. A resource miss unwinds this owner; no caller or scanner
+/// frame survives the host boundary.
 pub(super) struct CommandEpisode<G> {
     pub(super) error: Option<ExecError>,
     pub(super) command: Option<tex_command::CurrentCommand<G>>,
     pub(super) expansion: Option<tex_command::ExpansionWorkKey<G>>,
     pub(super) phase: Option<PreflightCommandPhase>,
     pub(super) cursor: Option<tex_command::CommandDeliveryCursor>,
-    pub(super) scanner: Option<tex_command::ScannerFrameKey<G>>,
+    /// Retained only as an empty compatibility slot while the outer replay
+    /// transition is assembled. Resource misses never populate it.
+    pub(super) scanner: Option<()>,
     pub(super) scalar: tex_command::ScalarScanFrame,
     pub(super) operation_scan: Option<PendingOperationScanPhase>,
-    pub(super) alignment_scanner: Option<tex_command::ScannerFrameKey<G>>,
+    pub(super) alignment_scanner: Option<()>,
     /// Host/VFS source role active when this detached operation was formed.
     /// This is written only when the command slot is about to be retired, then
     /// travels with that operation through resource suspension.
@@ -600,7 +534,7 @@ impl<G> CommandEpisode<G> {
     pub(super) fn retain_scanner(
         &mut self,
         cursor: tex_command::CommandDeliveryCursor,
-        scanner: Option<tex_command::ScannerFrameKey<G>>,
+        scanner: Option<()>,
     ) {
         self.cursor = Some(cursor);
         self.scanner = scanner;
@@ -610,7 +544,7 @@ impl<G> CommandEpisode<G> {
         &mut self,
         cursor: tex_command::CommandDeliveryCursor,
         phase: PendingOperationScanPhase,
-        scanner: tex_command::ScannerFrameKey<G>,
+        scanner: (),
     ) {
         self.phase = Some(PreflightCommandPhase::OperationScan);
         self.cursor = Some(cursor);
@@ -679,7 +613,7 @@ impl<G> CommandEpisode<G> {
         &mut self,
         error: ExecError,
         cursor: tex_command::CommandDeliveryCursor,
-        alignment_scanner: Option<tex_command::ScannerFrameKey<G>>,
+        alignment_scanner: Option<()>,
     ) {
         assert!(
             !self.has_preflight() || alignment_scanner.is_none(),
@@ -750,56 +684,6 @@ impl<G> std::ops::Deref for CommandEpisode<G> {
     }
 }
 
-/// Move-only state retained only across a real resource or diagnostic retry.
-///
-/// Ordinary synchronous commands never construct this type. The resident
-/// [`CommandEpisode`] and cold leaf are packaged only at the suspension seam,
-/// where their exact scanner, retry, and rollback coordinates must outlive the
-/// executor call.
-pub(super) struct OperationFrame<G> {
-    pub(super) episode: Option<CommandEpisode<G>>,
-    pub(super) cold: Option<ColdOperationSlot<G>>,
-}
-
-#[cfg(feature = "profiling")]
-std::thread_local! {
-    static OPERATION_FRAME_CONSTRUCTIONS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-}
-
-impl<G> OperationFrame<G> {
-    #[inline]
-    pub(super) fn new(episode: CommandEpisode<G>, cold: ColdOperationSlot<G>) -> Self {
-        #[cfg(feature = "profiling")]
-        OPERATION_FRAME_CONSTRUCTIONS.with(|count| count.set(count.get() + 1));
-        Self {
-            episode: Some(episode),
-            cold: Some(cold),
-        }
-    }
-
-    #[inline]
-    pub(super) fn into_parts(mut self) -> (CommandEpisode<G>, ColdOperationSlot<G>) {
-        self.take_parts()
-    }
-
-    #[inline]
-    pub(super) fn take_parts(&mut self) -> (CommandEpisode<G>, ColdOperationSlot<G>) {
-        (
-            self.episode
-                .take()
-                .expect("suspended operation frame owns its command episode"),
-            self.cold
-                .take()
-                .expect("suspended operation frame owns its cold slot"),
-        )
-    }
-}
-
-#[cfg(feature = "profiling")]
-pub(super) fn operation_frame_constructions() -> u64 {
-    OPERATION_FRAME_CONSTRUCTIONS.with(std::cell::Cell::get)
-}
-
 /// One command after canonical delivery and operand scanning.
 ///
 /// The hot variant is a family-sized borrow-release operand. Only the cold
@@ -822,107 +706,4 @@ pub(super) fn retain_hot_operation<G>(
     operation: hot_apply::HotOperation<G>,
 ) -> ScannedOperation<G> {
     ScannedOperation::Hot(operation)
-}
-
-pub(super) struct PendingResourceOperation<G> {
-    pub(super) attempt: tex_command::PendingCommandAttempt<G, SuspendedResourceResume<G>>,
-}
-
-pub(super) struct SuspendedResourceResume<G> {
-    pub(super) frame: OperationFrame<G>,
-    pub(super) barrier: Option<crate::transaction_protocol::CommandBarrier>,
-}
-
-pub(super) const SUSPENDED_RESOURCE_RESUME: tex_command::AttemptResumePoint =
-    tex_command::AttemptResumePoint {
-        command: 1,
-        scanner: 0,
-        expansion: 0,
-        subordinate: 0,
-    };
-
-#[derive(Debug)]
-pub(super) struct PendingAlignmentDelivery<G> {
-    pub(super) alignment: Option<AlignmentIdentity>,
-    pub(super) cursor: tex_command::CommandDeliveryCursor,
-    pub(super) scanner: Option<tex_command::ScannerFrameKey<G>>,
-    pub(super) expansion: Option<tex_command::ExpansionWorkKey<G>>,
-}
-
-// Both variants are stored in the singular operation owner. Boxing preflight
-// state would allocate at the direct-operation continuation boundary.
-#[allow(clippy::large_enum_variant)]
-pub(super) enum PendingDirectDestination<G> {
-    Alignment(PendingAlignmentDelivery<G>),
-    Frame(PendingFrameDestination<G>),
-}
-
-pub(super) struct PendingFrameDestination<G> {
-    pub(super) frame: OperationFrame<G>,
-    pub(super) resume: PendingFrameResume,
-}
-
-#[derive(Clone, Copy)]
-pub(super) enum PendingFrameResume {
-    Delivery,
-    ColdExecution(Option<crate::transaction_protocol::CommandBarrier>),
-}
-
-pub(super) enum PendingDirectState {
-    /// A retry whose prior attempt was rolled back and therefore owns no
-    /// attempt-local coordinate. Its next operation starts fresh.
-    Fresh,
-    /// A live attempt moved together with the exact caller phase that owns its
-    /// scanner child and delivery cursor.
-    Retained(tex_command::CommandAttemptOperation),
-}
-
-pub(super) struct PendingDirectOperation<G> {
-    pub(super) state: PendingDirectState,
-    pub(super) destination: PendingDirectDestination<G>,
-}
-
-impl<G> std::fmt::Debug for PendingDirectOperation<G> {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(match self {
-            Self {
-                state: PendingDirectState::Fresh,
-                ..
-            } => "PendingDirectOperation::<G>::Fresh",
-            Self {
-                state: PendingDirectState::Retained(_),
-                destination,
-            } => match destination {
-                PendingDirectDestination::Alignment(_) => {
-                    "PendingDirectOperation::<G>::RetainedAlignment"
-                }
-                PendingDirectDestination::Frame(_) => "PendingDirectOperation::<G>::RetainedFrame",
-            },
-        })
-    }
-}
-
-pub(super) struct PendingDiagnosticOperation<G> {
-    pub(super) operation: tex_command::CommandAttemptOperation,
-    pub(super) destination: PendingDiagnosticDestination<G>,
-}
-
-pub(super) struct PendingDiagnosticDestination<G> {
-    pub(super) frame: OperationFrame<G>,
-    pub(super) barrier: Option<crate::transaction_protocol::CommandBarrier>,
-}
-
-impl<G> std::fmt::Debug for PendingDiagnosticOperation<G> {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("PendingDiagnosticOperation::<G>::Frame")
-    }
-}
-
-impl<G> std::fmt::Debug for PendingResourceOperation<G> {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("PendingResourceOperation<G>")
-            .field("state", &"owned command attempt")
-            .finish_non_exhaustive()
-    }
 }

@@ -473,68 +473,6 @@ impl<G> MainControl<G> {
         self.finish_pending_page_region_succession(stores);
     }
 
-    pub(super) fn retain_direct_operation_for_retry(
-        &mut self,
-        stores: &mut Universe<G>,
-        mark: DirectOperationMark<G>,
-        diagnostic_effects: &mut DiagnosticEffects,
-    ) -> tex_command::CommandAttemptOperation {
-        self.retain_first_recoverable_for_retry(diagnostic_effects);
-        let DirectOperationMark {
-            state,
-            mode,
-            attempt,
-            ..
-        } = mark;
-        stores
-            .commit_state_operation(state)
-            .expect("retained operation owns the active state operation");
-        self.modes
-            .commit_journal(mode)
-            .expect("direct operation owns the top mode journal frame");
-        attempt
-    }
-
-    pub(super) fn retain_direct_delivery_for_retry(
-        &mut self,
-        stores: &mut Universe<G>,
-        mark: DirectOperationMark<G>,
-        destination: PendingDirectDestination<G>,
-        diagnostic_effects: &mut DiagnosticEffects,
-    ) {
-        let operation = self.retain_direct_operation_for_retry(stores, mark, diagnostic_effects);
-        assert!(
-            self.pending_direct_operation
-                .replace(PendingDirectOperation {
-                    state: PendingDirectState::Retained(operation),
-                    destination,
-                })
-                .is_none(),
-            "one direct retry owns the active operation"
-        );
-    }
-
-    pub(super) fn suspend_prepared_resource_operation(
-        &mut self,
-        stores: &Universe<G>,
-        operation: tex_command::CommandAttemptOperation,
-        frame: CommandEpisode<G>,
-        cold: ColdOperationSlot<G>,
-        barrier: Option<crate::transaction_protocol::CommandBarrier>,
-        diagnostic_effects: &mut DiagnosticEffects,
-    ) {
-        self.retain_first_recoverable_for_retry(diagnostic_effects);
-        let pending = SuspendedResourceResume::<G> {
-            frame: OperationFrame::new(frame, cold),
-            barrier,
-        };
-        let attempt = self
-            .command
-            .suspend_attempt(stores, operation, SUSPENDED_RESOURCE_RESUME, pending)
-            .expect("live main control can retain its admitted generation");
-        self.pending_resource_operation = Some(PendingResourceOperation::<G> { attempt });
-    }
-
     /// Finishes a failed prepared-resource preflight while the operation
     /// capability still has exactly one structural location.
     ///
@@ -549,7 +487,7 @@ impl<G> MainControl<G> {
         mark: DirectOperationMark<G>,
         mut frame: CommandEpisode<G>,
         cold: ColdOperationSlot<G>,
-        barrier: Option<crate::transaction_protocol::CommandBarrier>,
+        _barrier: Option<crate::transaction_protocol::CommandBarrier>,
         diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<StepResult, ExecError> {
         assert!(
@@ -559,16 +497,11 @@ impl<G> MainControl<G> {
         let error = frame.take_error();
         let result = self.finish_resource_preflight_failure(stores, error, diagnostic_effects);
         if matches!(result, Ok(StepResult::Suspended(_))) {
-            let operation =
-                self.retain_direct_operation_for_retry(stores, mark, diagnostic_effects);
-            self.suspend_prepared_resource_operation(
-                stores,
-                operation,
-                frame,
-                cold,
-                barrier,
-                diagnostic_effects,
-            );
+            // The resource need is the only owned value that escapes this
+            // operation. Its diagnostic origin and host outcome live outside
+            // the rewindable engine roots; the command/scanner/cold frame is
+            // discarded before any full-checkpoint restore can run.
+            self.discard_direct_operation(stores, mark);
         } else {
             self.commit_direct_operation(stores, mark, diagnostic_effects);
         }
@@ -923,6 +856,11 @@ impl<G> MainControl<G> {
     }
 
     pub(super) fn observed_suspension(&mut self, need: ResourceNeed) -> StepResult {
+        // The direct operation has already discarded its transient command
+        // attempt before this value escapes.  A host answer is retained by
+        // the outer candidate, but it cannot revive this MainControl object;
+        // only full checkpoint replay clears the latch.
+        self.resource_replay_required = true;
         if let Some(pending) = self.operation_observations.as_mut() {
             pending.record_resource(need.clone());
             pending

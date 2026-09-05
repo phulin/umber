@@ -865,6 +865,29 @@ impl<G> EngineCheckpoint<G> {
         nest: &mut ModeNest,
         universe: &mut Universe<G>,
     ) -> Result<(), CheckpointRestoreError> {
+        self.restore_state_with_replay_boundary(command, nest, universe, false)
+    }
+
+    /// Restores after the current direct operation has been discarded.  The
+    /// candidate may still be semantically inside the nested scanner that
+    /// requested the resource, so the state layer must replace that suffix
+    /// instead of requiring the current roots to be checkpoint-quiescent.
+    pub(crate) fn restore_state_after_replay(
+        &self,
+        command: &mut CommandState<G>,
+        nest: &mut ModeNest,
+        universe: &mut Universe<G>,
+    ) -> Result<(), CheckpointRestoreError> {
+        self.restore_state_with_replay_boundary(command, nest, universe, true)
+    }
+
+    fn restore_state_with_replay_boundary(
+        &self,
+        command: &mut CommandState<G>,
+        nest: &mut ModeNest,
+        universe: &mut Universe<G>,
+        after_direct_replay_discard: bool,
+    ) -> Result<(), CheckpointRestoreError> {
         let prepared_command = command
             .prepare_summary_restore(&self.command, universe)
             .map_err(CheckpointRestoreError::Command)?;
@@ -877,29 +900,8 @@ impl<G> EngineCheckpoint<G> {
             prepared_command,
             &self.modes,
             maximum_saved_depth,
+            after_direct_replay_discard,
         )
-    }
-
-    pub(crate) fn restore_state_for_replay(
-        &self,
-        command: &mut CommandState<G>,
-        nest: &mut ModeNest,
-        universe: &mut Universe<G>,
-    ) -> Result<(), CheckpointRestoreError> {
-        let prepared_command = command
-            .prepare_summary_restore(&self.command, universe)
-            .map_err(CheckpointRestoreError::Command)?;
-        let maximum_saved_depth = nest.maximum_saved_depth();
-        universe
-            .restore_runtime_checkpoint_with_roots(&self.runtime, || {
-                command
-                    .apply_prepared_restore_for_replay(prepared_command)
-                    .expect("aggregate replay preflight retained its command destination");
-                nest.restore_checkpoint_for_replay(&self.modes)
-                    .expect("aggregate replay preflight retained its mode destination");
-                nest.retain_maximum_saved_depth(maximum_saved_depth);
-            })
-            .map_err(CheckpointRestoreError::Runtime)
     }
 }
 
@@ -911,9 +913,10 @@ fn restore_validated_roots<G>(
     prepared_command: PreparedCommandRestore<G>,
     restored_modes: &ModeCheckpoint,
     maximum_saved_depth: usize,
+    after_direct_replay_discard: bool,
 ) -> Result<(), CheckpointRestoreError> {
-    universe
-        .restore_runtime_checkpoint_with_roots(runtime, || {
+    let restore = if after_direct_replay_discard {
+        universe.restore_runtime_checkpoint_after_replay_with_roots(runtime, || {
             command
                 .apply_prepared_restore(prepared_command)
                 .expect("aggregate preflight retained its command destination");
@@ -923,7 +926,17 @@ fn restore_validated_roots<G>(
             // state. Rolling back live modes must not refund an observed high-water.
             nest.retain_maximum_saved_depth(maximum_saved_depth);
         })
-        .map_err(CheckpointRestoreError::Runtime)
+    } else {
+        universe.restore_runtime_checkpoint_with_roots(runtime, || {
+            command
+                .apply_prepared_restore(prepared_command)
+                .expect("aggregate preflight retained its command destination");
+            nest.restore_checkpoint(restored_modes)
+                .expect("aggregate preflight retained its mode destination");
+            nest.retain_maximum_saved_depth(maximum_saved_depth);
+        })
+    };
+    restore.map_err(CheckpointRestoreError::Runtime)
 }
 
 /// Receives generation-typed checkpoints synchronously at named boundaries.

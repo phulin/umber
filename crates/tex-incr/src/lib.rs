@@ -717,12 +717,22 @@ impl<'store> RevisionCandidate<'store> {
             };
             match result {
                 PlanExecution::Replay(need) => {
+                    // CandidateRun has already rewound to the selected full
+                    // checkpoint before returning either replay outcome. Count
+                    // the restart here, once per actual rewind, rather than
+                    // tying it to whether the host answered synchronously.
                     self.resource_restarts = self.resource_restarts.saturating_add(1);
                     self.replayed_dispatches = self.replayed_dispatches.saturating_add(1);
                     let _ = need;
                     runtime_key = self.runtime_key.take();
                 }
                 PlanExecution::Suspended(need) => {
+                    // A declined host answer still rewinds the candidate and
+                    // parks the restored generation. The next host drive is
+                    // not the first restart; it is a later restart if the
+                    // answer is then admitted and the plan misses again.
+                    self.resource_restarts = self.resource_restarts.saturating_add(1);
+                    self.replayed_dispatches = self.replayed_dispatches.saturating_add(1);
                     self.suspension_serial = self.suspension_serial.saturating_add(1);
                     self.generation = Some(generation.into_generation());
                     return Ok(RevisionCandidateResult::AwaitingResources(need));
@@ -1111,6 +1121,47 @@ impl tex_exec::RetainedEngineOperation for CandidateRun<'_, '_> {
                 if let Err(error) = start_candidate_job(universe, control, options) {
                     return CandidateRunResult {
                         execution: Err(error),
+                        runtime_key: None,
+                        discarded_fuel: attempt_fuel,
+                    };
+                }
+            }
+            // Resource answers are outside the rewindable aggregate.  Install
+            // the detached outcome only after the full checkpoint and (for a
+            // JobStart replay) startup framing have been restored.  The next
+            // ordinary scanner call therefore runs on a fresh control object;
+            // no NeedResource path resumes the discarded direct operation.
+            let pending = {
+                let (_, _, _, _, runtime) = attached.parts::<CandidateRuntime>();
+                runtime.pending_resource.take()
+            };
+            if let Some((need, pending)) = pending {
+                let apply_result = {
+                    let (universe, ledger, _, control, runtime) =
+                        attached.parts::<CandidateRuntime>();
+                    let result = pending.apply_effects(universe);
+                    if result.is_ok() {
+                        match pending {
+                            PendingResource::Fulfilled { fulfillment, .. } => {
+                                if ledger.fulfill(control, &need, fulfillment).is_err() {
+                                    return CandidateRunResult {
+                                        execution: Err(SessionError::UnexpectedResource),
+                                        runtime_key: None,
+                                        discarded_fuel: attempt_fuel,
+                                    };
+                                }
+                            }
+                            PendingResource::Unavailable { .. } => {
+                                ledger.mark_unavailable(control, &need, false);
+                            }
+                        }
+                        runtime.answered_needs.push(need);
+                    }
+                    result
+                };
+                if let Err(error) = apply_result {
+                    return CandidateRunResult {
+                        execution: Err(SessionError::World(error)),
                         runtime_key: None,
                         discarded_fuel: attempt_fuel,
                     };
@@ -2286,19 +2337,8 @@ fn execute_plan_inner<G>(
                     })?
                 });
                 if let Some(pending) = pending {
-                    pending.apply_effects(universe)?;
-                    match pending {
-                        PendingResource::Fulfilled { fulfillment, .. } => {
-                            if ledger.fulfill(control, &need, fulfillment).is_err() {
-                                return Err(SessionError::UnexpectedResource);
-                            }
-                        }
-                        PendingResource::Unavailable { .. } => {
-                            ledger.mark_unavailable(control, &need, false);
-                        }
-                    }
-                    answered_needs.push(need);
-                    continue;
+                    *pending_resource = Some((need.clone(), pending));
+                    return Ok(PlanExecution::Replay(need));
                 }
                 if answered_needs.contains(&need) {
                     return Err(SessionError::ResourceNoProgress {

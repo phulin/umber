@@ -12,7 +12,10 @@ pub(super) struct OperationPreparation<G> {
 }
 
 struct OperationResume<G> {
-    scanner: Option<tex_command::ScannerFrameKey<G>>,
+    // The command core now unwinds on a resource need. Keep this type-only
+    // slot until the surrounding delivery owner is retired; it can never
+    // contain a scanner continuation.
+    scanner: Option<()>,
     expansion: Option<tex_command::ExpansionWorkKey<G>>,
 }
 
@@ -30,7 +33,7 @@ impl<G> OperationPreparation<G> {
     pub(super) fn fill_delivery(
         &mut self,
         delivery: OperationDelivery,
-        scanner: Option<tex_command::ScannerFrameKey<G>>,
+        scanner: Option<()>,
         expansion: Option<tex_command::ExpansionWorkKey<G>>,
     ) {
         assert!(
@@ -63,7 +66,7 @@ impl<G> OperationPreparation<G> {
             .expect("operation preparation drains one delivery")
     }
 
-    pub(super) fn take_scanner(&mut self) -> Option<tex_command::ScannerFrameKey<G>> {
+    pub(super) fn take_scanner(&mut self) -> Option<()> {
         self.resume
             .as_mut()
             .and_then(|resume| resume.scanner.take())

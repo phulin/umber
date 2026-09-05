@@ -24,7 +24,7 @@ An anchor is a move-only key into the candidate's existing retained generation.
 The candidate owns at most one current replay anchor in addition to its normal
 history rows. Replaying rewinds the current generation in place:
 
-1. settle the active `MainControl` attempt;
+1. discard the active direct `MainControl` operation and detach the owned need;
 2. restore command, mode, world, page, PDF, dependency, and source roots from
    the aggregate checkpoint;
 3. rewind the current output-ledger fork to the checkpoint's sealed mark; and
@@ -40,9 +40,10 @@ history remains the only fallback outside the candidate.
 
 The request, cache state, outcome, and detached origin are owned outside the
 rollback. A fulfilled or authoritative-unavailable response is staged exactly
-once, the candidate is rewound, and the staged outcome is applied when replay
-encounters the same need. A pending request yields to the host and is retried
-after provisioning. The host-world adapter records only semantic dependency
+once, the candidate is rewound, and the staged outcome is applied after the
+full restore, before a fresh synchronous scanner call encounters the same
+need. A pending request yields to the host and is retried only through that
+checkpoint replay. The host-world adapter records only semantic dependency
 observations as replay effects, so those observations are restored alongside
 the answer without repeating the host fetch. Fetch errors are reported as
 errors rather than being turned into authoritative absence. Resource bytes and

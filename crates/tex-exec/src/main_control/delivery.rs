@@ -354,17 +354,10 @@ impl<G> MainControl<G> {
                     let status = match delivery {
                         Ok(status) => status,
                         Err(error) => {
-                            // The expansion driver moves its live command into
-                            // command state only after an actual immutable-host
-                            // suspension. Fuel and semantic failures have no retry
-                            // command and must not clone one speculatively.
-                            if let Some(expansion) = processor.take_pending_expansion_work() {
-                                frame.admit_expanding(
-                                    expansion,
-                                    self.main_loop_active,
-                                    processor.delivery_cursor(),
-                                );
-                            }
+                            // Ordinary delivery unwinds on every host/resource
+                            // error. Checkpoint replay will construct a fresh
+                            // processor episode; no expansion continuation is
+                            // parked here.
                             drop(processor);
                             frame.error = Some(command_error(error));
                             return PreflightReadiness::Failed;
@@ -479,27 +472,10 @@ impl<G> MainControl<G> {
                                     }
                                 }
                                 Err(error) => {
-                                    let cursor = processor.delivery_cursor();
-                                    if execution_error_needs_command_retry(&error) {
-                                        if !frame.has_preflight() {
-                                            let retry_expansion =
-                                                processor.take_pending_expansion_work();
-                                            let scanner = processor.take_scanner_resume();
-                                            if let Some(expansion) = retry_expansion {
-                                                frame.discard_resident_command();
-                                                frame.admit_expanding(
-                                                    expansion,
-                                                    self.main_loop_active,
-                                                    cursor,
-                                                );
-                                            } else {
-                                                frame.mark_resident_settled(Some(cursor));
-                                                frame.scanner = scanner;
-                                            }
-                                        }
-                                    } else {
-                                        frame.discard_resident_command();
-                                    }
+                                    // The enclosing retained-generation replay
+                                    // owns the retry. Do not preserve a command,
+                                    // scanner, or expansion cursor here.
+                                    frame.discard_resident_command();
                                     frame.error = Some(error);
                                 }
                             }
@@ -1362,68 +1338,11 @@ pub(super) fn settle_preflight_step<G>(
     shown_mode: &mut Option<Mode>,
     diagnostics: &mut Vec<PendingDiagnostic<G>>,
 ) -> Result<ScannedOperation<G>, ExecError> {
-    let expansion = command.take_expansion();
-    match processor
-        .resume_expansion_into(expansion, main_loop, &mut command.command)
-        .map_err(command_error)?
-    {
-        tex_command::DeliveryStatus::End => {
-            return Ok(retain_cold_operation(
-                command,
-                cold,
-                ColdOperation::<G>::EndOfInput,
-            ));
-        }
-        tex_command::DeliveryStatus::ReplayCompleted(episode) => {
-            return Ok(retain_cold_operation(
-                command,
-                cold,
-                ColdOperation::<G>::ReplayCompleted(episode),
-            ));
-        }
-        tex_command::DeliveryStatus::Command => {}
-        _ => unreachable!("preflight settlement has no alignment event"),
-    };
-    command.settle_resident();
-    // TeX82 §§380 and 473--479 keep operand scanning under the newly settled
-    // unexpandable command. Expansion owns the retry only until settlement;
-    // after this point a resource failure must re-enter this command before
-    // any nested scanner continuation can resume.
-    let continues_main_loop = main_loop
-        && matches!(
-            command.current().meaning(),
-            ResolvedMeaning::Static(
-                Meaning::CharToken {
-                    cat: Catcode::Letter | Catcode::Other,
-                    ..
-                } | Meaning::CharGiven(_)
-                    | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char)
-            )
-        );
-    if !continues_main_loop {
-        report_main_control_command_trace(processor, mode, command.current(), boxes, shown_mode);
-    }
-    if main_loop
-        && matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal)
-        && matches!(
-            command.current().meaning(),
-            ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
-                UnexpandablePrimitive::NoBoundary
-            ))
-        )
-    {
-        return Ok(retain_cold_operation(
-            command,
-            cold,
-            ColdOperation::<G>::NoBoundary {
-                suppress_right: true,
-            },
-        ));
-    }
-    dispatch_main_control_command(
+    let _ = (
         processor,
         command,
         cold,
+        main_loop,
         mode,
         boxes,
         innermost_group,
@@ -1431,9 +1350,11 @@ pub(super) fn settle_preflight_step<G>(
         display_eq_no,
         shown_mode,
         diagnostics,
-        None,
-        true,
-    )
+    );
+    // Expansion is now completed by the ordinary synchronous delivery call.
+    // A parked expansion reaching this adapter is stale state from the
+    // retired continuation protocol and must never be resumed.
+    unreachable!("parked expansion cannot cross checkpoint replay")
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1490,28 +1411,8 @@ pub(super) fn scan_preflight_command<G>(
             )
         }
         PreflightCommandPhase::OperationScan => {
-            processor.resume_current_command(command.current());
-            let phase = command
-                .operation_scan
-                .take()
-                .expect("operation-scan phase owns its exact scalar state");
-            let mut suspended = None;
-            let result =
-                resume_pending_operation_scan(processor, command, cold, phase, &mut suspended);
-            if let Err(error) = &result
-                && execution_error_needs_command_retry(error)
-                && let Some(phase) = suspended
-            {
-                let child = processor
-                    .take_scanner_resume()
-                    .expect("a resuspended scalar scan retains its exact child capability");
-                command.retain_operation_scan(processor.delivery_cursor(), phase, child);
-            }
-            if result.is_ok() {
-                command.phase = Some(PreflightCommandPhase::Settled);
-                command.operation_scan = None;
-            }
-            result
+            let _ = (processor, command, cold);
+            unreachable!("parked scalar scan cannot cross checkpoint replay")
         }
         PreflightCommandPhase::PrefixScan {
             global,
@@ -1560,23 +1461,7 @@ pub(super) fn scan_preflight_command<G>(
                 shown_mode,
                 &mut suspended_operation_scan,
             );
-            if let Err(error) = &result
-                && execution_error_needs_command_retry(error)
-            {
-                let child = processor
-                    .take_scanner_resume()
-                    .expect("a resuspended prefixed command retains its exact scanner child");
-                if let Some(phase) = suspended_operation_scan {
-                    command.retain_operation_scan(processor.delivery_cursor(), phase, child);
-                } else {
-                    command.phase = Some(PreflightCommandPhase::PrefixedCommandScan {
-                        global,
-                        flags,
-                        set_box_allowed,
-                    });
-                    command.retain_scanner(processor.delivery_cursor(), Some(child));
-                }
-            }
+            let _ = suspended_operation_scan;
             if result.is_ok() {
                 command.phase = Some(PreflightCommandPhase::Settled);
                 command.operation_scan = None;
@@ -1960,25 +1845,14 @@ pub(super) fn scan_box_dimension_assignment<G>(
 /// Retains a non-scalar structured scanner child at its typed operation
 /// phase. Scalar families use the frame-owned destination directly.
 pub(super) fn retain_operation_child<G, T>(
-    processor: &mut CommandProcessor<'_, '_, G>,
-    scan: tex_command::RetainedScalarScan<G, T>,
-    phase: PendingOperationScanPhase,
-    suspended: &mut Option<PendingOperationScanPhase>,
+    _processor: &mut CommandProcessor<'_, '_, G>,
+    scan: tex_command::RetainedScalarScan<T>,
+    _phase: PendingOperationScanPhase,
+    _suspended: &mut Option<PendingOperationScanPhase>,
 ) -> Result<T, ExecError> {
     match scan {
-        tex_command::RetainedScalarScan::Complete(value) => {
-            *suspended = None;
-            Ok(value)
-        }
-        tex_command::RetainedScalarScan::Suspended { error, child } => {
-            processor.install_scanner_resume(Some(child));
-            *suspended = Some(phase);
-            Err(command_error(error))
-        }
-        tex_command::RetainedScalarScan::Failed(error) => {
-            *suspended = None;
-            Err(command_error(error))
-        }
+        tex_command::RetainedScalarScan::Complete(value) => Ok(value),
+        tex_command::RetainedScalarScan::Failed(error) => Err(command_error(error)),
     }
 }
 
@@ -3294,15 +3168,7 @@ pub(super) fn dispatch_main_control_command_inner<G>(
             result,
             &mut suspended,
         );
-        if let Err(error) = &scanned
-            && execution_error_needs_command_retry(error)
-            && let Some(phase) = suspended
-        {
-            let child = processor
-                .take_scanner_resume()
-                .expect("a suspended leader glue scan retains its exact child capability");
-            command.retain_operation_scan(processor.delivery_cursor(), phase, child);
-        }
+        let _ = suspended;
         if !scanned? {
             return Ok(retain_cold_operation(
                 command,
@@ -3367,22 +3233,7 @@ pub(super) fn dispatch_main_control_command_inner<G>(
                     return Err(ExecError::MissingPrefixedCommand);
                 }
                 Ok(_) => unreachable!("ordinary expanded delivery returns only commands"),
-                Err(error) => {
-                    let error = command_error(error);
-                    if execution_error_needs_command_retry(&error) {
-                        let child = processor
-                            .take_scanner_resume()
-                            .expect("a suspended prefix fetch retains its exact expansion child");
-                        command.phase = Some(PreflightCommandPhase::PrefixScan {
-                            global: retained_global,
-                            flags: retained_flags,
-                            alignment,
-                            set_box_allowed,
-                        });
-                        command.retain_scanner(processor.delivery_cursor(), Some(child));
-                    }
-                    return Err(error);
-                }
+                Err(error) => return Err(command_error(error)),
             };
             command.replace_current(next);
             // §1211's `if cur_cmd<=max_non_prefixed_command then <Discard
@@ -3612,23 +3463,7 @@ pub(super) fn dispatch_main_control_command_inner<G>(
             shown_mode,
             &mut suspended_operation_scan,
         );
-        if let Err(error) = &scanned_result
-            && execution_error_needs_command_retry(error)
-        {
-            let child = processor
-                .take_scanner_resume()
-                .expect("a suspended substantive command retains its exact scanner capability");
-            if let Some(phase) = suspended_operation_scan {
-                command.retain_operation_scan(processor.delivery_cursor(), phase, child);
-            } else {
-                command.phase = Some(PreflightCommandPhase::PrefixedCommandScan {
-                    global,
-                    flags,
-                    set_box_allowed,
-                });
-                command.retain_scanner(processor.delivery_cursor(), Some(child));
-            }
-        }
+        let _ = suspended_operation_scan;
         let scanned = scanned_result?;
         if suppress_left_boundary
             && matches!(scanned, ScannedOperation::Cold)

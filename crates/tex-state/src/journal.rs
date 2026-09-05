@@ -1149,24 +1149,44 @@ impl<G> SaveJournal<G> {
 
     #[must_use]
     pub(crate) fn validate_cursor(&self, cursor: JournalCursor<G>) -> bool {
-        if cursor.owner != self.owner
-            || cursor.checkpoint_entries() as usize > self.checkpoint_entries
-            || !self
-                .checkpoint_arena
-                .validates_checkpoint(cursor.checkpoint_mark())
-        {
-            return false;
-        }
-        cursor.group_depth() == 0
-            && cursor.save_position == 0
+        self.validate_cursor_shape(cursor)
             && self.active_groups.is_empty()
             && self.active_sequence.len == 0
             && self.transaction_depth == 0
             && self.transaction_entries.is_empty()
     }
 
+    /// Validates the retained checkpoint coordinate after a direct execution
+    /// attempt has been discarded.  The target is still an outer level-zero
+    /// mark, but the abandoned scanner may have left ordinary group-save
+    /// records in the live suffix; the restore operation owns replacing that
+    /// suffix.  A live state transaction is not permitted across this seam:
+    /// `discard_direct_operation` must have closed it first.
+    pub(crate) fn validate_cursor_after_replay(&self, cursor: JournalCursor<G>) -> bool {
+        self.validate_cursor_shape(cursor)
+            && self.transaction_depth == 0
+            && self.transaction_entries.is_empty()
+    }
+
+    fn validate_cursor_shape(&self, cursor: JournalCursor<G>) -> bool {
+        cursor.owner == self.owner
+            && cursor.checkpoint_entries() as usize <= self.checkpoint_entries
+            && self
+                .checkpoint_arena
+                .validates_checkpoint(cursor.checkpoint_mark())
+            && cursor.group_depth() == 0
+            && cursor.save_position == 0
+    }
+
     pub(crate) fn restore_group_cursor(&mut self, cursor: JournalCursor<G>) -> RestoredGroups {
         debug_assert!(self.validate_cursor(cursor));
+        self.restore_group_cursor_after_replay(cursor)
+    }
+
+    pub(crate) fn restore_group_cursor_after_replay(
+        &mut self,
+        cursor: JournalCursor<G>,
+    ) -> RestoredGroups {
         self.active_sequence.truncate(0);
         self.active_groups.clear();
         self.save_stack = cursor.save_stack;
