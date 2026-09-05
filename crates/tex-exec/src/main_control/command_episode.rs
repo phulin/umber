@@ -1,4 +1,4 @@
-//! Resident command episodes and typed suspension-only operation frames.
+//! Resident command episodes and typed cold-operation boundaries.
 
 use super::*;
 
@@ -9,7 +9,7 @@ use super::*;
 pub(super) enum OperationDelivery {
     Replay,
     /// The caller-owned command episode contains the sole live command and
-    /// its compact delivery/scanner coordinates.
+    /// its compact delivery coordinates.
     Command,
     /// TeX82 §1038's main-loop lookahead delivered this command with bare
     /// `get_next`; it must not acquire an expanded-delivery observation when
@@ -18,189 +18,18 @@ pub(super) enum OperationDelivery {
     /// including its canonical expanded observation. This covers both raw
     /// preflight and an in-place TeX82 `goto reswitch`/§1270 handoff.
     Alignment(AlignmentIdentity),
-    AlignmentRetry {
-        alignment: Option<AlignmentIdentity>,
-        cursor: tex_command::CommandDeliveryCursor,
-    },
     /// Ordinary application completed in the admitted command context.
     AppliedDirect,
     /// Ordinary preflight completed delivery and scanning in its admitted
     /// context; the adjacent typed slot contains the cold operation.
     ResidentCold,
-    /// Delivery completed before a cold semantic step. The semantic step still
-    /// runs through the sole executor below.
-    /// The suspension frame has restored the resident typed cold branch. Its
-    /// compact barrier belongs to the enclosing command, which may differ
-    /// from a nested operation that requested a resource.
-    SuspendedCold {
-        barrier: Option<crate::transaction_protocol::CommandBarrier>,
-    },
 }
 
 #[derive(Clone, Copy, Debug)]
 pub(super) enum PreflightCommandPhase {
     Settled,
     Raw,
-    OperationScan,
-    PrefixedCommandScan {
-        global: bool,
-        flags: MeaningFlags,
-        set_box_allowed: bool,
-    },
-    PrefixScan {
-        global: bool,
-        flags: MeaningFlags,
-        alignment: Option<AlignmentIdentity>,
-        set_box_allowed: bool,
-    },
     ImmediatePdfRetry(UnexpandablePrimitive),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum RegisterAssignmentScanPhase {
-    RegisterIndex,
-    OptionalEquals,
-    Value,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum UnaryOperationScanPhase {
-    OptionalEquals,
-    Value,
-}
-
-#[derive(Debug)]
-pub(super) enum ParagraphShapeScanPhase {
-    OptionalEquals,
-    Count,
-    Indent {
-        remaining: usize,
-        lines: Vec<ParagraphShapeLine>,
-    },
-    Width {
-        remaining: usize,
-        lines: Vec<ParagraphShapeLine>,
-        indent: Scaled,
-    },
-}
-
-#[derive(Debug)]
-pub(super) enum PenaltyArrayScanPhase {
-    OptionalEquals,
-    Count,
-    Value { remaining: usize, values: Vec<i32> },
-}
-
-#[derive(Debug)]
-pub(super) enum FontDimenScanPhase {
-    Number,
-    Font {
-        number: i32,
-    },
-    OptionalEquals {
-        number: i32,
-        font: FontId,
-        recovery_context: Option<String>,
-    },
-    Value {
-        number: i32,
-        font: FontId,
-        recovery_context: Option<String>,
-    },
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(super) enum FontIntegerScanPhase {
-    Font,
-    OptionalEquals { font: FontId },
-    Value { font: FontId },
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(super) enum CodeTableScanPhase {
-    Character,
-    OptionalEquals { character: char },
-    Value { character: char },
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(super) enum PdfFontCodeScanPhase {
-    Font,
-    Character { font: FontId },
-    OptionalEquals { font: FontId, character: u8 },
-    Value { font: FontId, character: u8 },
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(super) enum PdfFontExpandScanPhase {
-    Font,
-    OptionalEquals {
-        font: FontId,
-    },
-    Stretch {
-        font: FontId,
-    },
-    Shrink {
-        font: FontId,
-        stretch: i32,
-    },
-    Step {
-        font: FontId,
-        stretch: i32,
-        shrink: i32,
-    },
-    AutoExpand {
-        font: FontId,
-        stretch: i32,
-        shrink: i32,
-        step: i32,
-    },
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(super) enum OpenOutScanPhase {
-    Stream,
-    OptionalEquals { stream: u8 },
-    FileName { stream: u8 },
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(super) enum MarksScanPhase {
-    Class,
-    Text { class: u16 },
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(super) enum CatCodeScanPhase {
-    Character,
-    OptionalEquals { character: char },
-    Value { character: char },
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(super) enum MathFamilyScanPhase {
-    Family,
-    OptionalEquals {
-        family: tex_command::ScannedMathFamily,
-    },
-    Font {
-        family: tex_command::ScannedMathFamily,
-    },
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(super) enum ArithmeticIndexedTarget {
-    Integer,
-    Dimension,
-    Glue { mu: bool },
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(super) enum ArithmeticScanPhase {
-    TargetCommand,
-    TargetIndex { target: ArithmeticIndexedTarget },
-    Keyword { target: ArithmeticTarget },
-    Operand { target: ArithmeticTarget },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -213,100 +42,6 @@ pub(super) enum LeaderGlueResult {
         kind: GlueKind,
         index: u16,
         copy: bool,
-    },
-}
-
-#[derive(Debug)]
-pub(super) enum PendingOperationScanPhase {
-    Count {
-        index: Option<u16>,
-        global: bool,
-        phase: RegisterAssignmentScanPhase,
-    },
-    Dimension {
-        index: Option<u16>,
-        global: bool,
-        phase: RegisterAssignmentScanPhase,
-    },
-    BoxDimension {
-        index: Option<u16>,
-        dimension: tex_state::BoxDimension,
-        global: bool,
-        phase: RegisterAssignmentScanPhase,
-    },
-    Glue {
-        index: Option<u16>,
-        global: bool,
-        mu: bool,
-        phase: RegisterAssignmentScanPhase,
-    },
-    Unary {
-        meaning: Meaning,
-        global: bool,
-        origin: tex_state::token::OriginId,
-        phase: UnaryOperationScanPhase,
-    },
-    ParagraphShape {
-        global: bool,
-        phase: ParagraphShapeScanPhase,
-    },
-    PenaltyArray {
-        kind: tex_state::PenaltyArrayKind,
-        global: bool,
-        phase: PenaltyArrayScanPhase,
-    },
-    FontDimen(FontDimenScanPhase),
-    FontInteger {
-        primitive: UnexpandablePrimitive,
-        phase: FontIntegerScanPhase,
-    },
-    CodeTable {
-        primitive: UnexpandablePrimitive,
-        global: bool,
-        phase: CodeTableScanPhase,
-    },
-    PdfFontCode {
-        primitive: UnexpandablePrimitive,
-        phase: PdfFontCodeScanPhase,
-    },
-    PdfFontExpand(PdfFontExpandScanPhase),
-    FontOnly {
-        meaning: Meaning,
-    },
-    OpenOut(OpenOutScanPhase),
-    Marks(MarksScanPhase),
-    CatCode {
-        global: bool,
-        phase: CatCodeScanPhase,
-    },
-    MathFamily {
-        size: tex_command::MathFamilySize,
-        global: bool,
-        phase: MathFamilyScanPhase,
-    },
-    /// TeX82 §1160's `scan_delimiter` can suspend while its one compact
-    /// operand is scanning a `\delimiter` number.  Retain only the boundary
-    /// kind here; the processor's typed scanner frame owns the pending scalar
-    /// and the command episode continues from that exact delivery.
-    MathDelimiter {
-        kind: tex_command::MathDelimiterBoundaryKind,
-    },
-    Arithmetic {
-        primitive: UnexpandablePrimitive,
-        global: bool,
-        phase: ArithmeticScanPhase,
-    },
-    LeaderGlue {
-        mode: Mode,
-        result: LeaderGlueResult,
-    },
-    LeaderPayload {
-        primitive: UnexpandablePrimitive,
-        mode: Mode,
-    },
-    LeaderCommand {
-        mode: Mode,
-        result: LeaderGlueResult,
     },
 }
 
@@ -364,21 +99,15 @@ impl TypedOperationError {
 
 /// Singular stationary owner for one command attempt.
 ///
-/// This value is resident in the executor loop only for delivery and scanner
-/// state. Completed hot operands return directly to their admitted caller and
-/// never enter it. A resource miss unwinds this owner; no caller or scanner
-/// frame survives the host boundary.
+/// This value is resident in the executor loop only for delivery state.
+/// Completed hot operands return directly to their admitted caller and never
+/// enter it. A resource miss unwinds this owner; no caller or scanner frame
+/// survives the host boundary.
 pub(super) struct CommandEpisode<G> {
     pub(super) error: Option<ExecError>,
     pub(super) command: Option<tex_command::CurrentCommand<G>>,
     pub(super) phase: Option<PreflightCommandPhase>,
     pub(super) cursor: Option<tex_command::CommandDeliveryCursor>,
-    /// Retained only as an empty compatibility slot while the outer replay
-    /// transition is assembled. Resource misses never populate it.
-    pub(super) scanner: Option<()>,
-    pub(super) scalar: tex_command::ScalarScanFrame,
-    pub(super) operation_scan: Option<PendingOperationScanPhase>,
-    pub(super) alignment_scanner: Option<()>,
     /// Host/VFS source role active when this detached operation was formed.
     /// This is written only when the command slot is about to be retired, then
     /// travels with that operation through resource suspension.
@@ -392,10 +121,6 @@ impl<G> Default for CommandEpisode<G> {
             command: None,
             phase: None,
             cursor: None,
-            scanner: None,
-            scalar: tex_command::ScalarScanFrame::default(),
-            operation_scan: None,
-            alignment_scanner: None,
             source_role: None,
         }
     }
@@ -416,31 +141,24 @@ impl<G> CommandEpisode<G> {
         phase: PreflightCommandPhase,
         cursor: Option<tex_command::CommandDeliveryCursor>,
     ) {
-        assert!(self.scalar.is_empty());
         assert!(self.command.replace(command).is_none());
         assert!(self.phase.replace(phase).is_none());
         self.cursor = cursor;
-        self.scanner = None;
-        self.operation_scan = None;
     }
 
     /// Marks a command which raw delivery already wrote into this frame.
     ///
     /// The initial delivery and synchronous expansion paths use the frame's
     /// `command` field as their destination. Advancing that resident value to
-    /// a new phase must therefore update only the scalar phase facts rather
-    /// than taking and reinserting the whole command.
+    /// a new phase updates only the delivery facts.
     pub(super) fn mark_resident_command(
         &mut self,
         phase: PreflightCommandPhase,
         cursor: Option<tex_command::CommandDeliveryCursor>,
     ) {
-        assert!(self.scalar.is_empty());
         assert!(self.command.is_some());
         assert!(self.phase.replace(phase).is_none());
         self.cursor = cursor;
-        self.scanner = None;
-        self.operation_scan = None;
     }
 
     pub(super) fn mark_resident_settled(
@@ -455,7 +173,6 @@ impl<G> CommandEpisode<G> {
     }
 
     pub(super) fn admit_immediate_pdf(&mut self, primitive: UnexpandablePrimitive) {
-        assert!(self.scalar.is_empty());
         assert!(self.command.is_none());
         assert!(
             self.phase
@@ -463,8 +180,6 @@ impl<G> CommandEpisode<G> {
                 .is_none()
         );
         self.cursor = None;
-        self.scanner = None;
-        self.operation_scan = None;
     }
 
     pub(super) fn current(&self) -> &tex_command::CurrentCommand<G> {
@@ -487,46 +202,8 @@ impl<G> CommandEpisode<G> {
         self.command = Some(command);
     }
 
-    pub(super) fn settle_resident(&mut self) {
-        assert!(self.command.is_some());
-        self.phase = Some(PreflightCommandPhase::Settled);
-        self.operation_scan = None;
-    }
-
     pub(super) fn discard_resident_command(&mut self) {
         self.command = None;
-    }
-
-    pub(super) fn retain_scanner(
-        &mut self,
-        cursor: tex_command::CommandDeliveryCursor,
-        scanner: Option<()>,
-    ) {
-        self.cursor = Some(cursor);
-        self.scanner = scanner;
-    }
-
-    pub(super) fn retain_operation_scan(
-        &mut self,
-        cursor: tex_command::CommandDeliveryCursor,
-        phase: PendingOperationScanPhase,
-        scanner: (),
-    ) {
-        self.phase = Some(PreflightCommandPhase::OperationScan);
-        self.cursor = Some(cursor);
-        self.scanner = Some(scanner);
-        self.operation_scan = Some(phase);
-    }
-
-    pub(super) fn is_command_scan(&self) -> bool {
-        matches!(
-            self.phase,
-            Some(
-                PreflightCommandPhase::OperationScan
-                    | PreflightCommandPhase::PrefixedCommandScan { .. }
-                    | PreflightCommandPhase::PrefixScan { .. }
-            )
-        )
     }
 
     pub(super) fn has_preflight(&self) -> bool {
@@ -534,12 +211,9 @@ impl<G> CommandEpisode<G> {
     }
 
     pub(super) fn clear_preflight(&mut self) {
-        assert!(self.scalar.is_empty());
         let _ = self.command.take();
         self.phase = None;
         self.cursor = None;
-        self.scanner = None;
-        self.operation_scan = None;
     }
 
     pub(super) fn retain_source_role(&mut self) {
@@ -564,10 +238,6 @@ impl<G> CommandEpisode<G> {
                 && self.command.is_none()
                 && self.phase.is_none()
                 && self.cursor.is_none()
-                && self.scanner.is_none()
-                && self.scalar.is_empty()
-                && self.operation_scan.is_none()
-                && self.alignment_scanner.is_none()
                 && self.source_role.is_none(),
             "one command attempt owns one empty operation frame"
         );
@@ -577,20 +247,14 @@ impl<G> CommandEpisode<G> {
         &mut self,
         error: ExecError,
         cursor: tex_command::CommandDeliveryCursor,
-        alignment_scanner: Option<()>,
     ) {
-        assert!(
-            !self.has_preflight() || alignment_scanner.is_none(),
-            "one failed operation retains exactly one scanner destination"
-        );
         self.error = Some(error);
         self.cursor = Some(cursor);
-        self.alignment_scanner = alignment_scanner;
     }
 
     pub(super) fn assert_command_only(&self) {
         assert!(
-            self.error.is_none() && self.phase.is_some() && self.alignment_scanner.is_none(),
+            self.error.is_none() && self.phase.is_some(),
             "command delivery owns only its operation-local command frame"
         );
     }

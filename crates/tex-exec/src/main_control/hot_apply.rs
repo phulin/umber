@@ -65,10 +65,10 @@ impl<G> HotOperation<G> {
 pub(super) fn scan<G>(
     processor: &mut CommandProcessor<'_, '_, G>,
     command: &mut CommandEpisode<G>,
+    scalar: &mut tex_command::ScalarScanFrame,
     global: bool,
     flags: MeaningFlags,
     innermost_group: Option<GroupKind>,
-    suspended_operation_scan: &mut Option<PendingOperationScanPhase>,
 ) -> Result<Option<HotOperation<G>>, ExecError> {
     let operation = match command.meaning() {
         tex_state::meaning::ResolvedMeaning::Static(Meaning::CharToken {
@@ -86,13 +86,7 @@ pub(super) fn scan<G>(
         },
         tex_state::meaning::ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
             UnexpandablePrimitive::CatCode,
-        )) => scan_catcode_assignment(
-            processor,
-            &mut command.scalar,
-            global,
-            CatCodeScanPhase::Character,
-            suspended_operation_scan,
-        )?,
+        )) => scan_catcode_assignment(processor, scalar, global)?,
         tex_state::meaning::ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::Def
             | UnexpandablePrimitive::Edef
@@ -136,62 +130,16 @@ pub(super) fn scan_catcode_assignment<G>(
     processor: &mut CommandProcessor<'_, '_, G>,
     scalar: &mut tex_command::ScalarScanFrame,
     global: bool,
-    phase: CatCodeScanPhase,
-    suspended: &mut Option<PendingOperationScanPhase>,
 ) -> Result<HotOperation<G>, ExecError> {
-    let phase = if matches!(phase, CatCodeScanPhase::Character) {
-        let status =
-            processor.scan_restricted_integer_into(RestrictedIntegerClass::CharacterCode, scalar);
-        let character = take_operation_scalar!(
-            scalar,
-            status,
-            PendingOperationScanPhase::CatCode {
-                global,
-                phase: CatCodeScanPhase::Character,
-            },
-            suspended,
-            take_restricted
-        )
-        .value;
-        CatCodeScanPhase::OptionalEquals {
-            character: char::from_u32(character as u32)
-                .expect("scan_char_num returns a valid character"),
-        }
-    } else {
-        phase
-    };
-    let phase = match phase {
-        CatCodeScanPhase::OptionalEquals { character } => {
-            let status = processor.scan_optional_equals_into(scalar);
-            let _ = take_operation_scalar!(
-                scalar,
-                status,
-                PendingOperationScanPhase::CatCode {
-                    global,
-                    phase: CatCodeScanPhase::OptionalEquals { character },
-                },
-                suspended,
-                take_boolean
-            );
-            CatCodeScanPhase::Value { character }
-        }
-        phase => phase,
-    };
-    let CatCodeScanPhase::Value { character } = phase else {
-        unreachable!()
-    };
+    let status =
+        processor.scan_restricted_integer_into(RestrictedIntegerClass::CharacterCode, scalar);
+    let character = take_operation_scalar!(scalar, status, take_restricted).value;
+    let character =
+        char::from_u32(character as u32).expect("scan_char_num returns a valid character");
+    let status = processor.scan_optional_equals_into(scalar);
+    let _ = take_operation_scalar!(scalar, status, take_boolean);
     let status = processor.scan_integer_into(scalar);
-    let value = take_operation_scalar!(
-        scalar,
-        status,
-        PendingOperationScanPhase::CatCode {
-            global,
-            phase: CatCodeScanPhase::Value { character },
-        },
-        suspended,
-        take_integer
-    )
-    .value;
+    let value = take_operation_scalar!(scalar, status, take_integer).value;
     Ok(HotOperation::CatCode {
         character,
         value,

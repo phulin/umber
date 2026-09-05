@@ -69,8 +69,7 @@ use crate::{ExecError, Mode, ModeNest};
 /// unwinds the whole operation and is handled by checkpoint replay. No
 /// scanner child or caller phase is retained here.
 macro_rules! take_operation_scalar {
-    ($frame:expr, $status:expr, $phase:expr, $suspended:expr, $take:ident) => {{
-        let _ = $suspended;
+    ($frame:expr, $status:expr, $take:ident) => {{
         match $status {
             tex_command::ScalarScanStatus::Complete => $frame.$take(),
             tex_command::ScalarScanStatus::Failed => {
@@ -3438,7 +3437,7 @@ impl<G> MainControl<G> {
                 // when that scanner requests one.
                 PreflightReadiness::Ready
             } else if let Some(delivery) = initial_delivery.take() {
-                host_preparation.fill_delivery(delivery, None);
+                host_preparation.fill_delivery(delivery);
                 PreflightReadiness::Ready
             } else {
                 let mut admitted_operation_mark = Some(operation_mark);
@@ -3949,7 +3948,7 @@ impl<G> MainControl<G> {
                             let _ = stores.abandon_dependency_region(mark);
                         }
                     }
-                    if execution_error_needs_command_retry(&error) {
+                    if execution_error_is_resource(&error) {
                         let result = self.finish_resource_preflight_failure(
                             stores,
                             error,
@@ -4221,7 +4220,7 @@ impl<G> MainControl<G> {
                 return Ok(DiagnosticStepResult::Progress(step));
             }
             command_episode.admit_settled(command, Some(cursor));
-            host_preparation.fill_delivery(OperationDelivery::Command, None);
+            host_preparation.fill_delivery(OperationDelivery::Command);
         }
         let mode_mark = self.modes.begin_journal();
         let applied = match self.execute_typed_operation(
@@ -4234,10 +4233,6 @@ impl<G> MainControl<G> {
         ) {
             Err(TypedOperationError::Preparation(error)) => {
                 command_episode.error = Some(error);
-                assert!(
-                    command_episode.alignment_scanner.is_none(),
-                    "diagnostic retry cannot own an alignment scanner destination"
-                );
                 let unavailable = command_episode.has_unavailable(&cold_operation);
                 let result = self.finish_resource_preflight_failure(
                     stores,
@@ -6390,7 +6385,7 @@ impl<G> MainControl<G> {
             OperationDelivery::Replay
         };
         let mut host_preparation = OperationPreparation::new();
-        host_preparation.fill_delivery(delivery, None);
+        host_preparation.fill_delivery(delivery);
         let result = self.execute_typed_operation(
             stores,
             &mut host_preparation,
@@ -6474,31 +6469,18 @@ impl<G> MainControl<G> {
         tracked_region_is_active: bool,
     ) -> Result<ReplayStep, TypedOperationError> {
         let delivery = host_preparation.take_delivery();
-        // Resource retries replay the aggregate checkpoint. These former
-        // preparation payloads are deliberately drained and discarded; no
-        // scanner or expansion continuation crosses a host boundary.
-        let _ = host_preparation.take_scanner();
-        if matches!(
-            &delivery,
-            OperationDelivery::SuspendedCold { .. } | OperationDelivery::ResidentCold
-        ) {
+        // Resource retries replay the aggregate checkpoint. No scanner or
+        // expansion continuation crosses a host boundary.
+        if matches!(&delivery, OperationDelivery::ResidentCold) {
             assert!(
-                frame.has_unavailable(cold)
-                    && frame.error.is_none()
-                    && frame.alignment_scanner.is_none(),
-                "prepared delivery resumes the exact occupied operation frame; its scalar retry phase may retain the command cursor"
+                frame.has_unavailable(cold) && frame.error.is_none(),
+                "prepared delivery resumes the exact occupied operation frame"
             );
         } else if matches!(&delivery, OperationDelivery::Command) {
             frame.assert_command_only();
         } else if matches!(&delivery, OperationDelivery::AppliedDirect) {
             assert!(
-                frame.command.is_none()
-                    && frame.phase.is_none()
-                    && frame.cursor.is_none()
-                    && frame.scanner.is_none()
-                    && frame.scalar.is_empty()
-                    && frame.operation_scan.is_none()
-                    && frame.alignment_scanner.is_none(),
+                frame.command.is_none() && frame.phase.is_none() && frame.cursor.is_none(),
                 "applied hot delivery retains only an application error"
             );
         } else {
@@ -6513,10 +6495,7 @@ impl<G> MainControl<G> {
                 None => Ok(ReplayStep::Continue),
             };
         }
-        if matches!(
-            delivery,
-            OperationDelivery::ResidentCold | OperationDelivery::SuspendedCold { .. }
-        ) {
+        if matches!(delivery, OperationDelivery::ResidentCold) {
             return self.execute_scanned_cold_episode(
                 stores,
                 host_preparation,
@@ -6726,46 +6705,11 @@ impl<G> MainControl<G> {
                             frame,
                             cold,
                         )?,
-                        OperationDelivery::AlignmentRetry { alignment, cursor } => {
-                            processor.resume_delivery_cursor(cursor);
-                            match alignment {
-                                Some(alignment) => scan_alignment_delivery_step(
-                                    &mut processor,
-                                    alignment,
-                                    &ReplayBoxes::default(),
-                                    innermost_group,
-                                    mode,
-                                    job_is_all_over,
-                                    self.main_loop_active,
-                                    &mut self.shown_mode,
-                                    &mut diagnostics,
-                                    frame,
-                                    cold,
-                                )?,
-                                None => scan_replay_step(
-                                    &mut processor,
-                                    mode,
-                                    &self.boxes,
-                                    alignment_preamble,
-                                    innermost_group,
-                                    job_is_all_over,
-                                    self.modes.current_list().display_eq_no().is_some(),
-                                    self.main_loop_active,
-                                    &mut self.shown_mode,
-                                    &mut diagnostics,
-                                    frame,
-                                    cold,
-                                )?,
-                            }
-                        }
                         OperationDelivery::AppliedDirect => {
                             unreachable!("applied hot delivery returns before scanning")
                         }
                         OperationDelivery::ResidentCold => {
                             unreachable!("pre-scanned cold delivery bypasses operation preparation")
-                        }
-                        OperationDelivery::SuspendedCold { .. } => {
-                            unreachable!("prepared cold operations bypass operand scanning")
                         }
                     })
                 })();
@@ -6773,7 +6717,7 @@ impl<G> MainControl<G> {
                 let scanned = match scanned {
                     Ok(scanned) => scanned,
                     Err(error) => {
-                        frame.write_retry_failure(error, cursor, None);
+                        frame.write_retry_failure(error, cursor);
                         return Err(TypedOperationError::Preparation(frame.take_error()));
                     }
                 };
@@ -7337,10 +7281,7 @@ impl<G> MainControl<G> {
             let result =
                 self.finish_host_owned_step(applied, output_start, stores, diagnostic_effects);
             if let Some(snapshot) = nested_snapshot {
-                let settled = if result
-                    .as_ref()
-                    .is_err_and(execution_error_needs_command_retry)
-                {
+                let settled = if result.as_ref().is_err_and(execution_error_is_resource) {
                     self.command
                         .state_mut()
                         .rollback_transient(snapshot, stores)
@@ -8941,6 +8882,17 @@ fn execution_error_is_fuel(error: &ExecError) -> bool {
         ExecError::Captured { error, .. } => execution_error_is_fuel(error),
         ExecError::CumulativeFuelExceeded { .. }
         | ExecError::Command(CommandError::FuelExhausted { .. }) => true,
+        _ => false,
+    }
+}
+
+fn execution_error_is_resource(error: &ExecError) -> bool {
+    match error {
+        ExecError::Captured { error, .. } => execution_error_is_resource(error),
+        ExecError::MissingInput { .. }
+        | ExecError::MissingInputProbe { .. }
+        | ExecError::MissingFont { .. }
+        | ExecError::MissingPdfImage { .. } => true,
         _ => false,
     }
 }

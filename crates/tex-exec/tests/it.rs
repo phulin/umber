@@ -813,14 +813,18 @@ fn command_host_facts_are_sampled_only_by_the_consuming_query() {
             .count(),
         2
     );
-    assert_eq!(provider.matches("record_host_fact_query()").count(), 6);
+    assert_eq!(provider.matches("record_host_fact_query()").count(), 7);
     let preparation = executor_facts
         .split_once("struct OperationPreparation")
         .expect("operation preparation")
         .1
-        .split_once("struct OperationResume")
+        .split_once("impl<G> OperationPreparation<G>")
         .expect("preparation boundary")
         .0;
+    assert!(
+        !executor_facts.contains("OperationResume"),
+        "operation preparation must not retain a scanner resume placeholder"
+    );
     for cold_fact in ["mode:", "last_node", "pdf_output", "innermost_group"] {
         assert!(
             !preparation.contains(cold_fact),

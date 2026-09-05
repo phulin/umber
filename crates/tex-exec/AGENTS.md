@@ -35,16 +35,16 @@ Command operands are scanned by `tex-command` into typed request and result valu
   transitions are direct calls into the private sibling modules below; none is
   a facade or second command front.
 - `src/main_control/delivery.rs`: same-borrow raw fetch, classification,
-  expansion, alignment interception, general operand scanning, preflight phase
-  transitions, and typed retry reconstruction into the resident operation
-  destinations.
+  expansion, alignment interception, and general operand scanning. Ordinary
+  scanner helpers keep their typed results local and publish only completed
+  cold leaves; a resource miss unwinds the attempt for full-checkpoint replay.
 - `src/main_control/command_episode.rs`: the singular stationary
-  `CommandEpisode`, compact delivery/scanner phases, adjacent caller-owned
-  typed cold slot, and borrow-typed hot/cold execution episodes. Resource
-  misses unwind command processing; no parked expansion or scanner frame is
-  retained here.
+  `CommandEpisode`, admitted command and delivery cursor, adjacent
+  caller-owned typed cold slot, and borrow-typed hot/cold execution episodes.
+  Resource misses unwind command processing; scanner operands are call-local,
+  with no parked expansion, scanner, or caller-resume frame retained here.
 - `src/main_control/settlement.rs`: direct-operation evidence ownership,
-  begin/commit/rollback, resource and diagnostic retry settlement, ordered
+  begin/commit/rollback, resource suspension and diagnostic settlement, ordered
   semantic/effect/artifact publication, and exact-cut main-source paragraph
   checkpoint sealing. Shipout contributes only output-ledger evidence. Its direct-operation mark
   moves only tex-command's opaque lifecycle edge; the authoritative ordinary
@@ -54,13 +54,14 @@ Command operands are scanned by `tex-command` into typed request and result valu
   preparation. A scanner or conditional invokes only the exact fact method it
   consumes; ordinary delivery writes no mode/tail cache and performs no
   effective-tail traversal. The caller-owned preparation slot retains only
-  delivery, retry, and checked-save state across admitted stages; it contains
+  delivery and checked-save state across admitted stages; it contains
   no command classification. No live fact or provider survives a processor
   episode or enters suspension.
-- The resident `CommandEpisode` owns the admitted current command, scalar
-  phase, delivery cursor, scanner-local facts, partial direct scan, and the
-  completed hot-family operand. An adjacent caller-owned typed cold
-  slot owns uncommon leaves without entering the resident command layout.
+- The resident `CommandEpisode` owns the admitted current command, delivery
+  phase/cursor, source role, and attempt error. Scalar scanners use a local
+  call frame and return typed values synchronously; an adjacent caller-owned
+  typed cold slot owns uncommon leaves without entering the resident command
+  layout.
   Canonical dispatch applies ordinary character, spacing, paragraph-start,
   grouping, definition, let, and catcode results directly in one context
   admitted for the uninterrupted ordinary run. That context settles each
@@ -78,14 +79,14 @@ Command operands are scanned by `tex-command` into typed request and result valu
   instrumentation boundary remains on scalar dispatch.
   A resource need unwinds this episode and the host later restores a full
   checkpoint before calling ordinary delivery again. Do not recreate a nested
-  preflight command, generic operation payload, readiness status, or
-  prepare/apply handoff.
+  preflight command, scanner caller phase, generic operation payload,
+  readiness status, or prepare/apply handoff.
 - Executor host facts are demand-only borrows of the authoritative live mode
   and page state. Conditional mode, auxiliary values, and effective-tail
-  quantities are sampled at their consuming scanner/primitive; only the
-  scanner's already-consumed typed value can cross a genuine suspension.
-  Delivery/retry fields remain in the same caller slot and no fact cache,
-  compatibility preparation path, or per-token payload exists.
+  quantities are sampled at their consuming scanner/primitive; scanner
+  continuations never cross a suspension. Delivery fields remain in the same
+  caller slot and no fact cache, compatibility preparation path, or per-token
+  payload exists.
 - `src/main_control/hot_apply.rs`: fused family-sized scan operands and direct
   in-place semantic handlers for the measured definition, let, catcode, and
   ordinary-group families. These commands bypass `ColdOperation`; dispatch

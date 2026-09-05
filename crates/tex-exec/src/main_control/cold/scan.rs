@@ -24,6 +24,7 @@ pub(in crate::main_control) fn scan<G>(
     processor: &mut CommandProcessor<'_, '_, G>,
     command: &mut CommandEpisode<G>,
     cold: &mut ColdOperationSlot<G>,
+    scalar: &mut tex_command::ScalarScanFrame,
     global: bool,
     mode: Mode,
     boxes: &ReplayBoxes<G>,
@@ -32,7 +33,6 @@ pub(in crate::main_control) fn scan<G>(
     display_eq_no: bool,
     set_box_allowed: bool,
     shown_mode: &mut Option<Mode>,
-    suspended_operation_scan: &mut Option<PendingOperationScanPhase>,
 ) -> Result<(), ExecError> {
     let tex_state::meaning::ResolvedMeaning::Static(meaning) = command.meaning() else {
         unreachable!("expanded macro reached cold stomach dispatch")
@@ -156,35 +156,13 @@ pub(in crate::main_control) fn scan<G>(
             complete_cold_scan!(cold, ColdOperation::EjectResidualPage)
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count) => {
-            scan_count_register_assignment(
-                cold,
-                processor,
-                &mut command.scalar,
-                None,
-                global,
-                RegisterAssignmentScanPhase::RegisterIndex,
-                suspended_operation_scan,
-            )
+            scan_count_register_assignment(cold, processor, scalar, None, global)
         }
-        Meaning::CountRegister(index) => scan_count_register_assignment(
-            cold,
-            processor,
-            &mut command.scalar,
-            Some(index),
-            global,
-            RegisterAssignmentScanPhase::OptionalEquals,
-            suspended_operation_scan,
-        ),
+        Meaning::CountRegister(index) => {
+            scan_count_register_assignment(cold, processor, scalar, Some(index), global)
+        }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen) => {
-            scan_dimension_register_assignment(
-                cold,
-                processor,
-                &mut command.scalar,
-                None,
-                global,
-                RegisterAssignmentScanPhase::RegisterIndex,
-                suspended_operation_scan,
-            )
+            scan_dimension_register_assignment(cold, processor, scalar, None, global)
         }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::Wd
@@ -197,111 +175,39 @@ pub(in crate::main_control) fn scan<G>(
                 UnexpandablePrimitive::Dp => tex_state::BoxDimension::Depth,
                 _ => unreachable!(),
             };
-            scan_box_dimension_assignment(
-                cold,
-                processor,
-                &mut command.scalar,
-                None,
-                dimension,
-                global,
-                RegisterAssignmentScanPhase::RegisterIndex,
-                suspended_operation_scan,
-            )
+            scan_box_dimension_assignment(cold, processor, scalar, None, dimension, global)
         }
-        Meaning::DimenRegister(index) => scan_dimension_register_assignment(
-            cold,
-            processor,
-            &mut command.scalar,
-            Some(index),
-            global,
-            RegisterAssignmentScanPhase::OptionalEquals,
-            suspended_operation_scan,
-        ),
+        Meaning::DimenRegister(index) => {
+            scan_dimension_register_assignment(cold, processor, scalar, Some(index), global)
+        }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip) => {
-            scan_glue_register_assignment(
-                cold,
-                processor,
-                &mut command.scalar,
-                None,
-                global,
-                false,
-                RegisterAssignmentScanPhase::RegisterIndex,
-                suspended_operation_scan,
-            )
+            scan_glue_register_assignment(cold, processor, scalar, None, global, false)
         }
-        Meaning::SkipRegister(index) => scan_glue_register_assignment(
-            cold,
-            processor,
-            &mut command.scalar,
-            Some(index),
-            global,
-            false,
-            RegisterAssignmentScanPhase::OptionalEquals,
-            suspended_operation_scan,
-        ),
+        Meaning::SkipRegister(index) => {
+            scan_glue_register_assignment(cold, processor, scalar, Some(index), global, false)
+        }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip) => {
-            scan_glue_register_assignment(
-                cold,
-                processor,
-                &mut command.scalar,
-                None,
-                global,
-                true,
-                RegisterAssignmentScanPhase::RegisterIndex,
-                suspended_operation_scan,
-            )
+            scan_glue_register_assignment(cold, processor, scalar, None, global, true)
         }
-        Meaning::MuskipRegister(index) => scan_glue_register_assignment(
-            cold,
-            processor,
-            &mut command.scalar,
-            Some(index),
-            global,
-            true,
-            RegisterAssignmentScanPhase::OptionalEquals,
-            suspended_operation_scan,
-        ),
+        Meaning::MuskipRegister(index) => {
+            scan_glue_register_assignment(cold, processor, scalar, Some(index), global, true)
+        }
         // TeX82 §458 leaves `scan_glue` entirely in the command machine.
         // Main control receives only its completed typed specification, so a
         // u-template's numeric operand retains the canonical `back_input`
         // and replay sequence before this layer appends the glue node.
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HSkip) => {
-            scan_unary_scalar_operation(
-                cold,
-                processor,
-                &mut command.scalar,
-                meaning,
-                global,
-                command_origin,
-                UnaryOperationScanPhase::Value,
-                suspended_operation_scan,
-            )
+            scan_unary_scalar_operation(cold, processor, scalar, meaning, global, command_origin)
         }
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Kern) => scan_unary_scalar_operation(
-            cold,
-            processor,
-            &mut command.scalar,
-            meaning,
-            global,
-            command_origin,
-            UnaryOperationScanPhase::Value,
-            suspended_operation_scan,
-        ),
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Kern) => {
+            scan_unary_scalar_operation(cold, processor, scalar, meaning, global, command_origin)
+        }
         // TeX82 §1102's `any_mode(break_penalty): append_penalty` (§1103:
         // `scan_int; tail_append(new_penalty(cur_val))`). `\penalty` never
         // switches mode -- it appends directly to whatever list (main
         // vertical, horizontal, restricted horizontal, or math) is current.
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Penalty) => {
-            scan_unary_scalar_operation(
-                cold,
-                processor,
-                &mut command.scalar,
-                meaning,
-                global,
-                command_origin,
-                UnaryOperationScanPhase::Value,
-                suspended_operation_scan,
-            )
+            scan_unary_scalar_operation(cold, processor, scalar, meaning, global, command_origin)
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ControlSpace) => {
             complete_cold_scan!(cold, ColdOperation::ControlSpace)
@@ -311,12 +217,10 @@ pub(in crate::main_control) fn scan<G>(
                 scan_unary_scalar_operation(
                     cold,
                     processor,
-                    &mut command.scalar,
+                    scalar,
                     meaning,
                     global,
                     command_origin,
-                    UnaryOperationScanPhase::OptionalEquals,
-                    suspended_operation_scan,
                 )
             } else {
                 complete_cold_scan!(
@@ -344,28 +248,17 @@ pub(in crate::main_control) fn scan<G>(
             | UnexpandablePrimitive::ErrorStopMode),
         ) => complete_cold_scan!(cold, ColdOperation::SetInteractionMode(primitive)),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::InteractionMode) => {
-            scan_unary_scalar_operation(
-                cold,
-                processor,
-                &mut command.scalar,
-                meaning,
-                global,
-                command_origin,
-                UnaryOperationScanPhase::OptionalEquals,
-                suspended_operation_scan,
-            )
+            scan_unary_scalar_operation(cold, processor, scalar, meaning, global, command_origin)
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::SpaceFactor) => {
             if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal) {
                 scan_unary_scalar_operation(
                     cold,
                     processor,
-                    &mut command.scalar,
+                    scalar,
                     meaning,
                     global,
                     command_origin,
-                    UnaryOperationScanPhase::OptionalEquals,
-                    suspended_operation_scan,
                 )
             } else {
                 complete_cold_scan!(
@@ -377,29 +270,11 @@ pub(in crate::main_control) fn scan<G>(
             }
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PrevGraf) => {
-            scan_unary_scalar_operation(
-                cold,
-                processor,
-                &mut command.scalar,
-                meaning,
-                global,
-                command_origin,
-                UnaryOperationScanPhase::OptionalEquals,
-                suspended_operation_scan,
-            )
+            scan_unary_scalar_operation(cold, processor, scalar, meaning, global, command_origin)
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char) => {
             let origin = material_origin(processor, command);
-            scan_unary_scalar_operation(
-                cold,
-                processor,
-                &mut command.scalar,
-                meaning,
-                global,
-                origin,
-                UnaryOperationScanPhase::Value,
-                suspended_operation_scan,
-            )
+            scan_unary_scalar_operation(cold, processor, scalar, meaning, global, origin)
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Accent) => complete_cold_scan!(
             cold,
@@ -484,16 +359,7 @@ pub(in crate::main_control) fn scan<G>(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VSkip)
             if matches!(mode, Mode::Vertical | Mode::InternalVertical) =>
         {
-            scan_unary_scalar_operation(
-                cold,
-                processor,
-                &mut command.scalar,
-                meaning,
-                global,
-                command_origin,
-                UnaryOperationScanPhase::Value,
-                suspended_operation_scan,
-            )
+            scan_unary_scalar_operation(cold, processor, scalar, meaning, global, command_origin)
         }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::VFil
@@ -522,14 +388,7 @@ pub(in crate::main_control) fn scan<G>(
             }
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ParShape) => {
-            scan_paragraph_shape_assignment(
-                cold,
-                processor,
-                &mut command.scalar,
-                global,
-                ParagraphShapeScanPhase::OptionalEquals,
-                suspended_operation_scan,
-            )
+            scan_paragraph_shape_assignment(cold, processor, scalar, global)
         }
         // e-TeX 2.6 change [49.1248] extends TeX82 §1248's `set_shape`:
         // after the optional equals and integer count, the four penalty-array
@@ -548,15 +407,7 @@ pub(in crate::main_control) fn scan<G>(
                 UnexpandablePrimitive::DisplayWidowPenalties => PenaltyArrayKind::DisplayWidow,
                 _ => unreachable!("outer match restricts primitive to e-TeX penalty arrays"),
             };
-            scan_penalty_array_assignment(
-                cold,
-                processor,
-                &mut command.scalar,
-                kind,
-                global,
-                PenaltyArrayScanPhase::OptionalEquals,
-                suspended_operation_scan,
-            )
+            scan_penalty_array_assignment(cold, processor, scalar, kind, global)
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks) => {
             let owner = command.control_sequence().ok_or(ExecError::MissingToken {
@@ -595,22 +446,18 @@ pub(in crate::main_control) fn scan<G>(
         Meaning::IntParam(index) => scan_unary_scalar_operation(
             cold,
             processor,
-            &mut command.scalar,
+            scalar,
             Meaning::IntParam(index),
             global,
             command_origin,
-            UnaryOperationScanPhase::OptionalEquals,
-            suspended_operation_scan,
         ),
         Meaning::DimenParam(index) => scan_unary_scalar_operation(
             cold,
             processor,
-            &mut command.scalar,
+            scalar,
             Meaning::DimenParam(index),
             global,
             command_origin,
-            UnaryOperationScanPhase::OptionalEquals,
-            suspended_operation_scan,
         ),
         // TeX82 §1210 lists `set_page_dimen` and `set_page_int` among
         // `prefixed_command`'s ordinary assignment forms, and §1242 routes
@@ -624,22 +471,18 @@ pub(in crate::main_control) fn scan<G>(
         Meaning::PageDimension(dimension) => scan_unary_scalar_operation(
             cold,
             processor,
-            &mut command.scalar,
+            scalar,
             Meaning::PageDimension(dimension),
             global,
             command_origin,
-            UnaryOperationScanPhase::OptionalEquals,
-            suspended_operation_scan,
         ),
         Meaning::PageInteger(integer) => scan_unary_scalar_operation(
             cold,
             processor,
-            &mut command.scalar,
+            scalar,
             Meaning::PageInteger(integer),
             global,
             command_origin,
-            UnaryOperationScanPhase::OptionalEquals,
-            suspended_operation_scan,
         ),
         Meaning::TokParam(index) => {
             let owner = command.control_sequence().ok_or(ExecError::MissingToken {
@@ -752,12 +595,10 @@ pub(in crate::main_control) fn scan<G>(
                 scan_unary_scalar_operation(
                     cold,
                     processor,
-                    &mut command.scalar,
+                    scalar,
                     meaning,
                     global,
                     command_origin,
-                    UnaryOperationScanPhase::Value,
-                    suspended_operation_scan,
                 )?;
                 return Ok(());
             }
@@ -775,16 +616,7 @@ pub(in crate::main_control) fn scan<G>(
             )
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfSetRandomSeed) => {
-            scan_unary_scalar_operation(
-                cold,
-                processor,
-                &mut command.scalar,
-                meaning,
-                global,
-                command_origin,
-                UnaryOperationScanPhase::Value,
-                suspended_operation_scan,
-            )
+            scan_unary_scalar_operation(cold, processor, scalar, meaning, global, command_origin)
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfResetTimer) => {
             complete_cold_scan!(cold, ColdOperation::PdfResetTimer)
@@ -1018,31 +850,14 @@ pub(in crate::main_control) fn scan<G>(
         // scans `=<dimen>` either way; the whole assignment is consumed even
         // when §579 rejects it.
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::FontDimen) => {
-            scan_font_dimen_assignment(
-                cold,
-                processor,
-                &mut command.scalar,
-                FontDimenScanPhase::Number,
-                suspended_operation_scan,
-            )
+            scan_font_dimen_assignment(cold, processor, scalar)
         }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::HyphenChar | UnexpandablePrimitive::SkewChar),
-        ) => scan_font_integer_assignment(
-            cold,
-            processor,
-            &mut command.scalar,
-            primitive,
-            FontIntegerScanPhase::Font,
-            suspended_operation_scan,
-        ),
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::OpenOut) => scan_open_out_operation(
-            cold,
-            processor,
-            &mut command.scalar,
-            OpenOutScanPhase::Stream,
-            suspended_operation_scan,
-        ),
+        ) => scan_font_integer_assignment(cold, processor, scalar, primitive),
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::OpenOut) => {
+            scan_open_out_operation(cold, processor, scalar)
+        }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::CloseOut) => {
             complete_cold_scan!(
                 cold,
@@ -1055,13 +870,7 @@ pub(in crate::main_control) fn scan<G>(
             // pdftex.web §§1680--1682 configures font metrics independently
             // of the selected output backend; generated fonts are valid in
             // both DVI and PDF mode.
-            scan_pdf_font_expand_assignment(
-                cold,
-                processor,
-                &mut command.scalar,
-                PdfFontExpandScanPhase::Font,
-                suspended_operation_scan,
-            )
+            scan_pdf_font_expand_assignment(cold, processor, scalar)
         }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::PdfFontAttr
@@ -1133,12 +942,10 @@ pub(in crate::main_control) fn scan<G>(
                 scan_unary_scalar_operation(
                     cold,
                     processor,
-                    &mut command.scalar,
+                    scalar,
                     meaning,
                     global,
                     command_origin,
-                    UnaryOperationScanPhase::Value,
-                    suspended_operation_scan,
                 )
             } else {
                 complete_cold_scan!(
@@ -1161,15 +968,7 @@ pub(in crate::main_control) fn scan<G>(
             // character zero. The assigned value has the table-specific
             // bound below; it is a distinct operand and must not inherit the
             // selector's recovery.
-            scan_code_table_assignment(
-                cold,
-                processor,
-                &mut command.scalar,
-                primitive,
-                global,
-                CodeTableScanPhase::Character,
-                suspended_operation_scan,
-            )
+            scan_code_table_assignment(cold, processor, scalar, primitive, global)
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::CatCode) => {
             unreachable!("catcode assignments are owned by fused hot dispatch")
@@ -1184,36 +983,15 @@ pub(in crate::main_control) fn scan<G>(
             | UnexpandablePrimitive::PdfShbsCode
             | UnexpandablePrimitive::PdfKnbcCode
             | UnexpandablePrimitive::PdfKnacCode),
-        ) => scan_pdf_font_code_assignment(
-            cold,
-            processor,
-            &mut command.scalar,
-            primitive,
-            PdfFontCodeScanPhase::Font,
-            suspended_operation_scan,
-        ),
+        ) => scan_pdf_font_code_assignment(cold, processor, scalar, primitive),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfNoLigatures) => {
-            scan_font_only_operation(
-                cold,
-                processor,
-                &mut command.scalar,
-                meaning,
-                suspended_operation_scan,
-            )
+            scan_font_only_operation(cold, processor, scalar, meaning)
         }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::Advance
             | UnexpandablePrimitive::Multiply
             | UnexpandablePrimitive::Divide),
-        ) => scan_arithmetic_assignment(
-            cold,
-            processor,
-            &mut command.scalar,
-            primitive,
-            global,
-            ArithmeticScanPhase::TargetCommand,
-            suspended_operation_scan,
-        ),
+        ) => scan_arithmetic_assignment(cold, processor, scalar, primitive, global),
         Meaning::UnexpandablePrimitive(
             UnexpandablePrimitive::Def
             | UnexpandablePrimitive::Edef
@@ -1591,14 +1369,7 @@ pub(in crate::main_control) fn scan<G>(
             primitive @ (UnexpandablePrimitive::Leaders
             | UnexpandablePrimitive::CLeaders
             | UnexpandablePrimitive::XLeaders),
-        ) => scan_leaders_step(
-            cold,
-            processor,
-            &mut command.scalar,
-            primitive,
-            mode,
-            suspended_operation_scan,
-        ),
+        ) => scan_leaders_step(cold, processor, scalar, primitive, mode),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Shipout) => {
             complete_cold_scan!(cold, ColdOperation::BeginShipout)
         }
@@ -1708,13 +1479,9 @@ pub(in crate::main_control) fn scan<G>(
         // e-TeX 2.6 `etex.ch` [26.424]'s `make_mark`: `\marks` first scans
         // one extended register number (recovering an invalid selector to
         // class zero), then performs TeX82's expanded mark-text scan.
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Marks) => scan_marks_operation(
-            cold,
-            processor,
-            &mut command.scalar,
-            MarksScanPhase::Class,
-            suspended_operation_scan,
-        ),
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Marks) => {
+            scan_marks_operation(cold, processor, scalar)
+        }
         // TeX82 §1095's `hmode+halign: head_for_vmode` ends an unrestricted
         // paragraph and retries the alignment in vertical mode.
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HAlign)
@@ -2856,8 +2623,8 @@ fn unimplemented_meaning<G>(
     }
 }
 
-/// Scans TeX82's `advance`/`multiply`/`divide` operand sequence wholly
-/// through the command processor.  The target's meaning is classified here;
+/// Scans TeX82's advance/multiply/divide operand sequence wholly
+/// through the command processor. The target's meaning is classified here;
 /// application only sees this completed typed description after the processor
 /// borrow ends.
 pub(in crate::main_control) fn scan_arithmetic_assignment<G>(
@@ -2866,206 +2633,93 @@ pub(in crate::main_control) fn scan_arithmetic_assignment<G>(
     scalar: &mut tex_command::ScalarScanFrame,
     primitive: UnexpandablePrimitive,
     global: bool,
-    phase: ArithmeticScanPhase,
-    suspended: &mut Option<PendingOperationScanPhase>,
 ) -> Result<(), ExecError> {
-    let target = match phase {
-        ArithmeticScanPhase::TargetCommand => {
-            *suspended = Some(PendingOperationScanPhase::Arithmetic {
-                primitive,
-                global,
-                phase: ArithmeticScanPhase::TargetCommand,
-            });
-            let mut destination = None;
-            processor
-                .get_x_token_into(&mut destination)
-                .map_err(command_error)?;
-            let target_command = destination.ok_or(ExecError::UnsupportedAssignmentTarget)?;
-            *suspended = None;
-            match target_command.meaning() {
-                tex_state::meaning::ResolvedMeaning::Macro { .. } => {
-                    return complete_cold_scan!(
-                        cold,
-                        ColdOperation::InvalidArithmeticTarget {
-                            primitive,
-                            target: tex_command::PrintCommand::from_current(&target_command),
-                        }
-                    );
-                }
-                tex_state::meaning::ResolvedMeaning::Static(meaning) => match meaning {
-                    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count) => {
-                        let status = processor.scan_profile_register_index_into(scalar);
-                        ArithmeticTarget::IntegerRegister(take_operation_scalar!(
-                            scalar,
-                            status,
-                            PendingOperationScanPhase::Arithmetic {
-                                primitive,
-                                global,
-                                phase: ArithmeticScanPhase::TargetIndex {
-                                    target: ArithmeticIndexedTarget::Integer,
-                                },
-                            },
-                            suspended,
-                            take_register
-                        ))
-                    }
-                    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen) => {
-                        let status = processor.scan_profile_register_index_into(scalar);
-                        ArithmeticTarget::DimensionRegister(take_operation_scalar!(
-                            scalar,
-                            status,
-                            PendingOperationScanPhase::Arithmetic {
-                                primitive,
-                                global,
-                                phase: ArithmeticScanPhase::TargetIndex {
-                                    target: ArithmeticIndexedTarget::Dimension,
-                                },
-                            },
-                            suspended,
-                            take_register
-                        ))
-                    }
-                    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip) => {
-                        let status = processor.scan_profile_register_index_into(scalar);
-                        ArithmeticTarget::GlueRegister {
-                            index: take_operation_scalar!(
-                                scalar,
-                                status,
-                                PendingOperationScanPhase::Arithmetic {
-                                    primitive,
-                                    global,
-                                    phase: ArithmeticScanPhase::TargetIndex {
-                                        target: ArithmeticIndexedTarget::Glue { mu: false },
-                                    },
-                                },
-                                suspended,
-                                take_register
-                            ),
-                            mu: false,
-                        }
-                    }
-                    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip) => {
-                        let status = processor.scan_profile_register_index_into(scalar);
-                        ArithmeticTarget::GlueRegister {
-                            index: take_operation_scalar!(
-                                scalar,
-                                status,
-                                PendingOperationScanPhase::Arithmetic {
-                                    primitive,
-                                    global,
-                                    phase: ArithmeticScanPhase::TargetIndex {
-                                        target: ArithmeticIndexedTarget::Glue { mu: true },
-                                    },
-                                },
-                                suspended,
-                                take_register
-                            ),
-                            mu: true,
-                        }
-                    }
-                    Meaning::CountRegister(index) => ArithmeticTarget::IntegerRegister(index),
-                    Meaning::DimenRegister(index) => ArithmeticTarget::DimensionRegister(index),
-                    Meaning::SkipRegister(index) => {
-                        ArithmeticTarget::GlueRegister { index, mu: false }
-                    }
-                    Meaning::MuskipRegister(index) => {
-                        ArithmeticTarget::GlueRegister { index, mu: true }
-                    }
-                    Meaning::IntParam(index) => ArithmeticTarget::IntegerParameter(index),
-                    Meaning::DimenParam(index) => ArithmeticTarget::DimensionParameter(index),
-                    Meaning::GlueParam(index) => {
-                        ArithmeticTarget::GlueParameter { index, mu: false }
-                    }
-                    Meaning::MuGlueParam(index) => {
-                        ArithmeticTarget::GlueParameter { index, mu: true }
-                    }
-                    _ => {
-                        return complete_cold_scan!(
-                            cold,
-                            ColdOperation::InvalidArithmeticTarget {
-                                primitive,
-                                target: tex_command::PrintCommand::from_current(&target_command),
-                            }
-                        );
-                    }
-                },
-            }
-        }
-        ArithmeticScanPhase::TargetIndex { target } => {
-            let status = processor.scan_profile_register_index_into(scalar);
-            let index = take_operation_scalar!(
-                scalar,
-                status,
-                PendingOperationScanPhase::Arithmetic {
+    let mut destination = None;
+    processor
+        .get_x_token_into(&mut destination)
+        .map_err(command_error)?;
+    let target_command = destination.ok_or(ExecError::UnsupportedAssignmentTarget)?;
+    let target = match target_command.meaning() {
+        tex_state::meaning::ResolvedMeaning::Macro { .. } => {
+            return complete_cold_scan!(
+                cold,
+                ColdOperation::InvalidArithmeticTarget {
                     primitive,
-                    global,
-                    phase: ArithmeticScanPhase::TargetIndex { target },
-                },
-                suspended,
-                take_register
+                    target: tex_command::PrintCommand::from_current(&target_command),
+                }
             );
-            match target {
-                ArithmeticIndexedTarget::Integer => ArithmeticTarget::IntegerRegister(index),
-                ArithmeticIndexedTarget::Dimension => ArithmeticTarget::DimensionRegister(index),
-                ArithmeticIndexedTarget::Glue { mu } => {
-                    ArithmeticTarget::GlueRegister { index, mu }
+        }
+        tex_state::meaning::ResolvedMeaning::Static(meaning) => match meaning {
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count) => {
+                let status = processor.scan_profile_register_index_into(scalar);
+                ArithmeticTarget::IntegerRegister(take_operation_scalar!(
+                    scalar,
+                    status,
+                    take_register
+                ))
+            }
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen) => {
+                let status = processor.scan_profile_register_index_into(scalar);
+                ArithmeticTarget::DimensionRegister(take_operation_scalar!(
+                    scalar,
+                    status,
+                    take_register
+                ))
+            }
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip) => {
+                let status = processor.scan_profile_register_index_into(scalar);
+                ArithmeticTarget::GlueRegister {
+                    index: take_operation_scalar!(scalar, status, take_register),
+                    mu: false,
                 }
             }
-        }
-        ArithmeticScanPhase::Keyword { target } | ArithmeticScanPhase::Operand { target } => target,
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip) => {
+                let status = processor.scan_profile_register_index_into(scalar);
+                ArithmeticTarget::GlueRegister {
+                    index: take_operation_scalar!(scalar, status, take_register),
+                    mu: true,
+                }
+            }
+            Meaning::CountRegister(index) => ArithmeticTarget::IntegerRegister(index),
+            Meaning::DimenRegister(index) => ArithmeticTarget::DimensionRegister(index),
+            Meaning::SkipRegister(index) => ArithmeticTarget::GlueRegister { index, mu: false },
+            Meaning::MuskipRegister(index) => ArithmeticTarget::GlueRegister { index, mu: true },
+            Meaning::IntParam(index) => ArithmeticTarget::IntegerParameter(index),
+            Meaning::DimenParam(index) => ArithmeticTarget::DimensionParameter(index),
+            Meaning::GlueParam(index) => ArithmeticTarget::GlueParameter { index, mu: false },
+            Meaning::MuGlueParam(index) => ArithmeticTarget::GlueParameter { index, mu: true },
+            _ => {
+                return complete_cold_scan!(
+                    cold,
+                    ColdOperation::InvalidArithmeticTarget {
+                        primitive,
+                        target: tex_command::PrintCommand::from_current(&target_command),
+                    }
+                );
+            }
+        },
     };
-    if !matches!(phase, ArithmeticScanPhase::Operand { .. }) {
-        let status = processor.scan_keyword_into("by", scalar);
-        let _ = take_operation_scalar!(
-            scalar,
-            status,
-            PendingOperationScanPhase::Arithmetic {
-                primitive,
-                global,
-                phase: ArithmeticScanPhase::Keyword { target },
-            },
-            suspended,
-            take_boolean
-        );
-    }
-    let scalar_phase = PendingOperationScanPhase::Arithmetic {
-        primitive,
-        global,
-        phase: ArithmeticScanPhase::Operand { target },
-    };
+
+    let status = processor.scan_keyword_into("by", scalar);
+    let _ = take_operation_scalar!(scalar, status, take_boolean);
+
     let operand = match target {
         ArithmeticTarget::IntegerRegister(_) | ArithmeticTarget::IntegerParameter(_) => {
             let status = processor.scan_integer_into(scalar);
-            ArithmeticOperand::Integer(
-                take_operation_scalar!(scalar, status, scalar_phase, suspended, take_integer).value,
-            )
+            ArithmeticOperand::Integer(take_operation_scalar!(scalar, status, take_integer).value)
         }
         ArithmeticTarget::DimensionRegister(_) | ArithmeticTarget::DimensionParameter(_) => {
             match primitive {
                 UnexpandablePrimitive::Advance => {
                     let status = processor.scan_dimension_into(scalar);
                     ArithmeticOperand::Dimension(
-                        take_operation_scalar!(
-                            scalar,
-                            status,
-                            scalar_phase,
-                            suspended,
-                            take_dimension
-                        )
-                        .value,
+                        take_operation_scalar!(scalar, status, take_dimension).value,
                     )
                 }
                 UnexpandablePrimitive::Multiply | UnexpandablePrimitive::Divide => {
                     let status = processor.scan_integer_into(scalar);
                     ArithmeticOperand::Integer(
-                        take_operation_scalar!(
-                            scalar,
-                            status,
-                            scalar_phase,
-                            suspended,
-                            take_integer
-                        )
-                        .value,
+                        take_operation_scalar!(scalar, status, take_integer).value,
                     )
                 }
                 _ => unreachable!("arithmetic primitive is filtered above"),
@@ -3075,28 +2729,19 @@ pub(in crate::main_control) fn scan_arithmetic_assignment<G>(
             match primitive {
                 UnexpandablePrimitive::Advance => {
                     let status = processor.scan_glue_into(mu, scalar);
-                    ArithmeticOperand::Glue(
-                        take_operation_scalar!(scalar, status, scalar_phase, suspended, take_glue)
-                            .value,
-                    )
+                    ArithmeticOperand::Glue(take_operation_scalar!(scalar, status, take_glue).value)
                 }
                 UnexpandablePrimitive::Multiply | UnexpandablePrimitive::Divide => {
                     let status = processor.scan_integer_into(scalar);
                     ArithmeticOperand::Integer(
-                        take_operation_scalar!(
-                            scalar,
-                            status,
-                            scalar_phase,
-                            suspended,
-                            take_integer
-                        )
-                        .value,
+                        take_operation_scalar!(scalar, status, take_integer).value,
                     )
                 }
                 _ => unreachable!("arithmetic primitive is filtered above"),
             }
         }
     };
+
     complete_cold_scan!(
         cold,
         ColdOperation::Arithmetic {
