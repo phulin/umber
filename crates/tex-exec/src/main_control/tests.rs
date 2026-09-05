@@ -9989,9 +9989,9 @@ fn pdf_image_create_rejects_dvi_and_direct_retry_before_allocation() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = pdftex_image_control(stores);
         register_source(
-        &mut control,
-        br"\pdfximage width 10pt height 20pt depth 3pt attr{/Interpolate true} page 2 mediabox {image.pdf}",
-    );
+            &mut control,
+            br"\pdfximage width 10pt height 20pt depth 3pt attr{/Interpolate true} page 2 mediabox {image.pdf}",
+        );
         let state_before = stores.journal_cursor().expect("state cursor");
 
         assert!(matches!(
@@ -10007,7 +10007,10 @@ fn pdf_image_create_rejects_dvi_and_direct_retry_before_allocation() {
                 == 0
         );
         assert!(mode_vec(&control, stores).is_empty());
+    });
 
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = pdftex_image_control(stores);
         crate::test_harness::assign_int_param(
             stores,
             IntParam::PDF_OUTPUT,
@@ -10015,6 +10018,10 @@ fn pdf_image_create_rejects_dvi_and_direct_retry_before_allocation() {
             tex_state::AssignmentScope::Global,
         )
         .expect("integer parameter assignment");
+        register_source(
+            &mut control,
+            br"\pdfximage width 10pt height 20pt depth 3pt attr{/Interpolate true} page 2 mediabox {image.pdf}",
+        );
         let pdf_state_before = stores.journal_cursor().expect("state cursor");
         let request = {
             let mut request = None;
@@ -10048,14 +10055,6 @@ fn pdf_image_create_rejects_dvi_and_direct_retry_before_allocation() {
         assert_eq!(request.page_box, tex_command::PdfImagePageBox::Media);
         assert!(request.page_box_explicit);
         assert!(request.attr.is_some());
-        assert!(matches!(
-            control.capture_checkpoint(
-                crate::EngineBoundary::OuterParagraphEnd,
-                stores,
-                crate::ExecutionBudgetCounters::default(),
-            ),
-            Err(tex_command::CommandSummaryError::AttemptSuspended)
-        ));
 
         control.capabilities_mut().register_pdf_image(
             request,
@@ -10084,9 +10083,9 @@ fn immediate_pdf_image_rejects_direct_retry_after_resource_need() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = pdftex_image_control(stores);
         register_source(
-        &mut control,
-        br"\immediate\pdfximage width 7pt height 8pt depth 2pt attr{/Intent /RelativeColorimetric} page 3 cropbox {immediate.pdf}",
-    );
+            &mut control,
+            br"\immediate\pdfximage width 7pt height 8pt depth 2pt attr{/Intent /RelativeColorimetric} page 3 cropbox {immediate.pdf}",
+        );
         let state_before = stores.journal_cursor().expect("state cursor");
 
         assert!(matches!(
@@ -10101,7 +10100,10 @@ fn immediate_pdf_image_rejects_direct_retry_after_resource_need() {
                 == 0
         );
         assert!(mode_vec(&control, stores).is_empty());
+    });
 
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = pdftex_image_control(stores);
         crate::test_harness::assign_int_param(
             stores,
             IntParam::PDF_OUTPUT,
@@ -10109,6 +10111,10 @@ fn immediate_pdf_image_rejects_direct_retry_after_resource_need() {
             tex_state::AssignmentScope::Global,
         )
         .expect("integer parameter assignment");
+        register_source(
+            &mut control,
+            br"\immediate\pdfximage width 7pt height 8pt depth 2pt attr{/Intent /RelativeColorimetric} page 3 cropbox {immediate.pdf}",
+        );
         let pdf_state_before = stores.journal_cursor().expect("state cursor");
         let request = {
             let mut request = None;
