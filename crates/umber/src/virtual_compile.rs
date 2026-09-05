@@ -2954,6 +2954,20 @@ impl<'store> VirtualCompileSession<'store> {
         Some((key.wire_key(), discarded_work))
     }
 
+    /// Reads the parked command/input context for a bounded replay probe.
+    ///
+    /// The result is detached value-only telemetry; it does not expose or
+    /// retain the candidate's checkpoint owner. This remains crate-private so
+    /// normal hosts cannot accidentally make scheduling depend on it.
+    #[cfg(test)]
+    pub(crate) fn replay_probe_snapshot(&mut self) -> Option<tex_incr::ReplayProbeSnapshot> {
+        let candidate = self.candidate.as_mut()?;
+        match &mut candidate.execution {
+            RetainedExecution::Initial { candidate, .. }
+            | RetainedExecution::Pending(candidate) => candidate.replay_probe_snapshot().ok()?,
+        }
+    }
+
     fn finish_resource_wait(&mut self) {
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(started) = self.resource_wait_started.take() {

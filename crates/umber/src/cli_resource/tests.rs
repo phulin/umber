@@ -1,6 +1,9 @@
 #![allow(clippy::disallowed_methods)] // Host-side resource/cache integration fixtures.
 
+use std::sync::Arc;
+
 use tempfile::TempDir;
+use tex_command::{CommandObservation, CommandObserver};
 use tex_fonts::{FontFeaturePolicy, FontPurposes, FontRequest, FontRequestKey, VariationSelection};
 use tex_incr::RevisionId;
 use umber_distribution::{ManifestShard, pack_shard};
@@ -1910,6 +1913,270 @@ fn incompatible_format_schema_is_rejected_before_cache_lookup_or_acquisition() {
     );
 }
 
+fn required_batch_after_declining_startup_hint<'store>(
+    session: &mut VirtualCompileSession<'store>,
+) -> NeedResources {
+    let CompileAttemptResult::NeedResources(startup) = session.compile_attempt() else {
+        panic!("startup hint round must precede the demanded input");
+    };
+    assert!(startup.required.is_empty());
+    assert!(startup.probes.is_empty());
+    assert!(!startup.prefetch_hints.is_empty());
+    session
+        .provide_resources(Vec::new())
+        .expect("decline startup hints through the normal response contract");
+
+    let CompileAttemptResult::NeedResources(required) = session.compile_attempt() else {
+        panic!("declining startup hints must expose the demanded input");
+    };
+    assert!(!required.required.is_empty());
+    required
+}
+
+fn probe_observation_summary(observations: &[CommandObservation]) -> Vec<String> {
+    observations
+        .iter()
+        .take(8)
+        .map(|observation| match observation {
+            CommandObservation::Command(record) => format!(
+                "command name={} boundary={:?} level={} position={} sequence={}",
+                record.command,
+                record.boundary,
+                record.provenance.input_level,
+                record.provenance.position,
+                record.provenance.delivery_sequence,
+            ),
+            CommandObservation::Input(record) => format!(
+                "input reason={:?} transition={:?} source={:?} level={} position={}",
+                record.reason, record.transition, record.source, record.level, record.position,
+            ),
+            other => format!("{other:?}"),
+        })
+        .collect()
+}
+
+struct DirectProbeRecorder<'a>(&'a mut Vec<CommandObservation>);
+
+impl CommandObserver for DirectProbeRecorder<'_> {
+    fn committed(&mut self, observation: CommandObservation) {
+        if self.0.len() < 8 {
+            self.0.push(observation);
+        }
+    }
+}
+
+#[test]
+#[ignore = "temporary du4r replay probe"]
+fn du4r_bounded_loaded_format_replay_probe() {
+    let directory = TempDir::new().expect("distribution tempdir");
+    let distribution = directory.path().join("distribution");
+    let objects = distribution.join("objects");
+    std::fs::create_dir_all(&objects).expect("distribution objects directory");
+    let engine = EngineMode::Latex;
+    let closure_len = 4;
+    let mut recipe = crate::FormatRecipe::raw_etex26();
+    recipe.engine = engine;
+    recipe.format_name = "du4r-probe".to_owned();
+    recipe.format_ident_name = recipe.format_name.clone();
+    recipe.distribution_identity = b"du4r-probe".to_vec();
+    let format = crate::format_fixture::construct_format_in_worker(&recipe)
+        .expect("probe format")
+        .image;
+    let format_digest = hex_digest(&format);
+    std::fs::write(objects.join(format!("ahash64-v1-{format_digest}")), &format)
+        .expect("format object");
+
+    let mut closure_objects = Vec::new();
+    let mut entries = Vec::new();
+    let mut keys = Vec::new();
+    for index in 0..closure_len {
+        let name = format!("du4r-{index:02}.tex");
+        let key = format!("tex:{name}");
+        let bytes = if index + 1 == closure_len {
+            b"\\end".to_vec()
+        } else {
+            format!("\\input du4r-{:02}\n", index + 1).into_bytes()
+        };
+        let digest = hex_digest(&bytes);
+        std::fs::write(objects.join(format!("ahash64-v1-{digest}")), &bytes)
+            .expect("closure object");
+        entries.push(format!(
+            "\"{key}\":{{\"virtualPath\":\"/texlive/{name}\",\"object\":\"ahash64-v1-{digest}\",\"ahash64\":\"{digest}\",\"bytes\":{}}}",
+            bytes.len()
+        ));
+        keys.push(key);
+        closure_objects.push((digest, bytes.len() as u64));
+    }
+
+    // The direct loaded-format control has no resource request at all. Its
+    // observations are the parser baseline: a demand/replay run should not
+    // be allowed to masquerade as a command-parser failure.
+    let direct_fixture = crate::format_fixture::ensure_format(
+        &crate::FormatCacheStore::new(directory.path().join("direct-format-cache")),
+        &recipe,
+        &crate::umber_format_worker_launcher(),
+    )
+    .expect("direct probe format");
+    let mut direct_observations = Vec::new();
+    let direct_run = direct_fixture
+        .load(tex_state::World::memory())
+        .expect("direct fixture load")
+        .run(
+            "direct.tex",
+            // No `\input` is present in this control, so the loaded engine
+            // has no host miss or replay at all. It is intentionally a
+            // parser/direct-delivery baseline for the demand case below.
+            Arc::from(b"\\relax\\end\n".as_slice()),
+            &[],
+            &mut DirectProbeRecorder(&mut direct_observations),
+        )
+        .expect("direct loaded-format control");
+    eprintln!(
+        "PROBE direct status={:?} observations={:?}",
+        direct_run.result.status,
+        probe_observation_summary(&direct_observations),
+    );
+    let shard = format!(
+        "{{\"schema\":3,\"distribution\":\"du4r-probe\",\"index\":0,\"files\":{{{}}}}}\n",
+        entries.join(",")
+    );
+    let packed =
+        pack_shard(&ManifestShard::parse(&shard).expect("typed shard")).expect("packed shard");
+    let shard_digest = hex_digest(&packed);
+    std::fs::write(objects.join(format!("ahash64-v1-{shard_digest}")), packed)
+        .expect("shard object");
+    let key_json = keys
+        .iter()
+        .map(|key| format!("\"{key}\""))
+        .collect::<Vec<_>>()
+        .join(",");
+    let root = format!(
+        "{{\"schema\":8,\"distribution\":\"du4r-probe\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"],\"formats\":{{\"probe\":{{\"object\":\"ahash64-v1-{format_digest}\",\"ahash64\":\"{format_digest}\",\"bytes\":{},\"engine\":\"umber\",\"engineVersion\":\"{}\",\"formatSchema\":12,\"sourceDistribution\":\"du4r-probe\",\"sourceManifestAhash64\":\"{}\",\"sourceDateEpoch\":0,\"inputClosure\":{{\"schema\":1,\"keys\":[{}]}}}}}}}}\n",
+        format.len(),
+        crate::PACKAGE_VERSION,
+        "1".repeat(16),
+        key_json
+    );
+    std::fs::write(distribution.join("manifest-v8.json"), root).expect("root manifest");
+    let input = directory.path().join("main.tex");
+    std::fs::write(&input, b"\\input du4r-00\n").expect("main input");
+    let cancellation = FetchCancellation::new();
+    let mut session = NativeCompileSession::new_with_cache(
+        &NativeRunOptions {
+            input,
+            format: Some(PathBuf::from("probe.fmt")),
+            initial_prefetch_keys: Vec::new(),
+            engine,
+            pdf_output_mode: None,
+            outputs: OutputCapabilitySet::DVI,
+            html_asset_directory: None,
+            distribution: Some(distribution.to_string_lossy().into_owned()),
+            distribution_ahash64: None,
+            offline: false,
+            expansion_fuel: Some(20_000),
+            execution_steps: Some(20_000),
+        },
+        &cancellation,
+        ObjectCache::new(directory.path().join("cache")),
+    )
+    .expect("native session");
+
+    let mut batch = required_batch_after_declining_startup_hint(&mut session.session);
+    for round in 0..8 {
+        let parked = session.session.replay_probe_snapshot();
+        eprintln!(
+            "PROBE round={round} attempts={} batch={batch:?} telemetry={:?} replay={:?} parked={parked:?} retention={:?}",
+            session.session.attempts(),
+            session.session.compile_telemetry().execution,
+            session.session.resource_replay_context(),
+            session.session.retention_metrics(),
+        );
+        for name in ["du4r-00.tex", "du4r-01.tex", "du4r-02.tex", "du4r-03.tex"] {
+            let key = FileRequestKey::new(FileKind::TexInput, name).expect("probe key");
+            eprintln!(
+                "PROBE binding name={name} bound={} readiness={:?}",
+                session.session.workspace().get(&key).is_some(),
+                session.session.workspace().readiness(&key),
+            );
+        }
+        let generated_transaction = session
+            .session
+            .generated_transaction_identity()
+            .expect("generated transaction");
+        session
+            .distribution
+            .record_generated_misses(&batch, &generated_transaction);
+        let resolved = session
+            .distribution
+            .resolve_batch_with_prefetch(
+                &session.local,
+                &batch,
+                &cancellation,
+                &mut session.host_telemetry.resolver,
+            )
+            .expect("probe batch resolution");
+        eprintln!(
+            "PROBE resolved required={} prefetch={} admitted={} admitted_keys={:?}",
+            resolved.responses.len(),
+            resolved.prefetch_requests.len(),
+            resolved.admitted_files.len(),
+            resolved
+                .admitted_files
+                .iter()
+                .map(|(request, _)| request.key().clone())
+                .collect::<Vec<_>>(),
+        );
+        session
+            .session
+            .note_resource_exists(resolved.catalog_exists.clone());
+        session
+            .session
+            .authorize_prefetch_files(resolved.prefetch_requests.clone());
+        session
+            .session
+            .provide_resources(resolved.responses.clone())
+            .expect("probe admission");
+        for (request, file) in &resolved.admitted_files {
+            session.prefetch.admit_file_with_metadata(
+                request,
+                &file.virtual_path,
+                file.bytes.as_ref(),
+                session
+                    .distribution
+                    .dependencies_for([request.key().clone()]),
+            );
+        }
+        session
+            .drain_prefetch_closure(&cancellation)
+            .expect("probe prefetch");
+        eprintln!(
+            "PROBE after-admission bindings={:?}",
+            ["du4r-00.tex", "du4r-01.tex", "du4r-02.tex", "du4r-03.tex"]
+                .into_iter()
+                .map(|name| {
+                    let key = FileRequestKey::new(FileKind::TexInput, name).expect("probe key");
+                    (name, session.session.workspace().readiness(&key))
+                })
+                .collect::<Vec<_>>(),
+        );
+        match session.session.compile_attempt() {
+            CompileAttemptResult::NeedResources(next) => batch = next,
+            CompileAttemptResult::Complete(_) => {
+                eprintln!("PROBE complete");
+                return;
+            }
+            CompileAttemptResult::Error(error) => {
+                eprintln!(
+                    "PROBE terminal error={error:?} parked_after_error={:?}",
+                    session.session.replay_probe_snapshot(),
+                );
+                return;
+            }
+        }
+    }
+    panic!("PROBE finite round guard reached");
+}
+
 #[test]
 fn format_closure_is_loaded_only_as_each_input_is_requested() {
     for (engine, closure_len) in [(EngineMode::Latex, 57), (EngineMode::PdfLatex, 60)] {
@@ -1997,11 +2264,8 @@ fn format_closure_is_loaded_only_as_each_input_is_requested() {
         )
         .expect("native session");
 
-        let CompileAttemptResult::NeedResources(first) = session.session.compile_attempt() else {
-            panic!("first attempt must miss the closure head");
-        };
+        let first = required_batch_after_declining_startup_hint(&mut session.session);
         assert_eq!(first.required.len(), 1);
-        assert!(!first.prefetch_hints.is_empty());
         let responses = session
             .distribution
             .resolve_batch(&session.local, &first, &cancellation)
