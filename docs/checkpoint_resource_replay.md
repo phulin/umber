@@ -146,6 +146,32 @@ and separate font/image/document budgets. Hints are suggestions, not semantic
 input. Required lookups always win, and absence of a speculative hint never
 creates a negative binding.
 
+`umber-distribution::PrefetchPolicy` is the one policy owner for both native
+and WASM. It owns literal extraction, canonical `FileRequestKey` queue
+deduplication, selection budgets, bounded runtime closure, and replay-region
+escalation. `PrefetchPlanner` and the WASM DTO binding are adapters; native
+resolution and browser JavaScript retain only transport, provider ordering,
+and the original spelling/search context needed to issue a request. The shared
+defaults are 64 files/16 MiB total, 8 MiB small-runtime, 2 MiB font and image,
+512 KiB document, 256 KiB scanned runtime text, 32 follow-up hints, and one
+follow-up tier.
+
+The admission callback runs only after a verified response has successfully
+crossed the engine VFS transaction. It receives the canonical key, retained
+path, admitted bytes, and packed dependency hints; only then may the policy
+scan small runtime text and enqueue its next bounded batch. Catalog-positive
+metadata is reported separately as `ExistsNotReady`; a cache hit or catalog
+record never becomes `Ready` without engine admission. Empty or declined
+speculative batches are acknowledged once and terminate, while required
+responses and their original failures remain authoritative.
+
+For repeated misses, the host supplies the opaque key of the actual retained
+checkpoint region together with monotonic discarded-work telemetry. The policy
+keeps per-run region and request diagnostics, and escalates known small
+package/dependency companions by bounded tiers after additional discarded
+work. It resets those counters for a new run/context and never substitutes a
+suspension serial, creates a checkpoint, or fetches a whole distribution.
+
 The host confirms the startup set's readiness before the run and the demanded
 set's readiness before retry. A successful lookup manifest is published only
 after accepted output and generated state commit. Failed-attempt discoveries

@@ -16,6 +16,8 @@ use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
+use serde::{Deserialize, Serialize};
+
 use tex_command::{
     CommandProfile, RegisteredSourceKind, SourceFramingPolicy, SourceRegistration,
     SourceRegistrationError,
@@ -45,6 +47,69 @@ use candidate_lease::{CandidateLease, CandidateLeaseState};
 pub use history::{BoundaryKey, BoundaryRecord};
 use history::{HistoryComparison, RevisionEditMap, compare_histories};
 pub use trace::{TraceCompositionError, TraceOperation, TraceSummary, TraceValidationError};
+
+/// Stable wire projection of the executor boundary that owns a resource
+/// replay.  It deliberately contains no process-local checkpoint handle or
+/// suspension counter.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+pub enum ResourceReplayBoundary {
+    JobStart,
+    OuterParagraphEnd,
+}
+
+impl ResourceReplayBoundary {
+    #[must_use]
+    pub const fn wire_name(self) -> &'static str {
+        match self {
+            Self::JobStart => "job-start",
+            Self::OuterParagraphEnd => "outer-paragraph-end",
+        }
+    }
+}
+
+/// Opaque, serde-safe identity of one retained replay region.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct ResourceReplayRegionKey {
+    position: u64,
+    boundary: ResourceReplayBoundary,
+    ordinal: u32,
+}
+
+impl ResourceReplayRegionKey {
+    #[must_use]
+    pub const fn new(position: u64, boundary: ResourceReplayBoundary, ordinal: u32) -> Self {
+        Self {
+            position,
+            boundary,
+            ordinal,
+        }
+    }
+
+    #[must_use]
+    pub const fn position(self) -> u64 {
+        self.position
+    }
+
+    #[must_use]
+    pub const fn boundary(self) -> ResourceReplayBoundary {
+        self.boundary
+    }
+
+    #[must_use]
+    pub const fn ordinal(self) -> u32 {
+        self.ordinal
+    }
+
+    #[must_use]
+    pub fn wire_key(self) -> String {
+        format!(
+            "{}:{}:{}",
+            self.boundary.wire_name(),
+            self.position,
+            self.ordinal
+        )
+    }
+}
 
 /// Creates the caller-owned reachability domain for one incremental session.
 #[must_use]
@@ -623,6 +688,7 @@ pub struct RevisionCandidate<'store> {
     replayed_delivered_tokens: u64,
     replayed_dispatches: u64,
     discarded_fuel: u64,
+    resource_replay_region: Option<ResourceReplayRegionKey>,
     generation: Option<tex_exec::RetainedEngineGeneration<'store>>,
     inherited_boundary: Option<InheritedBoundary>,
     checkpoint_control_key: Option<tex_exec::RetainedEngineAttachmentKey>,
@@ -758,6 +824,14 @@ impl<'store> RevisionCandidate<'store> {
     #[must_use]
     pub const fn suspension_serial(&self) -> u64 {
         self.suspension_serial
+    }
+
+    /// Returns the last actual retained checkpoint used to rewind for a
+    /// resource answer.  The value is stable across host retries and is not a
+    /// substitute for the process-local suspension serial.
+    #[must_use]
+    pub const fn resource_replay_region_key(&self) -> Option<ResourceReplayRegionKey> {
+        self.resource_replay_region
     }
 
     pub fn set_cumulative_fuel_limit(&mut self, limit: u64) {
@@ -1045,11 +1119,16 @@ impl tex_exec::RetainedEngineOperation for CandidateRun<'_, '_> {
                 .candidate
                 .replayed_delivered_tokens
                 .saturating_add(delivered_after.saturating_sub(delivered_before) as u64);
-            let (anchor, attempt_fuel) = {
+            let (anchor, attempt_fuel, replay_region) = {
                 let (_, _, _, control, runtime) = attached.parts::<CandidateRuntime>();
+                let anchor = runtime.take_latest_replay_anchor();
+                let replay_region = anchor
+                    .as_ref()
+                    .map(|anchor| anchor.region_key(runtime, self.candidate));
                 (
-                    runtime.take_latest_replay_anchor(),
+                    anchor,
                     control.fuel_burned().saturating_sub(fuel_before),
+                    replay_region,
                 )
             };
             let Some(anchor) = anchor else {
@@ -1059,6 +1138,7 @@ impl tex_exec::RetainedEngineOperation for CandidateRun<'_, '_> {
                     discarded_fuel: attempt_fuel,
                 };
             };
+            self.candidate.resource_replay_region = replay_region;
             let replayed_from_job_start = matches!(anchor.slot, ReplayAnchorSlot::JobStart);
             let releases = {
                 let (_, _, mut checkpoints, _, runtime) = attached.parts::<CandidateRuntime>();
@@ -1432,6 +1512,34 @@ enum ReplayAnchorSlot {
     JobStart,
     CurrentCandidate,
     History(usize),
+}
+
+impl ReplayAnchorLease {
+    fn region_key(
+        &self,
+        runtime: &CandidateRuntime,
+        candidate: &RevisionCandidate<'_>,
+    ) -> ResourceReplayRegionKey {
+        let boundary = match self.slot {
+            ReplayAnchorSlot::JobStart => {
+                return ResourceReplayRegionKey::new(0, ResourceReplayBoundary::JobStart, 0);
+            }
+            ReplayAnchorSlot::CurrentCandidate => candidate.plan.restart_boundary,
+            ReplayAnchorSlot::History(index) => {
+                runtime.history.records.get(index).map(BoundaryRecord::key)
+            }
+        };
+        boundary.map_or_else(
+            || ResourceReplayRegionKey::new(0, ResourceReplayBoundary::JobStart, 0),
+            |key| {
+                let boundary = match key.boundary {
+                    EngineBoundary::JobStart => ResourceReplayBoundary::JobStart,
+                    EngineBoundary::OuterParagraphEnd => ResourceReplayBoundary::OuterParagraphEnd,
+                };
+                ResourceReplayRegionKey::new(key.position as u64, boundary, key.ordinal)
+            },
+        )
+    }
 }
 
 impl CandidateRuntime {
@@ -3412,6 +3520,7 @@ impl<'store> Session<'store> {
             replayed_delivered_tokens: 0,
             replayed_dispatches: 0,
             discarded_fuel: 0,
+            resource_replay_region: None,
             generation,
             inherited_boundary,
             checkpoint_control_key,

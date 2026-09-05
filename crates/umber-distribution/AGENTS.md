@@ -23,6 +23,11 @@ strict, host-neutral contract for immutable distribution manifests.
   byte view. Native and WebAssembly runtime selection must use this view and
   must not restore a JSON shard, per-record materialization, or `BTreeMap` hot
   path. `ManifestShard` remains a publisher/test construction model only.
+- `src/prefetch.rs` owns the shared host-neutral literal hint extraction,
+  canonical bounded prefetch queue, payload-budget selection, admitted runtime
+  closure, and retained-region escalation policy. Native and WASM adapters must
+  call this policy rather than grow independent predictors; it never performs
+  I/O or declares engine readiness.
 
 ## Validation
 

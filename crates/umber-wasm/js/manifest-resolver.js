@@ -8,7 +8,8 @@ import {
 } from "./manifest-schema.js";
 import { IndexedDbObjectCache } from "./persistent-cache.js";
 import {
-	extractLiteralHints,
+	createJavaScriptPrefetchPolicy,
+	createRustPrefetchPolicy,
 	LookupManifest,
 	literalHintRequest,
 	makePrefetchIdentity,
@@ -36,8 +37,17 @@ const DEFAULT_RESOLVED_FILES = 512;
 const MAX_RESOLVED_FILES = 4096;
 const DEFAULT_CACHED_BYTES = 64 * 1024 * 1024;
 const MAX_CACHED_BYTES = 256 * 1024 * 1024;
-const MAX_PACKAGE_SCAN_BYTES = 256 * 1024;
-const MAX_PACKAGE_FOLLOWUP_HINTS = 32;
+const SHARED_PREFETCH_BUDGET = Object.freeze({
+	maxFiles: 64,
+	maxBytes: 16 * 1024 * 1024,
+	maxRuntimeBytes: 8 * 1024 * 1024,
+	maxFontBytes: 2 * 1024 * 1024,
+	maxImageBytes: 2 * 1024 * 1024,
+	maxDocumentBytes: 512 * 1024,
+	maxRuntimeScanBytes: 256 * 1024,
+	maxFollowupHints: 32,
+	maxFollowupDepth: 1,
+});
 
 // Installed by the external publication tracked in umber2-66p0.27.
 export const TEXLIVE_2026_MANIFEST_URL = undefined;
@@ -202,6 +212,21 @@ export class HttpManifestResolver {
 		this.shardCache = new Map();
 		this.prefetchPolicyVersion =
 			options.prefetchPolicyVersion ?? PREFETCH_POLICY_VERSION;
+		this.prefetchPolicy =
+			options.prefetchPolicy ??
+			createRustPrefetchPolicy(options.catalog) ??
+			createJavaScriptPrefetchPolicy();
+		this.prefetchState = undefined;
+		this.prefetchQueue = [];
+		this.prefetchQueued = new Set();
+		this.prefetchAdmittedRequests = new Set();
+		this.prefetchDepths = new Map();
+		this.prefetchScanned = new Set();
+		this.replayMisses = new Map();
+		this.replayRegions = new Map();
+		this.replayRegionRequests = new Map();
+		this.lastDiscardedWork = 0;
+		this.knownDependencies = new Map();
 		this.readiness = new Map();
 		this.prefetchAdmitted = new Map();
 		this.prefetchCountedPaths = new Set();
@@ -221,6 +246,16 @@ export class HttpManifestResolver {
 		this.currentRun = undefined;
 	}
 
+	/** Installs the production Rust policy after the WASM module is loaded. */
+	bindPrefetchPolicy(bindings) {
+		const policy = createRustPrefetchPolicy(bindings);
+		if (policy !== undefined) {
+			this.prefetchPolicy = policy;
+			this.prefetchPolicyVersion = policy.version;
+		}
+		return this.prefetchPolicy.version;
+	}
+
 	async resolve(requests, options) {
 		const signal = Object.hasOwn(options ?? {}, "signal")
 			? options.signal
@@ -229,11 +264,6 @@ export class HttpManifestResolver {
 			? options.prefetchHints
 			: [];
 		const admitPrefetch = options?.admitPrefetch === true;
-		const prefetchTrace =
-			options?.prefetchTrace instanceof Set ? options.prefetchTrace : new Set();
-		const prefetchDepth = Number.isSafeInteger(options?.prefetchDepth)
-			? options.prefetchDepth
-			: 0;
 		const probes = Object.hasOwn(options ?? {}, "probes") ? options.probes : [];
 		if (!Array.isArray(probes)) {
 			throw new ManifestResolverError(
@@ -283,64 +313,24 @@ export class HttpManifestResolver {
 			this.#setReadiness(typedRequestIdentity(miss.request), "absent");
 			this.#recordAbsent(miss.request, roleFor(miss.request), miss.manifestKey);
 		}
-		for (const miss of hinted.misses) {
-			this.#setReadiness(typedRequestIdentity(miss.request), "absent");
-			this.#recordAbsent(miss.request, "hint", miss.manifestKey);
-		}
 		validateJobBudget(required.jobs, this.maxFiles, this.maxBytes);
-		const jobs = mergeJobs(
-			required.jobs,
-			hinted.jobs,
-			this.maxFiles,
-			this.maxBytes,
-		);
+		const jobs = this.#selectJobs(required.jobs, hinted.jobs);
 		const groups = groupByObject(jobs);
 		const results = new Map();
-		const followupHints = [];
 		let next = 0;
 		const worker = async () => {
 			while (next < groups.length) {
 				const group = groups[next++];
 				try {
 					const bytes = await this.#object(group[0].entry, signal);
-					if (
-						admitPrefetch &&
-						followupHints.length < MAX_PACKAGE_FOLLOWUP_HINTS
-					)
-						collectPackageHints(group, bytes, prefetchTrace, followupHints);
 					for (const job of group) {
-						const identity =
-							job.request === undefined
-								? typedRequestIdentity(decodeKey(job.manifestKey))
-								: job.key;
-						this.#setReadiness(identity, "ready");
+						this.#rememberDependencies(job);
 						this.#recordResolved(
 							job,
 							job.request === undefined
 								? "hint"
 								: roleFor(job.request, job.hinted || !job.requested),
 						);
-						if (job.requested && !job.hinted) {
-							const demandIdentity = job.key;
-							if (!this.demandCounted.has(demandIdentity)) {
-								this.demandCounted.add(demandIdentity);
-								this.prefetchMetrics.demandBytes += bytes.byteLength;
-							}
-							for (const [prefetchIdentity, value] of this.prefetchAdmitted) {
-								if (value.virtualPath === job.entry.virtualPath)
-									this.prefetchUsed.add(prefetchIdentity);
-							}
-						} else if (admitPrefetch && (job.hinted || !job.requested)) {
-							const prefetchIdentity = identity;
-							if (!this.prefetchAdmitted.has(prefetchIdentity)) {
-								this.prefetchAdmitted.set(prefetchIdentity, {
-									bytes: bytes.byteLength,
-									virtualPath: job.entry.virtualPath,
-								});
-								if (this.prefetchCountedPaths.add(job.entry.virtualPath))
-									this.prefetchMetrics.prefetchBytes += bytes.byteLength;
-							}
-						}
 						results.set(
 							job.key,
 							job.type === "file"
@@ -410,15 +400,244 @@ export class HttpManifestResolver {
 					: [],
 			),
 		);
-		if (followupHints.length === 0 || prefetchDepth >= 1) return admitted;
-		const followup = await this.resolve([], {
-			signal,
-			prefetchHints: deduplicateTypedRequests(followupHints),
-			admitPrefetch: true,
-			prefetchTrace,
-			prefetchDepth: prefetchDepth + 1,
+		return admitted;
+	}
+
+	#selectJobs(required, hinted) {
+		if (typeof this.prefetchPolicy.select !== "function")
+			return mergeJobs(required, hinted, this.maxFiles, this.maxBytes);
+		// Inline dependency jobs are returned alongside blocking jobs by the
+		// catalogue plan. Their null request index makes them speculative even
+		// though they came from the blocking lookup; keep them under the shared
+		// optional budget instead of treating them as required payloads.
+		const blocking = required.filter((job) => job.requested);
+		const inlineHints = required.filter((job) => !job.requested);
+		const candidates = inlineHints.concat(hinted);
+		const candidate = (job, requiredFlag) => ({
+			key: job.manifestKey,
+			object: job.entry.object,
+			ahash64: job.entry.ahash64,
+			bytes: job.entry.bytes,
+			required: requiredFlag,
 		});
-		return admitted.concat(followup);
+		const selection = this.prefetchPolicy.select(
+			blocking.map((job) => candidate(job, true)),
+			candidates.map((job) => candidate(job, false)),
+			SHARED_PREFETCH_BUDGET,
+		);
+		const allowed = new Set(selection.hintKeys);
+		return mergeSelectedJobs(
+			blocking,
+			candidates.filter((job) => allowed.has(job.manifestKey)),
+		);
+	}
+
+	#rememberDependencies(job) {
+		if (job.type !== "file" || !Array.isArray(job.entry.dependencies)) return;
+		const request = job.request ?? requestFromManifestKey(job.manifestKey);
+		if (request === undefined) return;
+		const identity = typedRequestIdentity(request);
+		const dependencies = this.knownDependencies.get(identity) ?? [];
+		for (const key of job.entry.dependencies) {
+			const dependency = requestFromManifestKey(key);
+			if (
+				dependency !== undefined &&
+				!dependencies.some(
+					(existing) =>
+						typedRequestIdentity(existing) === typedRequestIdentity(dependency),
+				)
+			)
+				dependencies.push(dependency);
+		}
+		this.knownDependencies.set(identity, dependencies);
+	}
+
+	/**
+	 * Completes the policy admission callback after the Rust VFS transaction has
+	 * accepted verified payloads. Cache/catalog responses alone do not reach
+	 * this method and therefore cannot become engine-readable.
+	 */
+	noteAdmitted(responses) {
+		for (const response of responses ?? []) {
+			if (response?.type !== "file" || !(response.bytes instanceof Uint8Array))
+				continue;
+			const request = {
+				type: "file",
+				domain: response.domain ?? resourceDomain(response.kind),
+				kind: response.kind,
+				name: response.name,
+				originalName: response.name,
+			};
+			const identity = typedRequestIdentity(request);
+			if (this.prefetchState !== undefined)
+				this.prefetchState.admit(
+					request,
+					response.virtualPath,
+					response.bytes,
+					this.knownDependencies.get(identity) ?? [],
+				);
+			this.prefetchAdmittedRequests.add(identity);
+			this.#setReadiness(identity, "ready");
+			if (response.speculative === true) {
+				if (!this.prefetchAdmitted.has(identity)) {
+					this.prefetchAdmitted.set(identity, {
+						bytes: response.bytes.byteLength,
+						virtualPath: response.virtualPath,
+					});
+					if (this.prefetchCountedPaths.add(response.virtualPath))
+						this.prefetchMetrics.prefetchBytes += response.bytes.byteLength;
+				}
+			} else {
+				if (!this.demandCounted.has(identity)) {
+					this.demandCounted.add(identity);
+					this.prefetchMetrics.demandBytes += response.bytes.byteLength;
+				}
+				for (const [prefetchIdentity, value] of this.prefetchAdmitted) {
+					if (value.virtualPath === response.virtualPath)
+						this.prefetchUsed.add(prefetchIdentity);
+				}
+			}
+			if (
+				this.prefetchState === undefined &&
+				isSmallRuntimeKey(`${response.kind}:${response.name}`) &&
+				response.bytes.byteLength <=
+					SHARED_PREFETCH_BUDGET.maxRuntimeScanBytes &&
+				!this.prefetchScanned.has(identity)
+			) {
+				this.prefetchScanned.add(identity);
+				const depth = this.prefetchDepths.get(identity) ?? 0;
+				if (depth < SHARED_PREFETCH_BUDGET.maxFollowupDepth) {
+					const source = new TextDecoder().decode(response.bytes);
+					const hints = this.prefetchPolicy.literalHints(source, {
+						maxHints: SHARED_PREFETCH_BUDGET.maxFollowupHints,
+						maxNameBytes: 1024,
+					});
+					for (const hint of hints.slice(
+						0,
+						SHARED_PREFETCH_BUDGET.maxFollowupHints,
+					)) {
+						const child = literalHintRequest(hint);
+						if (child !== undefined) this.#enqueuePrefetch(child, depth + 1);
+					}
+				}
+			}
+		}
+	}
+
+	takePrefetchHints(limit = SHARED_PREFETCH_BUDGET.maxFiles) {
+		if (this.prefetchState !== undefined)
+			return this.prefetchState.drain(limit);
+		return this.prefetchQueue.splice(0, Math.max(0, limit));
+	}
+
+	noteReplay(context, requests = []) {
+		if (
+			context === undefined ||
+			context === null ||
+			typeof context.region !== "string" ||
+			!Number.isSafeInteger(context.discardedWork)
+		)
+			return;
+		if (this.prefetchState !== undefined) {
+			for (const request of [...(requests ?? [])].filter(
+				(request) => request?.type === "file",
+			)) {
+				const advice = this.prefetchState.noteReplay(
+					context.region,
+					request,
+					context.discardedWork,
+				);
+				if (advice?.tier > 0) {
+					this.prefetchState.enqueueEscalation(
+						this.prefetchState.dependencyClosure(request, advice.tier),
+						advice.discardedWorkDelta,
+					);
+				}
+			}
+			return;
+		}
+		const delta = Math.max(0, context.discardedWork - this.lastDiscardedWork);
+		this.lastDiscardedWork = Math.max(
+			this.lastDiscardedWork,
+			context.discardedWork,
+		);
+		const regionCount =
+			(this.replayRegions.get(context.region) ?? 0) + (delta > 0 ? 1 : 0);
+		if (delta > 0) this.replayRegions.set(context.region, regionCount);
+		for (const request of [...(requests ?? [])].filter(
+			(request) => request?.type === "file",
+		)) {
+			const identity = typedRequestIdentity(request);
+			const regionRequests =
+				this.replayRegionRequests.get(context.region) ?? new Set();
+			const newRegionRequest = !regionRequests.has(identity);
+			regionRequests.add(identity);
+			this.replayRegionRequests.set(context.region, regionRequests);
+			if (regionCount === 0 && !newRegionRequest) continue;
+			const missKey = `${context.region}\u0000${identity}`;
+			const miss = this.replayMisses.get(missKey) ?? { count: 0, tier: 0 };
+			miss.count += 1;
+			miss.tier =
+				miss.tier > 0
+					? Math.min(3, miss.tier + 1)
+					: miss.count >= 2 || regionCount >= 2 || regionRequests.size >= 2
+						? 1
+						: 0;
+			this.replayMisses.set(missKey, miss);
+			if (miss.tier > 0) {
+				for (const dependency of this.#knownDependencyClosure(
+					request,
+					miss.tier,
+				))
+					this.#enqueuePrefetch(dependency, 0);
+			}
+		}
+	}
+
+	#knownDependencyClosure(request, tier) {
+		const output = [];
+		const seen = new Set([typedRequestIdentity(request)]);
+		let frontier = [request];
+		for (let depth = 0; depth < Math.min(3, Math.max(1, tier)); depth += 1) {
+			const next = [];
+			for (const parent of frontier) {
+				for (const dependency of this.knownDependencies.get(
+					typedRequestIdentity(parent),
+				) ?? []) {
+					const identity = typedRequestIdentity(dependency);
+					if (!seen.has(identity)) {
+						seen.add(identity);
+						output.push(dependency);
+						next.push(dependency);
+					}
+				}
+			}
+			frontier = next;
+		}
+		return output;
+	}
+
+	#enqueuePrefetch(request, depth) {
+		if (this.prefetchState !== undefined) {
+			return this.prefetchState.enqueue([
+				{
+					...request,
+					depth,
+					searchContext: request.searchContext ?? "runtime",
+				},
+			]);
+		}
+		const identity = typedRequestIdentity(request);
+		if (
+			this.prefetchQueued.has(identity) ||
+			this.prefetchAdmittedRequests.has(identity) ||
+			this.prefetchQueue.length >= SHARED_PREFETCH_BUDGET.maxFiles
+		)
+			return false;
+		this.prefetchQueued.add(identity);
+		this.prefetchDepths.set(identity, depth);
+		this.prefetchQueue.push(request);
+		return true;
 	}
 
 	/** Returns the last catalog/payload state observed for a typed request. */
@@ -431,9 +650,20 @@ export class HttpManifestResolver {
 	 * Identity fields deliberately contain execution policy, never source text.
 	 */
 	async beginRun(context = {}) {
+		this.prefetchState = undefined;
 		this.prefetchAdmitted.clear();
 		this.prefetchCountedPaths.clear();
 		this.prefetchUsed.clear();
+		this.prefetchQueue = [];
+		this.prefetchQueued.clear();
+		this.prefetchAdmittedRequests.clear();
+		this.prefetchDepths.clear();
+		this.prefetchScanned.clear();
+		this.replayMisses.clear();
+		this.replayRegions.clear();
+		this.replayRegionRequests.clear();
+		this.lastDiscardedWork = 0;
+		this.knownDependencies.clear();
 		this.demandCounted.clear();
 		this.readiness.clear();
 		for (const key of Object.keys(this.prefetchMetrics))
@@ -464,17 +694,31 @@ export class HttpManifestResolver {
 			} catch {}
 		}
 		this.currentRun = { identity, manifest: new LookupManifest(identity) };
-		const literalHints = this.literalPrefetchHints(context.source ?? "");
-		const hints = [...(prior?.resolvedRequests() ?? []), ...literalHints];
-		this.prefetchMetrics.startupPrefetchCandidates +=
-			prior?.resolvedRequests().length ?? 0;
-		this.prefetchMetrics.literalPrefetchHints += literalHints.length;
+		const priorRequests = prior?.resolvedRequests() ?? [];
+		this.prefetchMetrics.startupPrefetchCandidates += priorRequests.length;
 		const maxHints = Number.isSafeInteger(context.limits?.resolvedFiles)
 			? Math.min(context.limits.resolvedFiles, MAX_RESOLVED_FILES)
 			: DEFAULT_RESOLVED_FILES;
+		let startupHints;
+		if (typeof this.prefetchPolicy.createState === "function") {
+			this.prefetchState = this.prefetchPolicy.createState();
+			this.prefetchState.enqueue(priorRequests);
+			this.prefetchMetrics.literalPrefetchHints +=
+				this.prefetchState.enqueueLiteralHints(context.source ?? "");
+			startupHints = this.prefetchState.drain(maxHints);
+		} else {
+			const literalHints = this.literalPrefetchHints(context.source ?? "");
+			this.prefetchMetrics.literalPrefetchHints += literalHints.length;
+			startupHints = deduplicateTypedRequests([
+				...priorRequests,
+				...literalHints,
+			]).slice(0, maxHints);
+		}
+		for (const request of startupHints)
+			this.prefetchDepths.set(typedRequestIdentity(request), 0);
 		return {
 			identity,
-			hints: deduplicateTypedRequests(hints).slice(0, maxHints),
+			hints: startupHints,
 		};
 	}
 
@@ -512,9 +756,20 @@ export class HttpManifestResolver {
 
 	discardRun() {
 		this.currentRun = undefined;
+		this.prefetchState = undefined;
 		this.prefetchAdmitted.clear();
 		this.prefetchCountedPaths.clear();
 		this.prefetchUsed.clear();
+		this.prefetchQueue = [];
+		this.prefetchQueued.clear();
+		this.prefetchAdmittedRequests.clear();
+		this.prefetchDepths.clear();
+		this.prefetchScanned.clear();
+		this.replayMisses.clear();
+		this.replayRegions.clear();
+		this.replayRegionRequests.clear();
+		this.lastDiscardedWork = 0;
+		this.knownDependencies.clear();
 		this.demandCounted.clear();
 	}
 
@@ -527,7 +782,8 @@ export class HttpManifestResolver {
 	 * session options.  The engine still controls final lookup precedence.
 	 */
 	literalPrefetchHints(source, limits) {
-		return extractLiteralHints(source, limits)
+		return this.prefetchPolicy
+			.literalHints(source, limits)
 			.map(literalHintRequest)
 			.filter((request) => request !== undefined);
 	}
@@ -888,6 +1144,31 @@ function mergeJobs(required, hinted, maxFiles, maxBytes) {
 	return jobs;
 }
 
+function mergeSelectedJobs(required, hinted) {
+	const jobs = [];
+	const indexes = new Map();
+	for (const [source, blocking] of [
+		[required, true],
+		[hinted, false],
+	]) {
+		for (const job of source) {
+			const existing = indexes.get(job.key);
+			if (existing !== undefined) {
+				jobs[existing].blocking ||= blocking && job.requested;
+				jobs[existing].requested ||= job.requested;
+				continue;
+			}
+			indexes.set(job.key, jobs.length);
+			jobs.push({
+				...job,
+				requested: job.requested,
+				blocking: blocking && job.requested,
+			});
+		}
+	}
+	return jobs;
+}
+
 function groupByObject(jobs) {
 	const groups = [];
 	const indexes = new Map();
@@ -913,37 +1194,24 @@ function deduplicateTypedRequests(requests) {
 	});
 }
 
-function collectPackageHints(group, bytes, trace, output) {
-	if (
-		!(bytes instanceof Uint8Array) ||
-		bytes.byteLength > MAX_PACKAGE_SCAN_BYTES
-	)
-		return;
-	if (
-		!group.some(
-			(job) => job.type === "file" && isSmallRuntimeKey(job.manifestKey),
-		)
-	)
-		return;
-	if (group.some((job) => trace.has(job.key))) return;
-	for (const job of group) trace.add(job.key);
-	const source = new TextDecoder().decode(bytes);
-	for (const hint of extractLiteralHints(source, {
-		maxHints: MAX_PACKAGE_FOLLOWUP_HINTS,
-		maxNameBytes: 1024,
-	})) {
-		const request = literalHintRequest(hint);
-		if (request !== undefined && !trace.has(typedRequestIdentity(request))) {
-			trace.add(typedRequestIdentity(request));
-			output.push(request);
-			if (output.length >= MAX_PACKAGE_FOLLOWUP_HINTS) break;
-		}
-	}
-}
-
 function isSmallRuntimeKey(key) {
 	const name = key.split(":", 2)[1] ?? key;
 	return /\.(?:tex|sty|cls|def|ltx)$/i.test(name);
+}
+
+function requestFromManifestKey(key) {
+	try {
+		const decoded = decodeKey(key);
+		return {
+			type: "file",
+			domain: resourceDomain(decoded.kind),
+			...decoded,
+			originalName: decoded.name,
+			searchContext: "distribution",
+		};
+	} catch {
+		return undefined;
+	}
 }
 
 function stableOptionsIdentity(options) {

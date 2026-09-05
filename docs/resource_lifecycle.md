@@ -365,7 +365,21 @@ document-text edits. Project and generated negative evidence is scoped to its
 source revision or generated transaction. A manifest is published only after
 accepted output and generated state; failed-attempt discoveries are scheduling
 inputs only. Native and WASM share this semantic policy while retaining
-platform-specific cache and transport adapters.
+platform-specific cache and transport adapters. The concrete policy owner is
+`umber-distribution::PrefetchPolicy`, exposed to native through
+`PrefetchPlanner` and to authored WASM JavaScript through its thin Rust DTO
+binding. It owns extraction, canonical queue/deduplication, bounded closure,
+budget selection, and replay-region escalation; JavaScript does not maintain a
+second production predictor.
+
+Runtime closure is fed only by the successful engine-VFS admission callback.
+The callback carries the canonical request, retained path, admitted bytes, and
+authenticated dependency hints, so cache/catalog evidence can remain
+`ExistsNotReady` without being mislabeled `Ready`. A bounded empty speculative
+response is acknowledged once and is not recorded as semantic absence. Replay
+escalation uses the actual retained-region key plus monotonic discarded work;
+per-run counters broaden only known small-runtime/package companions, never a
+whole distribution or a new checkpoint lineage.
 
 ## Migration gates
 

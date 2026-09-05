@@ -10,6 +10,8 @@ use options::{
     parse_editor_options, parse_options, parse_project_options, parse_resource_responses,
 };
 use result::attempt_result;
+use serde::{Deserialize, Serialize};
+use serde_wasm_bindgen::{from_value, to_value};
 use umber::{
     EditorCompileSession, FileRequest, LatexProjectSession, ResourceResponse, VirtualCompileSession,
 };
@@ -128,6 +130,395 @@ pub fn content_hash(bytes: &Uint8Array) -> String {
     tex_state::ContentHash::from_bytes(&bytes.to_vec()).hex()
 }
 
+#[derive(Serialize)]
+struct JsLiteralHint {
+    kind: String,
+    #[serde(rename = "originalSpelling")]
+    original_spelling: String,
+    name: String,
+    #[serde(rename = "byteOffset")]
+    byte_offset: usize,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct JsLiteralHintLimits {
+    max_hints: usize,
+    max_name_bytes: usize,
+}
+
+#[derive(Deserialize)]
+struct JsPrefetchCandidate {
+    key: String,
+    #[serde(default)]
+    object: String,
+    #[serde(default)]
+    ahash64: String,
+    bytes: u64,
+    #[serde(default)]
+    class: Option<String>,
+    required: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct JsPrefetchBudget {
+    max_files: usize,
+    max_bytes: u64,
+    max_runtime_bytes: u64,
+    max_font_bytes: u64,
+    max_image_bytes: u64,
+    max_document_bytes: u64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JsPrefetchSelection {
+    required_keys: Vec<String>,
+    hint_keys: Vec<String>,
+    demand_bytes: u64,
+    prefetch_bytes: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct JsPrefetchRequest {
+    key: String,
+    original_spelling: String,
+    search_context: String,
+    #[serde(default)]
+    class: Option<String>,
+    required: bool,
+    depth: usize,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JsPrefetchRequestOutput {
+    key: String,
+    original_spelling: String,
+    search_context: String,
+    class: String,
+    required: bool,
+    depth: usize,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JsPrefetchEscalation {
+    tier: u8,
+    discarded_work_delta: u64,
+}
+
+fn prefetch_class(class: &str) -> umber_distribution::PrefetchClass {
+    match class {
+        "small-runtime" => umber_distribution::PrefetchClass::SmallRuntime,
+        "font" => umber_distribution::PrefetchClass::Font,
+        "image" => umber_distribution::PrefetchClass::Image,
+        "document" => umber_distribution::PrefetchClass::Document,
+        _ => umber_distribution::PrefetchClass::Other,
+    }
+}
+
+fn prefetch_class_name(class: umber_distribution::PrefetchClass) -> &'static str {
+    match class {
+        umber_distribution::PrefetchClass::SmallRuntime => "small-runtime",
+        umber_distribution::PrefetchClass::Font => "font",
+        umber_distribution::PrefetchClass::Image => "image",
+        umber_distribution::PrefetchClass::Document => "document",
+        umber_distribution::PrefetchClass::Other => "other",
+    }
+}
+
+fn prefetch_request(request: JsPrefetchRequest) -> umber_distribution::PrefetchRequest {
+    let class = request.class.as_deref().map_or_else(
+        || umber_distribution::PrefetchClass::for_key(&request.key),
+        prefetch_class,
+    );
+    umber_distribution::PrefetchRequest::new(
+        request.key,
+        request.original_spelling,
+        request.search_context,
+        request.required,
+    )
+    .with_class(class)
+    .with_depth(request.depth)
+}
+
+fn prefetch_request_value(request: umber_distribution::PrefetchRequest) -> JsPrefetchRequestOutput {
+    let depth = request.depth();
+    JsPrefetchRequestOutput {
+        key: request.key,
+        original_spelling: request.original_spelling,
+        search_context: request.search_context,
+        class: prefetch_class_name(request.class).to_owned(),
+        required: request.required,
+        depth,
+    }
+}
+
+/// Stateful WASM adapter for the host-neutral Rust prefetch policy.
+///
+/// JavaScript owns transport, provider precedence, and VFS admission. This
+/// object owns queue identity, lexical closure, budgets, and replay escalation
+/// for each resolver run so browser scheduling cannot drift from native.
+#[wasm_bindgen(js_name = PrefetchPolicySession)]
+pub struct PrefetchPolicySession {
+    policy: umber_distribution::PrefetchPolicy,
+}
+
+#[wasm_bindgen]
+impl PrefetchPolicySession {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self {
+            policy: umber_distribution::PrefetchPolicy::new(
+                umber_distribution::PrefetchBudget::default(),
+            ),
+        }
+    }
+
+    #[wasm_bindgen(js_name = enqueue)]
+    pub fn enqueue(&mut self, requests: JsValue) -> Result<(), JsValue> {
+        let requests = from_value::<Vec<JsPrefetchRequest>>(requests)
+            .map_err(|error| js_error(&format!("invalid prefetch requests: {error}")))?;
+        for request in requests {
+            self.policy.enqueue(prefetch_request(request));
+        }
+        Ok(())
+    }
+
+    #[wasm_bindgen(js_name = enqueueEscalation)]
+    pub fn enqueue_escalation(&mut self, requests: JsValue, priority: u64) -> Result<(), JsValue> {
+        let requests = from_value::<Vec<JsPrefetchRequest>>(requests)
+            .map_err(|error| js_error(&format!("invalid prefetch escalation requests: {error}")))?;
+        for request in requests {
+            self.policy
+                .enqueue_with_priority(prefetch_request(request), priority);
+        }
+        Ok(())
+    }
+
+    #[wasm_bindgen(js_name = enqueueLiteralHints)]
+    pub fn enqueue_literal_hints(&mut self, source: &str) -> usize {
+        self.policy.enqueue_literal_hints(source)
+    }
+
+    #[wasm_bindgen(js_name = drain)]
+    pub fn drain(&mut self, limit: usize) -> Result<JsValue, JsValue> {
+        let requests = self
+            .policy
+            .drain(limit)
+            .into_iter()
+            .map(prefetch_request_value)
+            .collect::<Vec<_>>();
+        to_value(&requests)
+            .map_err(|error| js_error(&format!("failed to encode prefetch requests: {error}")))
+    }
+
+    #[wasm_bindgen(js_name = dependencyClosure)]
+    pub fn dependency_closure(&self, key: &str, tier: u8) -> Result<JsValue, JsValue> {
+        let requests = self
+            .policy
+            .dependency_closure(key, tier)
+            .into_iter()
+            .map(prefetch_request_value)
+            .collect::<Vec<_>>();
+        to_value(&requests)
+            .map_err(|error| js_error(&format!("failed to encode dependency closure: {error}")))
+    }
+
+    #[wasm_bindgen(js_name = admit)]
+    pub fn admit(
+        &mut self,
+        key: &str,
+        virtual_path: &str,
+        bytes: &Uint8Array,
+        dependencies: Option<JsValue>,
+    ) -> Result<(), JsValue> {
+        self.admit_impl(key, virtual_path, bytes, None, dependencies)
+    }
+
+    /// Admission variant that preserves the semantic resource class when a
+    /// file kind aliases a distribution key. This keeps image bytes out of
+    /// the runtime-text scanner even when the image spelling has a `.sty`
+    /// suffix.
+    #[wasm_bindgen(js_name = admitWithClass)]
+    pub fn admit_with_class(
+        &mut self,
+        key: &str,
+        virtual_path: &str,
+        bytes: &Uint8Array,
+        class: Option<String>,
+        dependencies: Option<JsValue>,
+    ) -> Result<(), JsValue> {
+        self.admit_impl(key, virtual_path, bytes, class.as_deref(), dependencies)
+    }
+
+    fn admit_impl(
+        &mut self,
+        key: &str,
+        virtual_path: &str,
+        bytes: &Uint8Array,
+        class: Option<&str>,
+        dependencies: Option<JsValue>,
+    ) -> Result<(), JsValue> {
+        let dependencies = dependencies
+            .filter(|value| !value.is_undefined() && !value.is_null())
+            .map(|value| {
+                from_value::<Vec<JsPrefetchRequest>>(value).map_err(|error| {
+                    js_error(&format!("invalid admitted prefetch dependencies: {error}"))
+                })
+            })
+            .transpose()?;
+        let dependencies = dependencies
+            .unwrap_or_default()
+            .into_iter()
+            .map(prefetch_request);
+        if let Some(class) = class {
+            self.policy.admitted_with_class(
+                key,
+                prefetch_class(class),
+                &bytes.to_vec(),
+                dependencies,
+            );
+        } else {
+            self.policy
+                .admitted_with_metadata(key, virtual_path, &bytes.to_vec(), dependencies);
+        }
+        Ok(())
+    }
+
+    #[wasm_bindgen(js_name = noteReplay)]
+    pub fn note_replay(
+        &mut self,
+        region: &str,
+        request_key: &str,
+        discarded_work: u64,
+    ) -> Result<JsValue, JsValue> {
+        let Some(region) = umber_distribution::PrefetchRegionKey::new(region.to_owned()) else {
+            return Ok(JsValue::NULL);
+        };
+        let escalation = self.policy.note_replay(region, request_key, discarded_work);
+        escalation.map_or(Ok(JsValue::NULL), |escalation| {
+            to_value(&JsPrefetchEscalation {
+                tier: escalation.tier,
+                discarded_work_delta: escalation.discarded_work_delta,
+            })
+            .map_err(|error| js_error(&format!("failed to encode prefetch escalation: {error}")))
+        })
+    }
+}
+
+impl Default for PrefetchPolicySession {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JsReplayContext {
+    region: String,
+    discarded_work: u64,
+}
+
+fn replay_context_value(context: Option<(String, u64)>) -> Result<JsValue, JsValue> {
+    context.map_or(Ok(JsValue::NULL), |(region, discarded_work)| {
+        to_value(&JsReplayContext {
+            region,
+            discarded_work,
+        })
+        .map_err(|error| js_error(&format!("failed to encode replay context: {error}")))
+    })
+}
+
+#[wasm_bindgen(js_name = prefetchPolicyVersion)]
+pub fn prefetch_policy_version() -> String {
+    umber::prefetch::PREFETCH_POLICY_VERSION.to_owned()
+}
+
+/// Shared lexical policy DTO. Hosts retain transport and provider ordering,
+/// while extraction stays identical to native policy scheduling.
+#[wasm_bindgen(js_name = prefetchLiteralHints)]
+pub fn prefetch_literal_hints(source: &str, limits: Option<JsValue>) -> Result<JsValue, JsValue> {
+    let limits = match limits.filter(|value| !value.is_undefined() && !value.is_null()) {
+        Some(value) => {
+            let limits = from_value::<JsLiteralHintLimits>(value)
+                .map_err(|error| js_error(&format!("invalid prefetch hint limits: {error}")))?;
+            umber_distribution::LiteralHintLimits {
+                max_hints: limits.max_hints,
+                max_name_bytes: limits.max_name_bytes,
+            }
+        }
+        None => umber_distribution::LiteralHintLimits::default(),
+    };
+    let hints = umber_distribution::extract_literal_hints(source, limits)
+        .into_iter()
+        .map(|hint| JsLiteralHint {
+            kind: hint.kind.command().to_owned(),
+            original_spelling: hint.original_spelling,
+            name: hint.name,
+            byte_offset: hint.byte_offset,
+        })
+        .collect::<Vec<_>>();
+    to_value(&hints).map_err(|error| js_error(&format!("failed to encode prefetch hints: {error}")))
+}
+
+#[wasm_bindgen(js_name = prefetchSelect)]
+pub fn prefetch_select(
+    required: JsValue,
+    candidates: JsValue,
+    budget: JsValue,
+) -> Result<JsValue, JsValue> {
+    let required = from_value::<Vec<JsPrefetchCandidate>>(required)
+        .map_err(|error| js_error(&format!("invalid required prefetch candidates: {error}")))?;
+    let candidates = from_value::<Vec<JsPrefetchCandidate>>(candidates)
+        .map_err(|error| js_error(&format!("invalid prefetch candidates: {error}")))?;
+    let budget = from_value::<JsPrefetchBudget>(budget)
+        .map_err(|error| js_error(&format!("invalid prefetch budget: {error}")))?;
+    let convert = |candidate: JsPrefetchCandidate| {
+        let class = candidate.class.as_deref().map_or_else(
+            || umber_distribution::PrefetchClass::for_key(&candidate.key),
+            prefetch_class,
+        );
+        umber_distribution::PrefetchCandidate {
+            key: candidate.key,
+            object: umber_distribution::ObjectEntry {
+                object: candidate.object,
+                ahash64: candidate.ahash64,
+                bytes: candidate.bytes,
+            },
+            class,
+            required: candidate.required,
+        }
+    };
+    let selection = umber_distribution::select_prefetch_group(
+        required.into_iter().map(convert),
+        candidates.into_iter().map(convert),
+        umber_distribution::PrefetchBudget {
+            max_files: budget.max_files,
+            max_bytes: budget.max_bytes,
+            max_runtime_bytes: budget.max_runtime_bytes,
+            max_font_bytes: budget.max_font_bytes,
+            max_image_bytes: budget.max_image_bytes,
+            max_document_bytes: budget.max_document_bytes,
+            ..umber_distribution::PrefetchBudget::default()
+        },
+    );
+    to_value(&JsPrefetchSelection {
+        required_keys: selection
+            .required
+            .into_iter()
+            .map(|item| item.key)
+            .collect(),
+        hint_keys: selection.hints.into_iter().map(|item| item.key).collect(),
+        demand_bytes: selection.demand_bytes,
+        prefetch_bytes: selection.prefetch_bytes,
+    })
+    .map_err(|error| js_error(&format!("failed to encode prefetch selection: {error}")))
+}
+
 #[wasm_bindgen]
 impl CompilerSession {
     #[wasm_bindgen(constructor)]
@@ -170,6 +561,11 @@ impl CompilerSession {
     #[wasm_bindgen(js_name = compileAttempt)]
     pub fn compile_attempt(&mut self) -> Result<JsAttemptResult, JsValue> {
         self.advance()
+    }
+
+    #[wasm_bindgen(js_name = resourceReplayContext)]
+    pub fn resource_replay_context(&self) -> Result<JsValue, JsValue> {
+        replay_context_value(self.session_ref()?.resource_replay_context())
     }
 
     /// Advances synchronously until completion, error, or a typed resource batch.
@@ -370,6 +766,11 @@ impl EditorSession {
         self.advance()
     }
 
+    #[wasm_bindgen(js_name = resourceReplayContext)]
+    pub fn resource_replay_context(&self) -> Result<JsValue, JsValue> {
+        replay_context_value(self.session_ref()?.resource_replay_context())
+    }
+
     #[wasm_bindgen(js_name = stabilizeAttempt)]
     pub fn stabilize_attempt(&mut self) -> Result<JsEditorAttemptResult, JsValue> {
         let session = self.session_mut()?;
@@ -562,6 +963,11 @@ impl ProjectSession {
     #[wasm_bindgen(js_name = compileAttempt)]
     pub fn compile_attempt(&mut self) -> Result<JsAttemptResult, JsValue> {
         self.advance()
+    }
+
+    #[wasm_bindgen(js_name = resourceReplayContext)]
+    pub fn resource_replay_context(&self) -> Result<JsValue, JsValue> {
+        replay_context_value(self.session_ref()?.resource_replay_context())
     }
 
     #[wasm_bindgen(js_name = applyPatch)]

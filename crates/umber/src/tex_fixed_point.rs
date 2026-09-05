@@ -140,6 +140,11 @@ impl<'store> TexFixedPointSession<'store> {
             .map_err(tex_fixed_point_error)
     }
 
+    #[must_use]
+    pub fn resource_replay_context(&self) -> Option<(String, u64)> {
+        self.inner.resource_replay_context()
+    }
+
     pub fn authorize_prefetch_files(
         &mut self,
         requests: impl IntoIterator<Item = crate::FileRequest>,

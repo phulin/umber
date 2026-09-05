@@ -2935,6 +2935,25 @@ impl<'store> VirtualCompileSession<'store> {
         }
     }
 
+    /// Returns the retained replay anchor and monotonic discarded-work count
+    /// for the active candidate.  This is host telemetry only: callers must
+    /// never replace the region with a suspension or retry counter.
+    #[must_use]
+    pub fn resource_replay_context(&self) -> Option<(String, u64)> {
+        let candidate = self.candidate.as_ref()?;
+        let key = match &candidate.execution {
+            RetainedExecution::Initial { candidate, .. }
+            | RetainedExecution::Pending(candidate) => candidate.resource_replay_region_key()?,
+        };
+        let discarded_work = match &candidate.execution {
+            RetainedExecution::Initial { candidate, .. }
+            | RetainedExecution::Pending(candidate) => {
+                candidate.execution_telemetry().discarded_fuel
+            }
+        };
+        Some((key.wire_key(), discarded_work))
+    }
+
     fn finish_resource_wait(&mut self) {
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(started) = self.resource_wait_started.take() {

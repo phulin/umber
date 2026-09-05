@@ -1,4 +1,4 @@
-import { encodeRequest, resourceDomain } from "./manifest-schema.js";
+import { decodeKey, encodeRequest, resourceDomain } from "./manifest-schema.js";
 
 /** Shared names for the three states used by catalog/VFS adapters. */
 export const ResourceReadiness = Object.freeze({
@@ -8,6 +8,142 @@ export const ResourceReadiness = Object.freeze({
 });
 
 export const PREFETCH_POLICY_VERSION = "literal-groups-v1";
+
+function prefetchClassForRequest(request) {
+	return request?.kind === "image" ? "image" : undefined;
+}
+
+function rustRequestInput(request, required = false) {
+	const className = prefetchClassForRequest(request);
+	return {
+		key: encodeRequest(request),
+		originalSpelling: request.originalName ?? request.name ?? "",
+		searchContext: request.searchContext ?? "literal",
+		...(className === undefined ? {} : { class: className }),
+		required: request.required === true || required,
+		depth:
+			Number.isSafeInteger(request.depth) && request.depth >= 0
+				? request.depth
+				: 0,
+	};
+}
+
+function rustRequestOutput(request) {
+	if (!request || typeof request.key !== "string") return undefined;
+	let decoded;
+	try {
+		decoded = decodeKey(request.key);
+	} catch {
+		return undefined;
+	}
+	const kind = request.class === "image" ? "image" : decoded.kind;
+	return {
+		type: "file",
+		domain: resourceDomain(kind),
+		kind,
+		name: decoded.name,
+		originalName: request.originalSpelling ?? decoded.name,
+		searchContext: request.searchContext ?? "literal",
+		depth: request.depth ?? 0,
+	};
+}
+
+/**
+ * Binds the browser transport to the same Rust policy used by native hosts.
+ * The JavaScript scanner remains below as a deliberately test-only fallback
+ * for fixtures that do not load the WASM module.
+ */
+export function createRustPrefetchPolicy(bindings) {
+	if (
+		typeof bindings?.prefetchLiteralHints !== "function" ||
+		typeof bindings?.prefetchSelect !== "function" ||
+		typeof bindings?.PrefetchPolicySession !== "function"
+	)
+		return undefined;
+	return Object.freeze({
+		version:
+			typeof bindings.prefetchPolicyVersion === "function"
+				? bindings.prefetchPolicyVersion()
+				: PREFETCH_POLICY_VERSION,
+		literalHints(source) {
+			return bindings.prefetchLiteralHints(source).map((hint) => ({
+				...hint,
+				kind:
+					hint.kind === "includegraphics"
+						? "includegraphics"
+						: hint.kind === "documentclass"
+							? "documentclass"
+							: hint.kind === "package"
+								? "package"
+								: "input",
+			}));
+		},
+		select(required, candidates, budget) {
+			return bindings.prefetchSelect(required, candidates, budget);
+		},
+		createState() {
+			const state = new bindings.PrefetchPolicySession();
+			return Object.freeze({
+				enqueue(requests) {
+					state.enqueue(requests.map((request) => rustRequestInput(request)));
+				},
+				enqueueEscalation(requests, priority) {
+					state.enqueueEscalation(
+						requests.map((request) => rustRequestInput(request)),
+						priority,
+					);
+				},
+				enqueueLiteralHints(source) {
+					return state.enqueueLiteralHints(source);
+				},
+				drain(limit) {
+					return state
+						.drain(limit)
+						.map(rustRequestOutput)
+						.filter((request) => request !== undefined);
+				},
+				dependencyClosure(request, tier) {
+					return state
+						.dependencyClosure(encodeRequest(request), tier)
+						.map(rustRequestOutput)
+						.filter((request) => request !== undefined);
+				},
+				admit(request, virtualPath, bytes, dependencies = []) {
+					const key = encodeRequest(request);
+					const encodedDependencies = dependencies.map((dependency) =>
+						rustRequestInput(dependency),
+					);
+					if (typeof state.admitWithClass === "function") {
+						state.admitWithClass(
+							key,
+							virtualPath ?? "",
+							bytes,
+							request.kind === "image" ? "image" : undefined,
+							encodedDependencies,
+						);
+					} else {
+						state.admit(key, virtualPath ?? "", bytes, encodedDependencies);
+					}
+				},
+				noteReplay(region, request, discardedWork) {
+					return state.noteReplay(
+						region,
+						encodeRequest(request),
+						discardedWork,
+					);
+				},
+			});
+		},
+	});
+}
+
+export function createJavaScriptPrefetchPolicy() {
+	return Object.freeze({
+		version: PREFETCH_POLICY_VERSION,
+		literalHints: (source, limits) => extractLiteralHints(source, limits),
+		select: undefined,
+	});
+}
 
 export function makePrefetchIdentity({
 	engine = "tex82",

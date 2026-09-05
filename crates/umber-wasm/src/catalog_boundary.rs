@@ -138,6 +138,7 @@ fn batch_plan(
                 object: job.object.object.clone(),
                 ahash64: job.object.ahash64.clone(),
                 bytes: wire::SafeInteger::new(job.object.bytes).map_err(boundary_error)?,
+                dependencies: Vec::new(),
                 virtual_path: None,
                 container: None,
                 program_identity: None,
@@ -149,6 +150,12 @@ fn batch_plan(
             let (kind, request_index) = match &job.request {
                 ManifestRequest::File(_) => {
                     entry.virtual_path = job.virtual_path.clone();
+                    entry.dependencies = packed
+                        .file()
+                        .expect("selected file record")
+                        .dependencies()
+                        .map(|dependency| dependency.key().to_owned())
+                        .collect();
                     (
                         wire::CatalogJobKindDto::File,
                         request_position(requests, &job.request),

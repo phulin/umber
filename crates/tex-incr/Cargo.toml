@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 getrandom = { version = "0.3", features = ["wasm_js"] }
+serde.workspace = true
 tex-command = { path = "../tex-command" }
 tex-exec = { path = "../tex-exec" }
 tex-fonts = { path = "../tex-fonts" }

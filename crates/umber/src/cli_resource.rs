@@ -443,6 +443,7 @@ pub struct NativeCompileSession<'owner> {
     guards: NativeEngineGuards,
     distribution: DistributionResolver,
     local: LocalResolver,
+    prefetch: PrefetchPlanner,
     source: String,
     pending_source: Option<String>,
     host_telemetry: NativeHostTelemetry,
@@ -548,6 +549,12 @@ impl<'owner> NativeCompileSession<'owner> {
                     .and_then(distribution_request)
             })
             .collect::<Result<Vec<_>, _>>()?;
+        planner.enqueue_escalation(initial_prefetch_hints.iter().filter_map(
+            |request| match request {
+                ResourceRequest::File(request) => Some(request.clone()),
+                ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => None,
+            },
+        ));
         let mut initial_prefetch_hints = initial_prefetch_hints;
         initial_prefetch_hints.extend(planner.startup_hints(&source));
         let planner_metrics = planner.metrics();
@@ -659,6 +666,7 @@ impl<'owner> NativeCompileSession<'owner> {
             guards,
             distribution,
             local,
+            prefetch: planner,
             source,
             pending_source: None,
             host_telemetry: NativeHostTelemetry {
@@ -722,7 +730,36 @@ impl<'owner> NativeCompileSession<'owner> {
                         error => NativeRunError::Compile(error.to_string()),
                     });
                 }
-                CompileAttemptResult::NeedResources(batch) => {
+                CompileAttemptResult::NeedResources(mut batch) => {
+                    // A source/context reset may have queued fresh literal
+                    // seeds after the one-shot engine startup list was used.
+                    // Merge them at the same preflight seam so they are
+                    // admitted before the next engine retry.
+                    batch.prefetch_hints.extend(self.prefetch.drain_followups());
+                    if let Some((region, discarded_work)) = self.session.resource_replay_context() {
+                        let required_keys = batch
+                            .required
+                            .iter()
+                            .chain(&batch.probes)
+                            .filter_map(|request| match request {
+                                ResourceRequest::File(request) => Some(request.key().clone()),
+                                ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => None,
+                            })
+                            .collect::<Vec<_>>();
+                        for request in &required_keys {
+                            if let Some(escalation) =
+                                self.prefetch.note_replay(&region, request, discarded_work)
+                            {
+                                let dependencies = self
+                                    .prefetch
+                                    .escalation_dependencies(request, escalation.tier);
+                                self.prefetch.enqueue_escalation_with_priority(
+                                    dependencies,
+                                    escalation.discarded_work_delta,
+                                );
+                            }
+                        }
+                    }
                     let resolver_started = Instant::now();
                     let mut note_catalog = |keys: &[FileRequestKey]| {
                         self.session.note_resource_exists(keys.iter().cloned());
@@ -766,19 +803,81 @@ impl<'owner> NativeCompileSession<'owner> {
                     // not engine readiness until this boundary has accepted
                     // the payload and its request metadata.
                     let provision_started = Instant::now();
-                    self.session.note_resource_exists(resolved.catalog_exists);
                     self.session
-                        .authorize_prefetch_files(resolved.prefetch_requests);
-                    if let Err(error) = self.session.provide_resources(resolved.responses) {
+                        .note_resource_exists(resolved.catalog_exists.clone());
+                    self.session
+                        .authorize_prefetch_files(resolved.prefetch_requests.clone());
+                    if let Err(error) = self.session.provide_resources(resolved.responses.clone()) {
                         self.session.discard_suspended_candidate();
                         self.distribution.reset_lookup_manifest();
                         return Err(NativeRunError::Compile(error.to_string()));
                     }
+                    self.distribution
+                        .note_engine_admitted(&mut self.host_telemetry.resolver, &resolved);
+                    for (request, file) in &resolved.admitted_files {
+                        let dependencies =
+                            self.distribution.dependencies_for([request.key().clone()]);
+                        self.prefetch.admit_file_with_metadata(
+                            request,
+                            &file.virtual_path,
+                            file.bytes.as_ref(),
+                            dependencies,
+                        );
+                    }
+                    self.drain_prefetch_closure(cancellation)?;
                     self.host_telemetry.provision_time = self
                         .host_telemetry
                         .provision_time
                         .saturating_add(provision_started.elapsed());
                 }
+            }
+        }
+    }
+
+    fn drain_prefetch_closure(
+        &mut self,
+        cancellation: &FetchCancellation,
+    ) -> Result<(), NativeRunError> {
+        loop {
+            check_cancelled(cancellation)?;
+            let hints = self.prefetch.drain_followups();
+            if hints.is_empty() {
+                return Ok(());
+            }
+            let mut note_catalog = |keys: &[FileRequestKey]| {
+                self.session.note_resource_exists(keys.iter().cloned());
+            };
+            let resolved = self.distribution.resolve_batch_with_catalog(
+                &self.local,
+                &NeedResources {
+                    required: Vec::new(),
+                    probes: Vec::new(),
+                    prefetch_hints: hints,
+                },
+                cancellation,
+                &mut self.host_telemetry.resolver,
+                &mut note_catalog,
+            )?;
+            self.session
+                .note_resource_exists(resolved.catalog_exists.clone());
+            self.session
+                .authorize_prefetch_files(resolved.prefetch_requests.clone());
+            // Even an empty speculative response is acknowledged once.  This
+            // is what lets a false-positive hint terminate without becoming a
+            // startup retry loop; it never claims that the payload is ready.
+            self.session
+                .provide_resources(resolved.responses.clone())
+                .map_err(|error| NativeRunError::Compile(error.to_string()))?;
+            self.distribution
+                .note_engine_admitted(&mut self.host_telemetry.resolver, &resolved);
+            for (request, file) in &resolved.admitted_files {
+                let dependencies = self.distribution.dependencies_for([request.key().clone()]);
+                self.prefetch.admit_file_with_metadata(
+                    request,
+                    &file.virtual_path,
+                    file.bytes.as_ref(),
+                    dependencies,
+                );
             }
         }
     }
@@ -814,6 +913,7 @@ impl<'owner> NativeCompileSession<'owner> {
         self.distribution.set_project_revision(
             AHash64::for_bytes(HashDomain::DistributionContent, next.as_bytes()).hex(),
         );
+        self.prefetch.reset_for_context(next);
         self.pending_source = Some(next.to_owned());
         Ok(())
     }
@@ -1344,6 +1444,10 @@ struct ResolvedFormat {
 
 struct ResolvedDistributionBatch {
     responses: Vec<ResourceResponse>,
+    /// File payloads paired with the original request spelling.  The native
+    /// host calls the planner with these only after `provide_resources` has
+    /// committed the bytes to the engine VFS.
+    admitted_files: Vec<(FileRequest, ResolvedFile)>,
     /// File requests that were discovered inside an authenticated package
     /// closure rather than in the engine's original hint batch.
     prefetch_requests: Vec<FileRequest>,
@@ -1360,8 +1464,32 @@ struct DistributionResolver {
     lookup_manifest: Option<LookupManifest>,
     project_revision: Option<String>,
     prefetch_admitted: BTreeMap<FileRequestKey, (u64, String)>,
+    prefetch_counted_paths: BTreeSet<String>,
     prefetch_used: BTreeSet<FileRequestKey>,
     readiness: BTreeMap<FileRequestKey, Readiness>,
+    known_dependencies: BTreeMap<FileRequestKey, Vec<FileRequest>>,
+}
+
+fn admitted_files_for(
+    responses: &[ResourceResponse],
+    requests: impl IntoIterator<Item = FileRequest>,
+) -> Vec<(FileRequest, ResolvedFile)> {
+    let mut by_key = BTreeMap::new();
+    for request in requests {
+        by_key.entry(request.key().clone()).or_insert(request);
+    }
+    responses
+        .iter()
+        .filter_map(|response| {
+            let ResourceResponse::File(file) = response else {
+                return None;
+            };
+            by_key
+                .get(&file.request)
+                .cloned()
+                .map(|request| (request, file.clone()))
+        })
+        .collect()
 }
 
 impl DistributionResolver {
@@ -1397,8 +1525,10 @@ impl DistributionResolver {
             lookup_manifest: None,
             project_revision: None,
             prefetch_admitted: BTreeMap::new(),
+            prefetch_counted_paths: BTreeSet::new(),
             prefetch_used: BTreeSet::new(),
             readiness: BTreeMap::new(),
+            known_dependencies: BTreeMap::new(),
         }
     }
 
@@ -1408,7 +1538,9 @@ impl DistributionResolver {
 
     fn reset_lookup_manifest(&mut self) {
         self.prefetch_admitted.clear();
+        self.prefetch_counted_paths.clear();
         self.prefetch_used.clear();
+        self.known_dependencies.clear();
         let Some(current) = &self.lookup_manifest else {
             return;
         };
@@ -1419,28 +1551,76 @@ impl DistributionResolver {
         self.project_revision = Some(revision);
     }
 
-    fn note_prefetch_admitted(
-        &mut self,
-        telemetry: &mut ResolverTelemetry,
-        request: &FileRequest,
-        file: &ResolvedFile,
-    ) {
+    fn note_prefetch_admitted(&mut self, request: &FileRequest, file: &ResolvedFile) {
         if self.prefetch_admitted.contains_key(request.key()) {
             return;
         }
-        let path_already_counted = self
-            .prefetch_admitted
-            .values()
-            .any(|(_, path)| path == &file.virtual_path);
         self.prefetch_admitted.insert(
             request.key().clone(),
             (file.bytes.len() as u64, file.virtual_path.clone()),
         );
-        if !path_already_counted {
-            telemetry.prefetch_bytes = telemetry
-                .prefetch_bytes
-                .saturating_add(file.bytes.len() as u64);
+    }
+
+    fn admit_local_prefetch(
+        &mut self,
+        telemetry: &mut ResolverTelemetry,
+        request: FileRequest,
+        file: ResolvedFile,
+        responses: &mut Vec<ResourceResponse>,
+        prefetch_requests: &mut Vec<FileRequest>,
+    ) {
+        self.record_request_readiness(telemetry, request.key(), Readiness::ExistsNotReady);
+        self.record_file_resolved(&request, LookupRole::Hint, "local", &file, None);
+        self.note_prefetch_admitted(&request, &file);
+        prefetch_requests.push(request);
+        responses.push(ResourceResponse::File(file));
+    }
+
+    fn note_engine_admitted(
+        &mut self,
+        telemetry: &mut ResolverTelemetry,
+        batch: &ResolvedDistributionBatch,
+    ) {
+        for (request, file) in &batch.admitted_files {
+            self.record_request_readiness(telemetry, request.key(), Readiness::Ready);
+            if let Some((bytes, virtual_path)) = self.prefetch_admitted.get(request.key())
+                && self.prefetch_counted_paths.insert(virtual_path.clone())
+            {
+                debug_assert_eq!(*bytes, file.bytes.len() as u64);
+                telemetry.prefetch_bytes = telemetry.prefetch_bytes.saturating_add(*bytes);
+            }
         }
+    }
+
+    fn dependencies_for(
+        &self,
+        requests: impl IntoIterator<Item = FileRequestKey>,
+    ) -> Vec<FileRequest> {
+        self.dependencies_for_at_tier(requests, 1)
+    }
+
+    fn dependencies_for_at_tier(
+        &self,
+        requests: impl IntoIterator<Item = FileRequestKey>,
+        tier: u8,
+    ) -> Vec<FileRequest> {
+        let mut output = Vec::new();
+        let mut frontier = requests.into_iter().collect::<Vec<_>>();
+        let mut seen = frontier.iter().cloned().collect::<BTreeSet<_>>();
+        let max_depth = usize::from(tier.max(1)).min(3);
+        for _ in 0..max_depth {
+            let mut next = Vec::new();
+            for request in frontier.drain(..) {
+                for dependency in self.known_dependencies.get(&request).into_iter().flatten() {
+                    if seen.insert(dependency.key().clone()) {
+                        next.push(dependency.key().clone());
+                        output.push(dependency.clone());
+                    }
+                }
+            }
+            frontier = next;
+        }
+        output
     }
 
     fn unused_prefetch_bytes(&self) -> u64 {
@@ -1723,6 +1903,7 @@ impl DistributionResolver {
         check_cancelled(cancellation)?;
         let mut responses = Vec::new();
         let mut prefetch_requests = Vec::new();
+        let mut local_prefetch = Vec::<(FileRequest, ResolvedFile)>::new();
         let mut catalog_exists = BTreeSet::new();
         let mut unresolved = Vec::new();
         for request in batch.required.iter().chain(&batch.probes) {
@@ -1739,7 +1920,11 @@ impl DistributionResolver {
                         telemetry.demand_bytes = telemetry
                             .demand_bytes
                             .saturating_add(file.bytes.len() as u64);
-                        self.record_request_readiness(telemetry, request.key(), Readiness::Ready);
+                        self.record_request_readiness(
+                            telemetry,
+                            request.key(),
+                            Readiness::ExistsNotReady,
+                        );
                         self.record_file_resolved(
                             request,
                             lookup_role(batch, request, false),
@@ -1812,22 +1997,52 @@ impl DistributionResolver {
                 .saturating_add(started.elapsed());
             if let Some(file) = resolved {
                 telemetry.local_hits = telemetry.local_hits.saturating_add(1);
-                self.record_request_readiness(telemetry, request.key(), Readiness::Ready);
-                self.record_file_resolved(request, LookupRole::Hint, "local", &file, None);
-                self.note_prefetch_admitted(telemetry, request, &file);
-                responses.push(ResourceResponse::File(file));
+                local_prefetch.push((request.clone(), file));
             } else {
-                self.record_file_absent(
-                    request,
-                    LookupRole::Hint,
-                    "local",
-                    self.project_negative_scope(),
-                );
                 unresolved_hints.push(request.clone());
             }
         }
         if unresolved.is_empty() && unresolved_hints.is_empty() {
+            let selected = umber_distribution::select_prefetch_group(
+                [],
+                local_prefetch
+                    .iter()
+                    .map(|(request, file)| prefetch_candidate_for_file(request, file))
+                    .collect::<Result<Vec<_>, _>>()?,
+                umber_distribution::PrefetchBudget::default(),
+            );
+            let selected_keys = selected
+                .hints
+                .into_iter()
+                .map(|candidate| candidate.key)
+                .collect::<BTreeSet<_>>();
+            for (request, file) in local_prefetch {
+                let Some(key) = distribution_file_key(&request)? else {
+                    continue;
+                };
+                if selected_keys.contains(&key.manifest_key().to_string()) {
+                    self.admit_local_prefetch(
+                        telemetry,
+                        request,
+                        file,
+                        &mut responses,
+                        &mut prefetch_requests,
+                    );
+                }
+            }
             return Ok(ResolvedDistributionBatch {
+                admitted_files: admitted_files_for(
+                    &responses,
+                    batch
+                        .required
+                        .iter()
+                        .chain(&batch.probes)
+                        .chain(&batch.prefetch_hints)
+                        .filter_map(|request| match request {
+                            ResourceRequest::File(request) => Some(request.clone()),
+                            ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => None,
+                        }),
+                ),
                 responses,
                 prefetch_requests,
                 catalog_exists: catalog_exists.into_iter().collect(),
@@ -1966,21 +2181,6 @@ impl DistributionResolver {
                             hints.insert(key.clone(), entry.clone());
                             telemetry.package_group_candidates =
                                 telemetry.package_group_candidates.saturating_add(1);
-                        } else if !required.contains_key(&key)
-                            && selected.get(&key).is_some_and(Option::is_none)
-                            && let Some(request) = original_hints.get(&key)
-                        {
-                            self.record_file_absent(
-                                request,
-                                LookupRole::Hint,
-                                "distribution",
-                                self.distribution_negative_scope(),
-                            );
-                            self.record_request_readiness(
-                                telemetry,
-                                request.key(),
-                                Readiness::Absent,
-                            );
                         }
                     }
                 }
@@ -1988,6 +2188,44 @@ impl DistributionResolver {
                 Err(_) => {}
             }
         }
+        // Retain the authenticated dependency metadata for later replay
+        // escalation.  This map is scheduling evidence only; it never makes
+        // a request engine-readable without a later payload admission.
+        for (manifest_key, entry) in required.iter().chain(&hints) {
+            let parent_requests = original_files.get(manifest_key).cloned().or_else(|| {
+                original_hints
+                    .get(manifest_key)
+                    .cloned()
+                    .map(|request| vec![request])
+            });
+            let Some(parent_requests) = parent_requests else {
+                continue;
+            };
+            for parent in &parent_requests {
+                let dependencies = self
+                    .known_dependencies
+                    .entry(parent.key().clone())
+                    .or_default();
+                for dependency in &entry.dependencies {
+                    let Ok(distribution_key) =
+                        DistributionFileRequestKey::from_manifest_key(&dependency.key)
+                    else {
+                        continue;
+                    };
+                    let Ok(ResourceRequest::File(request)) = distribution_request(distribution_key)
+                    else {
+                        continue;
+                    };
+                    if !dependencies
+                        .iter()
+                        .any(|known| known.key() == request.key())
+                    {
+                        dependencies.push(request);
+                    }
+                }
+            }
+        }
+
         // Inline TLPDB-derived dependencies are already authenticated by the
         // packed shard.  Reuse their metadata directly; do not fetch an
         // arbitrary locality shard just to discover package peers.
@@ -2028,11 +2266,7 @@ impl DistributionResolver {
                 .saturating_add(started.elapsed());
             if let Some(file) = resolved {
                 telemetry.local_hits = telemetry.local_hits.saturating_add(1);
-                self.record_request_readiness(telemetry, request.key(), Readiness::Ready);
-                self.record_file_resolved(&request, LookupRole::Hint, "local", &file, None);
-                self.note_prefetch_admitted(telemetry, &request, &file);
-                responses.push(ResourceResponse::File(file));
-                prefetch_requests.push(request);
+                local_prefetch.push((request.clone(), file));
                 dependency_keys.insert(dependency.key.clone());
             } else {
                 hints.insert(
@@ -2079,27 +2313,61 @@ impl DistributionResolver {
             .collect::<Vec<_>>();
         let limits = crate::SessionLimits::default();
         let mut hint_fetches = Vec::new();
-        let hint_candidates = hints
+        let mut hint_candidates = local_prefetch
             .iter()
-            .filter(|(key, _)| !required.contains_key(*key))
-            .map(|(key, entry)| umber_distribution::PrefetchCandidate {
-                key: key.clone(),
-                object: entry.object.clone(),
-                class: umber_distribution::PrefetchClass::for_key(key),
-                required: false,
-            })
-            .collect::<Vec<_>>();
+            .map(|(request, file)| prefetch_candidate_for_file(request, file))
+            .collect::<Result<Vec<_>, _>>()?;
+        hint_candidates.extend(
+            hints
+                .iter()
+                .filter(|(key, _)| !required.contains_key(*key))
+                .map(|(key, entry)| umber_distribution::PrefetchCandidate {
+                    key: key.clone(),
+                    object: entry.object.clone(),
+                    class: umber_distribution::PrefetchClass::for_key(key),
+                    required: false,
+                })
+                .collect::<Vec<_>>(),
+        );
         let selected_hints = umber_distribution::select_prefetch_group(
-            [],
+            required
+                .iter()
+                .map(|(key, entry)| umber_distribution::PrefetchCandidate {
+                    key: key.clone(),
+                    object: entry.object.clone(),
+                    class: umber_distribution::PrefetchClass::for_key(key),
+                    required: true,
+                }),
             hint_candidates,
             umber_distribution::PrefetchBudget::default(),
         );
-        for candidate in selected_hints.hints {
-            hint_fetches.push(FetchRequest {
-                request_key: candidate.key,
-                object: candidate.object,
-                max_bytes: limits.one_file_bytes as u64,
-            });
+        let selected_keys = selected_hints
+            .hints
+            .into_iter()
+            .map(|candidate| candidate.key)
+            .collect::<BTreeSet<_>>();
+        for (request, file) in local_prefetch {
+            let Some(key) = distribution_file_key(&request)? else {
+                continue;
+            };
+            if selected_keys.contains(&key.manifest_key().to_string()) {
+                self.admit_local_prefetch(
+                    telemetry,
+                    request,
+                    file,
+                    &mut responses,
+                    &mut prefetch_requests,
+                );
+            }
+        }
+        for (key, entry) in &hints {
+            if selected_keys.contains(key) {
+                hint_fetches.push(FetchRequest {
+                    request_key: key.clone(),
+                    object: entry.object.clone(),
+                    max_bytes: limits.one_file_bytes as u64,
+                });
+            }
         }
         let mut fetch_requests = required_fetches.clone();
         fetch_requests.extend(hint_fetches);
@@ -2111,12 +2379,40 @@ impl DistributionResolver {
             match self.fetch_objects(&objects_base_url, &fetch_requests, cancellation, telemetry) {
                 Ok(fetched) => fetched,
                 Err(NativeRunError::Cancelled) => return Err(NativeRunError::Cancelled),
-                Err(_) if fetch_requests.len() > required_fetches.len() => self.fetch_objects(
-                    &objects_base_url,
-                    &required_fetches,
-                    cancellation,
-                    telemetry,
-                )?,
+                Err(_)
+                    if !required_fetches.is_empty()
+                        && fetch_requests.len() > required_fetches.len() =>
+                {
+                    self.fetch_objects(
+                        &objects_base_url,
+                        &required_fetches,
+                        cancellation,
+                        telemetry,
+                    )?
+                }
+                Err(_) if required_fetches.is_empty() => {
+                    // A speculative hint is advisory.  Transport or object
+                    // validation failure must not become semantic absence or
+                    // abort a demanded request in the same run.
+                    return Ok(ResolvedDistributionBatch {
+                        admitted_files: admitted_files_for(
+                            &responses,
+                            batch
+                                .required
+                                .iter()
+                                .chain(&batch.probes)
+                                .chain(&batch.prefetch_hints)
+                                .filter_map(|request| match request {
+                                    ResourceRequest::File(request) => Some(request.clone()),
+                                    ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => None,
+                                })
+                                .chain(prefetch_requests.iter().cloned()),
+                        ),
+                        responses,
+                        prefetch_requests,
+                        catalog_exists: catalog_exists.into_iter().collect(),
+                    });
+                }
                 Err(error) => return Err(error),
             };
         telemetry.object_load_time = telemetry
@@ -2160,7 +2456,7 @@ impl DistributionResolver {
                     bytes: data.clone(),
                 };
                 telemetry.demand_bytes = telemetry.demand_bytes.saturating_add(data.len() as u64);
-                self.record_request_readiness(telemetry, request.key(), Readiness::Ready);
+                self.record_request_readiness(telemetry, request.key(), Readiness::ExistsNotReady);
                 self.record_file_resolved(
                     &request,
                     lookup_role(batch, &request, false),
@@ -2190,7 +2486,7 @@ impl DistributionResolver {
                 virtual_path: entry.virtual_path.clone(),
                 bytes: data.into(),
             };
-            self.record_request_readiness(telemetry, request.key(), Readiness::Ready);
+            self.record_request_readiness(telemetry, request.key(), Readiness::ExistsNotReady);
             self.record_file_resolved(
                 &request,
                 LookupRole::Hint,
@@ -2198,12 +2494,11 @@ impl DistributionResolver {
                 &file,
                 Some(&entry.object),
             );
-            if dependency_keys.contains(&manifest_key) {
-                self.note_prefetch_admitted(telemetry, &request, &file);
-                prefetch_requests.push(key.clone());
-            } else {
-                self.note_prefetch_admitted(telemetry, &request, &file);
-            }
+            self.note_prefetch_admitted(&request, &file);
+            // Every speculative response is authorized through the same VFS
+            // seam. Dependency-discovered files and explicit hints therefore
+            // share one closure queue and one admission callback.
+            prefetch_requests.push(key.clone());
             responses.push(ResourceResponse::File(file));
         }
         drop(hints);
@@ -2213,6 +2508,19 @@ impl DistributionResolver {
                 .saturating_sub(telemetry.content_hash_time.saturating_sub(hash_before)),
         );
         Ok(ResolvedDistributionBatch {
+            admitted_files: admitted_files_for(
+                &responses,
+                batch
+                    .required
+                    .iter()
+                    .chain(&batch.probes)
+                    .chain(&batch.prefetch_hints)
+                    .filter_map(|request| match request {
+                        ResourceRequest::File(request) => Some(request.clone()),
+                        ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => None,
+                    })
+                    .chain(prefetch_requests.iter().cloned()),
+            ),
             responses,
             prefetch_requests,
             catalog_exists: catalog_exists.into_iter().collect(),
@@ -2721,6 +3029,29 @@ fn distribution_file_key(
     DistributionFileRequestKey::new(kind, request.key().name())
         .map(Some)
         .map_err(|error| NativeRunError::Selection(error.to_string()))
+}
+
+fn prefetch_candidate_for_file(
+    request: &FileRequest,
+    file: &ResolvedFile,
+) -> Result<umber_distribution::PrefetchCandidate, NativeRunError> {
+    let key = distribution_file_key(request)?.ok_or_else(|| {
+        NativeRunError::Selection(format!(
+            "prefetch request kind {} has no distribution catalogue key",
+            request.key().kind().wire_name()
+        ))
+    })?;
+    let manifest_key = key.manifest_key().to_string();
+    Ok(umber_distribution::PrefetchCandidate {
+        key: manifest_key.clone(),
+        object: ObjectEntry {
+            object: "local".to_owned(),
+            ahash64: AHash64::for_bytes(HashDomain::DistributionContent, &file.bytes).hex(),
+            bytes: file.bytes.len() as u64,
+        },
+        class: umber_distribution::PrefetchClass::for_key(&manifest_key),
+        required: false,
+    })
 }
 
 fn lookup_role(batch: &NeedResources, request: &FileRequest, hint: bool) -> LookupRole {

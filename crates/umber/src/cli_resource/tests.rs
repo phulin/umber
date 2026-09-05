@@ -1621,7 +1621,7 @@ fn mutable_local_precedence_records_project_negative_without_reusing_it() {
 fn inline_dependency_payload_crosses_native_engine_admission() {
     let directory = TempDir::new().expect("distribution tempdir");
     let distribution = directory.path().join("distribution");
-    let required = b"required payload";
+    let required = br"\input{child.tex}";
     let dependency = b"dependency payload";
     let required_digest = hex_digest(required);
     let dependency_digest = hex_digest(dependency);
@@ -1697,7 +1697,14 @@ fn inline_dependency_payload_crosses_native_engine_admission() {
     );
     session
         .session
-        .note_resource_exists(resolved.catalog_exists);
+        .note_resource_exists(resolved.catalog_exists.clone());
+    let unused_hint_key =
+        crate::FileRequestKey::new(FileKind::TexInput, "unused-hint.tex").expect("hint key");
+    assert_eq!(
+        session.session.workspace().readiness(&unused_hint_key),
+        None,
+        "an optional catalog miss is not an authoritative absence"
+    );
     let required_key =
         crate::FileRequestKey::new(FileKind::TexInput, "required.tex").expect("required key");
     assert_eq!(
@@ -1706,16 +1713,34 @@ fn inline_dependency_payload_crosses_native_engine_admission() {
     );
     session
         .session
-        .authorize_prefetch_files(resolved.prefetch_requests);
+        .authorize_prefetch_files(resolved.prefetch_requests.clone());
     session
         .session
-        .provide_resources(resolved.responses)
+        .provide_resources(resolved.responses.clone())
         .expect("admit required and inline dependency");
+    session
+        .distribution
+        .note_engine_admitted(&mut session.host_telemetry.resolver, &resolved);
+    for (request, file) in &resolved.admitted_files {
+        let dependencies = session
+            .distribution
+            .dependencies_for([request.key().clone()]);
+        session.prefetch.admit_file_with_metadata(
+            request,
+            &file.virtual_path,
+            file.bytes.as_ref(),
+            dependencies,
+        );
+    }
+    let closure = session.prefetch.drain_followups();
+    assert!(closure.iter().any(
+        |request| matches!(request, ResourceRequest::File(file) if file.key().name() == "child.tex")
+    ));
     let dependency_key =
         crate::FileRequestKey::new(FileKind::TexInput, "dependency.tex").expect("dependency key");
     assert!(session.session.workspace().get(&dependency_key).is_some());
     assert!(
-        session
+        !session
             .distribution
             .lookup_manifest
             .as_ref()

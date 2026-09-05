@@ -126,6 +126,14 @@ impl<'store> EditorCompileSession<'store> {
         }
     }
 
+    #[must_use]
+    pub fn resource_replay_context(&self) -> Option<(String, u64)> {
+        self.stabilizing
+            .as_ref()
+            .and_then(|session| session.resource_replay_context())
+            .or_else(|| self.hot.resource_replay_context())
+    }
+
     pub fn authorize_prefetch_files(&mut self, requests: impl IntoIterator<Item = FileRequest>) {
         let requests = requests.into_iter().collect::<Vec<_>>();
         if let Some(stabilizing) = &mut self.stabilizing {

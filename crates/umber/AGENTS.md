@@ -77,9 +77,11 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
   byte owners, cancellation-aware resource retries, incremental source
   replacement, one-shot zero restart-history ownership independent of the
   resource cache, finite engine fuel/step/frame/journal/effect configuration,
-  accepted-run telemetry handoff, and identity-pinned PDF font-closure receipt
-  projection. Packed misses are authoritative; do not restore selected-record
-  or selected-miss caches.
+  accepted-run telemetry handoff, shared `PrefetchPlanner` admission/replay
+  callbacks, and identity-pinned PDF font-closure receipt projection. Packed
+  misses are authoritative; do not restore selected-record or selected-miss
+  caches. Catalog existence remains separate from engine-readable payload
+  readiness.
 - `src/cli_resource/tests.rs`: retained-resource reuse and superseded-revision cancellation coverage.
 - `src/distribution_verify.rs`: explicit pinned local root/shard/object graph verifier, streaming object authentication, and complete-work report.
 - `src/distribution_verify/tests.rs`: exhaustive distribution verifier positive and corruption controls.

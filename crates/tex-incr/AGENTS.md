@@ -33,7 +33,10 @@ long-lived editor-session strategy over executor-named checkpoints.
   image and its explicit profile/compatibility/job-clock binding. Command fuel
   consumption is read only when a candidate completes or exits with an error;
   ordinary executor steps and retained resource suspension keep the singular
-  command ledger without cross-layer consumed-fuel publication. One
+  command ledger without cross-layer consumed-fuel publication. The public
+  candidate view also exposes a serde-safe retained replay-region key and
+  monotonic discarded-work telemetry for host scheduling, never a checkpoint
+  handle. One
   external session reachability store owns the fixed prior/current physical
   slots across rejection, acceptance, and suspension; the admitted generation
   sidecar, not the revision runtime or retained checkpoint, owns the singular

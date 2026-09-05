@@ -51,30 +51,20 @@ export class SessionDriver {
 				if (result?.kind === "error") throw diagnosticError(result, phase);
 				validateResourceWait(result, phase);
 				onProgress?.(result);
+				this.#resolver.noteReplay?.(
+					typeof session.resourceReplayContext === "function"
+						? session.resourceReplayContext()
+						: undefined,
+					[...(result.required ?? []), ...(result.probes ?? [])],
+				);
 				const responses = await resolveBatch(
 					this.#resolver,
 					result,
 					controller.signal,
 				);
 				throwIfAborted(controller.signal);
-				try {
-					const speculative = responses.filter(
-						(response) => response?.speculative === true,
-					);
-					if (
-						speculative.length > 0 &&
-						typeof session.authorizePrefetchResources === "function"
-					) {
-						session.authorizePrefetchResources(speculative);
-					}
-					session.provideResources(responses);
-				} catch (error) {
-					throw new SessionDriverError(
-						error?.code ?? "resource",
-						errorMessage(error),
-						{ cause: error },
-					);
-				}
+				provideResponses(session, this.#resolver, responses);
+				await drainPrefetchClosure(session, this.#resolver, controller.signal);
 			}
 			throw new SessionDriverError(
 				"attempt-limit",
@@ -114,6 +104,48 @@ export class SessionDriver {
 		);
 		this.#session.dispose();
 		this.#session = undefined;
+	}
+}
+
+function provideResponses(session, resolver, responses) {
+	try {
+		const speculative = responses.filter(
+			(response) => response?.speculative === true,
+		);
+		if (
+			speculative.length > 0 &&
+			typeof session.authorizePrefetchResources === "function"
+		) {
+			session.authorizePrefetchResources(speculative);
+		}
+		session.provideResources(responses);
+		resolver.noteAdmitted?.(responses);
+	} catch (error) {
+		throw new SessionDriverError(
+			error?.code ?? "resource",
+			errorMessage(error),
+			{ cause: error },
+		);
+	}
+}
+
+async function drainPrefetchClosure(session, resolver, signal) {
+	if (typeof resolver.takePrefetchHints !== "function") return;
+	for (;;) {
+		throwIfAborted(signal);
+		const hints = resolver.takePrefetchHints();
+		if (!Array.isArray(hints) || hints.length === 0) return;
+		const responses = await resolveBatch(
+			resolver,
+			{
+				required: [],
+				probes: [],
+				prefetchHints: hints,
+			},
+			signal,
+		);
+		throwIfAborted(signal);
+		provideResponses(session, resolver, responses);
 	}
 }
 

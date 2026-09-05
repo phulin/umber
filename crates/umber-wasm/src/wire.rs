@@ -969,6 +969,8 @@ pub struct CatalogJobEntryDto {
     pub ahash64: String,
     #[ts(type = "number")]
     pub bytes: SafeInteger,
+    #[serde(default)]
+    pub dependencies: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub virtual_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

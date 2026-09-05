@@ -56,3 +56,69 @@ fn source_edits_do_not_change_identity_or_publish_predictions() {
     assert_eq!(second.len(), 1);
     assert!(planner.into_manifest().records().is_empty());
 }
+
+#[test]
+fn planner_scans_only_after_admission_and_keeps_spelling() {
+    let mut planner = planner();
+    let root = FileRequest::new(
+        FileRequestKey::new(FileKind::TexInput, "root.sty").expect("key"),
+        "./root.sty",
+    );
+    planner.enqueue_escalation([root.clone()]);
+    let startup = planner.drain_followups();
+    assert_eq!(startup.len(), 1);
+    assert!(planner.drain_followups().is_empty());
+    planner.admit_file(&root, br#"\input{child.tex}"#);
+    let closure = planner.drain_followups();
+    assert_eq!(closure.len(), 1);
+    let ResourceRequest::File(child) = &closure[0] else {
+        panic!("expected file closure request");
+    };
+    assert_eq!(child.original_name(), "child.tex");
+}
+
+#[test]
+fn planner_admission_queues_authenticated_dependency_hints() {
+    let mut planner = planner();
+    let root = FileRequest::new(
+        FileRequestKey::new(FileKind::TexInput, "root.sty").expect("key"),
+        "root.sty",
+    );
+    let dependency = FileRequest::new(
+        FileRequestKey::new(FileKind::TexInput, "companion.sty").expect("key"),
+        "./companion.sty",
+    );
+    planner.admit_file_with_metadata(
+        &root,
+        "/texlive/root.sty",
+        br#"% no literal child"#,
+        [dependency],
+    );
+    let closure = planner.drain_followups();
+    assert!(closure.iter().any(|request| {
+        matches!(request, ResourceRequest::File(file) if file.original_name() == "./companion.sty")
+    }));
+}
+
+#[test]
+fn planner_resets_replay_and_admission_state_for_new_context() {
+    let mut planner = planner();
+    let root = FileRequest::new(
+        FileRequestKey::new(FileKind::TexInput, "root.sty").expect("key"),
+        "root.sty",
+    );
+    planner.enqueue_escalation([root.clone()]);
+    assert_eq!(planner.drain_followups().len(), 1);
+    planner.admit_file(&root, br#"\input{old-child.tex}"#);
+    assert_eq!(planner.drain_followups().len(), 1);
+    planner.reset_for_context("\\input{new-root.sty}");
+    let startup = planner.drain_followups();
+    assert!(startup.iter().any(|request| {
+        matches!(request, ResourceRequest::File(file) if file.key().name() == "new-root.sty")
+    }));
+    planner.admit_file(&root, br#"\input{new-child.tex}"#);
+    let closure = planner.drain_followups();
+    assert!(closure.iter().any(|request| {
+        matches!(request, ResourceRequest::File(file) if file.key().name() == "new-child.tex")
+    }));
+}

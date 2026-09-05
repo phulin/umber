@@ -502,6 +502,14 @@ impl<'store> LatexProjectSession<'store> {
         Ok(())
     }
 
+    #[must_use]
+    pub fn resource_replay_context(&self) -> Option<(String, u64)> {
+        self.candidate
+            .as_ref()
+            .and_then(|candidate| candidate.tex.as_ref())
+            .and_then(|session| session.resource_replay_context())
+    }
+
     pub fn authorize_prefetch_files(&mut self, requests: impl IntoIterator<Item = FileRequest>) {
         let requests = requests.into_iter().collect::<Vec<_>>();
         for request in &requests {

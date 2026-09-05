@@ -39,10 +39,12 @@ export async function compile(options, userFiles, resolver, signal, bindings) {
 	validateResolver(resolver);
 	const limits = validateSessionLimits(options?.limits);
 	throwIfAborted(signal);
-	const Session = await sessionClass(
+	const loaded = await sessionClass(
 		bindings,
 		options?.bibliography !== undefined,
 	);
+	resolver.bindPrefetchPolicy?.(bindings ?? loaded.bindings);
+	const Session = loaded.Session;
 	throwIfAborted(signal);
 	const prepared = await prepareResolverRun(
 		resolver,
@@ -87,6 +89,7 @@ export async function createEditorSession(
 	throwIfAborted(signal);
 	const module = bindings ?? (await import("./umber_wasm.js"));
 	if (bindings === undefined) await module.default();
+	resolver.bindPrefetchPolicy?.(module);
 	if (typeof module?.EditorSession !== "function") {
 		throw new CompileFacadeError(
 			"invalid-binding",
@@ -245,7 +248,7 @@ async function sessionClass(bindings, project) {
 			`${project ? "ProjectSession" : "CompilerSession"} binding is unavailable`,
 		);
 	}
-	return Session;
+	return { Session, bindings: module };
 }
 
 function addUserFiles(session, userFiles, limits) {

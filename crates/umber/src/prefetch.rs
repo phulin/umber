@@ -4,8 +4,9 @@ use std::collections::BTreeSet;
 
 use umber_distribution::{
     FileKind as DistributionFileKind, FileRequestKey as DistributionFileRequestKey, LookupManifest,
-    LookupOutcome, LookupRecord, LookupRole, NegativeScope, PrefetchBudget, PrefetchIdentity,
-    Readiness, ResolvedIdentity, extract_literal_hints,
+    LookupOutcome, LookupRecord, LookupRole, NegativeScope, PrefetchBudget, PrefetchClass,
+    PrefetchEscalation, PrefetchIdentity, PrefetchPolicy, PrefetchRegionKey, Readiness,
+    ResolvedIdentity,
 };
 use umber_hash::{AHash64, HashDomain};
 
@@ -41,6 +42,7 @@ pub struct PrefetchPlanner {
     accepted: LookupManifest,
     prior: Option<LookupManifest>,
     seen_startup: BTreeSet<String>,
+    policy: PrefetchPolicy,
     metrics: PrefetchMetrics,
 }
 
@@ -52,6 +54,7 @@ impl PrefetchPlanner {
             identity,
             budget,
             seen_startup: BTreeSet::new(),
+            policy: PrefetchPolicy::new(budget),
             metrics: PrefetchMetrics::default(),
         }
     }
@@ -87,7 +90,32 @@ impl PrefetchPlanner {
     /// Combines prior accepted lookups and literal source hints.  Requests are
     /// deduplicated by typed key and remain in stable source/history order.
     pub fn startup_hints(&mut self, source: &str) -> Vec<ResourceRequest> {
-        let mut output = Vec::new();
+        self.enqueue_startup_requests(source);
+        self.policy
+            .drain(self.budget.max_files)
+            .into_iter()
+            .filter_map(|request| resource_request(&request))
+            .filter(|request| self.seen_startup.insert(request_identity(request)))
+            .collect()
+    }
+
+    /// Starts scheduling for a new source/context without carrying replay
+    /// counters, admitted-byte state, or queued aliases across runs. The
+    /// caller drains the startup queue at its next preflight boundary.
+    pub fn reset_for_context(&mut self, source: &str) {
+        self.accepted = LookupManifest::new(self.identity.clone());
+        self.seen_startup.clear();
+        self.policy = PrefetchPolicy::new(self.budget);
+        self.metrics = PrefetchMetrics {
+            startup_candidates: self
+                .prior_manifest()
+                .map_or(0, |manifest| manifest.resolved_records().count() as u64),
+            ..PrefetchMetrics::default()
+        };
+        self.enqueue_startup_requests(source);
+    }
+
+    fn enqueue_startup_requests(&mut self, source: &str) {
         let prior_requests = self
             .prior_manifest()
             .into_iter()
@@ -95,30 +123,108 @@ impl PrefetchPlanner {
             .filter_map(distribution_record_request)
             .collect::<Vec<_>>();
         for request in prior_requests {
-            if self.seen_startup.insert(request_identity(&request)) {
-                output.push(request);
+            if let Some(policy_request) = policy_request(&request, "accepted", false) {
+                self.policy.enqueue(policy_request);
             }
         }
-        let literal = extract_literal_hints(source, Default::default());
-        self.metrics.literal_hints = self
-            .metrics
-            .literal_hints
-            .saturating_add(literal.len() as u64);
-        for hint in literal {
-            let kind = match hint.kind {
-                umber_distribution::LiteralHintKind::IncludeGraphics => FileKind::Image,
-                _ => FileKind::TexInput,
-            };
-            let Ok(key) = FileRequestKey::new(kind, &hint.name) else {
-                continue;
-            };
-            let request = ResourceRequest::File(FileRequest::new(key, hint.original_spelling));
-            if self.seen_startup.insert(request_identity(&request)) {
-                output.push(request);
+        let queued_before = self.policy.metrics().queued_requests;
+        self.policy.enqueue_literal_hints(source);
+        self.metrics.literal_hints = self.metrics.literal_hints.saturating_add(
+            self.policy
+                .metrics()
+                .queued_requests
+                .saturating_sub(queued_before),
+        );
+    }
+
+    /// Feeds the policy only after the caller has successfully admitted the
+    /// verified payload to the engine VFS. The returned values are bounded
+    /// lexical follow-ups, never semantic resource answers.
+    pub fn admit_file(&mut self, request: &FileRequest, bytes: &[u8]) {
+        self.admit_file_with_metadata(request, "", bytes, std::iter::empty());
+    }
+
+    pub fn admit_file_with_metadata(
+        &mut self,
+        request: &FileRequest,
+        _virtual_path: &str,
+        bytes: &[u8],
+        dependencies: impl IntoIterator<Item = FileRequest>,
+    ) {
+        let Ok(key) =
+            DistributionFileRequestKey::from_manifest_key(&distribution_key(request.key()))
+        else {
+            return;
+        };
+        let dependencies = dependencies.into_iter().filter_map(|dependency| {
+            policy_request(
+                &ResourceRequest::File(dependency),
+                "distribution-dependency",
+                false,
+            )
+        });
+        let class = if request.key().kind() == FileKind::Image {
+            PrefetchClass::Image
+        } else {
+            PrefetchClass::for_key(key.manifest_key().as_str())
+        };
+        self.policy
+            .admitted_with_class(key.manifest_key().as_str(), class, bytes, dependencies);
+    }
+
+    pub fn drain_followups(&mut self) -> Vec<ResourceRequest> {
+        self.policy
+            .drain(self.budget.max_files)
+            .into_iter()
+            .filter_map(|request| resource_request(&request))
+            .collect()
+    }
+
+    #[must_use]
+    pub fn note_replay(
+        &mut self,
+        region: &str,
+        request: &FileRequestKey,
+        discarded_work: u64,
+    ) -> Option<PrefetchEscalation> {
+        let key = DistributionFileRequestKey::from_manifest_key(&distribution_key(request))
+            .ok()?
+            .manifest_key()
+            .to_string();
+        let region = PrefetchRegionKey::new(region.to_owned())?;
+        self.policy.note_replay(region, &key, discarded_work)
+    }
+
+    pub fn enqueue_escalation(&mut self, requests: impl IntoIterator<Item = FileRequest>) {
+        self.enqueue_escalation_with_priority(requests, 0);
+    }
+
+    pub fn enqueue_escalation_with_priority(
+        &mut self,
+        requests: impl IntoIterator<Item = FileRequest>,
+        priority: u64,
+    ) {
+        for request in requests {
+            let resource = ResourceRequest::File(request);
+            if let Some(policy_request) = policy_request(&resource, "replay-escalation", false) {
+                self.policy.enqueue_with_priority(policy_request, priority);
             }
         }
-        output.truncate(self.budget.max_files);
-        output
+    }
+
+    pub fn escalation_dependencies(&self, request: &FileRequestKey, tier: u8) -> Vec<FileRequest> {
+        let Ok(key) = DistributionFileRequestKey::from_manifest_key(&distribution_key(request))
+        else {
+            return Vec::new();
+        };
+        self.policy
+            .dependency_closure(key.manifest_key().as_str(), tier)
+            .into_iter()
+            .filter_map(|request| match resource_request(&request) {
+                Some(ResourceRequest::File(request)) => Some(request),
+                Some(ResourceRequest::Font(_) | ResourceRequest::PkFont(_)) | None => None,
+            })
+            .collect()
     }
 
     /// Records a successful lookup for publication after the surrounding run
@@ -223,6 +329,44 @@ fn request_identity(request: &ResourceRequest) -> String {
         ResourceRequest::Font(request) => format!("font:{:?}", request.key),
         ResourceRequest::PkFont(request) => format!("pk-font:{:?}", request),
     }
+}
+
+fn policy_request(
+    request: &ResourceRequest,
+    search_context: &str,
+    required: bool,
+) -> Option<umber_distribution::PrefetchRequest> {
+    let ResourceRequest::File(request) = request else {
+        return None;
+    };
+    let key = distribution_key(request.key());
+    let mut policy_request = umber_distribution::PrefetchRequest::new(
+        key,
+        request.original_name(),
+        search_context,
+        required,
+    );
+    if request.key().kind() == FileKind::Image {
+        policy_request = policy_request.with_class(PrefetchClass::Image);
+    }
+    Some(policy_request)
+}
+
+fn resource_request(request: &umber_distribution::PrefetchRequest) -> Option<ResourceRequest> {
+    let key = DistributionFileRequestKey::from_manifest_key(&request.key).ok()?;
+    let kind = match key.kind() {
+        DistributionFileKind::Tex if request.class == PrefetchClass::Image => FileKind::Image,
+        DistributionFileKind::Tex => FileKind::TexInput,
+        DistributionFileKind::Tfm => FileKind::Tfm,
+        DistributionFileKind::BibAux => FileKind::BibAux,
+        DistributionFileKind::ClassicBib => FileKind::ClassicBibData,
+        DistributionFileKind::BibStyle => FileKind::BibStyle,
+    };
+    let key = FileRequestKey::new(kind, key.normalized_name()).ok()?;
+    Some(ResourceRequest::File(FileRequest::new(
+        key,
+        request.original_spelling.clone(),
+    )))
 }
 
 fn distribution_key(request: &FileRequestKey) -> String {
