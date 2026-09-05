@@ -147,12 +147,12 @@ pub struct CommandState<G> {
     /// operation. Checkpoints retain its bounded mark, never its payload.
     pub(crate) attempt: crate::CommandAttempt<G>,
     /// Current-generation reusable packed execution lanes. Macro activations
-    /// and typed operation continuations retain only private
-    /// generation-branded frame indices into this owner.
+    /// and synchronous scanner calls retain only private generation-branded
+    /// frame indices into this owner.
     pub(crate) scratch: crate::execution_scratch::ExecutionScratch<G>,
-    /// One direct-operation child scope. It stays installed across an
-    /// in-process resource suspension and is consumed only by commit or
-    /// rollback; named checkpoints require this field to be empty.
+    /// One direct-operation child scope. It is consumed only by commit or
+    /// rollback; named checkpoints require this field to be empty. A resource
+    /// miss unwinds the operation and the host replays from a full checkpoint.
     pub(crate) active_attempt_operation: Option<crate::CommandAttemptMark>,
     /// Singular exceptional-delivery authority. Rich scanner/alignment values
     /// retain cold-path context but are not polled by resident input; bounded

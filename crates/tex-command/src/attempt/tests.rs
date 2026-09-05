@@ -6,8 +6,8 @@ use tex_state::{DefinitionBuildError, DefinitionRef, GlueId, ProvenanceId, Token
 
 use super::{
     AttemptArena, AttemptDefinitionId, AttemptError, AttemptGlueId, AttemptPromotionDestination,
-    AttemptProvenanceId, AttemptResumePoint, AttemptScopeSerial, AttemptTokenListId,
-    AttemptTokenStorage, CommandAttempt, PendingCommandAttempt,
+    AttemptProvenanceId, AttemptScopeSerial, AttemptTokenListId, AttemptTokenStorage,
+    CommandAttempt,
 };
 
 fn word(ch: char) -> TracedTokenWord {
@@ -929,53 +929,6 @@ fn truncated_row_cannot_alias_a_reallocated_coordinate() {
                 .expect("test fixture is valid"),
             &[word('b')]
         );
-    })
-    .expect("test fixture is valid");
-}
-
-#[test]
-fn pending_attempt_owns_generation_and_resumes_without_a_borrow() {
-    tex_state::with_universe(budget(), |universe| {
-        let generation = universe.generation_owner().expect("test fixture is valid");
-        let pending = PendingCommandAttempt::new(
-            CommandAttempt::default(),
-            generation,
-            AttemptResumePoint {
-                command: 7,
-                scanner: 11,
-                expansion: 13,
-                subordinate: 17,
-            },
-            "font request",
-        );
-        let allocated_while_pinned = universe
-            .allocate_token_list(&[])
-            .expect("a coarse owner pins retirement, not append-only allocation");
-        assert!(
-            universe
-                .command_context()
-                .expect("context")
-                .token_list(allocated_while_pinned)
-                .is_empty()
-        );
-        assert_eq!(
-            universe.retire(),
-            Err(tex_state::UniverseError::State(
-                tex_state::StateError::GenerationInUse
-            ))
-        );
-
-        let (attempt, _opening, resume, request) = pending
-            .resume(universe)
-            .ok()
-            .expect("test fixture is valid");
-        assert!(!attempt.is_empty());
-        assert_eq!(resume.command, 7);
-        assert_eq!(request, "font request");
-        assert!(attempt.arena().mark().traced_words == 0);
-        universe
-            .allocate_token_list(&[])
-            .expect("test fixture is valid");
     })
     .expect("test fixture is valid");
 }

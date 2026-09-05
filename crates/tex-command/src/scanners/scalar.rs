@@ -211,14 +211,12 @@ pub enum RetainedScalarScan<T> {
     Failed(CommandError),
 }
 
-/// Reusable destination for one executor-owned scalar scan.
+/// Reusable destination for one synchronous scalar scan.
 ///
-/// The operation that requested the operand owns this slot across ordinary
-/// completion and resource retry.  A scanner writes one typed value or one
-/// cold error; the caller consumes that payload before starting the next
-/// scalar phase.  The exact continuation capability remains in the owning
-/// operation frame's scanner field, so this slot never becomes a mailbox or
-/// an independently retained owner.
+/// The caller owns this slot for the duration of the scan. A scanner writes
+/// one typed value or one cold error; the caller consumes that payload before
+/// starting another scalar operation. The slot never becomes a mailbox or an
+/// independently retained owner.
 #[derive(Debug, Default)]
 pub struct ScalarScanFrame {
     value: Option<ScalarScanValue>,

@@ -129,11 +129,11 @@ pub enum CommandError {
     /// requested logical filename.
     MissingInput { name: String, original_name: String },
     /// A non-opening file enquiry has no retained bytes or authoritative
-    /// absence yet and must suspend for a typed host probe.
+    /// absence yet and requests a typed host probe.
     MissingInputProbe(crate::FileEnquiryRequest),
     /// An otherwise-originless command failure annotated by the expandable
-    /// delivery which triggered it. Typed resource suspensions deliberately
-    /// remain unwrapped so the host can retry them.
+    /// delivery which triggered it. Typed resource needs deliberately remain
+    /// unwrapped so the host can replay them.
     AtOrigin {
         error: Box<CommandError>,
         origin: OriginId,

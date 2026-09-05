@@ -1,10 +1,10 @@
 //! Cold recipe construction for detached command continuations.
 
 use super::schema::{
-    CommandSummaryRecipe, ContinuationSchema, DetachedAttemptRecipe, DetachedCommandProfile,
-    GlueRecipe, GlueRecipeIndex, MacroRecipe, MacroRecipeIndex, NameRecipe, NameRecipeIndex,
-    OriginListRecipe, OriginListRecipeIndex, OriginRecipe, OriginRecipeIndex, SourceRecipe,
-    SourceRecipeIndex, TokenListRecipe, TokenListRecipeIndex,
+    CommandSummaryRecipe, ContinuationSchema, DetachedCommandProfile, GlueRecipe, GlueRecipeIndex,
+    MacroRecipe, MacroRecipeIndex, NameRecipe, NameRecipeIndex, OriginListRecipe,
+    OriginListRecipeIndex, OriginRecipe, OriginRecipeIndex, SourceRecipe, SourceRecipeIndex,
+    TokenListRecipe, TokenListRecipeIndex,
 };
 use super::{CommandContinuationError, OwnedCommandContinuation};
 
@@ -117,12 +117,10 @@ impl ContinuationRecipeBuilder {
     pub(crate) fn finish(
         self,
         summary: CommandSummaryRecipe,
-        attempt: Option<DetachedAttemptRecipe>,
     ) -> Result<OwnedCommandContinuation, CommandContinuationError> {
         OwnedCommandContinuation::from_schema(ContinuationSchema {
             profile: self.profile,
             summary,
-            attempt,
             sources: self.sources,
             names: self.names,
             token_lists: self.token_lists,

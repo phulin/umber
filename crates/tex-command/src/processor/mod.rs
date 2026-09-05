@@ -177,10 +177,9 @@ pub(crate) use status::{ScannerState, ScannerStatus};
 ///
 /// A resident token can prove freshness from the input row's current cursor,
 /// so that proof remains valid across sequential deliveries without another
-/// publication write.  Direct source positions, synthetic `endv`, and a
-/// command restored after a genuine suspension have no resident predecessor;
-/// they carry their one explicit stamp until an input-moving boundary
-/// consumes it.
+/// publication write. Direct source positions and synthetic `endv` have no
+/// resident predecessor; they carry their one explicit stamp until an
+/// input-moving boundary consumes it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DeliveryAuthority {
     Unavailable,
@@ -271,12 +270,12 @@ impl<G> Drop for CommandProcessor<'_, '_, G> {
     }
 }
 
-/// Opaque observation-order cursor retained when executor preflight suspends
-/// a command-processor episode after consuming scanner input.
+/// Opaque observation-order cursor used by executor preflight while one
+/// command-processing episode is split around semantic application.
 ///
 /// It carries no input or semantic owner: those remain in [`CommandState`].
-/// Restoring it only keeps delivery sequence metadata continuous when the
-/// typed command continuation resumes in a fresh borrow episode.
+/// Restoring it only keeps delivery sequence metadata continuous in the next
+/// borrow episode.
 #[derive(Clone, Copy, Debug)]
 pub struct CommandDeliveryCursor(u64);
 
@@ -293,13 +292,13 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.command.scratch.match_word_reads()
     }
 
-    /// Captures the next observation delivery sequence for a typed retry.
+    /// Captures the next observation delivery sequence for the next episode.
     #[must_use]
     pub const fn delivery_cursor(&self) -> CommandDeliveryCursor {
         CommandDeliveryCursor(self.next_delivery_sequence)
     }
 
-    /// Restores observation ordering for a typed retry in a fresh borrow.
+    /// Restores observation ordering in a fresh borrow episode.
     pub fn resume_delivery_cursor(&mut self, cursor: CommandDeliveryCursor) {
         self.invalidate_delivery_freshness();
         if self.observer.is_some() {
@@ -307,14 +306,13 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
     }
 
-    /// Continues scanning an executor-retained settled command in a fresh
-    /// borrow episode.
+    /// Continues scanning a settled command in a fresh borrow episode.
     ///
     /// `CurrentCommand` fields are private and its delivery stamp was minted
     /// by this command machine, so the executor can move the ephemeral value
     /// across its mutation-free preflight seam without backing up or
     /// redelivering the token. The next scanner delivery remains strictly
-    /// later than the resumed stamp.
+    /// later than the supplied stamp.
     pub fn resume_current_command(&mut self, command: &crate::CurrentCommand<G>) {
         let stamp = command.delivery_stamp();
         self.delivery_authority = DeliveryAuthority::Explicit(stamp);

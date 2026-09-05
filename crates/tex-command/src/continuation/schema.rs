@@ -278,40 +278,11 @@ pub(crate) struct CommandSummaryRecipe {
     pub(crate) align_state: i32,
 }
 
-/// Integer-only resume coordinates copied from an in-process attempt.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct DetachedResumePoint {
-    pub(crate) command: u32,
-    pub(crate) scanner: u32,
-    pub(crate) expansion: u32,
-    pub(crate) subordinate: u32,
-}
-
-/// Logical resource request retained without a host capability or callback.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct DetachedResourceRecipe {
-    pub(crate) kind: u16,
-    pub(crate) key: String,
-    pub(crate) payload: Vec<u8>,
-}
-
-/// Selected attempt roots which must be rebuilt in the destination attempt.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct DetachedAttemptRecipe {
-    pub(crate) token_lists: Vec<TokenListRecipeIndex>,
-    pub(crate) macros: Vec<MacroRecipeIndex>,
-    pub(crate) glue: Vec<GlueRecipeIndex>,
-    pub(crate) provenance: Vec<OriginRecipeIndex>,
-    pub(crate) resume: DetachedResumePoint,
-    pub(crate) request: DetachedResourceRecipe,
-}
-
-/// Complete handle-free command continuation.
+/// Complete handle-free semantic command recipe graph.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ContinuationSchema {
     pub(crate) profile: DetachedCommandProfile,
     pub(crate) summary: CommandSummaryRecipe,
-    pub(crate) attempt: Option<DetachedAttemptRecipe>,
     pub(crate) sources: Vec<SourceRecipe>,
     pub(crate) names: Vec<NameRecipe>,
     pub(crate) token_lists: Vec<TokenListRecipe>,

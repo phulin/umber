@@ -74,12 +74,12 @@ impl FileEnquiryResource {
 /// Immutable font bytes selected by the host for a canonical `\\font` replay.
 ///
 /// This transient capability value is never retained by command state or
-/// snapshots: a missing entry is an explicit resource suspension at the
-/// replay boundary.
+/// snapshots: a missing entry is an explicit resource need at the replay
+/// boundary.
 #[derive(Clone, Debug)]
 pub enum FontResource {
     /// The host completed lookup and determined that no font is available.
-    /// This differs from an absent capability entry, which suspends replay.
+    /// This differs from an absent capability entry, which requests replay.
     Unavailable,
     Tfm {
         metrics: FileContent,

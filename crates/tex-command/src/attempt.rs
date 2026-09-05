@@ -2,7 +2,7 @@
 //!
 //! Values in this module are coordinates, never owners. One [`AttemptArena`]
 //! owns all backing storage and can be truncated to a fixed-size mark or moved
-//! intact into an in-process resource continuation.
+//! intact through one synchronous command operation.
 
 use core::marker::PhantomData;
 use core::num::NonZeroU64;
@@ -12,8 +12,8 @@ use tex_state::glue::GlueSpec;
 use tex_state::provenance::OriginRecord;
 use tex_state::token::{TokenWord, TracedTokenWord};
 use tex_state::{
-    DefinitionBuildError, DefinitionBuilder, DefinitionRef, GenerationOwner, GlueId,
-    PromotionError, ProvenanceId, TokenListId, Universe,
+    DefinitionBuildError, DefinitionBuilder, DefinitionRef, GlueId, PromotionError, ProvenanceId,
+    TokenListId, Universe,
 };
 
 mod token_lane;
@@ -67,15 +67,12 @@ pub(crate) struct AttemptScopeCoordinate {
     serial: AttemptScopeSerial,
 }
 
-/// Linear capability owning one dynamically suspended attempt scope.
+/// Linear capability owning one synchronous attempt scope.
 ///
-/// A Rust lifetime cannot brand a scanner or macro frame which unwinds across
-/// a resource barrier and resumes later. Those frames use this smallest
-/// private runtime boundary instead: one checked serial and two fixed marks.
 /// Construction is arena-private, the value is neither `Copy` nor `Clone`,
 /// and exact close consumes it.
 #[derive(Debug, Eq, Hash, PartialEq)]
-#[must_use = "an owned attempt scope must be closed or moved into a continuation"]
+#[must_use = "an owned attempt scope must be closed before the operation returns"]
 pub(crate) struct OwnedAttemptScope {
     key: NonZeroU64,
     serial: AttemptScopeSerial,
@@ -109,9 +106,9 @@ pub struct ScopedAttemptTokenListId<'scope> {
 
 /// Borrowed synchronous child scope.
 ///
-/// The dynamic engine uses [`OwnedAttemptScope`] only where suspension makes
-/// a lexical Rust lifetime impossible. Purely synchronous helpers use this
-/// facade so a child id is statically unable to escape the callback.
+/// The dynamic engine uses [`OwnedAttemptScope`] where nested scanner helpers
+/// need a checked LIFO scope. Purely synchronous helpers use this facade so a
+/// child id is statically unable to escape the callback.
 pub struct AttemptScope<'arena, 'scope, G> {
     arena: &'arena mut AttemptArena<G>,
     owner: Option<OwnedAttemptScope>,
@@ -341,45 +338,6 @@ pub enum AttemptError {
 impl From<DefinitionBuildError> for AttemptError {
     fn from(error: DefinitionBuildError) -> Self {
         Self::Definition(error)
-    }
-}
-
-/// Failure to move one live attempt across an in-process resource boundary.
-///
-/// A stale opening coordinate is distinguished from failure to retain the
-/// current generation. Both are detected before the live arena is moved.
-#[derive(Debug)]
-pub enum AttemptSuspendError {
-    StaleMark(AttemptError),
-    Generation(tex_state::UniverseError),
-}
-
-/// Rejected suspension together with the still-live operation capability.
-///
-/// Suspension validates every coordinate before moving the attempt arena, so
-/// failure leaves command state unchanged. Returning the capability prevents
-/// that unchanged operation from losing its only caller owner.
-#[derive(Debug)]
-pub struct AttemptSuspendFailure {
-    operation: CommandAttemptOperation,
-    error: AttemptSuspendError,
-}
-
-impl AttemptSuspendFailure {
-    pub(crate) const fn new(
-        operation: CommandAttemptOperation,
-        error: AttemptSuspendError,
-    ) -> Self {
-        Self { operation, error }
-    }
-
-    #[must_use]
-    pub const fn error(&self) -> &AttemptSuspendError {
-        &self.error
-    }
-
-    pub fn into_parts(self) -> (CommandAttemptOperation, AttemptSuspendError) {
-        (self.operation, self.error)
     }
 }
 
@@ -640,8 +598,8 @@ impl<G> Default for AttemptArena<G> {
 impl<G> AttemptArena<G> {
     /// Opens one dynamic child of the exact currently active scope.
     ///
-    /// The returned linear capability may move into an in-process
-    /// continuation. No row, side table, or heap owner is allocated.
+    /// The returned linear capability remains local to the active operation.
+    /// No row, side table, or heap owner is allocated.
     pub(crate) fn begin_owned_scope(&mut self) -> Result<OwnedAttemptScope, AttemptError> {
         let serial = self.next_scope;
         let next_scope = serial.checked_successor()?;
@@ -1671,11 +1629,11 @@ where
     }
 }
 
-/// Opaque owner transferred between consecutive command operations.
+/// Opaque owner for one command operation.
 ///
-/// Scanner continuations may intentionally keep attempt coordinates live
-/// across more than one delivered command. The owner moves; individual ids
-/// never retain it. Macro activations use disjoint generation-owned scratch.
+/// Individual ids never retain the arena owner. Macro activations use
+/// disjoint generation-owned scratch, and a resource miss unwinds this owner
+/// before the host replays from a full checkpoint.
 pub struct CommandAttempt<G> {
     arena: AttemptArena<G>,
     active_operation: Option<OwnedAttemptScope>,
@@ -1698,11 +1656,11 @@ pub(crate) struct CommandAttemptMark {
 /// Move-only caller capability for one active command operation.
 ///
 /// Command state is the sole ordinary-path coordinate owner. The executor
-/// must move this opaque lifecycle edge into the exact continuation that can
-/// resume, commit, or roll the operation back, but the edge carries no copied
-/// coordinate. It cannot reconstruct a capability after discarding that edge.
+/// consumes this opaque lifecycle edge at the same synchronous boundary that
+/// commits or rolls the operation back; a resource miss drops the operation
+/// and replays from a full checkpoint.
 #[derive(Debug)]
-#[must_use = "an active command operation must be finished or moved into its continuation"]
+#[must_use = "an active command operation must be finished before the caller returns"]
 pub struct CommandAttemptOperation {
     _private: (),
 }
@@ -1725,10 +1683,6 @@ impl CommandAttemptMark {
             parent: operation.parent,
             macro_depth: u32::try_from(macro_depth).map_err(|_| AttemptError::CapacityOverflow)?,
         })
-    }
-
-    pub(crate) const fn attempt_mark(self) -> AttemptMark {
-        self.opening
     }
 
     pub(crate) const fn macro_depth(self) -> usize {
@@ -1787,7 +1741,8 @@ impl<G> CommandAttempt<G> {
     ///
     /// The higher-ranked callback prevents both its capability and every id
     /// allocated through it from escaping. Dynamic scanner/macro frames use
-    /// the crate-private owned-scope boundary instead because they may suspend.
+    /// the crate-private owned-scope boundary instead because they use dynamic
+    /// LIFO cleanup while the synchronous scan is active.
     pub fn with_scope<R>(
         &mut self,
         operation: impl for<'scope> FnOnce(&mut AttemptScope<'_, 'scope, G>) -> R,
@@ -1929,124 +1884,5 @@ impl<G> CommandAttempt<G> {
             && self.arena.top_scope == AttemptScopeSerial::ROOT
             && self.active_operation.is_none()
             && self.active_operation_origin.is_none()
-    }
-}
-
-/// Integer-only state-machine position retained at a resource barrier.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct AttemptResumePoint {
-    pub command: u32,
-    pub scanner: u32,
-    pub expansion: u32,
-    pub subordinate: u32,
-}
-
-/// Complete in-process command suspension package.
-///
-/// `R` owns the typed request and resume variant. No field borrows either the
-/// attempt or generation. The opening mark and state-machine resume point are
-/// fixed-size integer coordinates into this owned attempt. Resumption consumes
-/// the package, validates both the coarse generation and opening mark, drops
-/// that extra owner, and only then re-borrows live storage through `Universe`.
-pub struct PendingCommandAttempt<G, R> {
-    attempt: Box<CommandAttempt<G>>,
-    generation: GenerationOwner<G>,
-    opening: CommandAttemptMark,
-    operation: CommandAttemptOperation,
-    resume: AttemptResumePoint,
-    pending: R,
-}
-
-impl<G, R> PendingCommandAttempt<G, R> {
-    pub(crate) const fn operation_coordinate(&self) -> CommandAttemptMark {
-        self.opening
-    }
-
-    #[must_use]
-    #[cfg(test)]
-    pub(crate) fn new(
-        mut attempt: CommandAttempt<G>,
-        generation: GenerationOwner<G>,
-        resume: AttemptResumePoint,
-        pending: R,
-    ) -> Self {
-        let opening_mark = attempt.arena().mark();
-        let opening = attempt
-            .begin_operation(0)
-            .expect("test pending attempt opens an operation scope");
-        debug_assert_eq!(opening.attempt_mark(), opening_mark);
-        Self {
-            attempt: Box::new(attempt),
-            generation,
-            opening,
-            operation: CommandAttemptOperation::new(),
-            resume,
-            pending,
-        }
-    }
-
-    pub(crate) fn new_at_validated_mark(
-        attempt: CommandAttempt<G>,
-        generation: GenerationOwner<G>,
-        opening: CommandAttemptMark,
-        operation: CommandAttemptOperation,
-        resume: AttemptResumePoint,
-        pending: R,
-    ) -> Self {
-        debug_assert!(
-            attempt
-                .arena()
-                .validate_mark(opening.attempt_mark())
-                .is_ok()
-                && attempt.validate_operation(opening).is_ok(),
-            "a pending attempt may retain only its own validated opening cursor"
-        );
-        Self {
-            attempt: Box::new(attempt),
-            generation,
-            opening,
-            operation,
-            resume,
-            pending,
-        }
-    }
-
-    #[allow(
-        clippy::result_large_err,
-        reason = "stale admission must return the complete move-only continuation without a lifecycle allocation"
-    )]
-    pub(crate) fn resume(
-        self,
-        universe: &Universe<G>,
-    ) -> Result<
-        (
-            CommandAttempt<G>,
-            CommandAttemptOperation,
-            AttemptResumePoint,
-            R,
-        ),
-        Self,
-    > {
-        let opening = self.opening;
-        if !universe.owns_generation(&self.generation)
-            || self
-                .attempt
-                .arena()
-                .validate_mark(opening.attempt_mark())
-                .is_err()
-            || self.attempt.validate_operation(opening).is_err()
-        {
-            return Err(self);
-        }
-        let Self {
-            attempt,
-            generation,
-            opening: _,
-            operation,
-            resume,
-            pending,
-        } = self;
-        drop(generation);
-        Ok((*attempt, operation, resume, pending))
     }
 }

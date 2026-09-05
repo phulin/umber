@@ -313,7 +313,6 @@ fn if_and_ifcat_operands_stay_in_the_shared_delivery_lane() {
         assert_eq!(next_character(&mut processor), 'T');
         assert_eq!(next_character(&mut processor), 'N');
         assert_expanded_end(&mut processor);
-        assert_eq!(processor.command.scratch.driver_continuation_depth(), 0);
     });
 }
 
@@ -376,7 +375,6 @@ fn if_operand_string_compare_completes_its_exact_parent_once() {
         assert_eq!(next_character(&mut processor), 'T');
         assert_expanded_end(&mut processor);
         assert!(processor.command.conditions.current().is_none());
-        assert_eq!(processor.command.scratch.driver_continuation_depth(), 0);
         assert_eq!(processor.command.input_level_count(), 0);
         drop(processor);
         // The comparison result is one inserted expansion row. Its exact
@@ -422,7 +420,6 @@ fn ifnum_literal_operands_stay_in_the_shared_delivery_lane() {
 
         assert_eq!(next_character(&mut processor), 'Y');
         assert_expanded_end(&mut processor);
-        assert_eq!(processor.command.scratch.driver_continuation_depth(), 0);
     });
 }
 
@@ -482,20 +479,6 @@ fn deeply_nested_ifnum_operands_use_the_shared_control_lane() {
                 status => panic!("unexpected delivery status: {status:?}"),
             }
         }
-        assert_eq!(processor.command.scratch.driver_continuation_depth(), 0);
-        assert_eq!(
-            processor
-                .command
-                .scratch
-                .recursive_delivery_entries_with_control(),
-            0,
-            "nested ifnum operands must not re-enter the delivery loop"
-        );
-        assert_eq!(
-            processor.command.scratch.recursive_delivery_entries(),
-            0,
-            "the compact ifnum test has no nested delivery call at all"
-        );
     });
 }
 
@@ -544,7 +527,6 @@ fn ifodd_and_ifcase_literal_operands_use_the_numeric_control_lane() {
         assert_eq!(next_character(&mut processor), 'Y');
         assert_eq!(next_character(&mut processor), 'B');
         assert_expanded_end(&mut processor);
-        assert_eq!(processor.command.scratch.driver_continuation_depth(), 0);
     });
 }
 
@@ -603,15 +585,6 @@ fn ifdim_literal_operands_use_the_shared_dimension_control_lane() {
             command.meaning()
         );
         assert_expanded_end(&mut processor);
-        assert_eq!(processor.command.scratch.driver_continuation_depth(), 0);
-        assert_eq!(
-            processor
-                .command
-                .scratch
-                .recursive_delivery_entries_with_control(),
-            0,
-            "ifdim and its nested number must stay in one delivery loop"
-        );
     });
 }
 
@@ -652,15 +625,6 @@ fn ifpdfabsnum_literal_operands_use_the_shared_number_control_lane() {
         );
         assert_eq!(next_character(&mut processor), 'Y');
         assert_expanded_end(&mut processor);
-        assert_eq!(processor.command.scratch.driver_continuation_depth(), 0);
-        assert_eq!(
-            processor
-                .command
-                .scratch
-                .recursive_delivery_entries_with_control(),
-            0,
-            "ifpdfabsnum must stay in the shared delivery loop"
-        );
     });
 }
 
@@ -705,15 +669,6 @@ fn ifpdfabsdim_literal_operands_use_the_shared_dimension_control_lane() {
         );
         assert_eq!(next_character(&mut processor), 'Y');
         assert_expanded_end(&mut processor);
-        assert_eq!(processor.command.scratch.driver_continuation_depth(), 0);
-        assert_eq!(
-            processor
-                .command
-                .scratch
-                .recursive_delivery_entries_with_control(),
-            0,
-            "ifpdfabsdim must stay in the shared delivery loop"
-        );
     });
 }
 

@@ -328,10 +328,9 @@ impl<G> Clone for HotCommand<G> {
 /// and `cur_tok`.
 ///
 /// This value is normally call-local and remains absent at durable named
-/// checkpoints. A resource-suspended expanded scanner may retain exactly one
-/// current command as its typed continuation; its delivery stamp identifies
-/// that exact live cursor transition and is never reconstructed from token
-/// equality.
+/// checkpoints. A resource miss drops the current command with the unwound
+/// scanner call; its delivery stamp identifies the live cursor transition and
+/// is never reconstructed from token equality.
 #[derive(Debug)]
 pub struct CurrentCommand<G> {
     spelling: TracedTokenWord,

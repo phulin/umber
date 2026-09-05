@@ -252,7 +252,7 @@ pub(crate) struct ScanToksLocal<G> {
     /// Exact parent suffix before either mutable sink was admitted.
     ///
     /// Successful completion publishes the sinks to the parent operation.
-    /// Cancellation or failed continuation publication first closes the live
+    /// Cancellation or failed publication first closes the live
     /// scanner scope, then truncates through this mark so no unreachable sink
     /// row survives the failed transaction.
     attempt_opening: AttemptMark,
@@ -1139,7 +1139,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(result)
     }
 
-    /// Rejects one unpublished scanner continuation deepest-first.
+    /// Rejects one unpublished scanner result deepest-first.
     ///
     /// The scanner scope opens after its parent-owned result sinks so normal
     /// completion can return them without a copy. Failure therefore closes
@@ -1232,8 +1232,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(())
     }
 
-    // The stationary phase moves directly into reusable scratch only when a
-    // real resource suspension leaves this synchronous scanner invocation.
+    // The phase remains call-local. A resource miss unwinds this synchronous
+    // scanner invocation and the host replays from a full checkpoint.
     fn scan_toks_inner(
         &mut self,
         config: ScanToksConfig,

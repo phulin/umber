@@ -38,9 +38,8 @@ mod attempt;
 pub(crate) use attempt::CommandAttemptMark;
 pub use attempt::{
     AttemptDefinitionId, AttemptError, AttemptGlueId, AttemptNameId, AttemptPromotionDestination,
-    AttemptProvenanceId, AttemptResumePoint, AttemptScope, AttemptSuspendError,
-    AttemptSuspendFailure, AttemptTokenListId, AttemptTokenListIter, AttemptTokenListView,
-    CommandAttempt, CommandAttemptChildScope, CommandAttemptOperation, PendingCommandAttempt,
+    AttemptProvenanceId, AttemptScope, AttemptTokenListId, AttemptTokenListIter,
+    AttemptTokenListView, CommandAttempt, CommandAttemptChildScope, CommandAttemptOperation,
     ScopedAttemptTokenListId,
 };
 mod command;
@@ -93,7 +92,6 @@ mod tracing_nesting;
 mod test_harness;
 
 pub use command::{CurrentCommand, DeliveryStamp};
-pub use continuation::{CommandContinuationError, OwnedCommandContinuation};
 #[cfg(feature = "profiling")]
 pub use direct_command_delivery::{DirectCommandDeliveryBenchmark, DirectCommandDeliveryReceipt};
 pub use error::{CommandError, DimensionDiagnostic, InsertedUnit};

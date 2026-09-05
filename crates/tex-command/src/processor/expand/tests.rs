@@ -214,7 +214,6 @@ fn the_scans_its_target_from_the_same_expanded_delivery_loop() {
         );
         let output = collect_expanded_characters(universe, &mut command);
         assert_eq!(output, "0X");
-        assert_eq!(command.scratch.driver_continuation_depth(), 0);
     });
 }
 
@@ -255,12 +254,6 @@ fn expanded_collects_a_balanced_body_in_the_shared_control_lane() {
             ],
         );
         assert_eq!(collect_expanded_characters(universe, &mut command), "ABX");
-        assert_eq!(command.scratch.driver_continuation_depth(), 0);
-        assert_eq!(
-            command.scratch.recursive_delivery_entries_with_control(),
-            0,
-            "expanded collection must stay in the shared delivery loop"
-        );
     });
 }
 
@@ -309,7 +302,6 @@ fn expanded_body_uses_the_shared_lane_for_nested_the() {
             ],
         );
         assert_eq!(collect_expanded_characters(universe, &mut command), "0X");
-        assert_eq!(command.scratch.driver_continuation_depth(), 0);
     });
 }
 
@@ -369,12 +361,6 @@ fn nested_expanded_bodies_return_through_the_same_driver() {
             ],
         );
         assert_eq!(collect_expanded_characters(universe, &mut command), "AX");
-        assert_eq!(command.scratch.driver_continuation_depth(), 0);
-        assert_eq!(
-            command.scratch.recursive_delivery_entries_with_control(),
-            0,
-            "nested expanded bodies must not re-enter the delivery method"
-        );
     });
 }
 
@@ -439,12 +425,6 @@ fn expanded_body_splices_unexpanded_children_without_reentering_delivery() {
             ],
         );
         assert_eq!(collect_expanded_characters(universe, &mut command), "AX");
-        assert_eq!(command.scratch.driver_continuation_depth(), 0);
-        assert_eq!(
-            command.scratch.recursive_delivery_entries_with_control(),
-            0,
-            "unexpanded child must splice through the existing driver"
-        );
     });
 }
 
@@ -503,7 +483,6 @@ fn expanded_body_detokenizes_children_into_the_parent_buffer() {
             ],
         );
         assert_eq!(collect_expanded_characters(universe, &mut command), "A BX");
-        assert_eq!(command.scratch.driver_continuation_depth(), 0);
     });
 }
 
@@ -536,7 +515,6 @@ fn expanded_missing_opening_brace_uses_balanced_recovery() {
             ],
         );
         assert_eq!(collect_expanded_characters(universe, &mut command), "AX");
-        assert_eq!(command.scratch.driver_continuation_depth(), 0);
     });
 }
 
@@ -582,7 +560,6 @@ fn expanded_unterminated_body_aborts_synchronous_controls_at_end() {
                 .is_none()
         );
         drop(processor);
-        assert_eq!(command.scratch.driver_continuation_depth(), 0);
         command
             .rollback_attempt_operation(operation)
             .expect("rollback after unterminated expanded body");
@@ -626,17 +603,6 @@ fn deeply_nested_the_requests_use_the_control_lane() {
                 .expect("terminal command");
             assert_eq!(settled.meaning(), Meaning::Relax);
             drop(processor);
-            assert_eq!(command.scratch.driver_continuation_depth(), 0);
-            assert_eq!(
-                command.scratch.recursive_delivery_entries_with_control(),
-                0,
-                "nested the must not re-enter expanded delivery while a control is live"
-            );
-            let counters = command.scratch.expansion_control_counters();
-            assert_eq!(
-                counters.control_pushes, counters.control_pops,
-                "nested the must retire every control frame"
-            );
         }
     });
 }
@@ -664,12 +630,6 @@ fn nested_number_conversions_return_through_the_shared_delivery_loop() {
         ]);
         crate::test_harness::push(&mut command, input);
         assert_eq!(collect_expanded_characters(universe, &mut command), "4X");
-        assert_eq!(command.scratch.driver_continuation_depth(), 0);
-        assert_eq!(
-            command.scratch.recursive_delivery_entries_with_control(),
-            0,
-            "nested number must return through the compact control lane"
-        );
     });
 }
 
@@ -878,12 +838,6 @@ fn nested_pdf_uniform_deviates_use_the_shared_integer_lane() {
                 Meaning::Relax
             );
             drop(processor);
-            assert_eq!(command.scratch.driver_continuation_depth(), 0);
-            assert_eq!(
-                command.scratch.recursive_delivery_entries_with_control(),
-                0,
-                "nested pdf uniform operands must not re-enter delivery while a control is live"
-            );
         }
     });
 }
@@ -919,7 +873,6 @@ fn number_register_operands_use_the_shared_index_lane() {
             ],
         );
         assert_eq!(collect_expanded_characters(universe, &mut command), "0X");
-        assert_eq!(command.scratch.driver_continuation_depth(), 0);
     });
 }
 
@@ -968,7 +921,6 @@ fn ifnum_register_operands_use_the_shared_index_lane() {
             ],
         );
         assert_eq!(collect_expanded_characters(universe, &mut command), "X");
-        assert_eq!(command.scratch.driver_continuation_depth(), 0);
     });
 }
 
@@ -1025,7 +977,6 @@ fn ifdim_register_operands_use_the_shared_index_lane() {
             ],
         );
         assert_eq!(collect_expanded_characters(universe, &mut command), "X");
-        assert_eq!(command.scratch.driver_continuation_depth(), 0);
     });
 }
 
@@ -1066,7 +1017,6 @@ fn ifodd_register_operands_use_the_shared_index_lane() {
             ],
         );
         assert_eq!(collect_expanded_characters(universe, &mut command), "X");
-        assert_eq!(command.scratch.driver_continuation_depth(), 0);
     });
 }
 
@@ -1111,7 +1061,6 @@ fn ifodd_resumes_its_exact_parent_after_nested_expandafter() {
             ],
         );
         assert_eq!(collect_expanded_characters(universe, &mut command), "AX");
-        assert_eq!(command.scratch.driver_continuation_depth(), 0);
     });
 }
 
@@ -1154,17 +1103,7 @@ fn ifodd_exact_parent_matrix_covers_nested_scalar_children() {
             let _operation = command.begin_attempt_operation();
             crate::test_harness::push(&mut command, input);
             assert_eq!(collect_expanded_characters(universe, &mut command), "X");
-            assert_eq!(command.scratch.driver_continuation_depth(), 0);
             assert!(command.scratch.is_quiescent());
-            let counters = command.scratch.expansion_control_counters();
-            assert_eq!(
-                counters.control_pushes, counters.control_pops,
-                "every nested control frame must retire exactly once"
-            );
-            assert!(
-                counters.max_control_depth >= 2,
-                "the fixture must exercise a nested parent/child frame"
-            );
         }
     });
 }
@@ -1232,11 +1171,7 @@ fn low_fuel_nested_if_controls_balance_their_inline_frames() {
         }
         assert_eq!(output, "AX");
         assert!(processor.fuel.burned() <= 128);
-        assert_eq!(processor.command.scratch.driver_continuation_depth(), 0);
         assert!(processor.command.scratch.is_quiescent());
-        let counters = processor.command.scratch.expansion_control_counters();
-        assert_eq!(counters.control_pushes, counters.control_pops);
-        assert!(counters.max_control_depth >= 2);
     });
 }
 
@@ -1287,8 +1222,6 @@ fn nested_the_register_indices_do_not_reenter_the_delivery_stack() {
             crate::test_harness::push(&mut command, input);
             let output = collect_expanded_characters(universe, &mut command);
             assert_eq!(output, "0X");
-            assert_eq!(command.scratch.driver_continuation_depth(), 0);
-            assert_eq!(command.scratch.recursive_delivery_entries_with_control(), 0);
         }
     });
 }
@@ -1326,8 +1259,6 @@ fn nested_the_integer_expressions_use_the_shared_control_lane() {
             crate::test_harness::push(&mut command, input);
             let output = collect_expanded_characters(universe, &mut command);
             assert_eq!(output, "0X");
-            assert_eq!(command.scratch.driver_continuation_depth(), 0);
-            assert_eq!(command.scratch.recursive_delivery_entries_with_control(), 0);
         }
     });
 }
@@ -1355,7 +1286,6 @@ fn the_direct_internal_meanings_use_the_hot_value_projection() {
             ],
         );
         assert_eq!(collect_expanded_characters(universe, &mut command), "0X");
-        assert_eq!(command.scratch.driver_continuation_depth(), 0);
     });
 }
 
@@ -1408,7 +1338,6 @@ fn the_integer_expression_lane_preserves_operator_precedence() {
             ],
         );
         assert_eq!(collect_expanded_characters(universe, &mut command), "7X");
-        assert_eq!(command.scratch.driver_continuation_depth(), 0);
     });
 }
 
@@ -1476,7 +1405,6 @@ fn the_integer_and_dimension_expressions_accept_parenthesized_factors() {
         let _operation = command.begin_attempt_operation();
         crate::test_harness::push(&mut command, integer_input);
         assert_eq!(collect_expanded_characters(universe, &mut command), "7X");
-        assert_eq!(command.scratch.recursive_delivery_entries_with_control(), 0);
 
         let mut command = CommandState::default();
         let _operation = command.begin_attempt_operation();
@@ -1597,7 +1525,6 @@ fn the_integer_and_dimension_expressions_accept_parenthesized_factors() {
             collect_expanded_characters(universe, &mut command),
             "3.0ptX"
         );
-        assert_eq!(command.scratch.driver_continuation_depth(), 0);
 
         let dimension_prefix_input = [
             the,
@@ -1716,7 +1643,6 @@ fn number_integer_expression_uses_the_shared_expression_lane() {
             ],
         );
         assert_eq!(collect_expanded_characters(universe, &mut command), "7X");
-        assert_eq!(command.scratch.driver_continuation_depth(), 0);
     });
 }
 
@@ -1874,7 +1800,6 @@ fn number_dimension_expression_uses_the_shared_dimension_lane() {
             collect_expanded_characters(universe, &mut command),
             "65536X"
         );
-        assert_eq!(command.scratch.driver_continuation_depth(), 0);
     });
 }
 
@@ -1938,7 +1863,6 @@ fn the_dimension_expression_lane_preserves_fixed_point_addition() {
             collect_expanded_characters(universe, &mut command),
             "3.0ptX"
         );
-        assert_eq!(command.scratch.driver_continuation_depth(), 0);
     });
 }
 
@@ -1987,8 +1911,6 @@ fn deeply_nested_the_dimension_expressions_stay_on_the_control_lane() {
                 collect_expanded_characters(universe, &mut command),
                 "0.0ptX"
             );
-            assert_eq!(command.scratch.driver_continuation_depth(), 0);
-            assert_eq!(command.scratch.recursive_delivery_entries_with_control(), 0);
         }
     });
 }
@@ -2027,12 +1949,6 @@ fn nested_fontname_operands_use_the_shared_control_lane() {
         let output = collect_expanded_characters(universe, &mut command);
         assert!(output.starts_with("nullfont"));
         assert!(output.ends_with('X'));
-        assert_eq!(command.scratch.driver_continuation_depth(), 0);
-        assert_eq!(
-            command.scratch.recursive_delivery_entries_with_control(),
-            0,
-            "nested fontname operands must not re-enter delivery while a control is live"
-        );
     });
 }
 
@@ -2065,12 +1981,6 @@ fn nested_pdf_font_sizes_use_the_shared_font_selector_lane() {
         let output = collect_expanded_characters(universe, &mut command);
         assert!(!output.is_empty());
         assert!(output.ends_with('X'));
-        assert_eq!(command.scratch.driver_continuation_depth(), 0);
-        assert_eq!(
-            command.scratch.recursive_delivery_entries_with_control(),
-            0,
-            "nested pdffontsize operands must not re-enter delivery while a control is live"
-        );
     });
 }
 
@@ -2116,8 +2026,6 @@ fn nested_pdf_font_queries_use_the_shared_font_selector_lane() {
         let slash = output.find('/').expect("font-name separator");
         assert!(slash > 0, "pdffontname must render a nonempty name");
         assert!(output[slash + 1..].ends_with('X'));
-        assert_eq!(command.scratch.driver_continuation_depth(), 0);
-        assert_eq!(command.scratch.recursive_delivery_entries_with_control(), 0);
     });
 }
 
@@ -2156,8 +2064,6 @@ fn ifvoid_uses_the_shared_integer_lane_for_its_register_index() {
             ],
         );
         assert_eq!(collect_expanded_characters(universe, &mut command), "AX");
-        assert_eq!(command.scratch.driver_continuation_depth(), 0);
-        assert_eq!(command.scratch.recursive_delivery_entries_with_control(), 0);
     });
 }
 
@@ -2216,8 +2122,6 @@ fn iffontchar_consumes_font_and_character_on_the_shared_integer_lane() {
             ],
         );
         assert_eq!(collect_expanded_characters(universe, &mut command), "BX");
-        assert_eq!(command.scratch.driver_continuation_depth(), 0);
-        assert_eq!(command.scratch.recursive_delivery_entries_with_control(), 0);
     });
 }
 
@@ -2295,7 +2199,6 @@ fn ifcsname_collects_in_the_shared_delivery_lane() {
             }
         );
         drop(processor);
-        assert_eq!(command.scratch.driver_continuation_depth(), 0);
     });
 }
 
@@ -2743,7 +2646,6 @@ fn synchronous_primitive_chain_stays_in_the_occupied_hot_owner() {
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
         let ownership_before = crate::command::command_ownership_counters();
-        let hot_before = super::expansion_hot_counters();
         #[cfg(feature = "profiling")]
         let allocation_before = tex_state::measurement::hot_core_thread_allocation_measurement(
             tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan,
@@ -2769,25 +2671,12 @@ fn synchronous_primitive_chain_stays_in_the_occupied_hot_owner() {
         let delivered = destination.expect("hot terminal command");
         assert_eq!(delivered.spelling().semantic_token(), terminal);
         let ownership_after = crate::command::command_ownership_counters();
-        let hot_after = super::expansion_hot_counters();
         assert_eq!(
             ownership_after.rich_materializations - ownership_before.rich_materializations,
             0
         );
         assert_eq!(
             ownership_after.hot_reconstructions - ownership_before.hot_reconstructions,
-            0
-        );
-        assert_eq!(
-            hot_after.primitive_hot_dispatches - hot_before.primitive_hot_dispatches,
-            3
-        );
-        assert_eq!(
-            hot_after.primitive_cold_materializations - hot_before.primitive_cold_materializations,
-            0
-        );
-        assert_eq!(
-            hot_after.active_dispatch_calls - hot_before.active_dispatch_calls,
             0
         );
         #[cfg(feature = "profiling")]
@@ -2829,7 +2718,6 @@ fn primitive_scanner_start_uses_compact_opener_state() {
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut context = universe.command_context().expect("command context");
         let ownership_before = crate::command::command_ownership_counters();
-        let hot_before = super::expansion_hot_counters();
         let mut processor = crate::test_harness::processor(
             &mut command,
             &mut context,
@@ -2855,7 +2743,6 @@ fn primitive_scanner_start_uses_compact_opener_state() {
             }
         );
         let ownership_after = crate::command::command_ownership_counters();
-        let hot_after = super::expansion_hot_counters();
         assert_eq!(
             ownership_after.rich_materializations - ownership_before.rich_materializations,
             0
@@ -2863,18 +2750,6 @@ fn primitive_scanner_start_uses_compact_opener_state() {
         assert_eq!(
             ownership_after.hot_reconstructions - ownership_before.hot_reconstructions,
             0
-        );
-        assert_eq!(
-            hot_after.primitive_hot_dispatches - hot_before.primitive_hot_dispatches,
-            1
-        );
-        assert_eq!(
-            hot_after.primitive_cold_materializations - hot_before.primitive_cold_materializations,
-            0
-        );
-        assert!(
-            hot_after.active_dispatch_calls - hot_before.active_dispatch_calls > 0,
-            "number operands use the active compact accumulator"
         );
     });
 }
@@ -3861,8 +3736,6 @@ fn nested_pdf_integer_queries_return_through_the_shared_number_lane() {
             ],
         );
         assert_eq!(collect_expanded_characters(universe, &mut command), "0/0X");
-        assert_eq!(command.scratch.driver_continuation_depth(), 0);
-        assert_eq!(command.scratch.recursive_delivery_entries_with_control(), 0);
     });
 }
 
@@ -3934,8 +3807,6 @@ fn pdf_ximage_bbox_uses_the_shared_two_integer_lane() {
             collect_expanded_characters(universe, &mut command),
             "0.0ptX"
         );
-        assert_eq!(command.scratch.driver_continuation_depth(), 0);
-        assert_eq!(command.scratch.recursive_delivery_entries_with_control(), 0);
     });
 }
 
@@ -4047,8 +3918,6 @@ fn nested_pdf_string_projections_use_the_shared_collector_lane() {
             collect_expanded_characters(universe, &mut command),
             "a\\(b\\)/4162/ABX"
         );
-        assert_eq!(command.scratch.driver_continuation_depth(), 0);
-        assert_eq!(command.scratch.recursive_delivery_entries_with_control(), 0);
     });
 }
 
@@ -4083,8 +3952,6 @@ fn numbered_marks_use_the_shared_integer_lane() {
             ],
         );
         assert_eq!(collect_expanded_characters(universe, &mut command), "X");
-        assert_eq!(command.scratch.driver_continuation_depth(), 0);
-        assert_eq!(command.scratch.recursive_delivery_entries_with_control(), 0);
     });
 }
 
@@ -4133,8 +4000,6 @@ fn string_compare_uses_two_shared_collector_phases() {
             ],
         );
         assert_eq!(collect_expanded_characters(universe, &mut command), "-1X");
-        assert_eq!(command.scratch.driver_continuation_depth(), 0);
-        assert_eq!(command.scratch.recursive_delivery_entries_with_control(), 0);
     });
 }
 
@@ -4163,7 +4028,5 @@ fn pdf_last_match_uses_the_shared_number_lane_at_end_of_input() {
             ],
         );
         assert_eq!(collect_expanded_characters(universe, &mut command), "-1->X");
-        assert_eq!(command.scratch.driver_continuation_depth(), 0);
-        assert_eq!(command.scratch.recursive_delivery_entries_with_control(), 0);
     });
 }

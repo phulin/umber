@@ -669,8 +669,8 @@ pub fn append_command_token_text<G>(
 /// Character tokens remain raw (with parameter characters doubled), while
 /// control-sequence spelling and its separator observe the live escape
 /// character and catcode table. The returned value owns no token-list handle,
-/// so it remains stable when a typed resource continuation resumes the
-/// enclosing command.
+/// so it remains stable when the host replays the enclosing command from a
+/// full checkpoint.
 pub(crate) fn token_slice_string_text<G>(
     state: &mut tex_state::CommandContext<'_, G>,
     tokens: &[Token],

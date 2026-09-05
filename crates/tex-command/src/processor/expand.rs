@@ -3278,7 +3278,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .as_ref()
             .is_err_and(CommandError::is_resource_suspension)
         {
-            let error = result.expect_err("matched resource suspension");
+            let error = result.expect_err("matched resource need");
             // Resource misses unwind the whole synchronous call.  The host
             // restores a full aggregate checkpoint, so retaining `command`,
             // scanner phases, or an expansion parent here would only create a

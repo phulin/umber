@@ -493,8 +493,8 @@ impl PdfImageRequest {
     /// rule dimensions and `attr` are command/output state. Dimensions remain
     /// in this deliberately conservative key, but `attr` cannot: its
     /// Attribute text is command-attempt state, not part of host resource
-    /// identity. A retried request carries the coordinate in its owned
-    /// continuation arena.
+    /// identity. A replayed request obtains its fresh coordinate from the
+    /// ordinary scan.
     pub(crate) fn same_resource_as(&self, other: &Self) -> bool {
         self.name == other.name
             && self.width == other.width

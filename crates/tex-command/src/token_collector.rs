@@ -150,7 +150,7 @@ pub(crate) struct TokenCollector<G> {
     /// Episode-local direct writer for an ordinary definition. It is borrowed
     /// only for this synchronous scanner call; a resource miss unwinds the
     /// call and the host replays the full checkpoint instead of retaining the
-    /// writer as a scanner continuation.
+    /// writer as retry state.
     definition_writer: Option<tex_state::DefinitionBuildWriter<G>>,
 }
 

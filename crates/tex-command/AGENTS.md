@@ -13,7 +13,7 @@ unexpandable commands.
 
 `docs/expansion_memory_lifetimes.md` is the current implementation map and
 retention audit for command-state generations, execution scratch, macro and
-scanner nesting, input ownership, and suspension. Update it whenever this
+  scanner nesting, input ownership, and checkpoint replay. Update it whenever this
 crate changes an owner or exact reclamation point.
 
 Host capabilities are borrow-scoped through `CommandHostContext` and must
@@ -40,13 +40,13 @@ collector (see `src/conditionals.rs`).
 - `src/lib.rs`: intentionally small public facade and private module tree.
 - `src/attempt.rs`, `src/attempt/token_lane.rs`, and `src/attempt/tests.rs`:
   transitional scanner/operation scratch, including one attempt-owned
-  fixed-chunk token lane, promotion, and suspension scope capabilities. Each
+  fixed-chunk token lane and promotion. Each
   scanner carries only a typed branch coordinate into that lane; finalization
   publishes the same words and truncation returns whole chunks. Macro
   invocation storage does not use this arena. `CommandState` owns the sole
   ordinary operation coordinate; the executor moves a coordinate-free opaque
-  lifecycle edge. Only genuine suspension copies the coordinate into the
-  pending package for owner-exact readmission.
+  lifecycle edge only until synchronous commit or rollback. A resource miss
+  drops that operation and the host replays from a full checkpoint.
 - `src/execution_scratch.rs`: current-generation reusable execution scratch.
   Argument admission validates the pending macro frame and its next fixed slot
   once, then mints the writer's exact fixed-block append position, provenance-
@@ -71,11 +71,11 @@ collector (see `src/conditionals.rs`).
   owners and definition writers are call-local synchronous state; a resource
   miss unwinds them and the host replays a full checkpoint. Only semantic
   input/replay stacks and bounded expression storage remain in engine state.
-- `src/scanner_kernel.rs`: stack-local non-suspending scanner cursor shared by
+- `src/scanner_kernel.rs`: stack-local synchronous scanner cursor shared by
   macro arguments and `scan_toks`. It keeps brace and first-token facts beside
   the caller-owned output sink and settles already-admitted plain input runs
-  once; only a real external suspension promotes the surrounding scanner state
-  into retained scratch.
+  once; a resource miss unwinds this cursor and the host replays from a full
+  checkpoint rather than promoting scanner state into retained scratch.
 - Ordinary expansion has no parked-expansion owner. `get_x_token` and nested
   scanner calls keep one compact hot token/meaning pair through macro chains,
   materializing `CurrentCommand` only at a primitive scanner, diagnostic, or
@@ -88,7 +88,7 @@ collector (see `src/conditionals.rs`).
   Long-lived immutable resources remain in `CommandHostCapabilities`; live
   executor mode, auxiliary, and effective-tail facts cross the synchronous
   `CommandHostFacts` provider only when their exact scanner or conditional
-  consumes them. No fact cache enters command state or suspension.
+  consumes them. No fact cache enters command state or a replay round.
 - `src/profile.rs` and `src/profile/tests.rs`: public semantic character values,
   immutable command/character profiles, the distinct canonical compiled-engine
   semantics that survive loading an older format, capabilities, stable
@@ -98,18 +98,16 @@ collector (see `src/conditionals.rs`).
   fences transferred directly to §325/§390 descendants, current-generation
   execution scratch, and direct semantic mutation.
   `src/state/attempt_transition.rs` owns direct-operation scope settlement and
-  resource handoff, including the single state-owned ordinary attempt mark;
+  checkpoint-replay cleanup, including the single state-owned ordinary attempt mark;
   `src/state/projection.rs` owns allocation-free retained-byte
   and dependency views; `src/state/executor_publication.rs` owns ordered
   executor-facing fact transfer. Each is an inherent implementation on the
   same authoritative `CommandState`; none adds a facade or state owner. A named checkpoint records
   bounded timeline coordinates without cloning the aggregate root; warmed
-  command delivery performs no root admission. Resource
-  continuations retain the exclusive
-  current-generation lease, its same scratch lanes, typed ids, and integer
-  resume cursors; resumption re-borrows dense state and cancellation drops the
-  current candidate wholesale. These are process-local command state, never
-  format or summary payload. The live `CommandState` also owns TeX82's three
+  command delivery performs no root admission. A resource miss unwinds the
+  current operation and the host restores a full checkpoint before ordinary
+  delivery starts again; no command-owned retry package or cursor
+  crosses that boundary. The live `CommandState` also owns TeX82's three
   scalar stack maxima directly; they are operational session evidence outside
   snapshot roots and survive rollback without shared synchronization.
 - `src/timeline.rs`: generation-owned reversible storage for the remaining
@@ -138,11 +136,11 @@ collector (see `src/conditionals.rs`).
   chains and materializes `CurrentCommand` at execution/scanner,
   backup, observation/diagnosis, and exceptional recovery boundaries. Resource
   misses unwind the call tree for host-owned full-checkpoint replay rather than
-  retaining a suspension command.
+  retaining a retry command.
   Exact source geometry remains behind the spelling's
   packed origin and is materialized only by cold processor consumers; the hot
   value retains only source-role policy and direct-line facts. The executor then borrows the one caller-owned value through preflight and scanning,
-  and moves it only into an actual retry or another semantic owner; it never
+  and moves it only into another semantic owner; it never
   enters a durable snapshot or format boundary.
 - `src/direct_command_delivery.rs`: profiling-only mixed-meaning structural
   harness for direct dense-row writes into the caller-owned command. Its
@@ -168,23 +166,24 @@ collector (see `src/conditionals.rs`).
 - `src/processor/expand_pdf.rs`, `src/processor/expand_pdf_string.rs`, and
   `src/processor/expand_pdf_file.rs`: direct/static pdfTeX state/object,
   string/regular-expression, and immutable-file enquiry primitive families,
-  including their exact typed suspension phases.
+  using the same synchronous scanner calls and host-owned replay boundary.
 - `src/processor/expand_replay.rs` and `src/processor/expand_render.rs`:
   expansion-result insertion plus shared append-oriented TeX command and
   conversion rendering. These contain no expansion driver or semantic owner.
-- `src/processor/mod.rs`: processor construction plus the opaque delivery
-  cursor moved across an executor-owned typed resource continuation; it
-  restores observation ordering but owns no command/input semantics. The
+- `src/processor/mod.rs`: processor construction plus the episode-local
+  observation delivery cursor used at a direct executor boundary; it restores
+  observation ordering but owns no command/input semantics or retry state. The
   processor's ordinary immediate-delivery freshness proof compares the
   command's stable input-level/position coordinate with the authoritative
   resident cursor and one episode-local availability bit; it does not mirror
   the coordinate after each stored or macro delivery. Direct-source positions,
-  synthetic `endv`, and a genuinely suspended settled command use the one
-  explicit exceptional coordinate because they have no derivable resident
-  predecessor. Neither ordinary nor profiling delivery updates a parallel
+  synthetic `endv`, and a settled command without a resident predecessor use
+  the one explicit exceptional coordinate. Neither ordinary nor profiling
+  delivery updates a parallel
   freshness-publication census; focused fixtures derive their known delivery
   volume at the measurement boundary. `CurrentCommand` owns no observation
-  sequence; a genuine suspension retains the opaque cursor in its typed frame.
+  sequence; a resource miss drops the cursor with the call-local processor and
+  full-checkpoint replay starts a new observation episode.
   Every construction uses `CommandProcessor::new`, which takes the
   caller-owned admitted context, session-owned fuel, observer, and
   operation-local diagnostic-effects collector directly and constructs no
@@ -193,8 +192,8 @@ collector (see `src/conditionals.rs`).
   writes for structural assertions. Profiling builds derive that exact
   one-write-per-raw-delivery volume from the singular command-work ledger, so
   the resident loop does not maintain a parallel ownership census. Genuine
-  backup copies and suspension moves remain separately counted because they
-  are not implied by the raw-delivery vector.
+  backup copies remain separately counted because they are not implied by the
+  raw-delivery vector.
 - `src/error.rs`: command error and resource-need representation plus the
   shared dimension-scanner recovery diagnostic vocabulary consumed by legacy
   and canonical scanner paths.
@@ -422,7 +421,7 @@ collector (see `src/conditionals.rs`).
   in place. The processor loop itself owns the resident frame and cursor, so
   parameter substitution and ordinary exhaustion
   reselect the authoritative top only after changing the input stack, while
-  source line acquisition remains the cold suspension boundary. Its sole
+  source line acquisition remains the cold resource boundary. Its sole
   delivery settlement applies noexpand, outer
   validity, alignment classification, and observation after dense resolution
   has ended. The loop owns canonical token-to-current-meaning delivery;
@@ -434,9 +433,9 @@ collector (see `src/conditionals.rs`).
   end-template handling, macro activation, undefined recovery, or one exact
   primitive dispatch. That borrowed decision directly drives expansion;
   expansion does not match the resident meaning or primitive opcode again.
-  The facade also resumes an executor-retained settled delivery. Main-control
-  preflight performs raw fetch, expansion classification, and any required
-  expansion in one expanded-loop entry without backing up or redelivering the command.
+  Main-control preflight performs raw fetch, expansion classification, and any
+  required expansion in one expanded-loop entry without backing up or
+  redelivering the command.
   `status.rs` owns the one processor-level scanner episode mechanism for
   typed status entry, observation visibility, recovery re-entry, and complete
   prior-state restoration; scanner families do not open-code that lifecycle.
@@ -461,12 +460,12 @@ collector (see `src/conditionals.rs`).
   typed delimiter/v-template handoff, and active-cell input proofs over the
   canonical alignment state; it never reclassifies input in the executor.
 - `src/processor/tests.rs`: tracked command-root publication and fail-closed
-  unsupported-continuation coverage.
+  unsupported-boundary coverage.
 - `src/processor/alignment.rs`, `src/processor/alignment/tests.rs`: canonical
   alignment-delivery state and focused stack, brace-depth, template, and omit
   lifecycle tests.
 - `src/processor/expand/tests.rs` and `src/processor/fixtures/`: focused
-  expanded-delivery, primitive, suspension, allocation/layout unit tests and
+  expanded-delivery, primitive, replay, allocation/layout unit tests and
   bounded source microfixtures.
 - `src/scanners/`: private typed scanner family. `hyphenation.rs` owns TeX82
   §934/§960's `\hyphenation`/`\patterns` scans, which are `get_x_token`
@@ -489,24 +488,20 @@ collector (see `src/conditionals.rs`).
   all end a numeric scan with that one rule, so every numeric scan routes its
   terminator through it rather than choosing per call site whether to absorb
   a space. Expandable `\number` and `\romannumeral` scans retain their leading
-  sign/provenance, radix-tail accumulator, or completed §442 character code
-  awaiting its expanded optional-space probe when delivery suspends on an
-  immutable host request, so retry resumes the exact TeX82 §§440--445 token probe. The terminator test is
+  sign/provenance, radix-tail accumulator, or completed §442 character code in
+  call-local state while the ordinary scanner performs its optional-space
+  probe. A resource miss unwinds that local state and full-checkpoint replay
+  re-enters the canonical TeX82 §§440--445 token probe. The terminator test is
   on the command, so it is the category code and never
   the character: §207 makes `spacer` the command a category-10 character
   carries, and §349 is what normalizes such a character's `cur_chr` to a
-  space inside §341's `get_next`. The same reusable ABA-tagged scalar lane owns
-  optional-equals, fixed-inline keyword prefix, integer, dimension, glue,
-  filename, internal-value, expression, and font-selector continuation state.
-  Raw resource-capable scanners remain private; executor scalar phases write
-  directly into the reusable `ScalarScanFrame` owned by their resident
-  `CommandEpisode` through the same statically selected driver nested scalar
-  calls use, without a successful-value or error carrier between them, and
-  return only a compact status. Internal expansion, conditional, alignment,
-  and structured parents move a suspended child into their exact typed phase.
-  Success, resuspension, abort, and
-  fallible parent-frame storage all close or reinstall that chain
-  deepest-first. Do not add a root mailbox, caller-order result tape,
+  space inside §341's `get_next`. The same canonical scanner grammar handles
+  optional-equals, fixed-inline keyword prefixes, integers, dimensions, glue,
+  filenames, internal values, expressions, and font selectors. Scalar state is
+  call-local; it is never copied into an executor phase or retained across a
+  resource boundary. Success and error cleanup close local scopes deepest-first,
+  while a resource miss unwinds the whole call tree and the host replays from a
+  full checkpoint. Do not add a root mailbox, caller-order result tape,
   destination inference/search, or command redispatch fallback.
   `filename/tests.rs` owns focused expanded filename scanning, termination,
   replay, and registered-source retry tests.
@@ -594,10 +589,10 @@ collector (see `src/conditionals.rs`).
   destination-local phase mirror or published-header provenance edit exists.
   Recovery rendering carries the borrowed
   `DefinitionView` itself until its final word visit instead of returning a
-  naked slice from a temporary local-region borrow. Raw definition scanning has
-  no continuation.
-  `\edef`/`\xdef` retain only the build key, scalar progress, and existing
-  expansion continuation when a resource is genuinely unavailable. `read_toks`
+  naked slice from a temporary local-region borrow. Raw definition scanning is
+  entirely call-local.
+  `\edef`/`\xdef` retain only the build key while their ordinary local scanner
+  runs; a resource miss unwinds the builder and expansion call tree. `read_toks`
   keeps its independent cold/import staging lifetime. Read setup and
   finalization share one cleanup transaction which
   restores `align_state` and scanner status and truncates the exact child scope
@@ -605,13 +600,13 @@ collector (see `src/conditionals.rs`).
   branches in the attempt's shared fixed-chunk lane; they never own or recycle
   a per-scan word vector, and sealing is a metadata-only publication. Nested macros
   use separate macro frame/argument lanes, so push/pop never interleaves their
-  scratch with scanner output. A suspended scan carries branded frame indices
-  under the same exclusive current-generation lease. Scratch-frame insertion
-  preflights allocation, capacity, and serial advance before moving that scan;
-  failed insertion or a conflicting processor-baton publication restores the
-  prior baton, aborts the nested child deepest-first, finishes scanner status,
-  and reclaims both the scanner suffix and its parent-owned sink rows while
-  retaining reusable lane and builder capacity. Its semantic
+  scratch with scanner output. A synchronous scan uses branded frame indices
+  only while its local call is active. Scratch-frame insertion preflights
+  allocation, capacity, and serial advance before admitting that local scan;
+  failed insertion or a resource miss aborts the nested child deepest-first,
+  finishes scanner status, and reclaims both the scanner suffix and its
+  parent-owned sink rows while retaining reusable lane and builder capacity.
+  Its semantic
   `ScanToksMode` constructors are parsed once
   into a typed internal grammar, opener, expansion, warning owner,
   observation purpose, and status-visibility configuration. It also owns
@@ -671,11 +666,10 @@ collector (see `src/conditionals.rs`).
   Validation never mutates the runtime,
   aggregate command roots are not `Clone`, and capture requires quiescent
   execution scratch.
-- `src/continuation.rs` and `src/continuation/`: handle-free command-summary
-  and suspended-execution recipes, dense DTO-local indices, recursive schema
-  validation and budgets, cold detachment construction, destination-stamped
-  staging, atomic publication, and focused rejection/retry tests. The schema
-  contains no runtime identity, owner, storage coordinate, or borrow.
+- `src/continuation.rs` and `src/continuation/`: private handle-free semantic
+  recipe DTOs, dense local indices, recursive validation and budgets, and
+  destination-stamped staging tests. They contain no attempt, scanner,
+  expansion, caller, resource-request, or resume state.
 - `tests/`: external dependency, visibility, and capability-boundary tests.
   Character/input integration coverage binds the exact shared-domain tokenizer
   to the pinned TeX82 fixture and compile-fail gates profile immutability.

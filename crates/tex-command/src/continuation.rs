@@ -1,9 +1,10 @@
-//! Handle-free transport for retained command continuations.
+//! Handle-free transport for detached semantic command recipes.
 //!
-//! Live command state first detaches into owned logical recipes connected only
-//! by DTO-local indices. A destination validates the complete graph, stages
-//! every destination-local value behind a shared borrow, and publishes the
-//! finished replacement with one infallible move.
+//! A cold boundary may materialize logical recipes connected only by DTO-local
+//! indices. A destination validates the complete graph, stages every
+//! destination-local value behind a shared borrow, and publishes the finished
+//! replacement with one infallible move. This module never stores a parser
+//! caller, scanner, expansion, or resource request.
 
 #![allow(dead_code)] // The .6.4 integration installs runtime detachment adapters.
 
@@ -23,10 +24,10 @@ pub(crate) use materialize::{
 };
 pub(crate) use schema::*;
 
-/// Detached command-continuation schema version.
+/// Detached semantic command-recipe schema version.
 pub const COMMAND_CONTINUATION_SCHEMA_VERSION: u32 = 1;
 
-/// Explicit admission budgets for one detached continuation.
+/// Explicit admission budgets for one detached semantic recipe graph.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct CommandContinuationLimits {
     pub(crate) sources: usize,
@@ -60,16 +61,15 @@ impl Default for CommandContinuationLimits {
     }
 }
 
-/// A canonical command continuation containing only recipes and portable
-/// scalar state.
+/// A canonical detached semantic recipe graph.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OwnedCommandContinuation {
+pub(crate) struct OwnedCommandContinuation {
     schema: ContinuationSchema,
 }
 
-/// A detached continuation could not be validated or published.
+/// A detached recipe graph could not be validated or published.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum CommandContinuationError {
+pub(crate) enum CommandContinuationError {
     InvalidRecipe(&'static str),
     LimitExceeded(&'static str),
     ForeignDestination,
@@ -249,12 +249,6 @@ impl OwnedCommandContinuation {
         }
 
         validate_summary(schema)?;
-        if let Some(attempt) = &schema.attempt {
-            validate_attempt(schema, attempt)?;
-            string_bytes = checked_total(string_bytes, attempt.request.key.len(), "string bytes")?;
-            source_bytes =
-                checked_total(source_bytes, attempt.request.payload.len(), "source bytes")?;
-        }
         check_limit(source_bytes, limits.source_bytes, "source bytes")?;
         check_limit(string_bytes, limits.string_bytes, "string bytes")?;
         Ok(())
@@ -448,41 +442,6 @@ fn validate_token_frame(
     };
     if usize::try_from(frame.index).map_or(true, |index| index > len) {
         return invalid("token-frame cursor exceeds its payload");
-    }
-    Ok(())
-}
-
-fn validate_attempt(
-    schema: &ContinuationSchema,
-    attempt: &DetachedAttemptRecipe,
-) -> Result<(), CommandContinuationError> {
-    if attempt
-        .token_lists
-        .iter()
-        .any(|index| index.index() >= schema.token_lists.len())
-    {
-        return invalid("attempt references a missing token-list recipe");
-    }
-    if attempt
-        .macros
-        .iter()
-        .any(|index| index.index() >= schema.macros.len())
-    {
-        return invalid("attempt references a missing macro recipe");
-    }
-    if attempt
-        .glue
-        .iter()
-        .any(|index| index.index() >= schema.glue.len())
-    {
-        return invalid("attempt references a missing glue recipe");
-    }
-    if attempt
-        .provenance
-        .iter()
-        .any(|index| index.index() >= schema.origins.len())
-    {
-        return invalid("attempt references a missing origin recipe");
     }
     Ok(())
 }

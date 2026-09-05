@@ -11,7 +11,7 @@ fn profile() -> DetachedCommandProfile {
     }
 }
 
-fn valid_continuation(with_attempt: bool) -> OwnedCommandContinuation {
+fn valid_continuation() -> OwnedCommandContinuation {
     let mut builder = ContinuationRecipeBuilder::new(profile());
     let source = builder
         .push_source(SourceRecipe::Generated {
@@ -19,9 +19,6 @@ fn valid_continuation(with_attempt: bool) -> OwnedCommandContinuation {
             bytes: b"hello".to_vec(),
         })
         .expect("source index");
-    let unknown = builder
-        .push_origin(OriginRecipe::Unknown)
-        .expect("origin index");
     let source_point = builder
         .push_origin(OriginRecipe::SourcePoint {
             source,
@@ -72,15 +69,6 @@ fn valid_continuation(with_attempt: bool) -> OwnedCommandContinuation {
             replacement_origins,
         })
         .expect("macro index");
-    let glue = builder
-        .push_glue(GlueRecipe {
-            width: 65_536,
-            stretch: 0,
-            stretch_order: 0,
-            shrink: 0,
-            shrink_order: 0,
-        })
-        .expect("glue index");
     let summary = CommandSummaryRecipe {
         input: vec![
             InputFrameRecipe::Source(SourceFrameRecipe {
@@ -136,35 +124,17 @@ fn valid_continuation(with_attempt: bool) -> OwnedCommandContinuation {
         conditions: Vec::new(),
         align_state: 1_000_000,
     };
-    let attempt = with_attempt.then(|| DetachedAttemptRecipe {
-        token_lists: vec![words],
-        macros: vec![definition],
-        glue: vec![glue],
-        provenance: vec![unknown, source_point],
-        resume: DetachedResumePoint {
-            command: 3,
-            scanner: 5,
-            expansion: 8,
-            subordinate: 13,
-        },
-        request: DetachedResourceRecipe {
-            kind: 2,
-            key: "font:cmr10".to_owned(),
-            payload: b"cmr10".to_vec(),
-        },
-    });
-    builder.finish(summary, attempt).expect("valid recipes")
+    builder.finish(summary).expect("valid recipes")
 }
 
 #[derive(Debug, Default, Eq, PartialEq)]
 struct LiveDestination {
     names: Vec<String>,
-    published_resume: Option<(u32, u32, u32, u32)>,
 }
 
 #[test]
 fn complete_recipe_graph_materializes_with_one_atomic_publication() {
-    let continuation = valid_continuation(false);
+    let continuation = valid_continuation();
     let mut destination = CommandContinuationDestination::new(LiveDestination::default());
 
     continuation
@@ -190,7 +160,7 @@ fn complete_recipe_graph_materializes_with_one_atomic_publication() {
 
 #[test]
 fn malformed_recipe_rejects_before_staging_or_publication() {
-    let mut continuation = valid_continuation(false);
+    let mut continuation = valid_continuation();
     let InputFrameRecipe::Source(frame) = &mut continuation.schema.summary.input[0] else {
         panic!("source frame");
     };
@@ -198,7 +168,6 @@ fn malformed_recipe_rejects_before_staging_or_publication() {
     let builds = Cell::new(0);
     let mut destination = CommandContinuationDestination::new(LiveDestination {
         names: vec!["existing".to_owned()],
-        published_resume: None,
     });
 
     let result = continuation.materialize(
@@ -223,10 +192,9 @@ fn malformed_recipe_rejects_before_staging_or_publication() {
 
 #[test]
 fn failed_destination_rebuild_leaves_live_state_unchanged() {
-    let continuation = valid_continuation(false);
+    let continuation = valid_continuation();
     let mut destination = CommandContinuationDestination::new(LiveDestination {
         names: vec!["existing".to_owned()],
-        published_resume: None,
     });
 
     let result = continuation.materialize(
@@ -245,7 +213,7 @@ fn failed_destination_rebuild_leaves_live_state_unchanged() {
 
 #[test]
 fn staged_graph_is_stamped_for_exactly_one_destination() {
-    let continuation = valid_continuation(false);
+    let continuation = valid_continuation();
     let first = CommandContinuationDestination::new(LiveDestination::default());
     let mut second = CommandContinuationDestination::new(LiveDestination::default());
     let staged = first
@@ -266,7 +234,7 @@ fn staged_graph_is_stamped_for_exactly_one_destination() {
 
 #[test]
 fn logical_origin_cycles_are_rejected() {
-    let mut continuation = valid_continuation(false);
+    let mut continuation = valid_continuation();
     continuation.schema.origins[0] = OriginRecipe::Derived {
         operation: DetachedOriginOperation::Synthesized,
         primary: OriginRecipeIndex::from_len(0).expect("zero index"),
@@ -283,7 +251,7 @@ fn logical_origin_cycles_are_rejected() {
 
 #[test]
 fn admission_limits_reject_before_destination_building() {
-    let continuation = valid_continuation(false);
+    let continuation = valid_continuation();
     let limits = CommandContinuationLimits {
         tokens: 0,
         ..CommandContinuationLimits::default()
@@ -303,36 +271,6 @@ fn admission_limits_reject_before_destination_building() {
         ))
     ));
     assert_eq!(builds.get(), 0);
-}
-
-#[test]
-fn suspended_attempt_recipes_preserve_exact_resume_cursors() {
-    let continuation = valid_continuation(true);
-    let mut destination = CommandContinuationDestination::new(LiveDestination::default());
-
-    continuation
-        .materialize(
-            &mut destination,
-            CommandContinuationLimits::default(),
-            |_live, validated| {
-                let resume = validated
-                    .schema()
-                    .attempt
-                    .as_ref()
-                    .expect("attempt recipe")
-                    .resume;
-                Ok::<_, ()>((
-                    resume.command,
-                    resume.scanner,
-                    resume.expansion,
-                    resume.subordinate,
-                ))
-            },
-            |live, resume| live.published_resume = Some(resume),
-        )
-        .expect("attempt materialization");
-
-    assert_eq!(destination.live().published_resume, Some((3, 5, 8, 13)));
 }
 
 #[test]

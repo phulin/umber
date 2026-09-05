@@ -1,4 +1,4 @@
-//! Direct-operation scratch settlement and resource handoff.
+//! Direct-operation scratch settlement and checkpoint-replay cleanup.
 
 use super::CommandState;
 
@@ -114,7 +114,7 @@ impl<G> CommandState<G> {
     /// restored and truncated its command roots.
     ///
     /// Ordinary rollback must consume the linear operation capability through
-    /// [`Self::rollback_attempt_operation`]. Resource replay is the one
+    /// [`Self::rollback_attempt_operation`]. Checkpoint replay is the one
     /// coarse transaction that restores the aggregate command cursor first;
     /// its old operation coordinates are consequently no longer valid and
     /// must be discarded rather than replayed against the restored arena.
@@ -123,7 +123,7 @@ impl<G> CommandState<G> {
         // Aggregate restore has already truncated every semantic root and
         // attempt mark. Replace the two command-side scratch owners so no
         // stale child scope or scanner builder can make the restored named
-        // boundary appear suspended.
+        // boundary appear active.
         self.scratch = crate::execution_scratch::ExecutionScratch::default();
         self.active_attempt_operation = None;
         self.attempt.abandon_operation();
@@ -144,69 +144,5 @@ impl<G> CommandState<G> {
             self.active_attempt_operation = Some(mark);
         }
         result
-    }
-
-    /// Moves the complete operation arena into a resource continuation.
-    pub fn suspend_attempt<R>(
-        &mut self,
-        universe: &tex_state::Universe<G>,
-        operation: crate::CommandAttemptOperation,
-        resume: crate::AttemptResumePoint,
-        pending: R,
-    ) -> Result<crate::PendingCommandAttempt<G, R>, crate::AttemptSuspendFailure> {
-        let Some(opening) = self.active_attempt_operation else {
-            return Err(crate::AttemptSuspendFailure::new(
-                operation,
-                crate::AttemptSuspendError::StaleMark(crate::AttemptError::InvalidCoordinate),
-            ));
-        };
-        if let Err(error) = self.attempt.arena().validate_mark(opening.attempt_mark()) {
-            return Err(crate::AttemptSuspendFailure::new(
-                operation,
-                crate::AttemptSuspendError::StaleMark(error),
-            ));
-        }
-        if let Err(error) = self.attempt.validate_operation(opening) {
-            return Err(crate::AttemptSuspendFailure::new(
-                operation,
-                crate::AttemptSuspendError::StaleMark(error),
-            ));
-        }
-        let generation = match universe.generation_owner() {
-            Ok(generation) => generation,
-            Err(error) => {
-                return Err(crate::AttemptSuspendFailure::new(
-                    operation,
-                    crate::AttemptSuspendError::Generation(error),
-                ));
-            }
-        };
-        let attempt = core::mem::take(&mut self.attempt);
-        Ok(crate::PendingCommandAttempt::new_at_validated_mark(
-            attempt, generation, opening, operation, resume, pending,
-        ))
-    }
-
-    /// Reinstalls a returned arena after validating its coarse generation.
-    #[allow(
-        clippy::result_large_err,
-        reason = "stale admission must return the complete move-only continuation without a lifecycle allocation"
-    )]
-    pub fn resume_attempt<R>(
-        &mut self,
-        universe: &tex_state::Universe<G>,
-        pending: crate::PendingCommandAttempt<G, R>,
-    ) -> Result<
-        (crate::CommandAttemptOperation, crate::AttemptResumePoint, R),
-        crate::PendingCommandAttempt<G, R>,
-    > {
-        if !self.attempt.is_empty()
-            || self.active_attempt_operation != Some(pending.operation_coordinate())
-        {
-            return Err(pending);
-        }
-        let (attempt, operation, resume, pending) = pending.resume(universe)?;
-        self.attempt = attempt;
-        Ok((operation, resume, pending))
     }
 }
