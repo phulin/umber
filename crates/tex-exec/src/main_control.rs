@@ -1891,6 +1891,40 @@ impl<G> MainControl<G> {
         if self.has_external_attempt_owner() {
             return Err(crate::CheckpointRestoreError::AttemptSuspended);
         }
+        self.restore_checkpoint_roots(checkpoint, stores)
+    }
+
+    /// Restores aggregate roots while a resource operation is still parked.
+    ///
+    /// Resource replay deliberately restores semantic state before returning
+    /// the attempt arena through its normal settlement barrier. The public
+    /// restore path rejects such an owner because ordinary callers must not
+    /// bypass that barrier; this narrower crate-internal entry point is used
+    /// only by the retained-generation replay transaction.
+    pub(crate) fn restore_checkpoint_for_replay(
+        &mut self,
+        checkpoint: &crate::EngineCheckpoint<G>,
+        stores: &mut Universe<G>,
+    ) -> Result<(), crate::CheckpointRestoreError> {
+        if self.command.checkpoint_candidate_active() {
+            checkpoint.restore_state_for_replay(&mut self.command, &mut self.modes, stores)?;
+        } else {
+            self.restore_checkpoint_roots(checkpoint, stores)?;
+        }
+        self.active_alignment = None;
+        self.boxes = ReplayBoxes::default();
+        self.paragraph_checkpoint_demand = None;
+        self.paragraph_checkpoint_cut = false;
+        self.fatal = None;
+        self.captured_fatal_origin = None;
+        Ok(())
+    }
+
+    fn restore_checkpoint_roots(
+        &mut self,
+        checkpoint: &crate::EngineCheckpoint<G>,
+        stores: &mut Universe<G>,
+    ) -> Result<(), crate::CheckpointRestoreError> {
         checkpoint.restore_state(&mut self.command, &mut self.modes, stores)?;
         self.active_alignment = None;
         self.boxes = ReplayBoxes::default();
@@ -1899,6 +1933,80 @@ impl<G> MainControl<G> {
         self.fatal = None;
         self.captured_fatal_origin = None;
         Ok(())
+    }
+
+    /// Clears executor-side continuation state after aggregate roots have
+    /// returned to a named full checkpoint. These fields are deliberately not
+    /// part of `EngineCheckpoint`: a fork constructs them from defaults, and
+    /// an in-place resource replay must establish the same quiescent shape.
+    pub(crate) fn reset_checkpoint_replay_runtime(&mut self, boundary: crate::EngineBoundary) {
+        let root_main_source = (boundary != crate::EngineBoundary::JobStart)
+            .then_some(self.root_main_source)
+            .flatten();
+        self.capabilities = CommandHostCapabilities::default();
+        self.active_alignment = None;
+        self.boxes = ReplayBoxes::default();
+        self.active_discretionaries.clear();
+        self.active_math_choices.clear();
+        self.active_math_fields.clear();
+        self.active_math_left_boundaries.clear();
+        self.active_math_shifts.clear();
+        self.skip_pointer_sources.clear();
+        self.muskip_pointer_sources.clear();
+        self.main_loop_active = false;
+        self.set_box_forbidden_depth = 0;
+        self.shown_mode = None;
+        self.main_control_entered = boundary != crate::EngineBoundary::JobStart;
+        self.startup_terminal_line.clear();
+        self.terminal_line_was_empty = None;
+        self.root_main_source = root_main_source;
+        self.page_output_observations = ObservationBuffer::default();
+        self.operation_observations = None;
+        self.operation_receipt_start = None;
+        self.suspended_operation_observation = None;
+        self.completed_replay_episode = None;
+        self.prepared_dvi_pages = PreparedDviPages::default();
+        self.immediate_prints.clear();
+        self.prepared_shipout = None;
+        self.page_region_succession_pending = false;
+        self.paragraph_checkpoint_demand = None;
+        self.paragraph_checkpoint_cut = false;
+        self.pending_resource_site = None;
+        self.ended = false;
+        self.fatal = None;
+        self.captured_fatal_origin = None;
+        self.first_causal_context = None;
+        self.first_recoverable_diagnostic = None;
+        self.job = crate::job::JobFraming::default();
+        self.job_body_effect_end = None;
+        self.pdf_navigation_finalized = false;
+    }
+
+    /// Drops a resource continuation after aggregate roots have been restored.
+    /// The continuation's attempt coordinates belong to the discarded suffix
+    /// and must not be handed to the restored command arena.
+    pub(crate) fn abandon_external_attempt_for_replay(&mut self) {
+        self.pending_first_recoverable_diagnostic = None;
+        self.pending_resource_operation = None;
+        self.pending_direct_operation = None;
+        self.pending_diagnostic_operation = None;
+        self.command.abandon_attempt_after_checkpoint_restore();
+    }
+
+    /// Reinstalls a moved resource attempt just long enough for aggregate
+    /// checkpoint validation to see its original command coordinate. The
+    /// continuation frame is then dropped; aggregate restore owns the actual
+    /// suffix rollback and the follow-up abandon method clears the operation.
+    pub(crate) fn prepare_external_attempt_for_replay(&mut self, stores: &Universe<G>) {
+        let Some(pending) = self.pending_resource_operation.take() else {
+            return;
+        };
+        let (operation, resume, _pending) = self
+            .command
+            .resume_attempt(stores, pending.attempt)
+            .unwrap_or_else(|_| panic!("resource continuation belongs to the replay generation"));
+        debug_assert_eq!(resume, SUSPENDED_RESOURCE_RESUME);
+        drop(operation);
     }
 
     /// Reports command-operation owners retained by executor continuations.
@@ -3533,11 +3641,8 @@ impl<G> MainControl<G> {
                     self.episode_telemetry
                         .record_semantic_barrier(crate::SemanticEpisodeBarrier::Fuel);
                 }
-                let result = self.finish_resource_preflight_failure(
-                    stores,
-                    error,
-                    &mut diagnostic_effects,
-                );
+                let result =
+                    self.finish_resource_preflight_failure(stores, error, &mut diagnostic_effects);
                 if let Err(error) = &result {
                     Self::publish_pdf_fatal_error(stores, error)?;
                 }
@@ -4412,7 +4517,11 @@ impl<G> MainControl<G> {
                             },
                         });
                     } else {
-                        self.commit_direct_operation(stores, operation_mark, &mut diagnostic_effects);
+                        self.commit_direct_operation(
+                            stores,
+                            operation_mark,
+                            &mut diagnostic_effects,
+                        );
                     }
                     return match result? {
                         StepResult::Suspended(need) => Ok(DiagnosticStepResult::Suspended(need)),
@@ -4456,12 +4565,11 @@ impl<G> MainControl<G> {
                     "diagnostic retry cannot own an alignment scanner destination"
                 );
                 let unavailable = command_episode.has_unavailable(&cold_operation);
-                let result =
-                    self.finish_resource_preflight_failure(
-                        stores,
-                        command_episode.take_error(),
-                        &mut diagnostic_effects,
-                    );
+                let result = self.finish_resource_preflight_failure(
+                    stores,
+                    command_episode.take_error(),
+                    &mut diagnostic_effects,
+                );
                 self.modes
                     .rollback_journal(mode_mark)
                     .expect("diagnostic assignment owns the mode mark");
@@ -8063,7 +8171,7 @@ impl<G> MainControl<G> {
                 // transaction separately at its own pre-commit boundary.
                 stores
                     .world_mut()
-                .publish_diagnostic_effects_preserving(command.diagnostic_effects);
+                    .publish_diagnostic_effects_preserving(command.diagnostic_effects);
                 if let Some(receipt) =
                     shipout_replay_box(shipout, stores, &mut command, &self.modes)?
                         .and_then(|publication| publication.dvi)

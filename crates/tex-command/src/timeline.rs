@@ -455,6 +455,27 @@ impl<T: LogicalStackElement> LogicalStack<T> {
         restored
     }
 
+    pub(crate) fn restore_current(&mut self, mark: LogicalStackMark) -> bool {
+        let Some(_fork) = self.fork.as_ref() else {
+            return false;
+        };
+        if !self.validates(mark) {
+            return false;
+        }
+        let (rows, displaced) = (&mut self.rows, &mut self.displaced);
+        let restored = self.undo.restore_current_with(
+            mark.undo,
+            &mut (rows, displaced),
+            |inverse, (rows, displaced)| inverse.swap(rows, displaced),
+            |inverse, (_, displaced)| inverse.release(displaced),
+        );
+        if restored {
+            self.top = mark.top as usize;
+            self.next_interval();
+        }
+        restored
+    }
+
     pub(crate) fn release_prefix(&mut self, mark: LogicalStackMark) -> Option<usize> {
         if self.fork.is_some() || !self.validates(mark) {
             return None;

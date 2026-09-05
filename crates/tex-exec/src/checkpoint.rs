@@ -777,6 +777,12 @@ impl<G> EngineCheckpoint<G> {
         self.output.is_some()
     }
 
+    pub(crate) fn output_ledger_checkpoint(
+        &self,
+    ) -> Option<crate::canonical_step::OutputLedgerCheckpoint> {
+        self.output
+    }
+
     #[must_use]
     pub const fn schema_version(&self) -> u32 {
         self.schema_version
@@ -872,6 +878,28 @@ impl<G> EngineCheckpoint<G> {
             &self.modes,
             maximum_saved_depth,
         )
+    }
+
+    pub(crate) fn restore_state_for_replay(
+        &self,
+        command: &mut CommandState<G>,
+        nest: &mut ModeNest,
+        universe: &mut Universe<G>,
+    ) -> Result<(), CheckpointRestoreError> {
+        let prepared_command = command
+            .prepare_summary_restore(&self.command, universe)
+            .map_err(CheckpointRestoreError::Command)?;
+        let maximum_saved_depth = nest.maximum_saved_depth();
+        universe
+            .restore_runtime_checkpoint_with_roots(&self.runtime, || {
+                command
+                    .apply_prepared_restore_for_replay(prepared_command)
+                    .expect("aggregate replay preflight retained its command destination");
+                nest.restore_checkpoint_for_replay(&self.modes)
+                    .expect("aggregate replay preflight retained its mode destination");
+                nest.retain_maximum_saved_depth(maximum_saved_depth);
+            })
+            .map_err(CheckpointRestoreError::Runtime)
     }
 }
 

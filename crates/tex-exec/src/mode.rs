@@ -2328,6 +2328,21 @@ impl ModeNest {
         Ok(())
     }
 
+    pub(crate) fn restore_checkpoint_for_replay(
+        &mut self,
+        checkpoint: &ModeCheckpoint,
+    ) -> Result<(), ExecError> {
+        if !self.is_checkpoint_candidate() {
+            return self.restore_checkpoint(checkpoint);
+        }
+        self.storage.recycle_level_pending_sources();
+        self.storage.levels.clear();
+        self.storage.levels.push(checkpoint.outer.clone_rootless());
+        self.storage.journal = journal::ModeJournal::enabled(1);
+        self.storage.scratch.clear();
+        Ok(())
+    }
+
     pub(crate) fn fork_checkpoint(checkpoint: &ModeCheckpoint) -> Result<Self, ExecError> {
         let mut levels = Vec::with_capacity(Self::MAX_LIVE_LEVELS);
         levels.push(checkpoint.outer.clone_rootless());

@@ -482,6 +482,20 @@ impl<Role> NodeRegion<Role> {
             && self.annex_arena.can_begin_checkpoint_candidate(mark.annex)
     }
 
+    pub(crate) fn can_restore_checkpoint(&self, mark: NodeCheckpointMark) -> bool {
+        (self.pub_arena.can_begin_checkpoint_candidate(mark.nodes)
+            && self.annex_arena.can_begin_checkpoint_candidate(mark.annex))
+            || (self.pub_arena.validates_checkpoint(mark.nodes)
+                && self.annex_arena.validates_checkpoint(mark.annex))
+    }
+
+    fn can_restore_current_checkpoint(&self, mark: NodeCheckpointMark) -> bool {
+        self.pub_arena.validates_checkpoint(mark.nodes)
+            && self.annex_arena.validates_checkpoint(mark.annex)
+            && self.pub_arena.is_forked()
+            && self.annex_arena.is_forked()
+    }
+
     pub(crate) fn begin_checkpoint_candidate(
         &mut self,
         pool: &mut NodePool,
@@ -504,6 +518,13 @@ impl<Role> NodeRegion<Role> {
         pool: &mut NodePool,
         mark: NodeCheckpointMark,
     ) -> Result<(), ForkArenaError> {
+        if self.can_restore_current_checkpoint(mark) {
+            self.pub_arena
+                .restore_current_checkpoint(&mut pool.chunks, mark.nodes)?;
+            self.annex_arena
+                .restore_current_checkpoint(&mut pool.annex_chunks, mark.annex)?;
+            return Ok(());
+        }
         self.begin_checkpoint_candidate(pool, mark)?;
         let boundary = self.seal_checkpoint_boundary(pool)?;
         self.accept_checkpoint_candidate(pool, boundary)

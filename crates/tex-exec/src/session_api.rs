@@ -8,9 +8,13 @@ pub struct ExecutionTelemetry {
     pub cold_starts: u64,
     pub advance_calls: u64,
     pub suspensions: u64,
+    /// Full aggregate checkpoint rewinds caused by host resource misses.
+    pub resource_restarts: u64,
     pub local_step_retries: u64,
     pub replayed_delivered_tokens: u64,
     pub replayed_dispatches: u64,
+    /// Fuel spent by attempts whose semantic state was later rewound.
+    pub discarded_fuel: u64,
     pub cumulative_fuel: u64,
     pub engine_time: Duration,
     pub savepoint_capture_time: Duration,

@@ -24,8 +24,8 @@ use tex_exec::{
     Cancellation, CanonicalStepFailure, CanonicalStepResult, CanonicalStepRunner, CheckpointSink,
     DetachedEngineCompletion, DetachedFormatDump, DetachedPreparedPage, EngineBoundary,
     EngineCheckpoint, EngineCompletionDemand, MainControl, MainControlStep, OutputLedger,
-    ResourceFulfillment, ResourceHost, ResourceNeed, ResourceOutcome, ResourceWorld,
-    canonical_font_resource_path,
+    ResourceFulfillment, ResourceHost, ResourceNeed, ResourceOutcome, ResourceReplayEffect,
+    ResourceWorld, canonical_font_resource_path,
 };
 use tex_out::dvi::{DviError, DviStreamWriter};
 pub use tex_out::html::RenderedOutputId;
@@ -559,6 +559,7 @@ struct InheritedBoundary {
     key: tex_exec::RetainedCheckpointKey,
     evidence: tex_exec::RetainedBoundaryEvidence,
     retention: tex_exec::CheckpointRetention,
+    publish_record: bool,
 }
 
 struct CandidateCompletion {
@@ -618,6 +619,10 @@ pub struct RevisionCandidate<'store> {
     suspension_serial: u64,
     advance_calls: u64,
     cumulative_fuel: u64,
+    resource_restarts: u64,
+    replayed_delivered_tokens: u64,
+    replayed_dispatches: u64,
+    discarded_fuel: u64,
     generation: Option<tex_exec::RetainedEngineGeneration<'store>>,
     inherited_boundary: Option<InheritedBoundary>,
     checkpoint_control_key: Option<tex_exec::RetainedEngineAttachmentKey>,
@@ -684,39 +689,58 @@ impl<'store> RevisionCandidate<'store> {
         let checkpoint_control_key = self.checkpoint_control_key.take();
         let runtime_key = self.runtime_key.take();
         let mut generation = OwnedCandidateGeneration::new(generation);
-        let result = generation
-            .generation_mut()
-            .with_admitted(CandidateRun {
-                candidate: self,
-                host,
-                cancellation,
-                failed_attempt_fuel: &mut failed_attempt_fuel,
-                checkpoint_control_key,
-                runtime_key,
-            })
-            .map_err(SessionError::RetainedEngine)?;
-        self.runtime_key = result.runtime_key;
-        let result = result.execution;
-        self.generation = Some(generation.into_generation());
-        let result = match result {
-            Ok(result) => result,
-            Err(error) => {
-                self.cumulative_fuel = self.cumulative_fuel.saturating_add(failed_attempt_fuel);
-                return Err(error);
-            }
-        };
-        match result {
-            PlanExecution::Suspended(need) => {
-                self.suspension_serial = self.suspension_serial.saturating_add(1);
-                Ok(RevisionCandidateResult::AwaitingResources(need))
-            }
-            PlanExecution::Complete(completion, fuel) => {
-                self.advance_calls = self
-                    .advance_calls
-                    .saturating_add(completion.delivered_commands as u64);
-                self.cumulative_fuel = self.cumulative_fuel.saturating_add(fuel);
-                self.completed = Some(*completion);
-                Ok(RevisionCandidateResult::Complete)
+        let mut checkpoint_control_key = checkpoint_control_key;
+        let mut runtime_key = runtime_key;
+        loop {
+            let result = generation
+                .generation_mut()
+                .with_admitted(CandidateRun {
+                    candidate: self,
+                    host,
+                    cancellation,
+                    failed_attempt_fuel: &mut failed_attempt_fuel,
+                    checkpoint_control_key,
+                    runtime_key,
+                })
+                .map_err(SessionError::RetainedEngine)?;
+            checkpoint_control_key = None;
+            self.runtime_key = result.runtime_key;
+            let discarded_fuel = result.discarded_fuel;
+            self.cumulative_fuel = self.cumulative_fuel.saturating_add(discarded_fuel);
+            self.discarded_fuel = self.discarded_fuel.saturating_add(discarded_fuel);
+            let result = match result.execution {
+                Ok(result) => result,
+                Err(error) => {
+                    self.cumulative_fuel = self.cumulative_fuel.saturating_add(failed_attempt_fuel);
+                    return Err(error);
+                }
+            };
+            match result {
+                PlanExecution::Replay(need) => {
+                    self.resource_restarts = self.resource_restarts.saturating_add(1);
+                    self.replayed_dispatches = self.replayed_dispatches.saturating_add(1);
+                    let _ = need;
+                    runtime_key = self.runtime_key.take();
+                }
+                PlanExecution::Suspended(need) => {
+                    self.suspension_serial = self.suspension_serial.saturating_add(1);
+                    self.generation = Some(generation.into_generation());
+                    return Ok(RevisionCandidateResult::AwaitingResources(need));
+                }
+                PlanExecution::Complete(completion, fuel) => {
+                    self.advance_calls = self
+                        .advance_calls
+                        .saturating_add(completion.delivered_commands as u64);
+                    // The command ledger is monotonic across host waits and
+                    // full replay. Discarded attempts have already been
+                    // charged above, so completion contributes only the
+                    // ledger high-water mark rather than the same prefix a
+                    // second time.
+                    self.cumulative_fuel = self.cumulative_fuel.max(fuel);
+                    self.completed = Some(*completion);
+                    self.generation = Some(generation.into_generation());
+                    return Ok(RevisionCandidateResult::Complete);
+                }
             }
         }
     }
@@ -751,10 +775,12 @@ impl<'store> RevisionCandidate<'store> {
             cold_starts: 1,
             advance_calls: self.advance_calls,
             suspensions: self.suspension_serial,
+            resource_restarts: self.resource_restarts,
             local_step_retries: self.suspension_serial,
-            replayed_delivered_tokens: 0,
-            replayed_dispatches: 0,
+            replayed_delivered_tokens: self.replayed_delivered_tokens,
+            replayed_dispatches: self.replayed_dispatches,
             cumulative_fuel: self.cumulative_fuel,
+            discarded_fuel: self.discarded_fuel,
             engine_time: Duration::ZERO,
             savepoint_capture_time: Duration::ZERO,
             savepoint_restore_time: Duration::ZERO,
@@ -835,6 +861,7 @@ impl<'store> RevisionCandidate<'store> {
 }
 
 enum PlanExecution {
+    Replay(ResourceNeed),
     Suspended(ResourceNeed),
     Complete(Box<CandidateCompletion>, u64),
 }
@@ -875,6 +902,7 @@ impl tex_exec::RetainedEngineOperation for CandidateRun<'_, '_> {
                         return CandidateRunResult {
                             execution: Err(SessionError::RetainedEngine(error)),
                             runtime_key: None,
+                            discarded_fuel: 0,
                         };
                     }
                 }
@@ -890,6 +918,7 @@ impl tex_exec::RetainedEngineOperation for CandidateRun<'_, '_> {
                             return CandidateRunResult {
                                 execution: Err(SessionError::RetainedEngine(error)),
                                 runtime_key: None,
+                                discarded_fuel: 0,
                             };
                         }
                     };
@@ -910,6 +939,7 @@ impl tex_exec::RetainedEngineOperation for CandidateRun<'_, '_> {
                             return CandidateRunResult {
                                 execution: Err(error),
                                 runtime_key: None,
+                                discarded_fuel: 0,
                             };
                         }
                     };
@@ -934,6 +964,7 @@ impl tex_exec::RetainedEngineOperation for CandidateRun<'_, '_> {
                             return CandidateRunResult {
                                 execution: Err(error),
                                 runtime_key: None,
+                                discarded_fuel: 0,
                             };
                         }
                     };
@@ -944,6 +975,7 @@ impl tex_exec::RetainedEngineOperation for CandidateRun<'_, '_> {
                             return CandidateRunResult {
                                 execution: Err(SessionError::RetainedEngine(error)),
                                 runtime_key: None,
+                                discarded_fuel: 0,
                             };
                         }
                     };
@@ -953,6 +985,7 @@ impl tex_exec::RetainedEngineOperation for CandidateRun<'_, '_> {
                             return CandidateRunResult {
                                 execution: Err(SessionError::RetainedEngine(error)),
                                 runtime_key: None,
+                                discarded_fuel: 0,
                             };
                         }
                     }
@@ -965,6 +998,14 @@ impl tex_exec::RetainedEngineOperation for CandidateRun<'_, '_> {
                 panic!("candidate owner unwind test hook");
             }
         });
+        let delivered_before = {
+            let (_, _, _, _, runtime) = attached.parts::<CandidateRuntime>();
+            runtime.delivered_commands
+        };
+        let fuel_before = {
+            let (_, _, _, control, _) = attached.parts::<CandidateRuntime>();
+            control.fuel_burned()
+        };
         let execution = {
             let (universe, ledger, checkpoints, control, runtime) =
                 attached.parts::<CandidateRuntime>();
@@ -980,6 +1021,103 @@ impl tex_exec::RetainedEngineOperation for CandidateRun<'_, '_> {
                 self.failed_attempt_fuel,
             )
         };
+        let should_rewind = matches!(
+            &execution,
+            Ok(PlanExecution::Replay(_) | PlanExecution::Suspended(_))
+        );
+        let mut discarded_fuel = 0;
+        if should_rewind {
+            let delivered_after = {
+                let (_, _, _, _, runtime) = attached.parts::<CandidateRuntime>();
+                runtime.delivered_commands
+            };
+            self.candidate.replayed_delivered_tokens = self
+                .candidate
+                .replayed_delivered_tokens
+                .saturating_add(delivered_after.saturating_sub(delivered_before) as u64);
+            let (anchor, attempt_fuel) = {
+                let (_, _, _, control, runtime) = attached.parts::<CandidateRuntime>();
+                (
+                    runtime.take_latest_replay_anchor(),
+                    control.fuel_burned().saturating_sub(fuel_before),
+                )
+            };
+            let Some(anchor) = anchor else {
+                return CandidateRunResult {
+                    execution: Err(SessionError::ResourceReplayAnchorMissing),
+                    runtime_key: None,
+                    discarded_fuel: attempt_fuel,
+                };
+            };
+            let replayed_from_job_start = matches!(anchor.slot, ReplayAnchorSlot::JobStart);
+            let releases = {
+                let (_, _, mut checkpoints, _, runtime) = attached.parts::<CandidateRuntime>();
+                runtime
+                    .history
+                    .rewind_after_anchor(&anchor, &mut checkpoints)
+            };
+            if let Err(error) = attached.rewind_to_checkpoint(&anchor.key) {
+                return CandidateRunResult {
+                    execution: Err(SessionError::RetainedEngine(error)),
+                    runtime_key: None,
+                    discarded_fuel: attempt_fuel,
+                };
+            }
+            for release in releases {
+                let (universe, _, _, control, _) = attached.parts::<CandidateRuntime>();
+                release.apply(control, universe);
+            }
+            if !replayed_from_job_start && self.candidate.plan.restart_boundary.is_some() {
+                let root_anchor = self
+                    .candidate
+                    .plan
+                    .restart_boundary
+                    .expect("a rooted replay retains its selected boundary")
+                    .position;
+                let bytes = Arc::from(source_file_bytes(
+                    &self.candidate.plan.source,
+                    self.candidate.root_source_is_byte_projection,
+                ));
+                let (_, _, _, control, _) = attached.parts::<CandidateRuntime>();
+                if let Err(error) = control.rebind_root_source_for_editor(bytes, root_anchor) {
+                    return CandidateRunResult {
+                        execution: Err(error.into()),
+                        runtime_key: None,
+                        discarded_fuel: attempt_fuel,
+                    };
+                }
+            }
+            let (_, _, _, _, runtime) = attached.parts::<CandidateRuntime>();
+            runtime.restore_replay_anchor(anchor);
+            if replayed_from_job_start {
+                let options = CandidateControlOptions {
+                    job_name: &self.candidate.job_name,
+                    source_path: &self.candidate.source_path,
+                    bytes: Arc::from(source_file_bytes(
+                        &self.candidate.plan.source,
+                        self.candidate.root_source_is_byte_projection,
+                    )),
+                    profile: self.candidate.profile,
+                    compatibility: self.candidate.compatibility,
+                    initex: self.candidate.initex,
+                    emit_dvi: self.candidate.dvi_output,
+                    root_framing: self.candidate.root_framing,
+                    root_framing_name: self.candidate.root_framing_name.as_deref(),
+                };
+                let (universe, _, _, control, _) = attached.parts::<CandidateRuntime>();
+                control
+                    .capabilities_mut()
+                    .set_startup_job_name(&self.candidate.job_name);
+                if let Err(error) = start_candidate_job(universe, control, options) {
+                    return CandidateRunResult {
+                        execution: Err(error),
+                        runtime_key: None,
+                        discarded_fuel: attempt_fuel,
+                    };
+                }
+            }
+            discarded_fuel = attempt_fuel;
+        }
         // Terminal command and mode owners remain attached until the
         // aggregate accept/reject barrier explicitly settles them. Drop is
         // reserved for unwinding before an attachment can be published.
@@ -987,6 +1125,7 @@ impl tex_exec::RetainedEngineOperation for CandidateRun<'_, '_> {
         CandidateRunResult {
             execution,
             runtime_key,
+            discarded_fuel,
         }
     }
 }
@@ -994,6 +1133,7 @@ impl tex_exec::RetainedEngineOperation for CandidateRun<'_, '_> {
 struct CandidateRunResult {
     execution: Result<PlanExecution, SessionError>,
     runtime_key: Option<tex_exec::RetainedEngineAttachmentKey>,
+    discarded_fuel: u64,
 }
 
 struct SettleCandidateRuntime {
@@ -1181,11 +1321,120 @@ struct CandidateRuntime {
     history: LiveHistoryState,
     delivered_commands: usize,
     answered_needs: Vec<ResourceNeed>,
+    pending_resource: Option<(ResourceNeed, PendingResource)>,
+    resource_cache: Vec<(ResourceNeed, PendingResource)>,
     job_start_anchor: Option<FrozenJobStartAnchor>,
+}
+
+enum PendingResource {
+    Fulfilled {
+        fulfillment: ResourceFulfillment,
+        effects: Vec<ResourceReplayEffect>,
+    },
+    Unavailable {
+        effects: Vec<ResourceReplayEffect>,
+    },
+}
+
+impl Clone for PendingResource {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Fulfilled {
+                fulfillment,
+                effects,
+            } => Self::Fulfilled {
+                fulfillment: fulfillment.clone(),
+                effects: effects.clone(),
+            },
+            Self::Unavailable { effects } => Self::Unavailable {
+                effects: effects.clone(),
+            },
+        }
+    }
+}
+
+impl PendingResource {
+    fn apply_effects<G>(&self, universe: &mut Universe<G>) -> Result<(), WorldError> {
+        let effects = match self {
+            Self::Fulfilled { effects, .. } | Self::Unavailable { effects } => effects,
+        };
+        for effect in effects {
+            let ResourceReplayEffect::InputDependency {
+                path,
+                outcome,
+                access,
+            } = effect;
+            universe
+                .world_mut()
+                .record_input_dependency(path.clone(), *outcome, *access)?;
+        }
+        Ok(())
+    }
+}
+
+struct ReplayAnchorLease {
+    slot: ReplayAnchorSlot,
+    key: tex_exec::RetainedCheckpointKey,
+}
+
+enum ReplayAnchorSlot {
+    JobStart,
+    CurrentCandidate,
+    History(usize),
+}
+
+impl CandidateRuntime {
+    fn take_latest_replay_anchor(&mut self) -> Option<ReplayAnchorLease> {
+        if let Some((index, key)) = self
+            .history
+            .checkpoint_keys
+            .iter_mut()
+            .enumerate()
+            .rev()
+            .find_map(|(index, key)| key.take().map(|key| (index, key)))
+        {
+            return Some(ReplayAnchorLease {
+                slot: ReplayAnchorSlot::History(index),
+                key,
+            });
+        }
+        if let Some(key) = self.history.current_candidate_replay_anchor.take() {
+            return Some(ReplayAnchorLease {
+                slot: ReplayAnchorSlot::CurrentCandidate,
+                key,
+            });
+        }
+        self.history
+            .job_start_replay_anchor
+            .take()
+            .map(|key| ReplayAnchorLease {
+                slot: ReplayAnchorSlot::JobStart,
+                key,
+            })
+    }
+
+    fn restore_replay_anchor(&mut self, anchor: ReplayAnchorLease) {
+        match anchor.slot {
+            ReplayAnchorSlot::JobStart => {
+                debug_assert!(self.history.job_start_replay_anchor.is_none());
+                self.history.job_start_replay_anchor = Some(anchor.key);
+            }
+            ReplayAnchorSlot::CurrentCandidate => {
+                debug_assert!(self.history.current_candidate_replay_anchor.is_none());
+                self.history.current_candidate_replay_anchor = Some(anchor.key);
+            }
+            ReplayAnchorSlot::History(index) => {
+                debug_assert!(self.history.checkpoint_keys[index].is_none());
+                self.history.checkpoint_keys[index] = Some(anchor.key);
+            }
+        }
+        self.answered_needs.clear();
+    }
 }
 
 struct LiveConvergence {
     accepted: Arc<[BoundaryRecord]>,
+    initial_next_old: usize,
     next_old: usize,
     edit: Option<RevisionEditMap>,
     restart: BoundaryKey,
@@ -1199,6 +1448,8 @@ struct LiveHistoryState {
     occurrences: HashMap<(usize, EngineBoundary), u32>,
     paragraphs: usize,
     checkpoint_keys: Vec<Option<tex_exec::RetainedCheckpointKey>>,
+    job_start_replay_anchor: Option<tex_exec::RetainedCheckpointKey>,
+    current_candidate_replay_anchor: Option<tex_exec::RetainedCheckpointKey>,
     checkpoint_retentions: Vec<Option<tex_exec::CheckpointRetention>>,
     checkpoint_budget: usize,
     shared_owner_charges: BTreeMap<
@@ -1231,6 +1482,8 @@ impl LiveHistoryState {
             occurrences: HashMap::new(),
             paragraphs: 0,
             checkpoint_keys: Vec::new(),
+            job_start_replay_anchor: None,
+            current_candidate_replay_anchor: None,
             checkpoint_retentions: Vec::new(),
             checkpoint_budget,
             shared_owner_charges: BTreeMap::new(),
@@ -1294,26 +1547,34 @@ impl LiveHistoryState {
         let position = evidence.position();
         let ordinal = evidence.ordinal();
         debug_assert!(self.records.is_empty());
-        self.records.push(BoundaryRecord {
-            revision: self.revision,
-            key: BoundaryKey {
-                position,
-                boundary,
-                ordinal,
-            },
-            effect_prefix: evidence.effect_prefix(),
-            artifact_prefix: evidence.artifact_prefix(),
-            reachable_state_identity: evidence.reachable_state_identity(),
-            direct_convergence_source: None,
-        });
-        self.occurrences
-            .insert((position, boundary), ordinal.saturating_add(1));
-        self.observe_shared_owners(inherited.retention);
-        self.checkpoint_metadata_bytes = self
-            .checkpoint_metadata_bytes
-            .max(inherited.retention.checkpoint_metadata_bytes());
-        self.checkpoint_keys.push(Some(inherited.key));
-        self.checkpoint_retentions.push(Some(inherited.retention));
+        if inherited.publish_record {
+            self.records.push(BoundaryRecord {
+                revision: self.revision,
+                key: BoundaryKey {
+                    position,
+                    boundary,
+                    ordinal,
+                },
+                effect_prefix: evidence.effect_prefix(),
+                artifact_prefix: evidence.artifact_prefix(),
+                reachable_state_identity: evidence.reachable_state_identity(),
+                direct_convergence_source: None,
+            });
+            self.occurrences
+                .insert((position, boundary), ordinal.saturating_add(1));
+            self.observe_shared_owners(inherited.retention);
+            self.checkpoint_metadata_bytes = self
+                .checkpoint_metadata_bytes
+                .max(inherited.retention.checkpoint_metadata_bytes());
+            self.checkpoint_keys.push(Some(inherited.key));
+            self.checkpoint_retentions.push(Some(inherited.retention));
+        } else {
+            // The accepted history already owns the detached evidence for
+            // this selected root. The fork moved the same owner-relative key
+            // into the current generation, so retain it as a candidate-local
+            // replay fallback without publishing a duplicate history row.
+            self.current_candidate_replay_anchor = Some(inherited.key);
+        }
     }
 
     fn retained_restart_root_count(&self) -> usize {
@@ -1377,6 +1638,76 @@ impl LiveHistoryState {
                 self.shared_owner_charges.remove(&key);
             }
         }
+    }
+
+    /// Retains only the boundary prefix that is reachable from a replay
+    /// anchor.  A resource miss may occur after a candidate has published one
+    /// or more later checkpoints; those rows belong to the discarded suffix,
+    /// even though the aggregate engine roots are rewound separately.
+    fn rewind_after_anchor<G>(
+        &mut self,
+        anchor: &ReplayAnchorLease,
+        retained: &mut tex_exec::RetainedCheckpointStore<'_, G>,
+    ) -> Vec<tex_exec::EngineCheckpointRelease<G>> {
+        let (keep, selected_source) = match anchor.slot {
+            ReplayAnchorSlot::History(index) => (
+                index.saturating_add(1).min(self.records.len()),
+                self.records
+                    .get(index)
+                    .and_then(|record| record.direct_convergence_source),
+            ),
+            ReplayAnchorSlot::JobStart => (
+                self.records
+                    .iter()
+                    .position(|record| record.key.boundary == EngineBoundary::JobStart)
+                    .map_or(0, |index| index.saturating_add(1)),
+                None,
+            ),
+            ReplayAnchorSlot::CurrentCandidate => (0, None),
+        };
+        let mut releases = Vec::new();
+        while self.checkpoint_keys.len() > keep {
+            let key = self.checkpoint_keys.pop().flatten();
+            let retention = self.checkpoint_retentions.pop().flatten();
+            if let Some(key) = key {
+                let release = retained
+                    .release(key)
+                    .expect("replayed candidate suffix owns a live checkpoint key");
+                releases.push(release);
+                if let Some(retention) = retention {
+                    self.release_shared_owners(retention);
+                }
+            }
+        }
+        self.records.truncate(keep);
+        self.paragraphs = self
+            .records
+            .iter()
+            .filter(|record| record.key.boundary == EngineBoundary::OuterParagraphEnd)
+            .count();
+        self.occurrences.clear();
+        for record in &self.records {
+            self.occurrences
+                .entry((record.key.position, record.key.boundary))
+                .and_modify(|next| *next = (*next).max(record.key.ordinal.saturating_add(1)))
+                .or_insert(record.key.ordinal.saturating_add(1));
+        }
+        if let Some(convergence) = self.convergence.as_mut() {
+            convergence.next_old = selected_source
+                .and_then(|source| {
+                    convergence
+                        .accepted
+                        .iter()
+                        .position(|record| record.key == source)
+                })
+                .map_or(convergence.initial_next_old, |index| {
+                    index.saturating_add(1)
+                });
+            convergence.matched = None;
+            convergence.schedule_diverged = false;
+        }
+        self.protected_overage_bytes = self.retained_bytes().saturating_sub(self.checkpoint_budget);
+        releases
     }
 
     fn restart_victim(&self) -> Option<usize> {
@@ -1514,13 +1845,15 @@ impl<G> CheckpointSink<G> for LiveHistorySink<'_, '_, G> {
             checkpoint.reachable_state_identity(),
         );
         if boundary == EngineBoundary::JobStart {
-            // The session's detached frozen anchor is the authoritative
-            // restart owner. Keep schedule evidence, but never publish this
-            // initial cursor as a live journal root.
+            // The detached frozen anchor remains the session's cold fallback,
+            // while this candidate-local root lets a miss before the first
+            // paragraph unwind in place. It is intentionally kept out of the
+            // accepted history/budget rows; the protected JobStart lane row is
+            // settled with the candidate generation itself.
             self.state.checkpoint_keys.push(None);
             self.state.checkpoint_retentions.push(None);
-            self.retained.retain_evidence(evidence);
-            self.pending_release = Some(checkpoint.release_unretained());
+            self.state.job_start_replay_anchor =
+                Some(self.retained.retain_boundary(checkpoint, evidence));
             return;
         }
         self.state.observe_shared_owners(retention);
@@ -1542,6 +1875,23 @@ impl<G> CheckpointSink<G> for LiveHistorySink<'_, '_, G> {
 
     fn stop_requested(&self) -> bool {
         self.state.convergence_match().is_some()
+    }
+}
+
+impl<G> LiveHistorySink<'_, '_, G> {
+    fn release_job_start_replay_anchor(
+        &mut self,
+        control: &mut MainControl<G>,
+        universe: &mut Universe<G>,
+    ) {
+        let Some(key) = self.state.job_start_replay_anchor.take() else {
+            return;
+        };
+        let release = self
+            .retained
+            .release_job_start(key)
+            .expect("candidate-local JobStart root remains live until completion");
+        release.apply(control, universe);
     }
 }
 
@@ -1640,6 +1990,7 @@ fn initialize_candidate_runtime<G: 'static>(
         .zip(candidate.plan.restart_boundary)
         .map(|(next_old, restart)| LiveConvergence {
             accepted: Arc::clone(&candidate.comparison_history),
+            initial_next_old: next_old,
             next_old,
             edit: candidate.plan.edit_map,
             restart,
@@ -1692,6 +2043,8 @@ fn initialize_candidate_runtime<G: 'static>(
         history,
         delivered_commands: 0,
         answered_needs: Vec::new(),
+        pending_resource: None,
+        resource_cache: Vec::new(),
         job_start_anchor: candidate.job_start_anchor.clone(),
     })
 }
@@ -1708,6 +2061,7 @@ fn execute_plan<G>(
     cancellation: &Cancellation,
     failed_attempt_fuel: &mut u64,
 ) -> Result<PlanExecution, SessionError> {
+    let fuel_before = control.fuel_burned();
     let result = execute_plan_inner(
         universe,
         ledger,
@@ -1719,7 +2073,7 @@ fn execute_plan<G>(
         cancellation,
     );
     if result.is_err() {
-        *failed_attempt_fuel = control.fuel_burned();
+        *failed_attempt_fuel = control.fuel_burned().saturating_sub(fuel_before);
     }
     result
 }
@@ -1739,6 +2093,8 @@ fn execute_plan_inner<G>(
         history,
         delivered_commands,
         answered_needs,
+        pending_resource,
+        resource_cache,
         job_start_anchor,
     } = runtime;
     let mut sink = LiveHistorySink {
@@ -1825,6 +2181,7 @@ fn execute_plan_inner<G>(
                         .collect::<std::collections::BTreeSet<_>>()
                         .into_iter()
                         .collect();
+                    sink.release_job_start_replay_anchor(control, universe);
                     let completion = ledger.detach_checkpoint_prefix(control, universe)?;
                     let checkpoint_retained_bytes = sink.state.retained_bytes();
                     let checkpoint_shared_owner_bytes = sink.state.shared_owner_bytes();
@@ -1852,6 +2209,11 @@ fn execute_plan_inner<G>(
                 }
                 if matches!(step, MainControlStep::End | MainControlStep::EndOfInput) {
                     let dependencies = universe.world().input_dependencies().collect();
+                    // Format dumping replaces the command timeline with the
+                    // post-dump empty owner. Release the candidate-local
+                    // JobStart root while its captured command summary still
+                    // addresses the live timeline.
+                    sink.release_job_start_replay_anchor(control, universe);
                     let format_dump = control
                         .take_format_dump(universe)
                         .map_err(SessionError::FormatDump)?;
@@ -1900,25 +2262,69 @@ fn execute_plan_inner<G>(
                 }
             }
             CanonicalStepResult::ResourceNeed(need) => {
+                // Resource answers live outside the rewindable engine state.
+                // A full restart can therefore encounter an already-answered
+                // need again before it reaches the next miss. Reuse the
+                // immutable host answer instead of asking the host a second
+                // time (which would duplicate external effects and would
+                // otherwise make multi-resource attempts look inconsistent).
+                let pending_matches = pending_resource
+                    .as_ref()
+                    .is_some_and(|(pending_need, _)| pending_need == &need);
+                let pending = (pending_matches.then(|| {
+                    pending_resource
+                        .take()
+                        .expect("matching pending resource remains available")
+                        .1
+                }))
+                .or_else(|| {
+                    (!answered_needs.contains(&need)).then(|| {
+                        resource_cache
+                            .iter()
+                            .find(|(cached_need, _)| cached_need == &need)
+                            .map(|(_, answer)| answer.clone())
+                    })?
+                });
+                if let Some(pending) = pending {
+                    pending.apply_effects(universe)?;
+                    match pending {
+                        PendingResource::Fulfilled { fulfillment, .. } => {
+                            if ledger.fulfill(control, &need, fulfillment).is_err() {
+                                return Err(SessionError::UnexpectedResource);
+                            }
+                        }
+                        PendingResource::Unavailable { .. } => {
+                            ledger.mark_unavailable(control, &need, false);
+                        }
+                    }
+                    answered_needs.push(need);
+                    continue;
+                }
                 if answered_needs.contains(&need) {
                     return Err(SessionError::ResourceNoProgress {
                         need: Box::new(need),
                     });
                 }
-                let outcome = {
+                let (outcome, effects) = {
                     let mut world = ResourceWorld::new(universe);
-                    host.fulfill(&mut world, &need)
+                    let outcome = host.fulfill(&mut world, &need);
+                    (outcome, world.take_replay_effects())
                 };
                 match outcome {
                     ResourceOutcome::Fulfilled(fulfillment) => {
-                        ledger
-                            .fulfill(control, &need, fulfillment)
-                            .map_err(|_| SessionError::UnexpectedResource)?;
-                        answered_needs.push(need);
+                        let pending = PendingResource::Fulfilled {
+                            fulfillment,
+                            effects,
+                        };
+                        resource_cache.push((need.clone(), pending.clone()));
+                        *pending_resource = Some((need.clone(), pending));
+                        return Ok(PlanExecution::Replay(need));
                     }
                     ResourceOutcome::Unavailable => {
-                        ledger.mark_unavailable(control, &need, false);
-                        answered_needs.push(need);
+                        let pending = PendingResource::Unavailable { effects };
+                        resource_cache.push((need.clone(), pending.clone()));
+                        *pending_resource = Some((need.clone(), pending));
+                        return Ok(PlanExecution::Replay(need));
                     }
                     ResourceOutcome::Declined => return Ok(PlanExecution::Suspended(need)),
                 }
@@ -2880,14 +3286,15 @@ impl<'store> Session<'store> {
                     boundary: selected.boundary(),
                     ordinal: selected.ordinal(),
                 };
-                let inherited_boundary = (!self
+                let publish_record = !self
                     .history
                     .iter()
-                    .any(|record| record.key == selected_boundary))
-                .then_some(InheritedBoundary {
+                    .any(|record| record.key == selected_boundary);
+                let inherited_boundary = Some(InheritedBoundary {
                     key: selected_key,
                     evidence: selected,
                     retention,
+                    publish_record,
                 });
                 plan.restart_boundary = Some(selected_boundary);
                 (Some(generation), Some(runtime), inherited_boundary)
@@ -2955,6 +3362,10 @@ impl<'store> Session<'store> {
             suspension_serial: 0,
             advance_calls: 0,
             cumulative_fuel: 0,
+            resource_restarts: 0,
+            replayed_delivered_tokens: 0,
+            replayed_dispatches: 0,
+            discarded_fuel: 0,
             generation,
             inherited_boundary,
             checkpoint_control_key,
@@ -3611,7 +4022,8 @@ fn drive_synchronous_candidate(
     candidate: &mut RevisionCandidate<'_>,
     host: &mut dyn ResourceHost,
 ) -> Result<(), SessionError> {
-    match candidate.drive_with_resource_resolvers(host, &Cancellation::new())? {
+    let result = candidate.drive_with_resource_resolvers(host, &Cancellation::new())?;
+    match result {
         RevisionCandidateResult::Complete => Ok(()),
         RevisionCandidateResult::AwaitingResources(need) => Err(SessionError::ResourceNoProgress {
             need: Box::new(need),
@@ -3918,6 +4330,7 @@ pub enum SessionError {
     MissingJobStartAnchor,
     JobStartSessionMismatch,
     UnexpectedResource,
+    ResourceReplayAnchorMissing,
     ResourceNoProgress {
         need: Box<ResourceNeed>,
     },
@@ -3968,6 +4381,9 @@ impl fmt::Display for SessionError {
                 f.write_str("frozen JobStart anchor belongs to different session semantics")
             }
             Self::UnexpectedResource => f.write_str("resource fulfillment does not match"),
+            Self::ResourceReplayAnchorMissing => {
+                f.write_str("resource miss has no retained full checkpoint replay anchor")
+            }
             Self::ResourceNoProgress { need, .. } => {
                 write!(f, "resource replay made no progress for {need:?}")
             }

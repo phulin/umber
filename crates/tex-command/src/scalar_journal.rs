@@ -275,6 +275,28 @@ impl<T, const RECORDS: usize> PackedJournal<T, RECORDS> {
         true
     }
 
+    pub(crate) fn restore_current_with<C>(
+        &mut self,
+        mark: PackedJournalMark,
+        context: &mut C,
+        mut swap: impl FnMut(&mut T, &mut C),
+        mut release: impl FnMut(T, &mut C),
+    ) -> bool {
+        let Some(fork) = self.fork.as_ref() else {
+            return false;
+        };
+        if !self.validates(mark)
+            || mark.chunks < fork.selected.chunks
+            || mark.records < fork.selected.records
+        {
+            return false;
+        }
+        self.visit_current_suffix_reverse(mark, &mut |value| swap(value, context));
+        self.release_current_suffix(mark, &mut |value| release(value, context));
+        self.interval_tail_open = false;
+        true
+    }
+
     pub(crate) fn begin_checkpoint_candidate(
         &mut self,
         mark: PackedJournalMark,

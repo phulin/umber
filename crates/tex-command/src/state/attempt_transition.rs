@@ -113,6 +113,25 @@ impl<G> CommandState<G> {
         result
     }
 
+    /// Drops an attempt owner after an aggregate checkpoint has already
+    /// restored and truncated its command roots.
+    ///
+    /// Ordinary rollback must consume the linear operation capability through
+    /// [`Self::rollback_attempt_operation`]. Resource replay is the one
+    /// coarse transaction that restores the aggregate command cursor first;
+    /// its old operation coordinates are consequently no longer valid and
+    /// must be discarded rather than replayed against the restored arena.
+    #[doc(hidden)]
+    pub fn abandon_attempt_after_checkpoint_restore(&mut self) {
+        // Aggregate restore has already truncated every semantic root and
+        // attempt mark. Replace the two command-side scratch owners so no
+        // stale child scope or scanner builder can make the restored named
+        // boundary appear suspended.
+        self.scratch = crate::execution_scratch::ExecutionScratch::default();
+        self.active_attempt_operation = None;
+        self.attempt.abandon_operation();
+    }
+
     /// Commits the exact direct-operation/scanner scope. Macro frames live in
     /// the disjoint generation-owned scratch lanes until input retirement.
     pub fn commit_attempt_operation(

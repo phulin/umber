@@ -893,6 +893,48 @@ fn resource_suspension_replays_from_detached_plan_and_accepts_once() {
 }
 
 #[test]
+fn resource_replay_reuses_latest_candidate_checkpoint() {
+    let source = "A\\par\n\\input child \\end";
+    let mut incremental = session(RevisionId::new(1), source);
+    let mut candidate = incremental.start_cold_candidate().expect("candidate");
+    let mut host = DeclineOnceInput(false);
+    assert!(matches!(
+        candidate
+            .drive_with_resource_resolvers(&mut host, &Cancellation::new())
+            .expect("initial host yield"),
+        RevisionCandidateResult::AwaitingResources(ResourceNeed::Input { .. })
+    ));
+    assert_eq!(candidate.execution_telemetry().resource_restarts, 0);
+
+    assert!(matches!(
+        candidate
+            .drive_with_resource_resolvers(&mut host, &Cancellation::new())
+            .expect("checkpoint replay"),
+        RevisionCandidateResult::Complete
+    ));
+    let telemetry = candidate.execution_telemetry();
+    assert_eq!(telemetry.resource_restarts, 1);
+    assert!(telemetry.discarded_fuel > 0);
+    let replayed = incremental
+        .accept_cold_candidate(candidate)
+        .expect("replayed candidate accepts");
+
+    let mut cold = session(RevisionId::new(1), source);
+    let mut expected = cold.start_cold_candidate().expect("cold candidate");
+    let mut always_available = DeclineOnceInput(true);
+    assert!(matches!(
+        expected
+            .drive_with_resource_resolvers(&mut always_available, &Cancellation::new())
+            .expect("cold comparison"),
+        RevisionCandidateResult::Complete
+    ));
+    let expected = cold
+        .accept_cold_candidate(expected)
+        .expect("cold comparison accepts");
+    assert_detached_output_eq(&replayed, &expected);
+}
+
+#[test]
 fn non_job_start_command_fork_cancels_suspension_and_reuses_accepted_siblings() {
     let source = "A\\par\n\\font\\tenrm=cmr10 \\tenrm B\\par\nC\\par\\end";
     let mut incremental = session(RevisionId::new(1), source);

@@ -1,13 +1,16 @@
 //! Host-neutral immutable resource protocol for retained canonical execution.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tex_command::{
     FileEnquiryRequest, FileEnquiryResource, FontLoadRequest, FontResource, PdfImageRequest,
     PdfImageResource, RegisteredSourceKind, SourceRegistration, SourceRole,
 };
-use tex_state::{FileContent, InputReadState, Universe, WorldError};
+use tex_state::{
+    FileContent, InputDependencyAccess, InputDependencyOutcome, InputReadState, SharedBytes,
+    Universe, WorldError,
+};
 
 use crate::ResourceNeed;
 
@@ -53,6 +56,18 @@ pub enum ResourceOutcome {
     Fulfilled(ResourceFulfillment),
     Unavailable,
     Declined,
+}
+
+/// Semantic bookkeeping performed while a host resolves one immutable
+/// resource. The host answer itself is cached outside rollback, while these
+/// effects are replayed into the restored world on every full restart.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ResourceReplayEffect {
+    InputDependency {
+        path: PathBuf,
+        outcome: InputDependencyOutcome,
+        access: InputDependencyAccess,
+    },
 }
 
 impl ResourceFulfillment {
@@ -137,12 +152,16 @@ impl<G> ResourceWorldBackend for Universe<G> {
 
 pub struct ResourceWorld<'a> {
     backend: &'a mut dyn ResourceWorldBackend,
+    replay_effects: Vec<ResourceReplayEffect>,
 }
 
 impl<'a> ResourceWorld<'a> {
     #[must_use]
     pub fn new<G>(stores: &'a mut Universe<G>) -> Self {
-        Self { backend: stores }
+        Self {
+            backend: stores,
+            replay_effects: Vec::new(),
+        }
     }
 
     /// Borrows the candidate's private world for resource bookkeeping.
@@ -152,14 +171,26 @@ impl<'a> ResourceWorld<'a> {
     ) -> T {
         let mut operation = Some(operation);
         let mut result = None;
+        let replay_effects = &mut self.replay_effects;
         self.backend.with_input_read_state(&mut |input| {
+            let mut recording = RecordingInputReadState {
+                input,
+                replay_effects,
+            };
             result = Some(operation
                 .take()
                 .expect("resource input operation runs once")(
-                input
+                &mut recording
             ));
         });
         result.expect("resource input operation ran")
+    }
+
+    /// Takes semantic effects recorded while the host answered this request.
+    /// The resource host owns the returned list until the answer is either
+    /// applied or discarded by its surrounding transaction.
+    pub fn take_replay_effects(&mut self) -> Vec<ResourceReplayEffect> {
+        std::mem::take(&mut self.replay_effects)
     }
 
     pub fn read_file(&mut self, path: impl AsRef<Path>) -> Result<FileContent, WorldError> {
@@ -172,6 +203,45 @@ impl<'a> ResourceWorld<'a> {
         bytes: Arc<[u8]>,
     ) -> Result<FileContent, WorldError> {
         self.backend.register_selected_file(path.as_ref(), bytes)
+    }
+}
+
+struct RecordingInputReadState<'a> {
+    input: &'a mut dyn InputReadState,
+    replay_effects: &'a mut Vec<ResourceReplayEffect>,
+}
+
+impl InputReadState for RecordingInputReadState<'_> {
+    fn read_input_file(&mut self, path: &Path) -> Result<FileContent, WorldError> {
+        self.input.read_input_file(path)
+    }
+
+    fn read_pending_output_file(&mut self, path: &Path) -> Result<Option<FileContent>, WorldError> {
+        self.input.read_pending_output_file(path)
+    }
+
+    fn read_supplied_input_file(
+        &mut self,
+        path: &Path,
+        bytes: SharedBytes,
+    ) -> Result<FileContent, WorldError> {
+        self.input.read_supplied_input_file(path, bytes)
+    }
+
+    fn record_input_dependency(
+        &mut self,
+        path: &Path,
+        outcome: InputDependencyOutcome,
+        access: InputDependencyAccess,
+    ) -> Result<(), WorldError> {
+        self.input.record_input_dependency(path, outcome, access)?;
+        self.replay_effects
+            .push(ResourceReplayEffect::InputDependency {
+                path: path.to_owned(),
+                outcome,
+                access,
+            });
+        Ok(())
     }
 }
 

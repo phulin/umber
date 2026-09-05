@@ -140,6 +140,35 @@ impl OutputLedger {
         Ok(())
     }
 
+    /// Rewinds the current candidate output lineage to a whole-checkpoint
+    /// mark.  A resource miss may happen after pages have been prepared, but
+    /// it must never leave those pages visible when the engine retries from a
+    /// full semantic checkpoint.
+    pub(crate) fn rewind(
+        &mut self,
+        checkpoint: OutputLedgerCheckpoint,
+    ) -> Result<(), tex_state::fork_arena::ForkArenaError> {
+        if self.accepted_head_count.is_some() {
+            self.pages
+                .restore_current_checkpoint(&mut self.pool, checkpoint.mark)?;
+            self.prepared_page_count = checkpoint.prepared_page_count;
+            self.job_start_committed = true;
+            self.suspension_serial = 0;
+            self.terminal_step = None;
+            self.terminal_closed = false;
+            Ok(())
+        } else {
+            self.pages
+                .restore_accepted_checkpoint(&mut self.pool, checkpoint.mark)?;
+            self.prepared_page_count = checkpoint.prepared_page_count;
+            self.job_start_committed = true;
+            self.suspension_serial = 0;
+            self.terminal_step = None;
+            self.terminal_closed = false;
+            Ok(())
+        }
+    }
+
     pub(crate) fn checkpoint(&mut self) -> OutputLedgerCheckpoint {
         let boundary = self
             .pages

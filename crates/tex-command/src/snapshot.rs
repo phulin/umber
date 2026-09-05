@@ -722,11 +722,82 @@ impl<G> CommandTimeline<G> {
         true
     }
 
+    fn restore_current_roots(
+        &mut self,
+        mark: CommandTimelineMark,
+        roots: &mut CommandStateRoots<G>,
+    ) -> bool {
+        let Some(fork) = self.fork.as_ref() else {
+            return false;
+        };
+        let mut current = Some(fork.prefix_tail);
+        let mut frame_is_current = false;
+        while let Some(frame) = current {
+            if frame == mark.frame {
+                frame_is_current = true;
+                break;
+            }
+            current = self.next_frame(frame);
+        }
+        if !frame_is_current {
+            return false;
+        }
+        if !self.scalars.restore_current_with(
+            mark.scalars,
+            roots,
+            |inverse, roots| inverse.swap(roots),
+            |inverse, _| drop(inverse),
+        ) {
+            return false;
+        }
+        if !self.pending_input.restore_current_with(
+            mark.pending_input,
+            roots,
+            |inverse, roots| std::mem::swap(&mut inverse.0, &mut roots.pending_input_open),
+            |inverse, _| drop(inverse),
+        ) {
+            return false;
+        }
+        let suffix = self.chain_from(self.next_frame(mark.frame));
+        self.frame_slot_mut(mark.frame)
+            .expect("replay command prefix tail remains live")
+            .next = None;
+        if let Some(suffix) = suffix {
+            self.frame_slot_mut(suffix.head)
+                .expect("replay command suffix remains live")
+                .previous = None;
+            self.prepare_reusable_chain(suffix);
+            self.retire_chain(Some(suffix));
+        }
+        self.frame_tail = Some(mark.frame);
+        if let Some(fork) = self.fork.as_mut() {
+            fork.candidate = if mark.frame == fork.prefix_tail {
+                None
+            } else {
+                Some(CommandFrameChain {
+                    head: fork
+                        .candidate
+                        .as_ref()
+                        .expect("current replay frame belongs to candidate suffix")
+                        .head,
+                    tail: mark.frame,
+                })
+            };
+        }
+        self.touched_scalars = 0;
+        self.pending_input_touched = false;
+        true
+    }
+
     fn can_begin_checkpoint_candidate(&self, mark: CommandTimelineMark) -> bool {
         self.fork.is_none()
             && self.frame(mark.frame).is_some()
             && self.scalars.validates(mark.scalars)
             && self.pending_input.validates(mark.pending_input)
+    }
+
+    pub(crate) fn checkpoint_candidate_active(&self) -> bool {
+        self.fork.is_some()
     }
 
     fn begin_checkpoint_candidate(

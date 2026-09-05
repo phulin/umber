@@ -62,6 +62,49 @@ impl<'a, G> AttachedCheckpointControl<'a, G> {
         self.attachment = Some(Box::new(attachment));
     }
 
+    /// Rewinds the attached candidate to a retained full checkpoint.
+    ///
+    /// The active command attempt is first cancelled through its normal
+    /// settlement barrier.  The aggregate checkpoint then restores command,
+    /// mode, world, page, PDF, and dependency roots, while the output ledger
+    /// truncates its current fork to the same sealed mark.  No scanner or
+    /// expansion continuation survives this method.
+    pub fn rewind_to_checkpoint(
+        &mut self,
+        key: &RetainedCheckpointKey,
+    ) -> Result<(), RetainedEngineAccessError> {
+        let checkpoint = self
+            .sidecars
+            .boundaries
+            .as_ref()
+            .ok_or(RetainedEngineAccessError::StaleAttachment)?
+            .get(key)?;
+        let output = match checkpoint.output_ledger_checkpoint() {
+            Some(output) => output,
+            None => return Err(RetainedEngineAccessError::StaleCheckpoint),
+        };
+        let control = self
+            .control
+            .as_mut()
+            .ok_or(RetainedEngineAccessError::StaleAttachment)?;
+        control.prepare_external_attempt_for_replay(self.universe);
+        if control
+            .restore_checkpoint_for_replay(checkpoint, self.universe)
+            .is_err()
+        {
+            return Err(RetainedEngineAccessError::StaleCheckpoint);
+        }
+        control.reset_checkpoint_replay_runtime(checkpoint.boundary());
+        control.abandon_external_attempt_for_replay();
+        let rewind = self
+            .sidecars
+            .ledger
+            .as_mut()
+            .ok_or(RetainedEngineAccessError::StaleAttachment)?
+            .rewind(output);
+        rewind.map_err(|_| RetainedEngineAccessError::StaleCheckpoint)
+    }
+
     pub fn initialization_parts(
         &mut self,
     ) -> (
@@ -427,6 +470,18 @@ impl<G> RetainedCheckpointStore<'_, G> {
         key: RetainedCheckpointKey,
     ) -> Result<crate::EngineCheckpointRelease<G>, RetainedEngineAccessError> {
         self.boundaries.release_key(key)
+    }
+
+    /// Releases a candidate-local JobStart root after the candidate reaches a
+    /// terminal boundary. JobStart is protected while a candidate can still
+    /// replay from it, but the immutable session anchor takes over once the
+    /// candidate is complete, so the live lane need not retain another root.
+    #[doc(hidden)]
+    pub fn release_job_start(
+        &mut self,
+        key: RetainedCheckpointKey,
+    ) -> Result<crate::EngineCheckpointRelease<G>, RetainedEngineAccessError> {
+        self.boundaries.release_job_start(key)
     }
 
     #[doc(hidden)]
@@ -1720,21 +1775,55 @@ impl<G> BoundaryLane<G> {
             .checkpoint
             .expect("validated boundary row owns its restart root");
         self.live_roots = self.live_roots.saturating_sub(1);
-        let mut oldest_retained = None;
-        self.visit_visible_cells(|cell| {
-            if oldest_retained.is_none()
-                && let Some(checkpoint) = cell.checkpoint.as_ref()
-                && checkpoint.boundary() != crate::EngineBoundary::JobStart
-            {
-                oldest_retained = Some(crate::checkpoint::CheckpointReleaseFloor::capture(
-                    checkpoint,
-                ));
-            }
-        })?;
+        let oldest_retained = self.oldest_live_restart_floor()?;
         Ok(crate::EngineCheckpointRelease::new(
             removed,
             oldest_retained,
         ))
+    }
+
+    fn release_job_start(
+        &mut self,
+        key: RetainedCheckpointKey,
+    ) -> Result<crate::EngineCheckpointRelease<G>, RetainedEngineAccessError> {
+        self.get(&key)?;
+        if self.protected_record != Some(key.record) {
+            return Err(RetainedEngineAccessError::ProtectedCheckpoint);
+        }
+        let raw = self.raw_key(&key)?;
+        let removed = self
+            .slot_by_index_mut(raw.slot)
+            .cell
+            .as_mut()
+            .and_then(|cell| cell.checkpoint.take())
+            .ok_or(RetainedEngineAccessError::StaleCheckpoint)?;
+        self.protected_record = None;
+        self.live_roots = self.live_roots.saturating_sub(1);
+        let oldest_retained = self.oldest_live_restart_floor()?;
+        Ok(crate::EngineCheckpointRelease::new(
+            removed,
+            oldest_retained,
+        ))
+    }
+
+    fn oldest_live_restart_floor(
+        &self,
+    ) -> Result<Option<crate::checkpoint::CheckpointReleaseFloor<G>>, RetainedEngineAccessError>
+    {
+        let protected_job_start = self.protected_record;
+        let mut oldest = None;
+        self.visit_visible(|raw, cell| {
+            if oldest.is_none()
+                && let Some(checkpoint) = cell.checkpoint.as_ref()
+                && (checkpoint.boundary() != crate::EngineBoundary::JobStart
+                    || protected_job_start == Some(raw.record))
+            {
+                oldest = Some(crate::checkpoint::CheckpointReleaseFloor::capture(
+                    checkpoint,
+                ));
+            }
+        })?;
+        Ok(oldest)
     }
 
     fn can_begin(&self, key: &RetainedCheckpointKey) -> bool {

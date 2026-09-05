@@ -2230,7 +2230,7 @@ impl<'a> PageMaterialArena<'a> {
 
     #[must_use]
     pub fn can_restore_checkpoint(&self, mark: NodeCheckpointMark) -> bool {
-        self.region.can_begin_checkpoint_candidate(mark)
+        self.region.can_restore_checkpoint(mark)
     }
 
     pub fn restore_checkpoint(&mut self, mark: NodeCheckpointMark) -> Result<(), ForkArenaError> {
@@ -2431,7 +2431,7 @@ impl<'a> PageMaterialView<'a> {
 
     #[must_use]
     pub fn can_restore_checkpoint(&self, mark: NodeCheckpointMark) -> bool {
-        self.state.region.can_begin_checkpoint_candidate(mark)
+        self.state.region.can_restore_checkpoint(mark)
     }
 
     pub fn checkpoint_mark(

@@ -523,13 +523,15 @@ fn finalize_run(
         accepted.into_parts();
     if env::var_os("UMBER_RESOURCE_TELEMETRY").is_some_and(|value| value == "1") {
         eprintln!(
-            "RESOURCE_TELEMETRY cold_starts={} suspensions={} local_step_retries={} replayed_delivered_tokens={} replayed_dispatches={} cumulative_fuel={} resource_wait_ns={} engine_ns={}",
+            "RESOURCE_TELEMETRY cold_starts={} suspensions={} resource_restarts={} local_step_retries={} replayed_delivered_tokens={} replayed_dispatches={} cumulative_fuel={} discarded_fuel={} resource_wait_ns={} engine_ns={}",
             telemetry.execution.cold_starts,
             telemetry.execution.suspensions,
+            telemetry.execution.resource_restarts,
             telemetry.execution.local_step_retries,
             telemetry.execution.replayed_delivered_tokens,
             telemetry.execution.replayed_dispatches,
             telemetry.execution.cumulative_fuel,
+            telemetry.execution.discarded_fuel,
             telemetry.resource_wait_time.as_nanos(),
             telemetry.execution.engine_time.as_nanos(),
         );

@@ -1851,6 +1851,12 @@ impl<G> CommandAttempt<G> {
         Ok(())
     }
 
+    pub(crate) fn abandon_operation(&mut self) {
+        self.active_operation = None;
+        self.active_operation_origin = None;
+        self.arena.top_scope = AttemptScopeSerial::ROOT;
+    }
+
     pub(crate) fn begin_child_scope(&mut self) -> Result<OwnedAttemptScope, AttemptError> {
         self.arena.begin_owned_scope()
     }

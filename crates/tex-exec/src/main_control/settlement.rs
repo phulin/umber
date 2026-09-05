@@ -559,11 +559,8 @@ impl<G> MainControl<G> {
         let error = frame.take_error();
         let result = self.finish_resource_preflight_failure(stores, error, diagnostic_effects);
         if matches!(result, Ok(StepResult::Suspended(_))) {
-            let operation = self.retain_direct_operation_for_retry(
-                stores,
-                mark,
-                diagnostic_effects,
-            );
+            let operation =
+                self.retain_direct_operation_for_retry(stores, mark, diagnostic_effects);
             self.suspend_prepared_resource_operation(
                 stores,
                 operation,

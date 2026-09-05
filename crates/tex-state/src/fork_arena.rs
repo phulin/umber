@@ -5512,7 +5512,17 @@ impl<T, Lane> ForkArena<T, Lane> {
     /// arena while leaving its detached accepted suffix parked. This is the
     /// candidate-local transaction rollback counterpart of
     /// [`Self::restore_accepted_checkpoint`].
-    pub(crate) fn restore_current_checkpoint(
+    /// Restores the current transactional lineage to a sealed checkpoint
+    /// while leaving the detached accepted suffix parked.
+    ///
+    /// This is the candidate-local counterpart of
+    /// [`Self::restore_accepted_checkpoint`].  It is intentionally narrow:
+    /// callers must already own the sole forked lineage and may only name a
+    /// checkpoint whose whole-chunk mark belongs to this arena.  Exposing the
+    /// operation lets the execution layer rewind output together with its
+    /// aggregate engine checkpoint after a host resource miss; it does not
+    /// create another lineage or capture a finer-grained snapshot.
+    pub fn restore_current_checkpoint(
         &mut self,
         pool: &mut ChunkPool<T>,
         mark: CheckpointMark<Lane>,
@@ -5525,19 +5535,26 @@ impl<T, Lane> ForkArena<T, Lane> {
         {
             return Err(ForkArenaError::InvalidCheckpoint);
         }
-        let payload_tail_used = match mark.payload_tail {
-            Some(key) => pool.payload.used(key, self.owner)?,
-            None => 0,
+        // A retained prefix release rebases the arena at the floor's whole
+        // chunk. The floor mark intentionally keeps its old tail identity for
+        // equality/evidence, but that physical chunk has already been
+        // returned to the pool; at the rebased base there is no partial tail
+        // to restore or truncate.
+        let at_base = mark.payload_chunks as usize == self.base_payload_chunks as usize;
+        let payload_tail_used = match (at_base, mark.payload_tail) {
+            (true, _) => 0,
+            (false, Some(key)) => pool.payload.used(key, self.owner)?,
+            (false, None) => 0,
         };
-        let payload_tail_summary = match mark.payload_tail {
-            Some(key) => pool.payload.sequence_summary(key, self.owner)?,
-            None => None,
+        let payload_tail_summary = match (at_base, mark.payload_tail) {
+            (true, _) | (false, None) => None,
+            (false, Some(key)) => pool.payload.sequence_summary(key, self.owner)?,
         };
         self.truncate_payload(
             pool,
             mark.payload_chunks as usize,
             payload_tail_used,
-            mark.payload_tail.is_some(),
+            !at_base && mark.payload_tail.is_some(),
             payload_tail_summary,
         )
     }
@@ -5707,6 +5724,10 @@ impl<T, Lane> ForkArena<T, Lane> {
             payload_start: boundary.payload_chunks,
             _lane: PhantomData,
         })
+    }
+
+    pub(crate) fn is_forked(&self) -> bool {
+        matches!(self.ownership, ForkOwnership::Forked { .. })
     }
 
     pub fn seal_batch(

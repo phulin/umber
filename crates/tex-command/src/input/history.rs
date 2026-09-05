@@ -1776,6 +1776,35 @@ impl<G> InputStack<G> {
         restored
     }
 
+    pub(crate) fn restore_current(&mut self, mark: InputStackMark) -> bool {
+        if self.fork.is_none() || !self.validates(mark) {
+            return false;
+        }
+        let (rows, displaced, source_lex, source_owners, source_slots) = (
+            &mut self.rows,
+            &mut self.displaced_rows,
+            &mut self.source_lex_states,
+            &mut self.source_owner_states,
+            &mut self.source_slots,
+        );
+        let restored = self.undo.restore_current_with(
+            mark.undo,
+            &mut (rows, displaced, source_lex, source_owners, source_slots),
+            |inverse, state| inverse.swap(state),
+            |inverse, (_, displaced, source_lex, source_owners, source_slots)| {
+                inverse.release(displaced, source_lex, source_owners, source_slots);
+            },
+        );
+        if restored {
+            self.top = mark.top as usize;
+            self.occupied_source_buffer_slots = mark.occupied_source_buffer_slots;
+            self.active_macro_bodies = mark.active_macro_bodies;
+            self.active_macro_parameters = mark.active_macro_parameters;
+            self.begin_interval();
+        }
+        restored
+    }
+
     pub(crate) fn release_prefix(&mut self, mark: InputStackMark) -> Option<usize> {
         if self.fork.is_some() || !self.validates(mark) {
             return None;

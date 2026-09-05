@@ -3180,8 +3180,19 @@ impl<G> Universe<G> {
         if !generation_fork {
             let form_count = checkpoint.pdf.form_count();
             self.command_retained.pdf.rollback(checkpoint.pdf.clone());
-            self.durable_forms
-                .truncate(&mut self.page_region.nodes_mut(), form_count);
+            if self.durable_forms.is_candidate() {
+                debug_assert!(
+                    self.durable_forms
+                        .candidate_base_len()
+                        .is_some_and(|base_len| base_len <= form_count),
+                    "candidate PDF form base remains below its checkpoint"
+                );
+                self.durable_forms
+                    .rewind_candidate(&mut self.page_region.nodes_mut(), form_count);
+            } else {
+                self.durable_forms
+                    .truncate(&mut self.page_region.nodes_mut(), form_count);
+            }
         }
         if !generation_fork {
             self.command_retained.world.rollback(&checkpoint.world);

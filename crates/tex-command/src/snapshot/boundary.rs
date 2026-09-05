@@ -3,6 +3,11 @@
 use super::*;
 
 impl<G> CommandState<G> {
+    #[doc(hidden)]
+    pub fn checkpoint_candidate_active(&self) -> bool {
+        self.timeline.checkpoint_candidate_active()
+    }
+
     /// Runs only the command-family fork for its standalone allocation gate.
     #[doc(hidden)]
     #[cfg(feature = "profiling")]
@@ -454,6 +459,55 @@ impl<G> CommandState<G> {
             .arena_mut()
             .truncate(restore.attempt)
             .expect("prepared command restore validated its attempt mark");
+        self.synchronize_delivery_mode_roots();
+        Ok(())
+    }
+
+    /// Reapplies one checkpoint root inside an already-forked candidate.
+    /// Resource replay keeps the detached accepted suffix parked so aggregate
+    /// rejection can still return the original source generation unchanged.
+    #[doc(hidden)]
+    pub fn apply_prepared_restore_for_replay(
+        &mut self,
+        restore: PreparedCommandRestore<G>,
+    ) -> Result<(), CommandRestoreError> {
+        if restore.timeline_owner != self.timeline.owner {
+            return Err(CommandRestoreError::ForeignGeneration);
+        }
+        self.attempt
+            .arena()
+            .validate_mark(restore.attempt)
+            .map_err(|_| CommandRestoreError::InvalidCursor)?;
+        if !self
+            .timeline
+            .restore_current_roots(restore.timeline, &mut self.roots)
+        {
+            return Err(CommandRestoreError::InvalidCursor);
+        }
+        if !self.input.levels.restore_current(restore.rollback.input)
+            || !self
+                .conditions
+                .frames
+                .restore_current(restore.rollback.conditions)
+            || !self.group_payloads.restore_current(restore.rollback.groups)
+            || !self
+                .aftergroup_payloads
+                .restore_current(restore.rollback.aftergroups)
+            || !self
+                .alignment
+                .align_stack
+                .restore_current(restore.rollback.alignment)
+            || !self
+                .alignment
+                .suspended
+                .restore_current(restore.rollback.suspended_alignment)
+        {
+            return Err(CommandRestoreError::InvalidCursor);
+        }
+        self.attempt
+            .arena_mut()
+            .truncate(restore.attempt)
+            .expect("prepared replay restore validated its attempt mark");
         self.synchronize_delivery_mode_roots();
         Ok(())
     }

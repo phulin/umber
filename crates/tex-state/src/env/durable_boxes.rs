@@ -402,12 +402,37 @@ impl DurableFormState {
         self.base_len = Some(base_len);
     }
 
+    pub(crate) fn is_candidate(&self) -> bool {
+        self.base_len.is_some()
+    }
+
+    pub(crate) fn candidate_base_len(&self) -> Option<usize> {
+        self.base_len
+    }
+
     pub(crate) fn reject_candidate(&mut self, arena: &mut PageMaterialArena) {
         assert!(self.base_len.take().is_some());
         for entry in self.delta.drain(..) {
             arena
                 .retire_durable(entry.owner)
                 .expect("rejected PDF form owner remains live");
+        }
+    }
+
+    /// Drops the current-candidate forms after `form_count` while retaining
+    /// both the checkpoint prefix and the accepted suffix parked behind
+    /// `base_len`. Resource replay rewinds an already forked generation in
+    /// place; the parked suffix must remain available if the surrounding
+    /// candidate is later rejected back into its source.
+    pub(crate) fn rewind_candidate(&mut self, arena: &mut PageMaterialArena, form_count: usize) {
+        let base_len = self.base_len.expect("PDF form transaction is active");
+        assert!(base_len <= form_count);
+        let candidate_len = form_count - base_len;
+        assert!(candidate_len <= self.delta.len());
+        for entry in self.delta.drain(candidate_len..) {
+            arena
+                .retire_durable(entry.owner)
+                .expect("rewound PDF form owner remains live");
         }
     }
 
