@@ -15,8 +15,8 @@ use tex_command::{
 };
 use tex_exec::{
     CanonicalStepFailure, CanonicalStepResult, CanonicalStepRunner, CheckpointSink, DiagnosticStep,
-    DiagnosticStepResult, MainControl, ResourceFulfillment, ResourceHost, ResourceNeed,
-    ResourceOutcome, ResourceWorld,
+    DiagnosticStepResult, MainControl, ResourceFailure, ResourceFulfillment, ResourceHost,
+    ResourceNeed, ResourceOutcome, ResourceWorld,
 };
 use tex_out::dvi::DviStreamWriter;
 use tex_state::print::{Printer, Selector};
@@ -187,6 +187,10 @@ pub enum SessionError {
         need: Box<ResourceNeed>,
         fulfillment: Box<ResourceFulfillment>,
     },
+    ResourceFailure {
+        need: Box<ResourceNeed>,
+        failure: ResourceFailure,
+    },
     NoProgress {
         need: ResourceNeed,
         attempts: u8,
@@ -215,6 +219,9 @@ impl fmt::Display for SessionError {
                 formatter,
                 "resource fulfillment {fulfillment:?} does not answer pending need {need:?}"
             ),
+            Self::ResourceFailure { need, failure } => {
+                write!(formatter, "resource {need:?} failed: {failure}")
+            }
             Self::NoProgress { need, attempts } => write!(
                 formatter,
                 "resource retry made no progress after {attempts} attempts: {need:?}"
@@ -232,7 +239,14 @@ impl fmt::Display for SessionError {
     }
 }
 
-impl std::error::Error for SessionError {}
+impl std::error::Error for SessionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::ResourceFailure { failure, .. } => Some(failure),
+            _ => None,
+        }
+    }
+}
 
 impl SessionError {
     #[must_use]
@@ -649,6 +663,12 @@ impl<'a, G> EngineSession<'a, G> {
                 let mut world = ResourceWorld::new(self.stores);
                 host.fulfill(&mut world, &need)
             };
+            if let ResourceOutcome::Failed(failure) = &outcome {
+                return Err(SessionError::ResourceFailure {
+                    need: Box::new(need),
+                    failure: failure.clone(),
+                });
+            }
             if let ResourceOutcome::Fulfilled(fulfillment) = outcome {
                 let ResourceFulfillment::Input {
                     name: fulfilled_name,
@@ -972,6 +992,12 @@ impl<'a, G> EngineSession<'a, G> {
             let mut world = ResourceWorld::new(self.stores);
             host.fulfill(&mut world, need)
         };
+        if let ResourceOutcome::Failed(failure) = &outcome {
+            return Err(SessionError::ResourceFailure {
+                need: Box::new(need.clone()),
+                failure: failure.clone(),
+            });
+        }
         if let ResourceOutcome::Fulfilled(fulfillment) = outcome {
             self.fulfill(need, fulfillment)?;
             return Ok(true);
@@ -1272,60 +1298,65 @@ mod tests {
             need: &ResourceNeed,
         ) -> ResourceOutcome {
             match need {
-                ResourceNeed::Input { name, .. } => {
-                    world
-                        .read_file(name)
-                        .ok()
-                        .map_or(ResourceOutcome::Unavailable, |content| {
-                            ResourceOutcome::Fulfilled(ResourceFulfillment::world_input(
-                                name, content,
-                            ))
-                        })
-                }
-                ResourceNeed::InputProbe { request } => world.read_file(&request.name).ok().map_or(
-                    ResourceOutcome::Unavailable,
-                    |content| {
-                        ResourceOutcome::Fulfilled(ResourceFulfillment::world_input_probe(
-                            request.clone(),
-                            content,
-                        ))
-                    },
-                ),
-                ResourceNeed::Font { request } => world
-                    .read_file(canonical_font_resource_path(&request.name))
-                    .ok()
-                    .map_or(ResourceOutcome::Unavailable, |metrics| {
-                        ResourceOutcome::Fulfilled(ResourceFulfillment::Font {
+                ResourceNeed::Input { name, .. } => match world.read_file(name) {
+                    Ok(content) => {
+                        ResourceOutcome::Fulfilled(ResourceFulfillment::world_input(name, content))
+                    }
+                    Err(error) if error.io_error_kind() == Some(std::io::ErrorKind::NotFound) => {
+                        ResourceOutcome::Unavailable
+                    }
+                    Err(error) => ResourceOutcome::Failed(error.into()),
+                },
+                ResourceNeed::InputProbe { request } => match world.read_file(&request.name) {
+                    Ok(content) => ResourceOutcome::Fulfilled(
+                        ResourceFulfillment::world_input_probe(request.clone(), content),
+                    ),
+                    Err(error) if error.io_error_kind() == Some(std::io::ErrorKind::NotFound) => {
+                        ResourceOutcome::Unavailable
+                    }
+                    Err(error) => ResourceOutcome::Failed(error.into()),
+                },
+                ResourceNeed::Font { request } => {
+                    match world.read_file(canonical_font_resource_path(&request.name)) {
+                        Ok(metrics) => ResourceOutcome::Fulfilled(ResourceFulfillment::Font {
                             request: request.clone(),
                             resource: Box::new(FontResource::Tfm {
                                 metrics,
                                 opentype: None,
                             }),
-                        })
+                        }),
+                        Err(error)
+                            if error.io_error_kind() == Some(std::io::ErrorKind::NotFound) =>
+                        {
+                            ResourceOutcome::Unavailable
+                        }
+                        Err(error) => ResourceOutcome::Failed(error.into()),
+                    }
+                }
+                ResourceNeed::PdfImage { request } => match world.read_file(&request.name) {
+                    Ok(content) => ResourceOutcome::Fulfilled(ResourceFulfillment::PdfImage {
+                        request: request.clone(),
+                        resource: Box::new(PdfImageResource::Available(
+                            tex_state::PdfExternalImageSource {
+                                identity: content.hash(),
+                                metadata: tex_state::PdfExternalImageMetadata::Raster(
+                                    tex_state::PdfRasterImageMetadata::placeholder(),
+                                ),
+                                natural_width: tex_state::scaled::Scaled::from_raw(
+                                    tex_state::scaled::Scaled::UNITY,
+                                ),
+                                natural_height: tex_state::scaled::Scaled::from_raw(
+                                    tex_state::scaled::Scaled::UNITY,
+                                ),
+                                bytes: content.shared_bytes(),
+                            },
+                        )),
                     }),
-                ResourceNeed::PdfImage { request } => world.read_file(&request.name).ok().map_or(
-                    ResourceOutcome::Unavailable,
-                    |content| {
-                        ResourceOutcome::Fulfilled(ResourceFulfillment::PdfImage {
-                            request: request.clone(),
-                            resource: Box::new(PdfImageResource::Available(
-                                tex_state::PdfExternalImageSource {
-                                    identity: content.hash(),
-                                    metadata: tex_state::PdfExternalImageMetadata::Raster(
-                                        tex_state::PdfRasterImageMetadata::placeholder(),
-                                    ),
-                                    natural_width: tex_state::scaled::Scaled::from_raw(
-                                        tex_state::scaled::Scaled::UNITY,
-                                    ),
-                                    natural_height: tex_state::scaled::Scaled::from_raw(
-                                        tex_state::scaled::Scaled::UNITY,
-                                    ),
-                                    bytes: content.shared_bytes(),
-                                },
-                            )),
-                        })
-                    },
-                ),
+                    Err(error) if error.io_error_kind() == Some(std::io::ErrorKind::NotFound) => {
+                        ResourceOutcome::Unavailable
+                    }
+                    Err(error) => ResourceOutcome::Failed(error.into()),
+                },
             }
         }
     }
@@ -2374,6 +2405,51 @@ mod tests {
                 ("(job.tex".into(), String::new()),
                 "only the committed §537 root opening precedes the declined child request"
             );
+        });
+    }
+
+    struct FailingHost {
+        calls: usize,
+    }
+
+    impl ResourceHost for FailingHost {
+        fn fulfill(
+            &mut self,
+            _world: &mut ResourceWorld<'_>,
+            need: &ResourceNeed,
+        ) -> ResourceOutcome {
+            self.calls += 1;
+            if matches!(need, ResourceNeed::Input { name, .. } if name == "never.tex") {
+                ResourceOutcome::Failed(ResourceFailure::message(
+                    "read never.tex: input/output error",
+                ))
+            } else {
+                ResourceOutcome::Unavailable
+            }
+        }
+    }
+
+    #[test]
+    fn failed_host_is_returned_without_no_progress_retry() {
+        with_prepared_session(b"\\input never\\end", |stores, root| {
+            let mut session = EngineSession::new(stores, CommandProfile::TEX82);
+            session.set_no_progress_limit(8);
+            session
+                .register_authored_job("job.tex", root)
+                .expect("root registers");
+            let mut host = FailingHost { calls: 0 };
+            let error = session
+                .run(&mut host, &mut Vec::new())
+                .expect_err("host failure must surface immediately");
+            assert!(matches!(
+                error,
+                SessionError::ResourceFailure {
+                    need,
+                    failure: ResourceFailure::Message(message),
+                } if matches!(need.as_ref(), ResourceNeed::Input { name, .. } if name == "never.tex")
+                    && message == "read never.tex: input/output error"
+            ));
+            assert_eq!(host.calls, 1, "failed resources are not retried");
         });
     }
 

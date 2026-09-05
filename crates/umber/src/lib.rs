@@ -93,7 +93,9 @@ pub use pdf_output::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use prepared_format::{PreparedFormatJob, PreparedFormatProvider};
-pub use tex_exec::{ResourceFulfillment, ResourceHost, ResourceOutcome, ResourceWorld};
+pub use tex_exec::{
+    ResourceFailure, ResourceFulfillment, ResourceHost, ResourceOutcome, ResourceWorld,
+};
 pub use tex_fixed_point::{
     TexFixedPointAttempt, TexFixedPointError, TexFixedPointOptions, TexFixedPointOutput,
     TexFixedPointSession,
@@ -400,7 +402,7 @@ impl ResourceHost for FileSessionResolvers {
                             resource: Box::new(FontResource::Unavailable),
                         })
                     }
-                    Err(_) => ResourceOutcome::Declined,
+                    Err(error) => resource_search_outcome(error),
                 }
             }
             tex_exec::ResourceNeed::PdfImage { request } => {
@@ -450,10 +452,11 @@ fn resource_search_outcome(error: crate::input_search::WorldSearchError) -> Reso
     if error.is_authoritative_not_found() {
         ResourceOutcome::Unavailable
     } else {
-        // A host access/transport failure is not an authoritative negative.
-        // Leave the request unresolved so the surrounding session can retry
-        // or surface its host-side failure instead of caching false absence.
-        ResourceOutcome::Declined
+        let failure = error
+            .first_non_not_found()
+            .map(|(_, _, error)| ResourceFailure::from(error.clone()))
+            .unwrap_or_else(|| ResourceFailure::message(error.to_string()));
+        ResourceOutcome::Failed(failure)
     }
 }
 

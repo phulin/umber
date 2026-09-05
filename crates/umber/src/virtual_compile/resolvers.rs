@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
 use tex_exec::{
-    PdfImageRequest, ResourceFulfillment, ResourceHost, ResourceNeed, ResourceOutcome,
-    ResourceWorld,
+    PdfImageRequest, ResourceFailure, ResourceFulfillment, ResourceHost, ResourceNeed,
+    ResourceOutcome, ResourceWorld,
 };
 use tex_fonts::{
     AcceptedFontContainers, FontFeaturePolicy, FontLayoutPolicy, FontMappingFallbackPolicy,
@@ -194,6 +194,7 @@ impl ResourceHost for VirtualRunResolvers<'_> {
             Ok(HostLookup::Unavailable) => ResourceOutcome::Unavailable,
             Ok(HostLookup::NeedResource) => ResourceOutcome::Declined,
             Err(error) => {
+                let failure = error.clone();
                 match need {
                     ResourceNeed::Input { .. } => {
                         self.input.record_fatal(CompileError::World(error))
@@ -208,7 +209,7 @@ impl ResourceHost for VirtualRunResolvers<'_> {
                         self.image.files.record_fatal(CompileError::Output(error))
                     }
                 }
-                ResourceOutcome::Declined
+                ResourceOutcome::Failed(ResourceFailure::message(failure))
             }
         }
     }

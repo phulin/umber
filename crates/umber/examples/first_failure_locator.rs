@@ -244,33 +244,41 @@ struct CorpusHost;
 impl ResourceHost for CorpusHost {
     fn fulfill(&mut self, world: &mut ResourceWorld<'_>, need: &ResourceNeed) -> ResourceOutcome {
         match need {
-            ResourceNeed::Input { name, .. } => world
-                .read_file(canonical_input_path(name))
-                .ok()
-                .map_or(ResourceOutcome::Unavailable, |content| {
+            ResourceNeed::Input { name, .. } => match world.read_file(canonical_input_path(name)) {
+                Ok(content) => {
                     ResourceOutcome::Fulfilled(ResourceFulfillment::world_input(name, content))
-                }),
-            ResourceNeed::InputProbe { request } => world
-                .read_file(canonical_input_path(&request.name))
-                .ok()
-                .map_or(ResourceOutcome::Unavailable, |content| {
-                    ResourceOutcome::Fulfilled(ResourceFulfillment::world_input_probe(
-                        request.clone(),
-                        content,
-                    ))
-                }),
-            ResourceNeed::Font { request } => world
-                .read_file(canonical_font_resource_path(&request.name))
-                .ok()
-                .map_or(ResourceOutcome::Unavailable, |metrics| {
-                    ResourceOutcome::Fulfilled(ResourceFulfillment::Font {
+                }
+                Err(error) if error.io_error_kind() == Some(std::io::ErrorKind::NotFound) => {
+                    ResourceOutcome::Unavailable
+                }
+                Err(error) => ResourceOutcome::Failed(error.into()),
+            },
+            ResourceNeed::InputProbe { request } => {
+                match world.read_file(canonical_input_path(&request.name)) {
+                    Ok(content) => ResourceOutcome::Fulfilled(
+                        ResourceFulfillment::world_input_probe(request.clone(), content),
+                    ),
+                    Err(error) if error.io_error_kind() == Some(std::io::ErrorKind::NotFound) => {
+                        ResourceOutcome::Unavailable
+                    }
+                    Err(error) => ResourceOutcome::Failed(error.into()),
+                }
+            }
+            ResourceNeed::Font { request } => {
+                match world.read_file(canonical_font_resource_path(&request.name)) {
+                    Ok(metrics) => ResourceOutcome::Fulfilled(ResourceFulfillment::Font {
                         request: request.clone(),
                         resource: Box::new(FontResource::Tfm {
                             metrics,
                             opentype: None,
                         }),
-                    })
-                }),
+                    }),
+                    Err(error) if error.io_error_kind() == Some(std::io::ErrorKind::NotFound) => {
+                        ResourceOutcome::Unavailable
+                    }
+                    Err(error) => ResourceOutcome::Failed(error.into()),
+                }
+            }
             ResourceNeed::PdfImage { .. } => ResourceOutcome::Unavailable,
         }
     }

@@ -24,8 +24,8 @@ use tex_exec::{
     Cancellation, CanonicalStepFailure, CanonicalStepResult, CanonicalStepRunner, CheckpointSink,
     DetachedEngineCompletion, DetachedFormatDump, DetachedPreparedPage, EngineBoundary,
     EngineCheckpoint, EngineCompletionDemand, MainControl, MainControlStep, OutputLedger,
-    ResourceFulfillment, ResourceHost, ResourceNeed, ResourceOutcome, ResourceReplayEffect,
-    ResourceWorld, canonical_font_resource_path,
+    ResourceFailure, ResourceFulfillment, ResourceHost, ResourceNeed, ResourceOutcome,
+    ResourceReplayEffect, ResourceWorld, canonical_font_resource_path,
 };
 use tex_out::dvi::{DviError, DviStreamWriter};
 pub use tex_out::html::RenderedOutputId;
@@ -2367,6 +2367,12 @@ fn execute_plan_inner<G>(
                         return Ok(PlanExecution::Replay(need));
                     }
                     ResourceOutcome::Declined => return Ok(PlanExecution::Suspended(need)),
+                    ResourceOutcome::Failed(failure) => {
+                        return Err(SessionError::ResourceFailure {
+                            need: Box::new(need),
+                            failure,
+                        });
+                    }
                 }
             }
             CanonicalStepResult::Failed(error) => return Err(map_step_failure(error)),
@@ -4329,10 +4335,7 @@ fn direct_resource_error_outcome(error: tex_state::WorldError) -> ResourceOutcom
     if error.io_error_kind() == Some(std::io::ErrorKind::NotFound) {
         ResourceOutcome::Unavailable
     } else {
-        // A host access/read failure is unresolved, not an authoritative
-        // negative. The retained session can retry or surface the host
-        // failure without poisoning accepted lookup history.
-        ResourceOutcome::Declined
+        ResourceOutcome::Failed(ResourceFailure::from(error))
     }
 }
 
@@ -4383,6 +4386,10 @@ pub enum SessionError {
     ResourceReplayAnchorMissing,
     ResourceNoProgress {
         need: Box<ResourceNeed>,
+    },
+    ResourceFailure {
+        need: Box<ResourceNeed>,
+        failure: ResourceFailure,
     },
     SourceRegistration(SourceRegistrationError),
     CommandSummary(tex_command::CommandSummaryError),
@@ -4437,6 +4444,9 @@ impl fmt::Display for SessionError {
             Self::ResourceNoProgress { need, .. } => {
                 write!(f, "resource replay made no progress for {need:?}")
             }
+            Self::ResourceFailure { need, failure } => {
+                write!(f, "resource {need:?} failed: {failure}")
+            }
             Self::SourceRegistration(error) => write!(f, "source registration failed: {error}"),
             Self::CommandSummary(error) => write!(f, "checkpoint failed: {error}"),
             Self::Execute(error) => write!(f, "incremental execution failed: {error}"),
@@ -4463,7 +4473,14 @@ impl fmt::Display for SessionError {
     }
 }
 
-impl std::error::Error for SessionError {}
+impl std::error::Error for SessionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::ResourceFailure { failure, .. } => Some(failure),
+            _ => None,
+        }
+    }
+}
 
 impl SessionError {
     #[must_use]

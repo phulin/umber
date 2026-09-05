@@ -97,6 +97,12 @@ request returns to the host. A response for a cancelled or discarded candidate
 may remain in a shared verified cache, but it is not installed into that
 dropped execution. A direct operation never resumes after its need escapes.
 
+The public host protocol represents `FetchError` as
+`ResourceOutcome::Failed(ResourceFailure)`. `ResourceOutcome::Declined` is
+reserved for a genuinely pending request; a failure is returned through the
+session/incremental error boundary immediately and is never retried internally,
+converted into `NoProgress`, or recorded as a negative binding.
+
 Canonical catalog lookup, `FileKind` identity, default extensions, provider
 precedence, and project/generated/distribution layering remain the existing
 resolver's authority. Do not add a second resolver or JSON catalog. A complete

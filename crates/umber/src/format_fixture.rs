@@ -637,63 +637,62 @@ impl ResourceHost for LoadedResourceHost<'_> {
                         })
                 })
                 .unwrap_or(ResourceOutcome::Unavailable),
-            ResourceNeed::Font { request } => self
-                .job_resources
-                .iter()
-                .find_map(|resource| match resource {
-                    LoadedFormatResource::Tfm {
-                        logical_name,
-                        bytes,
-                    } if Path::new(logical_name).file_stem()
-                        == Some(std::ffi::OsStr::new(&request.name)) =>
-                    {
-                        let content = world
-                            .register_selected_file(
-                                logical_name,
-                                Arc::<[u8]>::from(bytes.as_slice()),
-                            )
-                            .ok()?;
-                        Some(ResourceOutcome::Fulfilled(ResourceFulfillment::Font {
-                            request: request.clone(),
-                            resource: Box::new(FontResource::Tfm {
-                                metrics: content,
-                                opentype: None,
-                            }),
-                        }))
-                    }
-                    _ => None,
+            ResourceNeed::Font { request } => {
+                let selected = self
+                    .job_resources
+                    .iter()
+                    .find_map(|resource| match resource {
+                        LoadedFormatResource::Tfm {
+                            logical_name,
+                            bytes,
+                        } if Path::new(logical_name).file_stem()
+                            == Some(std::ffi::OsStr::new(&request.name)) =>
+                        {
+                            Some((logical_name.as_str(), bytes.as_slice()))
+                        }
+                        _ => None,
+                    })
+                    .or_else(|| {
+                        self.format_resources
+                            .iter()
+                            .find_map(|resource| match resource {
+                                FormatResource::Tfm {
+                                    logical_name,
+                                    bytes,
+                                } if Path::new(logical_name).file_stem()
+                                    == Some(std::ffi::OsStr::new(&request.name)) =>
+                                {
+                                    Some((logical_name.as_str(), bytes.as_slice()))
+                                }
+                                _ => None,
+                            })
+                    });
+                selected.map_or(ResourceOutcome::Unavailable, |(logical_name, bytes)| {
+                    register_format_tfm_resource(world, request, logical_name, bytes)
                 })
-                .or_else(|| {
-                    self.format_resources
-                        .iter()
-                        .find_map(|resource| match resource {
-                            FormatResource::Tfm {
-                                logical_name,
-                                bytes,
-                            } if Path::new(logical_name).file_stem()
-                                == Some(std::ffi::OsStr::new(&request.name)) =>
-                            {
-                                let content = world
-                                    .register_selected_file(
-                                        logical_name,
-                                        Arc::<[u8]>::from(bytes.as_slice()),
-                                    )
-                                    .ok()?;
-                                Some(ResourceOutcome::Fulfilled(ResourceFulfillment::Font {
-                                    request: request.clone(),
-                                    resource: Box::new(FontResource::Tfm {
-                                        metrics: content,
-                                        opentype: None,
-                                    }),
-                                }))
-                            }
-                            _ => None,
-                        })
-                })
-                .unwrap_or(ResourceOutcome::Unavailable),
+            }
             ResourceNeed::PdfImage { .. } => ResourceOutcome::Unavailable,
         }
     }
+}
+
+fn register_format_tfm_resource(
+    world: &mut ResourceWorld<'_>,
+    request: &tex_command::FontLoadRequest,
+    logical_name: &str,
+    bytes: &[u8],
+) -> ResourceOutcome {
+    let metrics = match world.register_selected_file(logical_name, Arc::from(bytes)) {
+        Ok(metrics) => metrics,
+        Err(error) => return ResourceOutcome::Failed(error.into()),
+    };
+    ResourceOutcome::Fulfilled(ResourceFulfillment::Font {
+        request: request.clone(),
+        resource: Box::new(FontResource::Tfm {
+            metrics,
+            opentype: None,
+        }),
+    })
 }
 
 fn capture_loaded_projection<G>(
@@ -1085,20 +1084,13 @@ impl ResourceHost for RecipeResourceHost<'_> {
                     } if Path::new(logical_name).file_stem()
                         == Some(std::ffi::OsStr::new(&request.name)) =>
                     {
-                        let content = world
-                            .register_selected_file(logical_name, Arc::from(bytes.as_slice()))
-                            .ok()?;
-                        Some(ResourceOutcome::Fulfilled(ResourceFulfillment::Font {
-                            request: request.clone(),
-                            resource: Box::new(FontResource::Tfm {
-                                metrics: content,
-                                opentype: None,
-                            }),
-                        }))
+                        Some((logical_name.as_str(), bytes.as_slice()))
                     }
                     _ => None,
                 })
-                .unwrap_or(ResourceOutcome::Unavailable),
+                .map_or(ResourceOutcome::Unavailable, |(logical_name, bytes)| {
+                    register_format_tfm_resource(world, request, logical_name, bytes)
+                }),
             ResourceNeed::PdfImage { .. } => ResourceOutcome::Unavailable,
         }
     }

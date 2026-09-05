@@ -22,21 +22,28 @@ struct DirectResourceHost;
 impl ResourceHost for DirectResourceHost {
     fn fulfill(&mut self, world: &mut ResourceWorld<'_>, need: &ResourceNeed) -> ResourceOutcome {
         match need {
-            ResourceNeed::Input { name, .. } => world.read_file(Path::new(name)).ok().map_or(
-                ResourceOutcome::Unavailable,
-                |content| {
+            ResourceNeed::Input { name, .. } => match world.read_file(Path::new(name)) {
+                Ok(content) => {
                     ResourceOutcome::Fulfilled(ResourceFulfillment::world_input(name, content))
-                },
-            ),
-            ResourceNeed::InputProbe { request } => world
-                .read_file(Path::new(&request.name))
-                .ok()
-                .map_or(ResourceOutcome::Unavailable, |content| {
-                    ResourceOutcome::Fulfilled(ResourceFulfillment::world_input_probe(
-                        request.clone(),
-                        content,
-                    ))
-                }),
+                }
+                Err(error) if error.io_error_kind() == Some(std::io::ErrorKind::NotFound) => {
+                    ResourceOutcome::Unavailable
+                }
+                Err(error) => ResourceOutcome::Failed(error.into()),
+            },
+            ResourceNeed::InputProbe { request } => {
+                match world.read_file(Path::new(&request.name)) {
+                    Ok(content) => ResourceOutcome::Fulfilled(
+                        ResourceFulfillment::world_input_probe(request.clone(), content),
+                    ),
+                    Err(error)
+                        if error.io_error_kind() == Some(std::io::ErrorKind::NotFound) =>
+                    {
+                        ResourceOutcome::Unavailable
+                    }
+                    Err(error) => ResourceOutcome::Failed(error.into()),
+                }
+            }
             ResourceNeed::Font { .. } | ResourceNeed::PdfImage { .. } => {
                 ResourceOutcome::Unavailable
             }

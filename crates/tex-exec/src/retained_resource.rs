@@ -1,5 +1,6 @@
 //! Host-neutral immutable resource protocol for retained canonical execution.
 
+use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -51,11 +52,75 @@ pub enum ResourceFulfillment {
     },
 }
 
+/// An owned, actionable failure while resolving a resource.
+///
+/// This is deliberately separate from [`ResourceOutcome::Declined`]. A
+/// declined request is still pending and may be fulfilled by a later host
+/// round; a failure is final for the current drive and must be surfaced to
+/// the caller without being replayed or recorded as an absence. World-backed
+/// failures retain the shared typed error, including its I/O classification
+/// and path, while host adapters that cannot expose a typed error can retain
+/// their rendered cause.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ResourceFailure {
+    World(WorldError),
+    Message(String),
+}
+
+impl ResourceFailure {
+    #[must_use]
+    pub fn message(message: impl Into<String>) -> Self {
+        Self::Message(message.into())
+    }
+
+    #[must_use]
+    pub fn world(error: WorldError) -> Self {
+        Self::World(error)
+    }
+
+    #[must_use]
+    pub fn as_world_error(&self) -> Option<&WorldError> {
+        match self {
+            Self::World(error) => Some(error),
+            Self::Message(_) => None,
+        }
+    }
+}
+
+impl From<WorldError> for ResourceFailure {
+    fn from(error: WorldError) -> Self {
+        Self::World(error)
+    }
+}
+
+impl fmt::Display for ResourceFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::World(error) => error.fmt(formatter),
+            Self::Message(message) => formatter.write_str(message),
+        }
+    }
+}
+
+impl std::error::Error for ResourceFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::World(error) => Some(error),
+            Self::Message(_) => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum ResourceOutcome {
+    /// Immutable bytes or metadata are ready for replay into the engine.
     Fulfilled(ResourceFulfillment),
+    /// The host authoritatively knows that this request is absent.
     Unavailable,
+    /// The request is still pending and may be fulfilled by a later host round.
     Declined,
+    /// Resolving the request failed; the cause must be surfaced immediately.
+    Failed(ResourceFailure),
 }
 
 /// Semantic bookkeeping performed while a host resolves one immutable

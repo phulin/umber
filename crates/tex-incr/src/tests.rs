@@ -892,6 +892,47 @@ fn resource_suspension_replays_from_detached_plan_and_accepts_once() {
     assert_eq!(output.revision, RevisionId::new(1));
 }
 
+struct FailingInput {
+    calls: usize,
+}
+
+impl ResourceHost for FailingInput {
+    fn fulfill(&mut self, _world: &mut ResourceWorld<'_>, need: &ResourceNeed) -> ResourceOutcome {
+        self.calls += 1;
+        if matches!(need, ResourceNeed::Input { name, .. } if name == "child.tex") {
+            ResourceOutcome::Failed(ResourceFailure::message(
+                "read child.tex: permission denied",
+            ))
+        } else {
+            ResourceOutcome::Unavailable
+        }
+    }
+}
+
+#[test]
+fn resource_failure_surfaces_without_replay_or_retry() {
+    let mut session = session(RevisionId::new(1), r"\input child \end");
+    let mut candidate = session.start_cold_candidate().expect("candidate");
+    let mut host = FailingInput { calls: 0 };
+
+    let error = candidate
+        .drive_with_resource_resolvers(&mut host, &Cancellation::new())
+        .expect_err("resource failure must reject the candidate immediately");
+    assert!(matches!(
+        error,
+        SessionError::ResourceFailure {
+            need,
+            failure: ResourceFailure::Message(message),
+        } if matches!(need.as_ref(), ResourceNeed::Input { name, .. } if name == "child.tex")
+            && message == "read child.tex: permission denied"
+    ));
+    assert_eq!(host.calls, 1, "failed resources are not retried internally");
+    assert!(
+        candidate.generation.is_none(),
+        "failed candidate is discarded"
+    );
+}
+
 #[test]
 fn resource_replay_reuses_latest_candidate_checkpoint() {
     let source = "A\\par\n\\input child \\end";
@@ -949,15 +990,16 @@ impl ResourceHost for DeclineOnceInputProbe {
             self.0 = true;
             return ResourceOutcome::Declined;
         }
-        world.read_file(Path::new(&request.name)).ok().map_or(
-            ResourceOutcome::Unavailable,
-            |content| {
-                ResourceOutcome::Fulfilled(ResourceFulfillment::world_input_probe(
-                    request.clone(),
-                    content,
-                ))
-            },
-        )
+        match world.read_file(Path::new(&request.name)) {
+            Ok(content) => ResourceOutcome::Fulfilled(ResourceFulfillment::world_input_probe(
+                request.clone(),
+                content,
+            )),
+            Err(error) if error.io_error_kind() == Some(std::io::ErrorKind::NotFound) => {
+                ResourceOutcome::Unavailable
+            }
+            Err(error) => ResourceOutcome::Failed(error.into()),
+        }
     }
 }
 

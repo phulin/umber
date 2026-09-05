@@ -106,8 +106,8 @@ pub use retained_generation::{
     RetainedEngineRetirement,
 };
 pub use retained_resource::{
-    ResourceFulfillment, ResourceHost, ResourceOutcome, ResourceReplayEffect, ResourceWorld,
-    canonical_font_resource_path,
+    ResourceFailure, ResourceFulfillment, ResourceHost, ResourceOutcome, ResourceReplayEffect,
+    ResourceWorld, canonical_font_resource_path,
 };
 pub use session_api::{
     Cancellation, ExecutionBudgetCounters, ExecutionBudgets, ExecutionTelemetry, PendingInterrupt,
