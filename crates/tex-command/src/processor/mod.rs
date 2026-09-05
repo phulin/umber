@@ -220,6 +220,23 @@ pub struct CommandProcessor<'episode, 'admission, G> {
     /// Move-only scanner capability temporarily carried by the exact caller
     /// continuation while a fresh processor borrow performs its retry.
     pub(crate) scanner_resume: Option<crate::execution_scratch::ScannerFrameKey<G>>,
+    /// Exact synchronous parent lent to a scanner-owned expanded-token sink.
+    /// Fresh return capabilities use this edge directly; a resumed sink gets
+    /// its capability back from the parked continuation instead.
+    pub(crate) scanner_return_parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
+    /// Return capability currently owned by the scanner/control frame doing
+    /// an expanded request. Resource suspension copies this exact edge into
+    /// `PendingExpansion`; it is never rediscovered from the active lane.
+    pub(crate) scanner_return_capability:
+        Option<crate::expansion_work::control::ExpansionReturnCapability<G>>,
+    /// Return edge carried out of a parked expansion and available to the
+    /// resumed scanner request in the same expanded delivery episode.
+    pub(crate) resumed_return_capability:
+        Option<crate::expansion_work::control::ExpansionReturnCapability<G>>,
+    /// Sink expected by a scanner that is about to resume a parked expansion.
+    /// The expanded loop installs the parked capability before dispatch so a
+    /// resumed resource child cannot push a fresh return frame above it.
+    pub(crate) resumed_return_sink: Option<crate::expansion_work::control::ExpansionReturnSink>,
     /// Exact parked-command root supplied only by an executor expansion
     /// retry. Nested scanner owners continue to carry their existing typed
     /// wrapper around the same move-only root.
@@ -740,6 +757,10 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
             last_integer_terminator: None,
             next_delivery_sequence: 0,
             scanner_resume: None,
+            scanner_return_parent: None,
+            scanner_return_capability: None,
+            resumed_return_capability: None,
+            resumed_return_sink: None,
             expansion_resume: None,
             resumed_expansion: None,
             read_line_ended: false,

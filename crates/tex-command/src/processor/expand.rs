@@ -46,12 +46,6 @@ enum ResidentStorageKind {
     MacroBody,
     MacroArgument,
 }
-struct CurrentFrameWord {
-    word: TokenWord,
-    origin: OriginId,
-    position: u32,
-}
-
 enum InputFrameTransition<G> {
     Boundary(ResidentBoundary),
     Source {
@@ -110,7 +104,7 @@ enum ResidentWordRead<G> {
 fn next_word_from_current_frame(
     frame: &mut PackedInputFrame,
     load: impl FnOnce(u32) -> Option<(TokenWord, OriginId)>,
-) -> Option<CurrentFrameWord> {
+) -> Option<(TokenWord, OriginId, u32)> {
     let position = frame.position();
     if position >= frame.limit() {
         return None;
@@ -118,11 +112,7 @@ fn next_word_from_current_frame(
     let (word, origin) = load(position)?;
     let consumed = frame.advance_resident();
     debug_assert_eq!(consumed, position);
-    Some(CurrentFrameWord {
-        word,
-        origin,
-        position,
-    })
+    Some((word, origin, position))
 }
 
 /// Reads one word from an admitted macro replacement cursor.
@@ -136,7 +126,7 @@ fn next_word_from_current_frame(
 fn next_macro_body_word_from_current_frame<G>(
     frame: &mut PackedInputFrame,
     body: &mut crate::input::MacroBodyCursor<G>,
-) -> Option<CurrentFrameWord> {
+) -> Option<(TokenWord, OriginId, u32)> {
     let position = frame.position();
     if position >= frame.limit() {
         return None;
@@ -148,11 +138,7 @@ fn next_macro_body_word_from_current_frame<G>(
     if boundary && frame.position() < frame.limit() {
         body.body.advance_chunk_cold(frame.position());
     }
-    Some(CurrentFrameWord {
-        word,
-        origin: OriginId::UNKNOWN,
-        position,
-    })
+    Some((word, OriginId::UNKNOWN, position))
 }
 
 fn static_meaning<G>(meaning: &ResolvedMeaning<G>) -> Option<Meaning> {
@@ -192,6 +178,7 @@ struct ResumedExpandedDelivery<G> {
     command: HotCommand<G>,
     delivery_expanded: bool,
     parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
+    return_capability: Option<crate::expansion_work::control::ExpansionReturnCapability<G>>,
 }
 
 impl<G> Copy for ParentAdmission<G> {}
@@ -217,7 +204,7 @@ impl<G> ParentAdmission<G> {
 }
 
 enum ActiveControlSnapshot<G> {
-    Return(crate::expansion_work::control::ExpansionReturnView<G>),
+    Return(crate::expansion_work::ExpansionControlSlot<G>),
     Expanded(
         crate::expansion_work::ExpansionControlView<
             G,
@@ -275,7 +262,7 @@ impl<G> ActiveControlSnapshot<G> {
     /// typed lane slot, so dispatch does not rediscover the top control.
     fn awaitable_slot(self) -> Option<crate::expansion_work::ExpansionControlSlot<G>> {
         match self {
-            Self::Return(control) if !control.awaiting => Some(control.slot),
+            Self::Return(slot) => Some(slot),
             Self::ExpandAfterSync(control)
                 if control.phase
                     == crate::expansion_work::control::SynchronousExpandAfterPhase::NeedSecond =>
@@ -862,12 +849,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
         };
 
-        let Some(CurrentFrameWord {
-            word,
-            origin,
-            position,
-        }) = current
-        else {
+        let Some((word, origin, position)) = current else {
             return Ok(ResidentWordRead::Exhausted {
                 resident_index,
                 identity: exhausted_identity,
@@ -1286,8 +1268,24 @@ impl<G> CommandProcessor<'_, '_, G> {
         destination: &mut Option<CurrentCommand<G>>,
         initial_action: Option<ExpandedCommandAction>,
     ) -> Result<DeliveryStatus, CommandError> {
+        self.expanded_next_with_boundary(destination, initial_action, None)
+    }
+
+    fn expanded_next_with_boundary(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+        initial_action: Option<ExpandedCommandAction>,
+        return_boundary: Option<(
+            crate::expansion_work::ExpansionControlSlot<G>,
+            crate::expansion_work::control::ExpansionReturnSink,
+        )>,
+    ) -> Result<DeliveryStatus, CommandError> {
         let mut hot_destination = destination.take().map(HotCommand::from_current);
-        let result = self.expanded_next_hot(&mut hot_destination, initial_action);
+        let result = self.expanded_next_hot_with_boundary(
+            &mut hot_destination,
+            initial_action,
+            return_boundary,
+        );
         self.finish_hot_delivery(destination, &mut hot_destination, result)
     }
 
@@ -1327,6 +1325,18 @@ impl<G> CommandProcessor<'_, '_, G> {
         destination: &mut Option<HotCommand<G>>,
         initial_action: Option<ExpandedCommandAction>,
     ) -> Result<DeliveryStatus, CommandError> {
+        self.expanded_next_hot_with_boundary(destination, initial_action, None)
+    }
+
+    fn expanded_next_hot_with_boundary(
+        &mut self,
+        destination: &mut Option<HotCommand<G>>,
+        initial_action: Option<ExpandedCommandAction>,
+        return_boundary: Option<(
+            crate::expansion_work::ExpansionControlSlot<G>,
+            crate::expansion_work::control::ExpansionReturnSink,
+        )>,
+    ) -> Result<DeliveryStatus, CommandError> {
         let depth = self.command.transient.active_expansion_depth;
         self.command.scratch.note_delivery_entry(depth);
         let Some(active_depth) = depth.checked_add(1) else {
@@ -1342,31 +1352,60 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .scanner_resume
                 .as_ref()
                 .is_some_and(crate::ScannerFrameKey::is_expansion);
-        let (mut command, mut delivery_expanded, mut carried_parent) = if resuming {
-            match self.resume_expanded_delivery(destination.take()) {
-                Ok(resumed) => (
-                    Some(resumed.command),
-                    resumed.delivery_expanded,
-                    resumed.parent.map(ParentAdmission::Awaiting),
-                ),
-                Err(failure) => {
-                    return self.fail_hot_expanded_delivery(destination, depth, failure);
+        let (mut command, mut delivery_expanded, mut carried_parent, resumed_return_capability) =
+            if resuming {
+                match self.resume_expanded_delivery(destination.take()) {
+                    Ok(resumed) => (
+                        Some(resumed.command),
+                        resumed.delivery_expanded,
+                        resumed.parent.map(ParentAdmission::Awaiting),
+                        resumed.return_capability,
+                    ),
+                    Err(failure) => {
+                        return self.fail_hot_expanded_delivery(destination, depth, failure);
+                    }
                 }
+            } else if let Some(command) = destination.take() {
+                (Some(command), false, None, None)
+            } else {
+                (None, false, None, None)
+            };
+        self.resumed_return_capability = resumed_return_capability;
+        let mut return_boundary = return_boundary;
+        if let Some(expected_sink) = self.resumed_return_sink.take() {
+            let Some(capability) = self.resumed_return_capability.take() else {
+                return self.fail_hot_expanded_delivery(
+                    destination,
+                    depth,
+                    CommandError::input_invariant(),
+                );
+            };
+            if capability.sink() != expected_sink {
+                return self.fail_hot_expanded_delivery(
+                    destination,
+                    depth,
+                    CommandError::input_invariant(),
+                );
             }
-        } else if let Some(command) = destination.take() {
-            (Some(command), false, None)
-        } else {
-            (None, false, None)
-        };
+            let slot = capability.slot();
+            if self.scanner_return_capability.replace(capability).is_some() {
+                return self.fail_hot_expanded_delivery(
+                    destination,
+                    depth,
+                    CommandError::input_invariant(),
+                );
+            }
+            return_boundary = Some((slot, expected_sink));
+        }
         let mut initial_action = initial_action;
         let mut suppress_first_expansion_trace = delivery_expanded;
         let status = 'delivery: loop {
             if command.is_none() {
-                if self.command.scratch.active_expansion_return()
-                    == Some(
-                        crate::expansion_work::control::ExpansionReturnDestination::ScannerExpansion,
-                    )
-                {
+                if return_boundary.is_some_and(|(slot, destination)| {
+                    destination
+                        == crate::expansion_work::control::ExpansionReturnSink::ScannerExpansion
+                        && self.command.scratch.active_control_slot() == Some(slot)
+                }) {
                     break 'delivery DeliveryStatus::PendingExpanded;
                 }
                 debug_assert!(
@@ -1535,7 +1574,18 @@ impl<G> CommandProcessor<'_, '_, G> {
                     );
                     command.take();
                 }
-                ExpandedHotDispatch::Finished(status) => break status,
+                ExpandedHotDispatch::Finished(status) => {
+                    let child_still_owns_delivery = return_boundary.is_some_and(|(slot, sink)| {
+                        sink
+                            == crate::expansion_work::control::ExpansionReturnSink::ScannerExpansion
+                            && self.command.scratch.active_control_slot() != Some(slot)
+                    });
+                    if child_still_owns_delivery {
+                        command.take();
+                        continue;
+                    }
+                    break status;
+                }
             }
         };
         debug_assert_eq!(
@@ -1581,8 +1631,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             Some(ActiveControlTag::Return) => self
                 .command
                 .scratch
-                .top_expansion_return()
-                .map_err(crate::scan_toks::scratch_command_error)?
+                .active_control_slot()
                 .map(ActiveControlSnapshot::Return),
             Some(ActiveControlTag::Expanded) => self
                 .command
@@ -1652,6 +1701,20 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .map(ActiveControlSnapshot::The),
             Some(_) => None,
         };
+        if matches!(active, Some(ActiveControlSnapshot::Return(_)))
+            && matches!(
+                action,
+                ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate
+            )
+        {
+            // The scanner-owned return capability is deliberately left in
+            // the lane for its caller to consume.  Returning the settled
+            // command here keeps the scanner boundary in one delivery step;
+            // no ambient top-control retry is needed.
+            return Ok(ExpandedHotDispatch::Finished(
+                self.finish_expanded_command(command, *delivery_expanded),
+            ));
+        }
         if let Some(ActiveControlSnapshot::Expanded(control)) = active {
             match control.phase {
                 crate::expansion_work::control::SynchronousExpandedPhase::NeedOpening => {
@@ -2745,6 +2808,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
         let parent = admission.map(ParentAdmission::slot);
         let mut rich = command.materialize();
+        let prior_scanner_parent = std::mem::replace(&mut self.scanner_return_parent, parent);
         let result = self.expand_classified_rich_occupied(
             &mut rich,
             ExpansionDispatch::Primitive(primitive),
@@ -2753,6 +2817,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             parent,
             command_parked,
         );
+        self.scanner_return_parent = prior_scanner_parent;
         if !*command_parked {
             *command = HotCommand::from_current(rich);
         }
@@ -3425,9 +3490,20 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
+        self.get_x_token_into_with_boundary(destination, None)
+    }
+
+    fn get_x_token_into_with_boundary(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+        return_boundary: Option<(
+            crate::expansion_work::ExpansionControlSlot<G>,
+            crate::expansion_work::control::ExpansionReturnSink,
+        )>,
+    ) -> Result<DeliveryStatus, CommandError> {
         debug_assert!(destination.is_none());
         loop {
-            let result = self.expanded_next(destination)?;
+            let result = self.expanded_next_with_boundary(destination, None, return_boundary)?;
             match result {
                 DeliveryStatus::ReplayCompleted(_) => continue,
                 DeliveryStatus::AlignmentEndTemplate => {
@@ -3455,24 +3531,59 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        use crate::expansion_work::control::ExpansionReturnDestination;
+        use crate::expansion_work::control::ExpansionReturnSink;
 
-        let return_to = ExpansionReturnDestination::ScannerToken;
-        if !self
+        let return_to = ExpansionReturnSink::ScannerToken;
+        let resuming_parked_expansion = self
             .scanner_resume
             .as_ref()
             .is_some_and(crate::ScannerFrameKey::is_expansion)
-        {
-            self.command
-                .scratch
-                .begin_expansion_return(return_to)
-                .map_err(crate::scan_toks::scratch_command_error)?;
+            && self.resumed_return_capability.is_none();
+        if resuming_parked_expansion {
+            let prior_capability = self.scanner_return_capability.take();
+            self.resumed_return_sink = Some(return_to);
+            let result = self.get_x_token_into_with_boundary(destination, None);
+            self.resumed_return_sink = None;
+            let current_capability =
+                std::mem::replace(&mut self.scanner_return_capability, prior_capability);
+            if result.is_ok() {
+                self.command
+                    .scratch
+                    .finish_expansion_return(
+                        current_capability.ok_or_else(CommandError::input_invariant)?,
+                    )
+                    .map_err(crate::scan_toks::scratch_command_error)?;
+            }
+            return result;
         }
-        let result = self.get_x_token_into(destination);
-        if result.is_ok() && self.command.scratch.active_expansion_return() == Some(return_to) {
+        let capability = if self
+            .resumed_return_capability
+            .as_ref()
+            .is_some_and(|capability| capability.sink() == return_to)
+        {
+            self.resumed_return_capability
+                .take()
+                .ok_or_else(CommandError::input_invariant)?
+        } else {
+            let parent = self.current_scanner_return_parent();
             self.command
                 .scratch
-                .finish_expansion_return(return_to)
+                .begin_expansion_return(return_to, parent)
+                .map_err(crate::scan_toks::scratch_command_error)?
+        };
+        let (return_slot, return_sink) = (capability.slot(), capability.sink());
+        let prior_capability =
+            std::mem::replace(&mut self.scanner_return_capability, Some(capability));
+        let result =
+            self.get_x_token_into_with_boundary(destination, Some((return_slot, return_sink)));
+        let current_capability =
+            std::mem::replace(&mut self.scanner_return_capability, prior_capability);
+        if result.is_ok() {
+            self.command
+                .scratch
+                .finish_expansion_return(
+                    current_capability.ok_or_else(CommandError::input_invariant)?,
+                )
                 .map_err(crate::scan_toks::scratch_command_error)?;
         }
         result
@@ -3487,63 +3598,150 @@ impl<G> CommandProcessor<'_, '_, G> {
         destination: &mut Option<CurrentCommand<G>>,
         report_trace: bool,
     ) -> Result<(), CommandError> {
-        use crate::expansion_work::control::ExpansionReturnDestination;
+        use crate::expansion_work::control::ExpansionReturnSink;
 
-        let return_to = ExpansionReturnDestination::ScannerExpansion;
-        let resuming_return = self
+        let return_to = ExpansionReturnSink::ScannerExpansion;
+        let resuming_parked_expansion = self
             .scanner_resume
             .as_ref()
-            .is_some_and(crate::ScannerFrameKey::is_expansion);
-        let owns_return = self.command.scratch.active_expansion_return()
-            != Some(ExpansionReturnDestination::ScannerToken);
-        if owns_return && !resuming_return {
-            self.command
-                .scratch
-                .begin_expansion_return(return_to)
-                .map_err(crate::scan_toks::scratch_command_error)?;
-        }
-        let mut result = self.expand_into(destination, report_trace);
-        let owns_return = owns_return
-            && !(resuming_return
-                && self.command.scratch.active_expansion_return()
-                    == Some(ExpansionReturnDestination::ScannerToken));
-        if owns_return
-            && result.is_ok()
-            && self.command.scratch.active_expansion_return() != Some(return_to)
-        {
-            destination.take();
-            result = loop {
-                match self.expanded_next(destination) {
-                    Ok(DeliveryStatus::PendingExpanded)
-                        if destination.is_none()
-                            && self.command.scratch.active_expansion_return()
-                                == Some(return_to) =>
-                    {
-                        break Ok(());
-                    }
-                    Ok(DeliveryStatus::Command | DeliveryStatus::PendingExpanded) => {
-                        self.command
-                            .scratch
-                            .resume_exposed_expansion_parent()
-                            .map_err(crate::scan_toks::scratch_command_error)?;
-                        continue;
-                    }
-                    Ok(DeliveryStatus::ReplayCompleted(_)) => continue,
-                    Ok(_) => break Err(CommandError::input_invariant()),
-                    Err(error) => break Err(error),
+            .is_some_and(crate::ScannerFrameKey::is_expansion)
+            && self.resumed_return_capability.is_none();
+        if resuming_parked_expansion {
+            let prior_capability = self.scanner_return_capability.take();
+            let result = (|| {
+                let result = self.expand_into_with_parent(destination, report_trace, None);
+                if result.is_ok() {
+                    destination
+                        .take()
+                        .ok_or_else(CommandError::input_invariant)?;
                 }
-            };
-        }
-        if owns_return && result.is_ok() {
-            if self.command.scratch.active_expansion_return() != Some(return_to) {
-                return Err(CommandError::input_invariant());
+                let Some(capability) = self.scanner_return_capability.as_ref() else {
+                    return result.and_then(|_| Err(CommandError::input_invariant()));
+                };
+                let return_slot = capability.slot();
+                let return_sink = capability.sink();
+                if result.is_ok() && self.command.scratch.active_control_slot() != Some(return_slot)
+                {
+                    loop {
+                        match self.expanded_next_with_boundary(
+                            destination,
+                            None,
+                            Some((return_slot, return_sink)),
+                        )? {
+                            DeliveryStatus::ReplayCompleted(_) => continue,
+                            DeliveryStatus::PendingExpanded
+                                if destination.is_none()
+                                    && self.command.scratch.active_control_slot()
+                                        == Some(return_slot) =>
+                            {
+                                break;
+                            }
+                            DeliveryStatus::Command => {
+                                return Err(CommandError::input_invariant());
+                            }
+                            _ => return Err(CommandError::input_invariant()),
+                        }
+                    }
+                }
+                result
+            })();
+            let current_capability =
+                std::mem::replace(&mut self.scanner_return_capability, prior_capability);
+            if result.is_ok() {
+                self.command
+                    .scratch
+                    .finish_expansion_return(
+                        current_capability.ok_or_else(CommandError::input_invariant)?,
+                    )
+                    .map_err(crate::scan_toks::scratch_command_error)?;
             }
+            return result;
+        }
+        let use_carried_return = self
+            .resumed_return_capability
+            .as_ref()
+            .is_some_and(|capability| capability.sink() == return_to);
+        let capability = if use_carried_return {
+            self.resumed_return_capability
+                .take()
+                .ok_or_else(CommandError::input_invariant)?
+        } else {
+            let parent = self.current_scanner_return_parent();
             self.command
                 .scratch
-                .finish_expansion_return(return_to)
+                .begin_expansion_return(return_to, parent)
+                .map_err(crate::scan_toks::scratch_command_error)?
+        };
+        let (return_slot, return_sink) = (capability.slot(), capability.sink());
+        let prior_capability =
+            std::mem::replace(&mut self.scanner_return_capability, Some(capability));
+        let result = (|| {
+            let result = self.expand_into_with_parent(
+                destination,
+                report_trace,
+                (!use_carried_return).then_some(return_slot),
+            );
+            if result.is_ok() {
+                // A successful expansion has consumed the opener in this
+                // destination.  It is not a delivered result and must never
+                // be re-admitted as the next expanded command.
+                destination
+                    .take()
+                    .ok_or_else(CommandError::input_invariant)?;
+            }
+            if result.is_ok() && self.command.scratch.active_control_slot() != Some(return_slot) {
+                // A synchronous child owns the consumed opener. Continue in
+                // the same delivery driver until this exact return edge is
+                // exposed; the boundary carries the sink capability through
+                // the canonical loop and rejects any unowned status.
+                loop {
+                    let status = self.expanded_next_with_boundary(
+                        destination,
+                        None,
+                        Some((return_slot, return_sink)),
+                    )?;
+                    match status {
+                        DeliveryStatus::ReplayCompleted(_) => continue,
+                        DeliveryStatus::PendingExpanded
+                            if destination.is_none()
+                                && self.command.scratch.active_control_slot()
+                                    == Some(return_slot) =>
+                        {
+                            break;
+                        }
+                        DeliveryStatus::Command => {
+                            return Err(CommandError::input_invariant());
+                        }
+                        _ => return Err(CommandError::input_invariant()),
+                    }
+                }
+            }
+            result
+        })();
+        let current_capability =
+            std::mem::replace(&mut self.scanner_return_capability, prior_capability);
+        if result.is_ok() {
+            self.command
+                .scratch
+                .finish_expansion_return(
+                    current_capability.ok_or_else(CommandError::input_invariant)?,
+                )
                 .map_err(crate::scan_toks::scratch_command_error)?;
         }
         result
+    }
+
+    /// A nested scanner request belongs to the capability currently lent to
+    /// its caller.  A primitive's explicit parent remains the fallback for a
+    /// first request; once a sink is active, chaining through its exact slot
+    /// prevents a child from reaching back to an older ambient parent.
+    fn current_scanner_return_parent(
+        &self,
+    ) -> Option<crate::expansion_work::ExpansionControlSlot<G>> {
+        self.scanner_return_capability
+            .as_ref()
+            .map(|capability| capability.slot())
+            .or(self.scanner_return_parent)
     }
 
     /// Delivers protected replay-aware expansion into caller-provided storage.
@@ -4115,11 +4313,13 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.resumed_expansion = Some(retained.resume);
         let delivery_expanded = retained.delivery_expanded;
         let parent = retained.parent;
+        let return_capability = retained.return_capability;
         self.resume_current_command(&retained.command);
         Ok(ResumedExpandedDelivery {
             command: HotCommand::from_current(retained.command),
             delivery_expanded,
             parent,
+            return_capability,
         })
     }
 
@@ -4174,6 +4374,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             resume: crate::state::PendingExpansionResume::The { opener },
             delivery_expanded,
             parent: None,
+            return_capability: None,
             child,
         };
         match self.command.scratch.store_expansion_frame(pending) {
@@ -4870,16 +5071,14 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.back_input_token(TracedTokenWord::pack(frozen_endv, OriginId::UNKNOWN))
     }
 
-    /// Expands the command in one caller-owned destination, moving that sole
-    /// owner into parked work only across an immutable-resource suspension.
-    /// Resumption restores the same value into the destination before
-    /// continuing, while preserving §367's already emitted trace.
-    pub(crate) fn expand_into(
+    fn expand_into_with_parent(
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
         mut report_trace: bool,
+        explicit_parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), CommandError> {
-        let mut parent = None;
+        let mut parent = explicit_parent;
+        let mut admitted_parent = explicit_parent.is_some();
         if self.resumed_expansion.is_none()
             && self.scanner_resume.is_some()
             && !self
@@ -4923,6 +5122,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                 self.scanner_resume = Some(key);
             }
             parent = retained.parent;
+            admitted_parent = false;
+            if let Some(capability) = retained.return_capability {
+                if self.scanner_return_capability.replace(capability).is_some() {
+                    return Err(CommandError::input_invariant());
+                }
+            }
             *destination = Some(retained.command);
             self.resumed_expansion = Some(retained.resume);
             self.resume_current_command(
@@ -4931,6 +5136,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .expect("resumed expansion restores its command destination"),
             );
             report_trace = false;
+        }
+        if admitted_parent {
+            self.command
+                .scratch
+                .await_expansion_control_for_child(
+                    parent.ok_or_else(CommandError::input_invariant)?,
+                )
+                .map_err(crate::scan_toks::scratch_command_error)?;
         }
         let dispatch = match classify_expanded_command(
             destination
@@ -5378,6 +5591,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .unwrap_or(crate::state::PendingExpansionResume::Dispatch),
                 delivery_expanded,
                 parent,
+                return_capability: self.scanner_return_capability.take(),
                 child,
             };
             return match self.command.scratch.store_expansion_frame(pending) {

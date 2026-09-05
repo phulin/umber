@@ -181,6 +181,7 @@ fn aborting_a_cold_child_also_retires_its_synchronous_parent() {
             },
             delivery_expanded: true,
             parent: None,
+            return_capability: None,
             child: None,
         })
         .expect("suspended child");
@@ -531,6 +532,7 @@ fn failed_production_park_restores_the_exact_pending_owner() {
         resume: crate::state::PendingExpansionResume::PdfInsertHeight,
         delivery_expanded: true,
         parent: None,
+        return_capability: None,
         child: None,
     };
     let (error, pending) = work
@@ -568,6 +570,7 @@ fn nested_suspensions_are_lifo_and_reject_an_out_of_order_key_without_mutation()
             },
             delivery_expanded: false,
             parent: None,
+            return_capability: None,
             child: None,
         })
         .expect("outer suspension");
@@ -578,6 +581,7 @@ fn nested_suspensions_are_lifo_and_reject_an_out_of_order_key_without_mutation()
             resume: crate::state::PendingExpansionResume::PdfInsertHeight,
             delivery_expanded: true,
             parent: None,
+            return_capability: None,
             child: None,
         })
         .expect("inner suspension");

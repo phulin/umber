@@ -1642,6 +1642,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                 | crate::expansion_work::control::SynchronousExpandedKind::PdfUnescapeHex
         ) {
             self.finish_pdf_string_continuation(control.kind, list, control.opener)?;
+            if let Some(parent) = parent {
+                self.command
+                    .scratch
+                    .resume_expansion_control_parent(parent)
+                    .map_err(crate::scan_toks::scratch_command_error)?;
+            }
             return Ok(true);
         }
         let len = self
@@ -1668,6 +1674,12 @@ impl<G> CommandProcessor<'_, '_, G> {
             },
             first,
         );
+        if let Some(parent) = parent {
+            self.command
+                .scratch
+                .resume_expansion_control_parent(parent)
+                .map_err(crate::scan_toks::scratch_command_error)?;
+        }
         Ok(true)
     }
 

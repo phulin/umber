@@ -570,7 +570,7 @@ pub(crate) enum PrimitiveControl<G> {
 
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum ExpansionControl<G> {
-    Return(ExpansionReturn),
+    Return(ExpansionReturnState<G>),
     Dispatch {
         command: ExpansionCommandSlot<G>,
         trace: TraceState,
@@ -579,6 +579,7 @@ pub(crate) enum ExpansionControl<G> {
         command: ExpansionCommandSlot<G>,
         resume: crate::state::PendingExpansionResume,
         delivery_expanded: bool,
+        return_capability: Option<super::ExpansionReturnCapability<G>>,
         child: Option<
             crate::execution_scratch::ChildContinuation<
                 G,
@@ -607,37 +608,45 @@ pub(crate) enum ExpansionControl<G> {
 /// this move-only lane entry is the capability that prevents an unrelated
 /// outer synchronous control from consuming the child's result first.
 #[derive(Debug, Eq, PartialEq)]
-pub(crate) struct ExpansionReturn {
-    pub(crate) destination: ExpansionReturnDestination,
+pub(crate) struct ExpansionReturnState<G> {
+    pub(crate) sink: ExpansionReturnSink,
     pub(crate) awaiting: bool,
     pub(crate) command_mark: u32,
     pub(crate) name_mark: u32,
+    pub(crate) _generation: core::marker::PhantomData<fn(&G) -> &G>,
+}
+
+/// Move-only, sink-specific edge owned by one scanner/control frame. The
+/// lane state remains resident in `ExpansionWork`; this handle is the only
+/// value a request may carry into a parked expansion or consume on return.
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct ExpansionReturnCapability<G> {
+    slot: super::ExpansionControlSlot<G>,
+    sink: ExpansionReturnSink,
+}
+
+impl<G> ExpansionReturnCapability<G> {
+    pub(crate) fn new(slot: super::ExpansionControlSlot<G>, sink: ExpansionReturnSink) -> Self {
+        Self { slot, sink }
+    }
+
+    pub(crate) fn slot(&self) -> super::ExpansionControlSlot<G> {
+        self.slot
+    }
+
+    pub(crate) const fn sink(&self) -> ExpansionReturnSink {
+        self.sink
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ExpansionReturnDestination {
+pub(crate) enum ExpansionReturnSink {
     ScannerToken,
     ScannerExpansion,
 }
 
-/// Copy-small observation of the move-only return capability. Dispatch may
-/// inspect this projection, but only popping the lane entry consumes it.
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) struct ExpansionReturnView<G> {
-    pub(crate) slot: super::ExpansionControlSlot<G>,
-    pub(crate) destination: ExpansionReturnDestination,
-    pub(crate) awaiting: bool,
-}
-
-impl<G> Copy for ExpansionReturnView<G> {}
-
-impl<G> Clone for ExpansionReturnView<G> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-const _: () = assert!(core::mem::size_of::<ExpansionReturn>() <= 24);
+const _: () = assert!(core::mem::size_of::<ExpansionReturnState<()>>() <= 24);
+const _: () = assert!(core::mem::size_of::<ExpansionReturnCapability<()>>() <= 24);
 
 const _: () = {
     assert!(core::mem::size_of::<SynchronousExpandAfterControl<()>>() <= 128);

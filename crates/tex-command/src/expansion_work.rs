@@ -453,7 +453,7 @@ impl<G> Clone for ExpansionCommandSlot<G> {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub(crate) struct ExpansionControlSlot<G> {
     owner: NonZeroU64,
     lane: LaneId<G>,
@@ -465,6 +465,14 @@ impl<G> Clone for ExpansionControlSlot<G> {
         *self
     }
 }
+
+impl<G> PartialEq for ExpansionControlSlot<G> {
+    fn eq(&self, other: &Self) -> bool {
+        self.owner == other.owner && self.lane == other.lane
+    }
+}
+
+impl<G> Eq for ExpansionControlSlot<G> {}
 
 /// One resident synchronous-control frame.
 ///
@@ -641,47 +649,62 @@ impl<G> ExpansionWork<G> {
     /// cannot become active until the edge is consumed.
     pub(crate) fn begin_return(
         &mut self,
-        destination: ExpansionReturnDestination,
-    ) -> Result<(), ScratchError> {
+        sink: ExpansionReturnSink,
+        parent: Option<ExpansionControlSlot<G>>,
+    ) -> Result<ExpansionReturnCapability<G>, ScratchError> {
         let command_mark = self.commands.len();
         let name_mark = self.names.len;
-        let parent = self.top_control_slot()?.and_then(|slot| {
-            self.await_control_for_child(slot).ok()?;
-            Some(slot)
-        });
-        if let Err(error) = self.push_control_with_parent(
-            ExpansionControl::Return(ExpansionReturn {
-                destination,
+        let parent_already_awaiting = match parent {
+            Some(parent) => match self.control_is_awaiting(parent) {
+                Ok(awaiting) => awaiting,
+                Err(error) => return Err(error),
+            },
+            None => false,
+        };
+        if let Some(parent) = parent.filter(|_| !parent_already_awaiting) {
+            self.await_control_for_child(parent)?;
+        }
+        // An already-awaiting parent belongs to the enclosing primitive's
+        // admission, not to this scanner request.  The return sink must not
+        // resume that edge when it completes; the enclosing primitive will
+        // settle it after its scanner returns.  A fresh parent, by contrast,
+        // is owned by this sink and is restored from the stored frame edge.
+        let return_parent = (!parent_already_awaiting).then_some(parent).flatten();
+        match self.push_control_with_parent(
+            ExpansionControl::Return(ExpansionReturnState {
+                sink,
                 awaiting: false,
                 command_mark,
                 name_mark,
+                _generation: core::marker::PhantomData,
             }),
-            parent,
+            return_parent,
         ) {
-            if let Some(parent) = parent {
-                self.resume_control_parent(parent)
-                    .expect("failed return push restores its exact parent");
+            Ok(slot) => Ok(ExpansionReturnCapability::new(slot, sink)),
+            Err(error) => {
+                if parent.is_some() && !parent_already_awaiting {
+                    let parent = parent.expect("checked return parent");
+                    self.resume_control_parent(parent)
+                        .expect("failed return push restores its exact parent");
+                }
+                Err(error)
             }
-            return Err(error);
         }
-        Ok(())
     }
 
     /// Consumes the exact top return edge after its caller-owned destination
     /// has been filled. A different top is an ownership-order violation.
     pub(crate) fn finish_return(
         &mut self,
-        destination: ExpansionReturnDestination,
+        capability: ExpansionReturnCapability<G>,
     ) -> Result<(), ScratchError> {
-        let id = self.controls.top_id()?;
-        match self.control(id)? {
-            ExpansionControl::Return(retained) if retained.destination == destination => {}
-            _ => return Err(ScratchError::InvalidCoordinate),
+        let slot = capability.slot();
+        let sink = capability.sink();
+        let control = self.control(self.validate_control_slot(slot)?)?;
+        if !matches!(control, ExpansionControl::Return(state) if state.sink == sink) {
+            return Err(ScratchError::InvalidCoordinate);
         }
-        let (control, parent) = self.take_control_with_parent(ExpansionControlSlot {
-            owner: self.owner,
-            lane: id,
-        })?;
+        let (control, parent) = self.take_control_with_parent(slot)?;
         debug_assert!(matches!(control, ExpansionControl::Return(_)));
         if let Some(parent) = parent {
             self.resume_control_parent(parent)?;
@@ -689,41 +712,11 @@ impl<G> ExpansionWork<G> {
         Ok(())
     }
 
-    pub(crate) fn active_return_destination(&self) -> Option<ExpansionReturnDestination> {
-        let (ActiveControlTag::Return, id) = self.active_control? else {
-            return None;
-        };
-        match self.control(id).ok()? {
-            ExpansionControl::Return(retained) => Some(retained.destination),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn top_return_control(
-        &self,
-    ) -> Result<Option<ExpansionReturnView<G>>, ScratchError> {
-        let Some(slot) = self.top_control_slot()? else {
-            return Ok(None);
-        };
-        match self.control(slot.lane)? {
-            ExpansionControl::Return(control) => Ok(Some(ExpansionReturnView {
-                slot,
-                destination: control.destination,
-                awaiting: control.awaiting,
-            })),
-            _ => Ok(None),
-        }
-    }
-
-    pub(crate) fn resume_exposed_parent(&mut self) -> Result<bool, ScratchError> {
-        let Some(slot) = self.top_control_slot()? else {
-            return Ok(false);
-        };
-        if self.validate_awaiting_parent(slot).is_err() {
-            return Ok(false);
-        }
-        self.resume_control_parent(slot)?;
-        Ok(true)
+    pub(crate) fn active_control_slot(&self) -> Option<ExpansionControlSlot<G>> {
+        self.active_control.map(|(_, lane)| ExpansionControlSlot {
+            owner: self.owner,
+            lane,
+        })
     }
 
     /// Returns the one authoritative top-control tag.  The typed payload and
@@ -931,10 +924,9 @@ impl<G> ExpansionWork<G> {
                 let ExpansionControl::Return(control) = control else {
                     unreachable!()
                 };
-                if control.awaiting {
-                    return Err(ScratchError::InvalidCoordinate);
+                if !control.awaiting {
+                    control.awaiting = true;
                 }
-                control.awaiting = true;
                 Ok(())
             }
             ExpansionControl::ExpandAfterSync(_) => self.await_expandafter_nested(slot),
@@ -944,6 +936,41 @@ impl<G> ExpansionWork<G> {
             ExpansionControl::Number(_) => self.await_number_operand(slot),
             _ => Err(ScratchError::InvalidCoordinate),
         }
+    }
+
+    fn control_is_awaiting(&self, slot: ExpansionControlSlot<G>) -> Result<bool, ScratchError> {
+        let control = self.control(self.validate_control_slot(slot)?)?;
+        Ok(match control {
+            ExpansionControl::Return(control) => control.awaiting,
+            ExpansionControl::ExpandAfterSync(control) => {
+                control.phase == SynchronousExpandAfterPhase::AwaitNested
+            }
+            ExpansionControl::IfCompare(control) => matches!(
+                control.phase,
+                SynchronousIfComparePhase::AwaitFirst
+                    | SynchronousIfComparePhase::AwaitSecond { .. }
+            ),
+            ExpansionControl::IfNumber(control) => matches!(
+                control.phase,
+                SynchronousIfNumberPhase::AwaitLeft { .. }
+                    | SynchronousIfNumberPhase::AwaitRelation { .. }
+                    | SynchronousIfNumberPhase::AwaitRight { .. }
+                    | SynchronousIfNumberPhase::RegisterIndexAwait { .. }
+            ),
+            ExpansionControl::IfDimension(control) => matches!(
+                control.phase,
+                SynchronousIfDimensionPhase::AwaitLeft { .. }
+                    | SynchronousIfDimensionPhase::AwaitRelation { .. }
+                    | SynchronousIfDimensionPhase::AwaitRight { .. }
+                    | SynchronousIfDimensionPhase::RegisterIndexAwait { .. }
+            ),
+            ExpansionControl::Number(control) => matches!(
+                control.phase,
+                SynchronousNumberPhase::Await { .. }
+                    | SynchronousNumberPhase::RegisterIndexAwait { .. }
+            ),
+            _ => false,
+        })
     }
 
     /// Returns the active top `\the` opener, if the synchronous continuation
@@ -2491,12 +2518,19 @@ impl<G> ExpansionWork<G> {
         if self.active_roots.try_reserve(1).is_err() {
             return Err((ScratchError::AllocationFailed, pending));
         }
-        let mark = self.mark();
+        let mut mark = self.mark();
+        if let Some(parent) = pending.parent
+            && let Err(error) = self.retain_return_ancestors(&mut mark, Some(parent))
+        {
+            return Err((error, pending));
+        }
+        let return_capability = pending.return_capability;
         let crate::state::PendingExpansion {
             command,
             resume,
             delivery_expanded,
             parent,
+            return_capability: _,
             child,
         } = pending;
         let mut command = Some(command);
@@ -2510,6 +2544,7 @@ impl<G> ExpansionWork<G> {
                         resume,
                         delivery_expanded,
                         parent,
+                        return_capability,
                         child,
                     },
                 ));
@@ -2519,6 +2554,7 @@ impl<G> ExpansionWork<G> {
             command: command_slot,
             resume,
             delivery_expanded,
+            return_capability,
             child,
         });
         let root = match self.push_control_from_with_parent(&mut control, parent) {
@@ -2530,6 +2566,7 @@ impl<G> ExpansionWork<G> {
                 let ExpansionControl::Suspended {
                     resume,
                     delivery_expanded,
+                    return_capability,
                     child,
                     ..
                 } = control.expect("failed control park preserves owner")
@@ -2543,6 +2580,7 @@ impl<G> ExpansionWork<G> {
                         resume,
                         delivery_expanded,
                         parent,
+                        return_capability,
                         child,
                     },
                 ));
@@ -3002,6 +3040,28 @@ impl<G> ExpansionWork<G> {
         }
     }
 
+    /// Extends a suspension mark only through the exact parent chain that
+    /// owns the parked child. Return sinks can be admitted after the root
+    /// mark, so retaining their declared command/name floors is necessary for
+    /// resumption; walking parent links keeps this local and avoids scanning
+    /// unrelated control rows or inferring a recipient from the lane top.
+    fn retain_return_ancestors(
+        &self,
+        mark: &mut ExpansionMark,
+        mut parent: Option<ExpansionControlSlot<G>>,
+    ) -> Result<(), ScratchError> {
+        while let Some(slot) = parent {
+            let frame = self.control_frame(self.validate_control_slot(slot)?)?;
+            if let ExpansionControl::Return(capability) = &frame.control {
+                mark.controls = mark.controls.max(slot.lane.index().saturating_add(1));
+                mark.commands = mark.commands.max(capability.command_mark);
+                mark.name_bytes = mark.name_bytes.max(capability.name_mark);
+            }
+            parent = frame.parent;
+        }
+        Ok(())
+    }
+
     fn validate_key(&mut self, key: &ExpansionWorkKey<G>) -> Result<(), ScratchError> {
         let valid = key.owner == self.owner
             && self.active_roots.last().copied() == Some(key.root)
@@ -3040,6 +3100,7 @@ impl<G> ExpansionWork<G> {
         let ExpansionControl::Suspended {
             resume,
             delivery_expanded,
+            return_capability,
             child,
             ..
         } = suspended
@@ -3068,6 +3129,7 @@ impl<G> ExpansionWork<G> {
             resume,
             delivery_expanded,
             parent,
+            return_capability,
             child,
         })
     }
@@ -3136,14 +3198,7 @@ impl<G> ExpansionWork<G> {
         }
     }
 
-    fn truncate_to(&mut self, mut mark: ExpansionMark) -> Result<(), ScratchError> {
-        for index in mark.controls..self.controls.len() {
-            if let ExpansionControl::Return(retained) = &self.controls.get_index(index)?.control {
-                mark.controls = index.checked_add(1).ok_or(ScratchError::CapacityOverflow)?;
-                mark.commands = mark.commands.max(retained.command_mark);
-                mark.name_bytes = mark.name_bytes.max(retained.name_mark);
-            }
-        }
+    fn truncate_to(&mut self, mark: ExpansionMark) -> Result<(), ScratchError> {
         let retired_controls = self.controls.len().saturating_sub(mark.controls);
         #[cfg(debug_assertions)]
         let changed = self.controls.len() > mark.controls

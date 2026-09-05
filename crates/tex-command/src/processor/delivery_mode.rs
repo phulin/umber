@@ -20,6 +20,7 @@ impl DeliveryMode {
     const TRACING: u8 = 1 << 5;
     const TOKEN: u8 = Self::SUPPRESS_NEXT | Self::OUTER;
     const EPISODE: u8 = Self::OBSERVING | Self::TRACING | Self::TOKEN;
+    const SETTLEMENT: u8 = Self::OBSERVING | Self::ALIGNMENT | Self::SUPPRESS_NEXT;
 
     #[inline(always)]
     const fn set(&mut self, flag: u8, enabled: bool) {
@@ -61,7 +62,8 @@ impl DeliveryMode {
 
     #[inline(always)]
     pub(crate) const fn requires_slow_settlement(self) -> bool {
-        self.0 != 0
+        self.0 & Self::SETTLEMENT != 0
+            || self.0 & (Self::SCANNER | Self::OUTER) == (Self::SCANNER | Self::OUTER)
     }
 
     #[inline(always)]
@@ -138,5 +140,21 @@ mod tests {
         assert!(state.delivery_mode.alignment_active());
         state.finish_alignment(alignment).expect("finish");
         assert!(!state.delivery_mode.alignment_active());
+    }
+
+    #[test]
+    fn slow_settlement_requires_delivery_context() {
+        let mut mode = DeliveryMode::default();
+        mode.begin_episode(false, true);
+        assert!(!mode.requires_slow_settlement());
+
+        mode.set_scanner_active(true);
+        assert!(!mode.requires_slow_settlement());
+
+        mode.begin_token(false, true);
+        assert!(mode.requires_slow_settlement());
+
+        mode.set_scanner_active(false);
+        assert!(!mode.requires_slow_settlement());
     }
 }

@@ -292,6 +292,11 @@ pub(crate) struct PendingExpansion<G> {
     /// The slot is restored with the suspended control and is never
     /// rediscovered from the current top after retry.
     pub(crate) parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
+    /// Exact sink-specific scanner capability moved while a nested expansion
+    /// is parked. Resumption restores it directly instead of rediscovering a
+    /// return recipient from the current control-lane top.
+    pub(crate) return_capability:
+        Option<crate::expansion_work::control::ExpansionReturnCapability<G>>,
     pub(crate) child:
         Option<crate::execution_scratch::ChildContinuation<G, PendingExpansionChildDestination>>,
 }
