@@ -9,7 +9,7 @@ use bib_engine::{
 };
 use tex_fonts::{FontRequestKey, PdfPkFontRequest, ResolvedFont};
 use tex_state::ContentHash;
-use umber_vfs::{FileRequestBatch, ProjectWorkspace, ResolvedFile, VirtualPath};
+use umber_vfs::{FileRequest, FileRequestBatch, ProjectWorkspace, ResolvedFile, VirtualPath};
 
 use crate::fixed_point::{FixedPointCandidate, FixedPointCoordinator, FixedPointFailure};
 use crate::{
@@ -500,6 +500,21 @@ impl<'store> LatexProjectSession<'store> {
             candidate.tex_awaiting = false;
         }
         Ok(())
+    }
+
+    pub fn authorize_prefetch_files(&mut self, requests: impl IntoIterator<Item = FileRequest>) {
+        let requests = requests.into_iter().collect::<Vec<_>>();
+        for request in &requests {
+            let key = request.key().clone();
+            self.awaiting.insert(ProjectRequestKey::File(key.clone()));
+            self.workspace.authorize_prefetch_hints([key]);
+        }
+        if let Some(candidate) = self.candidate.as_mut()
+            && candidate.tex_awaiting
+            && let Some(tex) = candidate.tex.as_mut()
+        {
+            tex.authorize_prefetch_files(requests);
+        }
     }
 
     /// Cancels an unaccepted edited project generation and releases its
@@ -1084,7 +1099,13 @@ impl<'store> LatexProjectSession<'store> {
                 ResourceRequest::File(file) => Some(file.clone()),
                 ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => None,
             }),
-            [],
+            needs
+                .prefetch_hints
+                .iter()
+                .filter_map(|request| match request {
+                    ResourceRequest::File(file) => Some(file.clone()),
+                    ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => None,
+                }),
         ));
         self.non_file_resources.begin_batch(
             needs.required.iter().filter_map(project_non_file_key),

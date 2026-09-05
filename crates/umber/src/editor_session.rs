@@ -2,7 +2,7 @@ use std::fmt;
 use std::path::PathBuf;
 
 use tex_state::ContentHash;
-use umber_vfs::VirtualPath;
+use umber_vfs::{FileRequest, VirtualPath};
 
 use crate::{
     AcceptedInputObservationLedger, CompileAttemptResult, CompileError, FixedPointLimits,
@@ -123,6 +123,21 @@ impl<'store> EditorCompileSession<'store> {
             self.hot
                 .provide_resources(responses)
                 .map_err(EditorResourceError::Advance)
+        }
+    }
+
+    pub fn authorize_prefetch_files(&mut self, requests: impl IntoIterator<Item = FileRequest>) {
+        let requests = requests.into_iter().collect::<Vec<_>>();
+        if let Some(stabilizing) = &mut self.stabilizing {
+            stabilizing.authorize_prefetch_files(requests.clone());
+        } else {
+            self.hot.authorize_prefetch_files(requests.clone());
+        }
+        // Keep a hot-path authorization available when a speculative response
+        // arrives while a fixed-point pass is suspended; the stabilizing pass
+        // receives its own copy above.
+        if self.stabilizing.is_some() {
+            self.hot.authorize_prefetch_files(requests);
         }
     }
 

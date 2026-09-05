@@ -254,7 +254,11 @@ impl LookupRecord {
             && self.request_key == other.request_key
             && self.kind == other.kind
             && self.search_context == other.search_context
-            && std::mem::discriminant(&self.outcome) == std::mem::discriminant(&other.outcome)
+            && match (&self.outcome, &other.outcome) {
+                (LookupOutcome::Resolved(_), LookupOutcome::Resolved(_)) => true,
+                (LookupOutcome::Absent(left), LookupOutcome::Absent(right)) => left == right,
+                _ => false,
+            }
     }
 }
 

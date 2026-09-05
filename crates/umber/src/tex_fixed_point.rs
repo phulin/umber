@@ -140,6 +140,13 @@ impl<'store> TexFixedPointSession<'store> {
             .map_err(tex_fixed_point_error)
     }
 
+    pub fn authorize_prefetch_files(
+        &mut self,
+        requests: impl IntoIterator<Item = crate::FileRequest>,
+    ) {
+        self.inner.authorize_prefetch_files(requests);
+    }
+
     #[must_use]
     pub fn cancel_pending_patch(&mut self) -> bool {
         self.inner.cancel_pending_patch()

@@ -108,6 +108,21 @@ impl<K: Clone + Ord, V: Eq> ResourceLifecycle<K, V> {
         }
     }
 
+    /// Authorizes additional positive prefetch bindings without cancelling
+    /// the blocking requests in the current batch.  A catalog-discovered
+    /// dependency is not necessarily present in the engine's original hint
+    /// list, but its bytes still have to cross the same admission boundary.
+    pub fn authorize_hints(&mut self, keys: impl IntoIterator<Item = K>) {
+        for key in keys {
+            match self.states.entry(key) {
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    entry.insert(AdmissionState::Outstanding(RequestIntent::PrefetchHint));
+                }
+                std::collections::btree_map::Entry::Occupied(_) => {}
+            }
+        }
+    }
+
     pub fn admit(&mut self, key: K, value: V) -> Result<bool, AdmissionError<K>> {
         match self.states.get(&key) {
             Some(AdmissionState::Outstanding(_)) => {

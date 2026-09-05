@@ -1499,6 +1499,30 @@ impl<'store> VirtualCompileSession<'store> {
         generated_fingerprint(&self.workspace)
     }
 
+    /// Names the generated-output transaction currently being executed.  A
+    /// generated-file negative is valid only for this revision and output
+    /// state; it must not be reused as a distribution absence after rollback.
+    pub fn generated_transaction_identity(&self) -> Result<String, CompileError> {
+        let workspace = self
+            .candidate
+            .as_ref()
+            .map_or(&self.workspace, |candidate| &candidate.workspace);
+        let revision = self.pending_patch.as_ref().map_or_else(
+            || self.revision().map_or(0, |revision| revision.raw()),
+            |(revision, _)| revision.raw(),
+        );
+        let mut preimage = revision.to_le_bytes().to_vec();
+        for (path, hash) in generated_fingerprint(workspace)? {
+            preimage.extend_from_slice(path.as_str().as_bytes());
+            preimage.push(0);
+            preimage.extend_from_slice(&hash.bytes());
+        }
+        Ok(
+            umber_hash::AHash64::for_bytes(umber_hash::HashDomain::DistributionTree, &preimage)
+                .hex(),
+        )
+    }
+
     #[must_use]
     pub fn retention_metrics(&self) -> Option<RetentionMetrics> {
         let accepted = self
@@ -1735,6 +1759,38 @@ impl<'store> VirtualCompileSession<'store> {
             self.refresh_candidate_files()?;
         }
         result
+    }
+
+    /// Authorizes positive file responses discovered by a provider-side
+    /// dependency closure.  The closure is speculative, but its bytes use the
+    /// same typed VFS admission path as demanded resources.
+    pub fn authorize_prefetch_files(&mut self, requests: impl IntoIterator<Item = FileRequest>) {
+        let keys = requests
+            .into_iter()
+            .map(|request| request.key().clone())
+            .collect::<Vec<_>>();
+        self.workspace
+            .authorize_prefetch_hints(keys.iter().cloned());
+        if let Some(candidate) = self.candidate.as_mut() {
+            candidate
+                .workspace
+                .authorize_prefetch_hints(keys.iter().cloned());
+        }
+    }
+
+    /// Records catalog evidence without admitting payload bytes.  A later
+    /// read still follows the normal missing-resource path and requests the
+    /// bytes through the VFS lifecycle.
+    pub fn note_resource_exists(&mut self, requests: impl IntoIterator<Item = FileRequestKey>) {
+        let keys = requests.into_iter().collect::<Vec<_>>();
+        for key in &keys {
+            self.workspace.note_exists(key.clone());
+        }
+        if let Some(candidate) = self.candidate.as_mut() {
+            for key in &keys {
+                candidate.workspace.note_exists(key.clone());
+            }
+        }
     }
 
     fn refresh_candidate_files(&mut self) -> Result<(), CompileError> {

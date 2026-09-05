@@ -66,3 +66,26 @@ fn accepted_manifest_round_trips_and_promotes_roles() {
     assert_eq!(decoded.resolved_records().count(), 1);
     assert_eq!(decoded.records()[0].role, LookupRole::Required);
 }
+
+#[test]
+fn mutable_negative_scopes_do_not_conflict_across_revisions() {
+    let mut manifest = LookupManifest::new(identity());
+    for revision in ["revision-a", "revision-b"] {
+        manifest
+            .record(
+                LookupRecord::new(
+                    "missing",
+                    "tex:missing",
+                    "tex",
+                    "project",
+                    LookupRole::Required,
+                    LookupOutcome::Absent(NegativeScope::Project {
+                        revision: revision.to_owned(),
+                    }),
+                )
+                .expect("negative record"),
+            )
+            .expect("distinct revision remains durable");
+    }
+    assert_eq!(manifest.records().len(), 2);
+}

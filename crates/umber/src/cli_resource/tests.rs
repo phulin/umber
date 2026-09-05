@@ -33,6 +33,89 @@ fn native_engine_guard_selection_preserves_precedence_and_default() {
 }
 
 #[test]
+fn prefetch_identity_uses_format_content_and_pinned_root() {
+    let directory = TempDir::new().expect("temporary project");
+    let input = directory.path().join("main.tex");
+    std::fs::write(&input, b"\\end").expect("main input");
+    let options = NativeRunOptions {
+        input,
+        format: Some(PathBuf::from("first.fmt")),
+        initial_prefetch_keys: Vec::new(),
+        engine: EngineMode::PdfLatex,
+        pdf_output_mode: None,
+        outputs: OutputCapabilitySet::DVI,
+        html_asset_directory: None,
+        distribution: Some("/tmp/ignored-source-name".to_owned()),
+        distribution_ahash64: None,
+        offline: false,
+        expansion_fuel: None,
+        execution_steps: None,
+    };
+    let first = native_prefetch_identity(&options, Some(b"abcd"), Some("root-a"));
+    let same_content_different_path = native_prefetch_identity(
+        &NativeRunOptions {
+            format: Some(PathBuf::from("second.fmt")),
+            ..options.clone()
+        },
+        Some(b"abcd"),
+        Some("root-a"),
+    );
+    let different_format_same_size =
+        native_prefetch_identity(&options, Some(b"wxyz"), Some("root-a"));
+    let different_root = native_prefetch_identity(&options, Some(b"abcd"), Some("root-b"));
+    assert_eq!(first, same_content_different_path);
+    assert_ne!(first, different_format_same_size);
+    assert_ne!(first, different_root);
+}
+
+#[test]
+fn accepted_native_compile_publishes_lookup_history() {
+    let directory = TempDir::new().expect("temporary project");
+    let distribution = directory.path().join("distribution");
+    let (root, _) = write_sharded_root(
+        &distribution,
+        "accepted-publication",
+        0,
+        &[(
+            "{\"schema\":3,\"distribution\":\"accepted-publication\",\"index\":0,\"files\":{}}\n",
+            true,
+        )],
+    );
+    let input = directory.path().join("main.tex");
+    std::fs::write(&input, b"\\end").expect("main input");
+    let options = NativeRunOptions {
+        input,
+        format: None,
+        initial_prefetch_keys: Vec::new(),
+        engine: EngineMode::Tex82,
+        pdf_output_mode: None,
+        outputs: OutputCapabilitySet::DVI,
+        html_asset_directory: None,
+        distribution: Some(distribution.to_string_lossy().into_owned()),
+        distribution_ahash64: None,
+        offline: false,
+        expansion_fuel: None,
+        execution_steps: None,
+    };
+    let cache = ObjectCache::new(directory.path().join("cache"));
+    let mut session =
+        NativeCompileSession::new_with_cache(&options, &FetchCancellation::new(), cache.clone())
+            .expect("native session");
+    session
+        .compile(&FetchCancellation::new())
+        .expect("accepted compile");
+
+    let root_identity = AHash64::for_bytes(HashDomain::DistributionContent, &root).hex();
+    let identity = native_prefetch_identity(&options, None, Some(&root_identity));
+    let bytes = cache
+        .load_named("prefetch", &identity.canonical_key(), 4 * 1024 * 1024)
+        .expect("lookup history cache read")
+        .expect("accepted compile must publish lookup history");
+    let manifest = LookupManifest::decode(&bytes).expect("published lookup manifest");
+    assert_eq!(manifest.identity(), &identity);
+}
+
+#[test]
 fn native_session_installs_independent_explicit_engine_guards() {
     let directory = TempDir::new().expect("temporary project");
     let input = directory.path().join("main.tex");
@@ -1426,6 +1509,169 @@ fn distribution_prefetch_does_not_claim_a_locally_shadowed_alias() {
 }
 
 #[test]
+fn mutable_local_precedence_records_project_negative_without_reusing_it() {
+    let directory = TempDir::new().expect("distribution tempdir");
+    write_single_file_distribution(
+        directory.path(),
+        "negative-precedence",
+        "tex:article.cls",
+        "/texlive/tex/article.cls",
+        b"distribution",
+    );
+    let mut resolver = DistributionResolver::new(
+        ObjectCache::new(directory.path().join("cache")),
+        Some(directory.path().to_string_lossy().into_owned()),
+        None,
+        false,
+    );
+    resolver.set_project_revision("revision-a".to_owned());
+    resolver.set_lookup_manifest(LookupManifest::new(
+        PrefetchIdentity::new("tex82", "none", "options", "root", "policy").expect("identity"),
+    ));
+    let batch = needs(vec![file_request("article.cls")]);
+    let cancellation = FetchCancellation::new();
+    let first = resolver
+        .resolve_batch(&local_resolver(directory.path()), &batch, &cancellation)
+        .expect("distribution fallback");
+    assert!(matches!(
+        first.as_slice(),
+        [ResourceResponse::File(file)] if file.bytes == b"distribution"
+    ));
+    assert!(resolver.lookup_manifest.as_ref().is_some_and(|manifest| {
+        manifest.records().iter().any(|record| {
+            matches!(
+                &record.outcome,
+                LookupOutcome::Absent(NegativeScope::Project { revision })
+                    if revision == "revision-a"
+            )
+        })
+    }));
+
+    std::fs::write(directory.path().join("article.cls"), b"project").expect("project class");
+    let second = resolver
+        .resolve_batch(&local_resolver(directory.path()), &batch, &cancellation)
+        .expect("local precedence after mutation");
+    assert!(matches!(
+        second.as_slice(),
+        [ResourceResponse::File(file)] if file.bytes == b"project"
+    ));
+}
+
+#[test]
+fn inline_dependency_payload_crosses_native_engine_admission() {
+    let directory = TempDir::new().expect("distribution tempdir");
+    let distribution = directory.path().join("distribution");
+    let required = b"required payload";
+    let dependency = b"dependency payload";
+    let required_digest = hex_digest(required);
+    let dependency_digest = hex_digest(dependency);
+    let required_object = format!("ahash64-v1-{required_digest}");
+    let dependency_object = format!("ahash64-v1-{dependency_digest}");
+    let objects = distribution.join("objects");
+    std::fs::create_dir_all(&objects).expect("objects");
+    std::fs::write(objects.join(&required_object), required).expect("required object");
+    std::fs::write(objects.join(&dependency_object), dependency).expect("dependency object");
+    let shard = format!(
+        "{{\"schema\":3,\"distribution\":\"dependency-admission\",\"index\":0,\"files\":{{\"tex:required.tex\":{{\"virtualPath\":\"/texlive/tex/required.tex\",\"object\":\"{required_object}\",\"ahash64\":\"{required_digest}\",\"bytes\":{},\"dependencies\":[{{\"key\":\"tex:dependency.tex\",\"virtualPath\":\"/texlive/tex/dependency.tex\",\"object\":\"{dependency_object}\",\"ahash64\":\"{dependency_digest}\",\"bytes\":{}}}]}}}}}}\n",
+        required.len(),
+        dependency.len()
+    );
+    write_sharded_root(
+        &distribution,
+        "dependency-admission",
+        0,
+        &[(shard.as_str(), true)],
+    );
+
+    let input = directory.path().join("main.tex");
+    std::fs::write(&input, b"\\input required.tex \\end").expect("main input");
+    let options = NativeRunOptions {
+        input,
+        format: None,
+        initial_prefetch_keys: vec!["tex:unused-hint.tex".to_owned()],
+        engine: EngineMode::Tex82,
+        pdf_output_mode: None,
+        outputs: OutputCapabilitySet::DVI,
+        html_asset_directory: None,
+        distribution: Some(distribution.to_string_lossy().into_owned()),
+        distribution_ahash64: None,
+        offline: false,
+        expansion_fuel: None,
+        execution_steps: None,
+    };
+    let cancellation = FetchCancellation::new();
+    let mut session = NativeCompileSession::new_with_cache(
+        &options,
+        &cancellation,
+        ObjectCache::new(directory.path().join("cache")),
+    )
+    .expect("native session");
+    let CompileAttemptResult::NeedResources(batch) = session.session.compile_attempt() else {
+        panic!("engine must request required file and retain the hint");
+    };
+    assert!(batch
+        .prefetch_hints
+        .iter()
+        .any(|request| matches!(request, ResourceRequest::File(file) if file.key().name() == "unused-hint.tex")));
+    let generated_transaction = session
+        .session
+        .generated_transaction_identity()
+        .expect("generated transaction identity");
+    session
+        .distribution
+        .record_generated_misses(&batch, &generated_transaction);
+    let resolved = session
+        .distribution
+        .resolve_batch_with_prefetch(
+            &session.local,
+            &batch,
+            &cancellation,
+            &mut session.host_telemetry.resolver,
+        )
+        .expect("dependency batch");
+    assert!(
+        resolved
+            .prefetch_requests
+            .iter()
+            .any(|request| { request.key().name() == "dependency.tex" })
+    );
+    session
+        .session
+        .note_resource_exists(resolved.catalog_exists);
+    let required_key =
+        crate::FileRequestKey::new(FileKind::TexInput, "required.tex").expect("required key");
+    assert_eq!(
+        session.session.workspace().readiness(&required_key),
+        Some(umber_vfs::ResourceReadiness::ExistsNotReady)
+    );
+    session
+        .session
+        .authorize_prefetch_files(resolved.prefetch_requests);
+    session
+        .session
+        .provide_resources(resolved.responses)
+        .expect("admit required and inline dependency");
+    let dependency_key =
+        crate::FileRequestKey::new(FileKind::TexInput, "dependency.tex").expect("dependency key");
+    assert!(session.session.workspace().get(&dependency_key).is_some());
+    assert!(
+        session
+            .distribution
+            .lookup_manifest
+            .as_ref()
+            .is_some_and(|manifest| {
+                manifest.records().iter().any(|record| {
+                    matches!(
+                        &record.outcome,
+                        LookupOutcome::Absent(NegativeScope::Generated { transaction })
+                            if transaction == &generated_transaction
+                    )
+                })
+            })
+    );
+}
+
+#[test]
 fn native_compile_uses_local_file_after_shadowed_distribution_hint() {
     let directory = TempDir::new().expect("distribution tempdir");
     write_locally_shadowed_hint_distribution(directory.path());
@@ -1613,7 +1859,7 @@ fn format_closure_is_loaded_only_as_each_input_is_requested() {
             panic!("first attempt must miss the closure head");
         };
         assert_eq!(first.required.len(), 1);
-        assert!(first.prefetch_hints.is_empty());
+        assert!(!first.prefetch_hints.is_empty());
         let responses = session
             .distribution
             .resolve_batch(&session.local, &first, &cancellation)

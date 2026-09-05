@@ -602,6 +602,14 @@ impl ProjectWorkspace {
         self.ledger.note_exists(request);
     }
 
+    /// Authorizes positive speculative file bindings discovered by a
+    /// distribution provider after the engine's ordinary request batch was
+    /// built.  This preserves the one canonical lifecycle for both demanded
+    /// and prefetched bytes.
+    pub fn authorize_prefetch_hints(&mut self, requests: impl IntoIterator<Item = FileRequestKey>) {
+        self.ledger.lifecycle.authorize_hints(requests);
+    }
+
     #[must_use]
     pub fn readiness(&self, request: &FileRequestKey) -> Option<ResourceReadiness> {
         self.ledger.readiness(request)
