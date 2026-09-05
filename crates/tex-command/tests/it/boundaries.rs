@@ -1170,20 +1170,10 @@ fn resource_capable_scalar_scans_have_one_inline_owned_continuation_surface() {
         .expect("locate singular resident command episode");
     assert!(command_episode.contains("command: Option<tex_command::CurrentCommand<G>>"));
     assert!(command_episode.contains("phase: Option<PreflightCommandPhase>"));
-    assert!(command_episode.contains("scanner: Option<tex_command::ScannerFrameKey<G>>"));
-    assert!(command_episode.contains("operation_scan: Option<PendingOperationScanPhase>"));
     assert!(!command_episode.contains("OperationPayload"));
     for forbidden in ["Box<", "Vec<", "Arc<", "VecDeque", "HashMap"] {
         assert!(!command_episode.contains(forbidden));
     }
-    let operation_frame = main_control
-        .split("struct OperationFrame<G>")
-        .nth(1)
-        .and_then(|tail| tail.split("impl<G> OperationFrame<G>").next())
-        .expect("locate suspension-only operation frame");
-    assert!(operation_frame.contains("episode: Option<CommandEpisode<G>>"));
-    assert!(operation_frame.contains("cold: Option<ColdOperationSlot<G>>"));
-    assert!(!operation_frame.contains("CurrentCommand"));
 }
 
 #[test]

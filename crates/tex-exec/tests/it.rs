@@ -7,7 +7,7 @@ use tex_command::{
     CommandObservation, CommandObserver, CommandProfile, MutationTarget, ObservationValue,
     RegisteredSourceKind, SourceRegistration,
 };
-use tex_exec::{MainControl, MainControlStep, ResourceNeed, StepResult};
+use tex_exec::{ExecError, MainControl, MainControlStep, ResourceNeed, StepResult};
 use tex_out::dvi::{DviPagePlan, DviStreamWriter};
 use tex_state::{
     EffectRecord, PrintSink, PureMemoConfig, PureMemoRecordingPolicy, PureMemoRuntime,
@@ -208,7 +208,7 @@ fn unified_operation_preserves_state_output_and_typed_evidence() {
             {
                 StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput) => break,
                 StepResult::Progress(MainControlStep::Continue) => {}
-                StepResult::Suspended(need) => panic!("unexpected resource suspension: {need:?}"),
+                StepResult::Suspended(need) => panic!("unexpected resource need: {need:?}"),
             }
         }
         let telemetry = control.episode_telemetry();
@@ -286,8 +286,8 @@ fn unified_operation_preserves_state_output_and_typed_evidence() {
 }
 
 #[test]
-fn unified_operation_resource_suspension_is_observation_independent() {
-    let source = br"\input absent-resource";
+fn unified_operation_resource_need_is_observation_independent() {
+    let source = br"\count0=7\input absent-resource";
     let (ordinary_need, ordinary_effects) = support::with_plain_universe(|stores| {
         let mut control = etex_session(stores, source);
         let need = loop {
@@ -297,6 +297,21 @@ fn unified_operation_resource_suspension_is_observation_independent() {
                 break need;
             }
         };
+        assert_eq!(
+            need,
+            ResourceNeed::Input {
+                name: "absent-resource.tex".to_owned(),
+                original_name: "absent-resource".to_owned(),
+            }
+        );
+        control.capabilities_mut().register_input(
+            "absent-resource.tex",
+            SourceRegistration::new(RegisteredSourceKind::Generated, Arc::<[u8]>::from(&b""[..])),
+        );
+        assert!(matches!(
+            control.advance(stores),
+            Err(ExecError::ResourceReplayRequired)
+        ));
         (need, stores.world().effect_records().to_vec())
     });
     let (observed_need, observed_effects, evidence) = support::with_plain_universe(|stores| {
@@ -396,9 +411,7 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
     assert!(control.contains("mod settlement;"));
     for (authority, owner) in [
         ("struct CommandEpisode<G>", command_episode),
-        ("struct OperationFrame<G>", command_episode),
         ("fn preflight_replay_delivery(", delivery),
-        ("fn settle_preflight_step<", delivery),
         ("fn commit_direct_operation(", settlement),
         ("fn discard_direct_operation(", settlement),
         ("fn finish_paragraph_boundary(", settlement),
@@ -425,19 +438,10 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
     assert_eq!(interpreter.matches("CommandProcessor::new(").count(), 1);
     assert!(!ownership_surface.contains("enum ScannedStep"));
     assert!(!ownership_surface.contains("struct PreparedOperation"));
-    assert!(command_episode.contains("struct OperationFrame<G>"));
     assert!(command_episode.contains("struct CommandEpisode<G>"));
     assert!(!ownership_surface.contains("struct PreparedColdOperation"));
     assert!(!ownership_surface.contains("struct PrepareOperationError"));
     assert!(!ownership_surface.contains("Prepared(Box<ColdOperation"));
-    let operation_frame_definition = command_episode
-        .split("struct OperationFrame<G>")
-        .nth(1)
-        .and_then(|tail| tail.split("impl<G> OperationFrame<G>").next())
-        .expect("locate authoritative operation frame");
-    assert!(operation_frame_definition.contains("episode: Option<CommandEpisode<G>>"));
-    assert!(operation_frame_definition.contains("cold: Option<ColdOperationSlot<G>>"));
-    assert!(!operation_frame_definition.contains("CurrentCommand"));
     let command_episode_definition = command_episode
         .split("struct CommandEpisode<G>")
         .nth(1)
@@ -602,17 +606,6 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
     assert!(cold_support.contains("stores: &mut tex_state::CommandContext<'_, G>"));
     assert!(cold_support.contains("context: &'borrow mut tex_state::CommandContext<'stores, G>"));
     assert!(!cold_support.contains("context: tex_state::CommandContext<'a, G>"));
-    let expansion_settlement = delivery
-        .split_once("fn settle_preflight_step<")
-        .and_then(|(_, tail)| tail.split_once("fn scan_preflight_command<"))
-        .map(|(body, _)| body)
-        .expect("locate retained preflight settlement");
-    assert!(
-        expansion_settlement
-            .contains(".resume_expansion_into(expansion, main_loop, &mut command.command)")
-    );
-    assert!(!expansion_settlement.contains("let mut destination = None"));
-
     assert!(cold.contains("mod operation;"));
     assert!(cold.contains("mod scan;"));
     assert!(cold.contains("mod apply;"));

@@ -2502,11 +2502,15 @@ mod tests {
         type Output = RetainedCheckpointKey;
 
         fn run<G: 'static>(self, mut admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
+            admitted
+                .universe()
+                .assign_count(0, 3, AssignmentScope::Global)
+                .expect("accepted baseline count");
             let mut control = crate::MainControl::tex82_initex(admitted.universe());
             control
                 .register_root_source(SourceRegistration::new(
                     RegisteredSourceKind::Generated,
-                    std::sync::Arc::<[u8]>::from(&b"\\input child\\end"[..]),
+                    std::sync::Arc::<[u8]>::from(&b"\\count0=7 \\input child\\end"[..]),
                 ))
                 .expect("root source");
             let checkpoint = control
@@ -2524,44 +2528,82 @@ mod tests {
         }
     }
 
-    struct SuspendFork(RetainedEngineAttachmentKey);
+    struct BeginResourceAttempt(RetainedEngineAttachmentKey);
 
-    impl RetainedEngineOperation for SuspendFork {
-        type Output = RetainedEngineAttachmentKey;
+    impl RetainedEngineOperation for BeginResourceAttempt {
+        type Output = RetainedCheckpointKey;
 
         fn run<G: 'static>(self, mut admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
-            let runtime = admitted
+            let _runtime = admitted
                 .take_attachment::<RestoredCheckpointRuntime>(self.0)
                 .expect("fork runtime");
             let mut control = admitted
                 .take_checkpoint_control()
                 .expect("fork owns typed main control");
+            let checkpoint = control
+                .capture_checkpoint(
+                    crate::EngineBoundary::JobStart,
+                    admitted.universe(),
+                    crate::ExecutionBudgetCounters::default(),
+                )
+                .expect("candidate replay checkpoint");
+            let checkpoint = admitted.retain_checkpoint(checkpoint);
             let step = control
                 .advance_episode(admitted.universe())
-                .expect("resource suspension");
-            assert!(matches!(
+                .expect("resource need");
+            assert_eq!(
                 step,
-                crate::StepResult::Suspended(crate::ResourceNeed::Input { ref name, .. })
-                    if name == "child.tex"
+                crate::StepResult::Suspended(crate::ResourceNeed::Input {
+                    name: "child.tex".to_owned(),
+                    original_name: "child".to_owned(),
+                })
+            );
+            assert!(matches!(
+                control.advance_episode(admitted.universe()),
+                Err(crate::ExecError::ResourceReplayRequired)
             ));
+            control.cancel_external_attempt_for_checkpoint_settlement(admitted.universe());
             admitted
-                .attach_with_checkpoint_control(runtime, control)
-                .expect("suspended control reattaches")
+                .prepare_checkpoint_control(control)
+                .expect("invalidated control settles before replay")
+                .accept();
+            checkpoint
         }
     }
 
-    struct ResumeFork(RetainedEngineAttachmentKey);
+    struct ReplayResourceAttempt {
+        checkpoint: RetainedCheckpointKey,
+    }
 
-    impl RetainedEngineOperation for ResumeFork {
+    impl RetainedEngineOperation for ReplayResourceAttempt {
         type Output = crate::StepResult;
 
         fn run<G: 'static>(self, mut admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
-            let _runtime = admitted
-                .take_attachment::<RestoredCheckpointRuntime>(self.0)
-                .expect("suspended runtime");
-            let mut control = admitted
-                .take_checkpoint_control()
-                .expect("suspension owns typed main control");
+            let command = admitted
+                .sidecars
+                .command
+                .take()
+                .expect("settled candidate command is available for fresh replay control");
+
+            let checkpoint = admitted
+                .sidecars
+                .boundaries
+                .as_ref()
+                .expect("candidate owns replay checkpoint lane")
+                .get(&self.checkpoint)
+                .expect("candidate replay checkpoint survives the attempt");
+            let ledger = admitted
+                .sidecars
+                .ledger
+                .as_mut()
+                .expect("candidate owns output ledger");
+            let universe = &mut *admitted.universe;
+            let mut control =
+                crate::MainControl::from_checkpoint_fork(command, crate::ModeNest::new());
+            control
+                .restore_checkpoint_after_replay(checkpoint, universe, ledger)
+                .expect("full aggregate checkpoint restores");
+            control.reset_checkpoint_replay_runtime(checkpoint.boundary());
             control.capabilities_mut().register_input(
                 "child.tex",
                 SourceRegistration::new(
@@ -2569,19 +2611,20 @@ mod tests {
                     std::sync::Arc::<[u8]>::from(&b""[..]),
                 ),
             );
+            let mut result = None;
             for _ in 0..8 {
-                let step = control
-                    .advance_episode(admitted.universe())
-                    .expect("resource retry");
+                let step = control.advance_episode(universe).expect("resource replay");
                 if step == crate::StepResult::Progress(crate::MainControlStep::End) {
-                    admitted
-                        .prepare_checkpoint_control(control)
-                        .expect("terminal control parks")
-                        .accept();
-                    return step;
+                    result = Some(step);
+                    break;
                 }
             }
-            panic!("fulfilled resource input did not reach the terminal step")
+            let result = result.expect("fulfilled resource input reaches terminal step");
+            admitted
+                .prepare_checkpoint_control(control)
+                .expect("replayed control parks")
+                .accept();
+            result
         }
     }
 
@@ -2847,7 +2890,7 @@ mod tests {
     }
 
     #[test]
-    fn forked_candidate_can_suspend_for_a_resource_and_resume_after_acceptance() {
+    fn forked_candidate_replays_from_a_full_checkpoint_after_resource_need() {
         let store = store();
         let mut accepted =
             RetainedEngineGeneration::new(&store, World::memory()).expect("accepted generation");
@@ -2857,24 +2900,31 @@ mod tests {
         let (mut current, runtime, _) = accepted
             .fork_checkpoint(&checkpoint)
             .expect("resource candidate fork");
-        let suspension = current
-            .with_admitted(SuspendFork(runtime))
-            .expect("suspension admission");
+        let replay_checkpoint = current
+            .with_admitted(BeginResourceAttempt(runtime))
+            .expect("resource attempt admission");
+        let replayed = current
+            .with_admitted(ReplayResourceAttempt {
+                checkpoint: replay_checkpoint,
+            })
+            .expect("full-checkpoint replay admission");
+        assert_eq!(
+            replayed,
+            crate::StepResult::Progress(crate::MainControlStep::End)
+        );
 
         accepted.prepare_candidate_accept(&mut current);
         accepted.finish_candidate_accept(&mut current);
         accepted.retire().expect("accept current generation");
-        let resumed = current
-            .with_admitted(ResumeFork(suspension))
-            .expect("resume admission");
         assert_eq!(
-            resumed,
-            crate::StepResult::Progress(crate::MainControlStep::End)
+            current.with_admitted(ReadCount),
+            Ok(7),
+            "replay starts from the checkpoint and applies the complete root command",
         );
     }
 
     #[test]
-    fn dropping_a_resource_suspension_returns_the_attempt_before_reforking() {
+    fn dropping_a_resource_attempt_returns_the_attempt_before_reforking() {
         let store = store();
         let mut accepted =
             RetainedEngineGeneration::new(&store, World::memory()).expect("accepted generation");
@@ -2884,18 +2934,23 @@ mod tests {
         let (mut current, runtime, _) = accepted
             .fork_checkpoint(&checkpoint)
             .expect("first resource candidate fork");
-        let _suspension = current
-            .with_admitted(SuspendFork(runtime))
-            .expect("first suspension admission");
+        let _replay_checkpoint = current
+            .with_admitted(BeginResourceAttempt(runtime))
+            .expect("first resource attempt admission");
 
         drop(current);
+        assert_eq!(
+            accepted.with_admitted(ReadCount),
+            Ok(3),
+            "discarding the invalidated candidate leaves the accepted generation unchanged",
+        );
 
         let (mut retry, runtime, _) = accepted
             .fork_checkpoint(&checkpoint)
             .expect("rejection returned the command and state owners");
-        let _suspension = retry
-            .with_admitted(SuspendFork(runtime))
-            .expect("retry suspension does not nest the discarded attempt");
+        let _replay_checkpoint = retry
+            .with_admitted(BeginResourceAttempt(runtime))
+            .expect("retry resource attempt does not nest the discarded candidate");
         drop(retry);
     }
 
