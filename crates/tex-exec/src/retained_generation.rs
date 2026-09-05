@@ -79,28 +79,26 @@ impl<'a, G> AttachedCheckpointControl<'a, G> {
             .as_ref()
             .ok_or(RetainedEngineAccessError::StaleAttachment)?
             .get(key)?;
-        let output = match checkpoint.output_ledger_checkpoint() {
-            Some(output) => output,
-            None => return Err(RetainedEngineAccessError::StaleCheckpoint),
-        };
+        if checkpoint.output_ledger_checkpoint().is_none() {
+            return Err(RetainedEngineAccessError::StaleCheckpoint);
+        }
+        let ledger = self
+            .sidecars
+            .ledger
+            .as_mut()
+            .ok_or(RetainedEngineAccessError::StaleAttachment)?;
         let control = self
             .control
             .as_mut()
             .ok_or(RetainedEngineAccessError::StaleAttachment)?;
         if control
-            .restore_checkpoint_after_replay(checkpoint, self.universe)
+            .restore_checkpoint_after_replay(checkpoint, self.universe, ledger)
             .is_err()
         {
             return Err(RetainedEngineAccessError::StaleCheckpoint);
         }
         control.reset_checkpoint_replay_runtime(checkpoint.boundary());
-        let rewind = self
-            .sidecars
-            .ledger
-            .as_mut()
-            .ok_or(RetainedEngineAccessError::StaleAttachment)?
-            .rewind(output);
-        rewind.map_err(|_| RetainedEngineAccessError::StaleCheckpoint)
+        Ok(())
     }
 
     pub fn initialization_parts(

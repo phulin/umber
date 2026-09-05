@@ -13,9 +13,9 @@ use super::{
     EngineCheckpoint, ReachableStateRoots,
 };
 use crate::{
-    AdmittedEngineGeneration, ExecutionBudgetCounters, Mode, ModeNest, RestoredCheckpointRuntime,
-    RetainedCheckpointKey, RetainedEngineAttachmentKey, RetainedEngineGeneration,
-    RetainedEngineOperation,
+    AdmittedEngineGeneration, ExecutionBudgetCounters, Mode, ModeNest, OutputLedger,
+    RestoredCheckpointRuntime, RetainedCheckpointKey, RetainedEngineAttachmentKey,
+    RetainedEngineGeneration, RetainedEngineOperation,
 };
 
 fn retained_store() -> ReachabilityStore {
@@ -497,6 +497,68 @@ fn command_validation_failure_leaves_runtime_and_mode_unchanged() {
             20,
             "command validation must precede runtime mutation"
         );
+    });
+}
+
+#[test]
+fn candidate_replay_preflight_rejects_foreign_output_without_mutation() {
+    crate::test_harness::with_nonstop_universe(|universe| {
+        let mut command = CommandState::default();
+        let mut modes = ModeNest::new();
+        let mut output = OutputLedger::new();
+        let mut checkpoint = EngineCheckpoint::capture_checkpoint(
+            CheckpointEligibility::job_start(),
+            &mut command,
+            &mut modes,
+            universe,
+            ExecutionBudgetCounters::default(),
+        )
+        .expect("checkpoint captures");
+        checkpoint.set_output_ledger(output.checkpoint());
+
+        let mut command_owner = Some(command);
+        let (mut candidate, mut control) = checkpoint
+            .fork_state(universe, &mut command_owner, &mut output)
+            .expect("checkpoint forks");
+        let mut foreign_output = OutputLedger::new();
+        checkpoint.set_output_ledger(foreign_output.checkpoint());
+
+        let count_before = candidate
+            .command_context()
+            .expect("candidate context")
+            .count(0)
+            .expect("count");
+        let mode_before = control.mode_nest_for_test().summary();
+        let output_before = format!("{output:?}");
+        assert!(matches!(
+            control.restore_checkpoint_after_replay(&checkpoint, &mut candidate, &mut output),
+            Err(CheckpointRestoreError::Output(_))
+        ));
+        assert_eq!(
+            candidate
+                .command_context()
+                .expect("candidate context")
+                .count(0)
+                .expect("count"),
+            count_before,
+            "output preflight must precede runtime mutation"
+        );
+        assert_eq!(
+            control.mode_nest_for_test().summary(),
+            mode_before,
+            "output preflight must precede mode mutation"
+        );
+        assert_eq!(
+            format!("{output:?}"),
+            output_before,
+            "output preflight must leave the candidate ledger untouched"
+        );
+
+        let command = control.into_rejected_checkpoint_command_with_state(&candidate);
+        output.reject_checkpoint_candidate();
+        universe.reject_checkpoint_candidate(&mut candidate);
+        command_owner = Some(command);
+        drop(command_owner);
     });
 }
 

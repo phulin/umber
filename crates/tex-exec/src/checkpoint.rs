@@ -1,9 +1,10 @@
 use std::fmt;
 
 use tex_command::{
-    CommandRestoreError, CommandState, CommandSummary, CommandSummaryError, PreparedCommandRestore,
+    CommandRestoreError, CommandState, CommandSummary, CommandSummaryError,
+    PreparedCommandReplayRestore, PreparedCommandRestore,
 };
-use tex_state::{RuntimeCheckpoint, Universe, UniverseError};
+use tex_state::{PreparedRuntimeCheckpointReplay, RuntimeCheckpoint, Universe, UniverseError};
 
 use crate::mode::ModeCheckpoint;
 use crate::{ExecError, MainControl, ModeNest, ModeNestSummary};
@@ -420,6 +421,19 @@ pub struct EngineCheckpoint<G> {
     effect_prefix: usize,
     artifact_prefix: usize,
     pub(crate) budget_counters: crate::ExecutionBudgetCounters,
+}
+
+struct PreparedCheckpointReplay<G> {
+    command: PreparedCommandReplayRoots<G>,
+    mode: crate::mode::PreparedModeReplayRestore,
+    runtime: PreparedRuntimeCheckpointReplay<G>,
+    output: crate::canonical_step::PreparedOutputReplayRestore,
+    maximum_saved_depth: usize,
+}
+
+enum PreparedCommandReplayRoots<G> {
+    Candidate(PreparedCommandReplayRestore<G>),
+    Independent(PreparedCommandRestore<G>),
 }
 
 /// Small owner coordinates for the earliest surviving live restart root.
@@ -865,29 +879,6 @@ impl<G> EngineCheckpoint<G> {
         nest: &mut ModeNest,
         universe: &mut Universe<G>,
     ) -> Result<(), CheckpointRestoreError> {
-        self.restore_state_with_replay_boundary(command, nest, universe, false)
-    }
-
-    /// Restores after the current direct operation has been discarded.  The
-    /// candidate may still be semantically inside the nested scanner that
-    /// requested the resource, so the state layer must replace that suffix
-    /// instead of requiring the current roots to be checkpoint-quiescent.
-    pub(crate) fn restore_state_after_replay(
-        &self,
-        command: &mut CommandState<G>,
-        nest: &mut ModeNest,
-        universe: &mut Universe<G>,
-    ) -> Result<(), CheckpointRestoreError> {
-        self.restore_state_with_replay_boundary(command, nest, universe, true)
-    }
-
-    fn restore_state_with_replay_boundary(
-        &self,
-        command: &mut CommandState<G>,
-        nest: &mut ModeNest,
-        universe: &mut Universe<G>,
-        after_direct_replay_discard: bool,
-    ) -> Result<(), CheckpointRestoreError> {
         let prepared_command = command
             .prepare_summary_restore(&self.command, universe)
             .map_err(CheckpointRestoreError::Command)?;
@@ -900,8 +891,99 @@ impl<G> EngineCheckpoint<G> {
             prepared_command,
             &self.modes,
             maximum_saved_depth,
-            after_direct_replay_discard,
         )
+    }
+
+    /// Restores after the current direct operation has been discarded.  The
+    /// candidate may still be semantically inside the nested scanner that
+    /// requested the resource, so the state layer must replace that suffix
+    /// instead of requiring the current roots to be checkpoint-quiescent.
+    pub(crate) fn restore_state_after_replay(
+        &self,
+        command: &mut CommandState<G>,
+        nest: &mut ModeNest,
+        universe: &mut Universe<G>,
+        output: &mut crate::OutputLedger,
+    ) -> Result<(), CheckpointRestoreError> {
+        let prepared = self.prepare_state_after_replay(command, nest, universe, output)?;
+        self.apply_prepared_state_after_replay(command, nest, universe, output, prepared)
+    }
+
+    fn prepare_state_after_replay(
+        &self,
+        command: &CommandState<G>,
+        nest: &ModeNest,
+        universe: &Universe<G>,
+        output: &crate::OutputLedger,
+    ) -> Result<PreparedCheckpointReplay<G>, CheckpointRestoreError> {
+        let command = if command.checkpoint_candidate_active() {
+            PreparedCommandReplayRoots::Candidate(
+                command
+                    .prepare_summary_restore_after_replay(&self.command, universe)
+                    .map_err(CheckpointRestoreError::Command)?,
+            )
+        } else {
+            PreparedCommandReplayRoots::Independent(
+                command
+                    .prepare_summary_restore(&self.command, universe)
+                    .map_err(CheckpointRestoreError::Command)?,
+            )
+        };
+        let mode = nest.prepare_checkpoint_restore_after_replay(&self.modes);
+        let runtime = universe
+            .prepare_runtime_checkpoint_after_replay(&self.runtime)
+            .map_err(CheckpointRestoreError::Runtime)?;
+        let output_checkpoint = self.output.ok_or(CheckpointRestoreError::Output(
+            tex_state::fork_arena::ForkArenaError::InvalidCheckpoint,
+        ))?;
+        let output = output
+            .prepare_replay_restore(output_checkpoint)
+            .map_err(CheckpointRestoreError::Output)?;
+        Ok(PreparedCheckpointReplay {
+            command,
+            mode,
+            runtime,
+            output,
+            maximum_saved_depth: nest.maximum_saved_depth(),
+        })
+    }
+
+    fn apply_prepared_state_after_replay(
+        &self,
+        command: &mut CommandState<G>,
+        nest: &mut ModeNest,
+        universe: &mut Universe<G>,
+        output: &mut crate::OutputLedger,
+        prepared: PreparedCheckpointReplay<G>,
+    ) -> Result<(), CheckpointRestoreError> {
+        let PreparedCheckpointReplay {
+            command: prepared_command,
+            mode: prepared_mode,
+            runtime: prepared_runtime,
+            output: prepared_output,
+            maximum_saved_depth,
+        } = prepared;
+        universe
+            .apply_prepared_runtime_checkpoint_after_replay(&self.runtime, prepared_runtime, || {
+                match prepared_command {
+                    PreparedCommandReplayRoots::Candidate(prepared) => command
+                        .apply_prepared_replay_restore(prepared)
+                        .expect("aggregate replay preflight retained its command destination"),
+                    PreparedCommandReplayRoots::Independent(prepared) => command
+                        .apply_prepared_restore(prepared)
+                        .expect("aggregate replay preflight retained its command destination"),
+                }
+                nest.apply_prepared_checkpoint_restore_after_replay(&self.modes, prepared_mode)
+                    .expect("aggregate replay preflight retained its mode destination");
+                // TeX's maxima are job-lifetime diagnostics, not semantic
+                // checkpoint state. Rolling back live modes must not refund
+                // an observed high-water.
+                nest.retain_maximum_saved_depth(maximum_saved_depth);
+            })
+            .map_err(CheckpointRestoreError::Runtime)?;
+        output
+            .apply_prepared_replay_restore(prepared_output)
+            .map_err(CheckpointRestoreError::Output)
     }
 }
 
@@ -913,21 +995,9 @@ fn restore_validated_roots<G>(
     prepared_command: PreparedCommandRestore<G>,
     restored_modes: &ModeCheckpoint,
     maximum_saved_depth: usize,
-    after_direct_replay_discard: bool,
 ) -> Result<(), CheckpointRestoreError> {
-    let restore = if after_direct_replay_discard {
-        universe.restore_runtime_checkpoint_after_replay_with_roots(runtime, || {
-            command
-                .apply_prepared_restore(prepared_command)
-                .expect("aggregate preflight retained its command destination");
-            nest.restore_checkpoint(restored_modes)
-                .expect("aggregate preflight retained its mode destination");
-            // TeX's maxima are job-lifetime diagnostics, not semantic checkpoint
-            // state. Rolling back live modes must not refund an observed high-water.
-            nest.retain_maximum_saved_depth(maximum_saved_depth);
-        })
-    } else {
-        universe.restore_runtime_checkpoint_with_roots(runtime, || {
+    universe
+        .restore_runtime_checkpoint_with_roots(runtime, || {
             command
                 .apply_prepared_restore(prepared_command)
                 .expect("aggregate preflight retained its command destination");
@@ -935,8 +1005,7 @@ fn restore_validated_roots<G>(
                 .expect("aggregate preflight retained its mode destination");
             nest.retain_maximum_saved_depth(maximum_saved_depth);
         })
-    };
-    restore.map_err(CheckpointRestoreError::Runtime)
+        .map_err(CheckpointRestoreError::Runtime)
 }
 
 /// Receives generation-typed checkpoints synchronously at named boundaries.

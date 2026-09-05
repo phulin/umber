@@ -297,6 +297,15 @@ impl<T, const RECORDS: usize> PackedJournal<T, RECORDS> {
         true
     }
 
+    pub(crate) fn can_restore_current(&self, mark: PackedJournalMark) -> bool {
+        let Some(fork) = self.fork.as_ref() else {
+            return false;
+        };
+        self.validates(mark)
+            && mark.chunks >= fork.selected.chunks
+            && mark.records >= fork.selected.records
+    }
+
     pub(crate) fn begin_checkpoint_candidate(
         &mut self,
         mark: PackedJournalMark,

@@ -254,11 +254,12 @@ pub use source_fragments::{
     LayoutResolvedOrigin, Piece, PieceId, RootSpanId,
 };
 pub use universe::{
-    DefinitionPromotion, EngineBoundaryHasher, InteractionMode, NodePromotionError, PromotionError,
-    PromotionReceipt, ResidentPromotionBatch, RuntimeCheckpoint, RuntimeCheckpointFontScanCounters,
-    RuntimeCheckpointIdentityRoots, RuntimeCheckpointRetention, ShipoutTransaction,
-    StateCheckpoint, StateCheckpointMark, TokenListPromotion, Universe, UniverseError,
-    UniverseRetirement, with_universe, with_universe_for_profile, with_universe_in_epoch,
+    DefinitionPromotion, EngineBoundaryHasher, InteractionMode, NodePromotionError,
+    PreparedRuntimeCheckpointReplay, PromotionError, PromotionReceipt, ResidentPromotionBatch,
+    RuntimeCheckpoint, RuntimeCheckpointFontScanCounters, RuntimeCheckpointIdentityRoots,
+    RuntimeCheckpointRetention, ShipoutTransaction, StateCheckpoint, StateCheckpointMark,
+    TokenListPromotion, Universe, UniverseError, UniverseRetirement, with_universe,
+    with_universe_for_profile, with_universe_in_epoch,
 };
 #[cfg(feature = "profiling")]
 pub use universe::{SourceFontCheckpointHarness, SourceFontCheckpointMark};

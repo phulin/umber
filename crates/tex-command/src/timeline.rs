@@ -459,7 +459,7 @@ impl<T: LogicalStackElement> LogicalStack<T> {
         let Some(_fork) = self.fork.as_ref() else {
             return false;
         };
-        if !self.validates(mark) {
+        if !self.can_restore_current(mark) {
             return false;
         }
         let (rows, displaced) = (&mut self.rows, &mut self.displaced);
@@ -474,6 +474,12 @@ impl<T: LogicalStackElement> LogicalStack<T> {
             self.next_interval();
         }
         restored
+    }
+
+    pub(crate) fn can_restore_current(&self, mark: LogicalStackMark) -> bool {
+        self.fork.is_some()
+            && mark.top as usize <= self.rows.len()
+            && self.undo.can_restore_current(mark.undo)
     }
 
     pub(crate) fn release_prefix(&mut self, mark: LogicalStackMark) -> Option<usize> {

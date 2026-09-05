@@ -1825,28 +1825,36 @@ impl<G> MainControl<G> {
         checkpoint: &crate::EngineCheckpoint<G>,
         stores: &mut Universe<G>,
     ) -> Result<(), crate::CheckpointRestoreError> {
-        self.restore_checkpoint_roots(checkpoint, stores, false)
+        self.restore_checkpoint_roots(checkpoint, stores)
     }
 
     pub(crate) fn restore_checkpoint_after_replay(
         &mut self,
         checkpoint: &crate::EngineCheckpoint<G>,
         stores: &mut Universe<G>,
+        output: &mut crate::OutputLedger,
     ) -> Result<(), crate::CheckpointRestoreError> {
-        self.restore_checkpoint_roots(checkpoint, stores, true)
+        checkpoint.restore_state_after_replay(
+            &mut self.command,
+            &mut self.modes,
+            stores,
+            output,
+        )?;
+        self.active_alignment = None;
+        self.boxes = ReplayBoxes::default();
+        self.paragraph_checkpoint_demand = None;
+        self.paragraph_checkpoint_cut = false;
+        self.fatal = None;
+        self.captured_fatal_origin = None;
+        Ok(())
     }
 
     fn restore_checkpoint_roots(
         &mut self,
         checkpoint: &crate::EngineCheckpoint<G>,
         stores: &mut Universe<G>,
-        after_direct_replay_discard: bool,
     ) -> Result<(), crate::CheckpointRestoreError> {
-        if after_direct_replay_discard {
-            checkpoint.restore_state_after_replay(&mut self.command, &mut self.modes, stores)?;
-        } else {
-            checkpoint.restore_state(&mut self.command, &mut self.modes, stores)?;
-        }
+        checkpoint.restore_state(&mut self.command, &mut self.modes, stores)?;
         self.active_alignment = None;
         self.boxes = ReplayBoxes::default();
         self.paragraph_checkpoint_demand = None;

@@ -46,6 +46,7 @@ use crate::stores::{AcceptedStateCoreTail, StateCore, StateCoreRetirement};
 use crate::token::TokenWord;
 use crate::world::{AcceptedWorldTail, World, WorldSnapshot};
 use smallvec::SmallVec;
+use std::marker::PhantomData;
 use std::rc::Rc;
 
 fn tex_memory_words(nodes: &[Node], etex_node_sizes: bool) -> (usize, usize) {
@@ -262,6 +263,15 @@ pub struct RuntimeCheckpoint<G> {
     engine_usage: crate::command_context::EngineUsageCheckpoint,
     identity_roots: RuntimeCheckpointIdentityRoots,
     retention: RuntimeCheckpointRetention,
+}
+
+/// Consumed proof that the destination still owns every runtime coordinate
+/// needed by replay. The opaque addresses keep the proof tied to the exact
+/// Universe and checkpoint without copying engine roots.
+pub struct PreparedRuntimeCheckpointReplay<G> {
+    universe: usize,
+    checkpoint: usize,
+    brand: PhantomData<fn(&G) -> &G>,
 }
 
 /// Owner-published semantic roots for the state-layer checkpoint families.
@@ -3169,6 +3179,46 @@ impl<G> Universe<G> {
         )
     }
 
+    /// Preflights a retained runtime checkpoint against the current candidate
+    /// lineage without changing any owner. The returned capability is consumed
+    /// by [`Self::apply_prepared_runtime_checkpoint_after_replay`].
+    pub fn prepare_runtime_checkpoint_after_replay(
+        &self,
+        checkpoint: &RuntimeCheckpoint<G>,
+    ) -> Result<PreparedRuntimeCheckpointReplay<G>, UniverseError> {
+        if !self.runtime_checkpoint_roots_ready(checkpoint, false, true) {
+            return Err(UniverseError::State(StateError::InvalidCursor));
+        }
+        Ok(PreparedRuntimeCheckpointReplay {
+            universe: std::ptr::from_ref(self) as usize,
+            checkpoint: std::ptr::from_ref(checkpoint) as usize,
+            brand: PhantomData,
+        })
+    }
+
+    /// Applies a previously prepared current-candidate runtime restore.
+    /// Validation remains inside the owner method as a defensive constant-time
+    /// check; the aggregate replay boundary performs this only after every
+    /// other owner has passed its own preflight.
+    pub fn apply_prepared_runtime_checkpoint_after_replay(
+        &mut self,
+        checkpoint: &RuntimeCheckpoint<G>,
+        prepared: PreparedRuntimeCheckpointReplay<G>,
+        transfer_external_roots: impl FnOnce(),
+    ) -> Result<(), UniverseError> {
+        if prepared.universe != std::ptr::from_ref(self) as usize
+            || prepared.checkpoint != std::ptr::from_ref(checkpoint) as usize
+        {
+            return Err(UniverseError::State(StateError::InvalidCursor));
+        }
+        self.restore_runtime_checkpoint_with_roots_mode(
+            checkpoint,
+            transfer_external_roots,
+            false,
+            true,
+        )
+    }
+
     /// Restores a retained aggregate checkpoint after the direct execution
     /// attempt has already been discarded.  The current candidate may still
     /// contain semantic group/page suffixes from nested scanning; those are
@@ -3179,11 +3229,11 @@ impl<G> Universe<G> {
         checkpoint: &RuntimeCheckpoint<G>,
         transfer_external_roots: impl FnOnce(),
     ) -> Result<(), UniverseError> {
-        self.restore_runtime_checkpoint_with_roots_mode(
+        let prepared = self.prepare_runtime_checkpoint_after_replay(checkpoint)?;
+        self.apply_prepared_runtime_checkpoint_after_replay(
             checkpoint,
+            prepared,
             transfer_external_roots,
-            false,
-            true,
         )
     }
 
@@ -3202,26 +3252,11 @@ impl<G> Universe<G> {
         {
             return Err(UniverseError::State(StateError::CheckpointIneligible));
         }
-        let roots_ready = (if generation_fork {
-            self.command_retained
-                .world
-                .snapshot_is_forkable(&checkpoint.world)
-        } else {
-            self.command_retained
-                .world
-                .snapshot_is_retained(&checkpoint.world)
-        }) && self
-            .command_retained
-            .pdf
-            .snapshot_is_retained(&checkpoint.pdf)
-            && self.command_retained.fonts.validates(checkpoint.fonts)
-            && self.command_retained.sources.validates(checkpoint.sources)
-            && if after_direct_replay_discard {
-                self.checkpoint_state_is_ready_after_replay(checkpoint)
-            } else {
-                self.checkpoint_state_is_ready(checkpoint)
-            }
-            && self.page_region.validates_checkpoint(checkpoint.page);
+        let roots_ready = self.runtime_checkpoint_roots_ready(
+            checkpoint,
+            generation_fork,
+            after_direct_replay_discard,
+        );
         if !roots_ready {
             return Err(UniverseError::State(StateError::InvalidCursor));
         }
@@ -3268,6 +3303,34 @@ impl<G> Universe<G> {
             .sources
             .truncate_to(checkpoint.sources);
         Ok(())
+    }
+
+    fn runtime_checkpoint_roots_ready(
+        &self,
+        checkpoint: &RuntimeCheckpoint<G>,
+        generation_fork: bool,
+        after_direct_replay_discard: bool,
+    ) -> bool {
+        (if generation_fork {
+            self.command_retained
+                .world
+                .snapshot_is_forkable(&checkpoint.world)
+        } else {
+            self.command_retained
+                .world
+                .snapshot_is_retained(&checkpoint.world)
+        }) && self
+            .command_retained
+            .pdf
+            .snapshot_is_retained(&checkpoint.pdf)
+            && self.command_retained.fonts.validates(checkpoint.fonts)
+            && self.command_retained.sources.validates(checkpoint.sources)
+            && if after_direct_replay_discard {
+                self.checkpoint_state_is_ready_after_replay(checkpoint)
+            } else {
+                self.checkpoint_state_is_ready(checkpoint)
+            }
+            && self.page_region.validates_checkpoint(checkpoint.page)
     }
 
     /// Begins one exclusive, rollback-capable artifact publication.

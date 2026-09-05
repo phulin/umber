@@ -1777,7 +1777,7 @@ impl<G> InputStack<G> {
     }
 
     pub(crate) fn restore_current(&mut self, mark: InputStackMark) -> bool {
-        if self.fork.is_none() || !self.validates(mark) {
+        if !self.can_restore_current(mark) {
             return false;
         }
         let (rows, displaced, source_lex, source_owners, source_slots) = (
@@ -1803,6 +1803,12 @@ impl<G> InputStack<G> {
             self.begin_interval();
         }
         restored
+    }
+
+    pub(crate) fn can_restore_current(&self, mark: InputStackMark) -> bool {
+        self.fork.is_some()
+            && mark.top as usize <= self.rows.len()
+            && self.undo.can_restore_current(mark.undo)
     }
 
     pub(crate) fn release_prefix(&mut self, mark: InputStackMark) -> Option<usize> {

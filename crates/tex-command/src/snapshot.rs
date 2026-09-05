@@ -789,6 +789,24 @@ impl<G> CommandTimeline<G> {
         true
     }
 
+    fn can_restore_current_roots(&self, mark: CommandTimelineMark) -> bool {
+        let Some(fork) = self.fork.as_ref() else {
+            return false;
+        };
+        let mut current = Some(fork.prefix_tail);
+        let mut frame_is_current = false;
+        while let Some(frame) = current {
+            if frame == mark.frame {
+                frame_is_current = true;
+                break;
+            }
+            current = self.next_frame(frame);
+        }
+        frame_is_current
+            && self.scalars.can_restore_current(mark.scalars)
+            && self.pending_input.can_restore_current(mark.pending_input)
+    }
+
     fn can_begin_checkpoint_candidate(&self, mark: CommandTimelineMark) -> bool {
         self.fork.is_none()
             && self.frame(mark.frame).is_some()
@@ -1354,6 +1372,15 @@ pub struct PreparedCommandRestore<G> {
     rollback: CommandRollbackCoordinates,
     attempt: AttemptMark,
     brand: PhantomData<fn(&G) -> &G>,
+}
+
+/// Fully validated command-root switch within the current checkpoint fork.
+///
+/// This is deliberately distinct from [`PreparedCommandRestore`]: an ordinary
+/// restore rejects an active fork, while replay must rewind only the current
+/// candidate lineage and leave the accepted sibling suffix attached.
+pub struct PreparedCommandReplayRestore<G> {
+    restore: PreparedCommandRestore<G>,
 }
 
 #[cfg(test)]

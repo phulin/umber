@@ -435,6 +435,90 @@ impl<G> CommandState<G> {
         self.resolve_restore(summary.generation(), summary.cursor())
     }
 
+    /// Validates a retained summary against the current candidate fork.
+    ///
+    /// Replay is the only caller allowed to use this preparation. It accepts
+    /// a mark on the current fork lineage and keeps the detached accepted
+    /// sibling available for later candidate rejection or acceptance.
+    pub fn prepare_summary_restore_after_replay(
+        &self,
+        summary: &CommandSummary<G>,
+        universe: &Universe<G>,
+    ) -> Result<PreparedCommandReplayRestore<G>, CommandRestoreError> {
+        let restore = self.prepare_summary_restore(summary, universe)?;
+        let timeline = self.timeline.can_restore_current_roots(restore.timeline);
+        let input = self
+            .input
+            .levels
+            .can_restore_current(restore.rollback.input);
+        let conditions = self
+            .conditions
+            .frames
+            .can_restore_current(restore.rollback.conditions);
+        let groups = self
+            .group_payloads
+            .can_restore_current(restore.rollback.groups);
+        let aftergroups = self
+            .aftergroup_payloads
+            .can_restore_current(restore.rollback.aftergroups);
+        let alignment = self
+            .alignment
+            .align_stack
+            .can_restore_current(restore.rollback.alignment);
+        let suspended = self
+            .alignment
+            .suspended
+            .can_restore_current(restore.rollback.suspended_alignment);
+        if !(timeline && input && conditions && groups && aftergroups && alignment && suspended) {
+            return Err(CommandRestoreError::InvalidCursor);
+        }
+        Ok(PreparedCommandReplayRestore { restore })
+    }
+
+    /// Applies one current-candidate replay restore after aggregate preflight.
+    pub fn apply_prepared_replay_restore(
+        &mut self,
+        prepared: PreparedCommandReplayRestore<G>,
+    ) -> Result<(), CommandRestoreError> {
+        let restore = prepared.restore;
+        if restore.timeline_owner != self.timeline.owner {
+            return Err(CommandRestoreError::ForeignGeneration);
+        }
+        let restored = self
+            .timeline
+            .restore_current_roots(restore.timeline, &mut self.roots);
+        if !restored {
+            return Err(CommandRestoreError::InvalidCursor);
+        }
+        assert!(self.input.levels.restore_current(restore.rollback.input));
+        assert!(
+            self.conditions
+                .frames
+                .restore_current(restore.rollback.conditions)
+        );
+        assert!(self.group_payloads.restore_current(restore.rollback.groups));
+        assert!(
+            self.aftergroup_payloads
+                .restore_current(restore.rollback.aftergroups)
+        );
+        assert!(
+            self.alignment
+                .align_stack
+                .restore_current(restore.rollback.alignment)
+        );
+        assert!(
+            self.alignment
+                .suspended
+                .restore_current(restore.rollback.suspended_alignment)
+        );
+        self.attempt
+            .arena_mut()
+            .truncate(restore.attempt)
+            .expect("prepared replay command restore validated its attempt mark");
+        self.synchronize_delivery_mode_roots();
+        Ok(())
+    }
+
     /// Revalidates the destination and attempt suffix, then installs one
     /// prepared command root before discarding that suffix.
     pub fn apply_prepared_restore(

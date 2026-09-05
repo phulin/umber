@@ -83,6 +83,11 @@ pub(crate) struct OutputLedgerCheckpoint {
     prepared_page_count: usize,
 }
 
+pub(crate) struct PreparedOutputReplayRestore {
+    ledger: usize,
+    checkpoint: OutputLedgerCheckpoint,
+}
+
 impl Default for OutputLedger {
     fn default() -> Self {
         Self::new()
@@ -167,6 +172,34 @@ impl OutputLedger {
             self.terminal_closed = false;
             Ok(())
         }
+    }
+
+    pub(crate) fn prepare_replay_restore(
+        &self,
+        checkpoint: OutputLedgerCheckpoint,
+    ) -> Result<PreparedOutputReplayRestore, tex_state::fork_arena::ForkArenaError> {
+        let mark_valid = if self.accepted_head_count.is_some() {
+            self.pages.validates_checkpoint(checkpoint.mark)
+        } else {
+            self.pages.can_begin_checkpoint_candidate(checkpoint.mark)
+        };
+        if checkpoint.prepared_page_count > self.prepared_page_count || !mark_valid {
+            return Err(tex_state::fork_arena::ForkArenaError::InvalidCheckpoint);
+        }
+        Ok(PreparedOutputReplayRestore {
+            ledger: std::ptr::from_ref(self) as usize,
+            checkpoint,
+        })
+    }
+
+    pub(crate) fn apply_prepared_replay_restore(
+        &mut self,
+        prepared: PreparedOutputReplayRestore,
+    ) -> Result<(), tex_state::fork_arena::ForkArenaError> {
+        if prepared.ledger != std::ptr::from_ref(self) as usize {
+            return Err(tex_state::fork_arena::ForkArenaError::InvalidCheckpoint);
+        }
+        self.rewind(prepared.checkpoint)
     }
 
     pub(crate) fn checkpoint(&mut self) -> OutputLedgerCheckpoint {

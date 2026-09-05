@@ -2038,6 +2038,11 @@ pub(crate) struct ModeCheckpoint {
     reachable_state_identity_root: Option<u64>,
 }
 
+pub(crate) enum PreparedModeReplayRestore {
+    Candidate { nest: usize, checkpoint: usize },
+    Independent { nest: usize, checkpoint: usize },
+}
+
 impl Clone for ModeCheckpoint {
     fn clone(&self) -> Self {
         Self {
@@ -2326,6 +2331,52 @@ impl ModeNest {
         self.storage.journal = journal::ModeJournal::enabled(1);
         self.storage.scratch.clear();
         Ok(())
+    }
+
+    pub(crate) fn prepare_checkpoint_restore_after_replay(
+        &self,
+        checkpoint: &ModeCheckpoint,
+    ) -> PreparedModeReplayRestore {
+        let nest = std::ptr::from_ref(self) as usize;
+        let checkpoint = checkpoint.owner;
+        if self.is_checkpoint_candidate() {
+            PreparedModeReplayRestore::Candidate { nest, checkpoint }
+        } else {
+            PreparedModeReplayRestore::Independent { nest, checkpoint }
+        }
+    }
+
+    pub(crate) fn apply_prepared_checkpoint_restore_after_replay(
+        &mut self,
+        checkpoint: &ModeCheckpoint,
+        prepared: PreparedModeReplayRestore,
+    ) -> Result<(), ExecError> {
+        match prepared {
+            PreparedModeReplayRestore::Candidate {
+                nest,
+                checkpoint: owner,
+            } if nest == std::ptr::from_ref(self) as usize
+                && owner == checkpoint.owner
+                && self.is_checkpoint_candidate() =>
+            {
+                self.storage.recycle_level_pending_sources();
+                self.storage.levels.clear();
+                self.storage.levels.push(checkpoint.outer.clone_rootless());
+                self.storage.journal = journal::ModeJournal::enabled(1);
+                self.storage.scratch.clear();
+                Ok(())
+            }
+            PreparedModeReplayRestore::Independent {
+                nest,
+                checkpoint: owner,
+            } if nest == std::ptr::from_ref(self) as usize
+                && owner == checkpoint.owner
+                && !self.is_checkpoint_candidate() =>
+            {
+                self.restore_checkpoint(checkpoint)
+            }
+            _ => Err(ExecError::ResourceReplayRequired),
+        }
     }
 
     pub(crate) fn fork_checkpoint(checkpoint: &ModeCheckpoint) -> Result<Self, ExecError> {
