@@ -21,10 +21,6 @@ use tex_state::hyphenation::PatternSpec;
 use tex_state::meaning::{Meaning, ResolvedMeaning, UnexpandablePrimitive};
 use tex_state::token::Catcode;
 
-use crate::scanners::structured::{
-    PendingStructuredScalarPhase, PendingStructuredScanner, PendingStructuredScannerPhase,
-    StructuredScannerChildDestination,
-};
 use crate::{CommandError, CommandProcessor, processor::DeliveryStatus};
 
 fn static_meaning<G>(meaning: ResolvedMeaning<G>) -> Meaning {
@@ -70,7 +66,7 @@ pub struct ScannedHyphenationData {
 }
 
 #[derive(Debug, Eq, PartialEq)]
-pub(super) struct PendingHyphenationData {
+pub(super) struct HyphenationProgress {
     kind: HyphenationDataKind,
     words: Vec<Vec<char>>,
     current: Vec<char>,
@@ -101,59 +97,18 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         kind: HyphenationDataKind,
     ) -> Result<ScannedHyphenationData, CommandError> {
-        let pending = self.take_pending_structured_scanner()?;
-        let mut progress = match pending {
-            Some(PendingStructuredScanner { phase, mut child }) => {
-                let PendingStructuredScannerPhase::Scalar(
-                    PendingStructuredScalarPhase::Hyphenation(progress),
-                ) = phase
-                else {
-                    if let Some(child) = child.take() {
-                        self.abort_continuation(child.restore().0)?;
-                    }
-                    return Err(CommandError::input_invariant());
-                };
-                if progress.kind != kind {
-                    if let Some(child) = child.take() {
-                        self.abort_continuation(child.restore().0)?;
-                    }
-                    return Err(CommandError::input_invariant());
-                }
-                self.restore_structured_scanner_child(
-                    &mut child,
-                    StructuredScannerChildDestination::Scalar,
-                )?;
-                let result = self.scan_character_number_retained();
-                let (ch, phase) = self.retain_structured_scalar_progress(
-                    result,
-                    PendingStructuredScalarPhase::Hyphenation(progress),
-                )?;
-                let PendingStructuredScalarPhase::Hyphenation(mut progress) = phase else {
-                    unreachable!("hyphenation progress was returned unchanged")
-                };
-                if let Some(normalized) =
-                    self.exception_word_character(progress.pattern_language, ch)?
-                {
-                    progress.current.push(normalized);
-                }
-                progress
-            }
-            None => {
-                // §403: a left brace must follow `\patterns`/`\hyphenation`.
-                self.scan_left_brace(true)?;
-                PendingHyphenationData {
-                    kind,
-                    words: Vec::new(),
-                    current: Vec::new(),
-                    patterns: Vec::new(),
-                    pattern_letters: Vec::new(),
-                    pattern_values: vec![0],
-                    pattern_digit_sensed: false,
-                    pattern_language: u8::try_from(self.state.int_param(IntParam::LANGUAGE))
-                        .unwrap_or(0),
-                    pending_pattern_paths: BTreeMap::new(),
-                }
-            }
+        // §403: a left brace must follow `\patterns`/`\hyphenation`.
+        self.scan_left_brace(true)?;
+        let mut progress = HyphenationProgress {
+            kind,
+            words: Vec::new(),
+            current: Vec::new(),
+            patterns: Vec::new(),
+            pattern_letters: Vec::new(),
+            pattern_values: vec![0],
+            pattern_digit_sensed: false,
+            pattern_language: u8::try_from(self.state.int_param(IntParam::LANGUAGE)).unwrap_or(0),
+            pending_pattern_paths: BTreeMap::new(),
         };
         loop {
             let mut command = None;
@@ -223,15 +178,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char)
                     if kind == HyphenationDataKind::Exceptions =>
                 {
-                    let result = self.scan_character_number_retained();
-                    let (ch, phase) = self.retain_structured_scalar_progress(
-                        result,
-                        PendingStructuredScalarPhase::Hyphenation(progress),
-                    )?;
-                    let PendingStructuredScalarPhase::Hyphenation(returned) = phase else {
-                        unreachable!("hyphenation progress was returned unchanged")
-                    };
-                    progress = returned;
+                    let ch = self.scan_character_number_retained().into_result()?;
                     match self.exception_word_character(progress.pattern_language, ch)? {
                         Some(normalized) => Some(normalized),
                         None => continue,

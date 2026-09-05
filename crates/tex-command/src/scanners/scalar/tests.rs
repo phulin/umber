@@ -9,14 +9,6 @@ use crate::{
 };
 
 #[test]
-fn keyword_replay_keeps_scalar_continuations_compact() {
-    let prefix = std::mem::size_of::<super::MatchedKeywordPrefix<()>>();
-    let pending = std::mem::size_of::<super::PendingScalarFrame<()>>();
-    assert_eq!(prefix, 120);
-    assert_eq!(pending, 208);
-}
-
-#[test]
 fn scalar_call_frame_separates_compact_status_value_and_error() {
     assert_eq!(std::mem::size_of::<super::ScalarCallStatus>(), 1);
     assert!(
@@ -82,11 +74,6 @@ fn integer_scanner_preserves_signs_and_backs_up_the_nonspace_terminator() {
         );
         let integer = scalar.take_integer();
         assert_eq!(integer.value, -42);
-        assert_eq!(
-            processor.command.scratch.parked_scanner_storage_counts(),
-            (0, 0, 0),
-            "ordinary scalar progress never enters a continuation lane"
-        );
         let mut terminator = None;
         assert_eq!(
             processor

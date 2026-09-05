@@ -755,7 +755,6 @@ fn command_delivery_has_separate_concrete_loops_and_direct_input_mutation() {
         "pub(super) fn raw_next_with_replay_completion(",
         "pub(super) fn protected_expanded_next_with_replay_completion(",
         "pub(super) fn tex_alignment_lookahead_next(",
-        "pub(super) fn resumed_expanded_next(",
         "pub(super) fn alignment_expanded_next(",
     ] {
         assert!(
@@ -767,6 +766,8 @@ fn command_delivery_has_separate_concrete_loops_and_direct_input_mutation() {
         expansion.matches("#[cold]").count() >= 5,
         "rare delivery entries must stay out of line"
     );
+    assert!(!expansion.contains("resumed_expanded_next"));
+    assert!(!expansion.contains("resumed_main_loop_next"));
     for loop_name in ["raw_next", "expanded_next", "main_character_run"] {
         let signature = expansion
             .split(&format!("pub(super) fn {loop_name}("))
@@ -802,7 +803,7 @@ fn command_delivery_has_separate_concrete_loops_and_direct_input_mutation() {
         !format!("{expansion}\n{raw}").contains("pending_expanded_delivery"),
         "pending observation ownership must be typed, never a boolean"
     );
-    assert!(expansion.contains("pub(crate) fn expand_into("));
+    assert!(expansion.contains("pub(crate) fn request_expansion_into("));
     assert!(expansion.contains("destination: &mut Option<CurrentCommand<G>>"));
     let classification = expansion
         .split("fn classify_expanded_command<G>(")
@@ -828,7 +829,10 @@ fn command_delivery_has_separate_concrete_loops_and_direct_input_mutation() {
     let expansion_dispatch = expansion
         .split("fn expand_classified_occupied(")
         .nth(1)
-        .and_then(|tail| tail.split("pub(super) fn retain_expansion_scalar").next())
+        .and_then(|tail| {
+            tail.split("    /// Creates one invocation provenance")
+                .next()
+        })
         .expect("locate exact expansion dispatch");
     assert!(expansion.contains(
         "self.expand_classified_into(destination, dispatch, report_trace, false, parent)",
@@ -849,27 +853,27 @@ fn command_delivery_has_separate_concrete_loops_and_direct_input_mutation() {
     assert!(expansion.contains("let _activated = self.macro_call_hot(command)?;"));
     assert!(!expansion.contains("MacroCallOutcome"));
     assert!(expansion.contains("suppress_first_expansion_trace"));
-    assert!(expansion.contains(".store_expansion_frame(pending)"));
+    assert!(!expansion.contains(".store_expansion_frame(pending)"));
     assert_eq!(expansion.matches("fn admit_resident_word(").count(), 1);
     assert_eq!(expansion.matches("fn settle_hot_delivery(").count(), 1);
     assert!(!expansion.contains("mut fetch"));
     assert!(expansion.contains("ParentAdmission"));
     assert!(expansion.contains("HotCommand::from_resolved_delivery"));
-    assert!(expansion.contains("std::mem::replace(command, CurrentCommand::empty())"));
+    assert!(expansion.contains("let mut command = destination\n            .take()"));
     assert!(!expansion.contains("fn expand_with_trace("));
     assert!(!expansion.contains("expand_owned_with_trace("));
     assert!(!expansion.contains("delivery_driver_inner("));
-    assert!(policies.contains("take_pending_expansion_work"));
-    assert!(expansion.contains("ChildContinuation::capture("));
-    assert!(expansion.contains("PendingExpansionChildDestination::Dispatch"));
-    assert!(structural.contains(".store_expandafter_frame(PendingExpandAfter"));
-    assert!(pdf_string.contains(".store_pdf_string_compare_frame(PendingPdfStringCompare"));
-    assert!(pdf_string.contains("PdfStringComparePhase::Right { left }"));
+    assert!(!policies.contains("take_pending_expansion_work"));
+    assert!(!expansion.contains("ChildContinuation::capture("));
+    assert!(!expansion.contains("PendingExpansionChildDestination::Dispatch"));
+    assert!(!structural.contains(".store_expandafter_frame(ExpandAfterState"));
+    assert!(!pdf_string.contains(".store_pdf_string_compare_frame(PdfStringCompareState"));
+    assert!(!pdf_string.contains("PdfStringComparePhase::Right { left }"));
     assert!(structural.contains("begin_csname_continuation"));
     assert!(expansion.contains("top_csname_control"));
     let conditionals = fs::read_to_string(manifest_dir.join("src/conditionals.rs"))
         .expect("read conditional continuation ownership");
-    assert!(conditionals.contains("PendingExpansionResume::IfCsName"));
+    assert!(!conditionals.contains("ExpansionPhase::IfCsName"));
     let state = fs::read_to_string(manifest_dir.join("src/state.rs"))
         .expect("read command-state ownership");
     for forbidden in [
@@ -939,9 +943,9 @@ fn scan_toks_keeps_its_one_step_collector_and_direct_splice_boundary() {
         .expect("locate standalone unexpanded replay");
 
     assert_eq!(scanner.matches("fn scan_toks_inner(").count(), 1);
-    assert!(scanner.contains("let mut pending = match resumed"));
-    assert!(scanner.contains("phase: &mut PendingScanToksPhase<G>"));
-    assert!(collector.contains("progress: &mut ReplacementProgress<G>"));
+    assert!(scanner.contains("let mut pending = ScanToksLocal"));
+    assert!(scanner.contains("phase: &mut ScanToksStage"));
+    assert!(collector.contains("let mut destination = None;"));
     for retired_carrier in [
         "struct ScanToksFailure",
         "struct ReplacementFailure",
@@ -952,29 +956,14 @@ fn scan_toks_keeps_its_one_step_collector_and_direct_splice_boundary() {
             "scan_toks must not rebuild the stationary phase through {retired_carrier}"
         );
     }
-    assert_eq!(
-        scanner.matches("progress: ReplacementProgress<G>").count(),
-        1,
-        "only the stationary phase row may own replacement progress"
-    );
     assert!(collector.contains("self.get_next_into(&mut destination)"));
     assert!(expansion.contains(".as_mut()"));
     assert!(collector.contains("clear_command_destination(&mut destination)"));
-    assert!(collector.contains("pending_expansion.take()"));
-    let restore = collector
-        .find("pending_expansion.take()")
-        .expect("collector restores its parked expansion");
-    let steady_loop = collector.find("loop {").expect("steady collection loop");
-    assert!(restore < steady_loop);
-    assert!(
-        !collector[steady_loop..].contains("pending_expansion.take()"),
-        "steady replacement collection must not probe parked suspension state"
-    );
     assert_eq!(scanner.matches("fn drive_collector_expansion(").count(), 1);
-    assert!(expansion.contains("PendingCollectorExpansion"));
-    assert!(expansion.contains("error.is_resource_suspension()"));
+    assert!(!expansion.contains("CollectorExpansionState"));
+    assert!(!expansion.contains("error.is_resource_suspension()"));
     assert!(expansion.contains("self.request_expansion_into(destination, true)"));
-    assert!(expansion.contains("command: destination.take()"));
+    assert!(expansion.contains("let command = destination"));
     assert!(expansion.contains("self.append_direct_the_toks(collector, expansion_operand)"));
     assert!(
         !collector.contains("self.get_x_token()?"),
@@ -1121,11 +1110,13 @@ fn resource_capable_scalar_scans_have_one_inline_owned_continuation_surface() {
     assert!(!font.contains("pub fn scan_font_selector("));
     assert!(!structured.contains("pub fn scan_file_name("));
 
+    assert!(scalar.contains("pub enum RetainedScalarScan<T>"));
+    assert!(scalar.contains("pub struct ScalarScanFrame"));
     let scalar_frame = scalar
-        .split("pub(crate) enum PendingScalarFrame")
+        .split("pub struct ScalarScanFrame")
         .nth(1)
-        .and_then(|tail| tail.split("impl<G> PendingScalarFrame").next())
-        .expect("locate scalar continuation variants");
+        .and_then(|tail| tail.split("impl ScalarScanFrame").next())
+        .expect("locate scalar result slot");
     for forbidden in ["Box<", "Vec<", "Arc<", "VecDeque", "HashMap"] {
         assert!(
             !scalar_frame.contains(forbidden),
@@ -1531,7 +1522,6 @@ fn expanded_delivery_entry_has_one_iterative_owner() {
         "SynchronousIfDimensionControl",
         "SynchronousNumberControl",
         "SynchronousFontNameControl",
-        "SynchronousPdfXImageBBoxControl",
         "SynchronousExpandedControl",
     ] {
         assert!(
@@ -1542,14 +1532,13 @@ fn expanded_delivery_entry_has_one_iterative_owner() {
     assert!(work.contains("ActiveControlTag"));
     assert!(work.contains("active_control"));
     assert!(controls.contains("size_of::<SynchronousExpandAfterControl<()>>() <= 128"));
-    assert!(controls.contains("size_of::<TheControl>() <= 64"));
+    assert!(controls.contains("size_of::<TheControl>() <= 96"));
     assert!(controls.contains("size_of::<SynchronousIfCompareControl>() <= 64"));
     assert!(controls.contains("size_of::<SynchronousIfNumberControl>() <= 64"));
     assert!(controls.contains("size_of::<SynchronousIfDimensionControl>() <= 64"));
     assert!(controls.contains("size_of::<SynchronousNumberControl>() <= 48"));
     assert!(controls.contains("size_of::<SynchronousExpandedControl>() <= 128"));
     assert!(controls.contains("size_of::<SynchronousFontNameControl>() <= 32"));
-    assert!(controls.contains("size_of::<SynchronousPdfXImageBBoxControl>() <= 32"));
 }
 
 #[test]
@@ -1629,7 +1618,7 @@ fn expansion_primitives_and_scanners_use_typed_delivery_requests() {
         .expect("typed expansion request has a bounded body");
     assert_eq!(
         expansion_body
-            .matches("self.expand_into(destination, report_trace)")
+            .matches("self.expand_into_with_parent(destination, report_trace, None)")
             .count(),
         1,
         "the typed expansion request must have one canonical driver bridge"

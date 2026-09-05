@@ -143,12 +143,6 @@ impl ScanToksExpansion {
     }
 }
 
-impl ScanToksConfig {
-    const fn permits_resource_continuation(self) -> bool {
-        !matches!(self.grammar, ScanToksGrammar::MacroDefinition) || self.expansion.is_expanded()
-    }
-}
-
 /// Semantic owner of the scanner status and its runaway warning target.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum ScanToksOwner {
@@ -252,9 +246,9 @@ impl<G> ScannedWords<'_, G> {
     }
 }
 
-/// Exact command-owned continuation of one host-suspended token collector.
+/// Local owner of one token collector while its synchronous scan is running.
 #[derive(Debug, Eq, PartialEq)]
-pub(crate) struct PendingScanToks<G> {
+pub(crate) struct ScanToksLocal<G> {
     /// Exact parent suffix before either mutable sink was admitted.
     ///
     /// Successful completion publishes the sinks to the parent operation.
@@ -266,16 +260,15 @@ pub(crate) struct PendingScanToks<G> {
     collector: TokenCollector<G>,
     /// First deferred diagnostic which can belong to this scanner episode.
     ///
-    /// A resource suspension retains the cursor beside the scanner sinks, so
-    /// completion never mistakes an older, still-unpublished runaway report
-    /// for recovery produced by the resumed scan.
+    /// Completion never mistakes an older, still-unpublished runaway report
+    /// for recovery produced by this scan.
     diagnostic_start: usize,
     config: ScanToksConfig,
     episode: ScannerEpisode,
-    phase: PendingScanToksPhase<G>,
+    phase: ScanToksStage,
 }
 
-impl<G> PendingScanToks<G> {
+impl<G> ScanToksLocal<G> {
     pub(crate) fn macro_definition_target(&self, expanded: bool) -> Option<Symbol> {
         let expected = if expanded {
             ScanToksExpansion::Expanded
@@ -295,98 +288,18 @@ impl<G> PendingScanToks<G> {
             _ => None,
         }
     }
-
-    fn take_child(&mut self) -> Option<crate::execution_scratch::ScannerFrameKey<G>> {
-        match &mut self.phase {
-            PendingScanToksPhase::Opening { child } => child.take().map(|child| child.restore().0),
-            PendingScanToksPhase::Replacement { progress, .. } => progress
-                .pending_expansion
-                .as_mut()
-                .and_then(|pending| pending.child.take())
-                .map(|child| child.restore().0),
-        }
-    }
 }
 
-// Every pending field is a scalar, a typed attempt or generation coordinate,
-// or an ephemeral current-command value. The storage owners remain on
-// `CommandState`; no continuation borrows its accumulated token buffer.
-// Replacement state stays inline so suspension reuses the scratch lane rather
-// than allocating a box per scanner frame.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Eq, PartialEq)]
-enum PendingScanToksPhase<G> {
-    Opening {
-        child: Option<crate::execution_scratch::ChildContinuation<G, ScanToksChildDestination>>,
-    },
+enum ScanToksStage {
+    Opening,
     Replacement {
         macro_parameters: Option<(u8, Option<Symbol>)>,
         hash_brace: Option<TracedTokenWord>,
         primary: OriginId,
         malformed_parameter: bool,
-        progress: ReplacementProgress<G>,
     },
-}
-
-impl<G> PendingScanToksPhase<G> {
-    fn take_child(&mut self) -> Option<crate::execution_scratch::ScannerFrameKey<G>> {
-        match self {
-            Self::Opening { child } => child.take().map(|child| child.restore().0),
-            Self::Replacement { progress, .. } => progress
-                .pending_expansion
-                .as_mut()
-                .and_then(|pending| pending.child.take())
-                .map(|child| child.restore().0),
-        }
-    }
-
-    fn retain_child(
-        &mut self,
-        baton: &mut Option<crate::execution_scratch::ScannerFrameKey<G>>,
-    ) -> Result<(), CommandError> {
-        match self {
-            Self::Opening {
-                child: owner @ None,
-            } => {
-                *owner = crate::execution_scratch::ChildContinuation::capture(
-                    baton,
-                    ScanToksChildDestination::Opening,
-                );
-                Ok(())
-            }
-            Self::Opening { child: Some(_) } if baton.is_none() => Ok(()),
-            Self::Replacement { .. } if baton.is_none() => Ok(()),
-            Self::Opening { child: Some(_) } | Self::Replacement { .. } => {
-                Err(CommandError::input_invariant())
-            }
-        }
-    }
-}
-
-#[derive(Debug, Eq, PartialEq)]
-struct ReplacementProgress<G> {
-    pending_expansion: Option<PendingCollectorExpansion<G>>,
-}
-
-impl<G> ReplacementProgress<G> {
-    fn new() -> Self {
-        Self {
-            pending_expansion: None,
-        }
-    }
-}
-
-#[derive(Debug, Eq, PartialEq)]
-struct PendingCollectorExpansion<G> {
-    command: Option<crate::CurrentCommand<G>>,
-    route: CollectorExpansionRoute,
-    operand: Option<crate::CurrentCommand<G>>,
-    child: Option<crate::execution_scratch::ChildContinuation<G, CollectorExpansionRoute>>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ScanToksChildDestination {
-    Opening,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -616,72 +529,6 @@ enum MacroParameterDiagnostic {
 const FILE_ENDED_WITHIN_READ_DIAGNOSTIC: u64 = 0x7265_6164_0000_0486;
 
 impl<G> CommandProcessor<'_, '_, G> {
-    /// Consumes one structurally owned suspension chain deepest-first.
-    ///
-    /// Scanner scopes are attempt-arena suffix owners, so their children must
-    /// be closed before the caller scope can be discarded. Expansion frames
-    /// own no arena scope themselves and only forward that exact child edge.
-    pub(crate) fn abort_continuation(
-        &mut self,
-        key: crate::execution_scratch::ScannerFrameKey<G>,
-    ) -> Result<(), CommandError> {
-        let frame = self
-            .command
-            .scratch
-            .take_continuation_frame(key)
-            .map_err(scratch_command_error)?;
-        match frame {
-            crate::execution_scratch::ContinuationFrame::Scanner(pending) => {
-                self.settle_failed_scan_toks(pending)
-            }
-            crate::execution_scratch::ContinuationFrame::Scalar(mut pending) => {
-                let expression_stack_mark = pending.expression_stack_mark();
-                if let Some(child) = pending.take_child() {
-                    self.abort_continuation(child)?;
-                }
-                if let Some(mark) = expression_stack_mark {
-                    self.command
-                        .scratch
-                        .truncate_expression_stack(mark)
-                        .map_err(scratch_command_error)?;
-                }
-                Ok(())
-            }
-            crate::execution_scratch::ContinuationFrame::Expansion(key) => {
-                let mut pending = self
-                    .command
-                    .scratch
-                    .cancel_expansion(key)
-                    .map_err(scratch_command_error)?;
-                if let Some(child) = pending.take_child() {
-                    self.abort_continuation(child)?;
-                }
-                Ok(())
-            }
-            crate::execution_scratch::ContinuationFrame::ExpandAfter(mut pending) => {
-                if let Some(child) = pending.take_child() {
-                    self.abort_continuation(child)?;
-                }
-                Ok(())
-            }
-            crate::execution_scratch::ContinuationFrame::PdfStringCompare(mut pending) => {
-                if let Some(child) = pending.take_child() {
-                    self.abort_continuation(child)?;
-                }
-                Ok(())
-            }
-            crate::execution_scratch::ContinuationFrame::AlignmentPreamble(pending) => {
-                self.abort_alignment_preamble(pending)
-            }
-            crate::execution_scratch::ContinuationFrame::StructuredScanner(mut pending) => {
-                if let Some(child) = pending.take_child() {
-                    self.abort_continuation(child)?;
-                }
-                Ok(())
-            }
-        }
-    }
-
     fn allocate_attempt_token_list(
         &mut self,
         words: impl IntoIterator<Item = TracedTokenWord>,
@@ -1133,71 +980,52 @@ impl<G> CommandProcessor<'_, '_, G> {
         mode: ScanToksMode,
     ) -> Result<ScannedToksBuffers<G>, CommandError> {
         let config = ScanToksConfig::parse(mode);
-        let resumed = match self.scanner_resume.take() {
-            Some(key) => Some(
+        // Token collection is an ordinary synchronous scanner.  A resource
+        // miss is cleaned up below and propagated to the host checkpoint; no
+        // collector owner is published into execution scratch.
+        let attempt_opening = self.command.attempt.arena().mark();
+        let mut collector = match self.begin_scan_toks_collector(
+            config.grammar,
+            config.destination,
+            self.is_observed(),
+        ) {
+            Ok(collector) => collector,
+            Err(error) => {
                 self.command
-                    .scratch
-                    .take_scanner_frame(key)
-                    .map_err(scratch_command_error)?,
-            ),
-            None => None,
+                    .attempt
+                    .arena_mut()
+                    .truncate(attempt_opening)
+                    .map_err(attempt_command_error)?;
+                return Err(error);
+            }
         };
-        let mut pending = match resumed {
-            Some(pending) if pending.config == config => pending,
-            Some(pending) => {
-                self.settle_failed_scan_toks(pending)?;
-                return Err(CommandError::input_invariant());
+        let scope = match self.command.begin_attempt_scanner_scope() {
+            Ok(scope) => scope,
+            Err(error) => {
+                self.discard_scan_toks_collector(&mut collector)?;
+                self.command
+                    .attempt
+                    .arena_mut()
+                    .truncate(attempt_opening)
+                    .map_err(attempt_command_error)?;
+                return Err(attempt_command_error(error));
             }
-            None => {
-                // The result destination belongs to the logical parent, not
-                // the scanner's scratch child. Returning a synchronous child
-                // to a still-live macro can therefore truncate its suffix
-                // without copying or invalidating the completed result.
-                let attempt_opening = self.command.attempt.arena().mark();
-                let mut collector = match self.begin_scan_toks_collector(
-                    config.grammar,
-                    config.destination,
-                    self.is_observed(),
-                ) {
-                    Ok(collector) => collector,
-                    Err(error) => {
-                        self.command
-                            .attempt
-                            .arena_mut()
-                            .truncate(attempt_opening)
-                            .map_err(attempt_command_error)?;
-                        return Err(error);
-                    }
-                };
-                let scope = match self.command.begin_attempt_scanner_scope() {
-                    Ok(scope) => scope,
-                    Err(error) => {
-                        self.discard_scan_toks_collector(&mut collector)?;
-                        self.command
-                            .attempt
-                            .arena_mut()
-                            .truncate(attempt_opening)
-                            .map_err(attempt_command_error)?;
-                        return Err(attempt_command_error(error));
-                    }
-                };
-                let builder = TokenBuilderId(self.command.transient.next_builder_identity);
-                self.command.transient.next_builder_identity =
-                    self.command.transient.next_builder_identity.wrapping_add(1);
-                let warning = ScannerWarning(builder.0);
-                PendingScanToks {
-                    attempt_opening,
-                    scope,
-                    collector,
-                    diagnostic_start: self.command.semantic_diagnostics.len(),
-                    config,
-                    episode: self.begin_scanner_episode(
-                        config.scanner_status(builder, warning),
-                        config.status_visibility,
-                    ),
-                    phase: PendingScanToksPhase::Opening { child: None },
-                }
-            }
+        };
+        let builder = TokenBuilderId(self.command.transient.next_builder_identity);
+        self.command.transient.next_builder_identity =
+            self.command.transient.next_builder_identity.wrapping_add(1);
+        let warning = ScannerWarning(builder.0);
+        let mut pending = ScanToksLocal {
+            attempt_opening,
+            scope,
+            collector,
+            diagnostic_start: self.command.semantic_diagnostics.len(),
+            config,
+            episode: self.begin_scanner_episode(
+                config.scanner_status(builder, warning),
+                config.status_visibility,
+            ),
+            phase: ScanToksStage::Opening,
         };
         if let Err(error) = self.admit_scan_toks_definition_writer(&mut pending.collector) {
             self.settle_failed_scan_toks(pending)?;
@@ -1211,62 +1039,15 @@ impl<G> CommandProcessor<'_, '_, G> {
         );
         let mut result = match result {
             Ok(result) => result,
-            Err(error)
-                if error.is_resource_suspension()
-                    && pending.config.permits_resource_continuation() =>
-            {
-                if let Err(error) = self.release_scan_toks_definition_writer(&mut pending.collector)
-                {
-                    self.settle_failed_scan_toks(pending)?;
-                    return Err(error);
-                }
-                if let Err(error) = pending.phase.retain_child(&mut self.scanner_resume) {
-                    self.settle_failed_scan_toks(pending)?;
-                    return Err(error);
-                }
-                if self.scanner_resume.is_some() {
-                    self.settle_failed_scan_toks(pending)?;
-                    return Err(CommandError::input_invariant());
-                }
-                let mut pending = Some(pending);
-                let key = match self.command.scratch.store_scanner_frame(&mut pending) {
-                    Ok(key) => key,
-                    Err(error) => {
-                        self.settle_failed_scan_toks(
-                            pending
-                                .take()
-                                .expect("failed scratch insertion retains the scanner owner"),
-                        )?;
-                        return Err(scratch_command_error(error));
-                    }
-                };
-                debug_assert!(pending.is_none());
-                #[cfg(test)]
-                if self.command.scratch.take_scan_toks_publication_collision() {
-                    debug_assert!(self.scanner_resume.is_none());
-                    self.scanner_resume = Some(
-                        crate::execution_scratch::ScannerFrameKey::injected_scan_toks_publication_collision(),
-                    );
-                }
-                if let Some(displaced) = self.scanner_resume.replace(key) {
-                    let parked = self
-                        .scanner_resume
-                        .replace(displaced)
-                        .expect("publication collision installed the new scanner key");
-                    let pending = self
-                        .command
-                        .scratch
-                        .take_scanner_frame(parked)
-                        .map_err(scratch_command_error)?;
-                    self.settle_failed_scan_toks(pending)?;
-                    return Err(CommandError::input_invariant());
-                }
+            Err(error) if error.is_resource_suspension() => {
+                // `scan_toks` is a synchronous parser.  A missing immutable
+                // resource unwinds the collector and lets the host restore a
+                // full aggregate checkpoint; it never enters a scanner lane.
+                self.settle_failed_scan_toks(pending)?;
+                let _ = self.command.scratch.unwind_resource_failure();
                 return Err(error);
             }
             Err(error) => {
-                if let Some(child) = pending.phase.take_child() {
-                    self.abort_continuation(child)?;
-                }
                 self.finish_scanner_episode(pending.episode);
                 self.discard_scan_toks_collector(&mut pending.collector)?;
                 self.command
@@ -1280,20 +1061,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 return Err(error);
             }
         };
-        if let Some(child) = self.scanner_resume.take() {
-            self.abort_continuation(child)?;
-            self.finish_scanner_episode(pending.episode);
-            self.discard_scan_toks_collector(&mut pending.collector)?;
-            self.command
-                .discard_attempt_scope_suffix(pending.scope)
-                .map_err(attempt_command_error)?;
-            self.command
-                .attempt
-                .arena_mut()
-                .truncate(pending.attempt_opening)
-                .map_err(attempt_command_error)?;
-            return Err(CommandError::input_invariant());
-        }
         self.render_scan_toks_runaway_if_recovered(
             pending.config,
             pending.diagnostic_start,
@@ -1379,11 +1146,8 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// the scope first and separately truncates the exact pre-sink suffix.
     fn settle_failed_scan_toks(
         &mut self,
-        mut pending: PendingScanToks<G>,
+        mut pending: ScanToksLocal<G>,
     ) -> Result<(), CommandError> {
-        if let Some(child) = pending.take_child() {
-            self.abort_continuation(child)?;
-        }
         self.finish_scanner_episode(pending.episode);
         self.discard_scan_toks_collector(&mut pending.collector)?;
         self.command
@@ -1475,20 +1239,13 @@ impl<G> CommandProcessor<'_, '_, G> {
         config: ScanToksConfig,
         collector: &mut TokenCollector<G>,
         episode: &ScannerEpisode,
-        phase: &mut PendingScanToksPhase<G>,
+        phase: &mut ScanToksStage,
     ) -> Result<ScannedToksBuffers<G>, CommandError> {
         // `macro_parameters` is TeX82 §477's `macro_def` flag carried together
         // with §479's `t`: `Some(highest)` selects the parameter-character
         // rule and bounds a legal parameter number, `None` leaves parameter
         // characters as ordinary text (`\message`, `\write`, `\toks`, ...).
-        if let PendingScanToksPhase::Opening { child } = phase {
-            if let Some(child) = child.take() {
-                let (key, destination) = child.restore();
-                if destination != ScanToksChildDestination::Opening {
-                    return Err(CommandError::input_invariant());
-                }
-                self.install_scanner_resume(Some(key));
-            }
+        if let ScanToksStage::Opening = phase {
             let (macro_parameters, hash_brace, primary, malformed_parameter, missing_left_brace) =
                 match (config.grammar, config.opening) {
                     (ScanToksGrammar::General, ScanToksOpening::Required) => {
@@ -1554,31 +1311,23 @@ impl<G> CommandProcessor<'_, '_, G> {
                     malformed_parameter,
                 });
             }
-            *phase = PendingScanToksPhase::Replacement {
+            *phase = ScanToksStage::Replacement {
                 macro_parameters,
                 hash_brace,
                 primary,
                 malformed_parameter,
-                progress: ReplacementProgress::new(),
             };
         }
-        let PendingScanToksPhase::Replacement {
+        let ScanToksStage::Replacement {
             macro_parameters,
             hash_brace,
             primary,
             malformed_parameter,
-            progress,
         } = phase
         else {
             unreachable!("opening phase is replaced before collection")
         };
-        self.collect_replacement(
-            config.expansion,
-            *macro_parameters,
-            episode,
-            collector,
-            progress,
-        )?;
+        self.collect_replacement(config.expansion, *macro_parameters, episode, collector)?;
         // TeX's `#{` parameter-text special case treats that left brace as a
         // delimiter and appends the same saved brace after the replacement
         // text (TeX.web §476).
@@ -1812,7 +1561,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         collector: &mut TokenCollector<G>,
         destination: &mut Option<crate::CurrentCommand<G>>,
         expansion_operand: &mut Option<crate::CurrentCommand<G>>,
-        pending_expansion: &mut Option<PendingCollectorExpansion<G>>,
     ) -> Result<CollectorExpansionOutcome, CommandError> {
         if route == CollectorExpansionRoute::Ordinary && destination.is_none() {
             // A resumed generic expansion restores its sole parked command
@@ -1828,20 +1576,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     clear_command_destination(destination);
                     Ok(CollectorExpansionOutcome::Expanded)
                 }
-                Err(error) => {
-                    if error.is_resource_suspension() {
-                        *pending_expansion = Some(PendingCollectorExpansion {
-                            command: destination.take(),
-                            route,
-                            operand: None,
-                            child: crate::execution_scratch::ChildContinuation::capture(
-                                &mut self.scanner_resume,
-                                route,
-                            ),
-                        });
-                    }
-                    Err(error)
-                }
+                Err(error) => Err(error),
             };
         }
 
@@ -1857,23 +1592,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     return Ok(CollectorExpansionOutcome::Expanded);
                 }
                 Ok(false) => {}
-                Err(error) => {
-                    if error.is_resource_suspension() {
-                        let command = destination
-                            .take()
-                            .expect("collector suspension retains its command");
-                        *pending_expansion = Some(PendingCollectorExpansion {
-                            command: Some(command),
-                            route,
-                            operand: expansion_operand.take(),
-                            child: crate::execution_scratch::ChildContinuation::capture(
-                                &mut self.scanner_resume,
-                                route,
-                            ),
-                        });
-                    }
-                    return Err(error);
-                }
+                Err(error) => return Err(error),
             }
         }
         if route == CollectorExpansionRoute::Unexpanded {
@@ -1882,23 +1601,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     clear_command_destination(destination);
                     return Ok(CollectorExpansionOutcome::Expanded);
                 }
-                Err(error) => {
-                    if error.is_resource_suspension() {
-                        let command = destination
-                            .take()
-                            .expect("collector suspension retains its command");
-                        *pending_expansion = Some(PendingCollectorExpansion {
-                            command: Some(command),
-                            route,
-                            operand: None,
-                            child: crate::execution_scratch::ChildContinuation::capture(
-                                &mut self.scanner_resume,
-                                route,
-                            ),
-                        });
-                    }
-                    return Err(error);
-                }
+                Err(error) => return Err(error),
             }
         }
         if route == CollectorExpansionRoute::Detokenize {
@@ -1908,20 +1611,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                     return Ok(CollectorExpansionOutcome::Expanded);
                 }
                 Err(error) => {
-                    if error.is_resource_suspension() {
-                        let command = destination
-                            .take()
-                            .expect("collector suspension retains its command");
-                        *pending_expansion = Some(PendingCollectorExpansion {
-                            command: Some(command),
-                            route,
-                            operand: None,
-                            child: crate::execution_scratch::ChildContinuation::capture(
-                                &mut self.scanner_resume,
-                                route,
-                            ),
-                        });
-                    }
                     return Err(error);
                 }
             }
@@ -1955,20 +1644,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 clear_command_destination(destination);
                 Ok(CollectorExpansionOutcome::Expanded)
             }
-            Err(error) => {
-                if error.is_resource_suspension() {
-                    *pending_expansion = Some(PendingCollectorExpansion {
-                        command: destination.take(),
-                        route,
-                        operand: None,
-                        child: crate::execution_scratch::ChildContinuation::capture(
-                            &mut self.scanner_resume,
-                            route,
-                        ),
-                    });
-                }
-                Err(error)
-            }
+            Err(error) => Err(error),
         }
     }
 
@@ -1986,39 +1662,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         macro_parameters: Option<(u8, Option<Symbol>)>,
         episode: &ScannerEpisode,
         collector: &mut TokenCollector<G>,
-        progress: &mut ReplacementProgress<G>,
     ) -> Result<(), CommandError> {
-        let ReplacementProgress { pending_expansion } = progress;
         let mut destination = None;
-
-        // A parked expansion exists only after a real resource suspension.
-        // Restore it once before entering §477's steady collection loop; the
-        // ordinary path below consequently never probes continuation state.
-        if let Some(mut pending) = pending_expansion.take() {
-            if let Some(command) = pending.command.take() {
-                self.resume_current_command(&command);
-                destination = Some(command);
-            }
-            if let Some(child) = pending.child.take() {
-                let (key, child_destination) = child.restore();
-                if child_destination != pending.route {
-                    return Err(CommandError::input_invariant());
-                }
-                self.scanner_resume = Some(key);
-            }
-            let mut expansion_operand = pending.operand.take();
-            if self.drive_collector_expansion(
-                pending.route,
-                episode,
-                collector,
-                &mut destination,
-                &mut expansion_operand,
-                pending_expansion,
-            )? != CollectorExpansionOutcome::Expanded
-            {
-                return Err(CommandError::input_invariant());
-            }
-        }
 
         loop {
             let delivery = if expansion.is_expanded() {
@@ -2058,7 +1703,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                     collector,
                     &mut destination,
                     &mut expansion_operand,
-                    pending_expansion,
                 )? == CollectorExpansionOutcome::Expanded
                 {
                     continue;
@@ -2273,10 +1917,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         let scan = self.scan_the_internal_value_retained(retained_target);
         let value = match scan {
             crate::RetainedScalarScan::Complete(value) => value,
-            crate::RetainedScalarScan::Suspended { error, child } => {
-                self.install_scanner_resume(Some(child));
-                return Err(error);
-            }
             crate::RetainedScalarScan::Failed(error) => return Err(error),
         };
         let Some(value) = value else {

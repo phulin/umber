@@ -28,10 +28,7 @@ const NAME_BYTES_PER_CHUNK: usize = 1_024;
 /// cheap `None` test rather than a sequence of probes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ActiveControlTag {
-    Return,
     Dispatch,
-    Suspended,
-    ExpandAfter,
     The,
     CsName,
     IfCsName,
@@ -41,19 +38,14 @@ pub(crate) enum ActiveControlTag {
     IfDimension,
     Number,
     FontName,
-    PdfXImageBBox,
     Expanded,
-    Primitive,
 }
 
 type ActiveControl<G> = (ActiveControlTag, LaneId<G>);
 
 fn active_control_tag<G>(control: &ExpansionControl<G>) -> ActiveControlTag {
     match control {
-        ExpansionControl::Return(_) => ActiveControlTag::Return,
         ExpansionControl::Dispatch { .. } => ActiveControlTag::Dispatch,
-        ExpansionControl::Suspended { .. } => ActiveControlTag::Suspended,
-        ExpansionControl::ExpandAfter(_) => ActiveControlTag::ExpandAfter,
         ExpansionControl::The(_) => ActiveControlTag::The,
         ExpansionControl::CsName(_) => ActiveControlTag::CsName,
         ExpansionControl::IfCsName(_) => ActiveControlTag::IfCsName,
@@ -63,9 +55,7 @@ fn active_control_tag<G>(control: &ExpansionControl<G>) -> ActiveControlTag {
         ExpansionControl::IfDimension(_) => ActiveControlTag::IfDimension,
         ExpansionControl::Number(_) => ActiveControlTag::Number,
         ExpansionControl::FontName(_) => ActiveControlTag::FontName,
-        ExpansionControl::PdfXImageBBox(_) => ActiveControlTag::PdfXImageBBox,
         ExpansionControl::Expanded(_) => ActiveControlTag::Expanded,
-        ExpansionControl::Primitive(_) => ActiveControlTag::Primitive,
     }
 }
 
@@ -81,7 +71,6 @@ fn is_synchronous_control(tag: ActiveControlTag) -> bool {
             | ActiveControlTag::IfDimension
             | ActiveControlTag::Number
             | ActiveControlTag::FontName
-            | ActiveControlTag::PdfXImageBBox
             | ActiveControlTag::Expanded
     )
 }
@@ -644,81 +633,6 @@ impl<G> Default for ExpansionWork<G> {
 }
 
 impl<G> ExpansionWork<G> {
-    /// Installs a one-shot exact return edge above the currently executing
-    /// control. Children may push or park above it, but the hidden caller
-    /// cannot become active until the edge is consumed.
-    pub(crate) fn begin_return(
-        &mut self,
-        sink: ExpansionReturnSink,
-        parent: Option<ExpansionControlSlot<G>>,
-    ) -> Result<ExpansionReturnCapability<G>, ScratchError> {
-        let command_mark = self.commands.len();
-        let name_mark = self.names.len;
-        let parent_already_awaiting = match parent {
-            Some(parent) => match self.control_is_awaiting(parent) {
-                Ok(awaiting) => awaiting,
-                Err(error) => return Err(error),
-            },
-            None => false,
-        };
-        if let Some(parent) = parent.filter(|_| !parent_already_awaiting) {
-            self.await_control_for_child(parent)?;
-        }
-        // An already-awaiting parent belongs to the enclosing primitive's
-        // admission, not to this scanner request.  The return sink must not
-        // resume that edge when it completes; the enclosing primitive will
-        // settle it after its scanner returns.  A fresh parent, by contrast,
-        // is owned by this sink and is restored from the stored frame edge.
-        let return_parent = (!parent_already_awaiting).then_some(parent).flatten();
-        match self.push_control_with_parent(
-            ExpansionControl::Return(ExpansionReturnState {
-                sink,
-                awaiting: false,
-                command_mark,
-                name_mark,
-                _generation: core::marker::PhantomData,
-            }),
-            return_parent,
-        ) {
-            Ok(slot) => Ok(ExpansionReturnCapability::new(slot, sink)),
-            Err(error) => {
-                if parent.is_some() && !parent_already_awaiting {
-                    let parent = parent.expect("checked return parent");
-                    self.resume_control_parent(parent)
-                        .expect("failed return push restores its exact parent");
-                }
-                Err(error)
-            }
-        }
-    }
-
-    /// Consumes the exact top return edge after its caller-owned destination
-    /// has been filled. A different top is an ownership-order violation.
-    pub(crate) fn finish_return(
-        &mut self,
-        capability: ExpansionReturnCapability<G>,
-    ) -> Result<(), ScratchError> {
-        let slot = capability.slot();
-        let sink = capability.sink();
-        let control = self.control(self.validate_control_slot(slot)?)?;
-        if !matches!(control, ExpansionControl::Return(state) if state.sink == sink) {
-            return Err(ScratchError::InvalidCoordinate);
-        }
-        let (control, parent) = self.take_control_with_parent(slot)?;
-        debug_assert!(matches!(control, ExpansionControl::Return(_)));
-        if let Some(parent) = parent {
-            self.resume_control_parent(parent)?;
-        }
-        Ok(())
-    }
-
-    pub(crate) fn active_control_slot(&self) -> Option<ExpansionControlSlot<G>> {
-        self.active_control.map(|(_, lane)| ExpansionControlSlot {
-            owner: self.owner,
-            lane,
-        })
-    }
-
     /// Returns the one authoritative top-control tag.  The typed payload and
     /// exact lane slot are consulted only after this cold-side selection.
     pub(crate) fn active_control_tag(&self) -> Option<ActiveControlTag> {
@@ -919,16 +833,6 @@ impl<G> ExpansionWork<G> {
     ) -> Result<(), ScratchError> {
         let id = self.validate_control_slot(slot)?;
         match self.control(id)? {
-            ExpansionControl::Return(_) => {
-                let control = self.control_payload_mut(id)?;
-                let ExpansionControl::Return(control) = control else {
-                    unreachable!()
-                };
-                if !control.awaiting {
-                    control.awaiting = true;
-                }
-                Ok(())
-            }
             ExpansionControl::ExpandAfterSync(_) => self.await_expandafter_nested(slot),
             ExpansionControl::IfCompare(_) => self.await_if_compare_operand(slot),
             ExpansionControl::IfNumber(_) => self.await_if_number_operand(slot),
@@ -941,7 +845,6 @@ impl<G> ExpansionWork<G> {
     fn control_is_awaiting(&self, slot: ExpansionControlSlot<G>) -> Result<bool, ScratchError> {
         let control = self.control(self.validate_control_slot(slot)?)?;
         Ok(match control {
-            ExpansionControl::Return(control) => control.awaiting,
             ExpansionControl::ExpandAfterSync(control) => {
                 control.phase == SynchronousExpandAfterPhase::AwaitNested
             }
@@ -2155,31 +2058,6 @@ impl<G> ExpansionWork<G> {
         self.push_number_purpose_control_with_parent(opener, purpose, parent)
     }
 
-    pub(crate) fn push_pdf_ximage_bbox_control_with_parent(
-        &mut self,
-        opener: tex_state::token::OriginId,
-        parent: Option<ExpansionControlSlot<G>>,
-    ) -> Result<(), ScratchError> {
-        self.driver.push_continuation()?;
-        if let Err(error) = self.push_control_with_parent(
-            ExpansionControl::PdfXImageBBox(SynchronousPdfXImageBBoxControl {
-                opener,
-                phase: SynchronousPdfXImageBBoxPhase::Object {
-                    negative: false,
-                    value: 0,
-                    seen_digit: false,
-                },
-            }),
-            parent,
-        ) {
-            self.driver
-                .pop_continuation()
-                .expect("failed ximage-bbox push restores driver depth");
-            return Err(error);
-        }
-        Ok(())
-    }
-
     fn push_number_purpose_control_with_parent(
         &mut self,
         opener: tex_state::token::OriginId,
@@ -2433,54 +2311,6 @@ impl<G> ExpansionWork<G> {
         }
     }
 
-    pub(crate) fn top_pdf_ximage_bbox_control(
-        &self,
-    ) -> Result<Option<ExpansionControlView<G, SynchronousPdfXImageBBoxControl>>, ScratchError>
-    {
-        let Some(slot) = self.top_control_slot()? else {
-            return Ok(None);
-        };
-        match self.control(slot.lane)? {
-            ExpansionControl::PdfXImageBBox(control) => Ok(Some(ExpansionControlView {
-                slot,
-                control: *control,
-            })),
-            _ => Ok(None),
-        }
-    }
-
-    pub(crate) fn set_pdf_ximage_bbox_phase(
-        &mut self,
-        slot: ExpansionControlSlot<G>,
-        phase: SynchronousPdfXImageBBoxPhase,
-    ) -> Result<(), ScratchError> {
-        let control = self.control_payload_mut(self.validate_control_slot(slot)?)?;
-        let ExpansionControl::PdfXImageBBox(control) = control else {
-            return Err(ScratchError::InvalidCoordinate);
-        };
-        control.phase = phase;
-        Ok(())
-    }
-
-    pub(crate) fn pop_pdf_ximage_bbox_control(
-        &mut self,
-    ) -> Result<SynchronousPdfXImageBBoxControl, ScratchError> {
-        let id = self.controls.top_id()?;
-        let control = match self.control(id)? {
-            ExpansionControl::PdfXImageBBox(control) => *control,
-            _ => return Err(ScratchError::InvalidCoordinate),
-        };
-        let (_, parent) = self.take_control_with_parent(ExpansionControlSlot {
-            owner: self.owner,
-            lane: id,
-        })?;
-        self.driver.pop_continuation()?;
-        if let Some(parent) = parent {
-            self.resume_control_parent(parent)?;
-        }
-        Ok(control)
-    }
-
     pub(crate) fn pop_fontname_control(
         &mut self,
     ) -> Result<SynchronousFontNameControl, ScratchError> {
@@ -2520,111 +2350,6 @@ impl<G> ExpansionWork<G> {
 
     pub(crate) fn driver_continuation_depth(&self) -> u32 {
         self.driver.continuation_depth()
-    }
-
-    /// Parks the one command owner only after expansion has produced a real
-    /// immutable-resource suspension. Every fallible step restores the exact
-    /// pending value to the caller.
-    // The cold error must return the sole command owner intact. Boxing it
-    // would allocate precisely on the failed-park path this contract protects.
-    #[allow(clippy::result_large_err)]
-    pub(crate) fn park_suspension(
-        &mut self,
-        pending: crate::state::PendingExpansion<G>,
-    ) -> Result<ExpansionWorkKey<G>, (ScratchError, crate::state::PendingExpansion<G>)> {
-        if self.active_roots.try_reserve(1).is_err() {
-            return Err((ScratchError::AllocationFailed, pending));
-        }
-        let mut mark = self.mark();
-        if let Some(parent) = pending.parent
-            && let Err(error) = self.retain_return_ancestors(&mut mark, Some(parent))
-        {
-            return Err((error, pending));
-        }
-        let return_capability = pending.return_capability;
-        let crate::state::PendingExpansion {
-            command,
-            resume,
-            delivery_expanded,
-            parent,
-            return_capability: _,
-            child,
-        } = pending;
-        let mut command = Some(command);
-        let command_slot = match self.park_command_from(&mut command) {
-            Ok(slot) => slot,
-            Err(error) => {
-                return Err((
-                    error,
-                    crate::state::PendingExpansion {
-                        command: command.expect("failed command park preserves owner"),
-                        resume,
-                        delivery_expanded,
-                        parent,
-                        return_capability,
-                        child,
-                    },
-                ));
-            }
-        };
-        let mut control = Some(ExpansionControl::Suspended {
-            command: command_slot,
-            resume,
-            delivery_expanded,
-            return_capability,
-            child,
-        });
-        let root = match self.push_control_from_with_parent(&mut control, parent) {
-            Ok(root) => root,
-            Err(error) => {
-                let command = self
-                    .take_command(command_slot)
-                    .expect("failed control park restores its top command");
-                let ExpansionControl::Suspended {
-                    resume,
-                    delivery_expanded,
-                    return_capability,
-                    child,
-                    ..
-                } = control.expect("failed control park preserves owner")
-                else {
-                    unreachable!("production park builds a suspended root")
-                };
-                return Err((
-                    error,
-                    crate::state::PendingExpansion {
-                        command,
-                        resume,
-                        delivery_expanded,
-                        parent,
-                        return_capability,
-                        child,
-                    },
-                ));
-            }
-        };
-        self.active_roots.push(root.lane);
-        Ok(ExpansionWorkKey {
-            owner: self.owner,
-            root: root.lane,
-            mark,
-        })
-    }
-
-    /// Consumes a parked command and its exact continuation once for retry.
-    pub(crate) fn resume_suspension(
-        &mut self,
-        key: ExpansionWorkKey<G>,
-    ) -> Result<crate::state::PendingExpansion<G>, ScratchError> {
-        self.take_suspension(key, true)
-    }
-
-    /// Consumes a parked command and continuation for cancellation/abort.
-    pub(crate) fn cancel_suspension(
-        &mut self,
-        key: ExpansionWorkKey<G>,
-    ) -> Result<crate::state::PendingExpansion<G>, ScratchError> {
-        self.take_suspension(key, false)
     }
 
     pub(crate) fn begin_dispatch(
@@ -2945,12 +2670,6 @@ impl<G> ExpansionWork<G> {
                     _ => return Err(ScratchError::InvalidCoordinate),
                 };
             }
-            ExpansionControl::Return(control) => {
-                if !control.awaiting {
-                    return Err(ScratchError::InvalidCoordinate);
-                }
-                control.awaiting = false;
-            }
             _ => return Err(ScratchError::InvalidCoordinate),
         }
         Ok(())
@@ -3052,6 +2771,24 @@ impl<G> ExpansionWork<G> {
             && self.active_control.is_none()
     }
 
+    /// Drops all call-local expansion state after an immutable-resource miss.
+    ///
+    /// Resource acquisition is owned by the enclosing engine checkpoint.  A
+    /// command processor must therefore never carry a half-expanded control
+    /// tree into the host handoff: the aggregate is rewound and the next
+    /// episode starts from a full semantic boundary.  This is deliberately a
+    /// cold, failure-only operation; the ordinary expansion loop remains
+    /// allocation-free and keeps its compact hot command in local variables.
+    pub(crate) fn unwind_resource_failure(&mut self) -> Result<(), ScratchError> {
+        self.controls.truncate(0)?;
+        self.commands.truncate(0)?;
+        self.names.truncate(0)?;
+        self.active_roots.clear();
+        self.driver = ExpandedDeliveryDriver::default();
+        self.active_control = None;
+        Ok(())
+    }
+
     pub(crate) const fn counters(&self) -> ExpansionWorkCounters {
         self.counters
     }
@@ -3062,28 +2799,6 @@ impl<G> ExpansionWork<G> {
             commands: self.commands.len(),
             name_bytes: self.names.len,
         }
-    }
-
-    /// Extends a suspension mark only through the exact parent chain that
-    /// owns the parked child. Return sinks can be admitted after the root
-    /// mark, so retaining their declared command/name floors is necessary for
-    /// resumption; walking parent links keeps this local and avoids scanning
-    /// unrelated control rows or inferring a recipient from the lane top.
-    fn retain_return_ancestors(
-        &self,
-        mark: &mut ExpansionMark,
-        mut parent: Option<ExpansionControlSlot<G>>,
-    ) -> Result<(), ScratchError> {
-        while let Some(slot) = parent {
-            let frame = self.control_frame(self.validate_control_slot(slot)?)?;
-            if let ExpansionControl::Return(capability) = &frame.control {
-                mark.controls = mark.controls.max(slot.lane.index().saturating_add(1));
-                mark.commands = mark.commands.max(capability.command_mark);
-                mark.name_bytes = mark.name_bytes.max(capability.name_mark);
-            }
-            parent = frame.parent;
-        }
-        Ok(())
     }
 
     fn validate_key(&mut self, key: &ExpansionWorkKey<G>) -> Result<(), ScratchError> {
@@ -3099,63 +2814,6 @@ impl<G> ExpansionWork<G> {
             return Err(ScratchError::InvalidCoordinate);
         }
         Ok(())
-    }
-
-    fn take_suspension(
-        &mut self,
-        key: ExpansionWorkKey<G>,
-        completed: bool,
-    ) -> Result<crate::state::PendingExpansion<G>, ScratchError> {
-        self.validate_key(&key)?;
-        let root = ExpansionControlSlot {
-            owner: self.owner,
-            lane: key.root,
-        };
-        let command = match self.control(key.root)? {
-            ExpansionControl::Suspended { command, .. } => *command,
-            _ => return Err(ScratchError::InvalidCoordinate),
-        };
-        if key.root.index().checked_add(1) != Some(self.controls.len())
-            || command.lane.index().checked_add(1) != Some(self.commands.len())
-        {
-            return Err(ScratchError::InvalidCoordinate);
-        }
-        let (suspended, parent) = self.take_control_with_parent(root)?;
-        let ExpansionControl::Suspended {
-            resume,
-            delivery_expanded,
-            return_capability,
-            child,
-            ..
-        } = suspended
-        else {
-            unreachable!("validated suspended root remains suspended")
-        };
-        let command = self.take_command(command)?;
-        self.truncate_to(key.mark)?;
-        let popped = self.active_roots.pop();
-        debug_assert!(popped == Some(key.root));
-        if self.controls.len() == 0 {
-            // A resumed root may complete the scanner-return boundary that
-            // owned every synchronous descendant admitted after its mark.
-            // Their lane truncation retires the corresponding interpreter
-            // depth as one unit; no continuation remains to consume it.
-            self.driver = ExpandedDeliveryDriver::default();
-            self.active_control = None;
-        }
-        if completed {
-            self.counters.completed_roots = self.counters.completed_roots.saturating_add(1);
-        } else {
-            self.counters.aborted_roots = self.counters.aborted_roots.saturating_add(1);
-        }
-        Ok(crate::state::PendingExpansion {
-            command,
-            resume,
-            delivery_expanded,
-            parent,
-            return_capability,
-            child,
-        })
     }
 
     fn validate_command_slot(
@@ -3212,7 +2870,6 @@ impl<G> ExpansionWork<G> {
                 SynchronousNumberPhase::Await { .. }
                     | SynchronousNumberPhase::RegisterIndexAwait { .. }
             ),
-            ExpansionControl::Return(control) => control.awaiting,
             _ => false,
         };
         if awaiting {

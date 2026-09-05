@@ -8,16 +8,13 @@ mod scalar;
 mod structured;
 mod token_list;
 
-pub(crate) use expression::{
-    CompactExpressionPrefix, ExpressionFrame, ExpressionKind, PendingExpressionScan,
-};
+pub(crate) use expression::{CompactExpressionPrefix, ExpressionFrame, ExpressionKind};
 pub use hyphenation::{HyphenationDataKind, ScannedHyphenationData};
 pub use restricted::{RestrictedInteger, RestrictedIntegerClass};
 pub use scalar::{
     InternalValue, RetainedScalarScan, ScalarProvenance, ScalarRecovery, ScalarScanFrame,
     ScalarScanStatus, ScannedScalar,
 };
-pub(crate) use scalar::{PendingScalarFrame, ScalarChildDestination};
 pub use structured::{
     AlignmentCellOpening, EquationNumberSide, ExpandedWriteText, FileNameComponents,
     FontLoadRequest, FontSizeRecovery, GeneratedFontKind, ImmediateExtension, InputStreamRequest,
@@ -38,5 +35,4 @@ pub use structured::{
     ScannedRegisterDefinition, ScannedRuleSpec, ScannedSetBoxAssignment, ScannedSetBoxPath,
     ScannedVSplit, StructuredProvenance, WriteStreamSelector,
 };
-pub(crate) use structured::{PendingAlignmentPreamble, PendingStructuredScanner};
 pub use token_list::{ScannedTokenParameterAssignment, ScannedTokenRegisterAssignment};

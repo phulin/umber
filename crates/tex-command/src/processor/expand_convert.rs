@@ -81,90 +81,6 @@ fn compact_register_index_step(
 }
 
 impl<G> CommandProcessor<'_, '_, G> {
-    pub(super) fn canonical_expression_resume_pending(&self) -> Result<bool, CommandError> {
-        let canonical = self
-            .command
-            .scratch
-            .top_the_control()
-            .map_err(crate::scan_toks::scratch_command_error)?
-            .is_some_and(|control| {
-                matches!(
-                    control.phase,
-                    crate::expansion_work::control::ThePhase::CanonicalExpression { .. }
-                )
-            });
-        Ok(canonical
-            && self
-                .scanner_resume
-                .as_ref()
-                .is_some_and(crate::ScannerFrameKey::is_scalar))
-    }
-
-    /// Runs one deferred canonical expression handoff after expanded delivery
-    /// has yielded back to its caller.  The scalar scanner can therefore use
-    /// the ordinary shared token request without re-entering the hot loop
-    /// while a compact `\the` control is active.
-    pub(super) fn run_pending_canonical_expression(&mut self) -> Result<(), CommandError> {
-        let frame = self.command.scratch.take_pending_expression_frame();
-        if frame.is_none()
-            && !self
-                .scanner_resume
-                .as_ref()
-                .is_some_and(crate::ScannerFrameKey::is_scalar)
-        {
-            return Err(CommandError::input_invariant());
-        }
-        let complete = self.advance_the_canonical_expression_continuation(frame)?;
-        if complete {
-            Ok(())
-        } else {
-            Err(CommandError::input_invariant())
-        }
-    }
-
-    /// Hands an e-TeX expression operand from the compact `\the` lane to the
-    /// canonical typed scanner.  The compact lane owns only the conversion
-    /// opener; expression frames, including the generation-owned parenthesis
-    /// stack, remain solely in `scanners::expression`.
-    pub(super) fn advance_the_canonical_expression_continuation(
-        &mut self,
-        initial_frame: Option<crate::scanners::ExpressionFrame<G>>,
-    ) -> Result<bool, CommandError> {
-        use crate::expansion_work::control::ThePhase;
-
-        let control = self
-            .command
-            .scratch
-            .top_the_control()
-            .map_err(crate::scan_toks::scratch_command_error)?
-            .ok_or_else(CommandError::input_invariant)?;
-        let ThePhase::CanonicalExpression {
-            primitive,
-            as_number,
-        } = control.phase
-        else {
-            return Err(CommandError::input_invariant());
-        };
-        let value = match initial_frame {
-            Some(frame) => self.scan_expression_primitive_from_frame(primitive, frame)?,
-            None => self.scan_expression_primitive(primitive)?,
-        };
-        let opener = self
-            .command
-            .scratch
-            .pop_the_control()
-            .map_err(crate::scan_toks::scratch_command_error)?;
-        if as_number {
-            let crate::InternalValue::Dimension(value) = value else {
-                return Err(CommandError::input_invariant());
-            };
-            self.push_rendered_text(&value.raw().to_string(), opener);
-        } else {
-            self.expand_the_value(opener, value)?;
-        }
-        Ok(true)
-    }
-
     /// Advances the compact integer-expression form used by `\the`.  The
     /// ordinary expression scanner already has an explicit parenthesis stack,
     /// but its scalar factors still request expanded tokens synchronously.
@@ -371,20 +287,13 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
 
         // The compact accumulator owns only literal integer factors and the
-        // direct internal-value admission above.  Any other first-factor
-        // spelling is handed back to the canonical e-TeX scanner, which owns
-        // parenthesis frames, typed factors, and recovery. The signs already
-        // admitted here are carried by the canonical frame's pending factor
-        // polarity; no token or expression context is copied into a second
-        // parser.
+        // direct internal-value admission above. Any other first-factor
+        // spelling is handed directly to the canonical e-TeX scanner, which
+        // owns parenthesis frames, typed factors, and recovery. The compact
+        // control is retired before entering that synchronous scanner, so no
+        // pending expression frame or second delivery owner is needed.
         if !seen_digit {
             self.back_input(command.materialize())?;
-            self.command
-                .scratch
-                .set_the_phase(ThePhase::CanonicalExpression {
-                    primitive: UnexpandablePrimitive::NumExpr,
-                    as_number: false,
-                })?;
             let frame = if expression_started {
                 crate::scanners::ExpressionFrame::from_compact(
                     crate::scanners::ExpressionKind::Integer,
@@ -412,10 +321,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                     },
                 )
             };
-            self.command
+            let opener = self
+                .command
                 .scratch
-                .set_pending_expression_frame(frame)
+                .pop_the_control()
                 .map_err(crate::scan_toks::scratch_command_error)?;
+            let value =
+                self.scan_expression_primitive_from_frame(UnexpandablePrimitive::NumExpr, frame)?;
+            self.expand_the_value(opener, value)?;
             return Ok(true);
         }
 
@@ -952,12 +865,6 @@ impl<G> CommandProcessor<'_, '_, G> {
 
         if unit == 0 && !seen_digit {
             self.back_input(command.materialize())?;
-            self.command
-                .scratch
-                .set_the_phase(ThePhase::CanonicalExpression {
-                    primitive: UnexpandablePrimitive::DimExpr,
-                    as_number,
-                })?;
             let frame = if expression_started {
                 crate::scanners::ExpressionFrame::from_compact(
                     crate::scanners::ExpressionKind::Dimension,
@@ -985,10 +892,21 @@ impl<G> CommandProcessor<'_, '_, G> {
                     },
                 )
             };
-            self.command
+            let opener = self
+                .command
                 .scratch
-                .set_pending_expression_frame(frame)
+                .pop_the_control()
                 .map_err(crate::scan_toks::scratch_command_error)?;
+            let value =
+                self.scan_expression_primitive_from_frame(UnexpandablePrimitive::DimExpr, frame)?;
+            if as_number {
+                let crate::InternalValue::Dimension(value) = value else {
+                    return Err(CommandError::input_invariant());
+                };
+                self.push_rendered_text(&value.raw().to_string(), opener);
+            } else {
+                self.expand_the_value(opener, value)?;
+            }
             return Ok(true);
         }
 
@@ -2307,24 +2225,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         opener: &CurrentCommand<G>,
         roman: bool,
-        resume: &mut crate::state::PendingExpansionResume,
-        suspended: &mut Option<crate::state::PendingExpansionResume>,
     ) -> Result<(), CommandError> {
-        match std::mem::replace(resume, crate::state::PendingExpansionResume::Dispatch) {
-            crate::state::PendingExpansionResume::Dispatch => {}
-            crate::state::PendingExpansionResume::Number {
-                roman: retained_roman,
-            } if retained_roman == roman => {}
-            _ => return Err(CommandError::input_invariant()),
-        }
         let scan = self.scan_integer_retained();
-        let value = self
-            .retain_expansion_scalar(
-                scan,
-                crate::state::PendingExpansionResume::Number { roman },
-                suspended,
-            )?
-            .value;
+        let value = scan.into_result()?.value;
         let text = if roman {
             roman_numeral(value)
         } else {
@@ -2383,22 +2286,9 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub(super) fn expand_fontname(
         &mut self,
         opener: CurrentCommand<G>,
-        resume: &mut crate::state::PendingExpansionResume,
-        suspended: &mut Option<crate::state::PendingExpansionResume>,
     ) -> Result<(), CommandError> {
-        if !matches!(
-            std::mem::replace(resume, crate::state::PendingExpansionResume::Dispatch),
-            crate::state::PendingExpansionResume::Dispatch
-                | crate::state::PendingExpansionResume::FontName
-        ) {
-            return Err(CommandError::input_invariant());
-        }
         let scan = self.scan_font_selector_retained();
-        let font = self.retain_expansion_scalar(
-            scan,
-            crate::state::PendingExpansionResume::FontName,
-            suspended,
-        )?;
+        let font = scan.into_result()?;
         let mut name = self.state.font_name(font);
         let size = self.state.font_size(font);
         if size != self.state.font_design_size(font) {
@@ -2417,22 +2307,9 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub(super) fn expand_pdf_font_size(
         &mut self,
         opener: CurrentCommand<G>,
-        resume: &mut crate::state::PendingExpansionResume,
-        suspended: &mut Option<crate::state::PendingExpansionResume>,
     ) -> Result<(), CommandError> {
-        if !matches!(
-            std::mem::replace(resume, crate::state::PendingExpansionResume::Dispatch),
-            crate::state::PendingExpansionResume::Dispatch
-                | crate::state::PendingExpansionResume::PdfFontSize
-        ) {
-            return Err(CommandError::input_invariant());
-        }
         let scan = self.scan_font_selector_retained();
-        let font = self.retain_expansion_scalar(
-            scan,
-            crate::state::PendingExpansionResume::PdfFontSize,
-            suspended,
-        )?;
+        let font = scan.into_result()?;
         let size = format_scaled(self.state.tracked_font_size(font));
         self.push_rendered_text(&size, opener.origin());
         Ok(())
@@ -2442,22 +2319,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         opener: CurrentCommand<G>,
         primitive: ExpandablePrimitive,
-        resume: &mut crate::state::PendingExpansionResume,
-        suspended: &mut Option<crate::state::PendingExpansionResume>,
     ) -> Result<(), CommandError> {
-        match std::mem::replace(resume, crate::state::PendingExpansionResume::Dispatch) {
-            crate::state::PendingExpansionResume::Dispatch => {}
-            crate::state::PendingExpansionResume::PdfMarginKern {
-                primitive: retained,
-            } if retained == primitive => {}
-            _ => return Err(CommandError::input_invariant()),
-        }
         let scan = self.scan_extended_register_index_retained();
-        let index = self.retain_expansion_scalar(
-            scan,
-            crate::state::PendingExpansionResume::PdfMarginKern { primitive },
-            suspended,
-        )?;
+        let index = scan.into_result()?;
         let side = match primitive {
             ExpandablePrimitive::LeftMarginKern => tex_state::node::MarginKernSide::Left,
             ExpandablePrimitive::RightMarginKern => tex_state::node::MarginKernSide::Right,
@@ -2485,24 +2349,11 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub(super) fn expand_mark_class(
         &mut self,
         primitive: ExpandablePrimitive,
-        resume: &mut crate::state::PendingExpansionResume,
-        suspended: &mut Option<crate::state::PendingExpansionResume>,
     ) -> Result<(), CommandError> {
         // e-TeX 2.6 `etex.ch` [26.1178] uses the same
         // `scan_register_num` as numbered marks and sparse registers.
-        match std::mem::replace(resume, crate::state::PendingExpansionResume::Dispatch) {
-            crate::state::PendingExpansionResume::Dispatch => {}
-            crate::state::PendingExpansionResume::MarkClass {
-                primitive: retained,
-            } if retained == primitive => {}
-            _ => return Err(CommandError::input_invariant()),
-        }
         let scan = self.scan_extended_register_index_retained();
-        let class = self.retain_expansion_scalar(
-            scan,
-            crate::state::PendingExpansionResume::MarkClass { primitive },
-            suspended,
-        )?;
+        let class = scan.into_result()?;
         // e-TeX 2.6 etex.ch [25.386] makes class zero an exact alias for
         // TeX82's `cur_mark`, including its null-versus-empty pointer state.
         let tokens = self

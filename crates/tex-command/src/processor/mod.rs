@@ -217,31 +217,6 @@ pub struct CommandProcessor<'episode, 'admission, G> {
     /// fact to decide whether that replay is a decimal point or a unit.
     pub(crate) last_integer_terminator: Option<crate::CurrentCommand<G>>,
     next_delivery_sequence: u64,
-    /// Move-only scanner capability temporarily carried by the exact caller
-    /// continuation while a fresh processor borrow performs its retry.
-    pub(crate) scanner_resume: Option<crate::execution_scratch::ScannerFrameKey<G>>,
-    /// Exact synchronous parent lent to a scanner-owned expanded-token sink.
-    /// Fresh return capabilities use this edge directly; a resumed sink gets
-    /// its capability back from the parked continuation instead.
-    pub(crate) scanner_return_parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
-    /// Return capability currently owned by the scanner/control frame doing
-    /// an expanded request. Resource suspension copies this exact edge into
-    /// `PendingExpansion`; it is never rediscovered from the active lane.
-    pub(crate) scanner_return_capability:
-        Option<crate::expansion_work::control::ExpansionReturnCapability<G>>,
-    /// Return edge carried out of a parked expansion and available to the
-    /// resumed scanner request in the same expanded delivery episode.
-    pub(crate) resumed_return_capability:
-        Option<crate::expansion_work::control::ExpansionReturnCapability<G>>,
-    /// Sink expected by a scanner that is about to resume a parked expansion.
-    /// The expanded loop installs the parked capability before dispatch so a
-    /// resumed resource child cannot push a fresh return frame above it.
-    pub(crate) resumed_return_sink: Option<crate::expansion_work::control::ExpansionReturnSink>,
-    /// Exact parked-command root supplied only by an executor expansion
-    /// retry. Nested scanner owners continue to carry their existing typed
-    /// wrapper around the same move-only root.
-    expansion_resume: Option<crate::ExpansionWorkKey<G>>,
-    resumed_expansion: Option<crate::state::PendingExpansionResume>,
     /// Set only by canonical outer-validity recovery while a scalar macro
     /// matcher owns `ScannerStatus::Matching`.
     /// tex.web §360 has just ended a `\\read` pseudo-file's only line.
@@ -286,6 +261,12 @@ pub struct CommandProcessor<'episode, 'admission, G> {
 
 impl<G> Drop for CommandProcessor<'_, '_, G> {
     fn drop(&mut self) {
+        // Resource misses unwind through the host checkpoint.  The processor
+        // owns only call-local expansion/scanner scratch, so dropping the
+        // borrow is the single cold cleanup point for both resource and
+        // ordinary error exits.  Successful command delivery is quiescent by
+        // construction and therefore makes this a no-op on the hot path.
+        let _ = self.command.scratch.unwind_resource_failure();
         self.command.delivery_mode.end_episode();
     }
 }
@@ -415,62 +396,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         // occurred, so observation order is still exactly the cursor's
         // preceding position and does not depend on freshness ownership.
         self.next_delivery_sequence.wrapping_sub(1)
-    }
-
-    pub(crate) fn pending_scanner_frame(
-        &self,
-    ) -> Result<Option<&crate::scan_toks::PendingScanToks<G>>, crate::execution_scratch::ScratchError>
-    {
-        self.scanner_resume
-            .as_ref()
-            .map(|key| self.command.scratch.scanner_frame(key))
-            .transpose()
-    }
-
-    #[must_use]
-    pub fn take_scanner_resume(&mut self) -> Option<crate::ScannerFrameKey<G>> {
-        self.scanner_resume.take()
-    }
-
-    pub fn install_scanner_resume(&mut self, key: Option<crate::ScannerFrameKey<G>>) {
-        assert!(
-            self.scanner_resume.is_none(),
-            "a processor retry accepts exactly one scanner-frame capability"
-        );
-        self.scanner_resume = key;
-    }
-
-    /// Moves the outermost parked expansion root to its executor retry owner.
-    /// The command and exact typed continuation remain in generation-owned
-    /// stable lanes; no command projection or definition retain crosses the
-    /// boundary.
-    #[must_use]
-    pub fn take_pending_expansion_work(&mut self) -> Option<crate::ExpansionWorkKey<G>> {
-        if !self
-            .scanner_resume
-            .as_ref()
-            .is_some_and(crate::ScannerFrameKey::is_expansion)
-        {
-            return None;
-        }
-        let wrapper = self
-            .scanner_resume
-            .take()
-            .expect("matched expansion wrapper");
-        Some(
-            self.command
-                .scratch
-                .take_expansion_key(wrapper)
-                .expect("live expansion wrapper owns its parked root"),
-        )
-    }
-
-    pub fn install_expansion_resume(&mut self, key: crate::ExpansionWorkKey<G>) {
-        assert!(
-            self.expansion_resume.is_none() && self.resumed_expansion.is_none(),
-            "an expansion retry accepts exactly one parked root"
-        );
-        self.expansion_resume = Some(key);
     }
 
     /// Captures TeX82 §82's `show_context` while this processor still owns
@@ -756,13 +681,6 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
             delivery_authority: DeliveryAuthority::Unavailable,
             last_integer_terminator: None,
             next_delivery_sequence: 0,
-            scanner_resume: None,
-            scanner_return_parent: None,
-            scanner_return_capability: None,
-            resumed_return_capability: None,
-            resumed_return_sink: None,
-            expansion_resume: None,
-            resumed_expansion: None,
             read_line_ended: false,
             outer_recovered_while_matching: false,
             outer_recovered_while_absorbing: false,

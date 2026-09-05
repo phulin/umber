@@ -23,303 +23,6 @@ const ARGUMENT_SET_SLOT_MASK: u64 = (1_u64 << ARGUMENT_SET_SLOT_BITS) - 1;
 const ARGUMENT_SET_SERIAL_LIMIT: u64 = 1_u64 << (64 - ARGUMENT_SET_SLOT_BITS);
 
 #[derive(Debug)]
-struct ResumeFrameId<G> {
-    slot: u32,
-    serial: u64,
-    _generation: PhantomData<fn(&G) -> &G>,
-}
-
-impl<G> Copy for ResumeFrameId<G> {}
-impl<G> Clone for ResumeFrameId<G> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-impl<G> PartialEq for ResumeFrameId<G> {
-    fn eq(&self, other: &Self) -> bool {
-        self.slot == other.slot && self.serial == other.serial
-    }
-}
-impl<G> Eq for ResumeFrameId<G> {}
-
-/// Exact move-only root capability for one typed suspended continuation.
-#[derive(Debug, Eq, PartialEq)]
-pub struct ScannerFrameKey<G> {
-    id: ResumeFrameId<G>,
-    kind: ContinuationKind,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ContinuationKind {
-    Scanner,
-    Scalar,
-    Expansion,
-    #[allow(dead_code)]
-    ExpandAfter,
-    PdfStringCompare,
-    AlignmentPreamble,
-    StructuredScanner,
-}
-
-impl<G> ScannerFrameKey<G> {
-    pub(crate) fn is_scanner(&self) -> bool {
-        self.kind == ContinuationKind::Scanner
-    }
-
-    pub(crate) fn is_expansion(&self) -> bool {
-        self.kind == ContinuationKind::Expansion
-    }
-
-    pub(crate) fn is_scalar(&self) -> bool {
-        self.kind == ContinuationKind::Scalar
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn is_expandafter(&self) -> bool {
-        self.kind == ContinuationKind::ExpandAfter
-    }
-
-    pub(crate) fn is_pdf_string_compare(&self) -> bool {
-        self.kind == ContinuationKind::PdfStringCompare
-    }
-
-    pub(crate) fn is_alignment_preamble(&self) -> bool {
-        self.kind == ContinuationKind::AlignmentPreamble
-    }
-
-    pub(crate) fn is_structured_scanner(&self) -> bool {
-        self.kind == ContinuationKind::StructuredScanner
-    }
-
-    #[cfg(test)]
-    pub(crate) const fn injected_scan_toks_publication_collision() -> Self {
-        Self {
-            id: ResumeFrameId {
-                slot: u32::MAX,
-                serial: u64::MAX,
-                _generation: PhantomData,
-            },
-            kind: ContinuationKind::Scanner,
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) const fn is_injected_scan_toks_publication_collision(&self) -> bool {
-        self.id.slot == u32::MAX
-            && self.id.serial == u64::MAX
-            && matches!(self.kind, ContinuationKind::Scanner)
-    }
-}
-
-/// One structurally owned child edge and the caller phase that receives it.
-///
-/// The key is deliberately non-`Copy`: suspension moves the live child out
-/// of the processor baton and resumption consumes this edge before the caller
-/// phase can run again.
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) struct ChildContinuation<G, D> {
-    key: ScannerFrameKey<G>,
-    destination: D,
-}
-
-impl<G, D> ChildContinuation<G, D> {
-    pub(crate) fn capture(baton: &mut Option<ScannerFrameKey<G>>, destination: D) -> Option<Self> {
-        baton.take().map(|key| Self { key, destination })
-    }
-
-    pub(crate) fn restore(self) -> (ScannerFrameKey<G>, D) {
-        (self.key, self.destination)
-    }
-
-    pub(crate) fn from_key(key: ScannerFrameKey<G>, destination: D) -> Self {
-        Self { key, destination }
-    }
-}
-
-impl<G, D: Copy> ChildContinuation<G, D> {
-    pub(crate) fn destination(&self) -> D {
-        self.destination
-    }
-}
-
-// Keeping the heterogeneous payload inline is deliberate: boxing a live
-// continuation would allocate on every first suspension after warmup.
-#[allow(clippy::large_enum_variant)]
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) enum ContinuationFrame<G> {
-    Scanner(crate::scan_toks::PendingScanToks<G>),
-    Scalar(crate::scanners::PendingScalarFrame<G>),
-    Expansion(crate::ExpansionWorkKey<G>),
-    #[allow(dead_code)]
-    ExpandAfter(crate::processor::expand_structural::PendingExpandAfter<G>),
-    PdfStringCompare(crate::processor::expand_pdf_string::PendingPdfStringCompare<G>),
-    AlignmentPreamble(crate::scanners::PendingAlignmentPreamble<G>),
-    StructuredScanner(crate::scanners::PendingStructuredScanner<G>),
-}
-
-// `PendingScanToks` owns the definition builder and its attempt scope. Keep it
-// in a dedicated typed lane so that growing that exact suspension owner cannot
-// inflate every unrelated continuation row.
-#[allow(clippy::large_enum_variant)]
-#[derive(Debug, Eq, PartialEq)]
-enum StoredContinuationFrame<G> {
-    Scalar(crate::scanners::PendingScalarFrame<G>),
-    Expansion(crate::ExpansionWorkKey<G>),
-    ExpandAfter(crate::processor::expand_structural::PendingExpandAfter<G>),
-    PdfStringCompare(crate::processor::expand_pdf_string::PendingPdfStringCompare<G>),
-    AlignmentPreamble(crate::scanners::PendingAlignmentPreamble<G>),
-    StructuredScanner(crate::scanners::PendingStructuredScanner<G>),
-}
-
-// Parked expansion controls belong in ExpansionWork's stable chunks. They
-// must not enlarge this existing suspension lane into an 800-byte value.
-const _: () = assert!(core::mem::size_of::<StoredContinuationFrame<()>>() < 800);
-
-#[derive(Debug, Eq, PartialEq)]
-struct ResumeFrameSlot<T, G> {
-    serial: u64,
-    payload: Option<T>,
-    _generation: PhantomData<fn(&G) -> &G>,
-}
-
-impl<T, G> Default for ResumeFrameSlot<T, G> {
-    fn default() -> Self {
-        Self {
-            serial: 0,
-            payload: None,
-            _generation: PhantomData,
-        }
-    }
-}
-
-#[derive(Debug, Eq, PartialEq)]
-struct ResumeFrameLane<T, G> {
-    slots: Vec<ResumeFrameSlot<T, G>>,
-    free_slots: Vec<u32>,
-    next_serial: u64,
-}
-
-impl<T, G> Default for ResumeFrameLane<T, G> {
-    fn default() -> Self {
-        Self {
-            slots: Vec::new(),
-            free_slots: Vec::new(),
-            next_serial: 1,
-        }
-    }
-}
-
-impl<T, G> ResumeFrameLane<T, G> {
-    fn insert(&mut self, payload: T) -> Result<ResumeFrameId<G>, ScratchError> {
-        let mut payload = Some(payload);
-        self.insert_from(&mut payload)
-    }
-
-    fn take(&mut self, id: ResumeFrameId<G>) -> Result<T, ScratchError> {
-        let slot = self.slot_mut(id)?;
-        let payload = slot.payload.take().ok_or(ScratchError::InvalidCoordinate)?;
-        *slot = ResumeFrameSlot::default();
-        self.free_slots.push(id.slot);
-        Ok(payload)
-    }
-
-    fn get(&self, id: ResumeFrameId<G>) -> Result<&T, ScratchError> {
-        self.slot(id)?
-            .payload
-            .as_ref()
-            .ok_or(ScratchError::InvalidCoordinate)
-    }
-
-    fn get_mut(&mut self, id: ResumeFrameId<G>) -> Result<&mut T, ScratchError> {
-        self.slot_mut(id)?
-            .payload
-            .as_mut()
-            .ok_or(ScratchError::InvalidCoordinate)
-    }
-
-    /// Preflights every fallible coordinate and allocation before moving the
-    /// payload out of `payload`. An error therefore leaves both the owner and
-    /// the lane's reusable logical state unchanged.
-    fn insert_from(&mut self, payload: &mut Option<T>) -> Result<ResumeFrameId<G>, ScratchError> {
-        if payload.is_none() {
-            return Err(ScratchError::InvalidCoordinate);
-        }
-        let serial = self.next_serial;
-        let next_serial = serial
-            .checked_add(1)
-            .filter(|serial| *serial != 0)
-            .ok_or(ScratchError::CapacityOverflow)?;
-        let reused = self.free_slots.last().copied();
-        let index = if let Some(index) = reused {
-            let slot = self
-                .slots
-                .get(index as usize)
-                .ok_or(ScratchError::InvalidCoordinate)?;
-            if slot.payload.is_some() {
-                return Err(ScratchError::InvalidCoordinate);
-            }
-            index
-        } else {
-            let index =
-                u32::try_from(self.slots.len()).map_err(|_| ScratchError::CapacityOverflow)?;
-            self.slots
-                .try_reserve(1)
-                .map_err(|_| ScratchError::AllocationFailed)?;
-            self.free_slots
-                .try_reserve(1)
-                .map_err(|_| ScratchError::AllocationFailed)?;
-            index
-        };
-
-        if reused.is_some() {
-            let popped = self
-                .free_slots
-                .pop()
-                .expect("preflighted reusable resume slot remains present");
-            debug_assert_eq!(popped, index);
-        } else {
-            self.slots.push(ResumeFrameSlot::default());
-        }
-        self.next_serial = next_serial;
-        let slot = &mut self.slots[index as usize];
-        *slot = ResumeFrameSlot {
-            serial,
-            payload: payload.take(),
-            _generation: PhantomData,
-        };
-        Ok(ResumeFrameId {
-            slot: index,
-            serial,
-            _generation: PhantomData,
-        })
-    }
-
-    fn slot(&self, id: ResumeFrameId<G>) -> Result<&ResumeFrameSlot<T, G>, ScratchError> {
-        self.slots
-            .get(id.slot as usize)
-            .filter(|slot| slot.serial == id.serial && slot.payload.is_some())
-            .ok_or(ScratchError::InvalidCoordinate)
-    }
-
-    fn slot_mut(
-        &mut self,
-        id: ResumeFrameId<G>,
-    ) -> Result<&mut ResumeFrameSlot<T, G>, ScratchError> {
-        self.slots
-            .get_mut(id.slot as usize)
-            .filter(|slot| slot.serial == id.serial && slot.payload.is_some())
-            .ok_or(ScratchError::InvalidCoordinate)
-    }
-
-    fn live_len(&self) -> usize {
-        self.slots
-            .iter()
-            .filter(|slot| slot.payload.is_some())
-            .count()
-    }
-}
-
-#[derive(Debug)]
 pub(crate) struct ArgumentSetId<G> {
     packed: NonZeroU64,
     _generation: PhantomData<fn(&G) -> &G>,
@@ -949,14 +652,6 @@ pub(crate) enum ScratchError {
     AllocationFailed,
 }
 
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum InjectedScannerFrameStoreFailure {
-    Allocation,
-    Capacity,
-    Serial,
-}
-
 pub(crate) struct MacroWords<'a, G> {
     lane: &'a MacroWordLane,
     position: u32,
@@ -1004,10 +699,7 @@ pub(crate) struct ExecutionScratch<G> {
     macro_words: MacroWordLane,
     next_macro_serial: u64,
     transient_depth: u32,
-    scanner_resumes: ResumeFrameLane<crate::scan_toks::PendingScanToks<G>, G>,
-    continuation_resumes: ResumeFrameLane<StoredContinuationFrame<G>, G>,
     expression_frames: Vec<crate::scanners::ExpressionFrame<G>>,
-    pending_expression_frame: Option<crate::scanners::ExpressionFrame<G>>,
     expansion_work: crate::expansion_work::ExpansionWork<G>,
     _generation: PhantomData<fn(&G) -> &G>,
     #[cfg(test)]
@@ -1022,10 +714,6 @@ pub(crate) struct ExecutionScratch<G> {
     match_writer_fact_updates: u64,
     #[cfg(test)]
     match_writer_slot_validations: u64,
-    #[cfg(test)]
-    fail_next_scanner_frame_store: Option<InjectedScannerFrameStoreFailure>,
-    #[cfg(test)]
-    inject_scan_toks_publication_collision: bool,
     /// Successful matching should append and classify, never read its stored
     /// words back for paragraph or outer-group decisions. Diagnostic tracing
     /// and observed token payloads are deliberate readers and remain visible
@@ -1045,10 +733,7 @@ impl<G> Default for ExecutionScratch<G> {
             macro_words: MacroWordLane::default(),
             next_macro_serial: 1,
             transient_depth: 0,
-            scanner_resumes: ResumeFrameLane::default(),
-            continuation_resumes: ResumeFrameLane::default(),
             expression_frames: Vec::new(),
-            pending_expression_frame: None,
             expansion_work: crate::expansion_work::ExpansionWork::default(),
             _generation: PhantomData,
             #[cfg(test)]
@@ -1063,10 +748,6 @@ impl<G> Default for ExecutionScratch<G> {
             match_writer_fact_updates: 0,
             #[cfg(test)]
             match_writer_slot_validations: 0,
-            #[cfg(test)]
-            fail_next_scanner_frame_store: None,
-            #[cfg(test)]
-            inject_scan_toks_publication_collision: false,
             #[cfg(any(test, feature = "profiling"))]
             match_word_reads: Cell::new(0),
         }
@@ -1074,7 +755,7 @@ impl<G> Default for ExecutionScratch<G> {
 }
 
 #[derive(Debug)]
-pub(crate) struct ExecutionScratchTransientMark<G> {
+pub(crate) struct ExecutionScratchTransientMark {
     depth: u32,
     macro_slots_len: usize,
     macro_words_len: u32,
@@ -1083,36 +764,23 @@ pub(crate) struct ExecutionScratchTransientMark<G> {
     pending_macro_slot: u32,
     free_macro_slot: u32,
     next_macro_serial: u64,
-    pending_expression_frame: Option<crate::scanners::ExpressionFrame<G>>,
 }
 
 impl<G> ExecutionScratch<G> {
+    /// Discards all call-local scanner and expansion owners after a resource
+    /// miss. The enclosing host checkpoint owns retry; no scanner frame,
+    /// scalar phase, or expansion control is allowed to outlive this
+    /// processor episode.
+    pub(crate) fn unwind_resource_failure(&mut self) -> Result<(), ScratchError> {
+        self.expression_frames.clear();
+        self.expansion_work.unwind_resource_failure()
+    }
+
     /// Reads the one authoritative continuation owner. The selected payload
     /// stays in `ExpansionWork`; callers dispatch by this tag before touching
     /// any typed control lane.
     pub(crate) fn active_control_tag(&self) -> Option<crate::expansion_work::ActiveControlTag> {
         self.expansion_work.active_control_tag()
-    }
-
-    pub(crate) fn begin_expansion_return(
-        &mut self,
-        sink: crate::expansion_work::control::ExpansionReturnSink,
-        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
-    ) -> Result<crate::expansion_work::control::ExpansionReturnCapability<G>, ScratchError> {
-        self.expansion_work.begin_return(sink, parent)
-    }
-
-    pub(crate) fn finish_expansion_return(
-        &mut self,
-        capability: crate::expansion_work::control::ExpansionReturnCapability<G>,
-    ) -> Result<(), ScratchError> {
-        self.expansion_work.finish_return(capability)
-    }
-
-    pub(crate) fn active_control_slot(
-        &self,
-    ) -> Option<crate::expansion_work::ExpansionControlSlot<G>> {
-        self.expansion_work.active_control_slot()
     }
 
     pub(crate) fn active_control_is_synchronous(&self) -> bool {
@@ -1125,27 +793,6 @@ impl<G> ExecutionScratch<G> {
 
     pub(crate) fn expression_stack_len(&self) -> usize {
         self.expression_frames.len()
-    }
-
-    pub(crate) fn set_pending_expression_frame(
-        &mut self,
-        frame: crate::scanners::ExpressionFrame<G>,
-    ) -> Result<(), ScratchError> {
-        if self.pending_expression_frame.is_some() {
-            return Err(ScratchError::InvalidCoordinate);
-        }
-        self.pending_expression_frame = Some(frame);
-        Ok(())
-    }
-
-    pub(crate) fn take_pending_expression_frame(
-        &mut self,
-    ) -> Option<crate::scanners::ExpressionFrame<G>> {
-        self.pending_expression_frame.take()
-    }
-
-    pub(crate) fn has_pending_expression_frame(&self) -> bool {
-        self.pending_expression_frame.is_some()
     }
 
     pub(crate) fn push_expression_frame(
@@ -1177,231 +824,6 @@ impl<G> ExecutionScratch<G> {
         }
         self.expression_frames.truncate(mark);
         Ok(())
-    }
-
-    pub(crate) fn take_continuation_frame(
-        &mut self,
-        key: ScannerFrameKey<G>,
-    ) -> Result<ContinuationFrame<G>, ScratchError> {
-        if key.is_scanner() {
-            return self
-                .scanner_resumes
-                .take(key.id)
-                .map(ContinuationFrame::Scanner);
-        }
-        let frame = self.continuation_resumes.take(key.id)?;
-        let matches_kind = matches!(
-            (&frame, key.kind),
-            (StoredContinuationFrame::Scalar(_), ContinuationKind::Scalar)
-                | (
-                    StoredContinuationFrame::Expansion(_),
-                    ContinuationKind::Expansion
-                )
-                | (
-                    StoredContinuationFrame::ExpandAfter(_),
-                    ContinuationKind::ExpandAfter
-                )
-                | (
-                    StoredContinuationFrame::PdfStringCompare(_),
-                    ContinuationKind::PdfStringCompare
-                )
-                | (
-                    StoredContinuationFrame::AlignmentPreamble(_),
-                    ContinuationKind::AlignmentPreamble
-                )
-                | (
-                    StoredContinuationFrame::StructuredScanner(_),
-                    ContinuationKind::StructuredScanner
-                )
-        );
-        if !matches_kind {
-            return Err(ScratchError::InvalidCoordinate);
-        }
-        Ok(match frame {
-            StoredContinuationFrame::Scalar(pending) => ContinuationFrame::Scalar(pending),
-            StoredContinuationFrame::Expansion(pending) => ContinuationFrame::Expansion(pending),
-            StoredContinuationFrame::ExpandAfter(pending) => {
-                ContinuationFrame::ExpandAfter(pending)
-            }
-            StoredContinuationFrame::PdfStringCompare(pending) => {
-                ContinuationFrame::PdfStringCompare(pending)
-            }
-            StoredContinuationFrame::AlignmentPreamble(pending) => {
-                ContinuationFrame::AlignmentPreamble(pending)
-            }
-            StoredContinuationFrame::StructuredScanner(pending) => {
-                ContinuationFrame::StructuredScanner(pending)
-            }
-        })
-    }
-
-    pub(crate) fn store_scalar_frame(
-        &mut self,
-        pending: crate::scanners::PendingScalarFrame<G>,
-    ) -> Result<ScannerFrameKey<G>, ScratchError> {
-        self.continuation_resumes
-            .insert(StoredContinuationFrame::Scalar(pending))
-            .map(|id| ScannerFrameKey {
-                id,
-                kind: ContinuationKind::Scalar,
-            })
-    }
-
-    pub(crate) fn take_scalar_frame(
-        &mut self,
-        key: ScannerFrameKey<G>,
-    ) -> Result<crate::scanners::PendingScalarFrame<G>, ScratchError> {
-        if !key.is_scalar() {
-            return Err(ScratchError::InvalidCoordinate);
-        }
-        match self.continuation_resumes.take(key.id)? {
-            StoredContinuationFrame::Scalar(pending) => Ok(pending),
-            _ => Err(ScratchError::InvalidCoordinate),
-        }
-    }
-
-    pub(crate) fn scalar_frame_mut(
-        &mut self,
-        key: &ScannerFrameKey<G>,
-    ) -> Result<&mut crate::scanners::PendingScalarFrame<G>, ScratchError> {
-        if !key.is_scalar() {
-            return Err(ScratchError::InvalidCoordinate);
-        }
-        match self.continuation_resumes.slot_mut(key.id)?.payload.as_mut() {
-            Some(StoredContinuationFrame::Scalar(pending)) => Ok(pending),
-            _ => Err(ScratchError::InvalidCoordinate),
-        }
-    }
-
-    pub(crate) fn discard_scalar_frame(
-        &mut self,
-        key: ScannerFrameKey<G>,
-    ) -> Result<(), ScratchError> {
-        self.take_scalar_frame(key).map(drop)
-    }
-
-    pub(crate) fn store_scanner_frame(
-        &mut self,
-        pending: &mut Option<crate::scan_toks::PendingScanToks<G>>,
-    ) -> Result<ScannerFrameKey<G>, ScratchError> {
-        #[cfg(test)]
-        if let Some(failure) = self.fail_next_scanner_frame_store.take() {
-            return Err(match failure {
-                InjectedScannerFrameStoreFailure::Allocation => ScratchError::AllocationFailed,
-                InjectedScannerFrameStoreFailure::Capacity
-                | InjectedScannerFrameStoreFailure::Serial => ScratchError::CapacityOverflow,
-            });
-        }
-        let id = self.scanner_resumes.insert_from(pending)?;
-        Ok(ScannerFrameKey {
-            id,
-            kind: ContinuationKind::Scanner,
-        })
-    }
-
-    #[cfg(test)]
-    pub(crate) fn inject_scanner_frame_store_failure(
-        &mut self,
-        failure: InjectedScannerFrameStoreFailure,
-    ) {
-        self.fail_next_scanner_frame_store = Some(failure);
-    }
-
-    #[cfg(test)]
-    pub(crate) fn inject_scan_toks_publication_collision(&mut self) {
-        self.inject_scan_toks_publication_collision = true;
-    }
-
-    #[cfg(test)]
-    pub(crate) fn take_scan_toks_publication_collision(&mut self) -> bool {
-        core::mem::take(&mut self.inject_scan_toks_publication_collision)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn scanner_resume_storage_counts(&self) -> (usize, usize, usize) {
-        (
-            self.scanner_resumes.slots.len(),
-            self.scanner_resumes.free_slots.len(),
-            self.scanner_resumes.live_len(),
-        )
-    }
-
-    #[cfg(test)]
-    pub(crate) fn parked_scanner_storage_counts(&self) -> (usize, usize, usize) {
-        (
-            self.scanner_resumes.slots.len(),
-            self.continuation_resumes.slots.len(),
-            self.scanner_resumes.live_len() + self.continuation_resumes.live_len(),
-        )
-    }
-
-    pub(crate) fn take_scanner_frame(
-        &mut self,
-        key: ScannerFrameKey<G>,
-    ) -> Result<crate::scan_toks::PendingScanToks<G>, ScratchError> {
-        if !key.is_scanner() {
-            return Err(ScratchError::InvalidCoordinate);
-        }
-        self.scanner_resumes.take(key.id)
-    }
-
-    pub(crate) fn scanner_frame(
-        &self,
-        key: &ScannerFrameKey<G>,
-    ) -> Result<&crate::scan_toks::PendingScanToks<G>, ScratchError> {
-        if !key.is_scanner() {
-            return Err(ScratchError::InvalidCoordinate);
-        }
-        self.scanner_resumes.get(key.id)
-    }
-
-    // Failed wrapper admission returns the sole parked owner without boxing
-    // or allocating on this already-cold recovery edge.
-    #[allow(clippy::result_large_err)]
-    pub(crate) fn store_expansion_frame(
-        &mut self,
-        pending: crate::state::PendingExpansion<G>,
-    ) -> Result<ScannerFrameKey<G>, (ScratchError, crate::state::PendingExpansion<G>)> {
-        let key = self.expansion_work.park_suspension(pending)?;
-        let mut frame = Some(StoredContinuationFrame::Expansion(key));
-        match self.continuation_resumes.insert_from(&mut frame) {
-            Ok(id) => Ok(ScannerFrameKey {
-                id,
-                kind: ContinuationKind::Expansion,
-            }),
-            Err(error) => {
-                let StoredContinuationFrame::Expansion(key) =
-                    frame.expect("failed wrapper store preserves expansion key")
-                else {
-                    unreachable!("production wrapper contains one expansion key")
-                };
-                let pending = self
-                    .expansion_work
-                    .resume_suspension(key)
-                    .expect("failed wrapper store restores just-parked expansion");
-                Err((error, pending))
-            }
-        }
-    }
-
-    pub(crate) fn take_expansion_key(
-        &mut self,
-        key: ScannerFrameKey<G>,
-    ) -> Result<crate::ExpansionWorkKey<G>, ScratchError> {
-        if !key.is_expansion() {
-            return Err(ScratchError::InvalidCoordinate);
-        }
-        match self.continuation_resumes.take(key.id)? {
-            StoredContinuationFrame::Expansion(key) => Ok(key),
-            _ => Err(ScratchError::InvalidCoordinate),
-        }
-    }
-
-    pub(crate) fn resume_expansion(
-        &mut self,
-        key: crate::ExpansionWorkKey<G>,
-    ) -> Result<crate::state::PendingExpansion<G>, ScratchError> {
-        self.expansion_work.resume_suspension(key)
     }
 
     pub(crate) fn push_the_control_with_parent(
@@ -1770,15 +1192,6 @@ impl<G> ExecutionScratch<G> {
             .push_mark_class_control_with_parent(opener, primitive, parent)
     }
 
-    pub(crate) fn push_pdf_ximage_bbox_control_with_parent(
-        &mut self,
-        opener: tex_state::token::OriginId,
-        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
-    ) -> Result<(), ScratchError> {
-        self.expansion_work
-            .push_pdf_ximage_bbox_control_with_parent(opener, parent)
-    }
-
     pub(crate) fn push_pdf_string_control_with_parent(
         &mut self,
         opener: tex_state::token::OriginId,
@@ -1840,38 +1253,6 @@ impl<G> ExecutionScratch<G> {
         ScratchError,
     > {
         self.expansion_work.pop_number_control_with_parent()
-    }
-
-    pub(crate) fn top_pdf_ximage_bbox_control(
-        &self,
-    ) -> Result<
-        Option<
-            crate::expansion_work::ExpansionControlView<
-                G,
-                crate::expansion_work::control::SynchronousPdfXImageBBoxControl,
-            >,
-        >,
-        ScratchError,
-    > {
-        self.expansion_work.top_pdf_ximage_bbox_control()
-    }
-
-    pub(crate) fn set_pdf_ximage_bbox_phase(
-        &mut self,
-        phase: crate::expansion_work::control::SynchronousPdfXImageBBoxPhase,
-    ) -> Result<(), ScratchError> {
-        let slot = self
-            .expansion_work
-            .top_pdf_ximage_bbox_control()?
-            .ok_or(ScratchError::InvalidCoordinate)?
-            .slot;
-        self.expansion_work.set_pdf_ximage_bbox_phase(slot, phase)
-    }
-
-    pub(crate) fn pop_pdf_ximage_bbox_control(
-        &mut self,
-    ) -> Result<crate::expansion_work::control::SynchronousPdfXImageBBoxControl, ScratchError> {
-        self.expansion_work.pop_pdf_ximage_bbox_control()
     }
 
     pub(crate) fn push_fontname_control_with_parent(
@@ -2023,7 +1404,6 @@ impl<G> ExecutionScratch<G> {
     }
 
     pub(crate) fn abort_synchronous_controls(&mut self) -> Result<(), ScratchError> {
-        self.pending_expression_frame = None;
         self.expansion_work.abort_synchronous_controls()
     }
 
@@ -2068,155 +1448,6 @@ impl<G> ExecutionScratch<G> {
         &self,
     ) -> crate::expansion_work::ExpansionWorkCounters {
         self.expansion_work.counters()
-    }
-
-    pub(crate) fn cancel_expansion(
-        &mut self,
-        key: crate::ExpansionWorkKey<G>,
-    ) -> Result<crate::state::PendingExpansion<G>, ScratchError> {
-        self.expansion_work.cancel_suspension(key)
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn store_expandafter_frame(
-        &mut self,
-        pending: crate::processor::expand_structural::PendingExpandAfter<G>,
-    ) -> Result<ScannerFrameKey<G>, ScratchError> {
-        self.continuation_resumes
-            .insert(StoredContinuationFrame::ExpandAfter(pending))
-            .map(|id| ScannerFrameKey {
-                id,
-                kind: ContinuationKind::ExpandAfter,
-            })
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn take_expandafter_frame(
-        &mut self,
-        key: ScannerFrameKey<G>,
-    ) -> Result<crate::processor::expand_structural::PendingExpandAfter<G>, ScratchError> {
-        if !key.is_expandafter() {
-            return Err(ScratchError::InvalidCoordinate);
-        }
-        match self.continuation_resumes.take(key.id)? {
-            StoredContinuationFrame::ExpandAfter(pending) => Ok(pending),
-            _ => Err(ScratchError::InvalidCoordinate),
-        }
-    }
-
-    pub(crate) fn store_pdf_string_compare_frame(
-        &mut self,
-        pending: crate::processor::expand_pdf_string::PendingPdfStringCompare<G>,
-    ) -> Result<ScannerFrameKey<G>, ScratchError> {
-        self.continuation_resumes
-            .insert(StoredContinuationFrame::PdfStringCompare(pending))
-            .map(|id| ScannerFrameKey {
-                id,
-                kind: ContinuationKind::PdfStringCompare,
-            })
-    }
-
-    pub(crate) fn take_pdf_string_compare_frame(
-        &mut self,
-        key: ScannerFrameKey<G>,
-    ) -> Result<crate::processor::expand_pdf_string::PendingPdfStringCompare<G>, ScratchError> {
-        if !key.is_pdf_string_compare() {
-            return Err(ScratchError::InvalidCoordinate);
-        }
-        match self.continuation_resumes.take(key.id)? {
-            StoredContinuationFrame::PdfStringCompare(pending) => Ok(pending),
-            _ => Err(ScratchError::InvalidCoordinate),
-        }
-    }
-
-    pub(crate) fn store_alignment_preamble_frame(
-        &mut self,
-        pending: crate::scanners::PendingAlignmentPreamble<G>,
-    ) -> Result<ScannerFrameKey<G>, ScratchError> {
-        self.continuation_resumes
-            .insert(StoredContinuationFrame::AlignmentPreamble(pending))
-            .map(|id| ScannerFrameKey {
-                id,
-                kind: ContinuationKind::AlignmentPreamble,
-            })
-    }
-
-    pub(crate) fn take_alignment_preamble_frame(
-        &mut self,
-        key: ScannerFrameKey<G>,
-    ) -> Result<crate::scanners::PendingAlignmentPreamble<G>, ScratchError> {
-        if !key.is_alignment_preamble() {
-            return Err(ScratchError::InvalidCoordinate);
-        }
-        match self.continuation_resumes.take(key.id)? {
-            StoredContinuationFrame::AlignmentPreamble(pending) => Ok(pending),
-            _ => Err(ScratchError::InvalidCoordinate),
-        }
-    }
-
-    pub(crate) fn alignment_preamble_frame_mut(
-        &mut self,
-        key: &ScannerFrameKey<G>,
-    ) -> Result<&mut crate::scanners::PendingAlignmentPreamble<G>, ScratchError> {
-        if !key.is_alignment_preamble() {
-            return Err(ScratchError::InvalidCoordinate);
-        }
-        match self.continuation_resumes.get_mut(key.id)? {
-            StoredContinuationFrame::AlignmentPreamble(pending) => Ok(pending),
-            _ => Err(ScratchError::InvalidCoordinate),
-        }
-    }
-
-    pub(crate) fn discard_alignment_preamble_frame(
-        &mut self,
-        key: ScannerFrameKey<G>,
-    ) -> Result<(), ScratchError> {
-        self.take_alignment_preamble_frame(key).map(drop)
-    }
-
-    pub(crate) fn store_structured_scanner_frame(
-        &mut self,
-        pending: crate::scanners::PendingStructuredScanner<G>,
-    ) -> Result<ScannerFrameKey<G>, ScratchError> {
-        self.continuation_resumes
-            .insert(StoredContinuationFrame::StructuredScanner(pending))
-            .map(|id| ScannerFrameKey {
-                id,
-                kind: ContinuationKind::StructuredScanner,
-            })
-    }
-
-    pub(crate) fn take_structured_scanner_frame(
-        &mut self,
-        key: ScannerFrameKey<G>,
-    ) -> Result<crate::scanners::PendingStructuredScanner<G>, ScratchError> {
-        if !key.is_structured_scanner() {
-            return Err(ScratchError::InvalidCoordinate);
-        }
-        match self.continuation_resumes.take(key.id)? {
-            StoredContinuationFrame::StructuredScanner(pending) => Ok(pending),
-            _ => Err(ScratchError::InvalidCoordinate),
-        }
-    }
-
-    pub(crate) fn structured_scanner_frame_mut(
-        &mut self,
-        key: &ScannerFrameKey<G>,
-    ) -> Result<&mut crate::scanners::PendingStructuredScanner<G>, ScratchError> {
-        if !key.is_structured_scanner() {
-            return Err(ScratchError::InvalidCoordinate);
-        }
-        match self.continuation_resumes.get_mut(key.id)? {
-            StoredContinuationFrame::StructuredScanner(pending) => Ok(pending),
-            _ => Err(ScratchError::InvalidCoordinate),
-        }
-    }
-
-    pub(crate) fn discard_structured_scanner_frame(
-        &mut self,
-        key: ScannerFrameKey<G>,
-    ) -> Result<(), ScratchError> {
-        self.take_structured_scanner_frame(key).map(drop)
     }
 
     pub(crate) fn begin_macro_match(&mut self) -> Result<PendingArgumentSet<G>, ScratchError> {
@@ -2843,7 +2074,7 @@ impl<G> ExecutionScratch<G> {
             .flatten()
     }
 
-    pub(crate) fn begin_transient(&mut self) -> ExecutionScratchTransientMark<G> {
+    pub(crate) fn begin_transient(&mut self) -> ExecutionScratchTransientMark {
         self.transient_depth = self
             .transient_depth
             .checked_add(1)
@@ -2857,13 +2088,12 @@ impl<G> ExecutionScratch<G> {
             pending_macro_slot: self.pending_macro_slot,
             free_macro_slot: self.free_macro_slot,
             next_macro_serial: self.next_macro_serial,
-            pending_expression_frame: self.pending_expression_frame,
         }
     }
 
     pub(crate) fn rollback_transient(
         &mut self,
-        mark: ExecutionScratchTransientMark<G>,
+        mark: ExecutionScratchTransientMark,
     ) -> Result<(), ScratchError> {
         if mark.depth != self.transient_depth
             || mark.macro_slots_len > self.macro_slots.len()
@@ -2888,14 +2118,13 @@ impl<G> ExecutionScratch<G> {
         self.pending_macro_slot = mark.pending_macro_slot;
         self.free_macro_slot = mark.free_macro_slot;
         self.next_macro_serial = mark.next_macro_serial;
-        self.pending_expression_frame = mark.pending_expression_frame;
         self.transient_depth -= 1;
         Ok(())
     }
 
     pub(crate) fn commit_transient(
         &mut self,
-        mark: ExecutionScratchTransientMark<G>,
+        mark: ExecutionScratchTransientMark,
     ) -> Result<(), ScratchError> {
         if mark.depth != self.transient_depth {
             return Err(ScratchError::InvalidCoordinate);
@@ -2951,12 +2180,7 @@ impl<G> ExecutionScratch<G> {
     }
 
     pub(crate) fn is_quiescent(&self) -> bool {
-        self.frame_len() == 0
-            && self.pending_slot().is_err()
-            && self.scanner_resumes.live_len() == 0
-            && self.continuation_resumes.live_len() == 0
-            && self.pending_expression_frame.is_none()
-            && self.expansion_work.is_quiescent()
+        self.frame_len() == 0 && self.pending_slot().is_err() && self.expansion_work.is_quiescent()
     }
 
     #[cfg(test)]
@@ -3176,19 +2400,6 @@ mod tests {
     }
 
     #[test]
-    fn scanner_frame_coordinates_reject_stale_aba_and_double_consume() {
-        let mut lane = ResumeFrameLane::<u32, ()>::default();
-        let stale = lane.insert(1).expect("first frame");
-        assert_eq!(lane.take(stale), Ok(1));
-        assert_eq!(lane.take(stale), Err(ScratchError::InvalidCoordinate));
-        let replacement = lane.insert(2).expect("reused slot");
-        assert_eq!(replacement.slot, stale.slot);
-        assert_ne!(replacement.serial, stale.serial);
-        assert_eq!(lane.slot(stale), Err(ScratchError::InvalidCoordinate));
-        assert_eq!(lane.take(replacement), Ok(2));
-    }
-
-    #[test]
     fn argument_set_capacity_failures_precede_every_lifecycle_mutation() {
         let first_outside_packed_slot =
             u32::try_from(ARGUMENT_SET_SLOT_MASK + 1).expect("24-bit slot limit fits u32");
@@ -3275,83 +2486,6 @@ mod tests {
             ),
             before_commit
         );
-    }
-
-    #[test]
-    fn scanner_frame_serial_failure_retains_payload_and_lane_state() {
-        let mut lane = ResumeFrameLane::<u32, ()> {
-            next_serial: u64::MAX,
-            ..ResumeFrameLane::default()
-        };
-        let mut payload = Some(7);
-        let before = (
-            lane.slots.len(),
-            lane.slots.capacity(),
-            lane.free_slots.len(),
-            lane.free_slots.capacity(),
-            lane.next_serial,
-        );
-
-        assert_eq!(
-            lane.insert_from(&mut payload),
-            Err(ScratchError::CapacityOverflow)
-        );
-        assert_eq!(payload, Some(7));
-        assert_eq!(
-            (
-                lane.slots.len(),
-                lane.slots.capacity(),
-                lane.free_slots.len(),
-                lane.free_slots.capacity(),
-                lane.next_serial,
-            ),
-            before
-        );
-    }
-
-    #[test]
-    fn warmed_8192_nested_scanner_frames_reuse_bounded_slots() {
-        let mut lane = ResumeFrameLane::<Option<ResumeFrameId<()>>, ()>::default();
-        let run = |lane: &mut ResumeFrameLane<Option<ResumeFrameId<()>>, ()>| {
-            let mut child = None;
-            for _ in 0..8_192 {
-                child = Some(lane.insert(child).expect("nested frame"));
-            }
-            while let Some(frame) = child {
-                child = lane.take(frame).expect("resume child");
-            }
-        };
-        run(&mut lane);
-        run(&mut lane);
-        assert_eq!(lane.slots.len(), 8_192);
-        assert_eq!(lane.live_len(), 0);
-    }
-
-    #[cfg(feature = "profiling")]
-    #[test]
-    fn warmed_8192_nested_scanner_frames_allocate_zero_heap() {
-        let mut lane = ResumeFrameLane::<Option<ResumeFrameId<()>>, ()>::default();
-        let run = |lane: &mut ResumeFrameLane<Option<ResumeFrameId<()>>, ()>| {
-            let mut child = None;
-            for _ in 0..8_192 {
-                child = Some(lane.insert(child).expect("nested frame"));
-            }
-            while let Some(frame) = child {
-                child = lane.take(frame).expect("resume child");
-            }
-        };
-        run(&mut lane);
-
-        let owner = tex_state::measurement::HotCoreAllocationOwner::AttemptScratch;
-        let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
-        {
-            let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
-            run(&mut lane);
-        }
-        let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
-        assert_eq!(after.calls - before.calls, 0);
-        assert_eq!(after.requested_bytes - before.requested_bytes, 0);
-        assert_eq!(lane.slots.len(), 8_192);
     }
 
     #[test]

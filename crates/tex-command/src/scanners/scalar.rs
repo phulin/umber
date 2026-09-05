@@ -35,33 +35,6 @@ const IMPROPER_AUXILIARY_HELP: &[&str] = &[
 /// spellings are rejected because they are outside the canonical vocabulary.
 const KEYWORD_PREFIX_INLINE_CAPACITY: usize = 13;
 
-/// TeX82 §§440--445 scalar state whose next expanded token crossed an
-/// immutable host boundary.
-#[derive(Debug, Eq, Hash, PartialEq)]
-pub(crate) enum PendingIntegerScan {
-    Leading {
-        negative: bool,
-        provenance: OriginId,
-    },
-    Radix {
-        negative: bool,
-        provenance: OriginId,
-        radix: u8,
-        value: i32,
-        vacuous: bool,
-        overflowed: bool,
-    },
-    CharacterOptionalSpace {
-        negative: bool,
-        provenance: OriginId,
-        value: i32,
-    },
-    CharacterCode {
-        negative: bool,
-        provenance: OriginId,
-    },
-}
-
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct InlineKeyword {
     bytes: [u8; KEYWORD_PREFIX_INLINE_CAPACITY],
@@ -178,286 +151,6 @@ impl<G> MatchedKeywordPrefix<G> {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ScalarChildDestination {
-    OptionalEqualsToken,
-    KeywordToken,
-    IntegerLeadingToken,
-    IntegerComplete,
-    IntegerCharacterCode,
-    IntegerOptionalSpace,
-    IntegerRadixToken,
-    DimensionLeadingToken,
-    DimensionInternal,
-    DimensionInteger,
-    DimensionUnits,
-    DimensionOptionalSpace,
-    GlueLeadingToken,
-    GlueInternal,
-    GlueWidth,
-    GluePlusKeyword,
-    GlueStretch,
-    GlueMinusKeyword,
-    GlueShrink,
-    FileNameLeadingToken,
-    FileNameCharacter,
-    InternalValue,
-    Expression,
-    FontSelector,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum InternalScanPhase {
-    Start,
-    FontDimenFont {
-        number: i32,
-    },
-    FontCharacter {
-        primitive: UnexpandablePrimitive,
-        font: FontId,
-    },
-    PdfFontCodeCharacter {
-        primitive: UnexpandablePrimitive,
-        font: FontId,
-    },
-    FontIdentifier,
-}
-
-/// One allocation-free scalar continuation in the current generation's
-/// reusable ABA-tagged scratch lane.
-#[derive(Debug, Eq, PartialEq)]
-// The largest keyword prefix is stored in the reusable scanner-frame lane.
-// Boxing it would reintroduce a per-suspension allocation and owner.
-#[allow(clippy::large_enum_variant)]
-pub(crate) enum PendingScalarFrame<G> {
-    OptionalEquals {
-        provenance: OriginId,
-        child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
-    },
-    Keyword {
-        keyword: InlineKeyword,
-        matched: MatchedKeywordPrefix<G>,
-        provenance: OriginId,
-        child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
-    },
-    Integer {
-        progress: PendingIntegerScan,
-        child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
-    },
-    IntegerComplete {
-        first: CurrentCommand<G>,
-        negative: bool,
-        provenance: OriginId,
-        child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
-    },
-    DimensionLeading {
-        negative: bool,
-        provenance: OriginId,
-        allow_infinite: bool,
-        mu: bool,
-        child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
-    },
-    DimensionInternal {
-        first: CurrentCommand<G>,
-        negative: bool,
-        provenance: OriginId,
-        allow_infinite: bool,
-        mu: bool,
-        child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
-    },
-    DimensionInteger {
-        negative: bool,
-        provenance: OriginId,
-        allow_infinite: bool,
-        mu: bool,
-        child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
-    },
-    DimensionUnits {
-        progress: PendingDimensionUnits<G>,
-        negative: bool,
-        provenance: OriginId,
-        allow_infinite: bool,
-        mu: bool,
-        recovery: ScalarRecovery,
-        child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
-    },
-    DimensionOptionalSpace {
-        value: Scaled,
-        order: Order,
-        negative: bool,
-        provenance: OriginId,
-        recovery: ScalarRecovery,
-        arith_error: bool,
-        child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
-    },
-    GlueLeading {
-        mu: bool,
-        negative: bool,
-        provenance: OriginId,
-        child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
-    },
-    GlueInternal {
-        first: CurrentCommand<G>,
-        mu: bool,
-        negative: bool,
-        provenance: OriginId,
-        child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
-    },
-    GlueWidth {
-        mu: bool,
-        negative: bool,
-        child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
-    },
-    GluePlusKeyword {
-        mu: bool,
-        value: GlueSpec,
-        recovery: ScalarRecovery,
-        provenance: OriginId,
-        child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
-    },
-    GlueStretch {
-        mu: bool,
-        value: GlueSpec,
-        recovery: ScalarRecovery,
-        provenance: OriginId,
-        child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
-    },
-    GlueMinusKeyword {
-        mu: bool,
-        value: GlueSpec,
-        recovery: ScalarRecovery,
-        provenance: OriginId,
-        child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
-    },
-    GlueShrink {
-        mu: bool,
-        value: GlueSpec,
-        recovery: ScalarRecovery,
-        provenance: OriginId,
-        child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
-    },
-    FileNameLeading {
-        child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
-    },
-    FileNameCharacters {
-        components: crate::FileNameComponents,
-        character_count: usize,
-        quoted: bool,
-        grouped: bool,
-        provenance: OriginId,
-        child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
-    },
-    InternalValue {
-        command: CurrentCommand<G>,
-        level: InternalLevel,
-        negative: bool,
-        phase: InternalScanPhase,
-        child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
-    },
-    Expression {
-        progress: crate::scanners::PendingExpressionScan<G>,
-        child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
-    },
-    FontSelector {
-        size: crate::MathFamilySize,
-        child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
-    },
-}
-
-impl<G> PendingScalarFrame<G> {
-    pub(crate) fn expression_stack_mark(&self) -> Option<usize> {
-        match self {
-            Self::Expression { progress, .. } => Some(progress.stack_mark()),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn take_child(&mut self) -> Option<crate::execution_scratch::ScannerFrameKey<G>> {
-        match self {
-            Self::OptionalEquals { child, .. }
-            | Self::Keyword { child, .. }
-            | Self::Integer { child, .. }
-            | Self::IntegerComplete { child, .. }
-            | Self::DimensionLeading { child, .. }
-            | Self::DimensionInternal { child, .. }
-            | Self::DimensionInteger { child, .. }
-            | Self::DimensionUnits { child, .. }
-            | Self::DimensionOptionalSpace { child, .. }
-            | Self::GlueLeading { child, .. }
-            | Self::GlueInternal { child, .. }
-            | Self::GlueWidth { child, .. }
-            | Self::GluePlusKeyword { child, .. }
-            | Self::GlueStretch { child, .. }
-            | Self::GlueMinusKeyword { child, .. }
-            | Self::GlueShrink { child, .. }
-            | Self::FileNameLeading { child }
-            | Self::FileNameCharacters { child, .. }
-            | Self::InternalValue { child, .. }
-            | Self::Expression { child, .. } => child.take().map(|child| child.restore().0),
-            Self::FontSelector { child, .. } => child.take().map(|child| child.restore().0),
-        }
-    }
-
-    fn capture_child(&mut self, baton: &mut Option<crate::ScannerFrameKey<G>>) {
-        let (child, destination) = match self {
-            Self::OptionalEquals { child, .. } => {
-                (child, ScalarChildDestination::OptionalEqualsToken)
-            }
-            Self::Keyword { child, .. } => (child, ScalarChildDestination::KeywordToken),
-            Self::Integer {
-                progress: PendingIntegerScan::Leading { .. },
-                child,
-            } => (child, ScalarChildDestination::IntegerLeadingToken),
-            Self::Integer {
-                progress: PendingIntegerScan::Radix { .. },
-                child,
-            } => (child, ScalarChildDestination::IntegerRadixToken),
-            Self::Integer {
-                progress: PendingIntegerScan::CharacterCode { .. },
-                child,
-            } => (child, ScalarChildDestination::IntegerCharacterCode),
-            Self::Integer {
-                progress: PendingIntegerScan::CharacterOptionalSpace { .. },
-                child,
-            } => (child, ScalarChildDestination::IntegerOptionalSpace),
-            Self::IntegerComplete { child, .. } => (child, ScalarChildDestination::IntegerComplete),
-            Self::DimensionLeading { child, .. } => {
-                (child, ScalarChildDestination::DimensionLeadingToken)
-            }
-            Self::DimensionInternal { child, .. } => {
-                (child, ScalarChildDestination::DimensionInternal)
-            }
-            Self::DimensionInteger { child, .. } => {
-                (child, ScalarChildDestination::DimensionInteger)
-            }
-            Self::DimensionUnits { child, .. } => (child, ScalarChildDestination::DimensionUnits),
-            Self::DimensionOptionalSpace { child, .. } => {
-                (child, ScalarChildDestination::DimensionOptionalSpace)
-            }
-            Self::GlueLeading { child, .. } => (child, ScalarChildDestination::GlueLeadingToken),
-            Self::GlueInternal { child, .. } => (child, ScalarChildDestination::GlueInternal),
-            Self::GlueWidth { child, .. } => (child, ScalarChildDestination::GlueWidth),
-            Self::GluePlusKeyword { child, .. } => (child, ScalarChildDestination::GluePlusKeyword),
-            Self::GlueStretch { child, .. } => (child, ScalarChildDestination::GlueStretch),
-            Self::GlueMinusKeyword { child, .. } => {
-                (child, ScalarChildDestination::GlueMinusKeyword)
-            }
-            Self::GlueShrink { child, .. } => (child, ScalarChildDestination::GlueShrink),
-            Self::FileNameLeading { child } => {
-                (child, ScalarChildDestination::FileNameLeadingToken)
-            }
-            Self::FileNameCharacters { child, .. } => {
-                (child, ScalarChildDestination::FileNameCharacter)
-            }
-            Self::InternalValue { child, .. } => (child, ScalarChildDestination::InternalValue),
-            Self::Expression { child, .. } => (child, ScalarChildDestination::Expression),
-            Self::FontSelector { child, .. } => (child, ScalarChildDestination::FontSelector),
-        };
-        debug_assert!(child.is_none());
-        *child = crate::execution_scratch::ChildContinuation::capture(baton, destination);
-    }
-}
-
 fn observed_glue_value(value: &GlueSpec) -> ObservationValue {
     ObservationValue::Glue {
         width: i64::from(value.width.raw()),
@@ -507,20 +200,14 @@ pub struct ScannedScalar<T> {
     pub provenance: ScalarProvenance,
 }
 
-/// Move-only result of an executor-facing scalar scan.
+/// Result of an executor-facing scalar scan.
 ///
-/// Resource suspension carries the exact scratch capability out of the
-/// processor. Callers must move it into their typed parent or explicitly
-/// abort it; unlike `Result`, this type cannot be propagated with `?` while
-/// silently abandoning live scanner progress.
+/// Resource acquisition unwinds the ordinary scanner call. The host retries
+/// the complete checkpoint, so no scanner capability crosses this boundary.
 #[must_use]
 #[derive(Debug)]
-pub enum RetainedScalarScan<G, T> {
+pub enum RetainedScalarScan<T> {
     Complete(T),
-    Suspended {
-        error: CommandError,
-        child: crate::ScannerFrameKey<G>,
-    },
     Failed(CommandError),
 }
 
@@ -557,7 +244,6 @@ enum ScalarScanValue {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ScalarScanStatus {
     Complete,
-    Suspended,
     Failed,
 }
 
@@ -676,7 +362,6 @@ impl ScalarScanFrame {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ScalarCallStatus {
     Complete,
-    Suspended,
     Failed,
 }
 
@@ -766,7 +451,7 @@ macro_rules! scalar_value_or_return {
     ($call:ident, $status:expr) => {{
         match $status {
             ScalarCallStatus::Complete => $call.take_complete(),
-            ScalarCallStatus::Suspended | ScalarCallStatus::Failed => {
+            ScalarCallStatus::Failed => {
                 return Err($call.take_error());
             }
         }
@@ -778,7 +463,7 @@ macro_rules! scalar_value_or_return {
 /// The match remains at the producing call site so the successful ABI never
 /// materializes an error-sized return carrier at a second boundary.
 macro_rules! publish_scalar_result {
-    ($processor:expr, $call:ident, $result:expr, $suspended:expr $(,)?) => {{
+    ($processor:expr, $call:ident, $result:expr $(,)?) => {{
         match $result {
             Ok(value) => {
                 let mut terminal_error = None;
@@ -796,7 +481,7 @@ macro_rules! publish_scalar_result {
             }
             Err(error) => {
                 let mut terminal_error = None;
-                let status = $processor.finish_scalar_error(error, $suspended, &mut terminal_error);
+                let status = $processor.finish_scalar_error(error, &mut terminal_error);
                 $call.put_error(
                     terminal_error
                         .take()
@@ -813,20 +498,20 @@ macro_rules! publish_scalar_result {
 /// Unlike a generic value-taking helper, this expansion does not introduce a
 /// second `Result<T, CommandError>` handoff on the successful path.
 macro_rules! finish_scalar_result {
-    ($processor:expr, $result:expr, $suspended:expr $(,)?) => {{
+    ($processor:expr, $result:expr $(,)?) => {{
         match $result {
             Ok(value) => {
                 let mut terminal_error = None;
                 match $processor.finish_scalar_success(&mut terminal_error) {
                     ScalarCallStatus::Complete => Ok(value),
-                    ScalarCallStatus::Suspended | ScalarCallStatus::Failed => Err(terminal_error
+                    ScalarCallStatus::Failed => Err(terminal_error
                         .take()
                         .expect("failed scalar completion stores its error")),
                 }
             }
             Err(error) => {
                 let mut terminal_error = None;
-                $processor.finish_scalar_error(error, $suspended, &mut terminal_error);
+                $processor.finish_scalar_error(error, &mut terminal_error);
                 Err(terminal_error
                     .take()
                     .expect("failed scalar call stores its error"))
@@ -835,11 +520,21 @@ macro_rules! finish_scalar_result {
     }};
 }
 
-impl<G, T> RetainedScalarScan<G, T> {
-    pub fn map<U>(self, map: impl FnOnce(T) -> U) -> RetainedScalarScan<G, U> {
+impl<T> RetainedScalarScan<T> {
+    /// Convert the cold result of a synchronous scalar scan into the ordinary
+    /// command error boundary.  Resource failures have already unwound the
+    /// scanner call and are retried from the host checkpoint; no scanner
+    /// continuation is retained here.
+    pub(crate) fn into_result(self) -> Result<T, CommandError> {
+        match self {
+            Self::Complete(value) => Ok(value),
+            Self::Failed(error) => Err(error),
+        }
+    }
+
+    pub fn map<U>(self, map: impl FnOnce(T) -> U) -> RetainedScalarScan<U> {
         match self {
             Self::Complete(value) => RetainedScalarScan::Complete(map(value)),
-            Self::Suspended { error, child } => RetainedScalarScan::Suspended { error, child },
             Self::Failed(error) => RetainedScalarScan::Failed(error),
         }
     }
@@ -1058,144 +753,20 @@ impl<G> CommandProcessor<'_, '_, G> {
         match self.scan_font_selector_retained() {
             RetainedScalarScan::Complete(font) => Ok(font),
             RetainedScalarScan::Failed(error) => Err(error),
-            RetainedScalarScan::Suspended { error, child } => {
-                self.install_scanner_resume(Some(child));
-                Err(error)
-            }
         }
-    }
-
-    pub(crate) fn take_pending_scalar_frame(
-        &mut self,
-    ) -> Result<Option<PendingScalarFrame<G>>, CommandError> {
-        match self.scanner_resume.as_ref() {
-            None => return Ok(None),
-            Some(key) if key.is_scalar() => {}
-            Some(_) => return Err(CommandError::input_invariant()),
-        }
-        let key = self
-            .scanner_resume
-            .take()
-            .expect("matched scalar continuation");
-        self.command
-            .scratch
-            .take_scalar_frame(key)
-            .map(Some)
-            .map_err(crate::scan_toks::scratch_command_error)
-    }
-
-    /// Takes the attempt's scalar continuation into a borrowed slot.
-    ///
-    /// The synchronous no-continuation path returns only a compact status;
-    /// neither the pending-frame nor error carrier crosses this boundary.
-    pub(super) fn take_pending_scalar_frame_into<T>(
-        &mut self,
-        pending: &mut Option<PendingScalarFrame<G>>,
-        call: &mut impl ScalarCallDestination<T>,
-    ) -> ScalarCallStatus {
-        match self.scanner_resume.as_ref() {
-            None => return ScalarCallStatus::Complete,
-            Some(key) if key.is_scalar() => {}
-            Some(_) => {
-                call.put_error(CommandError::input_invariant());
-                return ScalarCallStatus::Failed;
-            }
-        }
-        let key = self
-            .scanner_resume
-            .take()
-            .expect("matched scalar continuation");
-        match self.command.scratch.take_scalar_frame(key) {
-            Ok(frame) => {
-                *pending = Some(frame);
-                ScalarCallStatus::Complete
-            }
-            Err(error) => {
-                call.put_error(crate::scan_toks::scratch_command_error(error));
-                ScalarCallStatus::Failed
-            }
-        }
-    }
-
-    pub(crate) fn restore_scalar_child(
-        &mut self,
-        child: &mut Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
-        expected: ScalarChildDestination,
-    ) -> Result<(), CommandError> {
-        if let Some(child) = child.take() {
-            let (key, destination) = child.restore();
-            if destination != expected {
-                self.abort_continuation(key)?;
-                return Err(CommandError::input_invariant());
-            }
-            self.install_scanner_resume(Some(key));
-        }
-        Ok(())
-    }
-
-    pub(super) fn retain_scalar_frame(
-        &mut self,
-        pending: PendingScalarFrame<G>,
-    ) -> Result<(), CommandError> {
-        let key = match self.command.scratch.store_scalar_frame(pending) {
-            Ok(key) => key,
-            Err(error) => {
-                if let Some(child) = self.scanner_resume.take() {
-                    self.abort_continuation(child)?;
-                }
-                return Err(crate::scan_toks::scratch_command_error(error));
-            }
-        };
-        if let Err(error) = self.command.scratch.scalar_frame_mut(&key) {
-            let abort_result = if let Some(child) = self.scanner_resume.take() {
-                self.abort_continuation(child)
-            } else {
-                Ok(())
-            };
-            let discard_result = self
-                .command
-                .scratch
-                .discard_scalar_frame(key)
-                .map_err(crate::scan_toks::scratch_command_error);
-            abort_result?;
-            discard_result?;
-            return Err(crate::scan_toks::scratch_command_error(error));
-        }
-        self.command
-            .scratch
-            .scalar_frame_mut(&key)
-            .expect("fresh scalar frame remains addressable")
-            .capture_child(&mut self.scanner_resume);
-        if self.scanner_resume.replace(key).is_some() {
-            return Err(CommandError::input_invariant());
-        }
-        Ok(())
     }
 
     pub(crate) fn detach_retained_scalar<T>(
         &mut self,
         result: Result<T, CommandError>,
-    ) -> RetainedScalarScan<G, T> {
+    ) -> RetainedScalarScan<T> {
         match result {
-            Ok(value) => {
-                debug_assert!(self.scanner_resume.is_none());
-                RetainedScalarScan::Complete(value)
-            }
-            Err(error) if error.is_resource_suspension() => {
-                let child = self
-                    .scanner_resume
-                    .take()
-                    .expect("resource suspension retains one exact scalar frame");
-                RetainedScalarScan::Suspended { error, child }
-            }
-            Err(error) => {
-                debug_assert!(self.scanner_resume.is_none());
-                RetainedScalarScan::Failed(error)
-            }
+            Ok(value) => RetainedScalarScan::Complete(value),
+            Err(error) => RetainedScalarScan::Failed(error),
         }
     }
 
-    pub fn scan_optional_equals_retained(&mut self) -> RetainedScalarScan<G, ScannedScalar<bool>> {
+    pub fn scan_optional_equals_retained(&mut self) -> RetainedScalarScan<ScannedScalar<bool>> {
         let result = self.scan_optional_equals();
         self.detach_retained_scalar(result)
     }
@@ -1203,31 +774,28 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub fn scan_keyword_retained(
         &mut self,
         keyword: &str,
-    ) -> RetainedScalarScan<G, ScannedScalar<bool>> {
+    ) -> RetainedScalarScan<ScannedScalar<bool>> {
         let result = self.scan_keyword(keyword);
         self.detach_retained_scalar(result)
     }
 
-    pub fn scan_integer_retained(&mut self) -> RetainedScalarScan<G, ScannedScalar<i32>> {
+    pub fn scan_integer_retained(&mut self) -> RetainedScalarScan<ScannedScalar<i32>> {
         let mut call = ScalarCallFrame::default();
         let status = self.scan_integer(&mut call);
         self.detach_scalar_call(&mut call, status)
     }
 
-    pub fn scan_dimension_retained(&mut self) -> RetainedScalarScan<G, ScannedScalar<Scaled>> {
+    pub fn scan_dimension_retained(&mut self) -> RetainedScalarScan<ScannedScalar<Scaled>> {
         let result = self.scan_dimension();
         self.detach_retained_scalar(result)
     }
 
-    pub fn scan_mu_dimension_retained(&mut self) -> RetainedScalarScan<G, ScannedScalar<Scaled>> {
+    pub fn scan_mu_dimension_retained(&mut self) -> RetainedScalarScan<ScannedScalar<Scaled>> {
         let result = self.scan_mu_dimension();
         self.detach_retained_scalar(result)
     }
 
-    pub fn scan_glue_retained(
-        &mut self,
-        mu: bool,
-    ) -> RetainedScalarScan<G, ScannedScalar<GlueSpec>> {
+    pub fn scan_glue_retained(&mut self, mu: bool) -> RetainedScalarScan<ScannedScalar<GlueSpec>> {
         let result = self.scan_glue(mu);
         self.detach_retained_scalar(result)
     }
@@ -1241,17 +809,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         frame.begin();
         match result {
             Ok(value) => {
-                debug_assert!(self.scanner_resume.is_none());
                 frame.put_value(wrap(value));
                 ScalarScanStatus::Complete
             }
-            Err(error) if error.is_resource_suspension() => {
-                debug_assert!(self.scanner_resume.is_some());
-                frame.put_error(error);
-                ScalarScanStatus::Suspended
-            }
             Err(error) => {
-                debug_assert!(self.scanner_resume.is_none());
                 frame.put_error(error);
                 ScalarScanStatus::Failed
             }
@@ -1261,7 +822,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn publish_retained_scalar_frame<T>(
         &mut self,
         frame: &mut ScalarScanFrame,
-        result: RetainedScalarScan<G, T>,
+        result: RetainedScalarScan<T>,
         wrap: impl FnOnce(T) -> ScalarScanValue,
     ) -> ScalarScanStatus {
         frame.begin();
@@ -1269,11 +830,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             RetainedScalarScan::Complete(value) => {
                 frame.put_value(wrap(value));
                 ScalarScanStatus::Complete
-            }
-            RetainedScalarScan::Suspended { error, child } => {
-                self.install_scanner_resume(Some(child));
-                frame.put_error(error);
-                ScalarScanStatus::Suspended
             }
             RetainedScalarScan::Failed(error) => {
                 frame.put_error(error);
@@ -1388,43 +944,17 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         call: &mut ScalarCallFrame<T>,
         status: ScalarCallStatus,
-    ) -> RetainedScalarScan<G, T> {
+    ) -> RetainedScalarScan<T> {
         match status {
-            ScalarCallStatus::Complete => {
-                debug_assert!(self.scanner_resume.is_none());
-                RetainedScalarScan::Complete(call.take_complete())
-            }
-            ScalarCallStatus::Suspended => {
-                let child = self
-                    .scanner_resume
-                    .take()
-                    .expect("resource suspension retains one exact scalar frame");
-                RetainedScalarScan::Suspended {
-                    error: call.take_error(),
-                    child,
-                }
-            }
-            ScalarCallStatus::Failed => {
-                debug_assert!(self.scanner_resume.is_none());
-                RetainedScalarScan::Failed(call.take_error())
-            }
+            ScalarCallStatus::Complete => RetainedScalarScan::Complete(call.take_complete()),
+            ScalarCallStatus::Failed => RetainedScalarScan::Failed(call.take_error()),
         }
     }
 
     fn scalar_scan_status(&self, status: ScalarCallStatus) -> ScalarScanStatus {
         match status {
-            ScalarCallStatus::Complete => {
-                debug_assert!(self.scanner_resume.is_none());
-                ScalarScanStatus::Complete
-            }
-            ScalarCallStatus::Suspended => {
-                debug_assert!(self.scanner_resume.is_some());
-                ScalarScanStatus::Suspended
-            }
-            ScalarCallStatus::Failed => {
-                debug_assert!(self.scanner_resume.is_none());
-                ScalarScanStatus::Failed
-            }
+            ScalarCallStatus::Complete => ScalarScanStatus::Complete,
+            ScalarCallStatus::Failed => ScalarScanStatus::Failed,
         }
     }
 
@@ -1432,56 +962,33 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         terminal_error: &mut Option<CommandError>,
     ) -> ScalarCallStatus {
-        if let Some(child) = self.scanner_resume.take() {
-            let error = match self.abort_continuation(child) {
-                Ok(()) => CommandError::input_invariant(),
-                Err(error) => error,
-            };
-            *terminal_error = Some(error);
-            ScalarCallStatus::Failed
-        } else {
-            ScalarCallStatus::Complete
-        }
+        let _ = terminal_error;
+        ScalarCallStatus::Complete
     }
 
     fn finish_scalar_error(
         &mut self,
-        mut error: CommandError,
-        suspended: Option<PendingScalarFrame<G>>,
+        error: CommandError,
         terminal_error: &mut Option<CommandError>,
     ) -> ScalarCallStatus {
-        let status = if error.is_resource_suspension() {
-            let Some(suspended) = suspended else {
-                *terminal_error = Some(CommandError::input_invariant());
-                return ScalarCallStatus::Failed;
-            };
-            match self.retain_scalar_frame(suspended) {
-                Ok(()) => ScalarCallStatus::Suspended,
-                Err(retain_error) => {
-                    error = retain_error;
-                    ScalarCallStatus::Failed
-                }
-            }
-        } else {
-            if let Some(child) = self.scanner_resume.take()
-                && let Err(abort_error) = self.abort_continuation(child)
-            {
-                error = abort_error;
-            }
-            ScalarCallStatus::Failed
-        };
+        // Resource failures leave the scanner immediately.  The enclosing
+        // host checkpoint retries the complete command, so keeping a typed
+        // scalar phase here would retain a second copy of the parser stack.
+        // The processor drop hook clears any transient child/control rows.
+        if error.is_resource_suspension() {
+            let _ = self.command.scratch.unwind_resource_failure();
+        }
         *terminal_error = Some(error);
-        status
+        ScalarCallStatus::Failed
     }
 
     fn finish_scalar_destination_error<T>(
         &mut self,
         error: CommandError,
-        suspended: Option<PendingScalarFrame<G>>,
         destination: &mut impl ScalarCallDestination<T>,
     ) -> ScalarCallStatus {
         let mut terminal_error = None;
-        let status = self.finish_scalar_error(error, suspended, &mut terminal_error);
+        let status = self.finish_scalar_error(error, &mut terminal_error);
         destination.put_error(
             terminal_error
                 .take()
@@ -1490,17 +997,14 @@ impl<G> CommandProcessor<'_, '_, G> {
         status
     }
 
-    /// Compatibility boundary for the structured filename scanner.
-    ///
-    /// Hot scalar callers publish through borrowed frames and compact status.
-    /// Filename scanning is structurally outside the scalar call chain and
-    /// retains this value-returning adapter.
+    /// Finishes a value-returning structured scanner at the ordinary error
+    /// boundary. Resource misses unwind to the host checkpoint just like the
+    /// compact scalar entry points; no scanner phase is retained here.
     pub(crate) fn finish_scalar_call<T>(
         &mut self,
         result: Result<T, CommandError>,
-        suspended: Option<PendingScalarFrame<G>>,
     ) -> Result<T, CommandError> {
-        finish_scalar_result!(self, result, suspended)
+        finish_scalar_result!(self, result)
     }
 
     /// Consumes TeX82 §405's other-category optional equals sign, after spaces.
@@ -1508,7 +1012,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let mut call = ScalarCallFrame::default();
         match self.scan_optional_equals_into_call(&mut call) {
             ScalarCallStatus::Complete => Ok(call.take_complete()),
-            ScalarCallStatus::Suspended | ScalarCallStatus::Failed => Err(call.take_error()),
+            ScalarCallStatus::Failed => Err(call.take_error()),
         }
     }
 
@@ -1523,48 +1027,13 @@ impl<G> CommandProcessor<'_, '_, G> {
             }};
         }
 
-        let mut pending = None;
-        if self.take_pending_scalar_frame_into(&mut pending, call) != ScalarCallStatus::Complete {
-            return ScalarCallStatus::Failed;
-        }
         let mut provenance = OriginId::UNKNOWN;
-        if let Some(pending) = pending.take() {
-            match pending {
-                PendingScalarFrame::OptionalEquals {
-                    provenance: retained,
-                    mut child,
-                } => {
-                    if let Err(error) = self.restore_scalar_child(
-                        &mut child,
-                        ScalarChildDestination::OptionalEqualsToken,
-                    ) {
-                        fail!(error);
-                    }
-                    provenance = retained;
-                }
-                mut pending => {
-                    if let Some(child) = pending.take_child()
-                        && let Err(error) = self.abort_continuation(child)
-                    {
-                        fail!(error);
-                    }
-                    fail!(CommandError::input_invariant());
-                }
-            }
-        };
         loop {
             let mut command = None;
             let delivery = match self.request_expanded_token(&mut command) {
                 Ok(delivery) => delivery,
                 Err(error) => {
-                    return self.finish_scalar_destination_error(
-                        error,
-                        Some(PendingScalarFrame::OptionalEquals {
-                            provenance,
-                            child: None,
-                        }),
-                        call,
-                    );
+                    return self.finish_scalar_destination_error(error, call);
                 }
             };
             let command = match delivery {
@@ -1666,7 +1135,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let mut call = ScalarCallFrame::default();
         match self.scan_keyword_into_call(keyword, &mut call) {
             ScalarCallStatus::Complete => Ok(call.take_complete()),
-            ScalarCallStatus::Suspended | ScalarCallStatus::Failed => Err(call.take_error()),
+            ScalarCallStatus::Failed => Err(call.take_error()),
         }
     }
 
@@ -1686,59 +1155,18 @@ impl<G> CommandProcessor<'_, '_, G> {
             Ok(keyword) => keyword,
             Err(error) => fail!(error),
         };
-        let mut pending = None;
-        if self.take_pending_scalar_frame_into(&mut pending, call) != ScalarCallStatus::Complete {
-            return ScalarCallStatus::Failed;
-        }
         // `link(backup_head)`: the tokens matched so far, in delivery order.
-        let mut matched;
-        let mut provenance;
-        if pending.is_none() {
-            matched = MatchedKeywordPrefix {
-                inline: smallvec::SmallVec::new(),
-                _generation: core::marker::PhantomData,
-            };
-            provenance = OriginId::UNKNOWN;
-        } else {
-            (matched, provenance) = match pending.take().expect("present keyword continuation") {
-                PendingScalarFrame::Keyword {
-                    keyword: retained,
-                    matched,
-                    provenance,
-                    mut child,
-                } if retained == keyword => {
-                    if let Err(error) =
-                        self.restore_scalar_child(&mut child, ScalarChildDestination::KeywordToken)
-                    {
-                        fail!(error);
-                    }
-                    (matched, provenance)
-                }
-                mut pending => {
-                    if let Some(child) = pending.take_child()
-                        && let Err(error) = self.abort_continuation(child)
-                    {
-                        fail!(error);
-                    }
-                    fail!(CommandError::input_invariant());
-                }
-            };
-        }
+        let mut matched = MatchedKeywordPrefix {
+            inline: smallvec::SmallVec::new(),
+            _generation: core::marker::PhantomData,
+        };
+        let mut provenance = OriginId::UNKNOWN;
         while let Some(letter) = keyword.get(matched.inline.len()) {
             let mut command = None;
             let delivery = match self.request_expanded_token(&mut command) {
                 Ok(delivery) => delivery,
                 Err(error) => {
-                    return self.finish_scalar_destination_error(
-                        error,
-                        Some(PendingScalarFrame::Keyword {
-                            keyword,
-                            matched,
-                            provenance,
-                            child: None,
-                        }),
-                        call,
-                    );
+                    return self.finish_scalar_destination_error(error, call);
                 }
             };
             let command = match delivery {
@@ -1815,179 +1243,19 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         call: &mut impl ScalarCallDestination<ScannedScalar<i32>>,
     ) -> ScalarCallStatus {
-        let mut pending = None;
-        if self.take_pending_scalar_frame_into(&mut pending, call) != ScalarCallStatus::Complete {
-            return ScalarCallStatus::Failed;
-        }
-        let mut suspended_integer = None;
-        let mut suspended_frame = None;
-        let result = match pending {
-            Some(PendingScalarFrame::Integer {
-                progress,
-                mut child,
-            }) => {
-                let expected = match progress {
-                    PendingIntegerScan::Leading { .. } => {
-                        ScalarChildDestination::IntegerLeadingToken
-                    }
-                    PendingIntegerScan::Radix { .. } => ScalarChildDestination::IntegerRadixToken,
-                    PendingIntegerScan::CharacterCode { .. } => {
-                        ScalarChildDestination::IntegerCharacterCode
-                    }
-                    PendingIntegerScan::CharacterOptionalSpace { .. } => {
-                        ScalarChildDestination::IntegerOptionalSpace
-                    }
-                };
-                if let Err(error) = self.restore_scalar_child(&mut child, expected) {
-                    call.put_error(error);
-                    return ScalarCallStatus::Failed;
-                }
-                self.scan_integer_with_resource_continuation(
-                    true,
-                    Some(progress),
-                    &mut suspended_integer,
-                    &mut suspended_frame,
-                )
-            }
-            Some(PendingScalarFrame::IntegerComplete {
-                first,
-                negative,
-                provenance,
-                mut child,
-            }) => {
-                if let Err(error) =
-                    self.restore_scalar_child(&mut child, ScalarChildDestination::IntegerComplete)
-                {
-                    call.put_error(error);
-                    return ScalarCallStatus::Failed;
-                }
-                self.complete_integer(
-                    first,
-                    negative,
-                    provenance,
-                    true,
-                    &mut suspended_integer,
-                    &mut suspended_frame,
-                )
-                .map(|completed| completed.0)
-            }
-            Some(mut pending) => {
-                if let Some(child) = pending.take_child()
-                    && let Err(error) = self.abort_continuation(child)
-                {
-                    call.put_error(error);
-                    return ScalarCallStatus::Failed;
-                }
-                call.put_error(CommandError::input_invariant());
-                return ScalarCallStatus::Failed;
-            }
-            None => self.scan_integer_with_resource_continuation(
-                true,
-                None,
-                &mut suspended_integer,
-                &mut suspended_frame,
-            ),
-        };
-        if suspended_frame.is_none() {
-            suspended_frame = suspended_integer.map(|progress| PendingScalarFrame::Integer {
-                progress,
-                child: None,
-            });
-        }
-        publish_scalar_result!(self, call, result, suspended_frame)
+        let result = self.scan_integer_with_resource_continuation();
+        publish_scalar_result!(self, call, result)
     }
 
     fn scan_integer_with_resource_continuation(
         &mut self,
-        retain_continuation: bool,
-        pending: Option<PendingIntegerScan>,
-        suspended: &mut Option<PendingIntegerScan>,
-        suspended_frame: &mut Option<PendingScalarFrame<G>>,
     ) -> Result<ScannedScalar<i32>, CommandError> {
-        if let Some(PendingIntegerScan::Radix {
-            negative,
-            provenance,
-            radix,
-            value,
-            vacuous,
-            overflowed,
-        }) = pending
-        {
-            let (value, vacuous, site) = self.scan_radix_tail_from(
-                value,
-                vacuous,
-                overflowed,
-                radix,
-                Some((negative, provenance)),
-                suspended,
-            )?;
-            if vacuous {
-                self.missing_number_error_at(site)?;
-                return Ok(self.inserted_zero_integer(provenance));
-            }
-            return Ok(self.finish_integer(value, negative, provenance, ScalarRecovery::None));
-        }
-        if let Some(PendingIntegerScan::CharacterOptionalSpace {
-            negative,
-            provenance,
-            value,
-        }) = pending
-        {
-            if let Err(error) = self.scan_optional_space() {
-                if error.is_resource_suspension() {
-                    *suspended = Some(PendingIntegerScan::CharacterOptionalSpace {
-                        negative,
-                        provenance,
-                        value,
-                    });
-                }
-                return Err(error);
-            }
-            return Ok(self.finish_integer(value, negative, provenance, ScalarRecovery::None));
-        }
-        if let Some(PendingIntegerScan::CharacterCode {
-            negative,
-            provenance,
-        }) = pending
-        {
-            let (value, recovery, optional_space) = self.scan_character_code()?;
-            if optional_space && let Err(error) = self.scan_optional_space() {
-                if error.is_resource_suspension() {
-                    *suspended = Some(PendingIntegerScan::CharacterOptionalSpace {
-                        negative,
-                        provenance,
-                        value,
-                    });
-                }
-                return Err(error);
-            }
-            return Ok(self.finish_integer(value, negative, provenance, recovery));
-        }
-        let (mut negative, mut provenance) = match pending {
-            Some(PendingIntegerScan::Leading {
-                negative,
-                provenance,
-            }) => (negative, provenance),
-            None => (false, OriginId::UNKNOWN),
-            Some(
-                PendingIntegerScan::Radix { .. }
-                | PendingIntegerScan::CharacterCode { .. }
-                | PendingIntegerScan::CharacterOptionalSpace { .. },
-            ) => unreachable!(),
-        };
+        let (mut negative, mut provenance) = (false, OriginId::UNKNOWN);
         let first = loop {
             let mut command = None;
             let delivery = match self.request_expanded_token(&mut command) {
                 Ok(delivery) => delivery,
-                Err(error) => {
-                    if retain_continuation && error.is_resource_suspension() {
-                        *suspended = Some(PendingIntegerScan::Leading {
-                            negative,
-                            provenance,
-                        });
-                    }
-                    return Err(error);
-                }
+                Err(error) => return Err(error),
             };
             let command = match delivery {
                 DeliveryStatus::Command => {
@@ -2013,16 +1281,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 _ => break command,
             }
         };
-        Ok(self
-            .complete_integer(
-                first,
-                negative,
-                provenance,
-                retain_continuation,
-                suspended,
-                suspended_frame,
-            )?
-            .0)
+        Ok(self.complete_integer(first, negative, provenance)?.0)
     }
 
     /// TeX82 §440's `scan_int` body, from the token its
@@ -2040,9 +1299,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         first: CurrentCommand<G>,
         negative: bool,
         provenance: OriginId,
-        retain_continuation: bool,
-        suspended: &mut Option<PendingIntegerScan>,
-        suspended_frame: &mut Option<PendingScalarFrame<G>>,
     ) -> Result<(ScannedScalar<i32>, u8), CommandError> {
         // TeX82 §440's `scan_int` calls `scan_something_internal(int_val,
         // false)`, so §413's §429 loop lowers every numeric level to an
@@ -2056,17 +1312,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             self.scan_something_internal(&first, InternalLevel::Integer, false, &mut internal_call);
         let internal = match internal_status {
             ScalarCallStatus::Complete => internal_call.take_complete(),
-            ScalarCallStatus::Suspended => {
-                if retain_continuation {
-                    *suspended_frame = Some(PendingScalarFrame::IntegerComplete {
-                        first,
-                        negative,
-                        provenance,
-                        child: None,
-                    });
-                }
-                return Err(internal_call.take_error());
-            }
             ScalarCallStatus::Failed => return Err(internal_call.take_error()),
         };
         let (value, radix, recovery) = match internal {
@@ -2081,13 +1326,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                     ch,
                     cat: Catcode::Other,
                 } if ch.is_ascii_digit() => (
-                    self.scan_radix_tail(
-                        Some(ch as u8 - b'0'),
-                        DECIMAL_RADIX,
-                        retain_continuation.then_some((negative, provenance)),
-                        suspended,
-                    )?
-                    .0,
+                    self.scan_radix_tail(Some(ch as u8 - b'0'), DECIMAL_RADIX)?
+                        .0,
                     DECIMAL_RADIX,
                     ScalarRecovery::None,
                 ),
@@ -2099,12 +1339,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     ch: '\'',
                     cat: Catcode::Other,
                 } => {
-                    let (value, vacuous, site) = self.scan_radix_tail(
-                        None,
-                        8,
-                        retain_continuation.then_some((negative, provenance)),
-                        suspended,
-                    )?;
+                    let (value, vacuous, site) = self.scan_radix_tail(None, 8)?;
                     if vacuous {
                         self.missing_number_error_at(site)?;
                         return Ok((self.inserted_zero_integer(provenance), 8));
@@ -2115,12 +1350,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     ch: '"',
                     cat: Catcode::Other,
                 } => {
-                    let (value, vacuous, site) = self.scan_radix_tail(
-                        None,
-                        16,
-                        retain_continuation.then_some((negative, provenance)),
-                        suspended,
-                    )?;
+                    let (value, vacuous, site) = self.scan_radix_tail(None, 16)?;
                     if vacuous {
                         self.missing_number_error_at(site)?;
                         return Ok((self.inserted_zero_integer(provenance), 16));
@@ -2136,26 +1366,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                     ch: '`',
                     cat: Catcode::Other,
                 } => {
-                    let (value, recovery, optional_space) = match self.scan_character_code() {
-                        Ok(value) => value,
-                        Err(error) => {
-                            if retain_continuation && error.is_resource_suspension() {
-                                *suspended = Some(PendingIntegerScan::CharacterCode {
-                                    negative,
-                                    provenance,
-                                });
-                            }
-                            return Err(error);
-                        }
-                    };
+                    let (value, recovery, optional_space) = self.scan_character_code()?;
                     if optional_space && let Err(error) = self.scan_optional_space() {
-                        if retain_continuation && error.is_resource_suspension() {
-                            *suspended = Some(PendingIntegerScan::CharacterOptionalSpace {
-                                negative,
-                                provenance,
-                                value,
-                            });
-                        }
                         return Err(error);
                     }
                     (value, NO_RADIX, recovery)
@@ -2240,122 +1452,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         allow_infinite: bool,
         mu: bool,
     ) -> Result<(ScannedScalar<Scaled>, Order), CommandError> {
-        let pending = self.take_pending_scalar_frame()?;
-        let mut suspended = None;
-        let result = match pending {
-            Some(PendingScalarFrame::DimensionLeading {
-                negative,
-                provenance,
-                allow_infinite: retained_allow_infinite,
-                mu: retained_mu,
-                mut child,
-            }) if retained_allow_infinite == allow_infinite && retained_mu == mu => {
-                self.restore_scalar_child(
-                    &mut child,
-                    ScalarChildDestination::DimensionLeadingToken,
-                )?;
-                self.scan_dimension_from_leading(
-                    negative,
-                    provenance,
-                    allow_infinite,
-                    mu,
-                    &mut suspended,
-                )
-            }
-            Some(PendingScalarFrame::DimensionInternal {
-                first,
-                negative,
-                provenance,
-                allow_infinite: retained_allow_infinite,
-                mu: retained_mu,
-                mut child,
-            }) if retained_allow_infinite == allow_infinite && retained_mu == mu => {
-                self.restore_scalar_child(&mut child, ScalarChildDestination::DimensionInternal)?;
-                self.scan_dimension_after_first(
-                    first,
-                    negative,
-                    provenance,
-                    allow_infinite,
-                    mu,
-                    &mut suspended,
-                )
-            }
-            Some(PendingScalarFrame::DimensionInteger {
-                negative,
-                provenance,
-                allow_infinite: retained_allow_infinite,
-                mu: retained_mu,
-                mut child,
-            }) if retained_allow_infinite == allow_infinite && retained_mu == mu => {
-                self.restore_scalar_child(&mut child, ScalarChildDestination::DimensionInteger)?;
-                self.scan_dimension_after_integer(
-                    negative,
-                    provenance,
-                    allow_infinite,
-                    mu,
-                    &mut suspended,
-                )
-            }
-            Some(PendingScalarFrame::DimensionUnits {
-                progress,
-                negative,
-                provenance,
-                allow_infinite: retained_allow_infinite,
-                mu: retained_mu,
-                recovery,
-                mut child,
-            }) if retained_allow_infinite == allow_infinite && retained_mu == mu => {
-                self.restore_scalar_child(&mut child, ScalarChildDestination::DimensionUnits)?;
-                self.scan_dimension_units_from(
-                    progress,
-                    negative,
-                    provenance,
-                    allow_infinite,
-                    mu,
-                    recovery,
-                    &mut suspended,
-                )
-            }
-            Some(PendingScalarFrame::DimensionOptionalSpace {
-                value,
-                order,
-                negative,
-                provenance,
-                recovery,
-                arith_error,
-                mut child,
-            }) => {
-                self.restore_scalar_child(
-                    &mut child,
-                    ScalarChildDestination::DimensionOptionalSpace,
-                )?;
-                suspended = Some(PendingScalarFrame::DimensionOptionalSpace {
-                    value,
-                    order,
-                    negative,
-                    provenance,
-                    recovery,
-                    arith_error,
-                    child: None,
-                });
-                self.scan_optional_space()?;
-                self.finish_dimension(value, order, negative, provenance, recovery, arith_error)
-            }
-            Some(mut pending) => {
-                if let Some(child) = pending.take_child() {
-                    self.abort_continuation(child)?;
-                }
-                return Err(CommandError::input_invariant());
-            }
-            None => self.scan_dimension_from_leading(
-                false,
-                OriginId::UNKNOWN,
-                allow_infinite,
-                mu,
-                &mut suspended,
-            ),
-        };
-        finish_scalar_result!(self, result, suspended)
+        let result = self.scan_dimension_from_leading(false, OriginId::UNKNOWN, allow_infinite, mu);
+        finish_scalar_result!(self, result)
     }
 
     fn scan_dimension_from_leading(
@@ -2364,7 +1462,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         mut provenance: OriginId,
         allow_infinite: bool,
         mu: bool,
-        suspended: &mut Option<PendingScalarFrame<G>>,
     ) -> Result<(ScannedScalar<Scaled>, Order), CommandError> {
         // TeX82 §448's `<Get the next non-blank non-sign token>` leaves that
         // token in hand and branches on it: an internal quantity (a command
@@ -2383,16 +1480,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             let mut command = None;
             let delivery = match self.request_expanded_token(&mut command) {
                 Ok(delivery) => delivery,
-                Err(error) => {
-                    *suspended = Some(PendingScalarFrame::DimensionLeading {
-                        negative,
-                        provenance,
-                        allow_infinite,
-                        mu,
-                        child: None,
-                    });
-                    return Err(error);
-                }
+                Err(error) => return Err(error),
             };
             let command = match delivery {
                 DeliveryStatus::Command => {
@@ -2420,7 +1508,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 false,
             );
         };
-        self.scan_dimension_after_first(first, negative, provenance, allow_infinite, mu, suspended)
+        self.scan_dimension_after_first(first, negative, provenance, allow_infinite, mu)
     }
 
     fn scan_dimension_after_first(
@@ -2430,7 +1518,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         provenance: OriginId,
         allow_infinite: bool,
         mu: bool,
-        suspended: &mut Option<PendingScalarFrame<G>>,
     ) -> Result<(ScannedScalar<Scaled>, Order), CommandError> {
         // TeX82 §449's "Fetch an internal dimension and goto attach_sign,
         // or fetch an internal integer": `scan_something_internal(mu_val,
@@ -2444,14 +1531,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         } else {
             InternalLevel::Dimension
         };
-        *suspended = Some(PendingScalarFrame::DimensionInternal {
-            first: first.clone(),
-            negative,
-            provenance,
-            allow_infinite,
-            mu,
-            child: None,
-        });
         let mut internal_call = ScalarCallFrame::default();
         let internal = scalar_value_or_return!(
             internal_call,
@@ -2477,7 +1556,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                         allow_infinite,
                         mu,
                         ScalarRecovery::None,
-                        suspended,
                     )
                 }
             },
@@ -2504,16 +1582,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                         allow_infinite,
                         mu,
                         ScalarRecovery::None,
-                        suspended,
                     )
                 } else {
-                    self.scan_dimension_after_integer(
-                        negative,
-                        provenance,
-                        allow_infinite,
-                        mu,
-                        suspended,
-                    )
+                    self.scan_dimension_after_integer(negative, provenance, allow_infinite, mu)
                 }
             }
         }
@@ -2525,16 +1596,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         provenance: OriginId,
         allow_infinite: bool,
         mu: bool,
-        suspended: &mut Option<PendingScalarFrame<G>>,
     ) -> Result<(ScannedScalar<Scaled>, Order), CommandError> {
         self.last_integer_terminator = None;
-        *suspended = Some(PendingScalarFrame::DimensionInteger {
-            negative,
-            provenance,
-            allow_infinite,
-            mu,
-            child: None,
-        });
         let mut integer_call = ScalarCallFrame::default();
         let integer = scalar_value_or_return!(integer_call, self.scan_integer(&mut integer_call));
         let decimal = self
@@ -2559,7 +1622,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             allow_infinite,
             mu,
             integer.recovery,
-            suspended,
         )
     }
 
@@ -2573,7 +1635,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         allow_infinite: bool,
         mu: bool,
         recovery: ScalarRecovery,
-        suspended: &mut Option<PendingScalarFrame<G>>,
     ) -> Result<(ScannedScalar<Scaled>, Order), CommandError> {
         let flip = integer < 0;
         let integer = if flip {
@@ -2616,7 +1677,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             allow_infinite,
             mu,
             recovery,
-            suspended,
         )
     }
 
@@ -2629,40 +1689,13 @@ impl<G> CommandProcessor<'_, '_, G> {
         allow_infinite: bool,
         mu: bool,
         recovery: ScalarRecovery,
-        suspended: &mut Option<PendingScalarFrame<G>>,
     ) -> Result<(ScannedScalar<Scaled>, Order), CommandError> {
-        *suspended = Some(PendingScalarFrame::DimensionUnits {
-            progress: progress.clone(),
-            negative,
-            provenance,
-            allow_infinite,
-            mu,
-            recovery,
-            child: None,
-        });
-        let units = self.scan_decimal_dimension_from(
-            progress,
-            allow_infinite,
-            mu,
-            suspended,
-            negative,
-            provenance,
-            recovery,
-        )?;
+        let units = self.scan_decimal_dimension_from(progress, allow_infinite, mu)?;
         // TeX82 §448's trailing `<Scan an optional space>` sits between the
         // unit scan and `attach_sign:`, so every path that reached
         // `attach_sign` by a `goto` -- §449's whole internal dimension and
         // §455's two internal-unit exits -- skips it.
         if !units.attach_sign {
-            *suspended = Some(PendingScalarFrame::DimensionOptionalSpace {
-                value: units.value,
-                order: units.order,
-                negative,
-                provenance,
-                recovery,
-                arith_error: units.arith_error,
-                child: None,
-            });
             self.scan_optional_space()?;
         }
         self.finish_dimension(
@@ -2824,89 +1857,10 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     /// Scans a normal or mu glue specification.
     fn scan_glue(&mut self, mu: bool) -> Result<ScannedScalar<GlueSpec>, CommandError> {
-        let pending = self.take_pending_scalar_frame()?;
-        let mut suspended = None;
-        let result = match pending {
-            Some(PendingScalarFrame::GlueLeading {
-                mu: retained_mu,
-                negative,
-                provenance,
-                mut child,
-            }) if retained_mu == mu => {
-                self.restore_scalar_child(&mut child, ScalarChildDestination::GlueLeadingToken)?;
-                self.scan_glue_from_leading(mu, negative, provenance, &mut suspended)
-            }
-            Some(PendingScalarFrame::GlueInternal {
-                first,
-                mu: retained_mu,
-                negative,
-                provenance,
-                mut child,
-            }) if retained_mu == mu => {
-                self.restore_scalar_child(&mut child, ScalarChildDestination::GlueInternal)?;
-                self.scan_glue_after_first(first, mu, negative, provenance, &mut suspended)
-            }
-            Some(PendingScalarFrame::GlueWidth {
-                mu: retained_mu,
-                negative,
-                mut child,
-            }) if retained_mu == mu => {
-                self.restore_scalar_child(&mut child, ScalarChildDestination::GlueWidth)?;
-                self.scan_glue_width(mu, negative, &mut suspended)
-            }
-            Some(PendingScalarFrame::GluePlusKeyword {
-                mu: retained_mu,
-                value,
-                recovery,
-                provenance,
-                mut child,
-            }) if retained_mu == mu => {
-                self.restore_scalar_child(&mut child, ScalarChildDestination::GluePlusKeyword)?;
-                self.scan_glue_plus_keyword(mu, value, recovery, provenance, &mut suspended)
-            }
-            Some(PendingScalarFrame::GlueStretch {
-                mu: retained_mu,
-                value,
-                recovery,
-                provenance,
-                mut child,
-            }) if retained_mu == mu => {
-                self.restore_scalar_child(&mut child, ScalarChildDestination::GlueStretch)?;
-                self.scan_glue_stretch(mu, value, recovery, provenance, &mut suspended)
-            }
-            Some(PendingScalarFrame::GlueMinusKeyword {
-                mu: retained_mu,
-                value,
-                recovery,
-                provenance,
-                mut child,
-            }) if retained_mu == mu => {
-                self.restore_scalar_child(&mut child, ScalarChildDestination::GlueMinusKeyword)?;
-                self.scan_glue_minus_keyword(mu, value, recovery, provenance, &mut suspended)
-            }
-            Some(PendingScalarFrame::GlueShrink {
-                mu: retained_mu,
-                value,
-                recovery,
-                provenance,
-                mut child,
-            }) if retained_mu == mu => {
-                self.restore_scalar_child(&mut child, ScalarChildDestination::GlueShrink)?;
-                self.scan_glue_shrink(mu, value, recovery, provenance, &mut suspended)
-            }
-            Some(mut pending) => {
-                if let Some(child) = pending.take_child() {
-                    self.abort_continuation(child)?;
-                }
-                return Err(CommandError::input_invariant());
-            }
-            None => {
-                self.scanned_glue_identity = None;
-                self.scanned_glue_register = None;
-                self.scan_glue_from_leading(mu, false, OriginId::UNKNOWN, &mut suspended)
-            }
-        };
-        finish_scalar_result!(self, result, suspended)
+        self.scanned_glue_identity = None;
+        self.scanned_glue_register = None;
+        let result = self.scan_glue_from_leading(mu, false, OriginId::UNKNOWN);
+        finish_scalar_result!(self, result)
     }
 
     fn scan_glue_from_leading(
@@ -2914,7 +1868,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         mu: bool,
         mut negative: bool,
         mut provenance: OriginId,
-        suspended: &mut Option<PendingScalarFrame<G>>,
     ) -> Result<ScannedScalar<GlueSpec>, CommandError> {
         // TeX82 §461's `<Get the next non-blank non-sign token>`: `scan_glue`
         // owns its own leading signs so that §430 can negate an internal
@@ -2925,15 +1878,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             let mut command = None;
             let delivery = match self.request_expanded_token(&mut command) {
                 Ok(delivery) => delivery,
-                Err(error) => {
-                    *suspended = Some(PendingScalarFrame::GlueLeading {
-                        mu,
-                        negative,
-                        provenance,
-                        child: None,
-                    });
-                    return Err(error);
-                }
+                Err(error) => return Err(error),
             };
             let command = match delivery {
                 DeliveryStatus::Command => {
@@ -2952,8 +1897,8 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
         };
         match first {
-            Some(first) => self.scan_glue_after_first(first, mu, negative, provenance, suspended),
-            None => self.scan_glue_width(mu, negative, suspended),
+            Some(first) => self.scan_glue_after_first(first, mu, negative, provenance),
+            None => self.scan_glue_width(mu, negative),
         }
     }
 
@@ -2963,7 +1908,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         mu: bool,
         negative: bool,
         provenance: OriginId,
-        suspended: &mut Option<PendingScalarFrame<G>>,
     ) -> Result<ScannedScalar<GlueSpec>, CommandError> {
         let level = if mu {
             InternalLevel::MuGlue
@@ -2975,13 +1919,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         // one canonical backup/replay cycle before `scan_dimen` owns its
         // integer prefix; collapsing the probe loses that input lifecycle and
         // also prevents a direct `\skip` RHS from being accepted as glue.
-        *suspended = Some(PendingScalarFrame::GlueInternal {
-            first: first.clone(),
-            mu,
-            negative,
-            provenance,
-            child: None,
-        });
         let mut internal_call = ScalarCallFrame::default();
         match scalar_value_or_return!(
             internal_call,
@@ -3038,7 +1975,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                     },
                     ScalarRecovery::None,
                     provenance,
-                    suspended,
                 )
             }
             // §461: `if cur_val_level=int_val then scan_dimen(mu,false,
@@ -3058,7 +1994,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                     },
                     ScalarRecovery::None,
                     provenance,
-                    suspended,
                 )
             }
             InternalScan::Value(InternalValue::Font(_) | InternalValue::Tokens { .. }) => {
@@ -3068,7 +2003,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             // false,false); if negative then negate(cur_val)`.
             InternalScan::NotInternal => {
                 self.back_input(first)?;
-                self.scan_glue_width(mu, negative, suspended)
+                self.scan_glue_width(mu, negative)
             }
         }
     }
@@ -3077,13 +2012,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         mu: bool,
         negative: bool,
-        suspended: &mut Option<PendingScalarFrame<G>>,
     ) -> Result<ScannedScalar<GlueSpec>, CommandError> {
-        *suspended = Some(PendingScalarFrame::GlueWidth {
-            mu,
-            negative,
-            child: None,
-        });
         let width = self.scan_dimension_with_order(false, mu)?.0;
         if negative {
             self.scanned_glue_identity = None;
@@ -3101,7 +2030,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             },
             width.recovery,
             width.provenance.primary,
-            suspended,
         )
     }
 
@@ -3111,19 +2039,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         value: GlueSpec,
         recovery: ScalarRecovery,
         provenance: OriginId,
-        suspended: &mut Option<PendingScalarFrame<G>>,
     ) -> Result<ScannedScalar<GlueSpec>, CommandError> {
-        *suspended = Some(PendingScalarFrame::GluePlusKeyword {
-            mu,
-            value,
-            recovery,
-            provenance,
-            child: None,
-        });
         if self.scan_keyword("plus")?.value {
-            self.scan_glue_stretch(mu, value, recovery, provenance, suspended)
+            self.scan_glue_stretch(mu, value, recovery, provenance)
         } else {
-            self.scan_glue_minus_keyword(mu, value, recovery, provenance, suspended)
+            self.scan_glue_minus_keyword(mu, value, recovery, provenance)
         }
     }
 
@@ -3131,22 +2051,13 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         mu: bool,
         mut value: GlueSpec,
-        mut recovery: ScalarRecovery,
+        _recovery: ScalarRecovery,
         provenance: OriginId,
-        suspended: &mut Option<PendingScalarFrame<G>>,
     ) -> Result<ScannedScalar<GlueSpec>, CommandError> {
-        *suspended = Some(PendingScalarFrame::GlueStretch {
-            mu,
-            value,
-            recovery,
-            provenance,
-            child: None,
-        });
         let (stretch, order) = self.scan_dimension_with_order(true, mu)?;
         value.stretch = stretch.value;
-        recovery = stretch.recovery;
         value.stretch_order = order;
-        self.scan_glue_minus_keyword(mu, value, recovery, provenance, suspended)
+        self.scan_glue_minus_keyword(mu, value, stretch.recovery, provenance)
     }
 
     fn scan_glue_minus_keyword(
@@ -3155,17 +2066,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         value: GlueSpec,
         recovery: ScalarRecovery,
         provenance: OriginId,
-        suspended: &mut Option<PendingScalarFrame<G>>,
     ) -> Result<ScannedScalar<GlueSpec>, CommandError> {
-        *suspended = Some(PendingScalarFrame::GlueMinusKeyword {
-            mu,
-            value,
-            recovery,
-            provenance,
-            child: None,
-        });
         if self.scan_keyword("minus")?.value {
-            self.scan_glue_shrink(mu, value, recovery, provenance, suspended)
+            self.scan_glue_shrink(mu, value, recovery, provenance)
         } else {
             self.finish_glue(value, recovery, provenance)
         }
@@ -3175,22 +2078,13 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         mu: bool,
         mut value: GlueSpec,
-        mut recovery: ScalarRecovery,
+        _recovery: ScalarRecovery,
         provenance: OriginId,
-        suspended: &mut Option<PendingScalarFrame<G>>,
     ) -> Result<ScannedScalar<GlueSpec>, CommandError> {
-        *suspended = Some(PendingScalarFrame::GlueShrink {
-            mu,
-            value,
-            recovery,
-            provenance,
-            child: None,
-        });
         let (shrink, order) = self.scan_dimension_with_order(true, mu)?;
         value.shrink = shrink.value;
-        recovery = shrink.recovery;
         value.shrink_order = order;
-        self.finish_glue(value, recovery, provenance)
+        self.finish_glue(value, shrink.recovery, provenance)
     }
 
     fn finish_glue(
@@ -3295,7 +2189,7 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     pub fn scan_internal_value_or_zero_retained(
         &mut self,
-    ) -> RetainedScalarScan<G, ScannedScalar<InternalValue>> {
+    ) -> RetainedScalarScan<ScannedScalar<InternalValue>> {
         let result = self.scan_internal_value_or_zero();
         self.detach_retained_scalar(result)
     }
@@ -3638,7 +2532,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub fn scan_the_internal_value_retained(
         &mut self,
         target: &CurrentCommand<G>,
-    ) -> RetainedScalarScan<G, Option<InternalValue>> {
+    ) -> RetainedScalarScan<Option<InternalValue>> {
         let result = self.scan_the_internal_value(target);
         self.detach_retained_scalar(result)
     }
@@ -3657,17 +2551,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         first: Option<u8>,
         radix: u8,
-        integer_continuation: Option<(bool, OriginId)>,
-        suspended: &mut Option<PendingIntegerScan>,
     ) -> Result<(i32, bool, Option<tex_state::diagnostic::DiagnosticSite>), CommandError> {
-        self.scan_radix_tail_from(
-            i32::from(first.unwrap_or(0)),
-            first.is_none(),
-            false,
-            radix,
-            integer_continuation,
-            suspended,
-        )
+        self.scan_radix_tail_from(i32::from(first.unwrap_or(0)), first.is_none(), false, radix)
     }
 
     fn scan_radix_tail_from(
@@ -3676,29 +2561,13 @@ impl<G> CommandProcessor<'_, '_, G> {
         mut vacuous: bool,
         mut overflowed: bool,
         radix: u8,
-        integer_continuation: Option<(bool, OriginId)>,
-        suspended: &mut Option<PendingIntegerScan>,
     ) -> Result<(i32, bool, Option<tex_state::diagnostic::DiagnosticSite>), CommandError> {
         let mut missing_site = None;
         loop {
             let mut command = None;
             let delivery = match self.request_expanded_token(&mut command) {
                 Ok(delivery) => delivery,
-                Err(error) => {
-                    if error.is_resource_suspension()
-                        && let Some((negative, provenance)) = integer_continuation
-                    {
-                        *suspended = Some(PendingIntegerScan::Radix {
-                            negative,
-                            provenance,
-                            radix,
-                            value,
-                            vacuous,
-                            overflowed,
-                        });
-                    }
-                    return Err(error);
-                }
+                Err(error) => return Err(error),
             };
             let command = match delivery {
                 DeliveryStatus::Command => {
@@ -3807,21 +2676,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         mut pending: PendingDimensionUnits<G>,
         allow_infinite: bool,
         mu: bool,
-        suspended: &mut Option<PendingScalarFrame<G>>,
-        negative: bool,
-        provenance: OriginId,
-        recovery: ScalarRecovery,
     ) -> Result<ScannedUnits, CommandError> {
         loop {
-            *suspended = Some(PendingScalarFrame::DimensionUnits {
-                progress: pending.clone(),
-                negative,
-                provenance,
-                allow_infinite,
-                mu,
-                recovery,
-                child: None,
-            });
             match pending.progress {
                 DimensionUnitProgress::Fraction { special_fil } => {
                     let mut command = None;
@@ -4884,48 +3740,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         negative: bool,
         call: &mut ScalarCallFrame<InternalScan>,
     ) -> ScalarCallStatus {
-        let mut pending = None;
-        if self.take_pending_scalar_frame_into(&mut pending, call) != ScalarCallStatus::Complete {
-            return ScalarCallStatus::Failed;
-        }
-        let (command, phase, mut child) = match pending {
-            Some(PendingScalarFrame::InternalValue {
-                command,
-                level: retained_level,
-                negative: retained_negative,
-                phase,
-                child,
-            }) if retained_level == level && retained_negative == negative => {
-                (command, phase, child)
-            }
-            Some(mut pending) => {
-                if let Some(child) = pending.take_child()
-                    && let Err(error) = self.abort_continuation(child)
-                {
-                    call.put_error(error);
-                    return ScalarCallStatus::Failed;
-                }
-                call.put_error(CommandError::input_invariant());
-                return ScalarCallStatus::Failed;
-            }
-            None => (command.clone(), InternalScanPhase::Start, None),
-        };
-        if let Err(error) =
-            self.restore_scalar_child(&mut child, ScalarChildDestination::InternalValue)
-        {
-            call.put_error(error);
-            return ScalarCallStatus::Failed;
-        }
-        let mut suspended = Some(PendingScalarFrame::InternalValue {
-            command: command.clone(),
-            level,
-            negative,
-            phase,
-            child: None,
-        });
-        let result =
-            self.scan_something_internal_from(command, level, negative, phase, &mut suspended);
-        publish_scalar_result!(self, call, result, suspended)
+        let command = command.clone();
+        let result = self.scan_something_internal_from(command, level, negative);
+        publish_scalar_result!(self, call, result)
     }
 
     fn scan_something_internal_from(
@@ -4933,8 +3750,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         command: CurrentCommand<G>,
         level: InternalLevel,
         negative: bool,
-        phase: InternalScanPhase,
-        suspended: &mut Option<PendingScalarFrame<G>>,
     ) -> Result<InternalScan, CommandError> {
         // §416 is titled "Fetch a token list or font identifier, provided that
         // |level=tok_val|", and its `level<>tok_val` test runs BEFORE any
@@ -4948,8 +3763,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         {
             return self.missing_number_internal_result(&command, level);
         }
-        let Some(value) = self.fetch_internal_value(&command, phase, level, negative, suspended)?
-        else {
+        let Some(value) = self.fetch_internal_value(&command, level, negative)? else {
             return Ok(InternalScan::NotInternal);
         };
         let Some(value) = self.coerce_internal_value(value, level)? else {
@@ -5011,47 +3825,9 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn fetch_internal_value(
         &mut self,
         command: &CurrentCommand<G>,
-        phase: InternalScanPhase,
-        level: InternalLevel,
-        negative: bool,
-        suspended: &mut Option<PendingScalarFrame<G>>,
+        _level: InternalLevel,
+        _negative: bool,
     ) -> Result<Option<InternalValue>, CommandError> {
-        let retain_phase = |phase| {
-            Some(PendingScalarFrame::InternalValue {
-                command: command.clone(),
-                level,
-                negative,
-                phase,
-                child: None,
-            })
-        };
-        match phase {
-            InternalScanPhase::FontDimenFont { number } => {
-                *suspended = retain_phase(phase);
-                let font = self.scan_font_selector_child()?;
-                return Ok(Some(self.internal_font_dimen(number, font)));
-            }
-            InternalScanPhase::FontCharacter { primitive, font } => {
-                *suspended = retain_phase(phase);
-                let character = self.scan_character_number()?;
-                return Ok(Some(
-                    self.internal_font_character(primitive, font, character),
-                ));
-            }
-            InternalScanPhase::PdfFontCodeCharacter { primitive, font } => {
-                *suspended = retain_phase(phase);
-                let character = self.scan_character_number()?;
-                return Ok(Some(
-                    self.internal_pdf_font_code(primitive, font, character),
-                ));
-            }
-            InternalScanPhase::FontIdentifier => {
-                *suspended = retain_phase(phase);
-                let font = self.scan_font_selector_child()?;
-                return Ok(Some(self.font_identity(font)));
-            }
-            InternalScanPhase::Start => {}
-        }
         let value = match scalar_meaning(command.meaning()) {
             // TeX82 `scan_something_internal` owns a register primitive's
             // restricted (`scan_eight_bit_int`) index scan. e-TeX 2.6
@@ -5128,7 +3904,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 let number =
                     scalar_value_or_return!(integer_call, self.scan_integer(&mut integer_call))
                         .value;
-                *suspended = retain_phase(InternalScanPhase::FontDimenFont { number });
                 let font = self.scan_font_selector_child()?;
                 self.internal_font_dimen(number, font)
             }
@@ -5144,7 +3919,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 | UnexpandablePrimitive::FontCharIc),
             ) => {
                 let font = self.scan_font_selector_child()?;
-                *suspended = retain_phase(InternalScanPhase::FontCharacter { primitive, font });
                 let character = self.scan_character_number()?;
                 self.internal_font_character(primitive, font, character)
             }
@@ -5183,8 +3957,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 | UnexpandablePrimitive::PdfKnacCode),
             ) => {
                 let font = self.scan_font_selector_child()?;
-                *suspended =
-                    retain_phase(InternalScanPhase::PdfFontCodeCharacter { primitive, font });
                 let character = self.scan_character_number()?;
                 self.internal_pdf_font_code(primitive, font, character)
             }
@@ -5542,7 +4314,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 | UnexpandablePrimitive::ScriptScriptFont,
             ) => {
                 self.back_input(command.copy_for_backup())?;
-                *suspended = retain_phase(InternalScanPhase::FontIdentifier);
                 let font = self.scan_font_selector_child()?;
                 self.font_identity(font)
             }
@@ -5701,7 +4472,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .expect("a recovered character code is a character"))
     }
 
-    pub fn scan_character_number_retained(&mut self) -> RetainedScalarScan<G, char> {
+    pub fn scan_character_number_retained(&mut self) -> RetainedScalarScan<char> {
         let result = self.scan_character_number();
         self.detach_retained_scalar(result)
     }
@@ -5747,7 +4518,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(scanned.value as u16)
     }
 
-    pub fn scan_profile_register_index_retained(&mut self) -> RetainedScalarScan<G, u16> {
+    pub fn scan_profile_register_index_retained(&mut self) -> RetainedScalarScan<u16> {
         let class = if self.profile().capabilities().supports_etex() {
             RestrictedIntegerClass::Register
         } else {
@@ -5757,12 +4528,12 @@ impl<G> CommandProcessor<'_, '_, G> {
             .map(|scanned| scanned.value as u16)
     }
 
-    pub fn scan_eight_bit_register_index_retained(&mut self) -> RetainedScalarScan<G, u16> {
+    pub fn scan_eight_bit_register_index_retained(&mut self) -> RetainedScalarScan<u16> {
         self.scan_restricted_integer_retained(RestrictedIntegerClass::EightBit)
             .map(|scanned| scanned.value as u16)
     }
 
-    pub fn scan_extended_register_index_retained(&mut self) -> RetainedScalarScan<G, u16> {
+    pub fn scan_extended_register_index_retained(&mut self) -> RetainedScalarScan<u16> {
         self.scan_restricted_integer_retained(RestrictedIntegerClass::Register)
             .map(|scanned| scanned.value as u16)
     }

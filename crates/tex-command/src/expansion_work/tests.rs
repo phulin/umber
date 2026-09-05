@@ -30,7 +30,7 @@ fn reviewed_layout_bounds_are_compile_time_invariants() {
     assert!(core::mem::size_of::<ExpansionCommandSlot<()>>() <= 16);
     assert!(core::mem::size_of::<ExpansionControlSlot<()>>() <= 16);
     assert!(core::mem::size_of::<ExpansionNameMark>() <= 16);
-    assert!(core::mem::size_of::<TheControl>() <= 64);
+    assert!(core::mem::size_of::<TheControl>() <= 96);
     assert!(core::mem::size_of::<SynchronousCsNameControl>() <= 32);
     assert!(core::mem::size_of::<SynchronousIfCsNameControl>() <= 32);
     assert!(core::mem::size_of::<SynchronousExpandAfterControl<()>>() <= 128);
@@ -169,28 +169,6 @@ fn synchronous_csname_controls_reuse_the_name_lane_in_lifo_order() {
 }
 
 #[test]
-fn aborting_a_cold_child_also_retires_its_synchronous_parent() {
-    let mut work = ExpansionWork::<()>::default();
-    work.push_the_control_with_parent(OriginId::UNKNOWN, None)
-        .expect("the parent");
-    let key = work
-        .park_suspension(crate::state::PendingExpansion {
-            command: empty_command(),
-            resume: crate::state::PendingExpansionResume::The {
-                opener: tex_state::token::OriginId::UNKNOWN,
-            },
-            delivery_expanded: true,
-            parent: None,
-            return_capability: None,
-            child: None,
-        })
-        .expect("suspended child");
-    work.abort(key).expect("deepest-first abort");
-    assert_eq!(work.driver_continuation_depth(), 0);
-    assert!(work.is_quiescent());
-}
-
-#[test]
 fn command_slots_keep_one_address_across_chunk_growth_and_reuse() {
     let mut work = ExpansionWork::<()>::default();
     let key = work.begin_dispatch(empty_command()).expect("root");
@@ -215,54 +193,6 @@ fn command_slots_keep_one_address_across_chunk_growth_and_reuse() {
         address
     );
     work.abort(replacement).expect("replacement abort");
-}
-
-#[test]
-fn complete_marks_abort_nested_controls_commands_and_name_bytes_deepest_first() {
-    let mut work = ExpansionWork::<()>::default();
-    let key = work.begin_dispatch(empty_command()).expect("root");
-    let opener = root_command(&work, &key);
-    let name = work.name_mark().expect("name mark");
-    for byte in b"control-sequence-name" {
-        work.push_name_byte(*byte).expect("name byte");
-    }
-
-    let first = work.park_command(empty_command()).expect("saved first");
-    let parent = work
-        .push_control(ExpansionControl::ExpandAfter(ExpandAfterControl {
-            opener,
-            saved_first: Some(first),
-            phase: ExpandAfterPhase::NeedOperands,
-        }))
-        .expect("parent control");
-    let second = work.park_command(empty_command()).expect("second");
-    let child = work
-        .push_control(ExpansionControl::Dispatch {
-            command: second,
-            trace: TraceState::Unseen,
-        })
-        .expect("child control");
-    let ExpansionControl::ExpandAfter(parent_control) =
-        work.control_mut(parent).expect("parent control")
-    else {
-        panic!("expandafter parent")
-    };
-    parent_control.phase = ExpandAfterPhase::AwaitSecond {
-        child: ExpansionChild::new(child, ExpandAfterSecondDestination),
-    };
-
-    assert_eq!(
-        work.name_bytes(name)
-            .expect("live name")
-            .collect::<Vec<_>>(),
-        b"control-sequence-name"
-    );
-    assert!(!work.is_quiescent());
-    work.abort(key).expect("deep abort");
-    assert!(work.is_quiescent());
-    assert_eq!(work.counters().aborted_roots, 1);
-    assert_eq!(work.counters().whole_control_copies, 0);
-    assert_eq!(work.counters().command_clones, 0);
 }
 
 #[test]
@@ -437,24 +367,6 @@ fn move_only_external_destination_restores_the_exact_key_and_route() {
 }
 
 #[test]
-fn typed_child_restores_only_its_exact_control_and_destination() {
-    let mut work = ExpansionWork::<()>::default();
-    let key = work.begin_dispatch(empty_command()).expect("root");
-    let command = work.park_command(empty_command()).expect("child command");
-    let control = work
-        .push_control(ExpansionControl::Dispatch {
-            command,
-            trace: TraceState::Unseen,
-        })
-        .expect("child control");
-    let child = ExpansionChild::new(control, CsNameTokenDestination);
-    let (restored, destination) = child.restore();
-    assert_eq!(restored, control);
-    assert_eq!(destination, CsNameTokenDestination);
-    work.abort(key).expect("abort");
-}
-
-#[test]
 fn generation_owner_is_checked_before_a_foreign_key_can_retire_work() {
     struct FirstGeneration;
     struct SecondGeneration;
@@ -520,93 +432,6 @@ fn capacity_failure_rolls_back_partially_parked_root_atomically() {
         Err(ScratchError::CapacityOverflow)
     );
     assert_eq!(work.names.len, u32::MAX);
-}
-
-#[test]
-fn failed_production_park_restores_the_exact_pending_owner() {
-    let mut work = ExpansionWork::<()>::default();
-    work.controls.next_serial = u32::MAX;
-    let ownership_before = crate::command::command_ownership_counters();
-    let pending = crate::state::PendingExpansion {
-        command: empty_command(),
-        resume: crate::state::PendingExpansionResume::PdfInsertHeight,
-        delivery_expanded: true,
-        parent: None,
-        return_capability: None,
-        child: None,
-    };
-    let (error, pending) = work
-        .park_suspension(pending)
-        .expect_err("exhausted control serial rejects park");
-    assert_eq!(error, ScratchError::CapacityOverflow);
-    assert_eq!(
-        pending.resume,
-        crate::state::PendingExpansionResume::PdfInsertHeight
-    );
-    assert!(pending.delivery_expanded);
-    assert!(pending.child.is_none());
-    assert_eq!(pending.command, empty_command());
-    assert!(work.is_quiescent());
-    let ownership_after = crate::command::command_ownership_counters();
-    assert_eq!(ownership_after.clones - ownership_before.clones, 0);
-    assert_eq!(
-        ownership_after.expansion_moves_in - ownership_before.expansion_moves_in,
-        1
-    );
-    assert_eq!(
-        ownership_after.expansion_moves_out - ownership_before.expansion_moves_out,
-        1
-    );
-}
-
-#[test]
-fn nested_suspensions_are_lifo_and_reject_an_out_of_order_key_without_mutation() {
-    let mut work = ExpansionWork::<()>::default();
-    let outer = work
-        .park_suspension(crate::state::PendingExpansion {
-            command: empty_command(),
-            resume: crate::state::PendingExpansionResume::The {
-                opener: tex_state::token::OriginId::UNKNOWN,
-            },
-            delivery_expanded: false,
-            parent: None,
-            return_capability: None,
-            child: None,
-        })
-        .expect("outer suspension");
-    let outer_duplicate = duplicate_key(&outer);
-    let inner = work
-        .park_suspension(crate::state::PendingExpansion {
-            command: empty_command(),
-            resume: crate::state::PendingExpansionResume::PdfInsertHeight,
-            delivery_expanded: true,
-            parent: None,
-            return_capability: None,
-            child: None,
-        })
-        .expect("inner suspension");
-
-    assert_eq!(
-        work.resume_suspension(outer_duplicate),
-        Err(ScratchError::InvalidCoordinate)
-    );
-    assert_eq!(work.active_roots.len(), 2);
-    let inner = work.resume_suspension(inner).expect("inner resumes first");
-    assert_eq!(
-        inner.resume,
-        crate::state::PendingExpansionResume::PdfInsertHeight
-    );
-    assert!(inner.delivery_expanded);
-    let outer = work.resume_suspension(outer).expect("outer resumes second");
-    assert_eq!(
-        outer.resume,
-        crate::state::PendingExpansionResume::The {
-            opener: tex_state::token::OriginId::UNKNOWN,
-        }
-    );
-    assert!(!outer.delivery_expanded);
-    assert!(work.is_quiescent());
-    assert_eq!(work.counters().stale_key_rejections, 1);
 }
 
 #[test]

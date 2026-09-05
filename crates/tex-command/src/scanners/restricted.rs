@@ -200,16 +200,13 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub fn scan_restricted_integer_retained(
         &mut self,
         class: RestrictedIntegerClass,
-    ) -> crate::RetainedScalarScan<G, RestrictedInteger> {
+    ) -> crate::RetainedScalarScan<RestrictedInteger> {
         match self.scan_integer_retained() {
             crate::RetainedScalarScan::Complete(scanned) => {
                 match self.finish_restricted_integer(class, scanned) {
                     Ok(value) => crate::RetainedScalarScan::Complete(value),
                     Err(error) => crate::RetainedScalarScan::Failed(error),
                 }
-            }
-            crate::RetainedScalarScan::Suspended { error, child } => {
-                crate::RetainedScalarScan::Suspended { error, child }
             }
             crate::RetainedScalarScan::Failed(error) => crate::RetainedScalarScan::Failed(error),
         }

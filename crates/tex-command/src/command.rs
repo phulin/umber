@@ -1200,6 +1200,7 @@ impl<G> CurrentCommand<G> {
     /// observe it. Keeping an initialized unresolved meaning avoids unsafe
     /// partial initialization while adding no second command representation.
     #[inline(always)]
+    #[cfg(test)]
     pub(crate) fn empty() -> Self {
         #[cfg(test)]
         update_command_ownership_counters(|counters| {

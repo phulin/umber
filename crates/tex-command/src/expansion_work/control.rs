@@ -2,113 +2,17 @@
 
 use crate::attempt::{AttemptMark, AttemptTokenBufferId};
 use crate::command::HotCommand;
-use crate::execution_scratch::ScannerFrameKey;
 use crate::scanner_kernel::ScannerCursor;
-use tex_state::meaning::{Meaning, UnexpandablePrimitive};
+use tex_state::meaning::Meaning;
 use tex_state::token::OriginId;
 
-use super::{ExpansionChild, ExpansionCommandSlot, ExpansionNameMark};
+use super::{ExpansionCommandSlot, ExpansionNameMark};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TraceState {
     Unseen,
     Complete,
     UnlessOperandPending,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct ExpandAfterSecondDestination;
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct CsNameTokenDestination;
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct IfCsNameTokenDestination;
-
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) enum ExpandAfterPhase<G> {
-    NeedOperands,
-    AwaitSecond {
-        child: ExpansionChild<G, ExpandAfterSecondDestination>,
-    },
-    ReplayFirst,
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) struct ExpandAfterControl<G> {
-    pub(crate) opener: ExpansionCommandSlot<G>,
-    pub(crate) saved_first: Option<ExpansionCommandSlot<G>>,
-    pub(crate) phase: ExpandAfterPhase<G>,
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) enum CsNamePhase<G> {
-    Collecting,
-    AwaitToken(ExpansionChild<G, CsNameTokenDestination>),
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) struct CsNameControl<G> {
-    pub(crate) opener: ExpansionCommandSlot<G>,
-    pub(crate) name: ExpansionNameMark,
-    pub(crate) phase: CsNamePhase<G>,
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) enum IfCsNamePhase<G> {
-    Collecting,
-    AwaitToken(ExpansionChild<G, IfCsNameTokenDestination>),
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) struct IfCsNameControl<G> {
-    pub(crate) opener: ExpansionCommandSlot<G>,
-    pub(crate) condition: crate::processor::status::ConditionId,
-    pub(crate) inverted: bool,
-    pub(crate) name: ExpansionNameMark,
-    pub(crate) phase: IfCsNamePhase<G>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct IfNumberLeftDestination;
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct IfNumberRightDestination;
-
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) struct ScannerChild<G, D> {
-    key: ScannerFrameKey<G>,
-    destination: D,
-}
-
-impl<G, D> ScannerChild<G, D> {
-    pub(crate) fn new(key: ScannerFrameKey<G>, destination: D) -> Self {
-        Self { key, destination }
-    }
-
-    pub(crate) fn restore(self) -> (ScannerFrameKey<G>, D) {
-        (self.key, self.destination)
-    }
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) enum IfNumberPhase<G> {
-    NeedLeft,
-    AwaitLeft(ScannerChild<G, IfNumberLeftDestination>),
-    NeedRelation {
-        left: i32,
-    },
-    AwaitRight {
-        left: i32,
-        relation: u8,
-        child: ScannerChild<G, IfNumberRightDestination>,
-    },
-    Complete,
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) struct IfNumberControl<G> {
-    pub(crate) opener: ExpansionCommandSlot<G>,
-    pub(crate) condition: crate::processor::status::ConditionId,
-    pub(crate) inverted: bool,
-    pub(crate) phase: IfNumberPhase<G>,
 }
 
 /// The compact continuation for an expanded `\the` operand.
@@ -150,14 +54,6 @@ pub(crate) enum ThePhase {
         /// operator still belongs to the expression; a digit or other token
         /// terminates the factor and must be backed up instead of appended.
         factor_spaced: bool,
-    },
-    /// Canonical e-TeX expression scanning has taken ownership of the
-    /// expanded operand stream.  While the scalar state machine requests
-    /// tokens, the enclosing `\the` control stays in this inert phase so it
-    /// cannot consume the scanner's input itself.
-    CanonicalExpression {
-        primitive: UnexpandablePrimitive,
-        as_number: bool,
     },
     /// Selector scan for a register used as a `\numexpr` factor.  The
     /// surrounding expression remains in this one compact control record
@@ -565,76 +461,12 @@ pub(crate) struct SynchronousFontNameControl {
     pub(crate) purpose: SynchronousFontPurpose,
 }
 
-/// Compact two-integer state for `\pdfximagebbox`.  The object number is
-/// validated before the one-based bounding-box coordinate is consumed, so a
-/// nested expansion can return to the exact stage without retaining a rich
-/// PDF object or metadata value.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum SynchronousPdfXImageBBoxPhase {
-    Object {
-        negative: bool,
-        value: i64,
-        seen_digit: bool,
-    },
-    Coordinate {
-        object: u32,
-        negative: bool,
-        value: i64,
-        seen_digit: bool,
-    },
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct SynchronousPdfXImageBBoxControl {
-    pub(crate) opener: OriginId,
-    pub(crate) phase: SynchronousPdfXImageBBoxPhase,
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) enum UnlessPhase<G> {
-    NeedConditional,
-    DispatchConditional {
-        command: ExpansionCommandSlot<G>,
-        trace: TraceState,
-    },
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) struct UnlessControl<G> {
-    pub(crate) opener: ExpansionCommandSlot<G>,
-    pub(crate) phase: UnlessPhase<G>,
-}
-
-/// Primitive PCs are variant-specific, so impossible route/payload pairs
-/// cannot be assembled through a generic bag of fields.
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) enum PrimitiveControl<G> {
-    CsName(CsNameControl<G>),
-    IfCsName(IfCsNameControl<G>),
-    IfNumber(IfNumberControl<G>),
-    Unless(UnlessControl<G>),
-}
-
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum ExpansionControl<G> {
-    Return(ExpansionReturnState<G>),
     Dispatch {
         command: ExpansionCommandSlot<G>,
         trace: TraceState,
     },
-    Suspended {
-        command: ExpansionCommandSlot<G>,
-        resume: crate::state::PendingExpansionResume,
-        delivery_expanded: bool,
-        return_capability: Option<super::ExpansionReturnCapability<G>>,
-        child: Option<
-            crate::execution_scratch::ChildContinuation<
-                G,
-                crate::state::PendingExpansionChildDestination,
-            >,
-        >,
-    },
-    ExpandAfter(ExpandAfterControl<G>),
     The(TheControl),
     CsName(SynchronousCsNameControl),
     IfCsName(SynchronousIfCsNameControl),
@@ -644,56 +476,8 @@ pub(crate) enum ExpansionControl<G> {
     IfDimension(SynchronousIfDimensionControl),
     Number(SynchronousNumberControl),
     FontName(SynchronousFontNameControl),
-    PdfXImageBBox(SynchronousPdfXImageBBoxControl),
     Expanded(SynchronousExpandedControl),
-    Primitive(PrimitiveControl<G>),
 }
-
-/// One exact caller-owned destination hidden below a nested expansion.
-///
-/// The destination itself remains in its scanner's stack or retained frame;
-/// this move-only lane entry is the capability that prevents an unrelated
-/// outer synchronous control from consuming the child's result first.
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) struct ExpansionReturnState<G> {
-    pub(crate) sink: ExpansionReturnSink,
-    pub(crate) awaiting: bool,
-    pub(crate) command_mark: u32,
-    pub(crate) name_mark: u32,
-    pub(crate) _generation: core::marker::PhantomData<fn(&G) -> &G>,
-}
-
-/// Move-only, sink-specific edge owned by one scanner/control frame. The
-/// lane state remains resident in `ExpansionWork`; this handle is the only
-/// value a request may carry into a parked expansion or consume on return.
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) struct ExpansionReturnCapability<G> {
-    slot: super::ExpansionControlSlot<G>,
-    sink: ExpansionReturnSink,
-}
-
-impl<G> ExpansionReturnCapability<G> {
-    pub(crate) fn new(slot: super::ExpansionControlSlot<G>, sink: ExpansionReturnSink) -> Self {
-        Self { slot, sink }
-    }
-
-    pub(crate) fn slot(&self) -> super::ExpansionControlSlot<G> {
-        self.slot
-    }
-
-    pub(crate) const fn sink(&self) -> ExpansionReturnSink {
-        self.sink
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ExpansionReturnSink {
-    ScannerToken,
-    ScannerExpansion,
-}
-
-const _: () = assert!(core::mem::size_of::<ExpansionReturnState<()>>() <= 24);
-const _: () = assert!(core::mem::size_of::<ExpansionReturnCapability<()>>() <= 24);
 
 const _: () = {
     assert!(core::mem::size_of::<SynchronousExpandAfterControl<()>>() <= 128);
@@ -703,6 +487,5 @@ const _: () = {
     assert!(core::mem::size_of::<SynchronousIfDimensionControl>() <= 64);
     assert!(core::mem::size_of::<SynchronousNumberControl>() <= 48);
     assert!(core::mem::size_of::<SynchronousFontNameControl>() <= 32);
-    assert!(core::mem::size_of::<SynchronousPdfXImageBBoxControl>() <= 32);
     assert!(core::mem::size_of::<SynchronousExpandedControl>() <= 128);
 };

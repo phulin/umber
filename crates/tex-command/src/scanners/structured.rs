@@ -4,6 +4,8 @@
 //! canonical filename scanning only. Input levels, raw tokens, and macro
 //! argument frames remain private to `tex-command`.
 
+use core::marker::PhantomData;
+
 use tex_state::glue::GlueSpec;
 use tex_state::ids::FontId;
 use tex_state::interner::Symbol;
@@ -43,34 +45,21 @@ enum AlignmentPreamblePhase {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum AlignmentPreambleChildDestination {
-    SpanExpansion,
-    Scalar,
-}
-
-#[derive(Debug, Eq, PartialEq)]
-struct PendingPreambleSpanExpansion<G> {
-    child:
-        Option<crate::execution_scratch::ChildContinuation<G, AlignmentPreambleChildDestination>>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum AlignmentPreambleScalarPhase {
     TabskipEquals,
     TabskipGlue,
 }
 
 #[derive(Debug, Eq, PartialEq)]
-struct PendingPreambleScalar<G> {
+struct AlignmentPreambleScalar<G> {
     phase: AlignmentPreambleScalarPhase,
-    child:
-        Option<crate::execution_scratch::ChildContinuation<G, AlignmentPreambleChildDestination>>,
+    _generation: PhantomData<fn(&G) -> &G>,
 }
 
 /// Exact in-process owner of an alignment preamble suspended while expanding
 /// the token following `\span`.
 #[derive(Debug, Eq, PartialEq)]
-pub(crate) struct PendingAlignmentPreamble<G> {
+pub(crate) struct AlignmentPreambleState<G> {
     alignment: AlignmentIdentity,
     builder: TokenBuilderId,
     scanner_episode: ScannerEpisode,
@@ -81,51 +70,8 @@ pub(crate) struct PendingAlignmentPreamble<G> {
     u_template: AttemptTokenBufferId,
     v_template: AttemptTokenBufferId,
     phase: AlignmentPreamblePhase,
-    span_expansion: Option<PendingPreambleSpanExpansion<G>>,
-    scalar_scan: Option<PendingPreambleScalar<G>>,
-}
-
-impl<G> PendingAlignmentPreamble<G> {
-    pub(crate) fn take_child(&mut self) -> Option<crate::execution_scratch::ScannerFrameKey<G>> {
-        self.scalar_scan
-            .as_mut()
-            .and_then(|pending| pending.child.take())
-            .or_else(|| {
-                self.span_expansion
-                    .as_mut()
-                    .and_then(|pending| pending.child.take())
-            })
-            .map(|child| child.restore().0)
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum StructuredScannerChildDestination {
-    Scalar,
-    TokenListRightHandSide,
-    PdfObjectStreamAttribute,
-    PdfObjectData,
-    PdfFormAttribute,
-    PdfFormResources,
-    PdfGlyphName,
-    PdfGlyphUnicode,
-    PdfImageAttribute,
-    PdfImagePageName,
-    PdfGraphicsLiteral,
-    PdfColorStackText,
-    SpecialText,
-    PdfNavigationAnnotationEntries,
-    PdfNavigationAttributes,
-    PdfNavigationTitle,
-    PdfNavigationIdentifier,
-    PdfDocumentFragmentText,
-    PdfActionUser,
-    PdfActionFile,
-    PdfActionStructure,
-    PdfActionPageView,
-    PdfActionTargetName,
-    ImmediateChild,
-    WriteExpansionText,
+    scalar_scan: Option<AlignmentPreambleScalar<G>>,
+    _generation: PhantomData<fn(&G) -> &G>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -147,269 +93,6 @@ enum PendingPdfActionOwner {
 enum PendingPdfColorStackAction {
     Set,
     Push,
-}
-
-#[derive(Debug, Eq, PartialEq)]
-enum PendingPdfActionPhase {
-    User,
-    File {
-        goto: bool,
-    },
-    StructureRaw {
-        goto: bool,
-        file: AttemptTokenListId,
-    },
-    StructureName {
-        goto: bool,
-        file: Option<AttemptTokenListId>,
-    },
-    PageView {
-        goto: bool,
-        file: Option<AttemptTokenListId>,
-        structure: Option<PdfActionIdentifier>,
-        number: u32,
-    },
-    TargetName {
-        goto: bool,
-        file: Option<AttemptTokenListId>,
-        structure: Option<PdfActionIdentifier>,
-    },
-}
-
-#[derive(Debug, Eq, PartialEq)]
-#[allow(private_interfaces)]
-pub(super) enum PendingStructuredScannerPhase<G> {
-    PdfObjectStreamAttribute {
-        use_object: Option<i32>,
-    },
-    PdfObjectData {
-        use_object: Option<i32>,
-        stream: bool,
-        stream_attr: Option<ScannedBalancedText>,
-        file: bool,
-    },
-    PdfFormAttribute,
-    PdfFormResources {
-        attr: Option<ScannedBalancedText>,
-    },
-    PdfGlyphName {
-        primitive: UnexpandablePrimitive,
-        font: Option<FontId>,
-    },
-    PdfGlyphUnicode {
-        font: Option<FontId>,
-        first: AttemptTokenListId,
-    },
-    PdfImageAttribute {
-        width: Option<Scaled>,
-        height: Option<Scaled>,
-        depth: Option<Scaled>,
-    },
-    PdfImagePageName {
-        width: Option<Scaled>,
-        height: Option<Scaled>,
-        depth: Option<Scaled>,
-        attr: Option<AttemptTokenListId>,
-    },
-    PdfGraphicsLiteral {
-        mode: tex_state::node::PdfLiteralMode,
-        deferred: bool,
-    },
-    PdfColorStackText {
-        id: i32,
-        action: PendingPdfColorStackAction,
-    },
-    SpecialText {
-        deferred: bool,
-    },
-    PdfAnnotationEntries {
-        use_object: Option<i32>,
-        dimensions: tex_state::PdfAnnotationDimensions,
-    },
-    PdfStartLinkAttributes {
-        dimensions: tex_state::PdfAnnotationDimensions,
-    },
-    PdfOutlineAttributes,
-    PdfOutlineTitle {
-        attributes: Option<ScannedBalancedText>,
-        action: PdfActionSpec,
-        count: i32,
-    },
-    PdfThreadAttributes {
-        primitive: UnexpandablePrimitive,
-        dimensions: tex_state::PdfAnnotationDimensions,
-    },
-    PdfThreadIdentifier {
-        primitive: UnexpandablePrimitive,
-        dimensions: tex_state::PdfAnnotationDimensions,
-        attributes: Option<ScannedBalancedText>,
-    },
-    PdfDestinationIdentifier {
-        structure: Option<u32>,
-    },
-    PdfDocumentFragmentText {
-        kind: tex_state::PdfDocumentFragmentKind,
-    },
-    PdfAction {
-        owner: PendingPdfActionOwner,
-        phase: PendingPdfActionPhase,
-    },
-    Scalar(PendingStructuredScalarPhase<G>),
-    TokenListRightHandSide(PendingTokenListOwner),
-    Immediate(PendingImmediatePhase),
-    WriteExpansion {
-        tokens: AttemptTokenListId,
-        stopper_level: InputLevelId,
-        write_words: usize,
-    },
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum PendingTokenListOwner {
-    Register {
-        owner: Symbol,
-        index: u16,
-    },
-    Value {
-        owner: Symbol,
-    },
-    Parameter {
-        parameter: tex_state::env::banks::TokParam,
-        owner: Symbol,
-    },
-}
-
-#[allow(clippy::large_enum_variant)]
-#[derive(Debug, Eq, PartialEq)]
-#[allow(private_interfaces)]
-pub(super) enum PendingStructuredScalarPhase<G> {
-    Unary(StructuredUnaryScalar),
-    CharacterDefinitionEquals {
-        target: Symbol,
-        provisional_old: ResolvedMeaning<G>,
-        class: RestrictedIntegerClass,
-    },
-    CharacterDefinitionValue {
-        target: Symbol,
-        provisional_old: ResolvedMeaning<G>,
-        class: RestrictedIntegerClass,
-    },
-    RegisterDefinitionEquals {
-        target: Symbol,
-        provisional_old: ResolvedMeaning<G>,
-    },
-    RegisterDefinitionIndex {
-        target: Symbol,
-        provisional_old: ResolvedMeaning<G>,
-    },
-    GlueParameterEquals {
-        index: u16,
-        mu: bool,
-    },
-    GlueParameterValue {
-        index: u16,
-        mu: bool,
-    },
-    VSplitIndex,
-    VSplitTo {
-        index: u16,
-    },
-    VSplitHeight {
-        index: u16,
-        missing_to_context: Option<String>,
-    },
-    Rule {
-        primitive: UnexpandablePrimitive,
-        width: Option<Scaled>,
-        height: Option<Scaled>,
-        depth: Option<Scaled>,
-        phase: RuleScalarPhase,
-    },
-    SpecialKeyword,
-    Packing {
-        owner: PackingOwner,
-        phase: PackingScalarPhase,
-    },
-    InsertPre,
-    InsertClass {
-        pre: bool,
-    },
-    BoxShiftDimension {
-        primitive: UnexpandablePrimitive,
-    },
-    PdfGraphics {
-        primitive: UnexpandablePrimitive,
-        phase: PdfGraphicsScalarPhase,
-    },
-    InputStream {
-        primitive: UnexpandablePrimitive,
-        read_global: bool,
-        phase: InputStreamScalarPhase,
-    },
-    FontDefinition {
-        target: Symbol,
-        phase: FontDefinitionScalarPhase,
-    },
-    GeneratedFont {
-        kind: GeneratedFontKind,
-        target: Symbol,
-        phase: GeneratedFontScalarPhase,
-    },
-    MathFractionThickness {
-        kind: MathFractionKind,
-        left_delimiter: Option<ScannedMathDelimiter>,
-        right_delimiter: Option<ScannedMathDelimiter>,
-    },
-    AccentBaseCharacter {
-        provenance: StructuredProvenance,
-    },
-    SetBoxIndex,
-    SetBoxEquals {
-        index: u16,
-    },
-    TokenListEquals(PendingTokenListOwner),
-    TokenRegisterIndex {
-        owner: Symbol,
-    },
-    TokenListRhsRegister(PendingTokenListOwner),
-    PdfImage(PdfImageScalarProgress),
-    PdfObject(PdfObjectScalarProgress),
-    PdfForm(PdfFormScalarProgress),
-    PdfDocumentOpenAction {
-        kind: tex_state::PdfDocumentFragmentKind,
-        text: ScannedBalancedText,
-    },
-    PdfOutlineCount {
-        attributes: Option<ScannedBalancedText>,
-        action: PdfActionSpec,
-        phase: PdfOutlineScalarPhase,
-    },
-    PdfThreadIdentifier {
-        primitive: UnexpandablePrimitive,
-        dimensions: tex_state::PdfAnnotationDimensions,
-        attributes: Option<ScannedBalancedText>,
-        phase: PdfThreadScalarPhase,
-    },
-    ImmediateOpenOut(ImmediateOpenOutScalarPhase),
-    ImmediateWriteStream {
-        close: bool,
-    },
-    PdfAction {
-        owner: PendingPdfActionOwner,
-        progress: PdfActionScalarProgress,
-    },
-    PdfNavigation(PdfNavigationScalarProgress),
-    PdfFontAction {
-        primitive: UnexpandablePrimitive,
-    },
-    MathFieldRestricted {
-        provenance: StructuredProvenance,
-        kind: MathFieldRestrictedKind,
-    },
-    LeaderRegister {
-        copy: bool,
-    },
-    Hyphenation(crate::scanners::hyphenation::PendingHyphenationData),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -486,41 +169,6 @@ enum PdfActionScalarPhase {
     NoNewWindowKeyword,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ImmediateOpenOutScalarPhase {
-    Stream,
-    Equals { stream: u8 },
-    FileName { stream: u8 },
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum PendingImmediatePhase {
-    WriteText {
-        stream: WriteStreamSelector,
-    },
-    WriteExpansion {
-        stream: WriteStreamSelector,
-        tokens: AttemptTokenListId,
-    },
-    Pdf {
-        primitive: UnexpandablePrimitive,
-        pdf_output_enabled: bool,
-    },
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum PdfOutlineScalarPhase {
-    CountKeyword,
-    CountValue,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum PdfThreadScalarPhase {
-    NameKeyword,
-    NumKeyword,
-    NumValue,
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PdfObjectScalarProgress {
     use_object: Option<i32>,
@@ -594,32 +242,6 @@ enum PdfImageScalarPhase {
     FileName,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum InputStreamScalarPhase {
-    Selector,
-    OpenEquals { scanned: crate::RestrictedInteger },
-    OpenFileName { scanned: crate::RestrictedInteger },
-    ReadTo { stream: i32 },
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum FontDefinitionScalarPhase {
-    Equals,
-    FileName,
-    AtKeyword { file_name: ScannedFileName },
-    AtDimension { file_name: ScannedFileName },
-    ScaledKeyword { file_name: ScannedFileName },
-    ScaledInteger { file_name: ScannedFileName },
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum GeneratedFontScalarPhase {
-    Equals,
-    Source,
-    Amount { source: FontId },
-    NoLigatures { source: FontId, amount: i16 },
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PdfGraphicsScalarPhase {
     LiteralShipout,
@@ -645,12 +267,6 @@ enum RuleScalarPhase {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum PackingOwner {
-    Box(UnexpandablePrimitive),
-    Alignment,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PackingScalarPhase {
     ToKeyword,
     SpreadKeyword,
@@ -658,40 +274,10 @@ enum PackingScalarPhase {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum StructuredUnaryScalar {
-    MathCharacter,
-    DelimiterNumber,
-    MathFamily(MathFamilySize),
-    MathMu(bool),
-    Accent,
-    WriteStream,
-    BoxRegister,
-    ShowBox,
-    PdfFormReference,
-    PdfReferenceObject,
-    ShowThe,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MathFieldRestrictedKind {
     Character,
     MathCharacter,
     Delimiter,
-}
-
-/// Exact structured-scanner caller and operand destination retained across a
-/// nested immutable-resource suspension.
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) struct PendingStructuredScanner<G> {
-    pub(super) phase: PendingStructuredScannerPhase<G>,
-    pub(super) child:
-        Option<crate::execution_scratch::ChildContinuation<G, StructuredScannerChildDestination>>,
-}
-
-impl<G> PendingStructuredScanner<G> {
-    pub(crate) fn take_child(&mut self) -> Option<crate::execution_scratch::ScannerFrameKey<G>> {
-        self.child.take().map(|child| child.restore().0)
-    }
 }
 
 /// Stable pending-diagnostic identities for TeX82 §760 template recovery.
@@ -1749,223 +1335,10 @@ enum DefinitionTargetProjection {
 }
 
 impl<G> CommandProcessor<'_, '_, G> {
-    pub(super) fn take_pending_structured_scanner(
-        &mut self,
-    ) -> Result<Option<PendingStructuredScanner<G>>, CommandError> {
-        if !self
-            .scanner_resume
-            .as_ref()
-            .is_some_and(crate::ScannerFrameKey::is_structured_scanner)
-        {
-            return Ok(None);
-        }
-        let key = self
-            .scanner_resume
-            .take()
-            .expect("matched structured-scanner frame");
-        self.command
-            .scratch
-            .take_structured_scanner_frame(key)
-            .map(Some)
-            .map_err(crate::scan_toks::scratch_command_error)
-    }
-
-    pub(super) fn restore_structured_scanner_child(
-        &mut self,
-        child: &mut Option<
-            crate::execution_scratch::ChildContinuation<G, StructuredScannerChildDestination>,
-        >,
-        expected: StructuredScannerChildDestination,
-    ) -> Result<(), CommandError> {
-        if let Some(child) = child.take() {
-            let (key, destination) = child.restore();
-            if destination != expected {
-                self.abort_continuation(key)?;
-                return Err(CommandError::input_invariant());
-            }
-            self.install_scanner_resume(Some(key));
-        }
-        Ok(())
-    }
-
-    pub(super) fn retain_structured_scanner(
-        &mut self,
-        phase: PendingStructuredScannerPhase<G>,
-        destination: StructuredScannerChildDestination,
-    ) -> Result<(), CommandError> {
-        let key = match self
-            .command
-            .scratch
-            .store_structured_scanner_frame(PendingStructuredScanner { phase, child: None })
-        {
-            Ok(key) => key,
-            Err(error) => {
-                if let Some(child) = self.scanner_resume.take() {
-                    self.abort_continuation(child)?;
-                }
-                return Err(crate::scan_toks::scratch_command_error(error));
-            }
-        };
-        let pending = match self.command.scratch.structured_scanner_frame_mut(&key) {
-            Ok(pending) => pending,
-            Err(error) => {
-                let abort_result = if let Some(child) = self.scanner_resume.take() {
-                    self.abort_continuation(child)
-                } else {
-                    Ok(())
-                };
-                let discard_result = self
-                    .command
-                    .scratch
-                    .discard_structured_scanner_frame(key)
-                    .map_err(crate::scan_toks::scratch_command_error);
-                abort_result?;
-                discard_result?;
-                return Err(crate::scan_toks::scratch_command_error(error));
-            }
-        };
-        pending.child = crate::execution_scratch::ChildContinuation::capture(
-            &mut self.scanner_resume,
-            destination,
-        );
-        if self.scanner_resume.replace(key).is_some() {
-            return Err(CommandError::input_invariant());
-        }
-        Ok(())
-    }
-
-    pub(super) fn retain_structured_scalar<T>(
-        &mut self,
-        result: crate::RetainedScalarScan<G, T>,
-        phase: PendingStructuredScalarPhase<G>,
-    ) -> Result<T, CommandError> {
-        match result {
-            crate::RetainedScalarScan::Complete(value) => Ok(value),
-            crate::RetainedScalarScan::Failed(error) => Err(error),
-            crate::RetainedScalarScan::Suspended { error, child } => {
-                let key = match self.command.scratch.store_structured_scanner_frame(
-                    PendingStructuredScanner {
-                        phase: PendingStructuredScannerPhase::Scalar(phase),
-                        child: None,
-                    },
-                ) {
-                    Ok(key) => key,
-                    Err(store_error) => {
-                        self.abort_continuation(child)?;
-                        return Err(crate::scan_toks::scratch_command_error(store_error));
-                    }
-                };
-                match self.command.scratch.structured_scanner_frame_mut(&key) {
-                    Ok(pending) => {
-                        pending.child =
-                            Some(crate::execution_scratch::ChildContinuation::from_key(
-                                child,
-                                StructuredScannerChildDestination::Scalar,
-                            ));
-                    }
-                    Err(store_error) => {
-                        let abort_result = self.abort_continuation(child);
-                        let discard_result = self
-                            .command
-                            .scratch
-                            .discard_structured_scanner_frame(key)
-                            .map_err(crate::scan_toks::scratch_command_error);
-                        abort_result?;
-                        discard_result?;
-                        return Err(crate::scan_toks::scratch_command_error(store_error));
-                    }
-                }
-                if self.scanner_resume.replace(key).is_some() {
-                    return Err(CommandError::input_invariant());
-                }
-                Err(error)
-            }
-        }
-    }
-
-    pub(super) fn retain_structured_scalar_progress<T>(
-        &mut self,
-        result: crate::RetainedScalarScan<G, T>,
-        phase: PendingStructuredScalarPhase<G>,
-    ) -> Result<(T, PendingStructuredScalarPhase<G>), CommandError> {
-        match result {
-            crate::RetainedScalarScan::Complete(value) => Ok((value, phase)),
-            crate::RetainedScalarScan::Failed(error) => Err(error),
-            crate::RetainedScalarScan::Suspended { error, child } => {
-                let key = match self.command.scratch.store_structured_scanner_frame(
-                    PendingStructuredScanner {
-                        phase: PendingStructuredScannerPhase::Scalar(phase),
-                        child: None,
-                    },
-                ) {
-                    Ok(key) => key,
-                    Err(store_error) => {
-                        self.abort_continuation(child)?;
-                        return Err(crate::scan_toks::scratch_command_error(store_error));
-                    }
-                };
-                match self.command.scratch.structured_scanner_frame_mut(&key) {
-                    Ok(pending) => {
-                        pending.child =
-                            Some(crate::execution_scratch::ChildContinuation::from_key(
-                                child,
-                                StructuredScannerChildDestination::Scalar,
-                            ));
-                    }
-                    Err(store_error) => {
-                        let abort_result = self.abort_continuation(child);
-                        let discard_result = self
-                            .command
-                            .scratch
-                            .discard_structured_scanner_frame(key)
-                            .map_err(crate::scan_toks::scratch_command_error);
-                        abort_result?;
-                        discard_result?;
-                        return Err(crate::scan_toks::scratch_command_error(store_error));
-                    }
-                }
-                if self.scanner_resume.replace(key).is_some() {
-                    return Err(CommandError::input_invariant());
-                }
-                Err(error)
-            }
-        }
-    }
-
-    fn restore_structured_unary(
-        &mut self,
-        expected: StructuredUnaryScalar,
-    ) -> Result<(), CommandError> {
-        let Some(pending) = self.take_pending_structured_scanner()? else {
-            return Ok(());
-        };
-        let PendingStructuredScanner { phase, mut child } = pending;
-        match phase {
-            PendingStructuredScannerPhase::Scalar(PendingStructuredScalarPhase::Unary(site))
-                if site == expected =>
-            {
-                self.restore_structured_scanner_child(
-                    &mut child,
-                    StructuredScannerChildDestination::Scalar,
-                )
-            }
-            _ => {
-                if let Some(child) = child.take() {
-                    self.abort_continuation(child.restore().0)?;
-                }
-                Err(CommandError::input_invariant())
-            }
-        }
-    }
-
-    fn finish_structured_unary<T>(
-        &mut self,
-        result: crate::RetainedScalarScan<G, T>,
-        site: StructuredUnaryScalar,
-    ) -> Result<T, CommandError> {
-        self.retain_structured_scalar(result, PendingStructuredScalarPhase::Unary(site))
-    }
-
+    // Structured scans run as ordinary synchronous Rust calls.  These tiny
+    // adapters are kept only while the legacy per-command phase tables are
+    // being collapsed; they never store or restore anything across a resource
+    // boundary.
     /// Expands a frozen whatsit payload at output traversal time.
     ///
     /// The caller decides how the resulting token spellings are rendered;
@@ -2120,81 +1493,21 @@ impl<G> CommandProcessor<'_, '_, G> {
         class: RestrictedIntegerClass,
         provisional_global: bool,
     ) -> Result<ScannedCharacterDefinition<G>, CommandError> {
-        let pending = self.take_pending_structured_scanner()?;
-        let (target, provisional_old, class, value_phase, mut child) = match pending {
-            Some(PendingStructuredScanner {
-                phase:
-                    PendingStructuredScannerPhase::Scalar(
-                        PendingStructuredScalarPhase::CharacterDefinitionEquals {
-                            target,
-                            provisional_old,
-                            class,
-                        },
-                    ),
-                child,
-            }) => (target, provisional_old, class, false, child),
-            Some(PendingStructuredScanner {
-                phase:
-                    PendingStructuredScannerPhase::Scalar(
-                        PendingStructuredScalarPhase::CharacterDefinitionValue {
-                            target,
-                            provisional_old,
-                            class,
-                        },
-                    ),
-                child,
-            }) => (target, provisional_old, class, true, child),
-            Some(mut pending) => {
-                if let Some(child) = pending.take_child() {
-                    self.abort_continuation(child)?;
-                }
-                return Err(CommandError::input_invariant());
-            }
-            None => {
-                let target = self.scan_definition_target()?;
-                let provisional_old = self.state.meaning(target);
-                self.state
-                    .set_provisional_meaning(target, Meaning::Relax, provisional_global);
-                observe!(
-                    self,
-                    crate::CommandObservation::Mutation(crate::MutationRecord {
-                        target: crate::MutationTarget::Meaning,
-                        key: crate::ObservationValue::Name(self.state.resolve(target).to_owned()),
-                        value: crate::ObservationValue::Name("relax".into()),
-                        global: provisional_global,
-                    }),
-                );
-                (target, provisional_old, class, false, None)
-            }
-        };
-        if !value_phase {
-            self.restore_structured_scanner_child(
-                &mut child,
-                StructuredScannerChildDestination::Scalar,
-            )?;
-            let equals = self.scan_optional_equals_retained();
-            self.retain_structured_scalar(
-                equals,
-                PendingStructuredScalarPhase::CharacterDefinitionEquals {
-                    target,
-                    provisional_old,
-                    class,
-                },
-            )?;
-        }
-        self.restore_structured_scanner_child(
-            &mut child,
-            StructuredScannerChildDestination::Scalar,
-        )?;
-        let value = self.scan_restricted_integer_retained(class);
-        let scanned = self.retain_structured_scalar(
-            value,
-            PendingStructuredScalarPhase::CharacterDefinitionValue {
-                target,
-                provisional_old,
-                class,
-            },
-        )?;
+        let target = self.scan_definition_target()?;
+        let provisional_old = self.state.meaning(target);
+        self.state
+            .set_provisional_meaning(target, Meaning::Relax, provisional_global);
+        observe!(
+            self,
+            crate::CommandObservation::Mutation(crate::MutationRecord {
+                target: crate::MutationTarget::Meaning,
+                key: crate::ObservationValue::Name(self.state.resolve(target).to_owned()),
+                value: crate::ObservationValue::Name("relax".into()),
+                global: provisional_global,
+            }),
+        );
+        self.scan_optional_equals_retained().into_result()?;
+        let scanned = self.scan_restricted_integer_retained(class).into_result()?;
         Ok(ScannedCharacterDefinition {
             target,
             provisional_old,
@@ -2214,91 +1527,30 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         provisional_global: bool,
     ) -> Result<ScannedRegisterDefinition<G>, CommandError> {
-        let pending = self.take_pending_structured_scanner()?;
-        let (target, provisional_old, index_phase, mut child) = match pending {
-            Some(PendingStructuredScanner {
-                phase:
-                    PendingStructuredScannerPhase::Scalar(
-                        PendingStructuredScalarPhase::RegisterDefinitionEquals {
-                            target,
-                            provisional_old,
-                        },
-                    ),
-                child,
-            }) => (target, provisional_old, false, child),
-            Some(PendingStructuredScanner {
-                phase:
-                    PendingStructuredScannerPhase::Scalar(
-                        PendingStructuredScalarPhase::RegisterDefinitionIndex {
-                            target,
-                            provisional_old,
-                        },
-                    ),
-                child,
-            }) => (target, provisional_old, true, child),
-            Some(mut pending) => {
-                if let Some(child) = pending.take_child() {
-                    self.abort_continuation(child)?;
-                }
-                return Err(CommandError::input_invariant());
-            }
-            None => {
-                let target = self.scan_definition_target()?;
-                let provisional_old = self.state.meaning(target);
-                self.state
-                    .set_provisional_meaning(target, Meaning::Relax, provisional_global);
-                observe!(
-                    self,
-                    crate::CommandObservation::Mutation(crate::MutationRecord {
-                        target: crate::MutationTarget::Meaning,
-                        key: crate::ObservationValue::Name(self.state.resolve(target).to_owned()),
-                        value: crate::ObservationValue::Name("relax".into()),
-                        global: provisional_global,
-                    }),
-                );
-                (target, provisional_old, false, None)
-            }
-        };
-        if !index_phase {
-            self.restore_structured_scanner_child(
-                &mut child,
-                StructuredScannerChildDestination::Scalar,
-            )?;
-            let equals = self.scan_optional_equals_retained();
-            self.retain_structured_scalar(
-                equals,
-                PendingStructuredScalarPhase::RegisterDefinitionEquals {
-                    target,
-                    provisional_old,
-                },
-            )?;
-        }
-        self.restore_structured_scanner_child(
-            &mut child,
-            StructuredScannerChildDestination::Scalar,
-        )?;
+        let target = self.scan_definition_target()?;
+        let provisional_old = self.state.meaning(target);
+        self.state
+            .set_provisional_meaning(target, Meaning::Relax, provisional_global);
+        observe!(
+            self,
+            crate::CommandObservation::Mutation(crate::MutationRecord {
+                target: crate::MutationTarget::Meaning,
+                key: crate::ObservationValue::Name(self.state.resolve(target).to_owned()),
+                value: crate::ObservationValue::Name("relax".into()),
+                global: provisional_global,
+            }),
+        );
+        self.scan_optional_equals_retained().into_result()?;
         // TeX82 §1224 uses `scan_eight_bit_int`, while e-TeX 2.6
         // etex.ch [49.1224] replaces that scan with `scan_register_num` so
         // sparse register shorthands may address 0..=32767. pdfTeX inherits
         // the same e-TeX register extension.
         let index = if self.command.profile().capabilities().supports_etex() {
             let result = self.scan_extended_register_index_retained();
-            self.retain_structured_scalar(
-                result,
-                PendingStructuredScalarPhase::RegisterDefinitionIndex {
-                    target,
-                    provisional_old,
-                },
-            )?
+            result.into_result()?
         } else {
             let result = self.scan_eight_bit_register_index_retained();
-            self.retain_structured_scalar(
-                result,
-                PendingStructuredScalarPhase::RegisterDefinitionIndex {
-                    target,
-                    provisional_old,
-                },
-            )?
+            result.into_result()?
         };
         Ok(ScannedRegisterDefinition {
             target,
@@ -2317,87 +1569,12 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         primitive: UnexpandablePrimitive,
     ) -> Result<Option<PdfGraphicsRequest>, CommandError> {
-        use PdfColorStackActionRequest as Action;
         use PdfGraphicsRequest as Request;
-
-        if let Some(pending) = self.take_pending_structured_scanner()? {
-            let PendingStructuredScanner { phase, mut child } = pending;
-            return match phase {
-                PendingStructuredScannerPhase::Scalar(
-                    PendingStructuredScalarPhase::PdfGraphics {
-                        primitive: retained_primitive,
-                        phase,
-                    },
-                ) if retained_primitive == primitive => {
-                    self.scan_pdf_graphics_scalar(primitive, phase, child)
-                }
-                PendingStructuredScannerPhase::PdfGraphicsLiteral { mode, deferred } => {
-                    self.restore_structured_scanner_child(
-                        &mut child,
-                        StructuredScannerChildDestination::PdfGraphicsLiteral,
-                    )?;
-                    let text = match self.scan_balanced_text(!deferred) {
-                        Ok(text) => text,
-                        Err(error) => {
-                            if error.is_resource_suspension() {
-                                self.retain_structured_scanner(
-                                    PendingStructuredScannerPhase::PdfGraphicsLiteral {
-                                        mode,
-                                        deferred,
-                                    },
-                                    StructuredScannerChildDestination::PdfGraphicsLiteral,
-                                )?;
-                            }
-                            return Err(error);
-                        }
-                    };
-                    Ok(Some(Request::Literal {
-                        mode,
-                        deferred,
-                        text,
-                    }))
-                }
-                PendingStructuredScannerPhase::PdfColorStackText { id, action } => {
-                    self.restore_structured_scanner_child(
-                        &mut child,
-                        StructuredScannerChildDestination::PdfColorStackText,
-                    )?;
-                    let text = match self.scan_balanced_text(true) {
-                        Ok(text) => text,
-                        Err(error) => {
-                            if error.is_resource_suspension() {
-                                self.retain_structured_scanner(
-                                    PendingStructuredScannerPhase::PdfColorStackText { id, action },
-                                    StructuredScannerChildDestination::PdfColorStackText,
-                                )?;
-                            }
-                            return Err(error);
-                        }
-                    };
-                    Ok(Some(Request::ColorStack {
-                        id,
-                        action: Some(match action {
-                            PendingPdfColorStackAction::Set => Action::Set(text),
-                            PendingPdfColorStackAction::Push => Action::Push(text),
-                        }),
-                    }))
-                }
-                _ => {
-                    if let Some(child) = child.take() {
-                        self.abort_continuation(child.restore().0)?;
-                    }
-                    Err(CommandError::input_invariant())
-                }
-            };
-        }
 
         let request = match primitive {
             UnexpandablePrimitive::PdfLiteral => {
-                return self.scan_pdf_graphics_scalar(
-                    primitive,
-                    PdfGraphicsScalarPhase::LiteralShipout,
-                    None,
-                );
+                return self
+                    .scan_pdf_graphics_scalar(primitive, PdfGraphicsScalarPhase::LiteralShipout);
             }
             UnexpandablePrimitive::PdfSetMatrix => Request::SetMatrix {
                 text: self.scan_balanced_text(true)?,
@@ -2405,27 +1582,15 @@ impl<G> CommandProcessor<'_, '_, G> {
             UnexpandablePrimitive::PdfSave => Request::Save,
             UnexpandablePrimitive::PdfRestore => Request::Restore,
             UnexpandablePrimitive::PdfColorStack => {
-                return self.scan_pdf_graphics_scalar(
-                    primitive,
-                    PdfGraphicsScalarPhase::ColorId,
-                    None,
-                );
+                return self.scan_pdf_graphics_scalar(primitive, PdfGraphicsScalarPhase::ColorId);
             }
             UnexpandablePrimitive::PdfSavePos => Request::SavePosition,
             UnexpandablePrimitive::PdfSnapRefPoint => Request::SnapReferencePoint,
             UnexpandablePrimitive::PdfSnapY => {
-                return self.scan_pdf_graphics_scalar(
-                    primitive,
-                    PdfGraphicsScalarPhase::SnapY,
-                    None,
-                );
+                return self.scan_pdf_graphics_scalar(primitive, PdfGraphicsScalarPhase::SnapY);
             }
             UnexpandablePrimitive::PdfSnapYComp => {
-                return self.scan_pdf_graphics_scalar(
-                    primitive,
-                    PdfGraphicsScalarPhase::SnapYComp,
-                    None,
-                );
+                return self.scan_pdf_graphics_scalar(primitive, PdfGraphicsScalarPhase::SnapYComp);
             }
             _ => return Ok(None),
         };
@@ -2434,34 +1599,21 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     fn scan_pdf_graphics_scalar(
         &mut self,
-        primitive: UnexpandablePrimitive,
+        _primitive: UnexpandablePrimitive,
         mut phase: PdfGraphicsScalarPhase,
-        mut child: Option<
-            crate::execution_scratch::ChildContinuation<G, StructuredScannerChildDestination>,
-        >,
     ) -> Result<Option<PdfGraphicsRequest>, CommandError> {
         use PdfColorStackActionRequest as Action;
         use PdfGraphicsRequest as Request;
         loop {
-            self.restore_structured_scanner_child(
-                &mut child,
-                StructuredScannerChildDestination::Scalar,
-            )?;
-            let retained = |phase| PendingStructuredScalarPhase::PdfGraphics { primitive, phase };
             match phase {
                 PdfGraphicsScalarPhase::LiteralShipout => {
                     let result = self.scan_keyword_retained("shipout");
-                    let deferred = self
-                        .retain_structured_scalar(result, retained(phase))?
-                        .value;
+                    let deferred = result.into_result()?.value;
                     phase = PdfGraphicsScalarPhase::LiteralDirect { deferred };
                 }
                 PdfGraphicsScalarPhase::LiteralDirect { deferred } => {
                     let result = self.scan_keyword_retained("direct");
-                    if self
-                        .retain_structured_scalar(result, retained(phase))?
-                        .value
-                    {
+                    if result.into_result()?.value {
                         return self.finish_pdf_graphics_literal(
                             tex_state::node::PdfLiteralMode::Direct,
                             deferred,
@@ -2471,9 +1623,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 PdfGraphicsScalarPhase::LiteralPage { deferred } => {
                     let result = self.scan_keyword_retained("page");
-                    let page = self
-                        .retain_structured_scalar(result, retained(phase))?
-                        .value;
+                    let page = result.into_result()?.value;
                     let mode = if page {
                         tex_state::node::PdfLiteralMode::Page
                     } else {
@@ -2483,17 +1633,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 PdfGraphicsScalarPhase::ColorId => {
                     let result = self.scan_integer_retained();
-                    let id = self
-                        .retain_structured_scalar(result, retained(phase))?
-                        .value;
+                    let id = result.into_result()?.value;
                     phase = PdfGraphicsScalarPhase::ColorSet { id };
                 }
                 PdfGraphicsScalarPhase::ColorSet { id } => {
                     let result = self.scan_keyword_retained("set");
-                    if self
-                        .retain_structured_scalar(result, retained(phase))?
-                        .value
-                    {
+                    if result.into_result()?.value {
                         return self
                             .finish_pdf_color_stack_text(id, PendingPdfColorStackAction::Set);
                     }
@@ -2501,10 +1646,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 PdfGraphicsScalarPhase::ColorPush { id } => {
                     let result = self.scan_keyword_retained("push");
-                    if self
-                        .retain_structured_scalar(result, retained(phase))?
-                        .value
-                    {
+                    if result.into_result()?.value {
                         return self
                             .finish_pdf_color_stack_text(id, PendingPdfColorStackAction::Push);
                     }
@@ -2512,10 +1654,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 PdfGraphicsScalarPhase::ColorPop { id } => {
                     let result = self.scan_keyword_retained("pop");
-                    if self
-                        .retain_structured_scalar(result, retained(phase))?
-                        .value
-                    {
+                    if result.into_result()?.value {
                         return Ok(Some(Request::ColorStack {
                             id,
                             action: Some(Action::Pop),
@@ -2525,9 +1664,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 PdfGraphicsScalarPhase::ColorCurrent { id } => {
                     let result = self.scan_keyword_retained("current");
-                    let current = self
-                        .retain_structured_scalar(result, retained(phase))?
-                        .value;
+                    let current = result.into_result()?.value;
                     return Ok(Some(Request::ColorStack {
                         id,
                         action: current.then_some(Action::Current),
@@ -2535,17 +1672,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 PdfGraphicsScalarPhase::SnapY => {
                     let result = self.scan_glue_retained(false);
-                    let glue = self
-                        .retain_structured_scalar(result, retained(phase))?
-                        .value;
+                    let glue = result.into_result()?.value;
                     return Ok(Some(Request::SnapY { glue }));
                 }
                 PdfGraphicsScalarPhase::SnapYComp => {
                     let result = self.scan_integer_retained();
-                    let ratio = self
-                        .retain_structured_scalar(result, retained(phase))?
-                        .value
-                        .clamp(0, 1000) as u16;
+                    let ratio = result.into_result()?.value.clamp(0, 1000) as u16;
                     return Ok(Some(Request::SnapYComp { ratio }));
                 }
             }
@@ -2563,15 +1695,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 deferred,
                 text,
             })),
-            Err(error) => {
-                if error.is_resource_suspension() {
-                    self.retain_structured_scanner(
-                        PendingStructuredScannerPhase::PdfGraphicsLiteral { mode, deferred },
-                        StructuredScannerChildDestination::PdfGraphicsLiteral,
-                    )?;
-                }
-                Err(error)
-            }
+            Err(error) => Err(error),
         }
     }
 
@@ -2588,106 +1712,27 @@ impl<G> CommandProcessor<'_, '_, G> {
                     PendingPdfColorStackAction::Push => PdfColorStackActionRequest::Push(text),
                 }),
             })),
-            Err(error) => {
-                if error.is_resource_suspension() {
-                    self.retain_structured_scanner(
-                        PendingStructuredScannerPhase::PdfColorStackText { id, action },
-                        StructuredScannerChildDestination::PdfColorStackText,
-                    )?;
-                }
-                Err(error)
-            }
+            Err(error) => Err(error),
         }
     }
 
-    fn scan_pdf_navigation_text(
-        &mut self,
-        child: &mut Option<
-            crate::execution_scratch::ChildContinuation<G, StructuredScannerChildDestination>,
-        >,
-        phase: PendingStructuredScannerPhase<G>,
-        destination: StructuredScannerChildDestination,
-    ) -> Result<(ScannedBalancedText, PendingStructuredScannerPhase<G>), CommandError> {
-        self.restore_structured_scanner_child(child, destination)?;
-        match self.scan_balanced_text(true) {
-            Ok(text) => Ok((text, phase)),
-            Err(error) => {
-                if error.is_resource_suspension() {
-                    self.retain_structured_scanner(phase, destination)?;
-                }
-                Err(error)
-            }
-        }
+    fn scan_pdf_navigation_text(&mut self) -> Result<ScannedBalancedText, CommandError> {
+        self.scan_balanced_text(true)
     }
 
     fn finish_pdf_outline(
         &mut self,
         attributes: Option<ScannedBalancedText>,
         action: PdfActionSpec,
-        mut child: Option<
-            crate::execution_scratch::ChildContinuation<G, StructuredScannerChildDestination>,
-        >,
-        retained_count: Option<i32>,
-        scalar_phase: Option<PdfOutlineScalarPhase>,
     ) -> Result<PdfNavigationRequest, CommandError> {
-        let count = if let Some(count) = retained_count {
-            count
+        let result = self.scan_keyword_retained("count");
+        let count = if result.into_result()?.value {
+            let result = self.scan_integer_retained();
+            result.into_result()?.value
         } else {
-            let phase = scalar_phase.unwrap_or(PdfOutlineScalarPhase::CountKeyword);
-            let count_keyword = if phase == PdfOutlineScalarPhase::CountValue {
-                true
-            } else {
-                self.restore_structured_scanner_child(
-                    &mut child,
-                    StructuredScannerChildDestination::Scalar,
-                )?;
-                let result = self.scan_keyword_retained("count");
-                self.retain_structured_scalar(
-                    result,
-                    PendingStructuredScalarPhase::PdfOutlineCount {
-                        attributes: attributes.clone(),
-                        action,
-                        phase: PdfOutlineScalarPhase::CountKeyword,
-                    },
-                )?
-                .value
-            };
-            if count_keyword {
-                self.restore_structured_scanner_child(
-                    &mut child,
-                    StructuredScannerChildDestination::Scalar,
-                )?;
-                let result = self.scan_integer_retained();
-                self.retain_structured_scalar(
-                    result,
-                    PendingStructuredScalarPhase::PdfOutlineCount {
-                        attributes: attributes.clone(),
-                        action,
-                        phase: PdfOutlineScalarPhase::CountValue,
-                    },
-                )?
-                .value
-            } else {
-                0
-            }
+            0
         };
-        let (title, phase) = self.scan_pdf_navigation_text(
-            &mut child,
-            PendingStructuredScannerPhase::PdfOutlineTitle {
-                attributes,
-                action,
-                count,
-            },
-            StructuredScannerChildDestination::PdfNavigationTitle,
-        )?;
-        let PendingStructuredScannerPhase::PdfOutlineTitle {
-            attributes,
-            action,
-            count,
-        } = phase
-        else {
-            return Err(CommandError::input_invariant());
-        };
+        let title = self.scan_pdf_navigation_text()?;
         Ok(PdfNavigationRequest::Outline(PdfOutlineRequest {
             attributes,
             action,
@@ -2701,57 +1746,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         primitive: UnexpandablePrimitive,
         dimensions: tex_state::PdfAnnotationDimensions,
         attributes: Option<ScannedBalancedText>,
-        mut child: Option<
-            crate::execution_scratch::ChildContinuation<G, StructuredScannerChildDestination>,
-        >,
-        resume_name: bool,
-        scalar_phase: Option<PdfThreadScalarPhase>,
     ) -> Result<PdfNavigationRequest, CommandError> {
-        let mut phase = scalar_phase.unwrap_or(PdfThreadScalarPhase::NameKeyword);
-        let name = if resume_name {
-            true
-        } else if phase == PdfThreadScalarPhase::NameKeyword {
-            self.restore_structured_scanner_child(
-                &mut child,
-                StructuredScannerChildDestination::Scalar,
-            )?;
-            let result = self.scan_keyword_retained("name");
-            let name = self
-                .retain_structured_scalar(
-                    result,
-                    PendingStructuredScalarPhase::PdfThreadIdentifier {
-                        primitive,
-                        dimensions,
-                        attributes: attributes.clone(),
-                        phase,
-                    },
-                )?
-                .value;
-            if !name {
-                phase = PdfThreadScalarPhase::NumKeyword;
-            }
-            name
-        } else {
-            false
-        };
+        let result = self.scan_keyword_retained("name");
+        let name = result.into_result()?.value;
         if name {
-            let (text, phase) = self.scan_pdf_navigation_text(
-                &mut child,
-                PendingStructuredScannerPhase::PdfThreadIdentifier {
-                    primitive,
-                    dimensions,
-                    attributes,
-                },
-                StructuredScannerChildDestination::PdfNavigationIdentifier,
-            )?;
-            let PendingStructuredScannerPhase::PdfThreadIdentifier {
-                primitive,
-                dimensions,
-                attributes,
-            } = phase
-            else {
-                return Err(CommandError::input_invariant());
-            };
+            let text = self.scan_pdf_navigation_text()?;
             return Ok(PdfNavigationRequest::Thread(PdfThreadRequest {
                 dimensions,
                 attributes,
@@ -2759,42 +1758,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                 running: primitive == UnexpandablePrimitive::PdfStartThread,
             }));
         }
-        self.restore_structured_scanner_child(
-            &mut child,
-            StructuredScannerChildDestination::Scalar,
-        )?;
-        let num = if phase == PdfThreadScalarPhase::NumValue {
-            true
-        } else {
-            let result = self.scan_keyword_retained("num");
-            self.retain_structured_scalar(
-                result,
-                PendingStructuredScalarPhase::PdfThreadIdentifier {
-                    primitive,
-                    dimensions,
-                    attributes: attributes.clone(),
-                    phase: PdfThreadScalarPhase::NumKeyword,
-                },
-            )?
-            .value
-        };
+
+        let result = self.scan_keyword_retained("num");
+        let num = result.into_result()?.value;
         let identifier = if num {
-            self.restore_structured_scanner_child(
-                &mut child,
-                StructuredScannerChildDestination::Scalar,
-            )?;
             let result = self.scan_integer_retained();
-            let value = self
-                .retain_structured_scalar(
-                    result,
-                    PendingStructuredScalarPhase::PdfThreadIdentifier {
-                        primitive,
-                        dimensions,
-                        attributes: attributes.clone(),
-                        phase: PdfThreadScalarPhase::NumValue,
-                    },
-                )?
-                .value;
+            let value = result.into_result()?.value;
             PdfActionIdentifier::Number(Self::finish_pdf_positive(
                 value,
                 "thread identifier",
@@ -2822,225 +1791,6 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<PdfNavigationRequest, CommandError> {
         use PdfNavigationRequest as Request;
 
-        let pending = self.take_pending_structured_scanner()?;
-        if let Some(pending) = pending {
-            let PendingStructuredScanner { phase, mut child } = pending;
-            return match phase {
-                PendingStructuredScannerPhase::PdfAnnotationEntries {
-                    use_object,
-                    dimensions,
-                } => {
-                    let (entries, phase) = self.scan_pdf_navigation_text(
-                        &mut child,
-                        PendingStructuredScannerPhase::PdfAnnotationEntries {
-                            use_object,
-                            dimensions,
-                        },
-                        StructuredScannerChildDestination::PdfNavigationAnnotationEntries,
-                    )?;
-                    let PendingStructuredScannerPhase::PdfAnnotationEntries {
-                        use_object,
-                        dimensions,
-                    } = phase
-                    else {
-                        return Err(CommandError::input_invariant());
-                    };
-                    Ok(Request::Annotation(PdfAnnotationRequest::Define {
-                        use_object,
-                        dimensions,
-                        entries,
-                    }))
-                }
-                PendingStructuredScannerPhase::PdfStartLinkAttributes { dimensions } => {
-                    let (attributes, phase) = self.scan_pdf_navigation_text(
-                        &mut child,
-                        PendingStructuredScannerPhase::PdfStartLinkAttributes { dimensions },
-                        StructuredScannerChildDestination::PdfNavigationAttributes,
-                    )?;
-                    let PendingStructuredScannerPhase::PdfStartLinkAttributes { dimensions } =
-                        phase
-                    else {
-                        return Err(CommandError::input_invariant());
-                    };
-                    let (owner, action) = self.scan_pdf_action_for_owner(
-                        PendingPdfActionOwner::StartLink {
-                            dimensions,
-                            attributes: Some(attributes),
-                        },
-                        None,
-                    )?;
-                    let PendingPdfActionOwner::StartLink {
-                        dimensions,
-                        attributes,
-                    } = owner
-                    else {
-                        return Err(CommandError::input_invariant());
-                    };
-                    Ok(Request::StartLink(PdfStartLinkRequest {
-                        dimensions,
-                        attributes,
-                        action,
-                    }))
-                }
-                PendingStructuredScannerPhase::PdfOutlineAttributes => {
-                    let (attributes, phase) = self.scan_pdf_navigation_text(
-                        &mut child,
-                        PendingStructuredScannerPhase::PdfOutlineAttributes,
-                        StructuredScannerChildDestination::PdfNavigationAttributes,
-                    )?;
-                    if !matches!(phase, PendingStructuredScannerPhase::PdfOutlineAttributes) {
-                        return Err(CommandError::input_invariant());
-                    }
-                    let (owner, action) = self.scan_pdf_action_for_owner(
-                        PendingPdfActionOwner::Outline {
-                            attributes: Some(attributes),
-                        },
-                        None,
-                    )?;
-                    let PendingPdfActionOwner::Outline { attributes } = owner else {
-                        return Err(CommandError::input_invariant());
-                    };
-                    self.finish_pdf_outline(attributes, action, None, None, None)
-                }
-                PendingStructuredScannerPhase::PdfOutlineTitle {
-                    attributes,
-                    action,
-                    count,
-                } => self.finish_pdf_outline(attributes, action, child, Some(count), None),
-                PendingStructuredScannerPhase::Scalar(
-                    PendingStructuredScalarPhase::PdfOutlineCount {
-                        attributes,
-                        action,
-                        phase,
-                    },
-                ) => self.finish_pdf_outline(attributes, action, child, None, Some(phase)),
-                PendingStructuredScannerPhase::PdfThreadAttributes {
-                    primitive,
-                    dimensions,
-                } => {
-                    let (attributes, phase) = self.scan_pdf_navigation_text(
-                        &mut child,
-                        PendingStructuredScannerPhase::PdfThreadAttributes {
-                            primitive,
-                            dimensions,
-                        },
-                        StructuredScannerChildDestination::PdfNavigationAttributes,
-                    )?;
-                    let PendingStructuredScannerPhase::PdfThreadAttributes {
-                        primitive,
-                        dimensions,
-                    } = phase
-                    else {
-                        return Err(CommandError::input_invariant());
-                    };
-                    self.scan_pdf_thread_identifier_owned(
-                        primitive,
-                        dimensions,
-                        Some(attributes),
-                        None,
-                        false,
-                        None,
-                    )
-                }
-                PendingStructuredScannerPhase::PdfThreadIdentifier {
-                    primitive,
-                    dimensions,
-                    attributes,
-                } => self.scan_pdf_thread_identifier_owned(
-                    primitive, dimensions, attributes, child, true, None,
-                ),
-                PendingStructuredScannerPhase::Scalar(
-                    PendingStructuredScalarPhase::PdfThreadIdentifier {
-                        primitive,
-                        dimensions,
-                        attributes,
-                        phase,
-                    },
-                ) => self.scan_pdf_thread_identifier_owned(
-                    primitive,
-                    dimensions,
-                    attributes,
-                    child,
-                    false,
-                    Some(phase),
-                ),
-                PendingStructuredScannerPhase::PdfDestinationIdentifier { structure } => {
-                    let (identifier, phase) = self.scan_pdf_navigation_text(
-                        &mut child,
-                        PendingStructuredScannerPhase::PdfDestinationIdentifier { structure },
-                        StructuredScannerChildDestination::PdfNavigationIdentifier,
-                    )?;
-                    let PendingStructuredScannerPhase::PdfDestinationIdentifier { structure } =
-                        phase
-                    else {
-                        return Err(CommandError::input_invariant());
-                    };
-                    self.scan_pdf_navigation_scalar(
-                        PdfNavigationScalarProgress {
-                            primitive: UnexpandablePrimitive::PdfDest,
-                            use_object: None,
-                            dimensions: tex_state::PdfAnnotationDimensions::RUNNING,
-                            attributes: None,
-                            structure,
-                            identifier: Some(PdfActionIdentifier::Name(identifier.tokens)),
-                            phase: PdfNavigationScalarPhase::DestinationXyz,
-                        },
-                        None,
-                    )
-                }
-                PendingStructuredScannerPhase::PdfAction { owner, phase } => {
-                    let (owner, action) =
-                        self.scan_pdf_action_for_owner(owner, Some((phase, child)))?;
-                    match owner {
-                        PendingPdfActionOwner::StartLink {
-                            dimensions,
-                            attributes,
-                        } => Ok(Request::StartLink(PdfStartLinkRequest {
-                            dimensions,
-                            attributes,
-                            action,
-                        })),
-                        PendingPdfActionOwner::Outline { attributes } => {
-                            self.finish_pdf_outline(attributes, action, None, None, None)
-                        }
-                        PendingPdfActionOwner::DocumentFragment { .. } => {
-                            Err(CommandError::input_invariant())
-                        }
-                    }
-                }
-                PendingStructuredScannerPhase::Scalar(
-                    PendingStructuredScalarPhase::PdfAction { owner, progress },
-                ) => {
-                    let (owner, action) = self.scan_pdf_action_scalar(owner, progress, child)?;
-                    match owner {
-                        PendingPdfActionOwner::StartLink {
-                            dimensions,
-                            attributes,
-                        } => Ok(Request::StartLink(PdfStartLinkRequest {
-                            dimensions,
-                            attributes,
-                            action,
-                        })),
-                        PendingPdfActionOwner::Outline { attributes } => {
-                            self.finish_pdf_outline(attributes, action, None, None, None)
-                        }
-                        PendingPdfActionOwner::DocumentFragment { .. } => {
-                            Err(CommandError::input_invariant())
-                        }
-                    }
-                }
-                PendingStructuredScannerPhase::Scalar(
-                    PendingStructuredScalarPhase::PdfNavigation(progress),
-                ) => self.scan_pdf_navigation_scalar(progress, child),
-                _ => {
-                    if let Some(child) = child.take() {
-                        self.abort_continuation(child.restore().0)?;
-                    }
-                    Err(CommandError::input_invariant())
-                }
-            };
-        }
-
         let phase = match primitive {
             UnexpandablePrimitive::PdfAnnot => PdfNavigationScalarPhase::AnnotationReserve,
             UnexpandablePrimitive::PdfStartLink
@@ -3052,38 +1802,27 @@ impl<G> CommandProcessor<'_, '_, G> {
             UnexpandablePrimitive::PdfEndThread => return Ok(Request::EndThread),
             _ => return Err(CommandError::input_invariant()),
         };
-        self.scan_pdf_navigation_scalar(
-            PdfNavigationScalarProgress {
-                primitive,
-                use_object: None,
-                dimensions: tex_state::PdfAnnotationDimensions::RUNNING,
-                attributes: None,
-                structure: None,
-                identifier: None,
-                phase,
-            },
-            None,
-        )
+        self.scan_pdf_navigation_scalar(PdfNavigationScalarProgress {
+            primitive,
+            use_object: None,
+            dimensions: tex_state::PdfAnnotationDimensions::RUNNING,
+            attributes: None,
+            structure: None,
+            identifier: None,
+            phase,
+        })
     }
 
     fn scan_pdf_navigation_scalar(
         &mut self,
         mut progress: PdfNavigationScalarProgress,
-        mut child: Option<
-            crate::execution_scratch::ChildContinuation<G, StructuredScannerChildDestination>,
-        >,
     ) -> Result<PdfNavigationRequest, CommandError> {
         use tex_state::node::PdfDestinationKind as Kind;
         loop {
-            self.restore_structured_scanner_child(
-                &mut child,
-                StructuredScannerChildDestination::Scalar,
-            )?;
-            let retained = PendingStructuredScalarPhase::PdfNavigation(progress.clone());
             match progress.phase {
                 PdfNavigationScalarPhase::AnnotationReserve => {
                     let result = self.scan_keyword_retained("reserveobjnum");
-                    if self.retain_structured_scalar(result, retained)?.value {
+                    if result.into_result()?.value {
                         return Ok(PdfNavigationRequest::Annotation(
                             PdfAnnotationRequest::Reserve,
                         ));
@@ -3092,7 +1831,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 PdfNavigationScalarPhase::AnnotationUse => {
                     let result = self.scan_keyword_retained("useobjnum");
-                    progress.phase = if self.retain_structured_scalar(result, retained)?.value {
+                    progress.phase = if result.into_result()?.value {
                         PdfNavigationScalarPhase::AnnotationUseObject
                     } else {
                         PdfNavigationScalarPhase::WidthKeyword
@@ -3100,15 +1839,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 PdfNavigationScalarPhase::AnnotationUseObject => {
                     let result = self.scan_integer_retained();
-                    progress.use_object =
-                        Some(self.retain_structured_scalar(result, retained)?.value);
+                    progress.use_object = Some(result.into_result()?.value);
                     progress.phase = PdfNavigationScalarPhase::WidthKeyword;
                 }
                 PdfNavigationScalarPhase::WidthKeyword
                 | PdfNavigationScalarPhase::FitRWidthKeyword => {
                     let result = self.scan_keyword_retained("width");
                     let fitr = progress.phase == PdfNavigationScalarPhase::FitRWidthKeyword;
-                    progress.phase = if self.retain_structured_scalar(result, retained)?.value {
+                    progress.phase = if result.into_result()?.value {
                         if fitr {
                             PdfNavigationScalarPhase::FitRWidthDimension
                         } else {
@@ -3123,8 +1861,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 PdfNavigationScalarPhase::WidthDimension
                 | PdfNavigationScalarPhase::FitRWidthDimension => {
                     let result = self.scan_dimension_retained();
-                    progress.dimensions.width =
-                        Some(self.retain_structured_scalar(result, retained)?.value);
+                    progress.dimensions.width = Some(result.into_result()?.value);
                     progress.phase =
                         if progress.phase == PdfNavigationScalarPhase::FitRWidthDimension {
                             PdfNavigationScalarPhase::FitRWidthKeyword
@@ -3136,7 +1873,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 | PdfNavigationScalarPhase::FitRHeightKeyword => {
                     let result = self.scan_keyword_retained("height");
                     let fitr = progress.phase == PdfNavigationScalarPhase::FitRHeightKeyword;
-                    progress.phase = if self.retain_structured_scalar(result, retained)?.value {
+                    progress.phase = if result.into_result()?.value {
                         if fitr {
                             PdfNavigationScalarPhase::FitRHeightDimension
                         } else {
@@ -3151,8 +1888,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 PdfNavigationScalarPhase::HeightDimension
                 | PdfNavigationScalarPhase::FitRHeightDimension => {
                     let result = self.scan_dimension_retained();
-                    progress.dimensions.height =
-                        Some(self.retain_structured_scalar(result, retained)?.value);
+                    progress.dimensions.height = Some(result.into_result()?.value);
                     progress.phase =
                         if progress.phase == PdfNavigationScalarPhase::FitRHeightDimension {
                             PdfNavigationScalarPhase::FitRWidthKeyword
@@ -3164,7 +1900,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 | PdfNavigationScalarPhase::FitRDepthKeyword => {
                     let result = self.scan_keyword_retained("depth");
                     let fitr = progress.phase == PdfNavigationScalarPhase::FitRDepthKeyword;
-                    if self.retain_structured_scalar(result, retained)?.value {
+                    if result.into_result()?.value {
                         progress.phase = if fitr {
                             PdfNavigationScalarPhase::FitRDepthDimension
                         } else {
@@ -3177,14 +1913,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     } else {
                         match progress.primitive {
                             UnexpandablePrimitive::PdfAnnot => {
-                                let (entries, _) = self.scan_pdf_navigation_text(
-                                    &mut None,
-                                    PendingStructuredScannerPhase::PdfAnnotationEntries {
-                                        use_object: progress.use_object,
-                                        dimensions: progress.dimensions,
-                                    },
-                                    StructuredScannerChildDestination::PdfNavigationAnnotationEntries,
-                                )?;
+                                let entries = self.scan_pdf_navigation_text()?;
                                 return Ok(PdfNavigationRequest::Annotation(
                                     PdfAnnotationRequest::Define {
                                         use_object: progress.use_object,
@@ -3205,8 +1934,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 PdfNavigationScalarPhase::DepthDimension
                 | PdfNavigationScalarPhase::FitRDepthDimension => {
                     let result = self.scan_dimension_retained();
-                    progress.dimensions.depth =
-                        Some(self.retain_structured_scalar(result, retained)?.value);
+                    progress.dimensions.depth = Some(result.into_result()?.value);
                     progress.phase =
                         if progress.phase == PdfNavigationScalarPhase::FitRDepthDimension {
                             PdfNavigationScalarPhase::FitRWidthKeyword
@@ -3216,28 +1944,17 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 PdfNavigationScalarPhase::AttributeKeyword => {
                     let result = self.scan_keyword_retained("attr");
-                    let has_attr = self.retain_structured_scalar(result, retained)?.value;
+                    let has_attr = result.into_result()?.value;
                     match progress.primitive {
                         UnexpandablePrimitive::PdfStartLink => {
                             if has_attr {
-                                progress.attributes = Some(
-                                    self.scan_pdf_navigation_text(
-                                        &mut None,
-                                        PendingStructuredScannerPhase::PdfStartLinkAttributes {
-                                            dimensions: progress.dimensions,
-                                        },
-                                        StructuredScannerChildDestination::PdfNavigationAttributes,
-                                    )?
-                                    .0,
-                                );
+                                progress.attributes = Some(self.scan_pdf_navigation_text()?);
                             }
-                            let (owner, action) = self.scan_pdf_action_for_owner(
-                                PendingPdfActionOwner::StartLink {
+                            let (owner, action) =
+                                self.scan_pdf_action_for_owner(PendingPdfActionOwner::StartLink {
                                     dimensions: progress.dimensions,
                                     attributes: progress.attributes,
-                                },
-                                None,
-                            )?;
+                                })?;
                             let PendingPdfActionOwner::StartLink {
                                 dimensions,
                                 attributes,
@@ -3253,48 +1970,26 @@ impl<G> CommandProcessor<'_, '_, G> {
                         }
                         UnexpandablePrimitive::PdfOutline => {
                             if has_attr {
-                                progress.attributes = Some(
-                                    self.scan_pdf_navigation_text(
-                                        &mut None,
-                                        PendingStructuredScannerPhase::PdfOutlineAttributes,
-                                        StructuredScannerChildDestination::PdfNavigationAttributes,
-                                    )?
-                                    .0,
-                                );
+                                progress.attributes = Some(self.scan_pdf_navigation_text()?);
                             }
-                            let (owner, action) = self.scan_pdf_action_for_owner(
-                                PendingPdfActionOwner::Outline {
+                            let (owner, action) =
+                                self.scan_pdf_action_for_owner(PendingPdfActionOwner::Outline {
                                     attributes: progress.attributes,
-                                },
-                                None,
-                            )?;
+                                })?;
                             let PendingPdfActionOwner::Outline { attributes } = owner else {
                                 return Err(CommandError::input_invariant());
                             };
-                            return self.finish_pdf_outline(attributes, action, None, None, None);
+                            return self.finish_pdf_outline(attributes, action);
                         }
                         primitive @ (UnexpandablePrimitive::PdfThread
                         | UnexpandablePrimitive::PdfStartThread) => {
                             if has_attr {
-                                progress.attributes = Some(
-                                    self.scan_pdf_navigation_text(
-                                        &mut None,
-                                        PendingStructuredScannerPhase::PdfThreadAttributes {
-                                            primitive,
-                                            dimensions: progress.dimensions,
-                                        },
-                                        StructuredScannerChildDestination::PdfNavigationAttributes,
-                                    )?
-                                    .0,
-                                );
+                                progress.attributes = Some(self.scan_pdf_navigation_text()?);
                             }
                             return self.scan_pdf_thread_identifier_owned(
                                 primitive,
                                 progress.dimensions,
                                 progress.attributes,
-                                None,
-                                false,
-                                None,
                             );
                         }
                         _ => return Err(CommandError::input_invariant()),
@@ -3302,7 +1997,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 PdfNavigationScalarPhase::DestinationStructure => {
                     let result = self.scan_keyword_retained("struct");
-                    progress.phase = if self.retain_structured_scalar(result, retained)?.value {
+                    progress.phase = if result.into_result()?.value {
                         PdfNavigationScalarPhase::DestinationStructureValue
                     } else {
                         PdfNavigationScalarPhase::DestinationName
@@ -3311,7 +2006,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 PdfNavigationScalarPhase::DestinationStructureValue => {
                     let result = self.scan_integer_retained();
                     progress.structure = Some(Self::finish_pdf_positive(
-                        self.retain_structured_scalar(result, retained)?.value,
+                        result.into_result()?.value,
                         "struct identifier",
                         false,
                     )?);
@@ -3319,14 +2014,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 PdfNavigationScalarPhase::DestinationName => {
                     let result = self.scan_keyword_retained("name");
-                    if self.retain_structured_scalar(result, retained)?.value {
-                        let (identifier, _) = self.scan_pdf_navigation_text(
-                            &mut None,
-                            PendingStructuredScannerPhase::PdfDestinationIdentifier {
-                                structure: progress.structure,
-                            },
-                            StructuredScannerChildDestination::PdfNavigationIdentifier,
-                        )?;
+                    if result.into_result()?.value {
+                        let identifier = self.scan_pdf_navigation_text()?;
                         progress.identifier = Some(PdfActionIdentifier::Name(identifier.tokens));
                         progress.phase = PdfNavigationScalarPhase::DestinationXyz;
                     } else {
@@ -3335,7 +2024,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 PdfNavigationScalarPhase::DestinationNumber => {
                     let result = self.scan_keyword_retained("num");
-                    if !self.retain_structured_scalar(result, retained)?.value {
+                    if !result.into_result()?.value {
                         return Err(CommandError::PdfNavigation(
                             "pdfTeX error (ext1): identifier type missing",
                         ));
@@ -3346,7 +2035,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     let result = self.scan_integer_retained();
                     progress.identifier =
                         Some(PdfActionIdentifier::Number(Self::finish_pdf_positive(
-                            self.retain_structured_scalar(result, retained)?.value,
+                            result.into_result()?.value,
                             "destination identifier",
                             true,
                         )?));
@@ -3354,7 +2043,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 PdfNavigationScalarPhase::DestinationXyz => {
                     let result = self.scan_keyword_retained("xyz");
-                    if self.retain_structured_scalar(result, retained)?.value {
+                    if result.into_result()?.value {
                         progress.phase = PdfNavigationScalarPhase::DestinationZoom;
                     } else {
                         progress.phase = PdfNavigationScalarPhase::DestinationFitBh;
@@ -3362,7 +2051,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 PdfNavigationScalarPhase::DestinationZoom => {
                     let result = self.scan_keyword_retained("zoom");
-                    if self.retain_structured_scalar(result, retained)?.value {
+                    if result.into_result()?.value {
                         progress.phase = PdfNavigationScalarPhase::DestinationZoomValue;
                     } else {
                         return self.finish_pdf_destination(progress, Kind::Xyz { zoom: None });
@@ -3370,7 +2059,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 PdfNavigationScalarPhase::DestinationZoomValue => {
                     let result = self.scan_integer_retained();
-                    let zoom = self.retain_structured_scalar(result, retained)?.value;
+                    let zoom = result.into_result()?.value;
                     if zoom > 1_073_741_823 {
                         return Err(CommandError::PdfNavigation(
                             "pdfTeX error (ext1): number too big",
@@ -3422,7 +2111,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         _ => unreachable!(),
                     };
                     let result = self.scan_keyword_retained(keyword);
-                    if self.retain_structured_scalar(result, retained)?.value {
+                    if result.into_result()?.value {
                         if progress.phase == PdfNavigationScalarPhase::DestinationFitR {
                             progress.dimensions = tex_state::PdfAnnotationDimensions::RUNNING;
                             progress.phase = PdfNavigationScalarPhase::FitRWidthKeyword;
@@ -3476,213 +2165,37 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(value as u32)
     }
 
-    fn scan_pdf_action_owned_text(
-        &mut self,
-        owner: &mut Option<PendingPdfActionOwner>,
-        child: &mut Option<
-            crate::execution_scratch::ChildContinuation<G, StructuredScannerChildDestination>,
-        >,
-        phase: PendingPdfActionPhase,
-        destination: StructuredScannerChildDestination,
-    ) -> Result<ScannedBalancedText, CommandError> {
-        self.restore_structured_scanner_child(child, destination)?;
-        match self.scan_balanced_text(true) {
-            Ok(text) => Ok(text),
-            Err(error) => {
-                if error.is_resource_suspension() {
-                    self.retain_structured_scanner(
-                        PendingStructuredScannerPhase::PdfAction {
-                            owner: owner
-                                .take()
-                                .expect("suspended PDF action retains its outer owner"),
-                            phase,
-                        },
-                        destination,
-                    )?;
-                }
-                Err(error)
-            }
-        }
+    fn scan_pdf_action_owned_text(&mut self) -> Result<ScannedBalancedText, CommandError> {
+        self.scan_balanced_text(true)
     }
 
     fn scan_pdf_action_for_owner(
         &mut self,
         owner: PendingPdfActionOwner,
-        pending: Option<(
-            PendingPdfActionPhase,
-            Option<
-                crate::execution_scratch::ChildContinuation<G, StructuredScannerChildDestination>,
-            >,
-        )>,
     ) -> Result<(PendingPdfActionOwner, PdfActionSpec), CommandError> {
-        let mut owner = Some(owner);
-        let (phase, mut child) =
-            pending.map_or((None, None), |(phase, child)| (Some(phase), child));
-        let progress = match phase {
-            Some(PendingPdfActionPhase::User) => {
-                let text = self.scan_pdf_action_owned_text(
-                    &mut owner,
-                    &mut child,
-                    PendingPdfActionPhase::User,
-                    StructuredScannerChildDestination::PdfActionUser,
-                )?;
-                return Ok((
-                    owner.expect("successful PDF action retains its owner"),
-                    PdfActionSpec::User(text.tokens),
-                ));
-            }
-            Some(PendingPdfActionPhase::File { goto }) => {
-                let file = self
-                    .scan_pdf_action_owned_text(
-                        &mut owner,
-                        &mut child,
-                        PendingPdfActionPhase::File { goto },
-                        StructuredScannerChildDestination::PdfActionFile,
-                    )?
-                    .tokens;
-                PdfActionScalarProgress {
-                    goto: Some(goto),
-                    file: Some(file),
-                    structure: None,
-                    target: None,
-                    phase: PdfActionScalarPhase::StructureKeyword,
-                }
-            }
-            Some(PendingPdfActionPhase::StructureRaw { goto, file }) => {
-                let structure = self
-                    .scan_pdf_action_owned_text(
-                        &mut owner,
-                        &mut child,
-                        PendingPdfActionPhase::StructureRaw { goto, file },
-                        StructuredScannerChildDestination::PdfActionStructure,
-                    )?
-                    .tokens;
-                PdfActionScalarProgress {
-                    goto: Some(goto),
-                    file: Some(file),
-                    structure: Some(PdfActionIdentifier::Raw(structure)),
-                    target: None,
-                    phase: PdfActionScalarPhase::PageKeyword,
-                }
-            }
-            Some(PendingPdfActionPhase::StructureName { goto, file }) => {
-                let structure = self
-                    .scan_pdf_action_owned_text(
-                        &mut owner,
-                        &mut child,
-                        PendingPdfActionPhase::StructureName { goto, file },
-                        StructuredScannerChildDestination::PdfActionStructure,
-                    )?
-                    .tokens;
-                PdfActionScalarProgress {
-                    goto: Some(goto),
-                    file,
-                    structure: Some(PdfActionIdentifier::Name(structure)),
-                    target: None,
-                    phase: PdfActionScalarPhase::PageKeyword,
-                }
-            }
-            Some(PendingPdfActionPhase::PageView {
-                goto,
-                file,
-                structure,
-                number,
-            }) => {
-                let view = self
-                    .scan_pdf_action_owned_text(
-                        &mut owner,
-                        &mut child,
-                        PendingPdfActionPhase::PageView {
-                            goto,
-                            file,
-                            structure,
-                            number,
-                        },
-                        StructuredScannerChildDestination::PdfActionPageView,
-                    )?
-                    .tokens;
-                PdfActionScalarProgress {
-                    goto: Some(goto),
-                    file,
-                    structure,
-                    target: Some(PdfActionTarget::Page { number, view }),
-                    phase: PdfActionScalarPhase::NewWindowKeyword,
-                }
-            }
-            Some(PendingPdfActionPhase::TargetName {
-                goto,
-                file,
-                structure,
-            }) => {
-                let name = self
-                    .scan_pdf_action_owned_text(
-                        &mut owner,
-                        &mut child,
-                        PendingPdfActionPhase::TargetName {
-                            goto,
-                            file,
-                            structure,
-                        },
-                        StructuredScannerChildDestination::PdfActionTargetName,
-                    )?
-                    .tokens;
-                PdfActionScalarProgress {
-                    goto: Some(goto),
-                    file,
-                    structure,
-                    target: Some(PdfActionTarget::Destination(PdfActionIdentifier::Name(
-                        name,
-                    ))),
-                    phase: PdfActionScalarPhase::NewWindowKeyword,
-                }
-            }
-            None => PdfActionScalarProgress {
-                goto: None,
-                file: None,
-                structure: None,
-                target: None,
-                phase: PdfActionScalarPhase::UserKeyword,
-            },
+        let progress = PdfActionScalarProgress {
+            goto: None,
+            file: None,
+            structure: None,
+            target: None,
+            phase: PdfActionScalarPhase::UserKeyword,
         };
-        self.scan_pdf_action_scalar(
-            owner.expect("balanced PDF action retains its owner"),
-            progress,
-            child,
-        )
+        self.scan_pdf_action_scalar(owner, progress)
     }
 
     fn scan_pdf_action_scalar(
         &mut self,
         owner: PendingPdfActionOwner,
         mut progress: PdfActionScalarProgress,
-        mut child: Option<
-            crate::execution_scratch::ChildContinuation<G, StructuredScannerChildDestination>,
-        >,
     ) -> Result<(PendingPdfActionOwner, PdfActionSpec), CommandError> {
         use tex_state::PdfActionWindow;
-        let mut owner = Some(owner);
+        let owner = Some(owner);
         loop {
-            self.restore_structured_scanner_child(
-                &mut child,
-                StructuredScannerChildDestination::Scalar,
-            )?;
-            let retained = PendingStructuredScalarPhase::PdfAction {
-                owner: owner
-                    .as_ref()
-                    .expect("active PDF action retains its owner")
-                    .clone(),
-                progress: progress.clone(),
-            };
             match progress.phase {
                 PdfActionScalarPhase::UserKeyword => {
                     let result = self.scan_keyword_retained("user");
-                    if self.retain_structured_scalar(result, retained)?.value {
-                        let text = self.scan_pdf_action_owned_text(
-                            &mut owner,
-                            &mut child,
-                            PendingPdfActionPhase::User,
-                            StructuredScannerChildDestination::PdfActionUser,
-                        )?;
+                    if result.into_result()?.value {
+                        let text = self.scan_pdf_action_owned_text()?;
                         return Ok((
                             owner.expect("successful PDF action retains its owner"),
                             PdfActionSpec::User(text.tokens),
@@ -3692,7 +2205,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 PdfActionScalarPhase::GotoKeyword => {
                     let result = self.scan_keyword_retained("goto");
-                    if self.retain_structured_scalar(result, retained)?.value {
+                    if result.into_result()?.value {
                         progress.goto = Some(true);
                         progress.phase = PdfActionScalarPhase::FileKeyword;
                     } else {
@@ -3701,7 +2214,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 PdfActionScalarPhase::ThreadKeyword => {
                     let result = self.scan_keyword_retained("thread");
-                    if !self.retain_structured_scalar(result, retained)?.value {
+                    if !result.into_result()?.value {
                         return Err(CommandError::PdfNavigation(
                             "pdfTeX error (ext1): action type missing",
                         ));
@@ -3711,38 +2224,24 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 PdfActionScalarPhase::FileKeyword => {
                     let result = self.scan_keyword_retained("file");
-                    if self.retain_structured_scalar(result, retained)?.value {
-                        let goto = progress.goto.ok_or(CommandError::input_invariant())?;
-                        progress.file = Some(
-                            self.scan_pdf_action_owned_text(
-                                &mut owner,
-                                &mut child,
-                                PendingPdfActionPhase::File { goto },
-                                StructuredScannerChildDestination::PdfActionFile,
-                            )?
-                            .tokens,
-                        );
+                    if result.into_result()?.value {
+                        let _ = progress.goto.ok_or(CommandError::input_invariant())?;
+                        progress.file = Some(self.scan_pdf_action_owned_text()?.tokens);
                     }
                     progress.phase = PdfActionScalarPhase::StructureKeyword;
                 }
                 PdfActionScalarPhase::StructureKeyword => {
                     let result = self.scan_keyword_retained("struct");
-                    if self.retain_structured_scalar(result, retained)?.value {
+                    if result.into_result()?.value {
                         let goto = progress.goto.ok_or(CommandError::input_invariant())?;
                         if !goto {
                             return Err(CommandError::PdfNavigation(
                                 "pdfTeX error (ext1): only GoTo action can be used with `struct'",
                             ));
                         }
-                        if let Some(file) = progress.file {
+                        if progress.file.is_some() {
                             progress.structure = Some(PdfActionIdentifier::Raw(
-                                self.scan_pdf_action_owned_text(
-                                    &mut owner,
-                                    &mut child,
-                                    PendingPdfActionPhase::StructureRaw { goto, file },
-                                    StructuredScannerChildDestination::PdfActionStructure,
-                                )?
-                                .tokens,
+                                self.scan_pdf_action_owned_text()?.tokens,
                             ));
                             progress.phase = PdfActionScalarPhase::PageKeyword;
                         } else {
@@ -3754,19 +2253,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 PdfActionScalarPhase::StructureNameKeyword => {
                     let result = self.scan_keyword_retained("name");
-                    if self.retain_structured_scalar(result, retained)?.value {
-                        let goto = progress.goto.ok_or(CommandError::input_invariant())?;
+                    if result.into_result()?.value {
+                        let _ = progress.goto.ok_or(CommandError::input_invariant())?;
                         progress.structure = Some(PdfActionIdentifier::Name(
-                            self.scan_pdf_action_owned_text(
-                                &mut owner,
-                                &mut child,
-                                PendingPdfActionPhase::StructureName {
-                                    goto,
-                                    file: progress.file,
-                                },
-                                StructuredScannerChildDestination::PdfActionStructure,
-                            )?
-                            .tokens,
+                            self.scan_pdf_action_owned_text()?.tokens,
                         ));
                         progress.phase = PdfActionScalarPhase::PageKeyword;
                     } else {
@@ -3775,7 +2265,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 PdfActionScalarPhase::StructureNumberKeyword => {
                     let result = self.scan_keyword_retained("num");
-                    if !self.retain_structured_scalar(result, retained)?.value {
+                    if !result.into_result()?.value {
                         return Err(CommandError::PdfNavigation(
                             "pdfTeX error (ext1): identifier type missing",
                         ));
@@ -3784,7 +2274,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 PdfActionScalarPhase::StructureNumber => {
                     let result = self.scan_integer_retained();
-                    let value = self.retain_structured_scalar(result, retained)?.value;
+                    let value = result.into_result()?.value;
                     progress.structure = Some(PdfActionIdentifier::Number(
                         Self::finish_pdf_positive(value, "struct identifier", false)?,
                     ));
@@ -3792,7 +2282,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 PdfActionScalarPhase::PageKeyword => {
                     let result = self.scan_keyword_retained("page");
-                    if self.retain_structured_scalar(result, retained)?.value {
+                    if result.into_result()?.value {
                         if !progress.goto.ok_or(CommandError::input_invariant())? {
                             return Err(CommandError::PdfNavigation(
                                 "pdfTeX error (ext1): only GoTo action can be used with `page'",
@@ -3806,43 +2296,20 @@ impl<G> CommandProcessor<'_, '_, G> {
                 PdfActionScalarPhase::PageNumber => {
                     let result = self.scan_integer_retained();
                     let number = Self::finish_pdf_positive(
-                        self.retain_structured_scalar(result, retained)?.value,
+                        result.into_result()?.value,
                         "page number",
                         false,
                     )?;
-                    let goto = progress.goto.ok_or(CommandError::input_invariant())?;
-                    let view = self
-                        .scan_pdf_action_owned_text(
-                            &mut owner,
-                            &mut child,
-                            PendingPdfActionPhase::PageView {
-                                goto,
-                                file: progress.file,
-                                structure: progress.structure,
-                                number,
-                            },
-                            StructuredScannerChildDestination::PdfActionPageView,
-                        )?
-                        .tokens;
+                    let _ = progress.goto.ok_or(CommandError::input_invariant())?;
+                    let view = self.scan_pdf_action_owned_text()?.tokens;
                     progress.target = Some(PdfActionTarget::Page { number, view });
                     progress.phase = PdfActionScalarPhase::NewWindowKeyword;
                 }
                 PdfActionScalarPhase::NameKeyword => {
                     let result = self.scan_keyword_retained("name");
-                    if self.retain_structured_scalar(result, retained)?.value {
-                        let goto = progress.goto.ok_or(CommandError::input_invariant())?;
-                        let name = self
-                            .scan_pdf_action_owned_text(
-                                &mut owner,
-                                &mut child,
-                                PendingPdfActionPhase::TargetName {
-                                    goto,
-                                    file: progress.file,
-                                    structure: progress.structure,
-                                },
-                                StructuredScannerChildDestination::PdfActionTargetName,
-                            )?
-                            .tokens;
+                    if result.into_result()?.value {
+                        let _ = progress.goto.ok_or(CommandError::input_invariant())?;
+                        let name = self.scan_pdf_action_owned_text()?.tokens;
                         progress.target = Some(PdfActionTarget::Destination(
                             PdfActionIdentifier::Name(name),
                         ));
@@ -3853,7 +2320,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 PdfActionScalarPhase::NumberKeyword => {
                     let result = self.scan_keyword_retained("num");
-                    if !self.retain_structured_scalar(result, retained)?.value {
+                    if !result.into_result()?.value {
                         return Err(CommandError::PdfNavigation(
                             "pdfTeX error (ext1): identifier type missing",
                         ));
@@ -3869,7 +2336,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 PdfActionScalarPhase::Number => {
                     let result = self.scan_integer_retained();
                     let value = Self::finish_pdf_positive(
-                        self.retain_structured_scalar(result, retained)?.value,
+                        result.into_result()?.value,
                         "num identifier",
                         false,
                     )?;
@@ -3880,14 +2347,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 PdfActionScalarPhase::NewWindowKeyword => {
                     let result = self.scan_keyword_retained("newwindow");
-                    if self.retain_structured_scalar(result, retained)?.value {
+                    if result.into_result()?.value {
                         return self.finish_pdf_action(owner, progress, PdfActionWindow::New);
                     }
                     progress.phase = PdfActionScalarPhase::NoNewWindowKeyword;
                 }
                 PdfActionScalarPhase::NoNewWindowKeyword => {
                     let result = self.scan_keyword_retained("nonewwindow");
-                    let same = self.retain_structured_scalar(result, retained)?.value;
+                    let same = result.into_result()?.value;
                     return self.finish_pdf_action(
                         owner,
                         progress,
@@ -3936,97 +2403,24 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// cases: `scan_keyword` and expanded `scan_pdf_ext_toks` are complete
     /// before the executor mutates its PDF ledger or mode list.
     pub fn scan_pdf_object_request(&mut self) -> Result<PdfObjectRequest, CommandError> {
-        let pending = self.take_pending_structured_scanner()?;
-        let (mut progress, mut child) = match pending {
-            Some(pending) => {
-                let PendingStructuredScanner { phase, mut child } = pending;
-                match phase {
-                    PendingStructuredScannerPhase::Scalar(
-                        PendingStructuredScalarPhase::PdfObject(progress),
-                    ) => (progress, child),
-                    PendingStructuredScannerPhase::PdfObjectStreamAttribute { use_object } => {
-                        self.restore_structured_scanner_child(
-                            &mut child,
-                            StructuredScannerChildDestination::PdfObjectStreamAttribute,
-                        )?;
-                        let stream_attr = match self.scan_balanced_text(true) {
-                            Ok(value) => Some(value),
-                            Err(error) => {
-                                if error.is_resource_suspension() {
-                                    self.retain_structured_scanner(
-                                        PendingStructuredScannerPhase::PdfObjectStreamAttribute {
-                                            use_object,
-                                        },
-                                        StructuredScannerChildDestination::PdfObjectStreamAttribute,
-                                    )?;
-                                }
-                                return Err(error);
-                            }
-                        };
-                        (
-                            PdfObjectScalarProgress {
-                                use_object,
-                                stream: true,
-                                stream_attr,
-                                phase: PdfObjectScalarPhase::FileKeyword,
-                            },
-                            None,
-                        )
-                    }
-                    PendingStructuredScannerPhase::PdfObjectData {
-                        use_object,
-                        stream,
-                        stream_attr,
-                        file,
-                    } => {
-                        self.restore_structured_scanner_child(
-                            &mut child,
-                            StructuredScannerChildDestination::PdfObjectData,
-                        )?;
-                        let data = self.scan_balanced_text(true)?;
-                        return Ok(PdfObjectRequest::Define {
-                            use_object,
-                            stream,
-                            stream_attr,
-                            file,
-                            data,
-                        });
-                    }
-                    _ => {
-                        if let Some(child) = child.take() {
-                            self.abort_continuation(child.restore().0)?;
-                        }
-                        return Err(CommandError::input_invariant());
-                    }
-                }
-            }
-            None => (
-                PdfObjectScalarProgress {
-                    use_object: None,
-                    stream: false,
-                    stream_attr: None,
-                    phase: PdfObjectScalarPhase::ReserveKeyword,
-                },
-                None,
-            ),
+        let mut progress = PdfObjectScalarProgress {
+            use_object: None,
+            stream: false,
+            stream_attr: None,
+            phase: PdfObjectScalarPhase::ReserveKeyword,
         };
         loop {
-            self.restore_structured_scanner_child(
-                &mut child,
-                StructuredScannerChildDestination::Scalar,
-            )?;
-            let retained = PendingStructuredScalarPhase::PdfObject(progress.clone());
             match progress.phase {
                 PdfObjectScalarPhase::ReserveKeyword => {
                     let result = self.scan_keyword_retained("reserveobjnum");
-                    if self.retain_structured_scalar(result, retained)?.value {
+                    if result.into_result()?.value {
                         return Ok(PdfObjectRequest::Reserve);
                     }
                     progress.phase = PdfObjectScalarPhase::UseKeyword;
                 }
                 PdfObjectScalarPhase::UseKeyword => {
                     let result = self.scan_keyword_retained("useobjnum");
-                    progress.phase = if self.retain_structured_scalar(result, retained)?.value {
+                    progress.phase = if result.into_result()?.value {
                         PdfObjectScalarPhase::UseObject
                     } else {
                         PdfObjectScalarPhase::StreamKeyword
@@ -4034,13 +2428,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 PdfObjectScalarPhase::UseObject => {
                     let result = self.scan_integer_retained();
-                    progress.use_object =
-                        Some(self.retain_structured_scalar(result, retained)?.value);
+                    progress.use_object = Some(result.into_result()?.value);
                     progress.phase = PdfObjectScalarPhase::StreamKeyword;
                 }
                 PdfObjectScalarPhase::StreamKeyword => {
                     let result = self.scan_keyword_retained("stream");
-                    progress.stream = self.retain_structured_scalar(result, retained)?.value;
+                    progress.stream = result.into_result()?.value;
                     progress.phase = if progress.stream {
                         PdfObjectScalarPhase::AttributeKeyword
                     } else {
@@ -4049,18 +2442,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 PdfObjectScalarPhase::AttributeKeyword => {
                     let result = self.scan_keyword_retained("attr");
-                    if self.retain_structured_scalar(result, retained)?.value {
+                    if result.into_result()?.value {
                         progress.stream_attr = match self.scan_balanced_text(true) {
                             Ok(value) => Some(value),
                             Err(error) => {
-                                if error.is_resource_suspension() {
-                                    self.retain_structured_scanner(
-                                        PendingStructuredScannerPhase::PdfObjectStreamAttribute {
-                                            use_object: progress.use_object,
-                                        },
-                                        StructuredScannerChildDestination::PdfObjectStreamAttribute,
-                                    )?;
-                                }
                                 return Err(error);
                             }
                         };
@@ -4069,21 +2454,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 PdfObjectScalarPhase::FileKeyword => {
                     let result = self.scan_keyword_retained("file");
-                    let file = self.retain_structured_scalar(result, retained)?.value;
+                    let file = result.into_result()?.value;
                     let data = match self.scan_balanced_text(true) {
                         Ok(data) => data,
                         Err(error) => {
-                            if error.is_resource_suspension() {
-                                self.retain_structured_scanner(
-                                    PendingStructuredScannerPhase::PdfObjectData {
-                                        use_object: progress.use_object,
-                                        stream: progress.stream,
-                                        stream_attr: progress.stream_attr,
-                                        file,
-                                    },
-                                    StructuredScannerChildDestination::PdfObjectData,
-                                )?;
-                            }
                             return Err(error);
                         }
                     };
@@ -4104,105 +2478,24 @@ impl<G> CommandProcessor<'_, '_, G> {
         primitive: UnexpandablePrimitive,
     ) -> Result<PdfFormRequest, CommandError> {
         if primitive == UnexpandablePrimitive::PdfRefXForm {
-            self.restore_structured_unary(StructuredUnaryScalar::PdfFormReference)?;
             let result = self.scan_integer_retained();
             return Ok(PdfFormRequest::Reference {
-                object: self
-                    .finish_structured_unary(result, StructuredUnaryScalar::PdfFormReference)?
-                    .value,
+                object: result.into_result()?.value,
             });
         }
-        let pending = self.take_pending_structured_scanner()?;
-        let (mut progress, mut child) = match pending {
-            Some(pending) => {
-                let PendingStructuredScanner { phase, mut child } = pending;
-                match phase {
-                    PendingStructuredScannerPhase::Scalar(
-                        PendingStructuredScalarPhase::PdfForm(progress),
-                    ) => (progress, child),
-                    PendingStructuredScannerPhase::PdfFormAttribute => {
-                        self.restore_structured_scanner_child(
-                            &mut child,
-                            StructuredScannerChildDestination::PdfFormAttribute,
-                        )?;
-                        let attr = match self.scan_balanced_text(true) {
-                            Ok(attr) => Some(attr),
-                            Err(error) => {
-                                if error.is_resource_suspension() {
-                                    self.retain_structured_scanner(
-                                        PendingStructuredScannerPhase::PdfFormAttribute,
-                                        StructuredScannerChildDestination::PdfFormAttribute,
-                                    )?;
-                                }
-                                return Err(error);
-                            }
-                        };
-                        (
-                            PdfFormScalarProgress {
-                                attr,
-                                resources: None,
-                                phase: PdfFormScalarPhase::ResourcesKeyword,
-                            },
-                            None,
-                        )
-                    }
-                    PendingStructuredScannerPhase::PdfFormResources { attr } => {
-                        self.restore_structured_scanner_child(
-                            &mut child,
-                            StructuredScannerChildDestination::PdfFormResources,
-                        )?;
-                        let resources = self.scan_balanced_text(true)?;
-                        let result = self.scan_extended_register_index_retained();
-                        let box_register = self.retain_structured_scalar(
-                            result,
-                            PendingStructuredScalarPhase::PdfForm(PdfFormScalarProgress {
-                                attr: attr.clone(),
-                                resources: Some(resources.clone()),
-                                phase: PdfFormScalarPhase::BoxRegister,
-                            }),
-                        )?;
-                        return Ok(PdfFormRequest::Create {
-                            attr,
-                            resources: Some(resources),
-                            box_register,
-                        });
-                    }
-                    _ => {
-                        if let Some(child) = child.take() {
-                            self.abort_continuation(child.restore().0)?;
-                        }
-                        return Err(CommandError::input_invariant());
-                    }
-                }
-            }
-            None => (
-                PdfFormScalarProgress {
-                    attr: None,
-                    resources: None,
-                    phase: PdfFormScalarPhase::AttributeKeyword,
-                },
-                None,
-            ),
+        let mut progress = PdfFormScalarProgress {
+            attr: None,
+            resources: None,
+            phase: PdfFormScalarPhase::AttributeKeyword,
         };
         loop {
-            self.restore_structured_scanner_child(
-                &mut child,
-                StructuredScannerChildDestination::Scalar,
-            )?;
-            let retained = PendingStructuredScalarPhase::PdfForm(progress.clone());
             match progress.phase {
                 PdfFormScalarPhase::AttributeKeyword => {
                     let result = self.scan_keyword_retained("attr");
-                    if self.retain_structured_scalar(result, retained)?.value {
+                    if result.into_result()?.value {
                         progress.attr = match self.scan_balanced_text(true) {
                             Ok(attr) => Some(attr),
                             Err(error) => {
-                                if error.is_resource_suspension() {
-                                    self.retain_structured_scanner(
-                                        PendingStructuredScannerPhase::PdfFormAttribute,
-                                        StructuredScannerChildDestination::PdfFormAttribute,
-                                    )?;
-                                }
                                 return Err(error);
                             }
                         };
@@ -4211,30 +2504,15 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 PdfFormScalarPhase::ResourcesKeyword => {
                     let result = self.scan_keyword_retained("resources");
-                    if self.retain_structured_scalar(result, retained)?.value {
+                    if result.into_result()?.value {
                         let resources = match self.scan_balanced_text(true) {
                             Ok(resources) => resources,
                             Err(error) => {
-                                if error.is_resource_suspension() {
-                                    self.retain_structured_scanner(
-                                        PendingStructuredScannerPhase::PdfFormResources {
-                                            attr: progress.attr,
-                                        },
-                                        StructuredScannerChildDestination::PdfFormResources,
-                                    )?;
-                                }
                                 return Err(error);
                             }
                         };
                         let result = self.scan_extended_register_index_retained();
-                        let box_register = self.retain_structured_scalar(
-                            result,
-                            PendingStructuredScalarPhase::PdfForm(PdfFormScalarProgress {
-                                attr: progress.attr.clone(),
-                                resources: Some(resources.clone()),
-                                phase: PdfFormScalarPhase::BoxRegister,
-                            }),
-                        )?;
+                        let box_register = result.into_result()?;
                         return Ok(PdfFormRequest::Create {
                             attr: progress.attr,
                             resources: Some(resources),
@@ -4245,7 +2523,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 PdfFormScalarPhase::BoxRegister => {
                     let result = self.scan_extended_register_index_retained();
-                    let box_register = self.retain_structured_scalar(result, retained)?;
+                    let box_register = result.into_result()?;
                     return Ok(PdfFormRequest::Create {
                         attr: progress.attr,
                         resources: progress.resources,
@@ -4259,12 +2537,9 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub fn scan_pdf_reference_object_request(
         &mut self,
     ) -> Result<PdfReferenceObjectRequest, CommandError> {
-        self.restore_structured_unary(StructuredUnaryScalar::PdfReferenceObject)?;
         let result = self.scan_integer_retained();
         Ok(PdfReferenceObjectRequest {
-            object: self
-                .finish_structured_unary(result, StructuredUnaryScalar::PdfReferenceObject)?
-                .value,
+            object: result.into_result()?.value,
         })
     }
 
@@ -4272,76 +2547,17 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         primitive: UnexpandablePrimitive,
     ) -> Result<ScannedPdfFontAction, CommandError> {
-        let pending = self.take_pending_structured_scanner()?;
-        let (font, retained_first) = match pending {
-            Some(pending) => {
-                let PendingStructuredScanner { phase, mut child } = pending;
-                match phase {
-                    PendingStructuredScannerPhase::Scalar(
-                        PendingStructuredScalarPhase::PdfFontAction { primitive: owner },
-                    ) if owner == primitive => {
-                        self.restore_structured_scanner_child(
-                            &mut child,
-                            StructuredScannerChildDestination::Scalar,
-                        )?;
-                        let scan = self.scan_font_selector_retained();
-                        let font = self.retain_structured_scalar(
-                            scan,
-                            PendingStructuredScalarPhase::PdfFontAction { primitive },
-                        )?;
-                        (Some(font), None)
-                    }
-                    PendingStructuredScannerPhase::PdfGlyphName {
-                        primitive: owner,
-                        font,
-                    } => {
-                        if owner != primitive {
-                            if let Some(child) = child.take() {
-                                self.abort_continuation(child.restore().0)?;
-                            }
-                            return Err(CommandError::input_invariant());
-                        }
-                        self.restore_structured_scanner_child(
-                            &mut child,
-                            StructuredScannerChildDestination::PdfGlyphName,
-                        )?;
-                        (font, None)
-                    }
-                    PendingStructuredScannerPhase::PdfGlyphUnicode { font, first }
-                        if primitive == UnexpandablePrimitive::PdfGlyphToUnicode =>
-                    {
-                        self.restore_structured_scanner_child(
-                            &mut child,
-                            StructuredScannerChildDestination::PdfGlyphUnicode,
-                        )?;
-                        (font, Some(first))
-                    }
-                    _ => {
-                        if let Some(child) = child.take() {
-                            self.abort_continuation(child.restore().0)?;
-                        }
-                        return Err(CommandError::input_invariant());
-                    }
-                }
-            }
-            None => {
-                let needs_font = matches!(
-                    primitive,
-                    UnexpandablePrimitive::PdfFontAttr
-                        | UnexpandablePrimitive::PdfIncludeChars
-                        | UnexpandablePrimitive::PdfNoBuiltinToUnicode
-                );
-                let font = if needs_font {
-                    let scan = self.scan_font_selector_retained();
-                    Some(self.retain_structured_scalar(
-                        scan,
-                        PendingStructuredScalarPhase::PdfFontAction { primitive },
-                    )?)
-                } else {
-                    None
-                };
-                (font, None)
-            }
+        let needs_font = matches!(
+            primitive,
+            UnexpandablePrimitive::PdfFontAttr
+                | UnexpandablePrimitive::PdfIncludeChars
+                | UnexpandablePrimitive::PdfNoBuiltinToUnicode
+        );
+        let font = if needs_font {
+            let scan = self.scan_font_selector_retained();
+            Some(scan.into_result()?)
+        } else {
+            None
         };
         if primitive == UnexpandablePrimitive::PdfNoBuiltinToUnicode {
             return Ok(ScannedPdfFontAction {
@@ -4350,32 +2566,16 @@ impl<G> CommandProcessor<'_, '_, G> {
                 second: None,
             });
         }
-        let first = if let Some(first) = retained_first {
-            first
-        } else {
-            match self.scan_balanced_text(true) {
-                Ok(first) => first.tokens,
-                Err(error) => {
-                    if error.is_resource_suspension() {
-                        self.retain_structured_scanner(
-                            PendingStructuredScannerPhase::PdfGlyphName { primitive, font },
-                            StructuredScannerChildDestination::PdfGlyphName,
-                        )?;
-                    }
-                    return Err(error);
-                }
+        let first = match self.scan_balanced_text(true) {
+            Ok(first) => first.tokens,
+            Err(error) => {
+                return Err(error);
             }
         };
         let second = if primitive == UnexpandablePrimitive::PdfGlyphToUnicode {
             match self.scan_balanced_text(true) {
                 Ok(second) => Some(second.tokens),
                 Err(error) => {
-                    if error.is_resource_suspension() {
-                        self.retain_structured_scanner(
-                            PendingStructuredScannerPhase::PdfGlyphUnicode { font, first },
-                            StructuredScannerChildDestination::PdfGlyphUnicode,
-                        )?;
-                    }
                     return Err(error);
                 }
             }
@@ -4394,130 +2594,28 @@ impl<G> CommandProcessor<'_, '_, G> {
         primitive: UnexpandablePrimitive,
     ) -> Result<PdfDocumentFragmentRequest, CommandError> {
         use tex_state::PdfDocumentFragmentKind as Kind;
-        let pending = self.take_pending_structured_scanner()?;
-        let (kind, text) = match pending {
-            Some(pending) => {
-                let PendingStructuredScanner { phase, mut child } = pending;
-                match phase {
-                    PendingStructuredScannerPhase::PdfDocumentFragmentText { kind } => {
-                        let (text, phase) = self.scan_pdf_navigation_text(
-                            &mut child,
-                            PendingStructuredScannerPhase::PdfDocumentFragmentText { kind },
-                            StructuredScannerChildDestination::PdfDocumentFragmentText,
-                        )?;
-                        let PendingStructuredScannerPhase::PdfDocumentFragmentText { kind } = phase
-                        else {
-                            return Err(CommandError::input_invariant());
-                        };
-                        (kind, text)
-                    }
-                    PendingStructuredScannerPhase::PdfAction { owner, phase } => {
-                        let (owner, action) =
-                            self.scan_pdf_action_for_owner(owner, Some((phase, child)))?;
-                        let PendingPdfActionOwner::DocumentFragment { kind, text } = owner else {
-                            return Err(CommandError::input_invariant());
-                        };
-                        return Ok(PdfDocumentFragmentRequest {
-                            kind,
-                            text,
-                            open_action: Some(action),
-                        });
-                    }
-                    PendingStructuredScannerPhase::Scalar(
-                        PendingStructuredScalarPhase::PdfAction { owner, progress },
-                    ) => {
-                        let (owner, action) =
-                            self.scan_pdf_action_scalar(owner, progress, child)?;
-                        let PendingPdfActionOwner::DocumentFragment { kind, text } = owner else {
-                            return Err(CommandError::input_invariant());
-                        };
-                        return Ok(PdfDocumentFragmentRequest {
-                            kind,
-                            text,
-                            open_action: Some(action),
-                        });
-                    }
-                    PendingStructuredScannerPhase::Scalar(
-                        PendingStructuredScalarPhase::PdfDocumentOpenAction { kind, text },
-                    ) => {
-                        self.restore_structured_scanner_child(
-                            &mut child,
-                            StructuredScannerChildDestination::Scalar,
-                        )?;
-                        let result = self.scan_keyword_retained("openaction");
-                        let open_action = self
-                            .retain_structured_scalar(
-                                result,
-                                PendingStructuredScalarPhase::PdfDocumentOpenAction {
-                                    kind,
-                                    text: text.clone(),
-                                },
-                            )?
-                            .value;
-                        if open_action {
-                            let (owner, action) = self.scan_pdf_action_for_owner(
-                                PendingPdfActionOwner::DocumentFragment { kind, text },
-                                None,
-                            )?;
-                            let PendingPdfActionOwner::DocumentFragment { kind, text } = owner
-                            else {
-                                return Err(CommandError::input_invariant());
-                            };
-                            return Ok(PdfDocumentFragmentRequest {
-                                kind,
-                                text,
-                                open_action: Some(action),
-                            });
-                        }
-                        return Ok(PdfDocumentFragmentRequest {
-                            kind,
-                            text,
-                            open_action: None,
-                        });
-                    }
-                    _ => {
-                        if let Some(child) = child.take() {
-                            self.abort_continuation(child.restore().0)?;
-                        }
-                        return Err(CommandError::input_invariant());
-                    }
-                }
-            }
-            None => {
-                let kind = match primitive {
-                    UnexpandablePrimitive::PdfInfo => Kind::Info,
-                    UnexpandablePrimitive::PdfCatalog => Kind::Catalog,
-                    UnexpandablePrimitive::PdfNames => Kind::Names,
-                    UnexpandablePrimitive::PdfTrailer => Kind::Trailer,
-                    UnexpandablePrimitive::PdfTrailerId => Kind::TrailerId,
-                    _ => return Err(CommandError::input_invariant()),
-                };
-                let (text, phase) = self.scan_pdf_navigation_text(
-                    &mut None,
-                    PendingStructuredScannerPhase::PdfDocumentFragmentText { kind },
-                    StructuredScannerChildDestination::PdfDocumentFragmentText,
-                )?;
-                let PendingStructuredScannerPhase::PdfDocumentFragmentText { kind } = phase else {
-                    return Err(CommandError::input_invariant());
-                };
-                (kind, text)
-            }
+        let (kind, text) = {
+            let kind = match primitive {
+                UnexpandablePrimitive::PdfInfo => Kind::Info,
+                UnexpandablePrimitive::PdfCatalog => Kind::Catalog,
+                UnexpandablePrimitive::PdfNames => Kind::Names,
+                UnexpandablePrimitive::PdfTrailer => Kind::Trailer,
+                UnexpandablePrimitive::PdfTrailerId => Kind::TrailerId,
+                _ => return Err(CommandError::input_invariant()),
+            };
+            let text = self.scan_pdf_navigation_text()?;
+            (kind, text)
         };
         let open_action = if kind == Kind::Catalog && {
             let result = self.scan_keyword_retained("openaction");
-            self.retain_structured_scalar(
-                result,
-                PendingStructuredScalarPhase::PdfDocumentOpenAction {
-                    kind,
-                    text: text.clone(),
-                },
-            )?
-            .value
+
+            result.into_result()?.value
         } {
-            let (owner, action) = self.scan_pdf_action_for_owner(
-                PendingPdfActionOwner::DocumentFragment { kind, text },
-                None,
-            )?;
+            let (owner, action) =
+                self.scan_pdf_action_for_owner(PendingPdfActionOwner::DocumentFragment {
+                    kind,
+                    text,
+                })?;
             let PendingPdfActionOwner::DocumentFragment { kind, text } = owner else {
                 return Err(CommandError::input_invariant());
             };
@@ -4578,10 +2676,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             MathFieldRestrictedKind::Delimiter => RestrictedIntegerClass::TwentySevenBit,
         };
         let result = self.scan_restricted_integer_retained(class);
-        let scanned = self.retain_structured_scalar(
-            result,
-            PendingStructuredScalarPhase::MathFieldRestricted { provenance, kind },
-        )?;
+        let scanned = result.into_result()?;
         let (code, provenance) = match kind {
             MathFieldRestrictedKind::Character => {
                 let ch = char::from_u32(scanned.value as u32)
@@ -4613,25 +2708,6 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     pub fn scan_math_field_episode(&mut self) -> Result<MathFieldEpisode, CommandError> {
-        if let Some(pending) = self.take_pending_structured_scanner()? {
-            let PendingStructuredScanner { phase, mut child } = pending;
-            let PendingStructuredScannerPhase::Scalar(
-                PendingStructuredScalarPhase::MathFieldRestricted { provenance, kind },
-            ) = phase
-            else {
-                if let Some(child) = child.take() {
-                    self.abort_continuation(child.restore().0)?;
-                }
-                return Err(CommandError::input_invariant());
-            };
-            self.restore_structured_scanner_child(
-                &mut child,
-                StructuredScannerChildDestination::Scalar,
-            )?;
-            if let Some(field) = self.scan_math_field_restricted(provenance, kind)? {
-                return Ok(field);
-            }
-        }
         let mut destination = None;
         loop {
             // §1151's `restart` label: §404's shared "next non-blank
@@ -4761,23 +2837,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         kind: MathDelimiterBoundaryKind,
     ) -> Result<MathDelimiterBoundary, CommandError> {
-        // A `\delimiter` operand is a retained structured scalar when its
-        // number scan crosses a resource boundary.  The enclosing executor
-        // retry keeps only this boundary kind in its operation phase, so
-        // restore the typed scalar frame before asking for another boundary
-        // token; otherwise the resumed call would consume the numeric
-        // operand as though it were a fresh delimiter character.
-        if self
-            .scanner_resume
-            .as_ref()
-            .is_some_and(crate::ScannerFrameKey::is_structured_scanner)
-        {
-            self.restore_structured_unary(StructuredUnaryScalar::DelimiterNumber)?;
-            return Ok(MathDelimiterBoundary {
-                kind,
-                delimiter: self.scan_delimiter_number()?,
-            });
-        }
         let mut destination = None;
         match self.next_non_blank_non_relax_x_token_hot(&mut destination)? {
             DeliveryStatus::End => {
@@ -4853,9 +2912,8 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     /// Scans TeX82 §436's `scan_fifteen_bit_int` math-character number.
     pub fn scan_math_character(&mut self) -> Result<ScannedMathCharacter, CommandError> {
-        self.restore_structured_unary(StructuredUnaryScalar::MathCharacter)?;
         let result = self.scan_restricted_integer_retained(RestrictedIntegerClass::FifteenBit);
-        let scanned = self.finish_structured_unary(result, StructuredUnaryScalar::MathCharacter)?;
+        let scanned = result.into_result()?;
         Ok(ScannedMathCharacter {
             code: scanned.value as u16,
             recovered: scanned.recovered,
@@ -4875,10 +2933,8 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// §1160. Every other delimiter position goes through
     /// [`Self::scan_delimiter`].
     pub fn scan_delimiter_number(&mut self) -> Result<ScannedMathDelimiter, CommandError> {
-        self.restore_structured_unary(StructuredUnaryScalar::DelimiterNumber)?;
         let result = self.scan_restricted_integer_retained(RestrictedIntegerClass::TwentySevenBit);
-        let scanned =
-            self.finish_structured_unary(result, StructuredUnaryScalar::DelimiterNumber)?;
+        let scanned = result.into_result()?;
         Ok(ScannedMathDelimiter {
             code: scanned.value as u32,
             recovered: scanned.recovered,
@@ -5031,76 +3087,14 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     pub(crate) fn abort_alignment_preamble(
         &mut self,
-        mut pending: PendingAlignmentPreamble<G>,
+        pending: AlignmentPreambleState<G>,
     ) -> Result<(), CommandError> {
-        if let Some(child) = pending.take_child() {
-            self.abort_continuation(child)?;
-        }
         self.finish_scanner_episode(pending.scanner_episode);
         self.command
             .transient
             .builders
             .retain(|live| live.identity != pending.builder.0);
         Ok(())
-    }
-
-    fn retain_alignment_scalar(
-        &mut self,
-        pending: PendingAlignmentPreamble<G>,
-        child: crate::ScannerFrameKey<G>,
-        error: CommandError,
-    ) -> Result<(), CommandError> {
-        self.install_scanner_resume(Some(child));
-        let key = match self.command.scratch.store_alignment_preamble_frame(pending) {
-            Ok(key) => key,
-            Err(store_error) => {
-                if let Some(child) = self.scanner_resume.take() {
-                    self.abort_continuation(child)?;
-                }
-                return Err(crate::scan_toks::scratch_command_error(store_error));
-            }
-        };
-        let frame = match self.command.scratch.alignment_preamble_frame_mut(&key) {
-            Ok(frame) => frame,
-            Err(store_error) => {
-                let abort_result = if let Some(child) = self.scanner_resume.take() {
-                    self.abort_continuation(child)
-                } else {
-                    Ok(())
-                };
-                let discard_result = self
-                    .command
-                    .scratch
-                    .discard_alignment_preamble_frame(key)
-                    .map_err(crate::scan_toks::scratch_command_error);
-                abort_result?;
-                discard_result?;
-                return Err(crate::scan_toks::scratch_command_error(store_error));
-            }
-        };
-        let Some(scalar) = frame.scalar_scan.as_mut() else {
-            let abort_result = if let Some(child) = self.scanner_resume.take() {
-                self.abort_continuation(child)
-            } else {
-                Ok(())
-            };
-            let discard_result = self
-                .command
-                .scratch
-                .discard_alignment_preamble_frame(key)
-                .map_err(crate::scan_toks::scratch_command_error);
-            abort_result?;
-            discard_result?;
-            return Err(CommandError::input_invariant());
-        };
-        scalar.child = crate::execution_scratch::ChildContinuation::capture(
-            &mut self.scanner_resume,
-            AlignmentPreambleChildDestination::Scalar,
-        );
-        if self.scanner_resume.replace(key).is_some() {
-            return Err(CommandError::input_invariant());
-        }
-        Err(error)
     }
 
     /// Scans TeX82 §435's `scan_four_bit_int` family index, the prefix common
@@ -5110,10 +3104,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         size: MathFamilySize,
     ) -> Result<ScannedMathFamily, CommandError> {
-        self.restore_structured_unary(StructuredUnaryScalar::MathFamily(size))?;
         let result = self.scan_restricted_integer_retained(RestrictedIntegerClass::FourBit);
-        let scanned =
-            self.finish_structured_unary(result, StructuredUnaryScalar::MathFamily(size))?;
+        let scanned = result.into_result()?;
         Ok(ScannedMathFamily {
             size,
             family: scanned.value as u8,
@@ -5127,7 +3119,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub fn scan_math_family_retained(
         &mut self,
         size: MathFamilySize,
-    ) -> crate::RetainedScalarScan<G, ScannedMathFamily> {
+    ) -> crate::RetainedScalarScan<ScannedMathFamily> {
         let result = self.scan_math_family(size);
         self.detach_retained_scalar(result)
     }
@@ -5140,50 +3132,18 @@ impl<G> CommandProcessor<'_, '_, G> {
         kind: MathFractionKind,
         with_delimiters: bool,
     ) -> Result<ScannedMathFraction, CommandError> {
-        let pending = self.take_pending_structured_scanner()?;
-        let (left_delimiter, right_delimiter, mut child) = match pending {
-            Some(PendingStructuredScanner {
-                phase:
-                    PendingStructuredScannerPhase::Scalar(
-                        PendingStructuredScalarPhase::MathFractionThickness {
-                            kind: retained_kind,
-                            left_delimiter,
-                            right_delimiter,
-                        },
-                    ),
-                child,
-            }) if retained_kind == kind => (left_delimiter, right_delimiter, child),
-            Some(mut pending) => {
-                if let Some(child) = pending.take_child() {
-                    self.abort_continuation(child)?;
-                }
-                return Err(CommandError::input_invariant());
-            }
-            None if with_delimiters => (
+        let (left_delimiter, right_delimiter) = if with_delimiters {
+            (
                 Some(self.scan_delimiter(false)?),
                 Some(self.scan_delimiter(false)?),
-                None,
-            ),
-            None => (None, None, None),
+            )
+        } else {
+            (None, None)
         };
         let thickness = match kind {
             MathFractionKind::Above => {
-                self.restore_structured_scanner_child(
-                    &mut child,
-                    StructuredScannerChildDestination::Scalar,
-                )?;
                 let result = self.scan_dimension_retained();
-                Some(
-                    self.retain_structured_scalar(
-                        result,
-                        PendingStructuredScalarPhase::MathFractionThickness {
-                            kind,
-                            left_delimiter,
-                            right_delimiter,
-                        },
-                    )?
-                    .value,
-                )
+                Some(result.into_result()?.value)
             }
             MathFractionKind::Atop => Some(Scaled::from_raw(0)),
             MathFractionKind::Over => None,
@@ -5201,19 +3161,12 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         glue: bool,
     ) -> Result<ScannedMathMuMaterial, CommandError> {
-        self.restore_structured_unary(StructuredUnaryScalar::MathMu(glue))?;
         if glue {
             let result = self.scan_glue_retained(true);
-            Ok(ScannedMathMuMaterial::Glue(
-                self.finish_structured_unary(result, StructuredUnaryScalar::MathMu(glue))?
-                    .value,
-            ))
+            Ok(ScannedMathMuMaterial::Glue(result.into_result()?.value))
         } else {
             let result = self.scan_mu_dimension_retained();
-            Ok(ScannedMathMuMaterial::Kern(
-                self.finish_structured_unary(result, StructuredUnaryScalar::MathMu(glue))?
-                    .value,
-            ))
+            Ok(ScannedMathMuMaterial::Kern(result.into_result()?.value))
         }
     }
 
@@ -5322,70 +3275,18 @@ impl<G> CommandProcessor<'_, '_, G> {
         read_global: bool,
     ) -> Result<InputStreamRequest, CommandError> {
         use tex_state::meaning::UnexpandablePrimitive;
-        let pending = self.take_pending_structured_scanner()?;
-        let (mut phase, mut child) = match pending {
-            Some(PendingStructuredScanner {
-                phase:
-                    PendingStructuredScannerPhase::Scalar(PendingStructuredScalarPhase::InputStream {
-                        primitive: retained_primitive,
-                        read_global: retained_global,
-                        phase,
-                    }),
-                child,
-            }) if retained_primitive == primitive && retained_global == read_global => {
-                (phase, child)
-            }
-            Some(mut pending) => {
-                if let Some(child) = pending.take_child() {
-                    self.abort_continuation(child)?;
-                }
-                return Err(CommandError::input_invariant());
-            }
-            None => (InputStreamScalarPhase::Selector, None),
-        };
-        let retained = |phase| PendingStructuredScalarPhase::InputStream {
-            primitive,
-            read_global,
-            phase,
-        };
         match primitive {
             // §§1272--1275's `in_stream` command scans §435's
             // `scan_four_bit_int`. Recovery is complete before the request is
             // committed; the raw value crosses the apply seam only so §435's
             // `int_error` can report it first.
             UnexpandablePrimitive::OpenIn => {
-                let scanned = match phase {
-                    InputStreamScalarPhase::Selector => {
-                        self.restore_structured_scanner_child(
-                            &mut child,
-                            StructuredScannerChildDestination::Scalar,
-                        )?;
-                        let result =
-                            self.scan_restricted_integer_retained(RestrictedIntegerClass::FourBit);
-                        let scanned =
-                            self.retain_structured_scalar(result, retained(phase.clone()))?;
-                        phase = InputStreamScalarPhase::OpenEquals { scanned };
-                        scanned
-                    }
-                    InputStreamScalarPhase::OpenEquals { scanned }
-                    | InputStreamScalarPhase::OpenFileName { scanned } => scanned,
-                    _ => return Err(CommandError::input_invariant()),
-                };
-                if matches!(phase, InputStreamScalarPhase::OpenEquals { .. }) {
-                    self.restore_structured_scanner_child(
-                        &mut child,
-                        StructuredScannerChildDestination::Scalar,
-                    )?;
-                    let result = self.scan_optional_equals_retained();
-                    self.retain_structured_scalar(result, retained(phase.clone()))?;
-                    phase = InputStreamScalarPhase::OpenFileName { scanned };
-                }
-                self.restore_structured_scanner_child(
-                    &mut child,
-                    StructuredScannerChildDestination::Scalar,
-                )?;
+                let result = self.scan_restricted_integer_retained(RestrictedIntegerClass::FourBit);
+                let scanned = result.into_result()?;
+                let result = self.scan_optional_equals_retained();
+                result.into_result()?;
                 let result = self.scan_file_name_retained();
-                let file_name = self.retain_structured_scalar(result, retained(phase))?;
+                let file_name = result.into_result()?;
                 Ok(InputStreamRequest::Open {
                     stream: scanned.value,
                     scanned: scanned.scanned,
@@ -5394,15 +3295,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                 })
             }
             UnexpandablePrimitive::CloseIn => {
-                if !matches!(phase, InputStreamScalarPhase::Selector) {
-                    return Err(CommandError::input_invariant());
-                }
-                self.restore_structured_scanner_child(
-                    &mut child,
-                    StructuredScannerChildDestination::Scalar,
-                )?;
                 let result = self.scan_restricted_integer_retained(RestrictedIntegerClass::FourBit);
-                let scanned = self.retain_structured_scalar(result, retained(phase))?;
+                let scanned = result.into_result()?;
                 Ok(InputStreamRequest::Close {
                     stream: scanned.value,
                     scanned: scanned.scanned,
@@ -5414,36 +3308,17 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // §435's four-bit selector: §482 answers an out-of-range
                 // stream with `if (n<0)or(n>15) then m:=16`, reading from the
                 // terminal, and no error is reported at all.
-                let stream = match phase {
-                    InputStreamScalarPhase::Selector => {
-                        self.restore_structured_scanner_child(
-                            &mut child,
-                            StructuredScannerChildDestination::Scalar,
-                        )?;
-                        let result = self.scan_integer_retained();
-                        self.retain_structured_scalar(result, retained(phase))?
-                            .value
-                    }
-                    InputStreamScalarPhase::ReadTo { stream } => stream,
-                    _ => return Err(CommandError::input_invariant()),
-                };
+                let result = self.scan_integer_retained();
+                let stream = result.into_result()?.value;
                 // tex.web §1225 reports a missing `to` and inserts it, then
                 // runs `get_r_token` regardless: the keyword is recovered,
                 // not required. §1225 reports it *here*, between the failed
                 // keyword and `get_r_token`, so §82's context still shows the
                 // target as `<to be read again>` and no `read_toks` prompt has
                 // been printed yet.
-                self.restore_structured_scanner_child(
-                    &mut child,
-                    StructuredScannerChildDestination::Scalar,
-                )?;
+
                 let result = self.scan_keyword_retained("to");
-                let found_to = self
-                    .retain_structured_scalar(
-                        result,
-                        retained(InputStreamScalarPhase::ReadTo { stream }),
-                    )?
-                    .value;
+                let found_to = result.into_result()?.value;
                 if !found_to {
                     let context = self.command.output_open_context(self.state);
                     let mut report = self.state.print_err("Missing `to' inserted");
@@ -5491,93 +3366,32 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         provisional_global: bool,
     ) -> Result<FontLoadRequest, CommandError> {
-        let pending = self.take_pending_structured_scanner()?;
-        let (target, mut phase, mut child) = match pending {
-            Some(PendingStructuredScanner {
-                phase:
-                    PendingStructuredScannerPhase::Scalar(
-                        PendingStructuredScalarPhase::FontDefinition { target, phase },
-                    ),
-                child,
-            }) => (target, phase, child),
-            Some(mut pending) => {
-                if let Some(child) = pending.take_child() {
-                    self.abort_continuation(child)?;
-                }
-                return Err(CommandError::input_invariant());
-            }
-            None => {
-                let target = self.scan_definition_target()?;
-                self.state.set_provisional_meaning(
-                    target,
-                    Meaning::Font(tex_state::font::NULL_FONT),
-                    provisional_global,
-                );
-                observe!(
-                    self,
-                    crate::CommandObservation::Mutation(crate::MutationRecord {
-                        target: crate::MutationTarget::Meaning,
-                        key: crate::ObservationValue::Name(self.state.resolve(target).to_owned()),
-                        value: crate::ObservationValue::Name("set_font".into()),
-                        global: provisional_global,
-                    }),
-                );
-                (target, FontDefinitionScalarPhase::Equals, None)
-            }
-        };
-        let retained = |phase| PendingStructuredScalarPhase::FontDefinition { target, phase };
-        if matches!(phase, FontDefinitionScalarPhase::Equals) {
-            self.restore_structured_scanner_child(
-                &mut child,
-                StructuredScannerChildDestination::Scalar,
-            )?;
-            let result = self.scan_optional_equals_retained();
-            self.retain_structured_scalar(result, retained(phase.clone()))?;
-            phase = FontDefinitionScalarPhase::FileName;
-        }
-        let file_name = match phase {
-            FontDefinitionScalarPhase::FileName => {
-                self.restore_structured_scanner_child(
-                    &mut child,
-                    StructuredScannerChildDestination::Scalar,
-                )?;
-                let result = self.scan_file_name_retained();
-                let file_name = self.retain_structured_scalar(result, retained(phase))?;
-                phase = FontDefinitionScalarPhase::AtKeyword {
-                    file_name: file_name.clone(),
-                };
-                file_name
-            }
-            FontDefinitionScalarPhase::AtKeyword { ref file_name }
-            | FontDefinitionScalarPhase::AtDimension { ref file_name }
-            | FontDefinitionScalarPhase::ScaledKeyword { ref file_name }
-            | FontDefinitionScalarPhase::ScaledInteger { ref file_name } => file_name.clone(),
-            FontDefinitionScalarPhase::Equals => unreachable!("equals advanced to filename"),
-        };
+        let target = self.scan_definition_target()?;
+        self.state.set_provisional_meaning(
+            target,
+            Meaning::Font(tex_state::font::NULL_FONT),
+            provisional_global,
+        );
+        observe!(
+            self,
+            crate::CommandObservation::Mutation(crate::MutationRecord {
+                target: crate::MutationTarget::Meaning,
+                key: crate::ObservationValue::Name(self.state.resolve(target).to_owned()),
+                value: crate::ObservationValue::Name("set_font".into()),
+                global: provisional_global,
+            }),
+        );
+        let result = self.scan_optional_equals_retained();
+        result.into_result()?;
+        let result = self.scan_file_name_retained();
+        let file_name = result.into_result()?;
         let mut size_recovery = None;
-        let size = if matches!(phase, FontDefinitionScalarPhase::AtDimension { .. })
-            || matches!(phase, FontDefinitionScalarPhase::AtKeyword { .. }) && {
-                self.restore_structured_scanner_child(
-                    &mut child,
-                    StructuredScannerChildDestination::Scalar,
-                )?;
-                let result = self.scan_keyword_retained("at");
-                self.retain_structured_scalar(result, retained(phase.clone()))?
-                    .value
-            } {
-            self.restore_structured_scanner_child(
-                &mut child,
-                StructuredScannerChildDestination::Scalar,
-            )?;
+        let size = if {
+            let result = self.scan_keyword_retained("at");
+            result.into_result()?.value
+        } {
             let result = self.scan_dimension_retained();
-            let requested = self
-                .retain_structured_scalar(
-                    result,
-                    retained(FontDefinitionScalarPhase::AtDimension {
-                        file_name: file_name.clone(),
-                    }),
-                )?
-                .value;
+            let requested = result.into_result()?.value;
             // §1259's `if (s<=0)or(s>=@'1000000000)`.
             FontSizeSpec::At(
                 if requested.raw() > 0 && requested.raw() < 2048 * Scaled::UNITY {
@@ -5591,36 +3405,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                 },
             )
         } else {
-            let scaled = if matches!(phase, FontDefinitionScalarPhase::ScaledInteger { .. }) {
-                true
-            } else {
-                self.restore_structured_scanner_child(
-                    &mut child,
-                    StructuredScannerChildDestination::Scalar,
-                )?;
-                let result = self.scan_keyword_retained("scaled");
-                self.retain_structured_scalar(
-                    result,
-                    retained(FontDefinitionScalarPhase::ScaledKeyword {
-                        file_name: file_name.clone(),
-                    }),
-                )?
-                .value
-            };
+            let result = self.scan_keyword_retained("scaled");
+            let scaled = result.into_result()?.value;
             if scaled {
-                self.restore_structured_scanner_child(
-                    &mut child,
-                    StructuredScannerChildDestination::Scalar,
-                )?;
                 let result = self.scan_integer_retained();
-                let requested = self
-                    .retain_structured_scalar(
-                        result,
-                        retained(FontDefinitionScalarPhase::ScaledInteger {
-                            file_name: file_name.clone(),
-                        }),
-                    )?
-                    .value;
+                let requested = result.into_result()?.value;
                 // §1258's `if (cur_val<=0)or(cur_val>32768)`.
                 FontSizeSpec::Scale(if (1..=32_768).contains(&requested) {
                     requested
@@ -5654,97 +3443,33 @@ impl<G> CommandProcessor<'_, '_, G> {
         kind: GeneratedFontKind,
         provisional_global: bool,
     ) -> Result<ScannedGeneratedFontDefinition, CommandError> {
-        let pending = self.take_pending_structured_scanner()?;
-        let (target, phase, mut child) = match pending {
-            Some(PendingStructuredScanner {
-                phase:
-                    PendingStructuredScannerPhase::Scalar(PendingStructuredScalarPhase::GeneratedFont {
-                        kind: retained_kind,
-                        target,
-                        phase,
-                    }),
-                child,
-            }) if retained_kind == kind => (target, phase, child),
-            Some(mut pending) => {
-                if let Some(child) = pending.take_child() {
-                    self.abort_continuation(child)?;
-                }
-                return Err(CommandError::input_invariant());
-            }
-            None => {
-                let target = self.scan_definition_target()?;
-                self.state.set_provisional_meaning(
-                    target,
-                    Meaning::Font(tex_state::font::NULL_FONT),
-                    provisional_global,
-                );
-                observe!(
-                    self,
-                    crate::CommandObservation::Mutation(crate::MutationRecord {
-                        target: crate::MutationTarget::Meaning,
-                        key: crate::ObservationValue::Name(self.state.resolve(target).to_owned()),
-                        value: crate::ObservationValue::Name("set_font".into()),
-                        global: provisional_global,
-                    }),
-                );
-                (target, GeneratedFontScalarPhase::Equals, None)
-            }
-        };
-        let retained = |phase| PendingStructuredScalarPhase::GeneratedFont {
-            kind,
+        let target = self.scan_definition_target()?;
+        self.state.set_provisional_meaning(
             target,
-            phase,
-        };
-        if matches!(phase, GeneratedFontScalarPhase::Equals) {
-            self.restore_structured_scanner_child(
-                &mut child,
-                StructuredScannerChildDestination::Scalar,
-            )?;
-            let result = self.scan_optional_equals_retained();
-            self.retain_structured_scalar(result, retained(phase))?;
-        }
-        let source = match phase {
-            GeneratedFontScalarPhase::Amount { source }
-            | GeneratedFontScalarPhase::NoLigatures { source, .. } => source,
-            GeneratedFontScalarPhase::Equals | GeneratedFontScalarPhase::Source => {
-                self.restore_structured_scanner_child(
-                    &mut child,
-                    StructuredScannerChildDestination::Scalar,
-                )?;
-                let result = self.scan_font_selector_retained();
-                self.retain_structured_scalar(result, retained(GeneratedFontScalarPhase::Source))?
-            }
-        };
+            Meaning::Font(tex_state::font::NULL_FONT),
+            provisional_global,
+        );
+        observe!(
+            self,
+            crate::CommandObservation::Mutation(crate::MutationRecord {
+                target: crate::MutationTarget::Meaning,
+                key: crate::ObservationValue::Name(self.state.resolve(target).to_owned()),
+                value: crate::ObservationValue::Name("set_font".into()),
+                global: provisional_global,
+            }),
+        );
+        let result = self.scan_optional_equals_retained();
+        result.into_result()?;
+        let result = self.scan_font_selector_retained();
+        let source = result.into_result()?;
         let (amount, no_ligatures) = match kind {
             GeneratedFontKind::Copy => (0, false),
             GeneratedFontKind::Letterspace => {
-                let amount = match phase {
-                    GeneratedFontScalarPhase::NoLigatures { amount, .. } => amount,
-                    _ => {
-                        self.restore_structured_scanner_child(
-                            &mut child,
-                            StructuredScannerChildDestination::Scalar,
-                        )?;
-                        let result = self.scan_integer_retained();
-                        self.retain_structured_scalar(
-                            result,
-                            retained(GeneratedFontScalarPhase::Amount { source }),
-                        )?
-                        .value
-                        .clamp(-1000, 1000) as i16
-                    }
-                };
-                self.restore_structured_scanner_child(
-                    &mut child,
-                    StructuredScannerChildDestination::Scalar,
-                )?;
+                let result = self.scan_integer_retained();
+                let amount = result.into_result()?.value.clamp(-1000, 1000) as i16;
+
                 let result = self.scan_keyword_retained("nolig");
-                let no_ligatures = self
-                    .retain_structured_scalar(
-                        result,
-                        retained(GeneratedFontScalarPhase::NoLigatures { source, amount }),
-                    )?
-                    .value;
+                let no_ligatures = result.into_result()?.value;
                 (amount, no_ligatures)
             }
         };
@@ -5768,111 +3493,21 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// the first unquoted space or noncharacter remains the request boundary.
     /// Resource acquisition is expressly outside this scanner.
     pub fn scan_pdf_image_request(&mut self) -> Result<PdfImageRequest, CommandError> {
-        let pending = self.take_pending_structured_scanner()?;
-        let (mut progress, mut child) = match pending {
-            Some(PendingStructuredScanner {
-                phase:
-                    PendingStructuredScannerPhase::Scalar(PendingStructuredScalarPhase::PdfImage(
-                        progress,
-                    )),
-                child,
-            }) => (progress, child),
-            Some(PendingStructuredScanner {
-                phase:
-                    PendingStructuredScannerPhase::PdfImageAttribute {
-                        width,
-                        height,
-                        depth,
-                    },
-                mut child,
-            }) => {
-                let (attr, _) = self.scan_pdf_navigation_text(
-                    &mut child,
-                    PendingStructuredScannerPhase::PdfImageAttribute {
-                        width,
-                        height,
-                        depth,
-                    },
-                    StructuredScannerChildDestination::PdfImageAttribute,
-                )?;
-                (
-                    PdfImageScalarProgress {
-                        width,
-                        height,
-                        depth,
-                        attr: Some(attr.tokens),
-                        page: PendingPdfImagePage::Unset,
-                        color_space_object: 0,
-                        page_box: None,
-                        phase: PdfImageScalarPhase::NamedKeyword,
-                    },
-                    None,
-                )
-            }
-            Some(PendingStructuredScanner {
-                phase:
-                    PendingStructuredScannerPhase::PdfImagePageName {
-                        width,
-                        height,
-                        depth,
-                        attr,
-                    },
-                mut child,
-            }) => {
-                let (text, _) = self.scan_pdf_navigation_text(
-                    &mut child,
-                    PendingStructuredScannerPhase::PdfImagePageName {
-                        width,
-                        height,
-                        depth,
-                        attr,
-                    },
-                    StructuredScannerChildDestination::PdfImagePageName,
-                )?;
-                (
-                    PdfImageScalarProgress {
-                        width,
-                        height,
-                        depth,
-                        attr,
-                        page: PendingPdfImagePage::Named(text.tokens),
-                        color_space_object: 0,
-                        page_box: None,
-                        phase: PdfImageScalarPhase::ColorSpaceKeyword,
-                    },
-                    None,
-                )
-            }
-            Some(mut pending) => {
-                if let Some(child) = pending.take_child() {
-                    self.abort_continuation(child)?;
-                }
-                return Err(CommandError::input_invariant());
-            }
-            None => (
-                PdfImageScalarProgress {
-                    width: None,
-                    height: None,
-                    depth: None,
-                    attr: None,
-                    page: PendingPdfImagePage::Unset,
-                    color_space_object: 0,
-                    page_box: None,
-                    phase: PdfImageScalarPhase::WidthKeyword,
-                },
-                None,
-            ),
+        let mut progress = PdfImageScalarProgress {
+            width: None,
+            height: None,
+            depth: None,
+            attr: None,
+            page: PendingPdfImagePage::Unset,
+            color_space_object: 0,
+            page_box: None,
+            phase: PdfImageScalarPhase::WidthKeyword,
         };
         loop {
-            self.restore_structured_scanner_child(
-                &mut child,
-                StructuredScannerChildDestination::Scalar,
-            )?;
-            let retained = PendingStructuredScalarPhase::PdfImage(progress);
             match progress.phase {
                 PdfImageScalarPhase::WidthKeyword => {
                     let result = self.scan_keyword_retained("width");
-                    progress.phase = if self.retain_structured_scalar(result, retained)?.value {
+                    progress.phase = if result.into_result()?.value {
                         PdfImageScalarPhase::WidthDimension
                     } else {
                         PdfImageScalarPhase::HeightKeyword
@@ -5880,12 +3515,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 PdfImageScalarPhase::WidthDimension => {
                     let result = self.scan_dimension_retained();
-                    progress.width = Some(self.retain_structured_scalar(result, retained)?.value);
+                    progress.width = Some(result.into_result()?.value);
                     progress.phase = PdfImageScalarPhase::WidthKeyword;
                 }
                 PdfImageScalarPhase::HeightKeyword => {
                     let result = self.scan_keyword_retained("height");
-                    progress.phase = if self.retain_structured_scalar(result, retained)?.value {
+                    progress.phase = if result.into_result()?.value {
                         PdfImageScalarPhase::HeightDimension
                     } else {
                         PdfImageScalarPhase::DepthKeyword
@@ -5893,12 +3528,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 PdfImageScalarPhase::HeightDimension => {
                     let result = self.scan_dimension_retained();
-                    progress.height = Some(self.retain_structured_scalar(result, retained)?.value);
+                    progress.height = Some(result.into_result()?.value);
                     progress.phase = PdfImageScalarPhase::WidthKeyword;
                 }
                 PdfImageScalarPhase::DepthKeyword => {
                     let result = self.scan_keyword_retained("depth");
-                    progress.phase = if self.retain_structured_scalar(result, retained)?.value {
+                    progress.phase = if result.into_result()?.value {
                         PdfImageScalarPhase::DepthDimension
                     } else {
                         PdfImageScalarPhase::AttributeKeyword
@@ -5906,38 +3541,21 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 PdfImageScalarPhase::DepthDimension => {
                     let result = self.scan_dimension_retained();
-                    progress.depth = Some(self.retain_structured_scalar(result, retained)?.value);
+                    progress.depth = Some(result.into_result()?.value);
                     progress.phase = PdfImageScalarPhase::WidthKeyword;
                 }
                 PdfImageScalarPhase::AttributeKeyword => {
                     let result = self.scan_keyword_retained("attr");
-                    if self.retain_structured_scalar(result, retained)?.value {
-                        let (attr, _) = self.scan_pdf_navigation_text(
-                            &mut None,
-                            PendingStructuredScannerPhase::PdfImageAttribute {
-                                width: progress.width,
-                                height: progress.height,
-                                depth: progress.depth,
-                            },
-                            StructuredScannerChildDestination::PdfImageAttribute,
-                        )?;
+                    if result.into_result()?.value {
+                        let attr = self.scan_pdf_navigation_text()?;
                         progress.attr = Some(attr.tokens);
                     }
                     progress.phase = PdfImageScalarPhase::NamedKeyword;
                 }
                 PdfImageScalarPhase::NamedKeyword => {
                     let result = self.scan_keyword_retained("named");
-                    if self.retain_structured_scalar(result, retained)?.value {
-                        let (text, _) = self.scan_pdf_navigation_text(
-                            &mut None,
-                            PendingStructuredScannerPhase::PdfImagePageName {
-                                width: progress.width,
-                                height: progress.height,
-                                depth: progress.depth,
-                                attr: progress.attr,
-                            },
-                            StructuredScannerChildDestination::PdfImagePageName,
-                        )?;
+                    if result.into_result()?.value {
+                        let text = self.scan_pdf_navigation_text()?;
                         progress.page = PendingPdfImagePage::Named(text.tokens);
                         progress.phase = PdfImageScalarPhase::ColorSpaceKeyword;
                     } else {
@@ -5946,7 +3564,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 PdfImageScalarPhase::PageKeyword => {
                     let result = self.scan_keyword_retained("page");
-                    if self.retain_structured_scalar(result, retained)?.value {
+                    if result.into_result()?.value {
                         progress.phase = PdfImageScalarPhase::PageNumber;
                     } else {
                         progress.page = PendingPdfImagePage::Number(1);
@@ -5955,14 +3573,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 PdfImageScalarPhase::PageNumber => {
                     let result = self.scan_integer_retained();
-                    progress.page = PendingPdfImagePage::Number(
-                        self.retain_structured_scalar(result, retained)?.value,
-                    );
+                    progress.page = PendingPdfImagePage::Number(result.into_result()?.value);
                     progress.phase = PdfImageScalarPhase::ColorSpaceKeyword;
                 }
                 PdfImageScalarPhase::ColorSpaceKeyword => {
                     let result = self.scan_keyword_retained("colorspace");
-                    progress.phase = if self.retain_structured_scalar(result, retained)?.value {
+                    progress.phase = if result.into_result()?.value {
                         PdfImageScalarPhase::ColorSpaceObject
                     } else {
                         PdfImageScalarPhase::MediaBox
@@ -5970,8 +3586,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 PdfImageScalarPhase::ColorSpaceObject => {
                     let result = self.scan_integer_retained();
-                    progress.color_space_object =
-                        self.retain_structured_scalar(result, retained)?.value;
+                    progress.color_space_object = result.into_result()?.value;
                     progress.phase = PdfImageScalarPhase::MediaBox;
                 }
                 PdfImageScalarPhase::MediaBox
@@ -6008,7 +3623,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         _ => unreachable!(),
                     };
                     let result = self.scan_keyword_retained(keyword);
-                    if self.retain_structured_scalar(result, retained)?.value {
+                    if result.into_result()?.value {
                         progress.page_box = Some(selected);
                         progress.phase = PdfImageScalarPhase::FileName;
                     } else {
@@ -6017,7 +3632,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 PdfImageScalarPhase::FileName => {
                     let result = self.scan_file_name_retained();
-                    let name = self.retain_structured_scalar(result, retained)?.packed();
+                    let name = result.into_result()?.packed();
                     let page = match progress.page {
                         PendingPdfImagePage::Unset => PdfImagePageSelection::Number(1),
                         PendingPdfImagePage::Number(page) => PdfImagePageSelection::Number(page),
@@ -6062,9 +3677,8 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// only then `do_assignments`, so the accent code is the whole of what the
     /// command layer owns before the executor takes over.
     pub fn scan_accent(&mut self) -> Result<ScannedAccent, CommandError> {
-        self.restore_structured_unary(StructuredUnaryScalar::Accent)?;
         let result = self.scan_integer_retained();
-        let accent = self.finish_structured_unary(result, StructuredUnaryScalar::Accent)?;
+        let accent = result.into_result()?;
         Ok(ScannedAccent {
             accent: accent.value,
             accent_provenance: StructuredProvenance {
@@ -6089,38 +3703,6 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// branch replays, and it does so here, inside the delivery episode that
     /// owns the command.
     pub fn scan_accent_base(&mut self) -> Result<ScannedAccentBase<G>, CommandError> {
-        if let Some(pending) = self.take_pending_structured_scanner()? {
-            let PendingStructuredScanner { phase, mut child } = pending;
-            return match phase {
-                PendingStructuredScannerPhase::Scalar(
-                    PendingStructuredScalarPhase::AccentBaseCharacter { provenance },
-                ) => {
-                    self.restore_structured_scanner_child(
-                        &mut child,
-                        StructuredScannerChildDestination::Scalar,
-                    )?;
-                    let result = self.scan_integer_retained();
-                    let character = u8::try_from(
-                        self.retain_structured_scalar(
-                            result,
-                            PendingStructuredScalarPhase::AccentBaseCharacter { provenance },
-                        )?
-                        .value,
-                    )
-                    .map_err(|_| CommandError::input_invariant())?;
-                    Ok(ScannedAccentBase::Character {
-                        character,
-                        provenance,
-                    })
-                }
-                _ => {
-                    if let Some(child) = child.take() {
-                        self.abort_continuation(child.restore().0)?;
-                    }
-                    Err(CommandError::input_invariant())
-                }
-            };
-        }
         let mut destination = None;
         match self.next_non_blank_non_relax_x_token_into(&mut destination)? {
             DeliveryStatus::End => return Ok(ScannedAccentBase::Missing),
@@ -6150,14 +3732,8 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
             Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char)) => {
                 let result = self.scan_integer_retained();
-                let character = u8::try_from(
-                    self.retain_structured_scalar(
-                        result,
-                        PendingStructuredScalarPhase::AccentBaseCharacter { provenance },
-                    )?
-                    .value,
-                )
-                .map_err(|_| CommandError::input_invariant())?;
+                let character = u8::try_from(result.into_result()?.value)
+                    .map_err(|_| CommandError::input_invariant())?;
                 Ok(ScannedAccentBase::Character {
                     character,
                     provenance,
@@ -6227,11 +3803,8 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// the `open_node_size` case (`\openout`) and which reports "Bad number"
     /// and recovers as stream zero instead.
     pub fn scan_write_stream(&mut self) -> Result<WriteStreamSelector, CommandError> {
-        self.restore_structured_unary(StructuredUnaryScalar::WriteStream)?;
         let result = self.scan_integer_retained();
-        let value = self
-            .finish_structured_unary(result, StructuredUnaryScalar::WriteStream)?
-            .value;
+        let value = result.into_result()?.value;
         Ok(if value < 0 {
             WriteStreamSelector::Negative
         } else if value > 15 {
@@ -6251,65 +3824,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         pdf_output_enabled: bool,
     ) -> Result<ImmediateExtension, CommandError> {
-        if self
-            .scanner_resume
-            .as_ref()
-            .is_some_and(crate::ScannerFrameKey::is_structured_scanner)
-        {
-            let pending = self.take_pending_structured_scanner()?;
-            let Some(PendingStructuredScanner { phase, child }) = pending else {
-                return Err(CommandError::input_invariant());
-            };
-            match phase {
-                PendingStructuredScannerPhase::Scalar(
-                    PendingStructuredScalarPhase::ImmediateOpenOut(phase),
-                ) => return self.finish_immediate_open_out(phase, child),
-                PendingStructuredScannerPhase::Scalar(
-                    PendingStructuredScalarPhase::ImmediateWriteStream { close },
-                ) => {
-                    let mut child = child;
-                    self.restore_structured_scanner_child(
-                        &mut child,
-                        StructuredScannerChildDestination::Scalar,
-                    )?;
-                    let stream = self.scan_immediate_write_stream_selector(close)?;
-                    return if close {
-                        Ok(ImmediateExtension::CloseOut { stream })
-                    } else {
-                        self.finish_immediate_write(stream, None)
-                    };
-                }
-                PendingStructuredScannerPhase::Immediate(phase) => {
-                    let mut child = child;
-                    self.restore_structured_scanner_child(
-                        &mut child,
-                        StructuredScannerChildDestination::ImmediateChild,
-                    )?;
-                    return match phase {
-                        PendingImmediatePhase::WriteText { stream } => {
-                            self.finish_immediate_write(stream, None)
-                        }
-                        PendingImmediatePhase::WriteExpansion { stream, tokens } => {
-                            self.finish_immediate_write(stream, Some(tokens))
-                        }
-                        PendingImmediatePhase::Pdf {
-                            primitive,
-                            pdf_output_enabled: retained,
-                        } if retained == pdf_output_enabled => {
-                            self.finish_immediate_pdf(primitive, pdf_output_enabled)
-                        }
-                        _ => Err(CommandError::input_invariant()),
-                    };
-                }
-                phase => {
-                    let mut pending = PendingStructuredScanner { phase, child };
-                    if let Some(child) = pending.take_child() {
-                        self.abort_continuation(child)?;
-                    }
-                }
-            }
-            return Err(CommandError::input_invariant());
-        }
         let mut destination = None;
         let command = loop {
             if self.request_expanded_token(&mut destination)? != DeliveryStatus::Command {
@@ -6328,14 +3842,14 @@ impl<G> CommandProcessor<'_, '_, G> {
         };
         match static_meaning(command.meaning()) {
             Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::OpenOut)) => {
-                self.finish_immediate_open_out(ImmediateOpenOutScalarPhase::Stream, None)
+                self.finish_immediate_open_out()
             }
             Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Write)) => {
-                let stream = self.scan_immediate_write_stream_selector(false)?;
-                self.finish_immediate_write(stream, None)
+                let stream = self.scan_immediate_write_stream_selector()?;
+                self.finish_immediate_write(stream)
             }
             Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::CloseOut)) => {
-                let stream = self.scan_immediate_write_stream_selector(true)?;
+                let stream = self.scan_immediate_write_stream_selector()?;
                 Ok(ImmediateExtension::CloseOut { stream })
             }
             Some(Meaning::UnexpandablePrimitive(
@@ -6352,15 +3866,9 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     fn scan_immediate_write_stream_selector(
         &mut self,
-        close: bool,
     ) -> Result<WriteStreamSelector, CommandError> {
         let result = self.scan_integer_retained();
-        let value = self
-            .retain_structured_scalar(
-                result,
-                PendingStructuredScalarPhase::ImmediateWriteStream { close },
-            )?
-            .value;
+        let value = result.into_result()?.value;
         Ok(if value < 0 {
             WriteStreamSelector::Negative
         } else if value > 15 {
@@ -6373,39 +3881,18 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn finish_immediate_write(
         &mut self,
         stream: WriteStreamSelector,
-        retained_tokens: Option<AttemptTokenListId>,
     ) -> Result<ImmediateExtension, CommandError> {
         // TeX82 §53 first saves write text without expansion, then
         // `write_out` replays it under an outer `\\endwrite` stopper.
-        let tokens = if let Some(tokens) = retained_tokens {
-            tokens
-        } else {
-            match self.scan_immediate_write_text() {
-                Ok(tokens) => tokens,
-                Err(error) => {
-                    if error.is_resource_suspension() {
-                        self.retain_structured_scanner(
-                            PendingStructuredScannerPhase::Immediate(
-                                PendingImmediatePhase::WriteText { stream },
-                            ),
-                            StructuredScannerChildDestination::ImmediateChild,
-                        )?;
-                    }
-                    return Err(error);
-                }
+        let tokens = match self.scan_immediate_write_text() {
+            Ok(tokens) => tokens,
+            Err(error) => {
+                return Err(error);
             }
         };
         let expanded = match self.expand_write_text(tokens) {
             Ok(expanded) => expanded,
             Err(error) => {
-                if error.is_resource_suspension() {
-                    self.retain_structured_scanner(
-                        PendingStructuredScannerPhase::Immediate(
-                            PendingImmediatePhase::WriteExpansion { stream, tokens },
-                        ),
-                        StructuredScannerChildDestination::ImmediateChild,
-                    )?;
-                }
                 return Err(error);
             }
         };
@@ -6435,70 +3922,16 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .map(ImmediateExtension::PdfImage),
             _ => return Err(CommandError::input_invariant()),
         };
-        match result {
-            Err(error) if error.is_resource_suspension() => {
-                self.retain_structured_scanner(
-                    PendingStructuredScannerPhase::Immediate(PendingImmediatePhase::Pdf {
-                        primitive,
-                        pdf_output_enabled,
-                    }),
-                    StructuredScannerChildDestination::ImmediateChild,
-                )?;
-                Err(error)
-            }
-            result => result,
-        }
+        result
     }
 
-    fn finish_immediate_open_out(
-        &mut self,
-        phase: ImmediateOpenOutScalarPhase,
-        mut child: Option<
-            crate::execution_scratch::ChildContinuation<G, StructuredScannerChildDestination>,
-        >,
-    ) -> Result<ImmediateExtension, CommandError> {
-        let stream = match phase {
-            ImmediateOpenOutScalarPhase::Stream => {
-                self.restore_structured_scanner_child(
-                    &mut child,
-                    StructuredScannerChildDestination::Scalar,
-                )?;
-                let result = self.scan_restricted_integer_retained(RestrictedIntegerClass::FourBit);
-                self.retain_structured_scalar(
-                    result,
-                    PendingStructuredScalarPhase::ImmediateOpenOut(
-                        ImmediateOpenOutScalarPhase::Stream,
-                    ),
-                )?
-                .value as u8
-            }
-            ImmediateOpenOutScalarPhase::Equals { stream }
-            | ImmediateOpenOutScalarPhase::FileName { stream } => stream,
-        };
-        if !matches!(phase, ImmediateOpenOutScalarPhase::FileName { .. }) {
-            self.restore_structured_scanner_child(
-                &mut child,
-                StructuredScannerChildDestination::Scalar,
-            )?;
-            let result = self.scan_optional_equals_retained();
-            self.retain_structured_scalar(
-                result,
-                PendingStructuredScalarPhase::ImmediateOpenOut(
-                    ImmediateOpenOutScalarPhase::Equals { stream },
-                ),
-            )?;
-        }
-        self.restore_structured_scanner_child(
-            &mut child,
-            StructuredScannerChildDestination::Scalar,
-        )?;
+    fn finish_immediate_open_out(&mut self) -> Result<ImmediateExtension, CommandError> {
+        let result = self.scan_restricted_integer_retained(RestrictedIntegerClass::FourBit);
+        let stream = result.into_result()?.value as u8;
+        let result = self.scan_optional_equals_retained();
+        result.into_result()?;
         let result = self.scan_file_name_retained();
-        let file_name = self.retain_structured_scalar(
-            result,
-            PendingStructuredScalarPhase::ImmediateOpenOut(ImmediateOpenOutScalarPhase::FileName {
-                stream,
-            }),
-        )?;
+        let file_name = result.into_result()?;
         Ok(ImmediateExtension::OpenOut { stream, file_name })
     }
 
@@ -6552,101 +3985,71 @@ impl<G> CommandProcessor<'_, '_, G> {
             ch: '{',
             cat: Catcode::BeginGroup,
         };
-        let pending = self.take_pending_structured_scanner()?;
-        let (stopper_level, write_words, mut child) =
-            if let Some(PendingStructuredScanner { phase, child }) = pending {
-                match phase {
-                    PendingStructuredScannerPhase::WriteExpansion {
-                        tokens: retained,
-                        stopper_level,
-                        write_words,
-                    } if retained == tokens => (stopper_level, write_words, child),
-                    phase => {
-                        let mut pending = PendingStructuredScanner { phase, child };
-                        if let Some(child) = pending.take_child() {
-                            self.abort_continuation(child)?;
-                        }
-                        return Err(CommandError::input_invariant());
-                    }
-                }
-            } else {
-                let write_words = self
+        let (stopper_level, write_words) = {
+            let write_words = self
+                .command
+                .attempt
+                .arena()
+                .token_words(tokens)
+                .map_err(|_| CommandError::input_invariant())?
+                .len();
+            // The bottom stopper delivers the synthetic closing brace followed
+            // by frozen outer `\\endwrite`; the write list and opening brace sit
+            // above it exactly as TeX82's three `ins_list` calls do.
+            let stopper_level = self.push_write_recovery([right_brace, endwrite], right_brace);
+            let write_level = self
+                .command
+                .push_attempt_list_level(
+                    tokens,
+                    u32::try_from(write_words).map_err(|_| CommandError::input_invariant())?,
+                    TokenBehavior::Ordinary,
+                    RetirementBehavior::Pop,
+                    ReplayTrace::Stored(StoredReplayReason::Write),
+                )
+                .map_err(|_| CommandError::input_invariant())?;
+            // TeX82 §§323 and 1370 trace the named write_text list at
+            // begin_token_list, before the opening-brace insertion and expanded
+            // scan_toks can report an error.
+            if self
+                .state
+                .int_param(tex_state::env::banks::IntParam::TRACING_MACROS)
+                > 1
+            {
+                let mut text = String::new();
+                crate::processor::expand_render::append_print_esc_text(
+                    self.state, "write", &mut text,
+                );
+                text.push_str("->");
+                let words = self
                     .command
                     .attempt
                     .arena()
                     .token_words(tokens)
-                    .map_err(|_| CommandError::input_invariant())?
-                    .len();
-                // The bottom stopper delivers the synthetic closing brace followed
-                // by frozen outer `\\endwrite`; the write list and opening brace sit
-                // above it exactly as TeX82's three `ins_list` calls do.
-                let stopper_level = self.push_write_recovery([right_brace, endwrite], right_brace);
-                let write_level = self
-                    .command
-                    .push_attempt_list_level(
-                        tokens,
-                        u32::try_from(write_words).map_err(|_| CommandError::input_invariant())?,
-                        TokenBehavior::Ordinary,
-                        RetirementBehavior::Pop,
-                        ReplayTrace::Stored(StoredReplayReason::Write),
-                    )
                     .map_err(|_| CommandError::input_invariant())?;
-                // TeX82 §§323 and 1370 trace the named write_text list at
-                // begin_token_list, before the opening-brace insertion and expanded
-                // scan_toks can report an error.
-                if self
-                    .state
-                    .int_param(tex_state::env::banks::IntParam::TRACING_MACROS)
-                    > 1
-                {
-                    let mut text = String::new();
-                    crate::processor::expand_render::append_print_esc_text(
-                        self.state, "write", &mut text,
-                    );
-                    text.push_str("->");
-                    let words = self
-                        .command
-                        .attempt
-                        .arena()
-                        .token_words(tokens)
-                        .map_err(|_| CommandError::input_invariant())?;
-                    for word in words.iter() {
-                        crate::processor::expand_render::append_token_list_token_text(
-                            self.state,
-                            word.semantic_token(),
-                            &mut text,
-                        );
-                    }
-                    self.command.semantic_diagnostics.push(
-                        crate::CommandSemanticDiagnostic::Trace {
-                            text,
-                            force_newline: false,
-                        },
+                for word in words.iter() {
+                    crate::processor::expand_render::append_token_list_token_text(
+                        self.state,
+                        word.semantic_token(),
+                        &mut text,
                     );
                 }
-                self.observe_write_list_push(write_level);
-                self.push_write_recovery([left_brace], left_brace);
-                (stopper_level, write_words, None)
-            };
+                self.command
+                    .semantic_diagnostics
+                    .push(crate::CommandSemanticDiagnostic::Trace {
+                        text,
+                        force_newline: false,
+                    });
+            }
+            self.observe_write_list_push(write_level);
+            self.push_write_recovery([left_brace], left_brace);
+            (stopper_level, write_words)
+        };
 
         self.outer_recovered_while_absorbing = false;
-        self.restore_structured_scanner_child(
-            &mut child,
-            StructuredScannerChildDestination::WriteExpansionText,
-        )?;
+
         let expanded = match self.scan_balanced_text(true) {
             Ok(expanded) => expanded.tokens,
             Err(error) => {
-                if error.is_resource_suspension() {
-                    self.retain_structured_scanner(
-                        PendingStructuredScannerPhase::WriteExpansion {
-                            tokens,
-                            stopper_level,
-                            write_words,
-                        },
-                        StructuredScannerChildDestination::WriteExpansionText,
-                    )?;
-                }
                 return Err(error);
             }
         };
@@ -6741,41 +4144,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         set_box_allowed: bool,
     ) -> Result<ScannedSetBoxAssignment, CommandError> {
-        let pending = self.take_pending_structured_scanner()?;
-        let (phase, mut child) = match pending {
-            Some(PendingStructuredScanner {
-                phase: PendingStructuredScannerPhase::Scalar(phase),
-                child,
-            }) => (phase, child),
-            Some(mut pending) => {
-                if let Some(child) = pending.take_child() {
-                    self.abort_continuation(child)?;
-                }
-                return Err(CommandError::input_invariant());
-            }
-            None => (PendingStructuredScalarPhase::SetBoxIndex, None),
-        };
-        let index = match phase {
-            PendingStructuredScalarPhase::SetBoxIndex => {
-                self.restore_structured_scanner_child(
-                    &mut child,
-                    StructuredScannerChildDestination::Scalar,
-                )?;
-                let result = self.scan_profile_register_index_retained();
-                self.retain_structured_scalar(result, PendingStructuredScalarPhase::SetBoxIndex)?
-            }
-            PendingStructuredScalarPhase::SetBoxEquals { index } => index,
-            _ => return Err(CommandError::input_invariant()),
-        };
-        self.restore_structured_scanner_child(
-            &mut child,
-            StructuredScannerChildDestination::Scalar,
-        )?;
+        let index = self.scan_profile_register_index_retained().into_result()?;
         let result = self.scan_optional_equals_retained();
-        self.retain_structured_scalar(
-            result,
-            PendingStructuredScalarPhase::SetBoxEquals { index },
-        )?;
+        result.into_result()?;
         let path = if set_box_allowed {
             ScannedSetBoxPath::Payload(self.scan_box_payload()?)
         } else {
@@ -6789,10 +4160,9 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// Scans the register operand of TeX82 §1079's `make_box(box_code)` and
     /// e-TeX 2.6 [47.1079]'s sparse-array replacement.
     pub fn scan_box_register(&mut self) -> Result<ScannedBoxRegister, CommandError> {
-        self.restore_structured_unary(StructuredUnaryScalar::BoxRegister)?;
         let result = self.scan_profile_register_index_retained();
         Ok(ScannedBoxRegister {
-            index: self.finish_structured_unary(result, StructuredUnaryScalar::BoxRegister)?,
+            index: result.into_result()?,
         })
     }
 
@@ -6801,73 +4171,11 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// e-TeX 2.6 [47.1082] widens the source box selector from
     /// `scan_eight_bit_int` to `scan_register_num`.
     pub fn scan_vsplit(&mut self) -> Result<ScannedVSplit, CommandError> {
-        let pending = self.take_pending_structured_scanner()?;
-        let (mut phase, mut child) = match pending {
-            Some(PendingStructuredScanner {
-                phase: PendingStructuredScannerPhase::Scalar(phase),
-                child,
-            }) => (phase, child),
-            Some(mut pending) => {
-                if let Some(child) = pending.take_child() {
-                    self.abort_continuation(child)?;
-                }
-                return Err(CommandError::input_invariant());
-            }
-            None => (PendingStructuredScalarPhase::VSplitIndex, None),
-        };
-        let index = match phase {
-            PendingStructuredScalarPhase::VSplitIndex => {
-                self.restore_structured_scanner_child(
-                    &mut child,
-                    StructuredScannerChildDestination::Scalar,
-                )?;
-                let result = self.scan_profile_register_index_retained();
-                let index = self
-                    .retain_structured_scalar(result, PendingStructuredScalarPhase::VSplitIndex)?;
-                phase = PendingStructuredScalarPhase::VSplitTo { index };
-                index
-            }
-            PendingStructuredScalarPhase::VSplitTo { index }
-            | PendingStructuredScalarPhase::VSplitHeight { index, .. } => index,
-            _ => {
-                if let Some(child) = child.take() {
-                    self.abort_continuation(child.restore().0)?;
-                }
-                return Err(CommandError::input_invariant());
-            }
-        };
-        let missing_to_context = match phase {
-            PendingStructuredScalarPhase::VSplitHeight {
-                missing_to_context, ..
-            } => missing_to_context,
-            PendingStructuredScalarPhase::VSplitTo { .. } => {
-                self.restore_structured_scanner_child(
-                    &mut child,
-                    StructuredScannerChildDestination::Scalar,
-                )?;
-                let result = self.scan_keyword_retained("to");
-                let found = self.retain_structured_scalar(
-                    result,
-                    PendingStructuredScalarPhase::VSplitTo { index },
-                )?;
-                (!found.value).then(|| self.command.output_open_context(self.state))
-            }
-            _ => unreachable!("index phase advanced to to/height"),
-        };
-        self.restore_structured_scanner_child(
-            &mut child,
-            StructuredScannerChildDestination::Scalar,
-        )?;
-        let result = self.scan_dimension_retained();
-        let height = self
-            .retain_structured_scalar(
-                result,
-                PendingStructuredScalarPhase::VSplitHeight {
-                    index,
-                    missing_to_context: missing_to_context.clone(),
-                },
-            )?
-            .value;
+        let index = self.scan_profile_register_index_retained().into_result()?;
+        let found = self.scan_keyword_retained("to").into_result()?;
+        let missing_to_context =
+            (!found.value).then(|| self.command.output_open_context(self.state));
+        let height = self.scan_dimension_retained().into_result()?.value;
         let split_context = self.command.output_open_context(self.state);
         Ok(ScannedVSplit {
             index,
@@ -6950,9 +4258,8 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     /// TeX82 §46's `\\showthe` internal-value scan.
     pub fn scan_showthe(&mut self) -> Result<ScannedDisplayDiagnostic, CommandError> {
-        self.restore_structured_unary(StructuredUnaryScalar::ShowThe)?;
         let result = self.scan_internal_value_or_zero_retained();
-        let value = self.finish_structured_unary(result, StructuredUnaryScalar::ShowThe)?;
+        let value = result.into_result()?;
         let text = match value.value {
             value @ (InternalValue::Integer(_)
             | InternalValue::Dimension(_)
@@ -7014,9 +4321,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         } else {
             RestrictedIntegerClass::EightBit
         };
-        self.restore_structured_unary(StructuredUnaryScalar::ShowBox)?;
         let result = self.scan_restricted_integer_retained(class);
-        let index = self.finish_structured_unary(result, StructuredUnaryScalar::ShowBox)?;
+        let index = result.into_result()?;
         Ok((
             u16::try_from(index.value).expect("recovered register number is in range"),
             StructuredProvenance {
@@ -7027,28 +4333,6 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     /// Scans the payload prefix of TeX82 §1090's leader commands.
     pub fn scan_leader_payload(&mut self) -> Result<ScannedLeaderPayload, CommandError> {
-        if let Some(pending) = self.take_pending_structured_scanner()? {
-            let PendingStructuredScanner { phase, mut child } = pending;
-            let PendingStructuredScannerPhase::Scalar(
-                PendingStructuredScalarPhase::LeaderRegister { copy },
-            ) = phase
-            else {
-                if let Some(child) = child.take() {
-                    self.abort_continuation(child.restore().0)?;
-                }
-                return Err(CommandError::input_invariant());
-            };
-            self.restore_structured_scanner_child(
-                &mut child,
-                StructuredScannerChildDestination::Scalar,
-            )?;
-            let result = self.scan_eight_bit_register_index_retained();
-            let index = self.retain_structured_scalar(
-                result,
-                PendingStructuredScalarPhase::LeaderRegister { copy },
-            )?;
-            return Ok(ScannedLeaderPayload::BoxRegister { index, copy });
-        }
         let mut destination = None;
         match self.request_expanded_token(&mut destination)? {
             DeliveryStatus::End => return Ok(ScannedLeaderPayload::Missing),
@@ -7060,20 +4344,14 @@ impl<G> CommandProcessor<'_, '_, G> {
             Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Box)) => {
                 let result = self.scan_eight_bit_register_index_retained();
                 Ok(ScannedLeaderPayload::BoxRegister {
-                    index: self.retain_structured_scalar(
-                        result,
-                        PendingStructuredScalarPhase::LeaderRegister { copy: false },
-                    )?,
+                    index: result.into_result()?,
                     copy: false,
                 })
             }
             Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Copy)) => {
                 let result = self.scan_eight_bit_register_index_retained();
                 Ok(ScannedLeaderPayload::BoxRegister {
-                    index: self.retain_structured_scalar(
-                        result,
-                        PendingStructuredScalarPhase::LeaderRegister { copy: true },
-                    )?,
+                    index: result.into_result()?,
                     copy: true,
                 })
             }
@@ -7104,58 +4382,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         index: u16,
         mu: bool,
     ) -> Result<ScannedGlueParameterAssignment, CommandError> {
-        let pending = self.take_pending_structured_scanner()?;
-        let (value_phase, mut child) = match pending {
-            Some(PendingStructuredScanner {
-                phase:
-                    PendingStructuredScannerPhase::Scalar(
-                        PendingStructuredScalarPhase::GlueParameterEquals {
-                            index: retained_index,
-                            mu: retained_mu,
-                        },
-                    ),
-                child,
-            }) if retained_index == index && retained_mu == mu => (false, child),
-            Some(PendingStructuredScanner {
-                phase:
-                    PendingStructuredScannerPhase::Scalar(
-                        PendingStructuredScalarPhase::GlueParameterValue {
-                            index: retained_index,
-                            mu: retained_mu,
-                        },
-                    ),
-                child,
-            }) if retained_index == index && retained_mu == mu => (true, child),
-            Some(mut pending) => {
-                if let Some(child) = pending.take_child() {
-                    self.abort_continuation(child)?;
-                }
-                return Err(CommandError::input_invariant());
-            }
-            None => (false, None),
-        };
-        if !value_phase {
-            self.restore_structured_scanner_child(
-                &mut child,
-                StructuredScannerChildDestination::Scalar,
-            )?;
-            let result = self.scan_optional_equals_retained();
-            self.retain_structured_scalar(
-                result,
-                PendingStructuredScalarPhase::GlueParameterEquals { index, mu },
-            )?;
-        }
-        self.restore_structured_scanner_child(
-            &mut child,
-            StructuredScannerChildDestination::Scalar,
-        )?;
+        let result = self.scan_optional_equals_retained();
+        result.into_result()?;
+
         let result = self.scan_glue_retained(mu);
-        let value = self
-            .retain_structured_scalar(
-                result,
-                PendingStructuredScalarPhase::GlueParameterValue { index, mu },
-            )?
-            .value;
+        let value = result.into_result()?.value;
         Ok(ScannedGlueParameterAssignment { index, value, mu })
     }
 
@@ -7165,65 +4396,20 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// scanning stay in command control, including failed-keyword replay.
     pub fn scan_rule_spec(
         &mut self,
-        primitive: UnexpandablePrimitive,
+        _primitive: UnexpandablePrimitive,
     ) -> Result<ScannedRuleSpec, CommandError> {
         let default_rule = Scaled::from_raw(26_214);
-        let pending = self.take_pending_structured_scanner()?;
-        let (mut width, mut height, mut depth, mut phase, mut child) = match pending {
-            Some(PendingStructuredScanner {
-                phase:
-                    PendingStructuredScannerPhase::Scalar(PendingStructuredScalarPhase::Rule {
-                        primitive: retained_primitive,
-                        width,
-                        height,
-                        depth,
-                        phase,
-                    }),
-                child,
-            }) if retained_primitive == primitive => (width, height, depth, phase, child),
-            Some(mut pending) => {
-                if let Some(child) = pending.take_child() {
-                    self.abort_continuation(child)?;
-                }
-                return Err(CommandError::input_invariant());
-            }
-            None if primitive == UnexpandablePrimitive::VRule => (
-                Some(default_rule),
-                None,
-                None,
-                RuleScalarPhase::WidthKeyword,
-                None,
-            ),
-            None => (
-                None,
-                Some(default_rule),
-                Some(Scaled::from_raw(0)),
-                RuleScalarPhase::WidthKeyword,
-                None,
-            ),
-        };
+        let (mut width, mut height, mut depth, mut phase) = (
+            None,
+            Some(default_rule),
+            Some(Scaled::from_raw(0)),
+            RuleScalarPhase::WidthKeyword,
+        );
         loop {
-            self.restore_structured_scanner_child(
-                &mut child,
-                StructuredScannerChildDestination::Scalar,
-            )?;
-            let retained_phase = |phase| PendingStructuredScalarPhase::Rule {
-                primitive,
-                width,
-                height,
-                depth,
-                phase,
-            };
             match phase {
                 RuleScalarPhase::WidthKeyword => {
                     let result = self.scan_keyword_retained("width");
-                    if self
-                        .retain_structured_scalar(
-                            result,
-                            retained_phase(RuleScalarPhase::WidthKeyword),
-                        )?
-                        .value
-                    {
+                    if result.into_result()?.value {
                         phase = RuleScalarPhase::WidthDimension;
                     } else {
                         phase = RuleScalarPhase::HeightKeyword;
@@ -7231,24 +4417,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 RuleScalarPhase::WidthDimension => {
                     let result = self.scan_dimension_retained();
-                    width = Some(
-                        self.retain_structured_scalar(
-                            result,
-                            retained_phase(RuleScalarPhase::WidthDimension),
-                        )?
-                        .value,
-                    );
+                    width = Some(result.into_result()?.value);
                     phase = RuleScalarPhase::WidthKeyword;
                 }
                 RuleScalarPhase::HeightKeyword => {
                     let result = self.scan_keyword_retained("height");
-                    if self
-                        .retain_structured_scalar(
-                            result,
-                            retained_phase(RuleScalarPhase::HeightKeyword),
-                        )?
-                        .value
-                    {
+                    if result.into_result()?.value {
                         phase = RuleScalarPhase::HeightDimension;
                     } else {
                         phase = RuleScalarPhase::DepthKeyword;
@@ -7256,24 +4430,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 RuleScalarPhase::HeightDimension => {
                     let result = self.scan_dimension_retained();
-                    height = Some(
-                        self.retain_structured_scalar(
-                            result,
-                            retained_phase(RuleScalarPhase::HeightDimension),
-                        )?
-                        .value,
-                    );
+                    height = Some(result.into_result()?.value);
                     phase = RuleScalarPhase::WidthKeyword;
                 }
                 RuleScalarPhase::DepthKeyword => {
                     let result = self.scan_keyword_retained("depth");
-                    if self
-                        .retain_structured_scalar(
-                            result,
-                            retained_phase(RuleScalarPhase::DepthKeyword),
-                        )?
-                        .value
-                    {
+                    if result.into_result()?.value {
                         phase = RuleScalarPhase::DepthDimension;
                     } else {
                         break;
@@ -7281,13 +4443,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 RuleScalarPhase::DepthDimension => {
                     let result = self.scan_dimension_retained();
-                    depth = Some(
-                        self.retain_structured_scalar(
-                            result,
-                            retained_phase(RuleScalarPhase::DepthDimension),
-                        )?
-                        .value,
-                    );
+                    depth = Some(result.into_result()?.value);
                     phase = RuleScalarPhase::WidthKeyword;
                 }
             }
@@ -7333,43 +4489,13 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// <dimen>{`, and `\hbox to <dimen>{` are the same scan, and a site that
     /// skipped straight to §403's mandatory left brace would reject the `t`
     /// of `to` as a missing brace.
-    fn scan_spec_packing(
-        &mut self,
-        owner: PackingOwner,
-    ) -> Result<ScannedPackingSpec, CommandError> {
-        let pending = self.take_pending_structured_scanner()?;
-        let (mut phase, mut child) = match pending {
-            Some(PendingStructuredScanner {
-                phase:
-                    PendingStructuredScannerPhase::Scalar(PendingStructuredScalarPhase::Packing {
-                        owner: retained_owner,
-                        phase,
-                    }),
-                child,
-            }) if retained_owner == owner => (phase, child),
-            Some(mut pending) => {
-                if let Some(child) = pending.take_child() {
-                    self.abort_continuation(child)?;
-                }
-                return Err(CommandError::input_invariant());
-            }
-            None => (PackingScalarPhase::ToKeyword, None),
-        };
+    fn scan_spec_packing(&mut self) -> Result<ScannedPackingSpec, CommandError> {
+        let mut phase = PackingScalarPhase::ToKeyword;
         loop {
-            self.restore_structured_scanner_child(
-                &mut child,
-                StructuredScannerChildDestination::Scalar,
-            )?;
             match phase {
                 PackingScalarPhase::ToKeyword => {
                     let result = self.scan_keyword_retained("to");
-                    if self
-                        .retain_structured_scalar(
-                            result,
-                            PendingStructuredScalarPhase::Packing { owner, phase },
-                        )?
-                        .value
-                    {
+                    if result.into_result()?.value {
                         phase = PackingScalarPhase::Dimension { exactly: true };
                     } else {
                         phase = PackingScalarPhase::SpreadKeyword;
@@ -7377,13 +4503,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 PackingScalarPhase::SpreadKeyword => {
                     let result = self.scan_keyword_retained("spread");
-                    if self
-                        .retain_structured_scalar(
-                            result,
-                            PendingStructuredScalarPhase::Packing { owner, phase },
-                        )?
-                        .value
-                    {
+                    if result.into_result()?.value {
                         phase = PackingScalarPhase::Dimension { exactly: false };
                     } else {
                         return Ok(ScannedPackingSpec::Natural);
@@ -7391,12 +4511,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 PackingScalarPhase::Dimension { exactly } => {
                     let result = self.scan_dimension_retained();
-                    let value = self
-                        .retain_structured_scalar(
-                            result,
-                            PendingStructuredScalarPhase::Packing { owner, phase },
-                        )?
-                        .value;
+                    let value = result.into_result()?.value;
                     return Ok(if exactly {
                         ScannedPackingSpec::Exactly(value)
                     } else {
@@ -7427,7 +4542,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             UnexpandablePrimitive::VCenter => ScannedBoxKind::VCenter,
             _ => return Err(CommandError::input_invariant()),
         };
-        let packing = self.scan_spec_packing(PackingOwner::Box(primitive))?;
+        let packing = self.scan_spec_packing()?;
         self.scan_box_group_opening()?;
         Ok(ScannedBoxConstruction { kind, packing })
     }
@@ -7445,55 +4560,16 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         is_vadjust: bool,
     ) -> Result<ScannedInsertConstruction, CommandError> {
-        let pending = self.take_pending_structured_scanner()?;
-        let (phase, mut child) = match pending {
-            Some(PendingStructuredScanner {
-                phase: PendingStructuredScannerPhase::Scalar(phase),
-                child,
-            }) => (phase, child),
-            Some(mut pending) => {
-                if let Some(child) = pending.take_child() {
-                    self.abort_continuation(child)?;
-                }
-                return Err(CommandError::input_invariant());
-            }
-            None => (PendingStructuredScalarPhase::InsertPre, None),
-        };
-        let pre = match phase {
-            PendingStructuredScalarPhase::InsertPre
-                if is_vadjust && self.command.profile().capabilities().supports_pdftex() =>
-            {
-                self.restore_structured_scanner_child(
-                    &mut child,
-                    StructuredScannerChildDestination::Scalar,
-                )?;
-                let result = self.scan_keyword_retained("pre");
-                self.retain_structured_scalar(result, PendingStructuredScalarPhase::InsertPre)?
-                    .value
-            }
-            PendingStructuredScalarPhase::InsertPre => false,
-            PendingStructuredScalarPhase::InsertClass { pre } => pre,
-            _ => {
-                if let Some(child) = child.take() {
-                    self.abort_continuation(child.restore().0)?;
-                }
-                return Err(CommandError::input_invariant());
-            }
+        let pre = if is_vadjust && self.command.profile().capabilities().supports_pdftex() {
+            self.scan_keyword_retained("pre").into_result()?.value
+        } else {
+            false
         };
         let (class, reserved_class_context) = if is_vadjust {
             (255, None)
         } else {
-            self.restore_structured_scanner_child(
-                &mut child,
-                StructuredScannerChildDestination::Scalar,
-            )?;
             let result = self.scan_restricted_integer_retained(RestrictedIntegerClass::EightBit);
-            let class = self
-                .retain_structured_scalar(
-                    result,
-                    PendingStructuredScalarPhase::InsertClass { pre },
-                )?
-                .value;
+            let class = result.into_result()?.value;
             let context = (class == 255).then(|| self.command.output_open_context(self.state));
             (class, context)
         };
@@ -7520,36 +4596,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         primitive: UnexpandablePrimitive,
     ) -> Result<ScannedBoxShift, CommandError> {
-        let pending = self.take_pending_structured_scanner()?;
-        let mut child = match pending {
-            Some(PendingStructuredScanner {
-                phase:
-                    PendingStructuredScannerPhase::Scalar(
-                        PendingStructuredScalarPhase::BoxShiftDimension {
-                            primitive: retained_primitive,
-                        },
-                    ),
-                child,
-            }) if retained_primitive == primitive => child,
-            Some(mut pending) => {
-                if let Some(child) = pending.take_child() {
-                    self.abort_continuation(child)?;
-                }
-                return Err(CommandError::input_invariant());
-            }
-            None => None,
-        };
-        self.restore_structured_scanner_child(
-            &mut child,
-            StructuredScannerChildDestination::Scalar,
-        )?;
         let result = self.scan_dimension_retained();
-        let amount = self
-            .retain_structured_scalar(
-                result,
-                PendingStructuredScalarPhase::BoxShiftDimension { primitive },
-            )?
-            .value;
+        let amount = result.into_result()?.value;
         let delta = match primitive {
             UnexpandablePrimitive::Lower | UnexpandablePrimitive::MoveRight => amount,
             UnexpandablePrimitive::Raise | UnexpandablePrimitive::MoveLeft => -amount,
@@ -7636,7 +4684,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// `scan_keyword`'s own, one per failed keyword, and they are produced by
     /// running the real keyword scans rather than by replaying the brace.
     pub fn scan_alignment_preamble_opening(&mut self) -> Result<ScannedPackingSpec, CommandError> {
-        let packing = self.scan_spec_packing(PackingOwner::Alignment)?;
+        let packing = self.scan_spec_packing()?;
         let _ = self.scan_left_brace(true)?;
         Ok(packing)
     }
@@ -7740,22 +4788,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         owner: Option<tex_state::interner::Symbol>,
     ) -> Result<(), CommandError> {
-        let pending = match self.scanner_resume.take() {
-            Some(key) if key.is_alignment_preamble() => Some(
-                self.command
-                    .scratch
-                    .take_alignment_preamble_frame(key)
-                    .map_err(crate::scan_toks::scratch_command_error)?,
-            ),
-            Some(key) => {
-                self.scanner_resume = Some(key);
-                return Err(CommandError::input_invariant());
-            }
-            None => None,
-        };
-        let mut pending = if let Some(pending) = pending {
-            pending
-        } else {
+        let mut pending = {
             // TeX82 §776's preamble scan begins with the opener already
             // consumed. It owns both template sinks before its first token
             // demand, so a nested expansion can suspend without moving either
@@ -7809,7 +4842,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .state
                 .glue_param(GlueParam::TAB_SKIP)
                 .map_or_else(|| GlueSpec::ZERO, |id| self.state.glue(id));
-            PendingAlignmentPreamble {
+            AlignmentPreambleState {
                 alignment,
                 builder,
                 scanner_episode,
@@ -7830,41 +4863,25 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .allocate_token_buffer()
                     .map_err(|_| CommandError::input_invariant())?,
                 phase: AlignmentPreamblePhase::UTemplate,
-                span_expansion: None,
                 scalar_scan: None,
+                _generation: PhantomData,
             }
         };
         loop {
-            if let Some(mut scalar) = pending.scalar_scan.take() {
-                if let Some(child) = scalar.child.take() {
-                    let (key, destination) = child.restore();
-                    if destination != AlignmentPreambleChildDestination::Scalar {
-                        self.abort_continuation(key)?;
-                        self.abort_alignment_preamble(pending)?;
-                        return Err(CommandError::input_invariant());
-                    }
-                    self.install_scanner_resume(Some(key));
-                }
+            if let Some(scalar) = pending.scalar_scan.take() {
                 match scalar.phase {
                     AlignmentPreambleScalarPhase::TabskipEquals => {
                         match self.scan_optional_equals_retained() {
                             crate::RetainedScalarScan::Complete(_) => {
-                                pending.scalar_scan = Some(PendingPreambleScalar {
+                                pending.scalar_scan = Some(AlignmentPreambleScalar {
                                     phase: AlignmentPreambleScalarPhase::TabskipGlue,
-                                    child: None,
+                                    _generation: PhantomData,
                                 });
                                 continue;
                             }
                             crate::RetainedScalarScan::Failed(error) => {
                                 self.abort_alignment_preamble(pending)?;
                                 return Err(error);
-                            }
-                            crate::RetainedScalarScan::Suspended { error, child } => {
-                                pending.scalar_scan = Some(PendingPreambleScalar {
-                                    phase: AlignmentPreambleScalarPhase::TabskipEquals,
-                                    child: None,
-                                });
-                                return self.retain_alignment_scalar(pending, child, error);
                             }
                         }
                     }
@@ -7881,54 +4898,39 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 self.abort_alignment_preamble(pending)?;
                                 return Err(error);
                             }
-                            crate::RetainedScalarScan::Suspended { error, child } => {
-                                pending.scalar_scan = Some(PendingPreambleScalar {
-                                    phase: AlignmentPreambleScalarPhase::TabskipGlue,
-                                    child: None,
-                                });
-                                return self.retain_alignment_scalar(pending, child, error);
-                            }
                         }
                     }
                 }
             }
             let mut destination = None;
-            let command =
-                match self.get_preamble_token(&mut pending.span_expansion, &mut destination) {
-                    Ok(DeliveryStatus::Command) => {
-                        destination.take().ok_or(CommandError::input_invariant())?
-                    }
-                    Ok(DeliveryStatus::End) => {
-                        self.abort_alignment_preamble(pending)?;
-                        return Err(CommandError::input_invariant());
-                    }
-                    Ok(_) => {
-                        self.abort_alignment_preamble(pending)?;
-                        return Err(CommandError::input_invariant());
-                    }
-                    Err(error) if error.is_resource_suspension() => {
-                        let key = self
-                            .command
-                            .scratch
-                            .store_alignment_preamble_frame(pending)
-                            .map_err(crate::scan_toks::scratch_command_error)?;
-                        if self.scanner_resume.replace(key).is_some() {
-                            return Err(CommandError::input_invariant());
-                        }
-                        return Err(error);
-                    }
-                    Err(error) => {
-                        self.abort_alignment_preamble(pending)?;
-                        return Err(error);
-                    }
-                };
+            let command = match self.get_preamble_token(&mut destination) {
+                Ok(DeliveryStatus::Command) => {
+                    destination.take().ok_or(CommandError::input_invariant())?
+                }
+                Ok(DeliveryStatus::End) => {
+                    self.abort_alignment_preamble(pending)?;
+                    return Err(CommandError::input_invariant());
+                }
+                Ok(_) => {
+                    self.abort_alignment_preamble(pending)?;
+                    return Err(CommandError::input_invariant());
+                }
+                Err(error) if error.is_resource_suspension() => {
+                    self.abort_alignment_preamble(pending)?;
+                    return Err(error);
+                }
+                Err(error) => {
+                    self.abort_alignment_preamble(pending)?;
+                    return Err(error);
+                }
+            };
             if matches!(
                 static_meaning(command.meaning()),
                 Some(Meaning::GlueParam(index)) if index == GlueParam::TAB_SKIP.raw()
             ) {
-                pending.scalar_scan = Some(PendingPreambleScalar {
+                pending.scalar_scan = Some(AlignmentPreambleScalar {
                     phase: AlignmentPreambleScalarPhase::TabskipEquals,
-                    child: None,
+                    _generation: PhantomData,
                 });
                 continue;
             }
@@ -8128,32 +5130,9 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// raw so their meanings are resolved when each cell is executed.
     fn get_preamble_token(
         &mut self,
-        pending: &mut Option<PendingPreambleSpanExpansion<G>>,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        let delivery = if let Some(mut resumed) = pending.take() {
-            if let Some(child) = resumed.child.take() {
-                let (key, destination) = child.restore();
-                if destination != AlignmentPreambleChildDestination::SpanExpansion {
-                    return Err(CommandError::input_invariant());
-                }
-                self.scanner_resume = Some(key);
-            }
-            if let Err(error) = self.request_expansion_into(destination, true) {
-                if error.is_resource_suspension() {
-                    *pending = Some(PendingPreambleSpanExpansion {
-                        child: crate::execution_scratch::ChildContinuation::capture(
-                            &mut self.scanner_resume,
-                            AlignmentPreambleChildDestination::SpanExpansion,
-                        ),
-                    });
-                }
-                return Err(error);
-            }
-            self.continue_preamble_after_span_expansion(destination)?
-        } else {
-            self.get_token_into(destination)?
-        };
+        let delivery = self.get_token_into(destination)?;
         if delivery == DeliveryStatus::End {
             return Ok(DeliveryStatus::End);
         }
@@ -8176,17 +5155,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .as_ref()
                 .is_some_and(crate::processor::expand::is_expandable_command)
             {
-                if let Err(error) = self.request_expansion_into(destination, true) {
-                    if error.is_resource_suspension() {
-                        *pending = Some(PendingPreambleSpanExpansion {
-                            child: crate::execution_scratch::ChildContinuation::capture(
-                                &mut self.scanner_resume,
-                                AlignmentPreambleChildDestination::SpanExpansion,
-                            ),
-                        });
-                    }
-                    return Err(error);
-                }
+                self.request_expansion_into(destination, true)?;
                 match self.continue_preamble_after_span_expansion(destination)? {
                     DeliveryStatus::End => return Ok(DeliveryStatus::End),
                     DeliveryStatus::Command => {}
@@ -8240,10 +5209,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        if self.scanner_resume.is_some() {
-            return Err(CommandError::input_invariant());
-        }
-        destination.take().ok_or(CommandError::input_invariant())?;
+        // `request_expansion_into` consumes the expanded command on success;
+        // §759 immediately crosses to a fresh raw `get_token` for the span
+        // operand, so the destination must already be empty here.
+        debug_assert!(destination.is_none());
         self.get_token_into(destination)
     }
 
@@ -8274,7 +5243,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub fn scan_balanced_text_retained(
         &mut self,
         expanded: bool,
-    ) -> crate::RetainedScalarScan<G, ScannedBalancedText> {
+    ) -> crate::RetainedScalarScan<ScannedBalancedText> {
         let result = self.scan_balanced_text(expanded);
         self.detach_retained_scalar(result)
     }
@@ -8329,84 +5298,19 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// The `shipout` form retains the unexpanded balanced tokens so traversal
     /// can expand them against the state current when their box is shipped.
     pub fn scan_special(&mut self) -> Result<(bool, ScannedBalancedText), CommandError> {
-        if let Some(pending) = self.take_pending_structured_scanner()? {
-            let PendingStructuredScanner { phase, mut child } = pending;
-            return match phase {
-                PendingStructuredScannerPhase::Scalar(
-                    PendingStructuredScalarPhase::SpecialKeyword,
-                ) => {
-                    self.restore_structured_scanner_child(
-                        &mut child,
-                        StructuredScannerChildDestination::Scalar,
-                    )?;
-                    let result = self.scan_keyword_retained("shipout");
-                    let deferred = self
-                        .retain_structured_scalar(
-                            result,
-                            PendingStructuredScalarPhase::SpecialKeyword,
-                        )?
-                        .value;
-                    match self.scan_balanced_text(!deferred) {
-                        Ok(text) => Ok((deferred, text)),
-                        Err(error) => {
-                            if error.is_resource_suspension() {
-                                self.retain_structured_scanner(
-                                    PendingStructuredScannerPhase::SpecialText { deferred },
-                                    StructuredScannerChildDestination::SpecialText,
-                                )?;
-                            }
-                            Err(error)
-                        }
-                    }
-                }
-                PendingStructuredScannerPhase::SpecialText { deferred } => {
-                    self.restore_structured_scanner_child(
-                        &mut child,
-                        StructuredScannerChildDestination::SpecialText,
-                    )?;
-                    match self.scan_balanced_text(!deferred) {
-                        Ok(text) => Ok((deferred, text)),
-                        Err(error) => {
-                            if error.is_resource_suspension() {
-                                self.retain_structured_scanner(
-                                    PendingStructuredScannerPhase::SpecialText { deferred },
-                                    StructuredScannerChildDestination::SpecialText,
-                                )?;
-                            }
-                            Err(error)
-                        }
-                    }
-                }
-                _ => {
-                    if let Some(child) = child.take() {
-                        self.abort_continuation(child.restore().0)?;
-                    }
-                    Err(CommandError::input_invariant())
-                }
-            };
-        }
         // TeX82 §473 enters `scan_toks` immediately. The preceding optional
         // keyword probe belongs only to pdfTeX 1.40.29 §1534; in particular,
         // an e-TeX job must enter `absorbing` before delivering the opening
         // brace instead of speculatively backing it up and replaying it.
         let deferred = if self.profile().capabilities().supports_pdftex() {
             let result = self.scan_keyword_retained("shipout");
-            self.retain_structured_scalar(result, PendingStructuredScalarPhase::SpecialKeyword)?
-                .value
+            result.into_result()?.value
         } else {
             false
         };
         match self.scan_balanced_text(!deferred) {
             Ok(text) => Ok((deferred, text)),
-            Err(error) => {
-                if error.is_resource_suspension() {
-                    self.retain_structured_scanner(
-                        PendingStructuredScannerPhase::SpecialText { deferred },
-                        StructuredScannerChildDestination::SpecialText,
-                    )?;
-                }
-                Err(error)
-            }
+            Err(error) => Err(error),
         }
     }
 
@@ -8417,15 +5321,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         expanded: bool,
         global: bool,
     ) -> Result<ScannedMacroDefinition<G>, CommandError> {
-        let target = if let Some(target) = self
-            .pending_scanner_frame()
-            .map_err(|_| CommandError::input_invariant())?
-            .and_then(|pending| pending.macro_definition_target(expanded))
-        {
-            target
-        } else {
-            self.scan_definition_target()?
-        };
+        let target = self.scan_definition_target()?;
         let scanned = self.scan_toks_buffers(ScanToksMode::MacroDefinitionFor {
             expanded,
             target,
@@ -8532,58 +5428,17 @@ impl<G> CommandProcessor<'_, '_, G> {
         result
     }
 
-    pub fn scan_file_name_retained(&mut self) -> crate::RetainedScalarScan<G, ScannedFileName> {
+    pub fn scan_file_name_retained(&mut self) -> crate::RetainedScalarScan<ScannedFileName> {
         let result = self.scan_file_name();
         self.detach_retained_scalar(result)
     }
 
     fn scan_file_name_inner(&mut self) -> Result<ScannedFileName, CommandError> {
-        let pending = self.take_pending_scalar_frame()?;
-        let mut suspended = None;
-        let result = match pending {
-            Some(crate::scanners::PendingScalarFrame::FileNameLeading { mut child }) => {
-                self.restore_scalar_child(
-                    &mut child,
-                    crate::scanners::ScalarChildDestination::FileNameLeadingToken,
-                )?;
-                self.scan_file_name_leading(&mut suspended)
-            }
-            Some(crate::scanners::PendingScalarFrame::FileNameCharacters {
-                components,
-                character_count,
-                quoted,
-                grouped,
-                provenance,
-                mut child,
-            }) => {
-                self.restore_scalar_child(
-                    &mut child,
-                    crate::scanners::ScalarChildDestination::FileNameCharacter,
-                )?;
-                self.scan_file_name_characters(
-                    components,
-                    character_count,
-                    quoted,
-                    grouped,
-                    provenance,
-                    &mut suspended,
-                )
-            }
-            Some(mut pending) => {
-                if let Some(child) = pending.take_child() {
-                    self.abort_continuation(child)?;
-                }
-                return Err(CommandError::input_invariant());
-            }
-            None => self.scan_file_name_leading(&mut suspended),
-        };
-        self.finish_scalar_call(result, suspended)
+        let result = self.scan_file_name_leading();
+        self.finish_scalar_call(result)
     }
 
-    fn scan_file_name_leading(
-        &mut self,
-        suspended: &mut Option<crate::scanners::PendingScalarFrame<G>>,
-    ) -> Result<ScannedFileName, CommandError> {
+    fn scan_file_name_leading(&mut self) -> Result<ScannedFileName, CommandError> {
         let mut destination = None;
         let first = loop {
             let command = match self.request_expanded_token(&mut destination) {
@@ -8593,11 +5448,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 Ok(DeliveryStatus::End) | Ok(_) => {
                     return Err(CommandError::input_invariant());
                 }
-                Err(error) => {
-                    *suspended =
-                        Some(crate::scanners::PendingScalarFrame::FileNameLeading { child: None });
-                    return Err(error);
-                }
+                Err(error) => return Err(error),
             };
             if !matches!(
                 static_meaning(command.meaning()),
@@ -8629,7 +5480,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             false,
             grouped,
             provenance.primary,
-            suspended,
         )
     }
 
@@ -8640,7 +5490,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         mut quoted: bool,
         grouped: bool,
         provenance: OriginId,
-        suspended: &mut Option<crate::scanners::PendingScalarFrame<G>>,
     ) -> Result<ScannedFileName, CommandError> {
         let mut destination = None;
         loop {
@@ -8650,17 +5499,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 Ok(DeliveryStatus::End) => break,
                 Ok(_) => return Err(CommandError::input_invariant()),
-                Err(error) => {
-                    *suspended = Some(crate::scanners::PendingScalarFrame::FileNameCharacters {
-                        components,
-                        character_count,
-                        quoted,
-                        grouped,
-                        provenance,
-                        child: None,
-                    });
-                    return Err(error);
-                }
+                Err(error) => return Err(error),
             };
             match static_meaning(command.meaning()) {
                 Some(Meaning::CharToken {

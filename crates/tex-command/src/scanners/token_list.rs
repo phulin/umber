@@ -10,10 +10,6 @@ use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, ResolvedMeaning, UnexpandablePrimitive};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
-use super::structured::{
-    PendingStructuredScalarPhase, PendingStructuredScanner, PendingStructuredScannerPhase,
-    PendingTokenListOwner, StructuredScannerChildDestination,
-};
 use crate::scan_toks::ScanToksMode;
 use crate::{AttemptTokenListId, CommandError, CommandProcessor, processor::DeliveryStatus};
 
@@ -59,119 +55,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         owner: Symbol,
     ) -> Result<ScannedTokenRegisterAssignment<G>, CommandError> {
-        let pending = self.take_pending_structured_scanner()?;
-        let (index, equals_done, mut child) = match pending {
-            Some(PendingStructuredScanner {
-                phase:
-                    PendingStructuredScannerPhase::Scalar(
-                        PendingStructuredScalarPhase::TokenRegisterIndex {
-                            owner: retained_owner,
-                        },
-                    ),
-                child,
-            }) if retained_owner == owner => {
-                let mut child = child;
-                self.restore_structured_scanner_child(
-                    &mut child,
-                    StructuredScannerChildDestination::Scalar,
-                )?;
-                let result = self.scan_profile_register_index_retained();
-                let index = self.retain_structured_scalar(
-                    result,
-                    PendingStructuredScalarPhase::TokenRegisterIndex { owner },
-                )?;
-                (index, false, None)
-            }
-            Some(PendingStructuredScanner {
-                phase:
-                    PendingStructuredScannerPhase::Scalar(
-                        PendingStructuredScalarPhase::TokenListEquals(
-                            PendingTokenListOwner::Register {
-                                owner: retained_owner,
-                                index,
-                            },
-                        ),
-                    ),
-                child,
-            }) if retained_owner == owner => (index, false, child),
-            Some(PendingStructuredScanner {
-                phase:
-                    PendingStructuredScannerPhase::TokenListRightHandSide(
-                        PendingTokenListOwner::Register {
-                            owner: retained_owner,
-                            index,
-                        },
-                    ),
-                child,
-            }) if retained_owner == owner => (index, true, child),
-            Some(PendingStructuredScanner {
-                phase:
-                    PendingStructuredScannerPhase::Scalar(
-                        PendingStructuredScalarPhase::TokenListRhsRegister(
-                            PendingTokenListOwner::Register {
-                                owner: retained_owner,
-                                index,
-                            },
-                        ),
-                    ),
-                child,
-            }) if retained_owner == owner => (index, true, child),
-            Some(mut pending) => {
-                if let Some(child) = pending.take_child() {
-                    self.abort_continuation(child)?;
-                }
-                return Err(CommandError::input_invariant());
-            }
-            None => {
-                let result = self.scan_profile_register_index_retained();
-                let index = self.retain_structured_scalar(
-                    result,
-                    PendingStructuredScalarPhase::TokenRegisterIndex { owner },
-                )?;
-                (index, false, None)
-            }
-        };
-        let pending_owner = PendingTokenListOwner::Register { owner, index };
-        if !equals_done {
-            self.restore_structured_scanner_child(
-                &mut child,
-                StructuredScannerChildDestination::Scalar,
-            )?;
-            let result = self.scan_optional_equals_retained();
-            self.retain_structured_scalar(
-                result,
-                PendingStructuredScalarPhase::TokenListEquals(pending_owner),
-            )?;
-        }
-        let scalar_child = child
-            .as_ref()
-            .is_some_and(|child| child.destination() == StructuredScannerChildDestination::Scalar);
-        self.restore_structured_scanner_child(
-            &mut child,
-            if scalar_child {
-                StructuredScannerChildDestination::Scalar
-            } else {
-                StructuredScannerChildDestination::TokenListRightHandSide
-            },
-        )?;
-        let value =
-            match self.scan_token_list_right_hand_side(owner, false, pending_owner, scalar_child) {
-                Ok(value) => value,
-                Err(error) => {
-                    if error.is_resource_suspension()
-                        && !self
-                            .scanner_resume
-                            .as_ref()
-                            .is_some_and(crate::ScannerFrameKey::is_structured_scanner)
-                    {
-                        self.retain_structured_scanner(
-                            PendingStructuredScannerPhase::TokenListRightHandSide(pending_owner),
-                            StructuredScannerChildDestination::TokenListRightHandSide,
-                        )?;
-                    }
-                    return Err(error);
-                }
-            };
+        let index = self.scan_profile_register_index_retained().into_result()?;
+        self.scan_optional_equals_retained().into_result()?;
+        let value = self.scan_token_list_right_hand_side(owner, false)?;
         Ok(ScannedTokenRegisterAssignment {
             index,
             tokens: value.tokens,
@@ -193,75 +79,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         ),
         CommandError,
     > {
-        let pending_owner = PendingTokenListOwner::Value { owner };
-        let pending = self.take_pending_structured_scanner()?;
-        let (equals_done, mut child) = match pending {
-            Some(PendingStructuredScanner {
-                phase:
-                    PendingStructuredScannerPhase::Scalar(
-                        PendingStructuredScalarPhase::TokenListEquals(retained),
-                    ),
-                child,
-            }) if retained == pending_owner => (false, child),
-            Some(PendingStructuredScanner {
-                phase: PendingStructuredScannerPhase::TokenListRightHandSide(retained),
-                child,
-            }) if retained == pending_owner => (true, child),
-            Some(PendingStructuredScanner {
-                phase:
-                    PendingStructuredScannerPhase::Scalar(
-                        PendingStructuredScalarPhase::TokenListRhsRegister(retained),
-                    ),
-                child,
-            }) if retained == pending_owner => (true, child),
-            Some(mut pending) => {
-                if let Some(child) = pending.take_child() {
-                    self.abort_continuation(child)?;
-                }
-                return Err(CommandError::input_invariant());
-            }
-            None => (false, None),
-        };
-        if !equals_done {
-            self.restore_structured_scanner_child(
-                &mut child,
-                StructuredScannerChildDestination::Scalar,
-            )?;
-            let result = self.scan_optional_equals_retained();
-            self.retain_structured_scalar(
-                result,
-                PendingStructuredScalarPhase::TokenListEquals(pending_owner),
-            )?;
-        }
-        let scalar_child = child
-            .as_ref()
-            .is_some_and(|child| child.destination() == StructuredScannerChildDestination::Scalar);
-        self.restore_structured_scanner_child(
-            &mut child,
-            if scalar_child {
-                StructuredScannerChildDestination::Scalar
-            } else {
-                StructuredScannerChildDestination::TokenListRightHandSide
-            },
-        )?;
-        let value =
-            match self.scan_token_list_right_hand_side(owner, false, pending_owner, scalar_child) {
-                Ok(value) => value,
-                Err(error) => {
-                    if error.is_resource_suspension()
-                        && !self
-                            .scanner_resume
-                            .as_ref()
-                            .is_some_and(crate::ScannerFrameKey::is_structured_scanner)
-                    {
-                        self.retain_structured_scanner(
-                            PendingStructuredScannerPhase::TokenListRightHandSide(pending_owner),
-                            StructuredScannerChildDestination::TokenListRightHandSide,
-                        )?;
-                    }
-                    return Err(error);
-                }
-            };
+        self.scan_optional_equals_retained().into_result()?;
+        let value = self.scan_token_list_right_hand_side(owner, false)?;
         Ok((value.tokens, value.source))
     }
 
@@ -285,79 +104,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         parameter: TokParam,
         owner: Symbol,
     ) -> Result<ScannedTokenParameterAssignment<G>, CommandError> {
-        let pending_owner = PendingTokenListOwner::Parameter { parameter, owner };
-        let pending = self.take_pending_structured_scanner()?;
-        let (equals_done, mut child) = match pending {
-            Some(PendingStructuredScanner {
-                phase:
-                    PendingStructuredScannerPhase::Scalar(
-                        PendingStructuredScalarPhase::TokenListEquals(retained),
-                    ),
-                child,
-            }) if retained == pending_owner => (false, child),
-            Some(PendingStructuredScanner {
-                phase: PendingStructuredScannerPhase::TokenListRightHandSide(retained),
-                child,
-            }) if retained == pending_owner => (true, child),
-            Some(PendingStructuredScanner {
-                phase:
-                    PendingStructuredScannerPhase::Scalar(
-                        PendingStructuredScalarPhase::TokenListRhsRegister(retained),
-                    ),
-                child,
-            }) if retained == pending_owner => (true, child),
-            Some(mut pending) => {
-                if let Some(child) = pending.take_child() {
-                    self.abort_continuation(child)?;
-                }
-                return Err(CommandError::input_invariant());
-            }
-            None => (false, None),
-        };
-        if !equals_done {
-            self.restore_structured_scanner_child(
-                &mut child,
-                StructuredScannerChildDestination::Scalar,
-            )?;
-            let result = self.scan_optional_equals_retained();
-            self.retain_structured_scalar(
-                result,
-                PendingStructuredScalarPhase::TokenListEquals(pending_owner),
-            )?;
-        }
-        let scalar_child = child
-            .as_ref()
-            .is_some_and(|child| child.destination() == StructuredScannerChildDestination::Scalar);
-        self.restore_structured_scanner_child(
-            &mut child,
-            if scalar_child {
-                StructuredScannerChildDestination::Scalar
-            } else {
-                StructuredScannerChildDestination::TokenListRightHandSide
-            },
-        )?;
-        let right_hand_side = match self.scan_token_list_right_hand_side(
-            owner,
-            parameter == TokParam::OUTPUT,
-            pending_owner,
-            scalar_child,
-        ) {
-            Ok(value) => value,
-            Err(error) => {
-                if error.is_resource_suspension()
-                    && !self
-                        .scanner_resume
-                        .as_ref()
-                        .is_some_and(crate::ScannerFrameKey::is_structured_scanner)
-                {
-                    self.retain_structured_scanner(
-                        PendingStructuredScannerPhase::TokenListRightHandSide(pending_owner),
-                        StructuredScannerChildDestination::TokenListRightHandSide,
-                    )?;
-                }
-                return Err(error);
-            }
-        };
+        self.scan_optional_equals_retained().into_result()?;
+        let right_hand_side =
+            self.scan_token_list_right_hand_side(owner, parameter == TokParam::OUTPUT)?;
         Ok(ScannedTokenParameterAssignment {
             tokens: right_hand_side
                 .pointer_present
@@ -371,17 +120,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         owner: Symbol,
         enclose_collected: bool,
-        pending_owner: PendingTokenListOwner,
-        resume_register: bool,
     ) -> Result<ScannedTokenListRightHandSide<G>, CommandError> {
-        if resume_register {
-            let result = self.scan_profile_register_index_retained();
-            let index = self.retain_structured_scalar(
-                result,
-                PendingStructuredScalarPhase::TokenListRhsRegister(pending_owner),
-            )?;
-            return Ok(self.token_register_rhs(index));
-        }
         let command = loop {
             let mut command = None;
             if self.request_expanded_token(&mut command)? != DeliveryStatus::Command {
@@ -404,10 +143,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // [49.1226]'s assignment target; both select the same sparse
                 // token-register namespace.
                 let result = self.scan_profile_register_index_retained();
-                let index = self.retain_structured_scalar(
-                    result,
-                    PendingStructuredScalarPhase::TokenListRhsRegister(pending_owner),
-                )?;
+                let index = result.into_result()?;
                 return Ok(self.token_register_rhs(index));
             }
             Meaning::ToksRegister(index) => {

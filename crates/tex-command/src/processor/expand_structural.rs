@@ -18,26 +18,6 @@ use super::expand::is_expandable_command;
 use super::expand_render::print_esc_text;
 use super::{CommandProcessor, DeliveryStatus};
 
-/// Operand state held by TeX82 §368 while `\expandafter` expands its second
-/// command across an immutable host suspension.
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) struct PendingExpandAfter<G> {
-    first: CurrentCommand<G>,
-    child: Option<crate::execution_scratch::ChildContinuation<G, PendingExpandAfterDestination>>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[allow(dead_code)]
-enum PendingExpandAfterDestination {
-    ExpandingSecond,
-}
-
-impl<G> PendingExpandAfter<G> {
-    pub(crate) fn take_child(&mut self) -> Option<crate::execution_scratch::ScannerFrameKey<G>> {
-        self.child.take().map(|child| child.restore().0)
-    }
-}
-
 /// Stable pending-diagnostic identity for TeX.web's `Missing \\endcsname
 /// inserted` recovery. Rendering belongs to the diagnostic milestone.
 pub(crate) const MISSING_ENDCSNAME_DIAGNOSTIC: u64 = 0x6373_6e61_6d65_0001;
@@ -198,72 +178,23 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// explicit backed-up level because it is no longer the latest delivery.
     #[allow(dead_code)]
     pub(super) fn expand_expandafter(&mut self) -> Result<(), CommandError> {
-        let pending = if self
-            .scanner_resume
-            .as_ref()
-            .is_some_and(crate::ScannerFrameKey::is_expandafter)
-        {
-            let key = self
-                .scanner_resume
-                .take()
-                .expect("matched expandafter frame");
-            Some(
-                self.command
-                    .scratch
-                    .take_expandafter_frame(key)
-                    .map_err(crate::scan_toks::scratch_command_error)?,
-            )
-        } else {
-            None
-        };
-        let (first, mut second) = if let Some(mut pending) = pending {
-            if let Some(child) = pending.child.take() {
-                let (key, destination) = child.restore();
-                if destination != PendingExpandAfterDestination::ExpandingSecond {
-                    return Err(CommandError::input_invariant());
-                }
-                self.install_scanner_resume(Some(key));
-            }
-            (pending.first, None)
-        } else {
-            let mut first = None;
-            match self.get_token_into(&mut first)? {
-                DeliveryStatus::End => return Err(CommandError::input_invariant()),
-                DeliveryStatus::Command => {}
-                _ => unreachable!("ordinary token delivery returns only commands"),
-            }
-            let first = first
-                .take()
-                .expect("command status initializes destination");
-            let mut second = None;
-            match self.get_token_into(&mut second)? {
-                DeliveryStatus::End => return Err(CommandError::input_invariant()),
-                DeliveryStatus::Command => {}
-                _ => unreachable!("ordinary token delivery returns only commands"),
-            }
-            (first, second)
-        };
+        let mut first = None;
+        match self.get_token_into(&mut first)? {
+            DeliveryStatus::End => return Err(CommandError::input_invariant()),
+            DeliveryStatus::Command => {}
+            _ => unreachable!("ordinary token delivery returns only commands"),
+        }
+        let first = first
+            .take()
+            .expect("command status initializes destination");
+        let mut second = None;
+        match self.get_token_into(&mut second)? {
+            DeliveryStatus::End => return Err(CommandError::input_invariant()),
+            DeliveryStatus::Command => {}
+            _ => unreachable!("ordinary token delivery returns only commands"),
+        }
         if second.as_ref().is_none_or(is_expandable_command) {
-            if let Err(error) = self.request_expansion_into(&mut second, true) {
-                if error.is_resource_suspension() {
-                    let key = self
-                        .command
-                        .scratch
-                        .store_expandafter_frame(PendingExpandAfter {
-                            first,
-                            child: crate::execution_scratch::ChildContinuation::capture(
-                                &mut self.scanner_resume,
-                                PendingExpandAfterDestination::ExpandingSecond,
-                            ),
-                        })
-                        .map_err(crate::scan_toks::scratch_command_error)?;
-                    self.scanner_resume = Some(key);
-                }
-                return Err(error);
-            }
-            if self.scanner_resume.is_some() {
-                return Err(CommandError::input_invariant());
-            }
+            self.request_expansion_into(&mut second, true)?;
             self.replay_expandafter_first(first)?;
         } else {
             self.back_input(
@@ -284,7 +215,6 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub(crate) fn scan_csname_characters(
         &mut self,
         mut name: String,
-        suspended: &mut Option<String>,
     ) -> Result<String, CommandError> {
         // pdfTeX section 57 saves and restores the prior flag so nested name
         // scans remain true to ifincsname and unwind to their caller.
@@ -294,12 +224,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             loop {
                 let status = match self.request_expanded_token(&mut destination) {
                     Ok(status) => status,
-                    Err(error) => {
-                        if error.is_resource_suspension() {
-                            *suspended = Some(name);
-                        }
-                        return Err(error);
-                    }
+                    Err(error) => return Err(error),
                 };
                 match status {
                     DeliveryStatus::End => return Err(CommandError::input_invariant()),

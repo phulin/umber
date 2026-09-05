@@ -250,25 +250,10 @@ impl<G> ExpressionFrame<G> {
 }
 
 #[derive(Debug, Eq, PartialEq)]
-pub(crate) enum PendingExpressionPhase<G> {
+pub(crate) enum ExpressionPhase<G> {
     FactorLeading,
     FactorScalar,
     Operator { factor: ExpressionValue<G> },
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) struct PendingExpressionScan<G> {
-    primitive: UnexpandablePrimitive,
-    stack_mark: usize,
-    frame: ExpressionFrame<G>,
-    overflow: bool,
-    phase: PendingExpressionPhase<G>,
-}
-
-impl<G> PendingExpressionScan<G> {
-    pub(crate) fn stack_mark(&self) -> usize {
-        self.stack_mark
-    }
 }
 
 impl<G> CommandProcessor<'_, '_, G> {
@@ -312,12 +297,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
 
         let mut call = crate::scanners::scalar::ScalarCallFrame::default();
-        let status = self.scan_expression(primitive, kind, initial_frame, &mut call);
+        let status = self.scan_expression(kind, initial_frame, &mut call);
         self.expression_depth -= 1;
         let (mut value, overflow) = match status {
             crate::scanners::scalar::ScalarCallStatus::Complete => call.take_complete(),
-            crate::scanners::scalar::ScalarCallStatus::Suspended
-            | crate::scanners::scalar::ScalarCallStatus::Failed => {
+            crate::scanners::scalar::ScalarCallStatus::Failed => {
                 return Err(call.take_error());
             }
         };
@@ -366,7 +350,6 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// expansion depth and do not recurse on the Rust stack.
     fn scan_expression(
         &mut self,
-        primitive: UnexpandablePrimitive,
         kind: ExpressionKind,
         initial_frame: Option<ExpressionFrame<G>>,
         call: &mut crate::scanners::scalar::ScalarCallFrame<(ExpressionValue<G>, bool)>,
@@ -380,67 +363,20 @@ impl<G> CommandProcessor<'_, '_, G> {
             }};
         }
 
-        let mut pending = None;
-        if self.take_pending_scalar_frame_into(&mut pending, call) != ScalarCallStatus::Complete {
-            return ScalarCallStatus::Failed;
-        }
-        let (stack_mark, mut frame, mut overflow, mut phase, mut child) = if pending.is_none() {
-            (
-                self.command.scratch.expression_stack_len(),
-                initial_frame.unwrap_or_else(|| ExpressionFrame::new(kind)),
-                false,
-                PendingExpressionPhase::FactorLeading,
-                None,
-            )
-        } else {
-            match pending.take().expect("present expression continuation") {
-                crate::scanners::PendingScalarFrame::Expression { progress, child }
-                    if progress.primitive == primitive =>
-                {
-                    (
-                        progress.stack_mark,
-                        progress.frame,
-                        progress.overflow,
-                        progress.phase,
-                        child,
-                    )
-                }
-                mut pending => {
-                    if let Some(child) = pending.take_child()
-                        && let Err(error) = self.abort_continuation(child)
-                    {
-                        fail!(error);
-                    }
-                    fail!(CommandError::input_invariant());
-                }
-            }
-        };
-        if let Err(error) = self.restore_scalar_child(
-            &mut child,
-            crate::scanners::ScalarChildDestination::Expression,
-        ) {
-            fail!(error);
-        }
+        let stack_mark = self.command.scratch.expression_stack_len();
+        let mut frame = initial_frame.unwrap_or_else(|| ExpressionFrame::new(kind));
+        let mut overflow = false;
+        let mut phase = ExpressionPhase::FactorLeading;
 
         loop {
             let factor = match phase {
-                PendingExpressionPhase::FactorLeading => {
+                ExpressionPhase::FactorLeading => {
                     let first = loop {
                         let mut first = None;
                         let delivery = match self.request_expanded_token(&mut first) {
                             Ok(delivery) => delivery,
                             Err(error) => {
-                                return self.suspend_expression(
-                                    error,
-                                    PendingExpressionScan {
-                                        primitive,
-                                        stack_mark,
-                                        frame,
-                                        overflow,
-                                        phase: PendingExpressionPhase::FactorLeading,
-                                    },
-                                    call,
-                                );
+                                return self.suspend_expression(error, stack_mark, call);
                             }
                         };
                         match delivery {
@@ -472,7 +408,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             fail!(crate::scan_toks::scratch_command_error(error));
                         }
                         frame = ExpressionFrame::new(factor_kind);
-                        phase = PendingExpressionPhase::FactorLeading;
+                        phase = ExpressionPhase::FactorLeading;
                         continue;
                     }
                     if let Some(command) = first
@@ -480,10 +416,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                     {
                         fail!(error);
                     }
-                    phase = PendingExpressionPhase::FactorScalar;
+                    phase = ExpressionPhase::FactorScalar;
                     continue;
                 }
-                PendingExpressionPhase::FactorScalar => {
+                ExpressionPhase::FactorScalar => {
                     let factor_kind = frame.factor_kind();
                     let value = match factor_kind {
                         ExpressionKind::Integer => {
@@ -520,38 +456,18 @@ impl<G> CommandProcessor<'_, '_, G> {
                     match value {
                         Ok(value) => value,
                         Err(error) => {
-                            return self.suspend_expression(
-                                error,
-                                PendingExpressionScan {
-                                    primitive,
-                                    stack_mark,
-                                    frame,
-                                    overflow,
-                                    phase: PendingExpressionPhase::FactorScalar,
-                                },
-                                call,
-                            );
+                            return self.suspend_expression(error, stack_mark, call);
                         }
                     }
                 }
-                PendingExpressionPhase::Operator { factor } => factor,
+                ExpressionPhase::Operator { factor } => factor,
             };
 
             let parenthesized = self.command.scratch.expression_stack_len() > stack_mark;
             let mut operator = match self.scan_expression_operator(parenthesized) {
                 Ok(operator) => operator,
                 Err(error) => {
-                    return self.suspend_expression(
-                        error,
-                        PendingExpressionScan {
-                            primitive,
-                            stack_mark,
-                            frame,
-                            overflow,
-                            phase: PendingExpressionPhase::Operator { factor },
-                        },
-                        call,
-                    );
+                    return self.suspend_expression(error, stack_mark, call);
                 }
             };
             let factor = if frame.factor_negative {
@@ -565,12 +481,12 @@ impl<G> CommandProcessor<'_, '_, G> {
 
             if operator.continues_term() {
                 frame.term_operator = operator;
-                phase = PendingExpressionPhase::FactorLeading;
+                phase = ExpressionPhase::FactorLeading;
                 continue;
             }
             evaluate_term(&mut frame, operator, &mut overflow);
             if !matches!(operator, ExpressionOperator::None) {
-                phase = PendingExpressionPhase::FactorLeading;
+                phase = ExpressionPhase::FactorLeading;
                 continue;
             }
 
@@ -587,55 +503,33 @@ impl<G> CommandProcessor<'_, '_, G> {
                 return ScalarCallStatus::Complete;
             };
             frame = parent;
-            phase = PendingExpressionPhase::Operator { factor: completed };
+            phase = ExpressionPhase::Operator { factor: completed };
         }
     }
 
     fn restore_retained_expression_child<T>(
         &mut self,
-        result: crate::RetainedScalarScan<G, T>,
+        result: crate::RetainedScalarScan<T>,
     ) -> Result<T, CommandError> {
         match result {
             crate::RetainedScalarScan::Complete(value) => Ok(value),
             crate::RetainedScalarScan::Failed(error) => Err(error),
-            crate::RetainedScalarScan::Suspended { error, child } => {
-                self.install_scanner_resume(Some(child));
-                Err(error)
-            }
         }
     }
 
     fn suspend_expression(
         &mut self,
         mut error: CommandError,
-        progress: PendingExpressionScan<G>,
+        stack_mark: usize,
         call: &mut crate::scanners::scalar::ScalarCallFrame<(ExpressionValue<G>, bool)>,
     ) -> crate::scanners::scalar::ScalarCallStatus {
         use crate::scanners::scalar::ScalarCallStatus;
 
-        let status = if error.is_resource_suspension() {
-            match self.retain_scalar_frame(crate::scanners::PendingScalarFrame::Expression {
-                progress,
-                child: None,
-            }) {
-                Ok(()) => ScalarCallStatus::Suspended,
-                Err(retain_error) => {
-                    error = retain_error;
-                    ScalarCallStatus::Failed
-                }
-            }
-        } else {
-            if let Err(truncate_error) = self
-                .command
-                .scratch
-                .truncate_expression_stack(progress.stack_mark)
-            {
-                error = crate::scan_toks::scratch_command_error(truncate_error);
-            }
-            ScalarCallStatus::Failed
-        };
+        if let Err(truncate_error) = self.command.scratch.truncate_expression_stack(stack_mark) {
+            error = crate::scan_toks::scratch_command_error(truncate_error);
+        }
         call.put_error(error);
-        status
+        ScalarCallStatus::Failed
     }
 
     fn scan_expression_operator(

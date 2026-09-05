@@ -22,31 +22,6 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// font identifier", whose `back_error` leaves the rejected command for
     /// its normal delivery and takes `null_font`.
     fn scan_font_selector(&mut self) -> Result<FontId, CommandError> {
-        if let Some(pending) = self.take_pending_scalar_frame()? {
-            let crate::scanners::PendingScalarFrame::FontSelector { size, mut child } = pending
-            else {
-                let mut pending = pending;
-                if let Some(child) = pending.take_child() {
-                    self.abort_continuation(child)?;
-                }
-                return Err(CommandError::input_invariant());
-            };
-            self.restore_scalar_child(
-                &mut child,
-                crate::scanners::ScalarChildDestination::FontSelector,
-            )?;
-            return match self.scan_math_family(size) {
-                Ok(family) => Ok(self.state.math_family_font(size.into(), family.family)),
-                Err(error) => {
-                    if error.is_resource_suspension() {
-                        self.retain_scalar_frame(
-                            crate::scanners::PendingScalarFrame::FontSelector { size, child: None },
-                        )?;
-                    }
-                    Err(error)
-                }
-            };
-        }
         // §577's `@<Get the next non-blank non-call token@>` (§406).
         let command = loop {
             let mut command = None;
@@ -76,17 +51,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .expect("the guard proved this is `def_family`");
                 match self.scan_math_family(size) {
                     Ok(family) => Ok(self.state.math_family_font(size.into(), family.family)),
-                    Err(error) => {
-                        if error.is_resource_suspension() {
-                            self.retain_scalar_frame(
-                                crate::scanners::PendingScalarFrame::FontSelector {
-                                    size,
-                                    child: None,
-                                },
-                            )?;
-                        }
-                        Err(error)
-                    }
+                    Err(error) => Err(error),
                 }
             }
             _ => {
@@ -119,7 +84,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
     }
 
-    pub fn scan_font_selector_retained(&mut self) -> crate::RetainedScalarScan<G, FontId> {
+    pub fn scan_font_selector_retained(&mut self) -> crate::RetainedScalarScan<FontId> {
         let result = self.scan_font_selector();
         self.detach_retained_scalar(result)
     }

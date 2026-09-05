@@ -10,29 +10,6 @@ use crate::{CommandError, CurrentCommand};
 
 use super::CommandProcessor;
 
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) struct PendingPdfStringCompare<G> {
-    phase: PdfStringComparePhase,
-    child: Option<crate::execution_scratch::ChildContinuation<G, PdfStringCompareDestination>>,
-}
-
-impl<G> PendingPdfStringCompare<G> {
-    pub(crate) fn take_child(&mut self) -> Option<crate::execution_scratch::ScannerFrameKey<G>> {
-        self.child.take().map(|child| child.restore().0)
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum PdfStringComparePhase {
-    Left,
-    Right { left: crate::AttemptTokenListId },
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum PdfStringCompareDestination {
-    Scan,
-}
-
 fn escape_pdf_literal_string(text: &str) -> String {
     fn append_byte(output: &mut String, byte: u8) {
         match byte {
@@ -181,82 +158,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         opener: CurrentCommand<G>,
     ) -> Result<(), CommandError> {
-        let pending = if self
-            .scanner_resume
-            .as_ref()
-            .is_some_and(crate::ScannerFrameKey::is_pdf_string_compare)
-        {
-            let key = self
-                .scanner_resume
-                .take()
-                .expect("matched pdf string-compare frame");
-            Some(
-                self.command
-                    .scratch
-                    .take_pdf_string_compare_frame(key)
-                    .map_err(crate::scan_toks::scratch_command_error)?,
-            )
-        } else {
-            None
-        };
-        let phase = pending
-            .as_ref()
-            .map_or(PdfStringComparePhase::Left, |pending| pending.phase);
-        if let Some(mut pending) = pending
-            && let Some(child) = pending.child.take()
-        {
-            let (key, destination) = child.restore();
-            if destination != PdfStringCompareDestination::Scan {
-                return Err(CommandError::input_invariant());
-            }
-            self.scanner_resume = Some(key);
-        }
-        let left = match phase {
-            PdfStringComparePhase::Left => {
-                match self.scan_toks(crate::scan_toks::ScanToksMode::General { expanded: true }) {
-                    Ok(scanned) => scanned.replacement_text,
-                    Err(error) => {
-                        if error.is_resource_suspension() {
-                            let key = self
-                                .command
-                                .scratch
-                                .store_pdf_string_compare_frame(PendingPdfStringCompare {
-                                    phase: PdfStringComparePhase::Left,
-                                    child: crate::execution_scratch::ChildContinuation::capture(
-                                        &mut self.scanner_resume,
-                                        PdfStringCompareDestination::Scan,
-                                    ),
-                                })
-                                .map_err(crate::scan_toks::scratch_command_error)?;
-                            self.scanner_resume = Some(key);
-                        }
-                        return Err(error);
-                    }
-                }
-            }
-            PdfStringComparePhase::Right { left } => left,
-        };
-        let right = match self.scan_toks(crate::scan_toks::ScanToksMode::General { expanded: true })
-        {
-            Ok(scanned) => scanned,
-            Err(error) => {
-                if error.is_resource_suspension() {
-                    let key = self
-                        .command
-                        .scratch
-                        .store_pdf_string_compare_frame(PendingPdfStringCompare {
-                            phase: PdfStringComparePhase::Right { left },
-                            child: crate::execution_scratch::ChildContinuation::capture(
-                                &mut self.scanner_resume,
-                                PdfStringCompareDestination::Scan,
-                            ),
-                        })
-                        .map_err(crate::scan_toks::scratch_command_error)?;
-                    self.scanner_resume = Some(key);
-                }
-                return Err(error);
-            }
-        };
+        let left = self
+            .scan_toks(crate::scan_toks::ScanToksMode::General { expanded: true })?
+            .replacement_text;
+        let right = self.scan_toks(crate::scan_toks::ScanToksMode::General { expanded: true })?;
         let left = self.attempt_token_list_string_text(left)?;
         let right = self.attempt_token_list_string_text(right.replacement_text)?;
         let value = match left.as_bytes().cmp(right.as_bytes()) {
@@ -390,119 +295,20 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub(super) fn expand_pdf_match(
         &mut self,
         opener: CurrentCommand<G>,
-        resume: &mut crate::state::PendingExpansionResume,
-        suspended: &mut Option<crate::state::PendingExpansionResume>,
     ) -> Result<(), CommandError> {
-        let pending = std::mem::replace(resume, crate::state::PendingExpansionResume::Dispatch);
-        let (mut case_insensitive, mut subcount, mut option_phase, retained_pattern) = match pending
-        {
-            crate::state::PendingExpansionResume::Dispatch => (false, 10_u32, Some(0_u8), None),
-            crate::state::PendingExpansionResume::PdfMatchOptions {
-                case_insensitive,
-                subcount,
-                phase,
-            } => (case_insensitive, subcount, Some(phase), None),
-            crate::state::PendingExpansionResume::PdfMatchPattern {
-                case_insensitive,
-                subcount,
-            } => (case_insensitive, subcount, None, None),
-            crate::state::PendingExpansionResume::PdfMatchHaystack {
-                case_insensitive,
-                subcount,
-                pattern,
-            } => (case_insensitive, subcount, None, Some(pattern)),
-            _ => return Err(CommandError::input_invariant()),
-        };
-        while let Some(phase) = option_phase {
-            match phase {
-                0 => {
-                    let scan = self.scan_keyword_retained("icase");
-                    if self
-                        .retain_expansion_scalar(
-                            scan,
-                            crate::state::PendingExpansionResume::PdfMatchOptions {
-                                case_insensitive,
-                                subcount,
-                                phase,
-                            },
-                            suspended,
-                        )?
-                        .value
-                    {
-                        case_insensitive = true;
-                    } else {
-                        option_phase = Some(1);
-                        continue;
-                    }
-                }
-                1 => {
-                    let scan = self.scan_keyword_retained("subcount");
-                    if self
-                        .retain_expansion_scalar(
-                            scan,
-                            crate::state::PendingExpansionResume::PdfMatchOptions {
-                                case_insensitive,
-                                subcount,
-                                phase,
-                            },
-                            suspended,
-                        )?
-                        .value
-                    {
-                        option_phase = Some(2);
-                        continue;
-                    }
-                    option_phase = None;
-                    continue;
-                }
-                2 => {
-                    let scan = self.scan_integer_retained();
-                    subcount = self
-                        .retain_expansion_scalar(
-                            scan,
-                            crate::state::PendingExpansionResume::PdfMatchOptions {
-                                case_insensitive,
-                                subcount,
-                                phase,
-                            },
-                            suspended,
-                        )?
-                        .value
-                        .max(0) as u32;
-                }
-                _ => return Err(CommandError::input_invariant()),
+        let mut case_insensitive = false;
+        let mut subcount = 10_u32;
+        loop {
+            if self.scan_keyword_retained("icase").into_result()?.value {
+                case_insensitive = true;
+            } else if self.scan_keyword_retained("subcount").into_result()?.value {
+                subcount = self.scan_integer_retained().into_result()?.value.max(0) as u32;
+            } else {
+                break;
             }
-            option_phase = Some(0);
         }
-        let pattern = if let Some(pattern) = retained_pattern {
-            pattern
-        } else {
-            match self.scan_balanced_text(true) {
-                Ok(pattern) => pattern.tokens,
-                Err(error) => {
-                    if error.is_resource_suspension() {
-                        *suspended = Some(crate::state::PendingExpansionResume::PdfMatchPattern {
-                            case_insensitive,
-                            subcount,
-                        });
-                    }
-                    return Err(error);
-                }
-            }
-        };
-        let haystack = match self.scan_balanced_text(true) {
-            Ok(haystack) => haystack.tokens,
-            Err(error) => {
-                if error.is_resource_suspension() {
-                    *suspended = Some(crate::state::PendingExpansionResume::PdfMatchHaystack {
-                        case_insensitive,
-                        subcount,
-                        pattern,
-                    });
-                }
-                return Err(error);
-            }
-        };
+        let pattern = self.scan_balanced_text(true)?.tokens;
+        let haystack = self.scan_balanced_text(true)?.tokens;
         let pattern = pdftex_c_string(self.attempt_token_list_bytes(pattern)?);
         let haystack = pdftex_c_string(self.attempt_token_list_bytes(haystack)?);
         let regex = match PosixRegexBuilder::new(&pattern)

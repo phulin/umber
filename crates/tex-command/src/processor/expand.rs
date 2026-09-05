@@ -162,23 +162,11 @@ enum ExpandedHotDispatch {
     Finished(DeliveryStatus),
 }
 
-/// Exact parent capability carried between the loop and one child admission.
-/// `Captured` is a live parent slot that still needs its one Await transition;
-/// `Awaiting` is the same slot restored from an inline frame link. Encoding
-/// that distinction in the value keeps admission/rollback from relying on a
-/// parallel boolean or on rediscovering the lane top.
+/// Exact parent slot carried between the loop and one child admission.
+/// Captured slots still need their one Await transition before the child runs.
 #[derive(Debug)]
 enum ParentAdmission<G> {
     Captured(crate::expansion_work::ExpansionControlSlot<G>),
-    Awaiting(crate::expansion_work::ExpansionControlSlot<G>),
-}
-
-#[derive(Debug)]
-struct ResumedExpandedDelivery<G> {
-    command: HotCommand<G>,
-    delivery_expanded: bool,
-    parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
-    return_capability: Option<crate::expansion_work::control::ExpansionReturnCapability<G>>,
 }
 
 impl<G> Copy for ParentAdmission<G> {}
@@ -192,19 +180,23 @@ impl<G> Clone for ParentAdmission<G> {
 impl<G> ParentAdmission<G> {
     #[inline]
     fn slot(self) -> crate::expansion_work::ExpansionControlSlot<G> {
-        match self {
-            Self::Captured(slot) | Self::Awaiting(slot) => slot,
-        }
+        self.captured_slot()
     }
 
     #[inline]
     const fn needs_await(self) -> bool {
-        matches!(self, Self::Captured(_))
+        true
+    }
+
+    #[inline]
+    const fn captured_slot(self) -> crate::expansion_work::ExpansionControlSlot<G> {
+        match self {
+            Self::Captured(slot) => slot,
+        }
     }
 }
 
 enum ActiveControlSnapshot<G> {
-    Return(crate::expansion_work::ExpansionControlSlot<G>),
     Expanded(
         crate::expansion_work::ExpansionControlView<
             G,
@@ -241,7 +233,6 @@ enum ActiveControlSnapshot<G> {
             crate::expansion_work::control::SynchronousNumberControl,
         >,
     ),
-    PdfXImageBBox,
     FontName,
     CsName,
     IfCsName,
@@ -257,12 +248,10 @@ impl<G> Clone for ActiveControlSnapshot<G> {
 }
 
 impl<G> ActiveControlSnapshot<G> {
-    /// Returns the exact active parent capability when its phase can suspend
-    /// around a nested expanded child. The snapshot already contains the
-    /// typed lane slot, so dispatch does not rediscover the top control.
+    /// Returns the exact active parent slot when its phase can await a nested
+    /// expanded child.
     fn awaitable_slot(self) -> Option<crate::expansion_work::ExpansionControlSlot<G>> {
         match self {
-            Self::Return(slot) => Some(slot),
             Self::ExpandAfterSync(control)
                 if control.phase
                     == crate::expansion_work::control::SynchronousExpandAfterPhase::NeedSecond =>
@@ -391,7 +380,6 @@ fn is_hot_synchronous_primitive(primitive: ExpandablePrimitive) -> bool {
             | ExpandablePrimitive::PdfXFormName
             | ExpandablePrimitive::PdfPageRef
             | ExpandablePrimitive::PdfLastMatch
-            | ExpandablePrimitive::PdfXImageBBox
             | ExpandablePrimitive::PdfEscapeString
             | ExpandablePrimitive::PdfEscapeHex
             | ExpandablePrimitive::PdfUnescapeHex
@@ -452,7 +440,6 @@ fn hot_primitive_starts_control(primitive: ExpandablePrimitive) -> bool {
             | ExpandablePrimitive::PdfXFormName
             | ExpandablePrimitive::PdfPageRef
             | ExpandablePrimitive::PdfLastMatch
-            | ExpandablePrimitive::PdfXImageBBox
             | ExpandablePrimitive::PdfEscapeString
             | ExpandablePrimitive::PdfEscapeHex
             | ExpandablePrimitive::PdfUnescapeHex
@@ -623,7 +610,6 @@ fn is_ranked_fused_expansion(dispatch: ExpansionDispatch) -> bool {
                     | ExpandablePrimitive::Number
                     | ExpandablePrimitive::The
                     | ExpandablePrimitive::PdfUniformDeviate
-                    | ExpandablePrimitive::PdfXImageBBox
             )
     )
 }
@@ -1109,9 +1095,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             if self.finish_number_continuation_at_end()? {
                 return Ok(ResidentColdOutcome::Retry);
             }
-            if self.finish_pdf_ximage_bbox_continuation_at_end()? {
-                return Ok(ResidentColdOutcome::Retry);
-            }
             if self.command.scratch.active_control_is_synchronous() {
                 self.command
                     .scratch
@@ -1270,41 +1253,17 @@ impl<G> CommandProcessor<'_, '_, G> {
         initial_action: Option<ExpandedCommandAction>,
     ) -> Result<DeliveryStatus, CommandError> {
         let mut initial_action = initial_action;
-        self.expanded_next_with_boundary(destination, initial_action.take(), None)
+        self.expanded_next_with_boundary(destination, initial_action.take())
     }
 
     fn expanded_next_with_boundary(
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
         initial_action: Option<ExpandedCommandAction>,
-        return_boundary: Option<(
-            crate::expansion_work::ExpansionControlSlot<G>,
-            crate::expansion_work::control::ExpansionReturnSink,
-        )>,
     ) -> Result<DeliveryStatus, CommandError> {
-        let mut initial_action = initial_action;
-        loop {
-            if destination.is_none() && self.canonical_expression_resume_pending()? {
-                self.run_pending_canonical_expression()?;
-                continue;
-            }
-            let mut hot_destination = destination.take().map(HotCommand::from_current);
-            let result = self.expanded_next_hot_with_boundary(
-                &mut hot_destination,
-                initial_action.take(),
-                return_boundary,
-            );
-            if matches!(
-                result,
-                Ok(DeliveryStatus::PendingExpanded)
-                    if self.command.scratch.has_pending_expression_frame()
-            ) {
-                hot_destination.take();
-                self.run_pending_canonical_expression()?;
-                continue;
-            }
-            return self.finish_hot_delivery(destination, &mut hot_destination, result);
-        }
+        let mut hot_destination = destination.take().map(HotCommand::from_current);
+        let result = self.expanded_next_hot_with_boundary(&mut hot_destination, initial_action);
+        self.finish_hot_delivery(destination, &mut hot_destination, result)
     }
 
     fn finish_hot_delivery(
@@ -1343,17 +1302,13 @@ impl<G> CommandProcessor<'_, '_, G> {
         destination: &mut Option<HotCommand<G>>,
         initial_action: Option<ExpandedCommandAction>,
     ) -> Result<DeliveryStatus, CommandError> {
-        self.expanded_next_hot_with_boundary(destination, initial_action, None)
+        self.expanded_next_hot_with_boundary(destination, initial_action)
     }
 
     fn expanded_next_hot_with_boundary(
         &mut self,
         destination: &mut Option<HotCommand<G>>,
         initial_action: Option<ExpandedCommandAction>,
-        return_boundary: Option<(
-            crate::expansion_work::ExpansionControlSlot<G>,
-            crate::expansion_work::control::ExpansionReturnSink,
-        )>,
     ) -> Result<DeliveryStatus, CommandError> {
         let depth = self.command.transient.active_expansion_depth;
         self.command.scratch.note_delivery_entry(depth);
@@ -1365,67 +1320,16 @@ impl<G> CommandProcessor<'_, '_, G> {
             );
         };
         self.command.transient.active_expansion_depth = active_depth;
-        let resuming = self.expansion_resume.is_some()
-            || self
-                .scanner_resume
-                .as_ref()
-                .is_some_and(crate::ScannerFrameKey::is_expansion);
-        let (mut command, mut delivery_expanded, mut carried_parent, resumed_return_capability) =
-            if resuming {
-                match self.resume_expanded_delivery(destination.take()) {
-                    Ok(resumed) => (
-                        Some(resumed.command),
-                        resumed.delivery_expanded,
-                        resumed.parent.map(ParentAdmission::Awaiting),
-                        resumed.return_capability,
-                    ),
-                    Err(failure) => {
-                        return self.fail_hot_expanded_delivery(destination, depth, failure);
-                    }
-                }
-            } else if let Some(command) = destination.take() {
-                (Some(command), false, None, None)
+        let (mut command, mut delivery_expanded, mut carried_parent) =
+            if let Some(command) = destination.take() {
+                (Some(command), false, None)
             } else {
-                (None, false, None, None)
+                (None, false, None)
             };
-        self.resumed_return_capability = resumed_return_capability;
-        let mut return_boundary = return_boundary;
-        if let Some(expected_sink) = self.resumed_return_sink.take() {
-            let Some(capability) = self.resumed_return_capability.take() else {
-                return self.fail_hot_expanded_delivery(
-                    destination,
-                    depth,
-                    CommandError::input_invariant(),
-                );
-            };
-            if capability.sink() != expected_sink {
-                return self.fail_hot_expanded_delivery(
-                    destination,
-                    depth,
-                    CommandError::input_invariant(),
-                );
-            }
-            let slot = capability.slot();
-            if self.scanner_return_capability.replace(capability).is_some() {
-                return self.fail_hot_expanded_delivery(
-                    destination,
-                    depth,
-                    CommandError::input_invariant(),
-                );
-            }
-            return_boundary = Some((slot, expected_sink));
-        }
         let mut initial_action = initial_action;
         let mut suppress_first_expansion_trace = delivery_expanded;
         let status = 'delivery: loop {
             if command.is_none() {
-                if return_boundary.is_some_and(|(slot, destination)| {
-                    destination
-                        == crate::expansion_work::control::ExpansionReturnSink::ScannerExpansion
-                        && self.command.scratch.active_control_slot() == Some(slot)
-                }) {
-                    break 'delivery DeliveryStatus::PendingExpanded;
-                }
                 debug_assert!(
                     destination.is_none(),
                     "the caller-owned hot command must be empty before a resident fetch"
@@ -1593,15 +1497,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                     command.take();
                 }
                 ExpandedHotDispatch::Finished(status) => {
-                    let child_still_owns_delivery = return_boundary.is_some_and(|(slot, sink)| {
-                        sink
-                            == crate::expansion_work::control::ExpansionReturnSink::ScannerExpansion
-                            && self.command.scratch.active_control_slot() != Some(slot)
-                    });
-                    if child_still_owns_delivery {
-                        command.take();
-                        continue;
-                    }
                     break status;
                 }
             }
@@ -1646,11 +1541,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         // `\the`/conditional can use the same LIFO lane.
         let active = match active_control {
             None => None,
-            Some(ActiveControlTag::Return) => self
-                .command
-                .scratch
-                .active_control_slot()
-                .map(ActiveControlSnapshot::Return),
             Some(ActiveControlTag::Expanded) => self
                 .command
                 .scratch
@@ -1687,12 +1577,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .top_number_control()
                 .map_err(crate::scan_toks::scratch_command_error)?
                 .map(ActiveControlSnapshot::Number),
-            Some(ActiveControlTag::PdfXImageBBox) => self
-                .command
-                .scratch
-                .top_pdf_ximage_bbox_control()
-                .map_err(crate::scan_toks::scratch_command_error)?
-                .map(|_| ActiveControlSnapshot::PdfXImageBBox),
             Some(ActiveControlTag::FontName) => self
                 .command
                 .scratch
@@ -1719,20 +1603,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .map(ActiveControlSnapshot::The),
             Some(_) => None,
         };
-        if matches!(active, Some(ActiveControlSnapshot::Return(_)))
-            && matches!(
-                action,
-                ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate
-            )
-        {
-            // The scanner-owned return capability is deliberately left in
-            // the lane for its caller to consume.  Returning the settled
-            // command here keeps the scanner boundary in one delivery step;
-            // no ambient top-control retry is needed.
-            return Ok(ExpandedHotDispatch::Finished(
-                self.finish_expanded_command(command, *delivery_expanded),
-            ));
-        }
         if let Some(ActiveControlSnapshot::Expanded(control)) = active {
             match control.phase {
                 crate::expansion_work::control::SynchronousExpandedPhase::NeedOpening => {
@@ -1994,22 +1864,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             return Ok(ExpandedHotDispatch::Continue);
         }
 
-        if matches!(active, Some(ActiveControlSnapshot::PdfXImageBBox))
-            && matches!(
-                action,
-                ExpandedCommandAction::Return
-                    | ExpandedCommandAction::EndTemplate
-                    | ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(
-                        ExpandablePrimitive::Else
-                            | ExpandablePrimitive::Or
-                            | ExpandablePrimitive::Fi,
-                    ))
-            )
-        {
-            let _ = self.advance_pdf_ximage_bbox_continuation(*command, false)?;
-            return Ok(ExpandedHotDispatch::Continue);
-        }
-
         // `\fontname` consumes one expanded font identifier.  Keep its
         // opener in the compact control lane so nested conversions are
         // reduced by this loop rather than by recursively re-entering a
@@ -2031,39 +1885,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         // and re-enters this same loop with the original target command.
         // This branch must run before ordinary classification: the
         // restored command is the target, not a new top-level expansion.
-        let resumed_the = match self.resumed_expansion.take() {
-            Some(crate::state::PendingExpansionResume::The { opener }) => Some(opener),
-            Some(other) => {
-                self.resumed_expansion = Some(other);
-                None
-            }
-            None => None,
-        };
-        if let Some(opener) = resumed_the {
-            let target = command.materialize();
-            match self.complete_the_continuation(&target, opener) {
-                Ok(()) => {
-                    return Ok(ExpandedHotDispatch::Continue);
-                }
-                Err(error) if error.is_resource_suspension() => {
-                    *command_parked = true;
-                    return self
-                        .park_the_continuation(
-                            target,
-                            opener,
-                            *delivery_expanded,
-                            error,
-                            destination,
-                            depth,
-                        )
-                        .map(ExpandedHotDispatch::Finished);
-                }
-                Err(error) => {
-                    return self.fail_expanded_dispatch(destination, depth, error);
-                }
-            }
-        }
-
         // `\csname` is another expanded-token consumer. Its spelling is
         // kept in the generation-owned name lane while this compact
         // control remains at the top of the same delivery stack. Nested
@@ -2134,10 +1955,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                     ExpandedCommandAction::Expand(_),
                 ) => {}
                 (
-                    crate::expansion_work::control::ThePhase::CanonicalExpression { .. },
-                    ExpandedCommandAction::Expand(_),
-                ) => {}
-                (
                     crate::expansion_work::control::ThePhase::ExpressionRegisterIndex { .. },
                     ExpandedCommandAction::Expand(_),
                 ) => {}
@@ -2159,25 +1976,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                     ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate,
                 ) => {
                     if self.advance_the_expression_continuation(*command)? {
-                        if self.command.scratch.has_pending_expression_frame() {
-                            return Ok(ExpandedHotDispatch::Finished(
-                                DeliveryStatus::PendingExpanded,
-                            ));
-                        }
                         return Ok(ExpandedHotDispatch::Continue);
                     }
                     return Ok(ExpandedHotDispatch::Continue);
-                }
-                (
-                    crate::expansion_work::control::ThePhase::CanonicalExpression { .. },
-                    ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate,
-                ) => {
-                    // The canonical scanner owns this token request.  It
-                    // re-enters the shared delivery loop and receives this
-                    // inert control only as the scanner's return boundary.
-                    return Ok(ExpandedHotDispatch::Finished(
-                        self.finish_expanded_command(command, *delivery_expanded),
-                    ));
                 }
                 (
                     crate::expansion_work::control::ThePhase::ExpressionRegisterIndex { .. },
@@ -2193,11 +1994,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                     ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate,
                 ) => {
                     if self.advance_the_dimension_expression_continuation(*command)? {
-                        if self.command.scratch.has_pending_expression_frame() {
-                            return Ok(ExpandedHotDispatch::Finished(
-                                DeliveryStatus::PendingExpanded,
-                            ));
-                        }
                         return Ok(ExpandedHotDispatch::Continue);
                     }
                     return Ok(ExpandedHotDispatch::Continue);
@@ -2282,17 +2078,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             return Ok(ExpandedHotDispatch::Continue);
                         }
                         Err(error) if error.is_resource_suspension() => {
-                            *command_parked = true;
-                            return self
-                                .park_the_continuation(
-                                    target,
-                                    the_control.opener,
-                                    *delivery_expanded,
-                                    error,
-                                    destination,
-                                    depth,
-                                )
-                                .map(ExpandedHotDispatch::Finished);
+                            return self.fail_expanded_dispatch(destination, depth, error);
                         }
                         Err(error) => {
                             return self.fail_expanded_dispatch(destination, depth, error);
@@ -2592,9 +2378,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .begin_pdf_last_match_continuation_with_parent(invocation.origin, parent),
                     _ => unreachable!("PDF integer branch validates its primitive"),
                 },
-                ExpandablePrimitive::PdfXImageBBox => {
-                    this.begin_pdf_ximage_bbox_continuation_with_parent(invocation.origin, parent)
-                }
                 primitive @ (ExpandablePrimitive::PdfEscapeString
                 | ExpandablePrimitive::PdfEscapeHex
                 | ExpandablePrimitive::PdfUnescapeHex
@@ -2869,16 +2652,13 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
         let parent = admission.map(ParentAdmission::slot);
         let mut rich = command.materialize();
-        let prior_scanner_parent = std::mem::replace(&mut self.scanner_return_parent, parent);
         let result = self.expand_classified_rich_occupied(
             &mut rich,
             ExpansionDispatch::Primitive(primitive),
             report_trace,
             delivery_expanded,
             parent,
-            command_parked,
         );
-        self.scanner_return_parent = prior_scanner_parent;
         if !*command_parked {
             *command = HotCommand::from_current(rich);
         }
@@ -3196,13 +2976,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         loop {
             let status = if destination.is_some() {
                 DeliveryStatus::Command
-            } else if self.expansion_resume.is_some()
-                || self
-                    .scanner_resume
-                    .as_ref()
-                    .is_some_and(crate::ScannerFrameKey::is_expansion)
-            {
-                self.expanded_next(destination)?
             } else {
                 self.raw_next(destination)?
             };
@@ -3276,17 +3049,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.expanded_until(destination, ExpandedUntilMode::PreserveUndefined)
     }
 
-    /// `x_token` starts with a command already in hand. Ordinary uses have no
-    /// pending command and therefore enter the expanded loop directly.
-    #[cold]
-    #[inline(never)]
-    pub(super) fn x_token_next(
-        &mut self,
-        destination: &mut Option<CurrentCommand<G>>,
-    ) -> Result<DeliveryStatus, CommandError> {
-        self.x_token_next_with_action(destination, None)
-    }
-
     fn x_token_next_with_action(
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
@@ -3335,10 +3097,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         destination: &mut Option<CurrentCommand<G>>,
         preflight: bool,
     ) -> Result<DeliveryStatus, CommandError> {
-        if destination.is_none() && self.canonical_expression_resume_pending()? {
-            self.run_pending_canonical_expression()?;
-            return self.expanded_next(destination);
-        }
         let existing = destination.is_some();
         let mut hot_destination = if existing {
             destination.as_ref().map(HotCommand::from_current_ref)
@@ -3396,16 +3154,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             return Ok(DeliveryStatus::Command);
         }
         let result = self.expanded_next_hot(&mut hot_destination, Some(action));
-        if matches!(
-            result,
-            Ok(DeliveryStatus::PendingExpanded)
-                if self.command.scratch.has_pending_expression_frame()
-        ) {
-            hot_destination.take();
-            destination.take();
-            self.run_pending_canonical_expression()?;
-            return self.expanded_next(destination);
-        }
         self.finish_hot_delivery(destination, &mut hot_destination, result)
     }
 
@@ -3427,52 +3175,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .take()
                         .ok_or_else(CommandError::input_invariant)?;
                     self.begin_scalar_alignment_v_template(&command)?;
-                }
-                result => return Ok(result),
-            }
-        }
-    }
-
-    /// Resumed expansion restores its command once, then uses the x-token
-    /// semantics owned by the cold continuation wrapper.
-    #[cold]
-    #[inline(never)]
-    pub(super) fn resumed_expanded_next(
-        &mut self,
-        destination: &mut Option<CurrentCommand<G>>,
-    ) -> Result<DeliveryStatus, CommandError> {
-        loop {
-            match self.x_token_next(destination)? {
-                DeliveryStatus::AlignmentEndTemplate => {
-                    let command = destination
-                        .take()
-                        .ok_or_else(CommandError::input_invariant)?;
-                    self.begin_scalar_alignment_v_template(&command)?;
-                }
-                DeliveryStatus::PendingExpanded | DeliveryStatus::AlignmentClosingBrace => {
-                    return Ok(DeliveryStatus::Command);
-                }
-                result => return Ok(result),
-            }
-        }
-    }
-
-    #[cold]
-    #[inline(never)]
-    pub(super) fn resumed_main_loop_next(
-        &mut self,
-        destination: &mut Option<CurrentCommand<G>>,
-    ) -> Result<DeliveryStatus, CommandError> {
-        loop {
-            match self.main_loop_next(destination)? {
-                DeliveryStatus::AlignmentEndTemplate => {
-                    let command = destination
-                        .take()
-                        .ok_or_else(CommandError::input_invariant)?;
-                    self.begin_scalar_alignment_v_template(&command)?;
-                }
-                DeliveryStatus::PendingExpanded | DeliveryStatus::AlignmentClosingBrace => {
-                    return Ok(DeliveryStatus::Command);
                 }
                 result => return Ok(result),
             }
@@ -3565,20 +3267,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        self.get_x_token_into_with_boundary(destination, None)
-    }
-
-    fn get_x_token_into_with_boundary(
-        &mut self,
-        destination: &mut Option<CurrentCommand<G>>,
-        return_boundary: Option<(
-            crate::expansion_work::ExpansionControlSlot<G>,
-            crate::expansion_work::control::ExpansionReturnSink,
-        )>,
-    ) -> Result<DeliveryStatus, CommandError> {
         debug_assert!(destination.is_none());
         loop {
-            let result = self.expanded_next_with_boundary(destination, None, return_boundary)?;
+            let result = self.expanded_next_with_boundary(destination, None)?;
             match result {
                 DeliveryStatus::ReplayCompleted(_) => continue,
                 DeliveryStatus::AlignmentEndTemplate => {
@@ -3606,62 +3297,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        use crate::expansion_work::control::ExpansionReturnSink;
-
-        let return_to = ExpansionReturnSink::ScannerToken;
-        let resuming_parked_expansion = self
-            .scanner_resume
-            .as_ref()
-            .is_some_and(crate::ScannerFrameKey::is_expansion)
-            && self.resumed_return_capability.is_none();
-        if resuming_parked_expansion {
-            let prior_capability = self.scanner_return_capability.take();
-            self.resumed_return_sink = Some(return_to);
-            let result = self.get_x_token_into_with_boundary(destination, None);
-            self.resumed_return_sink = None;
-            let current_capability =
-                std::mem::replace(&mut self.scanner_return_capability, prior_capability);
-            if result.is_ok() {
-                self.command
-                    .scratch
-                    .finish_expansion_return(
-                        current_capability.ok_or_else(CommandError::input_invariant)?,
-                    )
-                    .map_err(crate::scan_toks::scratch_command_error)?;
-            }
-            return result;
-        }
-        let capability = if self
-            .resumed_return_capability
-            .as_ref()
-            .is_some_and(|capability| capability.sink() == return_to)
-        {
-            self.resumed_return_capability
-                .take()
-                .ok_or_else(CommandError::input_invariant)?
-        } else {
-            let parent = self.current_scanner_return_parent();
-            self.command
-                .scratch
-                .begin_expansion_return(return_to, parent)
-                .map_err(crate::scan_toks::scratch_command_error)?
-        };
-        let (return_slot, return_sink) = (capability.slot(), capability.sink());
-        let prior_capability =
-            std::mem::replace(&mut self.scanner_return_capability, Some(capability));
-        let result =
-            self.get_x_token_into_with_boundary(destination, Some((return_slot, return_sink)));
-        let current_capability =
-            std::mem::replace(&mut self.scanner_return_capability, prior_capability);
-        if result.is_ok() {
-            self.command
-                .scratch
-                .finish_expansion_return(
-                    current_capability.ok_or_else(CommandError::input_invariant)?,
-                )
-                .map_err(crate::scan_toks::scratch_command_error)?;
-        }
-        result
+        // Scanner calls are ordinary synchronous Rust calls.  A resource
+        // error returns through this boundary and the processor drop hook
+        // unwinds all call-local expansion state for checkpoint replay.
+        self.get_x_token_into(destination)
     }
 
     /// Requests one already-delivered command's expansion from the same
@@ -3673,150 +3312,15 @@ impl<G> CommandProcessor<'_, '_, G> {
         destination: &mut Option<CurrentCommand<G>>,
         report_trace: bool,
     ) -> Result<(), CommandError> {
-        use crate::expansion_work::control::ExpansionReturnSink;
-
-        let return_to = ExpansionReturnSink::ScannerExpansion;
-        let resuming_parked_expansion = self
-            .scanner_resume
-            .as_ref()
-            .is_some_and(crate::ScannerFrameKey::is_expansion)
-            && self.resumed_return_capability.is_none();
-        if resuming_parked_expansion {
-            let prior_capability = self.scanner_return_capability.take();
-            let result = (|| {
-                let result = self.expand_into_with_parent(destination, report_trace, None);
-                if result.is_ok() {
-                    destination
-                        .take()
-                        .ok_or_else(CommandError::input_invariant)?;
-                }
-                let Some(capability) = self.scanner_return_capability.as_ref() else {
-                    return result.and_then(|_| Err(CommandError::input_invariant()));
-                };
-                let return_slot = capability.slot();
-                let return_sink = capability.sink();
-                if result.is_ok() && self.command.scratch.active_control_slot() != Some(return_slot)
-                {
-                    loop {
-                        match self.expanded_next_with_boundary(
-                            destination,
-                            None,
-                            Some((return_slot, return_sink)),
-                        )? {
-                            DeliveryStatus::ReplayCompleted(_) => continue,
-                            DeliveryStatus::PendingExpanded
-                                if destination.is_none()
-                                    && self.command.scratch.active_control_slot()
-                                        == Some(return_slot) =>
-                            {
-                                break;
-                            }
-                            DeliveryStatus::Command => {
-                                return Err(CommandError::input_invariant());
-                            }
-                            _ => return Err(CommandError::input_invariant()),
-                        }
-                    }
-                }
-                result
-            })();
-            let current_capability =
-                std::mem::replace(&mut self.scanner_return_capability, prior_capability);
-            if result.is_ok() {
-                self.command
-                    .scratch
-                    .finish_expansion_return(
-                        current_capability.ok_or_else(CommandError::input_invariant)?,
-                    )
-                    .map_err(crate::scan_toks::scratch_command_error)?;
-            }
-            return result;
-        }
-        let use_carried_return = self
-            .resumed_return_capability
-            .as_ref()
-            .is_some_and(|capability| capability.sink() == return_to);
-        let capability = if use_carried_return {
-            self.resumed_return_capability
-                .take()
-                .ok_or_else(CommandError::input_invariant)?
-        } else {
-            let parent = self.current_scanner_return_parent();
-            self.command
-                .scratch
-                .begin_expansion_return(return_to, parent)
-                .map_err(crate::scan_toks::scratch_command_error)?
-        };
-        let (return_slot, return_sink) = (capability.slot(), capability.sink());
-        let prior_capability =
-            std::mem::replace(&mut self.scanner_return_capability, Some(capability));
-        let result = (|| {
-            let result = self.expand_into_with_parent(
-                destination,
-                report_trace,
-                (!use_carried_return).then_some(return_slot),
-            );
-            if result.is_ok() {
-                // A successful expansion has consumed the opener in this
-                // destination.  It is not a delivered result and must never
-                // be re-admitted as the next expanded command.
-                destination
-                    .take()
-                    .ok_or_else(CommandError::input_invariant)?;
-            }
-            if result.is_ok() && self.command.scratch.active_control_slot() != Some(return_slot) {
-                // A synchronous child owns the consumed opener. Continue in
-                // the same delivery driver until this exact return edge is
-                // exposed; the boundary carries the sink capability through
-                // the canonical loop and rejects any unowned status.
-                loop {
-                    let status = self.expanded_next_with_boundary(
-                        destination,
-                        None,
-                        Some((return_slot, return_sink)),
-                    )?;
-                    match status {
-                        DeliveryStatus::ReplayCompleted(_) => continue,
-                        DeliveryStatus::PendingExpanded
-                            if destination.is_none()
-                                && self.command.scratch.active_control_slot()
-                                    == Some(return_slot) =>
-                        {
-                            break;
-                        }
-                        DeliveryStatus::Command => {
-                            return Err(CommandError::input_invariant());
-                        }
-                        _ => return Err(CommandError::input_invariant()),
-                    }
-                }
-            }
-            result
-        })();
-        let current_capability =
-            std::mem::replace(&mut self.scanner_return_capability, prior_capability);
+        let result = self.expand_into_with_parent(destination, report_trace, None);
         if result.is_ok() {
-            self.command
-                .scratch
-                .finish_expansion_return(
-                    current_capability.ok_or_else(CommandError::input_invariant)?,
-                )
-                .map_err(crate::scan_toks::scratch_command_error)?;
+            // The expanded opener is consumed by the nested call and cannot
+            // become the scanner's next operand.
+            destination
+                .take()
+                .ok_or_else(CommandError::input_invariant)?;
         }
         result
-    }
-
-    /// A nested scanner request belongs to the capability currently lent to
-    /// its caller.  A primitive's explicit parent remains the fallback for a
-    /// first request; once a sink is active, chaining through its exact slot
-    /// prevents a child from reaching back to an older ambient parent.
-    fn current_scanner_return_parent(
-        &self,
-    ) -> Option<crate::expansion_work::ExpansionControlSlot<G>> {
-        self.scanner_return_capability
-            .as_ref()
-            .map(|capability| capability.slot())
-            .or(self.scanner_return_parent)
     }
 
     /// Delivers protected replay-aware expansion into caller-provided storage.
@@ -4041,13 +3545,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         loop {
             match self.expanded_next_hot(destination, None)? {
                 DeliveryStatus::ReplayCompleted(_) => continue,
-                DeliveryStatus::PendingExpanded
-                    if self.command.scratch.has_pending_expression_frame() =>
-                {
-                    destination.take();
-                    self.run_pending_canonical_expression()?;
-                    continue;
-                }
                 DeliveryStatus::End => return Ok(DeliveryStatus::End),
                 DeliveryStatus::Command
                 | DeliveryStatus::PendingExpanded
@@ -4259,25 +3756,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(result)
     }
 
-    /// Resumes one genuinely suspended expansion from its stable parked root.
-    /// The key is the executor's only command-related retry owner; consuming
-    /// it moves the command once into `destination` before scalar expansion
-    /// continues at the retained typed phase.
-    pub fn resume_expansion_into(
-        &mut self,
-        key: crate::ExpansionWorkKey<G>,
-        main_loop: bool,
-        destination: &mut Option<CurrentCommand<G>>,
-    ) -> Result<DeliveryStatus, CommandError> {
-        debug_assert!(destination.is_none());
-        self.install_expansion_resume(key);
-        if main_loop {
-            self.resumed_main_loop_next(destination)
-        } else {
-            self.resumed_expanded_next(destination)
-        }
-    }
-
     /// Delivers one command through TeX82 §1038's `main_loop_lookahead`.
     ///
     /// `main_control`'s inner character loop (§1034) never returns to
@@ -4353,60 +3831,6 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     #[cold]
     #[inline(never)]
-    fn resume_expanded_delivery(
-        &mut self,
-        destination: Option<HotCommand<G>>,
-    ) -> Result<ResumedExpandedDelivery<G>, CommandError> {
-        let key = self.expansion_resume.take().or_else(|| {
-            self.scanner_resume
-                .as_ref()
-                .is_some_and(crate::ScannerFrameKey::is_expansion)
-                .then(|| {
-                    let wrapper = self
-                        .scanner_resume
-                        .take()
-                        .expect("matched expansion wrapper");
-                    self.command
-                        .scratch
-                        .take_expansion_key(wrapper)
-                        .expect("live wrapper owns expansion work")
-                })
-        });
-        let mut retained = self
-            .command
-            .scratch
-            .resume_expansion(key.expect("genuine suspension owns expansion work"))
-            .map_err(crate::scan_toks::scratch_command_error)?;
-        if destination
-            .is_some_and(|command| command != HotCommand::from_current_ref(&retained.command))
-        {
-            if let Some(child) = retained.take_child() {
-                self.abort_continuation(child)?;
-            }
-            return Err(CommandError::input_invariant());
-        }
-        if let Some(child) = retained.child.take() {
-            let (key, child_destination) = child.restore();
-            if child_destination != crate::state::PendingExpansionChildDestination::Dispatch {
-                return Err(CommandError::input_invariant());
-            }
-            self.scanner_resume = Some(key);
-        }
-        self.resumed_expansion = Some(retained.resume);
-        let delivery_expanded = retained.delivery_expanded;
-        let parent = retained.parent;
-        let return_capability = retained.return_capability;
-        self.resume_current_command(&retained.command);
-        Ok(ResumedExpandedDelivery {
-            command: HotCommand::from_current(retained.command),
-            delivery_expanded,
-            parent,
-            return_capability,
-        })
-    }
-
-    #[cold]
-    #[inline(never)]
     fn fail_hot_expanded_delivery(
         &mut self,
         destination: &mut Option<HotCommand<G>>,
@@ -4429,54 +3853,6 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<ExpandedHotDispatch, CommandError> {
         self.fail_hot_expanded_delivery(destination, depth, failure)
             .map(ExpandedHotDispatch::Finished)
-    }
-
-    /// Parks a completed `\the` target and its scalar child at the one cold
-    /// resource boundary.  The synchronous control itself was popped before
-    /// scanning the target (register indexes and font selectors have their
-    /// own expanded lookahead), so the compact resume payload carries only
-    /// the opener provenance needed to finish rendering after retry.
-    #[cold]
-    #[inline(never)]
-    fn park_the_continuation(
-        &mut self,
-        command: CurrentCommand<G>,
-        opener: OriginId,
-        delivery_expanded: bool,
-        error: CommandError,
-        destination: &mut Option<HotCommand<G>>,
-        depth: u32,
-    ) -> Result<DeliveryStatus, CommandError> {
-        let child = crate::execution_scratch::ChildContinuation::capture(
-            &mut self.scanner_resume,
-            crate::state::PendingExpansionChildDestination::Dispatch,
-        );
-        let pending = crate::state::PendingExpansion {
-            command,
-            resume: crate::state::PendingExpansionResume::The { opener },
-            delivery_expanded,
-            parent: None,
-            return_capability: None,
-            child,
-        };
-        match self.command.scratch.store_expansion_frame(pending) {
-            Ok(key) => {
-                self.scanner_resume = Some(key);
-                self.fail_hot_expanded_delivery(destination, depth, error)
-            }
-            Err((store_error, mut pending)) => {
-                if let Some(child) = pending.take_child()
-                    && let Err(failure) = self.abort_continuation(child)
-                {
-                    return self.fail_hot_expanded_delivery(destination, depth, failure);
-                }
-                self.fail_hot_expanded_delivery(
-                    destination,
-                    depth,
-                    crate::scan_toks::scratch_command_error(store_error),
-                )
-            }
-        }
     }
 
     #[cold]
@@ -5156,70 +4532,11 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn expand_into_with_parent(
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
-        mut report_trace: bool,
+        report_trace: bool,
         explicit_parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
     ) -> Result<(), CommandError> {
-        let mut parent = explicit_parent;
-        let mut admitted_parent = explicit_parent.is_some();
-        if self.resumed_expansion.is_none()
-            && self.scanner_resume.is_some()
-            && !self
-                .scanner_resume
-                .as_ref()
-                .is_some_and(crate::ScannerFrameKey::is_expansion)
-        {
-            return Err(CommandError::input_invariant());
-        }
-        if self.resumed_expansion.is_none()
-            && self
-                .scanner_resume
-                .as_ref()
-                .is_some_and(crate::ScannerFrameKey::is_expansion)
-        {
-            let wrapper = self
-                .scanner_resume
-                .take()
-                .expect("matched expansion wrapper");
-            let key = self
-                .command
-                .scratch
-                .take_expansion_key(wrapper)
-                .map_err(crate::scan_toks::scratch_command_error)?;
-            let mut retained = self
-                .command
-                .scratch
-                .resume_expansion(key)
-                .map_err(crate::scan_toks::scratch_command_error)?;
-            if destination.is_some() {
-                if let Some(child) = retained.take_child() {
-                    self.abort_continuation(child)?;
-                }
-                return Err(CommandError::input_invariant());
-            }
-            if let Some(child) = retained.child.take() {
-                let (key, destination) = child.restore();
-                if destination != crate::state::PendingExpansionChildDestination::Dispatch {
-                    return Err(CommandError::input_invariant());
-                }
-                self.scanner_resume = Some(key);
-            }
-            parent = retained.parent;
-            admitted_parent = false;
-            if let Some(capability) = retained.return_capability {
-                if self.scanner_return_capability.replace(capability).is_some() {
-                    return Err(CommandError::input_invariant());
-                }
-            }
-            *destination = Some(retained.command);
-            self.resumed_expansion = Some(retained.resume);
-            self.resume_current_command(
-                destination
-                    .as_ref()
-                    .expect("resumed expansion restores its command destination"),
-            );
-            report_trace = false;
-        }
-        if admitted_parent {
+        let parent = explicit_parent;
+        if explicit_parent.is_some() {
             self.command
                 .scratch
                 .await_expansion_control_for_child(
@@ -5257,18 +4574,14 @@ impl<G> CommandProcessor<'_, '_, G> {
         let mut command = destination
             .take()
             .ok_or_else(CommandError::input_invariant)?;
-        let mut command_parked = false;
         let result = self.expand_classified_rich_occupied(
             &mut command,
             dispatch,
             report_trace,
             delivery_expanded,
             parent,
-            &mut command_parked,
         );
-        if !command_parked {
-            *destination = Some(command);
-        }
+        *destination = Some(command);
         if result.is_ok()
             && let Some(parent) = parent
             && !starts_synchronous_control(dispatch)
@@ -5286,18 +4599,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         command: &mut CurrentCommand<G>,
         dispatch: ExpansionDispatch,
         report_trace: bool,
-        delivery_expanded: bool,
+        _delivery_expanded: bool,
         parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
-        command_parked: &mut bool,
     ) -> Result<(), CommandError> {
-        let resumed_here = self.resumed_expansion.is_some();
-        let mut expansion_resume = self
-            .resumed_expansion
-            .take()
-            .unwrap_or(crate::state::PendingExpansionResume::Dispatch);
-        if !resumed_here && self.scanner_resume.is_some() {
-            return Err(CommandError::input_invariant());
-        }
+        // Resource misses unwind this ordinary call all the way to the host;
+        // phase storage is therefore local to this one expansion request.
         #[cfg(feature = "profiling")]
         {
             if !is_ranked_fused_expansion(dispatch) {
@@ -5335,7 +4641,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         if report_trace && traceable && self.command.delivery_mode.tracing() {
             self.print_command_trace(crate::PrintCommand::from_current(command));
         }
-        let mut suspended_resume = None;
         let result = (|| {
             match dispatch {
                 ExpansionDispatch::Macro => {
@@ -5369,19 +4674,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                             kind != crate::conditionals::ConditionalKind::IfCsName
                         }) =>
                 {
-                    self.expand_conditional(
-                        command,
-                        false,
-                        &mut expansion_resume,
-                        &mut suspended_resume,
-                    )
+                    self.expand_conditional(command, false)
                 }
-                ExpansionDispatch::Primitive(ExpandablePrimitive::Unless) => self.expand_unless(
-                    command,
-                    &mut expansion_resume,
-                    &mut suspended_resume,
-                    parent,
-                ),
+                ExpansionDispatch::Primitive(ExpandablePrimitive::Unless) => {
+                    self.expand_unless(command, parent)
+                }
                 ExpansionDispatch::Primitive(ExpandablePrimitive::IfCsName) => {
                     self.begin_ifcsname_continuation_with_parent(false, parent)
                 }
@@ -5415,10 +4712,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                     self.expand_meaning(command)
                 }
                 ExpansionDispatch::Primitive(ExpandablePrimitive::Number) => {
-                    self.expand_number(command, false, &mut expansion_resume, &mut suspended_resume)
+                    self.expand_number(command, false)
                 }
                 ExpansionDispatch::Primitive(ExpandablePrimitive::RomanNumeral) => {
-                    self.expand_number(command, true, &mut expansion_resume, &mut suspended_resume)
+                    self.expand_number(command, true)
                 }
                 ExpansionDispatch::Primitive(ExpandablePrimitive::The) => {
                     self.begin_the_continuation_with_parent(command.origin(), parent)
@@ -5435,32 +4732,21 @@ impl<G> CommandProcessor<'_, '_, G> {
                 ExpansionDispatch::Primitive(ExpandablePrimitive::Scantokens) => {
                     self.expand_scantokens()
                 }
-                ExpansionDispatch::Primitive(ExpandablePrimitive::FontName) => self
-                    .expand_fontname(
-                        command.copy_for_backup(),
-                        &mut expansion_resume,
-                        &mut suspended_resume,
-                    ),
+                ExpansionDispatch::Primitive(ExpandablePrimitive::FontName) => {
+                    self.expand_fontname(command.copy_for_backup())
+                }
                 // pdftex.web §470's `pdf_font_size_code` conversion prints the
                 // selected font size as an ordinary scaled dimension.
-                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfFontSize) => self
-                    .expand_pdf_font_size(
-                        command.copy_for_backup(),
-                        &mut expansion_resume,
-                        &mut suspended_resume,
-                    ),
+                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfFontSize) => {
+                    self.expand_pdf_font_size(command.copy_for_backup())
+                }
                 // pdftex.web §470 scans e-TeX's extended box-register domain,
                 // then queries typed hlist state for the first non-skipable node
                 // at the requested edge.
                 ExpansionDispatch::Primitive(
                     primitive @ (ExpandablePrimitive::LeftMarginKern
                     | ExpandablePrimitive::RightMarginKern),
-                ) => self.expand_margin_kern(
-                    command.copy_for_backup(),
-                    primitive,
-                    &mut expansion_resume,
-                    &mut suspended_resume,
-                ),
+                ) => self.expand_margin_kern(command.copy_for_backup(), primitive),
                 ExpansionDispatch::Primitive(ExpandablePrimitive::Input) => {
                     self.expand_input(command.copy_for_backup())
                 }
@@ -5502,12 +4788,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // the signed uniform bound, then advance the single checkpointed
                 // MetaPost-derived stream shared with the operand-free normal
                 // deviate conversion.
-                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfUniformDeviate) => self
-                    .expand_pdf_uniform_deviate(
-                        command,
-                        &mut expansion_resume,
-                        &mut suspended_resume,
-                    ),
+                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfUniformDeviate) => {
+                    self.expand_pdf_uniform_deviate(command)
+                }
                 ExpansionDispatch::Primitive(ExpandablePrimitive::PdfNormalDeviate) => {
                     let value = self.state.pdf_normal_deviate();
                     self.push_rendered_text(&value.to_string(), command.origin());
@@ -5547,73 +4830,51 @@ impl<G> CommandProcessor<'_, '_, G> {
                 ExpansionDispatch::Primitive(ExpandablePrimitive::PdfUnescapeHex) => {
                     self.expand_pdf_unescape_hex(command.copy_for_backup())
                 }
-                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfColorStackInit) => self
-                    .expand_pdf_color_stack_init(
-                        command.copy_for_backup(),
-                        &mut expansion_resume,
-                        &mut suspended_resume,
-                    ),
-                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfMatch) => self
-                    .expand_pdf_match(
-                        command.copy_for_backup(),
-                        &mut expansion_resume,
-                        &mut suspended_resume,
-                    ),
-                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfLastMatch) => self
-                    .expand_pdf_last_match(
-                        command.copy_for_backup(),
-                        &mut expansion_resume,
-                        &mut suspended_resume,
-                    ),
-                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfFileDump) => self
-                    .expand_pdf_file_dump(
-                        command.copy_for_backup(),
-                        &mut expansion_resume,
-                        &mut suspended_resume,
-                    ),
-                ExpansionDispatch::Primitive(ExpandablePrimitive::FileSize) => self
-                    .expand_pdf_file_size(
-                        command.copy_for_backup(),
-                        &mut expansion_resume,
-                        &mut suspended_resume,
-                    ),
-                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfFileModificationDate) => self
-                    .expand_pdf_file_modification_date(
-                        command.copy_for_backup(),
-                        &mut expansion_resume,
-                        &mut suspended_resume,
-                    ),
-                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfMdFiveSum) => self
-                    .expand_pdf_md_five_sum(
-                        command.copy_for_backup(),
-                        &mut expansion_resume,
-                        &mut suspended_resume,
-                    ),
-                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfInsertHeight) => self
-                    .expand_pdf_insert_height(
-                        command.copy_for_backup(),
-                        &mut expansion_resume,
-                        &mut suspended_resume,
-                    ),
+                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfColorStackInit) => {
+                    self.expand_pdf_color_stack_init(command.copy_for_backup())
+                }
+                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfMatch) => {
+                    self.expand_pdf_match(command.copy_for_backup())
+                }
+                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfLastMatch) => {
+                    self.expand_pdf_last_match(command.copy_for_backup())
+                }
+                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfFileDump) => {
+                    self.expand_pdf_file_dump(command.copy_for_backup())
+                }
+                ExpansionDispatch::Primitive(ExpandablePrimitive::FileSize) => {
+                    self.expand_pdf_file_size(command.copy_for_backup())
+                }
+                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfFileModificationDate) => {
+                    self.expand_pdf_file_modification_date(command.copy_for_backup())
+                }
+                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfMdFiveSum) => {
+                    self.expand_pdf_md_five_sum(command.copy_for_backup())
+                }
+                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfInsertHeight) => {
+                    self.expand_pdf_insert_height(command.copy_for_backup())
+                }
                 // pdftex.web §470's `pdf_ximage_bbox_code` conversion scans an
                 // existing image object before its one-based page-box coordinate.
                 // The enquiry reads detached metadata only; it never reserves an
                 // image or writer object while expanding.
-                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfXImageBBox) => self
-                    .expand_pdf_ximage_bbox(command, &mut expansion_resume, &mut suspended_resume),
+                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfXImageBBox) => {
+                    self.expand_pdf_ximage_bbox(command)
+                }
                 // pdftex.web §1549's `pdf_xform_name_code` conversion scans a
                 // form object number and prints its independent resource identity.
                 // Unknown object numbers produce zero, matching the other PDF
                 // object enquiries rather than manufacturing ledger state.
-                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfXFormName) => self
-                    .expand_pdf_xform_name(command, &mut expansion_resume, &mut suspended_resume),
+                ExpansionDispatch::Primitive(ExpandablePrimitive::PdfXFormName) => {
+                    self.expand_pdf_xform_name(command)
+                }
                 // pdftex.web §470's `pdf_page_ref_code` conversion scans a one-based
                 // shipped-page number and prints its page-object identity. Pages
                 // that do not exist yet expand to zero without reserving
                 // speculative writer state; nonpositive operands are rejected by
                 // the conversion's `pdf_error` guard.
                 ExpansionDispatch::Primitive(ExpandablePrimitive::PdfPageRef) => {
-                    self.expand_pdf_page_ref(command, &mut expansion_resume, &mut suspended_resume)
+                    self.expand_pdf_page_ref(command)
                 }
                 // pdfTeX §57.1 consumes one raw token and, only for a registered
                 // primitive spelling, replays the immutable frozen primitive.
@@ -5651,9 +4912,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     | ExpandablePrimitive::BotMarks
                     | ExpandablePrimitive::SplitFirstMarks
                     | ExpandablePrimitive::SplitBotMarks),
-                ) => {
-                    self.expand_mark_class(primitive, &mut expansion_resume, &mut suspended_resume)
-                }
+                ) => self.expand_mark_class(primitive),
                 ExpansionDispatch::Primitive(primitive) => {
                     Err(CommandError::UnsupportedExpandablePrimitive(primitive))
                 }
@@ -5663,42 +4922,16 @@ impl<G> CommandProcessor<'_, '_, G> {
             .as_ref()
             .is_err_and(CommandError::is_resource_suspension)
         {
-            let child = crate::execution_scratch::ChildContinuation::capture(
-                &mut self.scanner_resume,
-                crate::state::PendingExpansionChildDestination::Dispatch,
-            );
             let error = result.expect_err("matched resource suspension");
-            let suspended_command = std::mem::replace(command, CurrentCommand::empty());
-            *command_parked = true;
-            let pending = crate::state::PendingExpansion {
-                command: suspended_command,
-                resume: suspended_resume
-                    .take()
-                    .unwrap_or(crate::state::PendingExpansionResume::Dispatch),
-                delivery_expanded,
-                parent,
-                return_capability: self.scanner_return_capability.take(),
-                child,
-            };
-            return match self.command.scratch.store_expansion_frame(pending) {
-                Ok(key) => {
-                    self.scanner_resume = Some(key);
-                    Err(error)
-                }
-                Err((store_error, mut pending)) => {
-                    if let Some(child) = pending.take_child()
-                        && let Err(failure) = self.abort_continuation(child)
-                    {
-                        return Err(failure);
-                    }
-                    Err(crate::scan_toks::scratch_command_error(store_error))
-                }
-            };
-        } else if let Some(child) = self.scanner_resume.take() {
-            self.abort_continuation(child)?;
-            if result.is_ok() {
-                return Err(CommandError::input_invariant());
-            }
+            // Resource misses unwind the whole synchronous call.  The host
+            // restores a full aggregate checkpoint, so retaining `command`,
+            // scanner phases, or an expansion parent here would only create a
+            // second history root and keep the failed candidate alive.
+            self.command
+                .scratch
+                .unwind_resource_failure()
+                .map_err(crate::scan_toks::scratch_command_error)?;
+            return Err(error);
         }
         result
     }
@@ -5719,9 +4952,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 return Err(CommandError::input_invariant());
             }
         }
-        if self.resumed_expansion.is_some() || self.scanner_resume.is_some() {
-            return Err(CommandError::input_invariant());
-        }
         #[cfg(feature = "profiling")]
         {
             tex_state::measurement::record_hot_core_macro_expansion();
@@ -5731,23 +4961,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
         let _activated = self.macro_call_hot(command)?;
         Ok(())
-    }
-
-    pub(super) fn retain_expansion_scalar<T>(
-        &mut self,
-        scan: crate::RetainedScalarScan<G, T>,
-        phase: crate::state::PendingExpansionResume,
-        suspended: &mut Option<crate::state::PendingExpansionResume>,
-    ) -> Result<T, CommandError> {
-        match scan {
-            crate::RetainedScalarScan::Complete(value) => Ok(value),
-            crate::RetainedScalarScan::Suspended { error, child } => {
-                self.install_scanner_resume(Some(child));
-                *suspended = Some(phase);
-                Err(error)
-            }
-            crate::RetainedScalarScan::Failed(error) => Err(error),
-        }
     }
 
     /// Creates one invocation provenance node and atomically exposes its

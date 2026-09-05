@@ -1110,7 +1110,7 @@ pub struct TransientCommandSnapshot<G> {
     generation: CommandGenerationOwner<G>,
     cursor: CommandSnapshotCursor,
     replay: crate::input::ReplayTransientMark,
-    scratch: crate::execution_scratch::ExecutionScratchTransientMark<G>,
+    scratch: crate::execution_scratch::ExecutionScratchTransientMark,
     brand: PhantomData<fn(&G) -> &G>,
 }
 
@@ -1129,7 +1129,7 @@ impl<G> TransientCommandSnapshot<G> {
         generation: CommandGenerationOwner<G>,
         cursor: CommandSnapshotCursor,
         replay: crate::input::ReplayTransientMark,
-        scratch: crate::execution_scratch::ExecutionScratchTransientMark<G>,
+        scratch: crate::execution_scratch::ExecutionScratchTransientMark,
     ) -> Self {
         Self {
             generation,
