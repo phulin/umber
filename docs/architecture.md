@@ -7,6 +7,15 @@ It deliberately omits completed migration plans and benchmark histories; Git
 and Beads retain those records. State representation and mutation invariants
 are specified in [core_state.md](core_state.md).
 
+For resource misses, the approved `umber2-du4r` boundary is the contract in
+[checkpoint_resource_replay.md](checkpoint_resource_replay.md). Raw and
+expanded parsing uses ordinary synchronous Rust calls; a miss unwinds the
+complete call tree and the host replays from an eligible full checkpoint.
+Older descriptions of parked scanner/caller continuations or same-executor
+step resumption are obsolete. TeX's input, macro, group, conditional,
+alignment, and expression stacks remain semantic language state, not resource
+continuation state.
+
 ## 1. The big picture
 
 Umber is a TeX interpreter split at semantic ownership boundaries:
@@ -120,16 +129,18 @@ Replay frames have three representations:
   allocation pool when their replay frame retires.
 
 Transient execution does not intern token lists merely to re-enter the input.
-Checkpoint summaries own the remaining transient words by value. The only
-restartable command/input representation is tex-command's validated
-`CommandSummary`; checkpoints do not retain a parallel lexer or expander
-continuation.
+Checkpoint summaries own the remaining transient words by value. An eligible
+full checkpoint is the only resource-replay boundary; it does not capture an
+active scanner, output routine, alignment operation, or partial call. The host
+retains at most one current-candidate replay anchor and restores the ordinary
+parser through VFS/World after provisioning.
 
 Command snapshots retain each live source cursor over already owned backing
 together with source, replay, condition, alignment, provenance, and allocator
-state. Rollback never reopens a resource. In-process suspension retains the
-same generation-owned argument segments and transient replay backing, so
-retrying a step does not copy live token volume.
+state at a legal full-checkpoint boundary. Rollback never reopens a resource.
+A resource miss unwinds local scanner state; request/cache/outcome ownership
+stays with the host session outside engine rollback, and replay starts from
+the matching full checkpoint rather than retaining live token volume.
 
 ## 5. Expansion engine
 
@@ -412,22 +423,18 @@ Recursive scanners may use ordinary Rust locals, but only executor-named
 quiescent boundaries are restartable.
 
 `tex-exec::MainControl::execute_operation` is the sole aggregate operation
-authority. Small replay, redispatch, and alignment delivery values select how
-a completed command enters the shared scanner/application tail; ordinary,
-observed, and nested execution do not select separate semantic engines. The
-same function owns the aggregate savepoint, resource suspension, commit,
-rollback, fatal termination, and telemetry. When observation is disabled the
-evidence slot allocates nothing. When enabled it enforces its record ceiling as
-records append and assembles the crate-private `ExecutionReceipt` from those
-same committed mutation, resource, semantic/live-effect, artifact, diagnostic,
-and termination facts. Every allocating receipt category is admitted against
-the shared 1,000,000-record ceiling before its vector can grow, and live-effect,
-artifact, geometry, diagnostic, and termination closure happens before the
-operation savepoint commits. The observer-publication seam consumes the typed
-receipt and checks its terminal projection instead of constructing a write-only
-shadow value. The receipt remains internal and does not extend the `tex-oracle`
-wire schema. The migration selector, shadow runner, and predecessor step
-branches are absent.
+authority. Small redispatch and alignment-delivery values select how a
+completed command enters the shared scanner/application tail; ordinary,
+observed, and nested execution do not select separate semantic engines. A
+resource miss unwinds this operation completely and returns a cold need to the
+host; it does not park a scanner or caller continuation. The host's
+`ResourceReplayAnchor` restores the existing full checkpoint and matching
+output/generated/diagnostic prefixes before a fresh ordinary operation. When
+observation is disabled the evidence slot allocates nothing. When enabled it
+enforces its record ceiling as records append and assembles the crate-private
+`ExecutionReceipt` from the same committed mutation, resource,
+semantic/live-effect, artifact, diagnostic, and termination facts. The receipt
+remains internal and does not extend the `tex-oracle` wire schema.
 
 Shipout decodes compact node words sequentially and always drives artifact
 encoding without an ordinary-path owned page tree. Classic/default sessions
@@ -545,13 +552,14 @@ follow §§1015--1028, with §1025 entering an internal-vertical `output_group`
 before replaying the braced `\\output` list. Nested box-body braces always
 close their box groups before the list's outer brace reaches §1026, which ends
 the paragraph, unsaves that group, and splices held-over
-material, and resuming the page builder. A resource suspension is an Umber
-execution boundary, not a TeX group boundary: the aggregate step rollback
-unwinds descendant groups to the pre-step lineage, then replay recreates the
-same groups and keeps their local definitions live until their matching TeX
-closers. pdfTeX.web retains these group, box, and output transitions; its
-output teardown additionally flushes page discards and uses the pdfTeX ignored
-depth sentinel, without changing assignment lifetime.
+material, and resuming the page builder. A resource miss is an Umber host
+replay boundary, not a TeX group boundary: the active parser call tree
+unwinds, and the host restores the latest eligible full checkpoint before
+ordinary replay recreates the same groups and keeps their local definitions
+live until their matching TeX closers. pdfTeX.web retains these group, box,
+and output transitions; its output teardown additionally flushes page discards
+and uses the pdfTeX ignored depth sentinel, without changing assignment
+lifetime.
 
 Display entry follows TeX.web §§1137--1145. In particular, §1145 pushes the
 `\everydisplay` token list before `build_page`, so an output routine may run
@@ -647,9 +655,10 @@ installs the payload atomically. Prefix, live patch, and converged suffix
 selection operates on whole journals and re-closes one output patch, so the
 session and host adapters retain no parallel effect or artifact ledgers.
 Full canonical-state convergence can reuse the accepted suffix. Otherwise an
-invalidated region restarts from the nearest accepted `CommandSummary` and
-executes ordinary command and paragraph processing. No finished-line or
-paragraph transaction payload is retained across revisions. The
+invalidated region restarts from the nearest eligible full checkpoint and
+executes ordinary command and paragraph processing. Resource misses during
+that run use the same host-owned replay anchor; no per-command checkpoint or
+finished-line transaction payload is retained. The
 schedule-aligned suffix-adoption fast path
 treats a deterministic fixed-seed 64-bit aHash over canonical current-state
 projections as authoritative: it has no SHA-256 or structural fallback, and the

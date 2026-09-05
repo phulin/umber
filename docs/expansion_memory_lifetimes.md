@@ -3,6 +3,13 @@
 Status: implementation map, migration guide, and retention audit for the core
 command expansion engine.
 
+For `umber2-du4r`, resource misses use the ordinary parser plus host-owned
+full-checkpoint replay in [checkpoint_resource_replay.md](checkpoint_resource_replay.md).
+Any resource-boundary advice below that retains a scanner, expansion, caller,
+or `OperationFrame` continuation is superseded. The language-semantic input,
+macro, group, conditional, alignment, and expression stacks remain live engine
+state; they are not parked resource state.
+
 The normative end state is [Runtime storage lifetimes](runtime_storage_lifetimes.md).
 This document answers the narrower practical question: when expansion scans,
 expands, suspends, resumes, rolls back, and crosses an editor revision, who owns
@@ -32,9 +39,10 @@ generation** is the move-only lease and complete slot payload for one accepted
 or candidate revision. A **durable value** is immutable data which may be named by live TeX
 state, an input cursor, or a checkpoint for the rest of that generation.
 **Scratch** is reusable unpublished storage whose last user can be identified
-exactly. A **continuation** is the owned state needed to resume after the host
-must provide a resource. **Sealing** publishes a generation-branded immutable
-owner; a sealed builder cannot be appended to again.
+exactly. A **replay anchor** is an existing full checkpoint plus matching host
+transaction-prefix marks; it is owned by the session and never contains a
+scanner or caller continuation. **Sealing** publishes a generation-branded
+immutable owner; a sealed builder cannot be appended to again.
 
 "Chunk" always means a fixed-capacity physical backing unit inside an arena.
 A chunk is not a revision, a history entry, or an independent lifetime owner.
@@ -54,13 +62,13 @@ process-immutable tables and compiled semantics
               `-- one active operation
                     +-- ordinary Rust stack locals
                     +-- nested macro frames and scanner state
-                    `-- typed suspension package, when the host is needed
+                    `-- host-owned ResourceReplayAnchor, when the host is needed
 
 accept candidate:
   validate and quiesce -> clear old prior slot -> candidate becomes prior
 
 reject or cancel candidate:
-  drop its continuations -> drop command/executor roots -> clear current slot
+  drop its replay anchor -> drop command/executor roots -> clear current slot
 ```
 
 The driver-completed primitive registry belongs to the first
@@ -79,9 +87,9 @@ is no third historical arena and no chunk-by-chunk history.
 Ordinary macro-argument and `scan_toks` collection keeps its shared brace and
 first-token cursor on the Rust stack beside the caller-owned output sink.
 Already-admitted plain input spans advance that cursor and the sink once per
-run, without a second pending-facts representation. A `scan_toks` continuation
-is published into reusable execution scratch only when immutable-resource
-acquisition actually suspends the operation.
+run, without a second pending-facts representation. A resource miss unwinds
+the collector; no `scan_toks` continuation is published. The host restores a
+full replay anchor before ordinary collection runs again.
 
 ## Lifetime matrix
 

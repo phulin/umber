@@ -8,6 +8,11 @@ revisions. It complements the semantic identity contract in
 [Stepwise Execution](stepwise_execution.md), and the acceptance boundary in
 [Incremental engine v1](incremental_v1.md).
 
+For resource misses, [Resource-miss checkpoint replay](checkpoint_resource_replay.md)
+is authoritative: ordinary parser calls unwind and the host retains one full
+replay anchor. A private revision must not retain a typed scanner/caller
+continuation or same-executor resume frame.
+
 ## Invariant
 
 Persistent memory is reachable semantic state, live rollback authority, or
@@ -56,8 +61,8 @@ contains no allocation-domain control. `tex-exec::MainControl`
 opens one fixed-size `Universe::DirectOperationMark` after preflight. Successful
 operation commit closes the private suffix without releasing earlier work.
 Ordinary failure and cancellation discard only unpublished operation
-allocations; resource suspension retains the fully prepared continuation and
-does not restore aggregate command, state, or mode roots.
+allocations; a resource miss unwinds the operation and host replay restores
+the selected full checkpoint and matching prefixes.
 
 `tex-incr::RevisionCandidate` owns the `Universe`, command state, speculative
 checkpoints, and detached candidate output across resource suspensions. A
@@ -76,8 +81,8 @@ domain merely because one allocation survives.
 Node-list payloads need no allocation-domain transfer ledger. A private
 candidate's mode, page, command, Env, PDF, checkpoint, and output staging
 values own their `NodeListRef` fields directly. Success moves those references,
-resource retry retains its typed continuation, rejection drops the candidate
-closure, and acceptance moves the selected aggregate. Detached format, memo,
+resource retry restores the selected full checkpoint and matching host prefixes,
+rejection drops the candidate closure, and acceptance moves the selected aggregate. Detached format, memo,
 DVI, PDF, and HTML values contain no runtime
 node coordinate that the domain could retain.
 

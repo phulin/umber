@@ -2,6 +2,13 @@
 
 Status: proposed architecture for Beads epic `umber2-awgc`.
 
+The approved `umber2-du4r` resource boundary supersedes any resource
+continuation in this proposal. Ordinary parser calls unwind on a miss; the
+host retains one full replay anchor and restores an eligible checkpoint. Do
+not implement a parked scanner/caller `OperationFrame` or same-executor resume
+seam from this document. Language-semantic stacks remain ordinary engine
+state.
+
 Umber will replace the current scalar command object graph with one compact,
 mutable, snapshot-native TeX core. The replacement preserves the existing
 semantic tests, formats, incremental checkpoints, compact node builder, and
@@ -615,29 +622,18 @@ write epoch and commit advances the node-operation watermark; TeX's save stack r
 owner of local/global group restoration. Group depth is no longer an episode
 stop, so one bounded episode may enter, mutate inside, and leave nested groups.
 
-The resource/effect/PDF/checkpoint cutover is also active. Expandable delivery
-settles in the same command-processor borrow as raw preflight, then operand
-scanning writes one typed prepared operation into the caller's singular
-`OperationFrame`. Preparation returns only a payload-free readiness coordinate;
-application consumes the occupied fields at that same boundary, and completion
-leaves the frame empty for immediate reuse. There is no prepared aggregate
-return, box, generation-long operation lane, or whole-operation handoff.
-Missing fonts, input streams, PDF images, and `\input` files move that exact
-frame into the attempt's singular typed continuation across host acquisition;
-`\immediate` additionally retains the already-consumed nested PDF command.
-Observed retry moves its unpublished evidence buffer and opaque
-delivery-order cursor with the typed continuation, so it neither clones the
-observer root nor changes raw/expanded provenance. Retry therefore neither
-rewinds input nor rescans operands. Nested expanded token collectors retain
-their accumulator and special-splice route, while `\expandafter` and `\csname`
-retain their consumed operands and partial name respectively. Expandable
-`\number` and `\romannumeral` scans likewise retain their sign and provenance
-before the first expanded number token and their accumulated value, radix,
-vacuous flag, and overflow state while probing for the next digit. TeX82
-§442's alphabetic constant also keeps its completed character code while its
-following expanded optional-space probe is suspended. A resumed conversion therefore continues
-at the exact expanded-token boundary instead of restarting after an
-already-consumed sign, digit, or character constant. Semantic apply
+The resource/effect/PDF/checkpoint cutover must follow the approved replay
+boundary. Expandable delivery settles in the same command-processor borrow as
+raw preflight, and operand scanning uses ordinary local values. There is no
+prepared aggregate return, box, generation-long operation lane, or whole-
+operation resource handoff. Missing fonts, input streams, PDF images, and
+`\input` files unwind to a cold `ResourceNeed`; they do not move an
+`OperationFrame`, scanner child, or caller edge into a typed continuation.
+The host restores an eligible full checkpoint and matching output/generated/
+diagnostic prefixes, then ordinary parsing replays the request. `\expandafter`,
+`\csname`, numeric scans, and alignment retain their TeX-semantic input state
+only while the ordinary call is active; a miss discards local partial progress.
+Semantic apply
 begins only after resource resolution and uses direct owner journals;
 output-capable box closing, ErrorStop recovery, observed and tracked commands,
 and private revisions use the same path. A private revision opens only a

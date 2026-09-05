@@ -2,6 +2,15 @@
 
 Status: authoritative target architecture for Beads epic `umber2-johp`.
 
+For `umber2-du4r`, resource misses use ordinary synchronous parser calls and
+host-owned full-checkpoint replay as specified in
+[checkpoint_resource_replay.md](checkpoint_resource_replay.md). The older
+resource-continuation passages in this document are superseded: no parked
+scanner, expansion, caller, output, `PendingExpansion`, `OperationFrame`,
+`ReturnEdge`, or same-executor resume API may cross a resource boundary.
+Input, macro, group, conditional, alignment, and expression stacks remain
+TeX-semantic state and are not being removed.
+
 ## 1. Purpose
 
 Umber implements one `tex-command` command-processing subsystem whose semantic
@@ -46,12 +55,12 @@ there, under the `\global`/`\globaldefs` scope main control selects, exactly
 as §1224's provisional `\relax` is. §1257's `common_ending: equiv(u):=f` then
 overwrites the equivalent directly rather than through a second `eq_define`,
 so the completed definition publishes no second mutation. After
-that processor borrow ends, replay resolves the request through its transient
-registered-font capability and installs the loaded meaning atomically. An
-absent capability is a typed font suspension, so the enclosing aggregate rolls
-back before a fresh processor episode retries; a completed unavailable lookup
-instead recovers the target to `nullfont`. Font capabilities and loaded
-resources never enter command snapshots or durable summaries.
+that processor borrow ends, the host resolves the request outside the parser
+and replays from the latest eligible full checkpoint; the ordinary parser then
+installs the loaded meaning atomically. An absent capability is a cold typed
+resource need, not a parked font scanner. A completed unavailable lookup
+replays the target's normal recovery to `nullfont`. Font capabilities and
+loaded resources never enter command snapshots or durable summaries.
 If a valid TFM reaches the font-bank bound, replay follows TeX.web §567: it
 reports `not loaded: Not enough room left`, retains the provisional
 `nullfont` meaning, and commits no partial font row.
@@ -212,15 +221,14 @@ Raw and expanded entries select branches of the same delivery loop. Their
 ordinary command branches materialize the result directly in the caller's
 return slot, without an eager `CommandError`, error slot, zero-sized failure
 relay, or general internal status carrier. Only cold failure and resident-
-cold-transition helpers construct a rich error. The expanded entry restores parked
-continuation state through a separate cold helper only when a genuine resource
-suspension exists; an ordinary synchronous request carries no resume state. The
-public boundary returns the compact final `DeliveryStatus`. Cold end, replay-
-completion, and failure exits clear the provisional slot. A genuine resource
-barrier alone replaces the initialized value and moves its prior command into
-the typed expansion-suspension slot. There is no process-global
-slot, mailbox, destination inference, nested-request reuse, or second raw
-representation.
+cold-transition helpers construct a rich error. A genuine resource barrier
+unwinds the expanded entry into a cold owned `ResourceNeed`; it does not move a
+prior command into a typed expansion-suspension slot. The host later restores
+an eligible full checkpoint and enters the same ordinary delivery loop. The
+public boundary returns the compact final `DeliveryStatus`. Cold end,
+replay-completion, and failure exits clear the provisional slot. There is no
+process-global slot, mailbox, destination inference, nested-request reuse, or
+second raw representation.
 
 The frame-owned delivery loop also owns final suppression, fuel, and alignment
 settlement rather than returning through a second hot helper.
@@ -775,13 +783,12 @@ error-sized carrier. Optional-equals, keyword, and integer scans drive that
 frame directly through the same statically selected destination contract used
 by nested scalar calls; they do not first construct a second call frame and
 move its completed value or cold error. Completion consumes the value
-immediately. Only a genuine
-resource suspension installs the existing move-only continuation edge in
-generation-owned scratch and retains its key beside the operation's exact
-phase. The frame is explicitly emptied before reuse and owns no heap
-allocation, retained arena, cache, or durable state. Nested expression
-evaluation uses the same destination-directed rule for its child result rather
-than returning a large `Result` through `scan_expression`.
+immediately. The frame is explicitly emptied before reuse and owns no heap
+allocation, retained arena, cache, or durable state. A resource miss unwinds
+that local frame and returns a cold owned `ResourceNeed`; the host later
+replays from a full checkpoint. Nested expression evaluation uses the same
+destination-directed rule for its child result rather than returning a large
+`Result` through `scan_expression`.
 
 Recoverable scalar diagnostics use the same borrow-scoped `CommandContext`
 that the processor already holds: its §73 `print_err` forwarding method opens
@@ -1555,11 +1562,12 @@ only the outer cell, never a second copy of `align_state`.
 ### 8.6 Profile and delivery-local expansion state
 
 The immutable `CommandProfile` is a direct command root. Expansion execution
-owns no persistent root or counter. One expanded-delivery invocation keeps a
-stack-local bit recording whether that delivery expanded; only an actual
-resource suspension moves the bit into its `PendingExpansion`, and completion
-drops it. This local fact decides whether TeX82 alignment lookahead must defer
-its terminal expanded-delivery observation.
+owns no persistent resource-resume root or counter. One expanded-delivery
+invocation may keep a stack-local bit recording whether that delivery
+expanded; if a resource is missing, the bit is discarded with the unwound
+attempt and the host later replays from a full checkpoint. This local fact
+decides whether TeX82 alignment lookahead must defer its terminal
+expanded-delivery observation.
 
 Recoverable diagnostics live once in the canonical semantic-diagnostic queue,
 which the executor claims after the processor episode. Resource resolution,
@@ -2225,15 +2233,12 @@ token span, macro definition, source ancestry, or command frame, and retained
 memory is independent of unmarked push/pop count after the live-depth high
 water is warm.
 
-Detached resource continuations deliberately do not serialize a runtime frame
-or arena coordinate. Detachment projects packed words, backup coordinates,
-portable identity, and current offset into the existing handle-free DTO;
-materialization admits a fresh destination-lane entry and frame, then advances
-it to that offset. Command snapshots clone the compact frame/coordinate and
-share immutable coarse lane segments. Source continuations retain their exact
-physical byte/scalar/line cursor and rebuild the source frame after
-registration, preserving diagnostic positions without publishing runtime
-coordinates.
+Resource misses do not create detached continuations. A diagnostic or other
+portable value that must outlive a dropped candidate is detached into a
+handle-free DTO, while parser input, backup coordinates, scanner locals, and
+source cursors are discarded with the unwound attempt. The host restores a
+full checkpoint and re-enters ordinary source delivery after registration;
+runtime frame coordinates never become wire identity.
 
 The implemented ownership model has no macro activation chain. A specialized
 `MacroBody` input row is the complete live-call record: an 8-byte non-owning
@@ -3048,27 +3053,25 @@ For an expanded scan it follows the canonical structure:
 The replacement loop supplies one caller-owned `Option<CurrentCommand<G>>`
 as the delivery destination. Classification, observation, and spelling borrow
 the resident command, then successful progress clears the option in place.
-Only TeX's real backup path or typed resource suspension consumes it. This
-keeps ordinary collection destination-directed without a returned-command
+Only TeX's real backup path consumes it. A resource miss unwinds the local
+collector and returns a cold need; the host later restores a full checkpoint.
+This keeps ordinary collection destination-directed without a returned-command
 handoff, a heap indirection, or generation-long retention.
 
-One scanner invocation likewise owns one stationary `PendingScanToks` row.
-Its opening phase installs `ReplacementProgress` once, and ordinary token
-delivery mutates the brace depth, parameter candidate, expansion operand, and
-typed child edge in place. Synchronous success and failure return only their
-small semantic result; only an immutable-resource suspension moves the row
-into the recyclable typed scanner lane, and resumption restores that exact row.
-The resumed collector takes and decodes its parked expansion once before
-entering the resident replacement loop. Ordinary §477 iterations therefore
-reuse the one command destination without probing suspension state; only a
-new immutable-resource suspension constructs another typed parked expansion.
+One scanner invocation likewise owns one stationary `PendingScanToks` row
+while its ordinary call is active. Its opening phase installs
+`ReplacementProgress` once, and token delivery mutates the brace depth,
+parameter candidate, and expansion operand in place. Synchronous success and
+failure return only their small semantic result. A resource miss discards the
+row with the unwound call; host replay restores the eligible full checkpoint
+and re-enters the ordinary collector. No typed child edge or parked expansion
+is constructed for retry.
 
 The collector's parameter and replacement storage is also the only source for TeX82
 §306's partial runaway display. A scanner episode records the deferred-
-diagnostic cursor at entry and retains it with that collector across resource
-suspension. Completion first checks only that episode's diagnostic suffix. An
-ordinary successful scan returns without constructing, copying, or rendering
-diagnostic tokens; when EOF or outer-command recovery has actually published
+diagnostic cursor at entry for its ordinary call. Completion first checks only
+that episode's diagnostic suffix. An ordinary successful scan returns without
+constructing, copying, or rendering diagnostic tokens; when EOF or outer-command recovery has actually published
 the matching runaway report, completion borrows the two resident scanner views and
 streams them once, with the synthetic `->` separator, into the report's final
 selector-aware string before the attempt scope retires. There is no parallel
@@ -3712,13 +3715,13 @@ There are two snapshot forms.
 
 ### 28.1 Direct operation cursor
 
-Ordinary execution owns no `CommandStateSnapshot`. `Universe` exposes a
-fixed-size, non-restoring direct-operation cursor for journal retirement and
-private-allocation rejection; command state retains typed blocked
-continuations at resource boundaries. Named incremental checkpoints remain the
-only aggregate restoration authority. They preserve the exact committed
-command and provenance prefix, while durable command summaries serialize no
-second provenance arena or raw provenance watermark.
+Ordinary execution owns no `CommandStateSnapshot` for a resource retry.
+`Universe` exposes a fixed-size, non-restoring direct-operation cursor for
+journal retirement and private-allocation rejection; a resource miss unwinds
+local command state and returns a cold need. Named incremental checkpoints
+remain the only aggregate restoration authority. They preserve the exact
+committed command and provenance prefix, while durable command summaries
+serialize no second provenance arena or raw provenance watermark.
 
 The command component of such a retained boundary is generation-generic. A
 `CommandStateSnapshot<G>` and a live `CommandSummary<G>` each retain exactly
@@ -4437,14 +4440,13 @@ Execution cannot:
 - attach sticky suppression to tokens; or
 - access raw provenance stores.
 
-An explicit `CurrentCommand` is delivered once. If its operand scanner
-suspends, main control moves the command, delivery cursor, non-`Copy` scanner
-child, and non-`Copy` operation capability into one typed retry destination.
-Alignment dispatch records the substantive command destination before calling
-its scanner; alignment itself remains the destination only when suspension
-occurred while alignment still owned delivery. Retry therefore resumes the
-exact caller rather than fetching past a settled command or reconstructing an
-owner coordinate from command state.
+An explicit `CurrentCommand` is delivered once within an ordinary synchronous
+call. If its operand scanner needs a resource, the call tree unwinds and
+returns a cold `ResourceNeed`; main control does not move the command,
+delivery cursor, scanner child, or operation capability into a retry
+destination. Alignment remains a TeX semantic destination, not a resource
+continuation. The host later restores a full checkpoint and re-enters ordinary
+delivery.
 
 The call-local destination is empty on initial delivery, is cleared only while
 a canonical filler or expansion loop continues, and never crosses a resource
@@ -4457,37 +4459,32 @@ admitted `CommandContext`; only the narrower `CommandProcessor` borrow ends
 before application. There is no hand-picked command-family scanner at this
 boundary. A completed cold operand ends admission at its host/resource
 preparation boundary; cold resource resolution and rooting own no command
-processor or command context. Resource, transaction,
-diagnostic, alignment, and tracked-region boundaries retain their explicit
-typed continuation. No path backs up or redelivers a settled preflight command.
-Replay completion and alignment events remain compact status variants and
-leave no command-bearing return envelope.
+processor or command context. Resource boundaries do not retain a typed parser
+continuation: the active call tree unwinds and the host later restores a full
+checkpoint. Transaction, diagnostic, alignment, and tracked-region values may
+remain ordinary semantic state when TeX requires them; none is a
+resource-resume edge. No path backs up or redelivers a settled preflight
+command. Replay completion and alignment events remain compact status variants
+and leave no command-bearing return envelope.
 
-The executor's caller-loop `CommandEpisode` in
-`main_control/command_episode.rs` owns the command, parked expansion, delivery
-cursor, scanner child, operation-scan phase, scalar destination, and completed
-hot operand directly. There is no nested preflight-command projection or
+The executor's caller-loop command episode owns command, delivery, scanner,
+operation-scan, scalar-destination, and completed-operand values only while the
+ordinary call is active. There is no nested preflight-command projection or
 generic operation payload. A completed cold scan installs its uncommon leaf
-once in an adjacent caller-owned typed slot. Canonical dispatch then enters hot
-execution directly or constructs a borrow-typed `ColdExecutionEpisode`; the
-former prepare/readiness/apply handoff is absent. The cold promotion writer
-preflights all attempt roots and writes each prepared owner directly into its
-final field without a temporary builder batch or aggregate receipt. Execution
-consumes semantic leaves through mutable borrows and clears the occupied branch
-slot after commit. A genuinely suspended typed scanner writes its rebuilt leaf
-directly into those same resident destinations. Only a real suspension
-constructs a move-only `OperationFrame` which packages the command episode and
-occupied cold slot for the typed retry owner; resumption restores them without
-reconstructing an equivalent command carrier.
+once in an adjacent caller-owned typed slot. Canonical dispatch then enters
+hot execution directly or constructs a borrow-typed cold execution episode.
+If a resource is needed, the episode unwinds and returns a cold
+`ResourceNeed`; no `OperationFrame`, parked expansion, or scanner retry owner
+is constructed. The host restores the full replay anchor and calls ordinary
+dispatch again.
 
 Each bounded `MainControl` episode settles commands through the sole live
 command, mode, Universe, output, and World owners. A command-core
-`MissingInput` becomes a typed suspension carrying its prepared continuation;
-observer records remain buffered until structural application commits. Retry
-resumes that continuation without reconstructing a delivered command or
-rolling back an already committed ordinary prefix. Host capabilities remain
-borrow-scoped, so supplying a resource changes only the resumed operation's
-capability set.
+`MissingInput` unwinds to a cold `ResourceNeed`; observer records and other
+effects remain private until the full replay attempt commits. The host restores
+the selected checkpoint and matching prefixes, then reconstructs ordinary
+delivery by replay rather than resuming a delivered command. Host capabilities
+remain borrow-scoped and never enter command state.
 
 There is no coverage fallback. Every TeX82, e-TeX, and pdfTeX meaning enters
 this loop, including definitions, assignments, groups, alignments, mode and
@@ -4911,17 +4908,16 @@ consumes only the mandatory brace, and `MainControl::accept_math_field` opens
 `push_math`'s save and mode levels, retains §1153's typed parent-field
 destination, and returns to the ordinary production loop. Each body command
 is then its own normal main-control operation. In particular, a file enquiry
-inside a superscript uses the same generation-owned typed resource
-suspension as one at top level; the opener and already committed body
-commands are neither copied nor replayed. The delivered `}` is
+inside a superscript uses the same host-owned full-checkpoint replay as one at
+top level; the opener and already committed body commands remain ordinary
+TeX state, while the active call unwinds on a miss. The delivered `}` is
 `EndMathGroup`, which performs §1186's `unsave`/`fin_mlist`, pops that exact
 destination, and fills the reserved nucleus or script field.
 
 This destination stack is executor structural state, not a command scanner
-or a caller-order mailbox. The command attempt and any suspended scanner
-frames remain wholly owned by the existing command-generation lifecycle;
-the math destination records only where §1186 writes after the ordinary
-resource continuation resumes.
+or a caller-order mailbox. The command attempt unwinds on a resource miss;
+the math destination records only where §1186 writes after full-checkpoint
+replay returns to ordinary main control.
 
 `\mathchoice` (§1172) is the same mechanism, not an exception to it.
 `append_choices` is `tail_append(new_choice); ... push_math(math_choice_group);

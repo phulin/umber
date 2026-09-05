@@ -2,6 +2,11 @@
 
 Status: historical ownership contract for Beads issue `umber2-3v8z.4`.
 
+For `umber2-du4r`, resource misses use ordinary parser unwind and host-owned
+full-checkpoint replay. The older resource-continuation wording in this
+historical contract is superseded; only owned diagnostic/source DTOs may cross
+the dropped candidate boundary.
+
 The runtime ownership portions of this document are superseded by
 [Runtime storage lifetimes](runtime_storage_lifetimes.md). The current
 `tex-state` cold boundary accepts explicit diagnostic or rendered-source

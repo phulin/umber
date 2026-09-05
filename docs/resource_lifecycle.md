@@ -24,6 +24,12 @@ contracts in [umber_vfs.md](umber_vfs.md),
 [ctan_resource_fetch.md](ctan_resource_fetch.md), and
 [distribution_manifest.md](distribution_manifest.md).
 
+For the `umber2-du4r` execution boundary, read
+[checkpoint_resource_replay.md](checkpoint_resource_replay.md). A resource
+miss unwinds ordinary parser calls and the host replays from one eligible full
+checkpoint. This lifecycle must not be read as permission to retain a scanner,
+caller, or output continuation inside the engine.
+
 > One semantic request key survives unchanged from the requesting subsystem to
 > an immutable positive or negative session binding. Catalogue lookup, source
 > selection, acquisition, caching, validation, and revision publication are
@@ -34,8 +40,9 @@ contracts in [umber_vfs.md](umber_vfs.md),
 The lifecycle must preserve exact identity, ordering, and wire encodings;
 distinguish required reads, blocking probes, and optional hints; distinguish a
 provider miss from authoritative absence; verify and domain-validate bytes
-before visibility; and retain suspended candidates without publishing their
-resources, effects, generated files, or outputs.
+before visibility; and retain only host request/outcome state plus a replay
+anchor without publishing candidate resources, effects, generated files, or
+outputs. The active parser call tree is never retained across a miss.
 
 Host I/O, retries, clocks, cancellation handles, URLs, cache paths, futures,
 threads, and JavaScript objects never enter engine or incremental snapshots.
@@ -132,6 +139,20 @@ pub enum AdmissionState {
     Unavailable(AbsenceEvidence),
 }
 ```
+
+Admission is separate from host readiness. A canonical record can be known
+before its bytes or metadata have crossed into the engine-readable store:
+
+```text
+Ready            record and required payload/metadata admitted to VFS
+ExistsNotReady   record exists; acquisition or admission is pending
+Absent           authoritative negative scoped to its provider/state identity
+```
+
+Native disk-cache and WASM IndexedDB hits are therefore not automatically
+`Ready`. Host preflight and retry must preserve the existing catalog,
+`FileKind`, extension, provider, and project/generated/distribution precedence.
+Access, transport, and validation errors remain failures, not `Absent`.
 
 `Unseen` is absence from the ledger. `Outstanding` is candidate-local response
 authorization, not a published binding. `Admitted` and `Unavailable` are
@@ -269,12 +290,14 @@ There are three different publication boundaries:
    succeed. It then publishes root revision, generated generation, accepted
    input observations, effects, artifacts, and output together.
 
-Engine suspension retains only semantic needs, retained execution state,
-immutable admitted capabilities, and bounded candidate state. It retains no
-resolver, downloader, cache transaction, native path, future, callback,
-worker message, or URL. Rollback or cancellation drops outstanding
-authorizations and private outputs, while immutable admitted session resources
-remain.
+Engine suspension is an unwind, not a parked execution stack. The host session
+retains the request/cache/outcome ledger and one `ResourceReplayAnchor`; the
+engine retains no resolver, downloader, cache transaction, native path,
+future, callback, worker message, URL, scanner, caller, or output continuation.
+Rollback or cancellation drops outstanding authorizations and private outputs,
+while immutable admitted session resources remain. Replay restores the full
+checkpoint and matching generated/output/diagnostic prefixes before ordinary
+engine execution starts again.
 
 `bib-engine` owns bibliography closure and detached generated files over one
 immutable VFS snapshot. It performs no host I/O. `umber` owns the multipass
@@ -289,7 +312,8 @@ files nor accepted input observations.
 | Domain key construction and validation                | requesting engine, `tex-fonts`, or bibliography crate |
 | Catalogue encoding, parsing, selection, verified miss | `umber-distribution`                                  |
 | Native acquisition, verification, persistent store    | `umber-fetch::DistributionClient`                     |
-| Suspension and retained resource capability           | `tex-exec`                                            |
+| Engine `ResourceNeed` and ordinary unwind             | `tex-exec`                                            |
+| Replay-anchor selection and host retry                | `umber` / `tex-incr`                                  |
 | Candidate lifetime and revision acceptance            | `tex-incr`                                            |
 | Native provider order and scheduling                  | `umber`                                               |
 | Browser async provider order and scheduling           | authored JavaScript in `umber-wasm`                   |
@@ -315,7 +339,9 @@ domain need
   -> generic verification
   -> domain validation
   -> atomic admission
-  -> resume retained candidate
+  -> host selects full replay anchor
+  -> restore checkpoint and matching host prefixes
+  -> ordinary engine replay
   -> complete engine/bibliography/output closure
   -> atomic revision acceptance
 ```
@@ -323,6 +349,23 @@ domain need
 For a blocking key, all providers missing takes the alternative path through
 authoritative negative admission. For a hint, misses, cancellation, or failure
 end without binding or retry progress.
+
+## Startup preflight and manifests
+
+The host may run one shared startup preflight before entering the engine. It is
+not a resource restart, and an empty speculative reply proceeds normally.
+Prefetch candidates come from the last accepted attempted-and-successful
+lookup manifest, literal-only source hints, and bounded small package/runtime
+metadata groups. Hints are resolved through this canonical lifecycle, are
+suggestions rather than semantics, and never create negative bindings.
+
+The manifest identity includes engine/profile, format identity, options,
+authenticated distribution identity, and provider/search policy while allowing
+document-text edits. Project and generated negative evidence is scoped to its
+source revision or generated transaction. A manifest is published only after
+accepted output and generated state; failed-attempt discoveries are scheduling
+inputs only. Native and WASM share this semantic policy while retaining
+platform-specific cache and transport adapters.
 
 ## Migration gates
 

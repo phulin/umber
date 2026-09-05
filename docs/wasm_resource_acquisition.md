@@ -9,6 +9,13 @@ batched file/OpenType resource acquisition and its shared native/WASM retry
 state are implemented by the persistent compile session; the remaining
 OpenType rollout is tracked by `umber2-y2ei`.
 
+For `umber2-du4r`, a resource miss unwinds ordinary parser calls and the host
+replays from an eligible full checkpoint as specified in
+[checkpoint_resource_replay.md](checkpoint_resource_replay.md). This document
+does not authorize a parked scanner/expansion/caller continuation or a
+same-executor step-resume API. IndexedDB/cache hits are host-side objects until
+their required payload or metadata is admitted to the engine-readable VFS.
+
 The browser resolver and HTML resource registry use the same portable
 `ahash64-v1` algorithm and domain tags as Rust; Web Crypto and runtime-random
 hash state are not part of this identity. Root, packed shard, payload,
@@ -176,10 +183,12 @@ to an already laid-out classic artifact. Clients may run such formats under
 the explicit `ClassicTfmExact` compatibility policy; requested HTML then uses
 the paint-only driver closure above without changing format or layout state.
 
-The initial file MVP may still restart compilation after a file miss while the
-general session is introduced. The completed architecture resumes from the
-appropriate retained session boundary and never repeats completed work merely
-to reuse a font in output.
+The initial file path may restart compilation after a file miss. The approved
+architecture selects the latest eligible full checkpoint (or the initial
+format fallback), restores its matching generated/output/diagnostic prefixes,
+and reruns ordinary parser calls. It does not retain a scanner stack or repeat
+work merely to reuse a font in output; any repeated work is the explicit cost
+of full checkpoint replay.
 
 ## Frontend acquisition coordinator
 
@@ -242,10 +251,11 @@ therefore cannot resume a cancelled suspension.
 Retained editor clients use the same resolver loop for both the one-pass hot
 candidate and explicit stabilization. Each `need-resources` value identifies
 its phase; responses are forwarded to the single Rust `EditorCompileSession`,
-which selects the suspended hot or fixed-point pass. JavaScript does not count
-passes or reconstruct a wait. `cancelStabilization()` drops only the private
-off-hot-path coordinator, while abort or disposal of an authored direct or
-worker facade releases the complete session.
+which lets the host session select the full replay anchor for that pass.
+JavaScript does not count parser frames or reconstruct a wait.
+`cancelStabilization()` drops only the private off-hot-path coordinator, while
+abort or disposal of an authored direct or worker facade releases the complete
+session.
 
 ## Prefetch without correctness coupling
 

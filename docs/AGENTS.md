@@ -158,8 +158,13 @@ schema-v1 base-command instrumentation seam, offline reuse, and build-record
 contract.
 
 `persistent_compile_sessions.md` defines the unified native/WASM compile
-session lifecycle that composes typed resource retries with revision-checked
-root-buffer patches and retained incremental execution.
+session lifecycle that composes host-owned full-checkpoint resource replay with
+revision-checked root-buffer patches and retained incremental execution. It
+must not prescribe a parked scanner or same-executor resource continuation.
+
+`checkpoint_resource_replay.md` is the approved `umber2-du4r` contract for
+ordinary synchronous parsing, full-checkpoint replay, resource outcome and
+readiness ownership, startup preflight, and monotonic replay accounting.
 
 `generated_input_stabilization.md` defines the implemented correctness and
 lifecycle contract for positive and negative generated-input dependencies,
@@ -167,9 +172,11 @@ safe `JobStart` fallback, provisional editor output, bounded off-hot-path
 fixed-point stabilization, and safe cold execution after external-input
 changes.
 
-`stepwise_execution.md` defines the owned `tex-exec` run, atomic per-step
-snapshot/replay protocol, typed resource sites, lifecycle, cumulative fuel and
-cancellation rules, and the migration from whole-attempt retries.
+`stepwise_execution.md` defines the engine/session lifecycle around
+`checkpoint_resource_replay.md`. Resource misses unwind ordinary parser calls
+and are replayed by the host from an eligible full checkpoint; this document
+must not reintroduce per-step savepoints or typed scanner/expansion/caller
+continuations.
 
 `mode_list_rollback_journal.md` records the measured retained-COW mode-list
 cost, the required nested inverse-journal invariants, and the mutation-boundary

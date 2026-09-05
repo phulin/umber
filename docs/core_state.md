@@ -2,6 +2,14 @@
 
 Status: authoritative current contract.
 
+The approved `umber2-du4r` resource boundary is
+[checkpoint_resource_replay.md](checkpoint_resource_replay.md). A resource
+miss unwinds ordinary parser calls and the host restores one eligible full
+checkpoint. Any row or paragraph below that says a resource boundary moves an
+unfinished scanner, expansion, or caller into a typed continuation is
+superseded. Input, macro, group, conditional, alignment, and expression stacks
+remain semantic TeX state and are still journaled where required.
+
 This document specifies the implemented `tex-state` ownership, mutation,
 identity, history, effect, and snapshot model. Algorithmic consumers are
 described in [architecture.md](architecture.md).
@@ -90,12 +98,13 @@ token and provenance closure. Continuation and schema-12 DTOs remain
 handle-free and reconstruct fresh runtime chunks.
 
 An incremental session uses the external store's optional prior slot and one
-exclusive current slot. Candidate operations mutate only current; resource
-suspension retains the same slot lease and typed continuation across host
-turns. Rejection clears current and preserves prior. Acceptance clears the old
-prior and changes the current lease's role without moving rows or creating a
-third allocation domain. The existing durable arenas remain partitioned by
-slot until their bodies migrate into store-level reachability storage.
+exclusive current slot. Candidate operations mutate only current; a resource
+miss unwinds the active operation and the host retains one full replay anchor
+across turns. Rejection clears current and preserves prior. Acceptance clears
+the old prior and changes the current lease's role without moving rows or
+creating a third allocation domain. The existing durable arenas remain
+partitioned by slot until their bodies migrate into store-level reachability
+storage.
 
 The same boundary owns TeX82-shaped allocator diagnostics:
 `Universe::engine_usage_statistics` combines live usage from the interner,

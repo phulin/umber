@@ -5,6 +5,12 @@ hosts and the WebAssembly binding. It composes the typed resource protocol in
 `wasm_resource_acquisition.md` with the revision and checkpoint rules in
 `incremental_v1.md`; it does not introduce a second browser-only engine API.
 
+For resource misses, the authoritative boundary is
+[checkpoint_resource_replay.md](checkpoint_resource_replay.md). The parser
+unwinds ordinary calls completely and the host replays from one eligible full
+checkpoint. This document does not authorize a parked scanner/caller stack,
+same-executor resume API, or replay of only the operation that missed.
+
 ## One session state machine
 
 `umber::VirtualCompileSession` is the host-neutral session. The WASM
@@ -18,12 +24,13 @@ hosts and the WebAssembly binding. It composes the typed resource protocol in
 - detached output for the most recently accepted revision.
 
 The public Rust orchestration value remains shallow: its aggregate accepted
-incremental session and suspended revision candidate are heap-owned values.
-Their semantic ownership is still exclusive to the compile session, but a
-caller's stack frame does not grow with the concrete engine-state
-representation or with the number of compile-session locals it holds. Moving
-a suspended candidate between attempts preserves that allocation instead of
-materializing the aggregate state machine on the caller's stack.
+incremental session and private revision candidate are heap-owned values. Their
+semantic ownership is still exclusive to the compile session, but a caller's
+stack frame does not grow with the concrete engine-state representation or
+with the number of compile-session locals it holds. A resource wait retains
+the request/outcome ledger and one `ResourceReplayAnchor`; it does not retain
+the parser's active Rust call stack. Replay restores the full checkpoint in
+the current candidate generation.
 
 The existing `advance()`/`compile_attempt()` operation drives every state.
 Session options also fix the nonempty Rust-owned `OutputCapabilitySet` before
@@ -35,15 +42,16 @@ adapter only. Output capabilities cannot change between accepted revisions.
 Before the first accepted revision it executes the configured main user file.
 After `apply_patch` it executes the pending revision. Either execution may
 return `NeedResources`; the caller provides those resources and calls
-`advance()` again. Missing-resource execution never accepts or partially
-publishes a revision.
+`advance()` again. The host restores the latest eligible full checkpoint (or
+the initial format fallback) before replaying ordinary main control. A
+missing-resource execution never accepts or partially publishes a revision.
 
 Ordinary `\input` misses and blocking `\openin`/existence probes use distinct
-request channels. A probe suspends until the host supplies verified bytes or
-an authoritative unavailable response; absence then resumes as TeX's normal
-false probe result without promoting the lookup to a required input. Both
-answers count as retry progress, while speculative prefetch hints remain
-positive-only and never create negative bindings.
+request channels. A probe waits until the host supplies verified bytes or an
+authoritative unavailable response; absence then replays as TeX's normal false
+probe result without promoting the lookup to a required input. Both answers
+count as retry progress, while speculative prefetch hints remain positive-only
+and never create negative bindings.
 
 An authoritative unavailable binding describes acquired immutable inputs; it
 does not shadow bytes generated later by the executing TeX job. Every probe or
@@ -98,9 +106,11 @@ Dropping or rejecting the transaction leaves the accepted patch, substrate,
 history, provenance, and memo generation unchanged.
 
 The private revision is an owned `tex_incr::RevisionCandidate`: its canonical
-main control and command state, rollback roots,
-speculative checkpoint sink, command trace, and candidate output remain
-live across progressing resource responses.
+main control and command state, rollback roots, speculative checkpoint sink,
+command trace, and candidate output remain owned by the session while a
+resource response is acquired. The active parser call tree does not remain
+live across the wait; a `ResourceReplayAnchor` selects the full checkpoint
+and host prefix for the next attempt.
 Node-list state in each of those aggregates is held by direct `NodeListRef`
 ownership. A retry restores those aggregate references before failed scratch
 is dropped; cancellation and rejection drop the candidate closure; acceptance
@@ -108,9 +118,10 @@ moves the chosen closure without a node-root scan, pin log, or promotion pass.
 Provisioning changes only immutable session resource bindings and increments a
 monotonic response generation. The next `compile_attempt` supplies a fresh VFS
 snapshot-backed resolver to the same candidate; the candidate's monotonic
-suspension serial identifies the active wait, and only the rolled-back step is
-replayed. Earlier committed steps and their generated/effect state are neither
-published nor recomputed.
+restart counter identifies the host replay. The full checkpoint and matching
+generated/output/diagnostic prefixes are restored, so post-anchor work is
+discarded and earlier accepted-prefix state is replayed only as required by
+that checkpoint. No scanner or caller continuation crosses the wait.
 
 The initial candidate also transfers the workspace's immutable user and
 resolved-resource files into the incremental session's registered-input
@@ -225,9 +236,9 @@ root in a private workspace generation and opens the exact transaction snapshot
 that its resolvers will read. It compares every accepted positive and
 authoritative-negative dependency with that snapshot. An exact match permits
 ordinary checkpoint selection; any mismatch creates a private candidate that
-executes from `JobStart`. This is a reuse decision,
-not a patch rejection, and the same private candidate remains live across
-resource suspension and retry.
+executes from `JobStart`. This is a reuse decision, not a patch rejection. A
+resource wait keeps only the private candidate's request ledger and replay
+anchor; the next attempt restores the selected full checkpoint.
 A resource request, diagnostic failure, or output-limit failure discards that
 stage, so the session retains no parallel byte maps, file-accounting counters,
 or partially published generated files.
@@ -243,10 +254,12 @@ Clearing the distribution cache preserves the latest root bytes but discards
 accepted incremental history and restarts resource acquisition as a cold
 revision.
 
-Resource resolvers are supplied to `tex-incr` execution rather than bypassed
-by a browser-specific preflight. This permits initial and patched revisions to
-use the identical request keys, virtual paths, font selection, and retry
-policy as batch compilation.
+Resource resolvers are supplied to `tex-incr` execution with the identical
+request keys, virtual paths, font selection, and retry policy as batch
+compilation. A shared host startup preflight may admit required payloads and
+metadata before the run; it is a scheduling optimization, not a second
+resolver or a checkpoint restart. Empty speculative replies proceed to the
+ordinary engine run.
 
 Accepted sessions expose a bounded, deterministic
 `AcceptedInputObservationLedger`. Schema version 1 projects the rollback-safe
@@ -399,9 +412,9 @@ is an oscillation; configured attempt and pass limits are typed failures.
 Project resource responses use the existing combined file/font protocol.
 Each project candidate retains its current pass number, convergence history,
 private generated-file map, and active `VirtualCompileSession`. A TeX resource
-response is installed directly into that active session, so resumption advances
-the same owned executor run; it does not reconstruct the pass or replay its
-committed prefix. An intentional next TeX pass creates a new engine run only
+response is installed into that active session, whose host replay restores the
+current pass's full checkpoint and matching generated/output prefixes. It does
+not park or reconstruct a scanner call. An intentional next TeX pass creates a new engine run only
 after the preceding TeX and bibliography phase changed the generated-file
 signature. Bibliography detection and `BibSession` resource waits remain their
 own protocol: while either waits, the already completed TeX pass is retained
@@ -421,7 +434,8 @@ fixed-point limits, iterates private generated generations, and publishes the
 stable root, final TeX output, generated files, and observation ledger in one
 transaction. `LatexProjectSession` and `TexFixedPointSession` share pass and
 attempt bounds, deterministic signature history, non-adjacent oscillation
-detection, suspended TeX-pass resumption, and candidate rollback. A stable
+detection, host-owned full-checkpoint replay within a TeX pass, and candidate
+rollback. A stable
 generated signature accepts the just-completed pass without scheduling an
 extra run.
 

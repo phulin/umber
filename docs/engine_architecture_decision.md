@@ -11,6 +11,12 @@ remain the sole lifecycle, dispatch, input, and state authorities. Packed
 cursors, direct banks, mutable builders, and compact diagnostic sidecars live
 inside those authorities and freeze at typed barriers.
 
+The later approved `umber2-du4r` resource boundary narrows this decision:
+ordinary parser calls unwind on a miss, and the host replays from an eligible
+full checkpoint. Any resource-continuation or same-executor resume language
+below is superseded by [checkpoint_resource_replay.md](checkpoint_resource_replay.md);
+language-semantic stacks remain part of the canonical engine.
+
 The decision is based on the committed prototype branches and their benchmark
 programs, not on ratios copied between unlike workloads. No native TeX-family
 process was run or profiled for this comparison.
@@ -231,7 +237,7 @@ The work is deliberately serial at ownership cutovers:
    retrofitted after the hot loop becomes authoritative.
 3. Execute `.12`: move `MainControl` onto shared packed command episodes by
    semantic family. Canonicalize source/token frames, macro arguments,
-   expansion, scalar scanners, conditions, and slow-helper resume; delete each
+   expansion, scalar scanners, conditions, and slow-helper call paths; delete each
    predecessor as its family cuts over.
 4. Execute `.13` after `.12`: make the mutable node builder canonical and
    freeze node/provenance/observation sidecars at the protocol's barriers.
@@ -292,8 +298,8 @@ vectors and allocation counts are in
   observer, all scanner/condition/alignment/recovery cases, and exact
   diagnostic context pass through the episode path;
 - `NeedResource`, cancellation, fuel, error, effect, checkpoint, and observer
-  perturbation tests prove atomic rollback or commit and exact resume on the
-  same engine;
+  perturbation tests prove atomic rollback or commit and full-checkpoint replay
+  through the host session;
 - fresh and schema-12-loaded runs have identical state, output, format redump,
   and checkpoint schedules; cold and incremental runs compare state, effects,
   artifacts, dependencies, provenance queries, and named boundaries;

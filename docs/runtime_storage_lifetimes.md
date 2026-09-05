@@ -1,5 +1,14 @@
 # Runtime storage lifetimes
 
+For `umber2-du4r`, resource-boundary execution follows
+[checkpoint_resource_replay.md](checkpoint_resource_replay.md): ordinary parser
+calls unwind completely, and the host restores an eligible full checkpoint.
+Any resource-pending continuation, `OperationFrame`, `ResumePoint`, or
+same-executor scanner/caller resume described in this document is superseded
+and must not be implemented. The input, macro, group, conditional, alignment,
+and expression stacks described here remain language-semantic state; they are
+not resource-retry storage.
+
 Status: normative end-state architecture contract.
 
 Implementation boundary: the legacy runtime-value region registry, per-value
