@@ -1201,19 +1201,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                     })?;
                 return Ok(false);
             }
-            if let Some(value) = self.scan_the_direct_value(meaning)?
-                && let Some(value) = Self::number_from_internal_value(&value)
-            {
+            if let Some(value) = self.scan_number_direct_value(meaning, outer_negative)? {
                 let _ = self
                     .command
                     .scratch
                     .pop_number_control()
                     .map_err(crate::scan_toks::scratch_command_error)?;
-                let value = if outer_negative {
-                    value.saturating_neg()
-                } else {
-                    value
-                };
                 self.finish_number_output(*control, value)?;
                 return Ok(true);
             }
@@ -1246,13 +1239,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                         i64::from(u8::MAX)
                     };
                     let index = u16::try_from(value.clamp(0, limit)).unwrap_or(0);
-                    let internal = this.scan_the_register_value(target, index)?;
-                    let number = Self::number_from_internal_value(&internal).unwrap_or(0);
-                    let number = if outer_negative {
-                        number.saturating_neg()
-                    } else {
-                        number
-                    };
+                    let number = this
+                        .scan_number_register_value(target, index, outer_negative)?
+                        .unwrap_or(0);
                     let _ = this
                         .command
                         .scratch
@@ -1380,6 +1369,10 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     fn compact_number_register_target(meaning: Meaning) -> bool {
+        // `\toks` is a tok_val, not an int_val.  Leave it on the generic
+        // missing-number boundary so §416 backs up the primitive before its
+        // selector, as TeX does, instead of consuming the selector and
+        // silently rendering zero.
         matches!(
             meaning,
             Meaning::UnexpandablePrimitive(
@@ -1387,20 +1380,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                     | UnexpandablePrimitive::Dimen
                     | UnexpandablePrimitive::Skip
                     | UnexpandablePrimitive::Muskip
-                    | UnexpandablePrimitive::Toks
+                    | UnexpandablePrimitive::Wd
+                    | UnexpandablePrimitive::Ht
+                    | UnexpandablePrimitive::Dp
             )
         )
-    }
-
-    fn number_from_internal_value(value: &crate::InternalValue) -> Option<i32> {
-        match value {
-            crate::InternalValue::Integer(value) => Some(*value),
-            crate::InternalValue::Dimension(value) => Some(value.raw()),
-            crate::InternalValue::Glue(value) | crate::InternalValue::MuGlue(value) => {
-                Some(value.width.raw())
-            }
-            crate::InternalValue::Font(_) | crate::InternalValue::Tokens { .. } => None,
-        }
     }
 
     /// Starts the iterative `\the` operand request.  The opener is reduced to

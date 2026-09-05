@@ -3331,12 +3331,43 @@ impl<G> CommandProcessor<'_, '_, G> {
         target: Meaning,
         index: u16,
     ) -> Result<InternalValue, CommandError> {
+        let value = self.scan_the_register_value_unobserved(target, index)?;
+        self.observe_internal_value(value.clone());
+        Ok(value)
+    }
+
+    /// Fetches one of the compact register targets without publishing a
+    /// scanner observation.  `\the` and the synchronous number lane share the
+    /// fetch, but the latter must publish the value after §429 has lowered it
+    /// to `int_val`.
+    fn scan_the_register_value_unobserved(
+        &mut self,
+        target: Meaning,
+        index: u16,
+    ) -> Result<InternalValue, CommandError> {
         let value = match target {
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count) => {
                 InternalValue::Integer(self.state.count(index).unwrap_or(0))
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen) => {
                 InternalValue::Dimension(self.state.dimen(index))
+            }
+            Meaning::UnexpandablePrimitive(
+                primitive @ (UnexpandablePrimitive::Wd
+                | UnexpandablePrimitive::Ht
+                | UnexpandablePrimitive::Dp),
+            ) => {
+                let dimension = match primitive {
+                    UnexpandablePrimitive::Wd => BoxDimension::Width,
+                    UnexpandablePrimitive::Ht => BoxDimension::Height,
+                    UnexpandablePrimitive::Dp => BoxDimension::Depth,
+                    _ => unreachable!("outer match restricts primitive"),
+                };
+                InternalValue::Dimension(
+                    self.state
+                        .box_dimension(index, dimension)
+                        .unwrap_or_else(|| Scaled::from_raw(0)),
+                )
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip) => {
                 let identity = self.state.glue_register(index).ok().flatten();
@@ -3365,7 +3396,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
             _ => return Err(CommandError::input_invariant()),
         };
-        self.observe_internal_value(value.clone());
         Ok(value)
     }
 
@@ -3382,6 +3412,22 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub(crate) fn scan_the_direct_value(
         &mut self,
         meaning: Meaning,
+    ) -> Result<Option<InternalValue>, CommandError> {
+        let value = self.scan_the_direct_value_unobserved(meaning, InternalLevel::Tokens)?;
+        if let Some(value) = &value {
+            self.observe_internal_value(value.clone());
+        }
+        Ok(value)
+    }
+
+    /// Fetches a direct internal meaning without publishing an observation.
+    /// The synchronous number lane uses this projection so its one shared
+    /// admission path can lower dimensions and glue through §429 before the
+    /// result is observed as an integer.
+    fn scan_the_direct_value_unobserved(
+        &mut self,
+        meaning: Meaning,
+        level: InternalLevel,
     ) -> Result<Option<InternalValue>, CommandError> {
         let value = match meaning {
             Meaning::CountRegister(index) => {
@@ -3454,6 +3500,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     identity.map_or_else(|| GlueSpec::ZERO, |id| self.state.glue(id)),
                 )
             }
+            Meaning::ToksRegister(_) if level != InternalLevel::Tokens => return Ok(None),
             Meaning::ToksRegister(index) => {
                 let tokens = self
                     .state
@@ -3463,6 +3510,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     tokens: self.copy_durable_token_list_into_attempt(tokens)?,
                 }
             }
+            Meaning::TokParam(_) if level != InternalLevel::Tokens => return Ok(None),
             Meaning::TokParam(index) => {
                 let tokens = self
                     .state
@@ -3526,8 +3574,65 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
             _ => return Ok(None),
         };
-        self.observe_internal_value(value.clone());
         Ok(Some(value))
+    }
+
+    /// Admits one direct internal meaning for a synchronous integer
+    /// conversion.  This is the hot equivalent of §413's
+    /// `scan_something_internal(int_val,false)`: fetch once, run the shared
+    /// §429 lowering cascade, apply the caller's accumulated polarity, and
+    /// return only values that really reached `int_val`.  Font identifiers
+    /// and token lists deliberately return `None`, leaving the caller to
+    /// perform §416's ordinary missing-number recovery at its cold
+    /// diagnostic boundary.
+    pub(crate) fn scan_number_direct_value(
+        &mut self,
+        meaning: Meaning,
+        negative: bool,
+    ) -> Result<Option<i32>, CommandError> {
+        let Some(value) = self.scan_the_direct_value_unobserved(meaning, InternalLevel::Integer)?
+        else {
+            return Ok(None);
+        };
+        self.lower_internal_integer(value, negative)
+    }
+
+    /// Applies TeX82 §429 to a fetched internal quantity requested at
+    /// `int_val`, then applies the accumulated outer polarity.  Both direct
+    /// meanings and compact selector lanes use this function, keeping
+    /// glue/dimension coercion (including `mu_error`) out of their individual
+    /// hot command classifiers.
+    pub(crate) fn lower_internal_integer(
+        &mut self,
+        value: InternalValue,
+        negative: bool,
+    ) -> Result<Option<i32>, CommandError> {
+        let Some(InternalValue::Integer(value)) =
+            self.coerce_internal_value(value, InternalLevel::Integer)?
+        else {
+            return Ok(None);
+        };
+        let value = if negative {
+            value.saturating_neg()
+        } else {
+            value
+        };
+        self.observe_internal_value(InternalValue::Integer(value));
+        Ok(Some(value))
+    }
+
+    /// Fetches and lowers a compact selector-bearing internal quantity for a
+    /// synchronous integer conversion.  The selector has already been
+    /// consumed by the typed hot lane, so no rich command needs to be
+    /// materialized here.
+    pub(crate) fn scan_number_register_value(
+        &mut self,
+        target: Meaning,
+        index: u16,
+        negative: bool,
+    ) -> Result<Option<i32>, CommandError> {
+        let value = self.scan_the_register_value_unobserved(target, index)?;
+        self.lower_internal_integer(value, negative)
     }
 
     pub fn scan_the_internal_value_retained(

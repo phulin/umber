@@ -1,5 +1,7 @@
 use tex_state::env::AssignmentScope;
+use tex_state::env::banks::IntParam;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, MeaningWord};
+use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
 use crate::{
@@ -782,6 +784,49 @@ fn number_reports_a_genuinely_missing_operand_and_preserves_the_token() {
             diagnostic_effects.has_first_recoverable(),
             "a genuinely missing operand must report through the cold diagnostic effect"
         );
+    });
+}
+
+#[test]
+fn number_admits_direct_internal_values_and_composes_polarity() {
+    crate::test_harness::with_universe(|universe| {
+        let number = install_static(
+            universe,
+            "number",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Number),
+        );
+        let time = install_static(universe, "time", Meaning::IntParam(IntParam::TIME.raw()));
+        let count = install_static(universe, "countalias", Meaning::CountRegister(0));
+        let dimension = install_static(universe, "dimenalias", Meaning::DimenRegister(0));
+        universe
+            .assign_int_param(IntParam::TIME, 23, AssignmentScope::Global)
+            .expect("time parameter assignment");
+        universe
+            .assign_count(0, 17, AssignmentScope::Global)
+            .expect("count register assignment");
+        universe
+            .assign_dimension(0, Scaled::from_raw(123), AssignmentScope::Global)
+            .expect("dimension register assignment");
+
+        let cases = [
+            (vec![number, time, letter('X')], "23X"),
+            (vec![number, count, letter('X')], "17X"),
+            (
+                vec![number, other('-'), other('-'), count, letter('X')],
+                "17X",
+            ),
+            (vec![number, other('-'), dimension, letter('X')], "-123X"),
+        ];
+        for (input, expected) in cases {
+            let mut command = CommandState::default();
+            let _operation = command.begin_attempt_operation();
+            crate::test_harness::push(&mut command, input);
+            assert_eq!(
+                collect_expanded_characters(universe, &mut command),
+                expected
+            );
+            assert!(command.take_semantic_diagnostics().is_empty());
+        }
     });
 }
 

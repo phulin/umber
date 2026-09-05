@@ -467,17 +467,18 @@ fn format_font_suspension_while_closing_box_retains_active_owner() {
 }
 
 #[test]
-fn loaded_format_everyjob_preserves_repeated_number_signs() {
+fn loaded_format_everyjob_preserves_number_signs_and_internal_operands() {
     // TeX82 §440 keeps every leading sign in the integer scanner, even when
-    // expansion supplies a later sign from a restored macro.  Build the
-    // smallest format that exercises that path through `\everyjob`, then
-    // load it before the root job so format restoration and job-start input
-    // remain part of the regression.
+    // expansion supplies a later sign from a restored macro.  The same
+    // loaded-format boundary exercises §413/§429 admission for an integer
+    // parameter, register, dimension, and glue value, then loads it before
+    // the root job so format restoration and job-start input remain part of
+    // the regression.
     let image = crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
-            br"\def\minusone{-1}\everyjob{\message{X=\number-\minusone}}\dump",
+            br"\def\minusone{-1}\count0=17\dimen0=123sp\skip0=1sp\everyjob{\message{X=\number-\minusone T=\number\time C=\number\count0 D=\number\dimen0 G=\number\skip0 S=\number--\count0}}\dump",
         );
         run_to_end(&mut control, stores);
         admitted!(stores, |context| assert!(
@@ -523,6 +524,11 @@ fn loaded_format_everyjob_preserves_repeated_number_signs() {
 
             let terminal = terminal_text(stores);
             assert!(terminal.contains("X=1"), "{terminal}");
+            assert!(terminal.contains("T="), "{terminal}");
+            assert!(terminal.contains("C=17"), "{terminal}");
+            assert!(terminal.contains("D=123"), "{terminal}");
+            assert!(terminal.contains("G=1"), "{terminal}");
+            assert!(terminal.contains("S=17"), "{terminal}");
             assert!(!terminal.contains("Missing number"), "{terminal}");
         },
     )
