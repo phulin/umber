@@ -122,3 +122,44 @@ fn planner_resets_replay_and_admission_state_for_new_context() {
         matches!(request, ResourceRequest::File(file) if file.key().name() == "new-child.tex")
     }));
 }
+
+#[test]
+fn planner_preserves_shared_transport_names_for_distinct_file_kinds() {
+    let requests = [
+        FileRequest::new(
+            FileRequestKey::new(FileKind::VirtualFont, "shared").expect("vf key"),
+            "shared",
+        ),
+        FileRequest::new(
+            FileRequestKey::new(FileKind::PdfFontProgram, "shared").expect("pdf key"),
+            "shared",
+        ),
+        FileRequest::new(
+            FileRequestKey::new(FileKind::GenericAsset, "shared").expect("asset key"),
+            "shared",
+        ),
+    ];
+    let mut planner = planner();
+    planner.enqueue_escalation(requests);
+    let mut drained = planner.drain_followups();
+    drained.sort_by_key(|request| match request {
+        ResourceRequest::File(request) => request.key().kind(),
+        ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => FileKind::TexInput,
+    });
+    assert_eq!(
+        drained
+            .iter()
+            .map(|request| match request {
+                ResourceRequest::File(request) => (request.key().kind(), request.key().name()),
+                ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => {
+                    (FileKind::TexInput, "")
+                }
+            })
+            .collect::<Vec<_>>(),
+        vec![
+            (FileKind::GenericAsset, "shared"),
+            (FileKind::VirtualFont, "shared"),
+            (FileKind::PdfFontProgram, "shared"),
+        ]
+    );
+}

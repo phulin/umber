@@ -147,14 +147,31 @@ input. Required lookups always win, and absence of a speculative hint never
 creates a negative binding.
 
 `umber-distribution::PrefetchPolicy` is the one policy owner for both native
-and WASM. It owns literal extraction, canonical `FileRequestKey` queue
+and WASM. It owns literal extraction, complete semantic file-key
 deduplication, selection budgets, bounded runtime closure, and replay-region
-escalation. `PrefetchPlanner` and the WASM DTO binding are adapters; native
-resolution and browser JavaScript retain only transport, provider ordering,
-and the original spelling/search context needed to issue a request. The shared
-defaults are 64 files/16 MiB total, 8 MiB small-runtime, 2 MiB font and image,
-512 KiB document, 256 KiB scanned runtime text, 32 follow-up hints, and one
+escalation. A policy request carries `domain`, `kind`, normalized `name`,
+original spelling, and search context separately from its catalogue transport
+key; a budget class is only an accounting class and never reconstructs a file
+kind. The WASM DTO serializes those semantic fields explicitly, so a shared
+`tex:<name>` payload can satisfy distinct VF, PDF, image, or asset admissions
+without aliasing their request identities. `PrefetchPlanner` and the WASM DTO
+binding are adapters; native resolution and browser JavaScript retain provider
+ordering and issue the original typed request. The shared defaults are 64
+files/16 MiB total, 8 MiB small-runtime, 2 MiB font and image, 512 KiB
+document, 256 KiB scanned runtime text, 32 follow-up hints, and one
 follow-up tier.
+
+The byte and class limits are reservations owned by one policy instance for
+the entire run. Every selected semantic key is charged once, while a payload
+identified by its object, digest, and declared length is charged once even
+when it serves multiple semantic admissions. Required demand is tracked
+independently and never consumes speculative ceilings. Reservations happen
+before acquisition and remain charged after an optional fetch fails, so a
+retry, batch split, or recursive closure cannot exceed the run's budget.
+Drained optional keys remain owned by the run's attempted set; a declined or
+unadmitted hint is not requeued by a later scan. Only a new run/context resets
+these ledgers, and direct required demand may still request a previously
+declined key.
 
 The admission callback runs only after a verified response has successfully
 crossed the engine VFS transaction. It receives the canonical key, retained

@@ -55,6 +55,7 @@ fn group_selection_keeps_required_and_separate_class_budgets() {
         },
         class: PrefetchClass::for_key(key),
         required: false,
+        file_key: None,
     };
     let selected = select_prefetch_group(
         [entry("tex:required.tex", 100)],
@@ -97,6 +98,7 @@ fn group_selection_charges_shared_payload_once() {
         },
         class: PrefetchClass::SmallRuntime,
         required: false,
+        file_key: None,
     };
     let selected = select_prefetch_group(
         [],
@@ -270,4 +272,89 @@ fn replay_escalation_uses_region_and_discards_work_not_serials() {
     assert_eq!(escalation.tier, 1);
     let other = PrefetchRegionKey::new("outer-paragraph-end:99:1").expect("region");
     assert!(policy.note_replay(other, "tex:one.sty", 30).is_none());
+}
+
+#[test]
+fn semantic_kinds_do_not_alias_when_transport_key_is_shared() {
+    let key = |kind| PrefetchFileKey::new("tex", kind, "same-name").expect("semantic key");
+    let candidate = |kind| PrefetchCandidate {
+        key: "tex:same-name".to_owned(),
+        object: ObjectEntry {
+            object: "shared-object".to_owned(),
+            ahash64: "0123456789abcdef".to_owned(),
+            bytes: 12,
+        },
+        class: PrefetchClass::Other,
+        required: false,
+        file_key: Some(key(kind)),
+    };
+    let mut policy = PrefetchPolicy::new(PrefetchBudget {
+        max_files: 4,
+        max_bytes: 12,
+        max_runtime_bytes: 12,
+        ..PrefetchBudget::default()
+    });
+    let selection = policy.select_prefetch_group([], [candidate("vf"), candidate("font-program")]);
+    assert_eq!(selection.hints.len(), 2);
+    assert_eq!(selection.prefetch_bytes, 12);
+}
+
+#[test]
+fn selection_budget_is_cumulative_and_reserves_unique_payloads() {
+    let candidate = |name: &str, object: &str, bytes: u64| PrefetchCandidate {
+        key: format!("tex:{name}"),
+        object: ObjectEntry {
+            object: object.to_owned(),
+            ahash64: format!("{bytes:016x}"),
+            bytes,
+        },
+        class: PrefetchClass::SmallRuntime,
+        required: false,
+        file_key: Some(PrefetchFileKey::new("tex", "tex", name).expect("key")),
+    };
+    let mut policy = PrefetchPolicy::new(PrefetchBudget {
+        max_files: 8,
+        max_bytes: 100,
+        max_runtime_bytes: 60,
+        ..PrefetchBudget::default()
+    });
+    assert_eq!(
+        policy
+            .select_prefetch_group([], [candidate("one.sty", "one", 60)])
+            .prefetch_bytes,
+        60
+    );
+    let second = policy.select_prefetch_group(
+        [],
+        [
+            candidate("alias.sty", "one", 60),
+            candidate("two.sty", "two", 1),
+        ],
+    );
+    assert_eq!(second.hints.len(), 1);
+    assert_eq!(second.hints[0].key, "tex:alias.sty");
+    assert_eq!(second.prefetch_bytes, 0);
+    assert!(
+        policy
+            .select_prefetch_group([], [candidate("three.sty", "three", 1)])
+            .hints
+            .is_empty()
+    );
+}
+
+#[test]
+fn drained_optional_keys_are_not_rediscovered_but_demand_can_requeue() {
+    let optional = PrefetchRequest::new("tex:declined.sty", "declined.sty", "literal", false);
+    let demand = PrefetchRequest::new("tex:declined.sty", "declined.sty", "required", true);
+    let mut policy = PrefetchPolicy::new(PrefetchBudget::default());
+    assert!(policy.enqueue(optional.clone()));
+    assert_eq!(policy.drain(1), vec![optional]);
+    assert!(!policy.enqueue(PrefetchRequest::new(
+        "tex:declined.sty",
+        "again.sty",
+        "runtime",
+        false,
+    )));
+    assert!(policy.enqueue(demand.clone()));
+    assert_eq!(policy.drain(1), vec![demand]);
 }

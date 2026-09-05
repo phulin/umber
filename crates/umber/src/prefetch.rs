@@ -5,8 +5,8 @@ use std::collections::BTreeSet;
 use umber_distribution::{
     FileKind as DistributionFileKind, FileRequestKey as DistributionFileRequestKey, LookupManifest,
     LookupOutcome, LookupRecord, LookupRole, NegativeScope, PrefetchBudget, PrefetchClass,
-    PrefetchEscalation, PrefetchIdentity, PrefetchPolicy, PrefetchRegionKey, Readiness,
-    ResolvedIdentity,
+    PrefetchEscalation, PrefetchFileKey, PrefetchIdentity, PrefetchPolicy, PrefetchRegionKey,
+    Readiness, ResolvedIdentity,
 };
 use umber_hash::{AHash64, HashDomain};
 
@@ -80,6 +80,14 @@ impl PrefetchPlanner {
     #[must_use]
     pub const fn budget(&self) -> PrefetchBudget {
         self.budget
+    }
+
+    pub fn select_prefetch_group(
+        &mut self,
+        required: impl IntoIterator<Item = umber_distribution::PrefetchCandidate>,
+        candidates: impl IntoIterator<Item = umber_distribution::PrefetchCandidate>,
+    ) -> umber_distribution::PrefetchSelection {
+        self.policy.select_prefetch_group(required, candidates)
     }
 
     #[must_use]
@@ -168,8 +176,13 @@ impl PrefetchPlanner {
         } else {
             PrefetchClass::for_key(key.manifest_key().as_str())
         };
+        let Some(parent) =
+            policy_request(&ResourceRequest::File(request.clone()), "admission", false)
+        else {
+            return;
+        };
         self.policy
-            .admitted_with_class(key.manifest_key().as_str(), class, bytes, dependencies);
+            .admitted_request_with_class(&parent, class, bytes, dependencies);
     }
 
     pub fn drain_followups(&mut self) -> Vec<ResourceRequest> {
@@ -187,12 +200,10 @@ impl PrefetchPlanner {
         request: &FileRequestKey,
         discarded_work: u64,
     ) -> Option<PrefetchEscalation> {
-        let key = DistributionFileRequestKey::from_manifest_key(&distribution_key(request))
-            .ok()?
-            .manifest_key()
-            .to_string();
+        let key = prefetch_file_key(request)?;
         let region = PrefetchRegionKey::new(region.to_owned())?;
-        self.policy.note_replay(region, &key, discarded_work)
+        self.policy
+            .note_replay_for_file_key(region, &key, discarded_work)
     }
 
     pub fn enqueue_escalation(&mut self, requests: impl IntoIterator<Item = FileRequest>) {
@@ -213,12 +224,11 @@ impl PrefetchPlanner {
     }
 
     pub fn escalation_dependencies(&self, request: &FileRequestKey, tier: u8) -> Vec<FileRequest> {
-        let Ok(key) = DistributionFileRequestKey::from_manifest_key(&distribution_key(request))
-        else {
+        let Some(file_key) = prefetch_file_key(request) else {
             return Vec::new();
         };
         self.policy
-            .dependency_closure(key.manifest_key().as_str(), tier)
+            .dependency_closure_for_file_key(&file_key, tier)
             .into_iter()
             .filter_map(|request| match resource_request(&request) {
                 Some(ResourceRequest::File(request)) => Some(request),
@@ -340,7 +350,8 @@ fn policy_request(
         return None;
     };
     let key = distribution_key(request.key());
-    let mut policy_request = umber_distribution::PrefetchRequest::new(
+    let mut policy_request = umber_distribution::PrefetchRequest::for_file_key(
+        prefetch_file_key(request.key())?,
         key,
         request.original_name(),
         search_context,
@@ -353,20 +364,26 @@ fn policy_request(
 }
 
 fn resource_request(request: &umber_distribution::PrefetchRequest) -> Option<ResourceRequest> {
-    let key = DistributionFileRequestKey::from_manifest_key(&request.key).ok()?;
-    let kind = match key.kind() {
-        DistributionFileKind::Tex if request.class == PrefetchClass::Image => FileKind::Image,
-        DistributionFileKind::Tex => FileKind::TexInput,
-        DistributionFileKind::Tfm => FileKind::Tfm,
-        DistributionFileKind::BibAux => FileKind::BibAux,
-        DistributionFileKind::ClassicBib => FileKind::ClassicBibData,
-        DistributionFileKind::BibStyle => FileKind::BibStyle,
-    };
-    let key = FileRequestKey::new(kind, key.normalized_name()).ok()?;
+    let file_key = request.file_key.as_ref()?;
+    let domain = crate::ResourceDomain::from_wire_name(&file_key.domain)?;
+    let kind = FileKind::from_wire_name(&file_key.kind)?;
+    let key = FileRequestKey::for_domain(domain, kind, &file_key.normalized_name).ok()?;
     Some(ResourceRequest::File(FileRequest::new(
         key,
         request.original_spelling.clone(),
     )))
+}
+
+fn prefetch_file_key(request: &FileRequestKey) -> Option<PrefetchFileKey> {
+    PrefetchFileKey::new(
+        request.domain().wire_name(),
+        request.kind().wire_name(),
+        request.name(),
+    )
+}
+
+pub(crate) fn semantic_file_key(request: &FileRequestKey) -> Option<PrefetchFileKey> {
+    prefetch_file_key(request)
 }
 
 fn distribution_key(request: &FileRequestKey) -> String {

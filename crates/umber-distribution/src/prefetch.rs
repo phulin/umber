@@ -237,6 +237,61 @@ pub enum PrefetchClass {
     Other,
 }
 
+/// Complete semantic identity carried by the prefetch policy.
+///
+/// Distribution catalogue keys are intentionally many-to-one for several
+/// TeX resource kinds (for example VF and PDF font files share `tex:`). A
+/// policy request therefore retains the canonical domain, semantic kind, and
+/// normalized name separately from that transport key. The strings mirror
+/// `umber-vfs::FileRequestKey` without making this dependency-free crate
+/// depend on the VFS crate.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct PrefetchFileKey {
+    pub domain: String,
+    pub kind: String,
+    pub normalized_name: String,
+}
+
+impl PrefetchFileKey {
+    pub fn new(
+        domain: impl Into<String>,
+        kind: impl Into<String>,
+        normalized_name: impl Into<String>,
+    ) -> Option<Self> {
+        let key = Self {
+            domain: domain.into(),
+            kind: kind.into(),
+            normalized_name: normalized_name.into(),
+        };
+        key.valid().then_some(key)
+    }
+
+    fn valid(&self) -> bool {
+        !self.domain.is_empty()
+            && !self.kind.is_empty()
+            && !self.normalized_name.is_empty()
+            && self.domain.len() <= 64
+            && self.kind.len() <= 64
+            && self.normalized_name.len() <= 4096
+            && self
+                .domain
+                .bytes()
+                .chain(self.kind.bytes())
+                .chain(self.normalized_name.bytes())
+                .all(|byte| !byte.is_ascii_control())
+    }
+
+    /// Deterministic identity used only for policy maps and payload
+    /// accounting. It is not a catalogue or URL key.
+    #[must_use]
+    pub fn identity(&self) -> String {
+        format!(
+            "{}\u{1f}{}\u{1f}{}",
+            self.domain, self.kind, self.normalized_name
+        )
+    }
+}
+
 impl PrefetchClass {
     #[must_use]
     pub fn for_key(key: &str) -> Self {
@@ -269,6 +324,7 @@ pub struct PrefetchCandidate {
     pub object: ObjectEntry,
     pub class: PrefetchClass,
     pub required: bool,
+    pub file_key: Option<PrefetchFileKey>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -311,6 +367,17 @@ pub struct PrefetchSelection {
     pub prefetch_bytes: u64,
 }
 
+fn candidate_identity(candidate: &PrefetchCandidate) -> String {
+    candidate.file_key.as_ref().map_or_else(
+        || format!("transport:{}", candidate.key),
+        PrefetchFileKey::identity,
+    )
+}
+
+fn payload_identity(object: &ObjectEntry) -> (String, String, u64) {
+    (object.object.clone(), object.ahash64.clone(), object.bytes)
+}
+
 /// Selects required records plus a bounded, deterministic small group.  The
 /// required set is never dropped for speculative budget reasons; each hint
 /// class has an independent ceiling so a large font/image cannot consume the
@@ -325,25 +392,21 @@ pub fn select_prefetch_group(
     let mut seen = BTreeSet::new();
     let mut required_payloads = BTreeSet::new();
     for candidate in required {
-        if !seen.insert(candidate.key.clone()) {
+        if !seen.insert(candidate_identity(&candidate)) {
             continue;
         }
-        let payload = (
-            candidate.object.object.clone(),
-            candidate.object.ahash64.clone(),
-            candidate.object.bytes,
-        );
+        let payload = payload_identity(&candidate.object);
         if required_payloads.insert(payload) {
             output.demand_bytes = output.demand_bytes.saturating_add(candidate.object.bytes);
         }
         output.required.push(candidate);
     }
-    let mut files = output.required.len();
+    let mut files = 0;
     let mut total = 0_u64;
     let mut by_class = [0_u64; 5];
     let mut payloads = required_payloads;
     for mut candidate in candidates {
-        if candidate.required || !seen.insert(candidate.key.clone()) {
+        if candidate.required || !seen.insert(candidate_identity(&candidate)) {
             continue;
         }
         if files >= budget.max_files {
@@ -358,11 +421,7 @@ pub fn select_prefetch_group(
             PrefetchClass::Other => budget.max_bytes,
         };
         let bytes = candidate.object.bytes;
-        let payload = (
-            candidate.object.object.clone(),
-            candidate.object.ahash64.clone(),
-            bytes,
-        );
+        let payload = payload_identity(&candidate.object);
         let new_payload = payloads.insert(payload.clone());
         if new_payload
             && (bytes > class_limit.saturating_sub(by_class[class_index])
@@ -385,14 +444,15 @@ pub fn select_prefetch_group(
 
 /// A host-neutral file request used by the shared prefetch policy.
 ///
-/// The key is already canonical (for example `tex:amsmath.sty`).  Hosts map
-/// this DTO to their richer `FileRequest`, retaining the original spelling and
-/// search context at that boundary.  Keeping the policy keyed by the
-/// canonical string prevents native and browser adapters from growing subtly
-/// different identity and de-duplication rules.
+/// `key` is the immutable catalogue transport key. `file_key` is the complete
+/// semantic identity and is the policy's equality/deduplication key whenever
+/// supplied by a typed host. The original spelling and search context remain
+/// attached so an adapter can issue the same lookup without reconstructing it
+/// from a coarse budget class.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct PrefetchRequest {
     pub key: String,
+    pub file_key: Option<PrefetchFileKey>,
     pub original_spelling: String,
     pub search_context: String,
     pub class: PrefetchClass,
@@ -410,6 +470,10 @@ impl PrefetchRequest {
     ) -> Self {
         let key = key.into();
         Self {
+            // Legacy callers only have a catalogue transport key. Keep that
+            // identity opaque; typed hosts must use `for_file_key` so no
+            // semantic kind is guessed from a prefix or budget class.
+            file_key: None,
             class: PrefetchClass::for_key(&key),
             key,
             original_spelling: original_spelling.into(),
@@ -417,6 +481,36 @@ impl PrefetchRequest {
             required,
             depth: 0,
         }
+    }
+
+    /// Constructs a request at a typed host boundary. This is the production
+    /// constructor; the transport key is retained only for catalogue lookup.
+    #[must_use]
+    pub fn for_file_key(
+        file_key: PrefetchFileKey,
+        transport_key: impl Into<String>,
+        original_spelling: impl Into<String>,
+        search_context: impl Into<String>,
+        required: bool,
+    ) -> Self {
+        let key = transport_key.into();
+        Self {
+            class: PrefetchClass::for_key(&key),
+            key,
+            file_key: Some(file_key),
+            original_spelling: original_spelling.into(),
+            search_context: search_context.into(),
+            required,
+            depth: 0,
+        }
+    }
+
+    #[must_use]
+    pub fn identity(&self) -> String {
+        self.file_key.as_ref().map_or_else(
+            || format!("transport:{}", self.key),
+            PrefetchFileKey::identity,
+        )
     }
 
     #[must_use]
@@ -484,6 +578,15 @@ struct ReplayMisses {
     tier: u8,
 }
 
+#[derive(Clone, Debug, Default)]
+struct PrefetchAccounting {
+    semantic_keys: BTreeSet<String>,
+    demanded_keys: BTreeSet<String>,
+    payloads: BTreeSet<(String, String, u64)>,
+    total_bytes: u64,
+    class_bytes: [u64; 5],
+}
+
 /// Shared bounded queue and replay escalation policy.
 ///
 /// The policy has no catalog, transport, VFS, or engine dependency.  It only
@@ -507,6 +610,11 @@ pub struct PrefetchPolicy {
     replay: BTreeMap<(PrefetchRegionKey, String), ReplayMisses>,
     replay_regions: BTreeMap<PrefetchRegionKey, u32>,
     replay_region_requests: BTreeMap<PrefetchRegionKey, BTreeSet<String>>,
+    /// Semantic keys that have left the queue and are now in-flight or have
+    /// already been attempted. Optional rediscovery in this run cannot
+    /// requeue them; a required demand may still enqueue the same key.
+    attempted: BTreeSet<String>,
+    accounting: PrefetchAccounting,
     last_discarded_work: u64,
     metrics: PrefetchPolicyMetrics,
 }
@@ -529,6 +637,8 @@ impl PrefetchPolicy {
             replay: BTreeMap::new(),
             replay_regions: BTreeMap::new(),
             replay_region_requests: BTreeMap::new(),
+            attempted: BTreeSet::new(),
+            accounting: PrefetchAccounting::default(),
             last_discarded_work: 0,
             metrics: PrefetchPolicyMetrics::default(),
         }
@@ -539,9 +649,101 @@ impl PrefetchPolicy {
         self.budget
     }
 
+    /// Configures the host-provided limits before the first stateful
+    /// selection. Once a reservation or demand has been recorded, changing
+    /// limits would reset neither accounting nor ownership, so reject it.
+    pub fn configure_budget(&mut self, budget: PrefetchBudget) -> bool {
+        if !self.accounting.semantic_keys.is_empty()
+            || !self.accounting.demanded_keys.is_empty()
+            || !self.accounting.payloads.is_empty()
+        {
+            return false;
+        }
+        self.budget = budget;
+        true
+    }
+
     #[must_use]
     pub const fn metrics(&self) -> PrefetchPolicyMetrics {
         self.metrics
+    }
+
+    /// Selects one host batch against the policy's cumulative per-run
+    /// reservation ledger. Required payloads are always returned and never
+    /// consume speculative byte or file ceilings. Optional reservations are
+    /// charged before acquisition; a failed optional fetch keeps its charge
+    /// for the rest of this run, which is conservative and prevents retry
+    /// cycles from exceeding the declared budget.
+    pub fn select_prefetch_group(
+        &mut self,
+        required: impl IntoIterator<Item = PrefetchCandidate>,
+        candidates: impl IntoIterator<Item = PrefetchCandidate>,
+    ) -> PrefetchSelection {
+        let mut output = PrefetchSelection::default();
+        let mut seen = BTreeSet::new();
+        let mut required_payloads = BTreeSet::new();
+        for candidate in required {
+            let identity = candidate_identity(&candidate);
+            if !seen.insert(identity.clone()) {
+                continue;
+            }
+            if self.accounting.demanded_keys.insert(identity) {
+                let payload = payload_identity(&candidate.object);
+                if required_payloads.insert(payload.clone()) {
+                    output.demand_bytes =
+                        output.demand_bytes.saturating_add(candidate.object.bytes);
+                }
+                self.accounting.payloads.insert(payload);
+            }
+            output.required.push(candidate);
+        }
+        for mut candidate in candidates {
+            if candidate.required {
+                continue;
+            }
+            let identity = candidate_identity(&candidate);
+            if !seen.insert(identity.clone())
+                || self.accounting.demanded_keys.contains(&identity)
+                || self.accounting.semantic_keys.contains(&identity)
+            {
+                continue;
+            }
+            if self.accounting.semantic_keys.len() >= self.budget.max_files {
+                break;
+            }
+            let class_index = candidate.class as usize;
+            let class_limit = match candidate.class {
+                PrefetchClass::SmallRuntime => self.budget.max_runtime_bytes,
+                PrefetchClass::Font => self.budget.max_font_bytes,
+                PrefetchClass::Image => self.budget.max_image_bytes,
+                PrefetchClass::Document => self.budget.max_document_bytes,
+                PrefetchClass::Other => self.budget.max_bytes,
+            };
+            let bytes = candidate.object.bytes;
+            let payload = payload_identity(&candidate.object);
+            let new_payload = !self.accounting.payloads.contains(&payload);
+            if new_payload
+                && (bytes
+                    > self
+                        .budget
+                        .max_bytes
+                        .saturating_sub(self.accounting.total_bytes)
+                    || bytes > class_limit.saturating_sub(self.accounting.class_bytes[class_index]))
+            {
+                continue;
+            }
+            candidate.required = false;
+            self.accounting.semantic_keys.insert(identity);
+            self.accounting.payloads.insert(payload.clone());
+            if new_payload {
+                self.accounting.total_bytes = self.accounting.total_bytes.saturating_add(bytes);
+                self.accounting.class_bytes[class_index] =
+                    self.accounting.class_bytes[class_index].saturating_add(bytes);
+                output.prefetch_bytes = output.prefetch_bytes.saturating_add(bytes);
+            }
+            output.hints.push(candidate);
+        }
+        output
     }
 
     /// Enqueues one canonical request.  Required requests are never rejected
@@ -555,19 +757,23 @@ impl PrefetchPolicy {
     /// discarded-work deltas receive larger priorities; equal priorities keep
     /// FIFO order. Required requests still bypass the speculative cap.
     pub fn enqueue_with_priority(&mut self, request: PrefetchRequest, priority: u64) -> bool {
-        if request.key.is_empty() || self.admitted.contains(&request.key) {
+        let identity = request.identity();
+        if request.key.is_empty()
+            || self.admitted.contains(&identity)
+            || (!request.required && self.attempted.contains(&identity))
+        {
             return false;
         }
-        if self.queued.contains_key(&request.key) {
+        if self.queued.contains_key(&identity) {
             let previous = self
                 .queue_priorities
-                .get(&request.key)
+                .get(&identity)
                 .copied()
                 .unwrap_or_default();
             let Some(index) = self
                 .queue
                 .iter()
-                .position(|queued| queued.key == request.key)
+                .position(|queued| queued.identity() == identity)
             else {
                 return false;
             };
@@ -582,18 +788,18 @@ impl PrefetchPolicy {
                 // file. Once a demanded request takes it over, release that
                 // reservation so another optional request may use the cap.
                 self.speculative_scheduled = self.speculative_scheduled.saturating_sub(1);
-                self.depths.insert(request.key.clone(), request.depth());
-                self.classes.insert(request.key.clone(), request.class);
+                self.depths.insert(identity.clone(), request.depth());
+                self.classes.insert(identity.clone(), request.class);
             }
             let queued = if promoted { request } else { queued };
             let priority = priority.max(previous);
-            self.queue_priorities.insert(queued.key.clone(), priority);
+            self.queue_priorities.insert(identity.clone(), priority);
             let insertion = self
                 .queue
                 .iter()
                 .position(|queued| {
                     self.queue_priorities
-                        .get(&queued.key)
+                        .get(&queued.identity())
                         .copied()
                         .unwrap_or_default()
                         < priority
@@ -605,7 +811,7 @@ impl PrefetchPolicy {
         if !request.required && self.speculative_scheduled >= self.budget.max_files {
             return false;
         }
-        let key = request.key.clone();
+        let key = identity;
         let depth = request.depth();
         if !request.required {
             self.speculative_scheduled = self.speculative_scheduled.saturating_add(1);
@@ -613,13 +819,13 @@ impl PrefetchPolicy {
         self.depths.insert(key.clone(), depth);
         self.classes.insert(key.clone(), request.class);
         self.queued.insert(key, depth);
-        self.queue_priorities.insert(request.key.clone(), priority);
+        self.queue_priorities.insert(request.identity(), priority);
         let insertion = self
             .queue
             .iter()
             .position(|queued| {
                 self.queue_priorities
-                    .get(&queued.key)
+                    .get(&queued.identity())
                     .copied()
                     .unwrap_or_default()
                     < priority
@@ -639,14 +845,30 @@ impl PrefetchPolicy {
             let Ok(key) = crate::FileRequestKey::new(FileKind::Tex, hint.name.clone()) else {
                 continue;
             };
+            let file_key = PrefetchFileKey::new(
+                "tex",
+                if hint.kind == LiteralHintKind::IncludeGraphics {
+                    "image"
+                } else {
+                    "tex"
+                },
+                key.normalized_name(),
+            )
+            .expect("validated literal hint key");
             let key = key.manifest_key().to_string();
             let class = match hint.kind {
                 LiteralHintKind::IncludeGraphics => PrefetchClass::Image,
                 _ => PrefetchClass::for_key(&key),
             };
             if self.enqueue(
-                PrefetchRequest::new(key, hint.original_spelling, "literal", false)
-                    .with_class(class),
+                PrefetchRequest::for_file_key(
+                    file_key,
+                    key,
+                    hint.original_spelling,
+                    "literal",
+                    false,
+                )
+                .with_class(class),
             ) {
                 count += 1;
             }
@@ -664,8 +886,10 @@ impl PrefetchPolicy {
             let Some(request) = self.queue.pop_front() else {
                 break;
             };
-            self.queued.remove(&request.key);
-            self.queue_priorities.remove(&request.key);
+            let identity = request.identity();
+            self.queued.remove(&identity);
+            self.queue_priorities.remove(&identity);
+            self.attempted.insert(identity);
             output.push(request);
         }
         output
@@ -692,12 +916,17 @@ impl PrefetchPolicy {
         bytes: &[u8],
         dependencies: impl IntoIterator<Item = PrefetchRequest>,
     ) {
-        self.admitted_with_class(
-            request_key,
-            PrefetchClass::for_key(request_key),
-            bytes,
-            dependencies,
-        );
+        let request = PrefetchRequest::new(request_key, request_key, "admission", false);
+        self.admitted_request_with_metadata(&request, bytes, dependencies);
+    }
+
+    pub fn admitted_request_with_metadata(
+        &mut self,
+        request: &PrefetchRequest,
+        bytes: &[u8],
+        dependencies: impl IntoIterator<Item = PrefetchRequest>,
+    ) {
+        self.admitted_request_with_class(request, request.class, bytes, dependencies);
     }
 
     /// Admission variant for adapters that retain a semantic file kind which
@@ -712,31 +941,47 @@ impl PrefetchPolicy {
         bytes: &[u8],
         dependencies: impl IntoIterator<Item = PrefetchRequest>,
     ) {
-        if !self.admitted.insert(request_key.to_owned()) {
+        let request =
+            PrefetchRequest::new(request_key, request_key, "admission", false).with_class(class);
+        self.admitted_request_with_class(&request, class, bytes, dependencies);
+    }
+
+    pub fn admitted_request_with_class(
+        &mut self,
+        request: &PrefetchRequest,
+        class: PrefetchClass,
+        bytes: &[u8],
+        dependencies: impl IntoIterator<Item = PrefetchRequest>,
+    ) {
+        let identity = request.identity();
+        if !self.admitted.insert(identity.clone()) {
             return;
         }
-        self.classes.insert(request_key.to_owned(), class);
+        self.classes.insert(identity.clone(), class);
         if let Some(index) = self
             .queue
             .iter()
-            .position(|request| request.key == request_key)
+            .position(|queued| queued.identity() == identity)
         {
             self.queue.remove(index);
-            self.queued.remove(request_key);
-            self.queue_priorities.remove(request_key);
+            self.queued.remove(&identity);
+            self.queue_priorities.remove(&identity);
         }
         self.metrics.admitted_files = self.metrics.admitted_files.saturating_add(1);
-        let parent_depth = self.depths.get(request_key).copied().unwrap_or_default();
+        let parent_depth = self.depths.get(&identity).copied().unwrap_or_default();
         for dependency in dependencies {
             let dependency = dependency.with_depth(parent_depth.saturating_add(1));
-            let known = self.dependencies.entry(request_key.to_owned()).or_default();
-            if !known.iter().any(|known| known.key == dependency.key) {
+            let known = self.dependencies.entry(identity.clone()).or_default();
+            if !known
+                .iter()
+                .any(|known| known.identity() == dependency.identity())
+            {
                 known.push(dependency.clone());
             }
             self.enqueue(dependency);
         }
-        let class = self.classes.get(request_key).copied().unwrap_or(class);
-        if class != PrefetchClass::SmallRuntime || !self.scanned.insert(request_key.to_owned()) {
+        let class = self.classes.get(&identity).copied().unwrap_or(class);
+        if class != PrefetchClass::SmallRuntime || !self.scanned.insert(identity) {
             return;
         }
         let byte_count = bytes.len() as u64;
@@ -755,6 +1000,7 @@ impl PrefetchPolicy {
             .scanned_runtime_bytes
             .saturating_add(byte_count);
         let text = String::from_utf8_lossy(bytes);
+        let typed_parent = request.file_key.is_some();
         if parent_depth >= self.budget.max_followup_depth {
             return;
         }
@@ -775,14 +1021,34 @@ impl PrefetchPolicy {
             let Ok(key) = crate::FileRequestKey::new(FileKind::Tex, hint.name.clone()) else {
                 continue;
             };
+            let file_key = PrefetchFileKey::new(
+                "tex",
+                if hint.kind == LiteralHintKind::IncludeGraphics {
+                    "image"
+                } else {
+                    "tex"
+                },
+                key.normalized_name(),
+            )
+            .expect("validated runtime hint key");
             let key = key.manifest_key().to_string();
             let class = match hint.kind {
                 LiteralHintKind::IncludeGraphics => PrefetchClass::Image,
                 _ => PrefetchClass::for_key(&key),
             };
-            let request = PrefetchRequest::new(key, hint.original_spelling, "runtime", false)
-                .with_class(class)
-                .with_depth(parent_depth.saturating_add(1));
+            let request = if typed_parent {
+                PrefetchRequest::for_file_key(
+                    file_key,
+                    key,
+                    hint.original_spelling,
+                    "runtime",
+                    false,
+                )
+            } else {
+                PrefetchRequest::new(key, hint.original_spelling, "runtime", false)
+            }
+            .with_class(class)
+            .with_depth(parent_depth.saturating_add(1));
             if self.enqueue(request) {
                 self.metrics.followup_hints = self.metrics.followup_hints.saturating_add(1);
             }
@@ -795,16 +1061,30 @@ impl PrefetchPolicy {
     /// hints; the tier itself remains capped by the shared policy.
     #[must_use]
     pub fn dependency_closure(&self, request_key: &str, tier: u8) -> Vec<PrefetchRequest> {
+        self.dependency_closure_for_identity(format!("transport:{request_key}"), tier)
+    }
+
+    #[must_use]
+    pub fn dependency_closure_for_file_key(
+        &self,
+        request_key: &PrefetchFileKey,
+        tier: u8,
+    ) -> Vec<PrefetchRequest> {
+        self.dependency_closure_for_identity(request_key.identity(), tier)
+    }
+
+    fn dependency_closure_for_identity(&self, identity: String, tier: u8) -> Vec<PrefetchRequest> {
         let mut output = Vec::new();
-        let mut seen = BTreeSet::from([request_key.to_owned()]);
-        let mut frontier = vec![request_key.to_owned()];
+        let mut seen = BTreeSet::from([identity.clone()]);
+        let mut frontier = vec![identity];
         for _ in 0..usize::from(tier.max(1)).min(3) {
             let mut next = Vec::new();
             for parent in frontier.drain(..) {
                 for dependency in self.dependencies.get(&parent).into_iter().flatten() {
-                    if seen.insert(dependency.key.clone()) {
+                    let identity = dependency.identity();
+                    if seen.insert(identity.clone()) {
                         output.push(dependency.clone().with_depth(0));
-                        next.push(dependency.key.clone());
+                        next.push(identity);
                     }
                 }
             }
@@ -820,6 +1100,24 @@ impl PrefetchPolicy {
         &mut self,
         region: PrefetchRegionKey,
         request_key: &str,
+        discarded_work: u64,
+    ) -> Option<PrefetchEscalation> {
+        self.note_replay_for_identity(region, format!("transport:{request_key}"), discarded_work)
+    }
+
+    pub fn note_replay_for_file_key(
+        &mut self,
+        region: PrefetchRegionKey,
+        request_key: &PrefetchFileKey,
+        discarded_work: u64,
+    ) -> Option<PrefetchEscalation> {
+        self.note_replay_for_identity(region, request_key.identity(), discarded_work)
+    }
+
+    fn note_replay_for_identity(
+        &mut self,
+        region: PrefetchRegionKey,
+        request_key: String,
         discarded_work: u64,
     ) -> Option<PrefetchEscalation> {
         let delta = discarded_work.saturating_sub(self.last_discarded_work);
@@ -840,12 +1138,9 @@ impl PrefetchPolicy {
             .replay_region_requests
             .entry(region.clone())
             .or_default();
-        region_request_count.insert(request_key.to_owned());
+        region_request_count.insert(request_key.clone());
         let region_request_count = region_request_count.len();
-        let miss = self
-            .replay
-            .entry((region, request_key.to_owned()))
-            .or_default();
+        let miss = self.replay.entry((region, request_key)).or_default();
         miss.region = region_count;
         miss.requests = miss.requests.saturating_add(1);
         let tier = if miss.tier != 0 {

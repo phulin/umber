@@ -27,8 +27,9 @@ pub use packed::{
 };
 pub use prefetch::{
     LiteralHint, LiteralHintKind, LiteralHintLimits, PrefetchBudget, PrefetchCandidate,
-    PrefetchClass, PrefetchEscalation, PrefetchPolicy, PrefetchPolicyMetrics, PrefetchRegionKey,
-    PrefetchRequest, PrefetchSelection, extract_literal_hints, select_prefetch_group,
+    PrefetchClass, PrefetchEscalation, PrefetchFileKey, PrefetchPolicy, PrefetchPolicyMetrics,
+    PrefetchRegionKey, PrefetchRequest, PrefetchSelection, extract_literal_hints,
+    select_prefetch_group,
 };
 pub use readiness::{
     LookupManifest, LookupOutcome, LookupRecord, LookupRole, ManifestError, NegativeScope,
