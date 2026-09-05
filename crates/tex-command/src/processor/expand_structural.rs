@@ -128,32 +128,20 @@ impl<G> CommandProcessor<'_, '_, G> {
                         destination = None;
                     }
                     _ => {
-                        if let Some(symbol) = command.control_sequence() {
-                            // TeX82's name scanner contributes the spelling
-                            // of a control sequence returned by a nested
-                            // `\csname`. The nested token is already fully
-                            // expanded here; using its admitted symbol keeps
-                            // the outer scanner independent of its live
-                            // meaning and preserves the exact interner
-                            // spelling.
-                            name.push_str(self.state.resolve(symbol));
-                            destination = None;
-                        } else {
-                            let rendered = print_esc_text(self.state, "endcsname");
-                            let command = destination
-                                .take()
-                                .expect("csname recovery consumes the delivered command");
-                            self.back_error_reporting(
-                                command,
-                                MISSING_ENDCSNAME_DIAGNOSTIC,
-                                format!("Missing {rendered} inserted"),
-                                &[
-                                    "The control sequence marked <to be read again> should",
-                                    "not appear between \\csname and \\endcsname.",
-                                ],
-                            )?;
-                            break;
-                        }
+                        let rendered = print_esc_text(self.state, "endcsname");
+                        let command = destination
+                            .take()
+                            .expect("csname recovery consumes the delivered command");
+                        self.back_error_reporting(
+                            command,
+                            MISSING_ENDCSNAME_DIAGNOSTIC,
+                            format!("Missing {rendered} inserted"),
+                            &[
+                                "The control sequence marked <to be read again> should",
+                                "not appear between \\csname and \\endcsname.",
+                            ],
+                        )?;
+                        break;
                     }
                 }
             }
