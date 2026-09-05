@@ -48,12 +48,28 @@ export interface FileRequestKey {
 
 export interface FileRequest extends FileRequestKey {
 	originalName?: string;
+	searchContext?: string;
+	negativeScope?: string;
 }
 
 export interface ResolvedDownload {
 	request: FileRequestKey;
 	virtualPath: string;
 	bytes: Uint8Array;
+	/** Provider-side package closure response admitted as a speculative hint. */
+	speculative?: true;
+}
+
+export interface PrefetchMetrics {
+	startupPrefetchCandidates: number;
+	literalPrefetchHints: number;
+	packageGroupCandidates: number;
+	prefetchBytes: number;
+	demandBytes: number;
+	unusedPrefetchBytes: number;
+	readyResources: number;
+	existsNotReadyResources: number;
+	absentResources: number;
 }
 
 export interface HttpManifestResolverOptions {
@@ -218,6 +234,17 @@ export class HttpManifestResolver {
 	): Promise<Uint8Array>;
 	formatMetadata(name: string): ManifestFormat;
 	formatPrefetchHints(name: string): readonly ResourceRequest[];
+	beginRun(context?: {
+		source?: string;
+		options?: Record<string, unknown>;
+		limits?: { resolvedFiles?: number };
+	}): Promise<{
+		identity: unknown;
+		hints: readonly ResourceRequest[];
+	}>;
+	commitRun(): Promise<void>;
+	discardRun(): void;
+	readonly metrics: PrefetchMetrics;
 	readinessOf(
 		request: ResourceRequest,
 	): "ready" | "exists-not-ready" | "absent" | undefined;

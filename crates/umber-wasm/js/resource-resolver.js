@@ -64,10 +64,11 @@ export class CompositeResourceResolver {
 			ordered.map((request) => [resourceRequestIdentity(request), request]),
 		);
 		const accepted = new Map();
+		const speculative = new Map();
 		const probeKeys = new Set(probes.map(resourceRequestIdentity));
 		const hintKeys = new Set(hints.map(resourceRequestIdentity));
 
-		for (const provider of this.providers) {
+		for (const [providerIndex, provider] of this.providers.entries()) {
 			if (pending.size === 0) break;
 			throwIfAborted(signal);
 			const providerPending = [...pending.values()];
@@ -98,12 +99,53 @@ export class CompositeResourceResolver {
 					throw new TypeError(
 						`resource provider returned duplicate response ${identity}`,
 					);
-				if (!pending.has(identity))
+				if (!pending.has(identity) && response?.speculative !== true)
 					throw new TypeError(
 						`resource provider returned unexpected response ${identity}`,
 					);
 				seen.add(identity);
-				if (isUnavailable(response)) continue;
+				if (isUnavailable(response)) {
+					const metadata = responseToRequest(response);
+					const pendingRequest = pending.get(identity);
+					if (metadata !== undefined && pendingRequest !== undefined) {
+						pending.set(identity, {
+							...pendingRequest,
+							...(metadata.searchContext === undefined
+								? {}
+								: { searchContext: metadata.searchContext }),
+							...(metadata.negativeScope === undefined
+								? {}
+								: { negativeScope: metadata.negativeScope }),
+						});
+					}
+					continue;
+				}
+				if (!pending.has(identity)) {
+					const request = responseToRequest(response);
+					let higher;
+					if (request !== undefined) {
+						for (const higherProvider of this.providers.slice(
+							0,
+							providerIndex,
+						)) {
+							const higherResponses = await higherProvider.resolve([request], {
+								signal,
+								probes: [],
+								prefetchHints: [],
+								admitPrefetch: false,
+							});
+							const positive = [...(higherResponses ?? [])].find(
+								(candidate) => !isUnavailable(candidate),
+							);
+							if (positive !== undefined) {
+								higher = positive;
+								break;
+							}
+						}
+					}
+					speculative.set(identity, markSpeculative(higher ?? response));
+					continue;
+				}
 				accepted.set(identity, response);
 				pending.delete(identity);
 			}
@@ -123,8 +165,36 @@ export class CompositeResourceResolver {
 						: [response];
 				}),
 			);
-		return responses;
+		return responses.concat([...speculative.values()]);
 	}
+}
+
+function responseToRequest(response) {
+	if (response?.type === "file" || response?.type === "file-unavailable") {
+		return {
+			type: "file",
+			domain: response.domain,
+			kind: response.kind,
+			name: response.name,
+			originalName: response.originalName ?? response.name,
+			...(response.searchContext === undefined
+				? {}
+				: { searchContext: response.searchContext }),
+			...(response.negativeScope === undefined
+				? {}
+				: { negativeScope: response.negativeScope }),
+		};
+	}
+	if (response?.type === "font") return { ...response, type: "font" };
+	if (response?.type === "legacy-font-mapping")
+		return { ...response, type: "legacy-font-mapping" };
+	return undefined;
+}
+
+function markSpeculative(response) {
+	return response?.speculative === true
+		? response
+		: { ...response, speculative: true };
 }
 
 function deduplicateRequests(requests) {

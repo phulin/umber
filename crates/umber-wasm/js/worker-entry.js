@@ -1,5 +1,8 @@
 import { compile, createEditorSession } from "./compile.js";
-import { HttpManifestResolver } from "./manifest-resolver.js";
+import {
+	deterministicAhash64Hex,
+	HttpManifestResolver,
+} from "./manifest-resolver.js";
 import {
 	CompositeResourceResolver,
 	resourceRequestIdentity,
@@ -69,12 +72,18 @@ async function prepareSession(message, dependencies) {
 		);
 		const formatPrefetchHints =
 			manifestResolver.formatPrefetchHints?.(message.resolver.format) ?? [];
-		options = { ...options, format, formatPrefetchHints };
+		options = {
+			...options,
+			format,
+			formatSchema: bindings.formatSchemaVersion(),
+			formatPrefetchHints,
+		};
 	}
 	return { bindings, options, resolver };
 }
 
 function composeResolver(message, manifestResolver) {
+	const projectRevision = projectRevisionForMessage(message);
 	const resourceResponses = new Map(
 		(message.resolver.resourceResponses ?? []).map((response) => [
 			resourceResponseIdentity(response),
@@ -89,17 +98,56 @@ function composeResolver(message, manifestResolver) {
 						return requests
 							.concat(options?.probes ?? [])
 							.concat(options?.prefetchHints ?? [])
-							.map(
-								(request) =>
-									resourceResponses.get(resourceRequestIdentity(request)) ?? {
-										...request,
-										type: `${request.type}-unavailable`,
-									},
-							);
+							.map((request) => {
+								const response = resourceResponses.get(
+									resourceRequestIdentity(request),
+								);
+								if (response !== undefined) {
+									return response.type?.endsWith("-unavailable")
+										? {
+												...response,
+												searchContext: response.searchContext ?? "project",
+												negativeScope:
+													response.negativeScope ??
+													`project:${projectRevision}`,
+											}
+										: response;
+								}
+								return {
+									...request,
+									type: `${request.type}-unavailable`,
+									searchContext: "project",
+									negativeScope: `project:${projectRevision}`,
+								};
+							});
 					},
 				},
 				manifestResolver,
 			]);
+}
+
+function projectRevisionForMessage(message) {
+	const entries = [...message.userFiles]
+		.filter(
+			(entry) =>
+				Array.isArray(entry) &&
+				typeof entry[0] === "string" &&
+				entry[1] instanceof Uint8Array,
+		)
+		.sort(([left], [right]) => left.localeCompare(right));
+	const chunks = [];
+	for (const [path, bytes] of entries) {
+		chunks.push(new TextEncoder().encode(path), Uint8Array.of(0), bytes);
+	}
+	let length = 0;
+	for (const chunk of chunks) length += chunk.byteLength;
+	const preimage = new Uint8Array(length);
+	let offset = 0;
+	for (const chunk of chunks) {
+		preimage.set(chunk, offset);
+		offset += chunk.byteLength;
+	}
+	return deterministicAhash64Hex(preimage);
 }
 
 export function outputTransfers(output) {

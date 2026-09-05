@@ -47,9 +47,13 @@ export class LookupManifest {
 		if (!record || typeof record !== "object") return false;
 		const duplicate = this.records.find(
 			(existing) =>
+				existing.originalSpelling === record.originalSpelling &&
 				existing.requestKey === record.requestKey &&
 				existing.resourceKind === record.resourceKind &&
-				existing.outcome?.kind === record.outcome?.kind,
+				existing.searchContext === record.searchContext &&
+				existing.outcome?.kind === record.outcome?.kind &&
+				(existing.outcome?.kind !== "absent" ||
+					existing.outcome?.scope === record.outcome?.scope),
 		);
 		if (duplicate) {
 			if (roleRank(record.role) > roleRank(duplicate.role))

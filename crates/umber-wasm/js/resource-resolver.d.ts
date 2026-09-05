@@ -6,10 +6,15 @@ import type {
 } from "./manifest-resolver.js";
 
 export type TypedResourceRequest = ResourceRequest | LegacyMappingRequest;
-export type TypedResourceResponse =
+export type TypedResourceResponse = (
 	| ResourceResponse
 	| ResolvedLegacyMapping
-	| UnavailableLegacyMapping;
+	| UnavailableLegacyMapping
+) & {
+	searchContext?: string;
+	negativeScope?: string;
+	speculative?: true;
+};
 
 export interface ResourceProvider {
 	resolve(

@@ -67,6 +67,32 @@ test("absence becomes authoritative only after every provider misses", async () 
 	assert.equal(calls, 2);
 });
 
+test("mutable provider misses retain lookup scope for the distribution provider", async () => {
+	const request = file("project.tex");
+	let forwarded;
+	const resolver = new CompositeResourceResolver([
+		{
+			async resolve(requests) {
+				return requests.map((value) => ({
+					...value,
+					type: "file-unavailable",
+					searchContext: "project",
+					negativeScope: "project:revision-a",
+				}));
+			},
+		},
+		{
+			async resolve(requests) {
+				forwarded = requests[0];
+				return requests.map(unavailable);
+			},
+		},
+	]);
+	await resolver.resolve([request]);
+	assert.equal(forwarded.searchContext, "project");
+	assert.equal(forwarded.negativeScope, "project:revision-a");
+});
+
 test("transport failure is actionable and never converted to absence", async () => {
 	const expected = new Error("offline object missing");
 	const resolver = new CompositeResourceResolver([
@@ -196,4 +222,35 @@ test("speculative hints retain provider precedence and are admitted only on requ
 		[[7]],
 	);
 	assert.equal(calls.at(-1)[0], "first");
+});
+
+test("provider-side speculative dependencies still honor higher precedence", async () => {
+	const root = file("root.tex");
+	const dependency = file("dependency.tex");
+	const first = {
+		async resolve(requests) {
+			return requests.map((request) =>
+				request.name === "dependency.tex"
+					? resolved(request, 1)
+					: unavailable(request),
+			);
+		},
+	};
+	const second = {
+		async resolve(requests) {
+			return [
+				resolved(requests[0], 2),
+				{ ...resolved(dependency, 9), speculative: true },
+			];
+		},
+	};
+	const responses = await new CompositeResourceResolver([
+		first,
+		second,
+	]).resolve([root]);
+	assert.deepEqual(
+		responses.map(({ bytes }) => [...bytes]),
+		[[2], [1]],
+	);
+	assert.equal(responses[1].speculative, true);
 });

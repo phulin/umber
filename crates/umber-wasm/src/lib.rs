@@ -10,7 +10,9 @@ use options::{
     parse_editor_options, parse_options, parse_project_options, parse_resource_responses,
 };
 use result::attempt_result;
-use umber::{EditorCompileSession, LatexProjectSession, VirtualCompileSession};
+use umber::{
+    EditorCompileSession, FileRequest, LatexProjectSession, ResourceResponse, VirtualCompileSession,
+};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen(typescript_custom_section)]
@@ -82,6 +84,23 @@ pub struct EditorSession {
     session: Option<EditorCompileSession<'static>>,
 }
 
+fn prefetch_files(responses: &[ResourceResponse]) -> Vec<FileRequest> {
+    responses
+        .iter()
+        .filter_map(|response| match response {
+            ResourceResponse::File(file) => Some(FileRequest::new(
+                file.request.clone(),
+                file.virtual_path.clone(),
+            )),
+            ResourceResponse::FileUnavailable(_)
+            | ResourceResponse::Font(_)
+            | ResourceResponse::FontUnavailable(_)
+            | ResourceResponse::PkFont(_)
+            | ResourceResponse::PkFontUnavailable(_) => None,
+        })
+        .collect()
+}
+
 #[wasm_bindgen(js_name = packageVersion)]
 pub fn package_version() -> String {
     umber::PACKAGE_VERSION.to_owned()
@@ -134,6 +153,18 @@ impl CompilerSession {
         self.session_mut()?
             .provide_resources(responses)
             .map_err(compile_boundary_error)
+    }
+
+    #[wasm_bindgen(js_name = authorizePrefetchResources)]
+    pub fn authorize_prefetch_resources(
+        &mut self,
+        responses: &JsResourceResponses,
+    ) -> Result<(), JsValue> {
+        let responses = parse_resource_responses(responses.as_ref())
+            .map_err(|error| tag_js_error(error, "invalid-resource"))?;
+        self.session_mut()?
+            .authorize_prefetch_files(prefetch_files(&responses));
+        Ok(())
     }
 
     #[wasm_bindgen(js_name = compileAttempt)]
@@ -313,6 +344,18 @@ impl EditorSession {
         self.session_mut()?
             .provide_resources(responses)
             .map_err(editor_resource_boundary_error)
+    }
+
+    #[wasm_bindgen(js_name = authorizePrefetchResources)]
+    pub fn authorize_prefetch_resources(
+        &mut self,
+        responses: &JsResourceResponses,
+    ) -> Result<(), JsValue> {
+        let responses = parse_resource_responses(responses.as_ref())
+            .map_err(|error| tag_js_error(error, "invalid-resource"))?;
+        self.session_mut()?
+            .authorize_prefetch_files(prefetch_files(&responses));
+        Ok(())
     }
 
     /// Runs exactly one latency-critical editor pass.
@@ -498,6 +541,18 @@ impl ProjectSession {
         self.session_mut()?
             .provide_resources(responses)
             .map_err(project_boundary_error)
+    }
+
+    #[wasm_bindgen(js_name = authorizePrefetchResources)]
+    pub fn authorize_prefetch_resources(
+        &mut self,
+        responses: &JsResourceResponses,
+    ) -> Result<(), JsValue> {
+        let responses = parse_resource_responses(responses.as_ref())
+            .map_err(|error| tag_js_error(error, "invalid-resource"))?;
+        self.session_mut()?
+            .authorize_prefetch_files(prefetch_files(&responses));
+        Ok(())
     }
 
     pub fn advance(&mut self) -> Result<JsAttemptResult, JsValue> {

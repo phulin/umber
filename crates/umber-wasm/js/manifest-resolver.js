@@ -141,6 +141,7 @@ export class HttpManifestResolver {
 			maxBytes: options.maxBytes,
 			catalog: options.catalog,
 			prefetchPolicyVersion: options.prefetchPolicyVersion,
+			rootAHash64: options.manifestAHash64,
 		});
 	}
 
@@ -170,6 +171,9 @@ export class HttpManifestResolver {
 			);
 		}
 		this.fetch = options.fetch ?? platformFetch();
+		this.rootAHash64 =
+			options.rootAHash64 ??
+			deterministicAhash64Hex(new TextEncoder().encode(this.rootCanonical));
 		this.concurrency = validateConcurrency(
 			options.concurrency ?? DEFAULT_CONCURRENCY,
 		);
@@ -199,6 +203,21 @@ export class HttpManifestResolver {
 		this.prefetchPolicyVersion =
 			options.prefetchPolicyVersion ?? PREFETCH_POLICY_VERSION;
 		this.readiness = new Map();
+		this.prefetchAdmitted = new Map();
+		this.prefetchCountedPaths = new Set();
+		this.prefetchUsed = new Set();
+		this.demandCounted = new Set();
+		this.prefetchMetrics = {
+			startupPrefetchCandidates: 0,
+			literalPrefetchHints: 0,
+			packageGroupCandidates: 0,
+			prefetchBytes: 0,
+			demandBytes: 0,
+			unusedPrefetchBytes: 0,
+			readyResources: 0,
+			existsNotReadyResources: 0,
+			absentResources: 0,
+		};
 		this.currentRun = undefined;
 	}
 
@@ -247,13 +266,26 @@ export class HttpManifestResolver {
 			throwIfAborted(signal);
 			// Speculative index transport is best effort, like speculative objects.
 		}
+		for (const job of required.jobs.concat(hinted.jobs)) {
+			const identity =
+				job.request === undefined
+					? typedRequestIdentity(decodeKey(job.manifestKey))
+					: job.key;
+			this.#setReadiness(identity, "exists-not-ready");
+			if (job.request === undefined)
+				this.prefetchMetrics.packageGroupCandidates += 1;
+		}
 		const unavailable = required.misses.map(({ type, request }) => ({
 			...request,
 			type: `${type}-unavailable`,
 		}));
 		for (const miss of required.misses) {
-			this.readiness.set(typedRequestIdentity(miss.request), "absent");
+			this.#setReadiness(typedRequestIdentity(miss.request), "absent");
 			this.#recordAbsent(miss.request, roleFor(miss.request), miss.manifestKey);
+		}
+		for (const miss of hinted.misses) {
+			this.#setReadiness(typedRequestIdentity(miss.request), "absent");
+			this.#recordAbsent(miss.request, "hint", miss.manifestKey);
 		}
 		validateJobBudget(required.jobs, this.maxFiles, this.maxBytes);
 		const jobs = mergeJobs(
@@ -277,12 +309,38 @@ export class HttpManifestResolver {
 					)
 						collectPackageHints(group, bytes, prefetchTrace, followupHints);
 					for (const job of group) {
-						this.readiness.set(job.key, "ready");
-						if (job.request !== undefined)
-							this.#recordResolved(
-								job,
-								roleFor(job.request, job.hinted || !job.requested),
-							);
+						const identity =
+							job.request === undefined
+								? typedRequestIdentity(decodeKey(job.manifestKey))
+								: job.key;
+						this.#setReadiness(identity, "ready");
+						this.#recordResolved(
+							job,
+							job.request === undefined
+								? "hint"
+								: roleFor(job.request, job.hinted || !job.requested),
+						);
+						if (job.requested && !job.hinted) {
+							const demandIdentity = job.key;
+							if (!this.demandCounted.has(demandIdentity)) {
+								this.demandCounted.add(demandIdentity);
+								this.prefetchMetrics.demandBytes += bytes.byteLength;
+							}
+							for (const [prefetchIdentity, value] of this.prefetchAdmitted) {
+								if (value.virtualPath === job.entry.virtualPath)
+									this.prefetchUsed.add(prefetchIdentity);
+							}
+						} else if (admitPrefetch && (job.hinted || !job.requested)) {
+							const prefetchIdentity = identity;
+							if (!this.prefetchAdmitted.has(prefetchIdentity)) {
+								this.prefetchAdmitted.set(prefetchIdentity, {
+									bytes: bytes.byteLength,
+									virtualPath: job.entry.virtualPath,
+								});
+								if (this.prefetchCountedPaths.add(job.entry.virtualPath))
+									this.prefetchMetrics.prefetchBytes += bytes.byteLength;
+							}
+						}
 						results.set(
 							job.key,
 							job.type === "file"
@@ -300,6 +358,9 @@ export class HttpManifestResolver {
 										})(),
 										virtualPath: job.entry.virtualPath,
 										bytes,
+										...(admitPrefetch && job.hinted
+											? { speculative: true }
+											: {}),
 									}
 								: job.type === "font"
 									? {
@@ -370,18 +431,27 @@ export class HttpManifestResolver {
 	 * Identity fields deliberately contain execution policy, never source text.
 	 */
 	async beginRun(context = {}) {
+		this.prefetchAdmitted.clear();
+		this.prefetchCountedPaths.clear();
+		this.prefetchUsed.clear();
+		this.demandCounted.clear();
+		this.readiness.clear();
+		for (const key of Object.keys(this.prefetchMetrics))
+			this.prefetchMetrics[key] = 0;
+		const format = formatIdentity(
+			context.options?.format,
+			context.options?.formatSchema,
+		);
+		const persistable = format !== "unavailable";
 		const identity = makePrefetchIdentity({
 			engine: context.options?.engine ?? "tex82",
-			format:
-				context.options?.format === undefined
-					? "none"
-					: `bytes:${context.options.format.byteLength}`,
+			format,
 			options: stableOptionsIdentity(context.options),
-			distribution: this.manifest.distribution,
-			searchPolicy: this.prefetchPolicyVersion,
+			distribution: `root:${this.rootAHash64}`,
+			searchPolicy: `${this.prefetchPolicyVersion};providers=project/generated/local/distribution;precedence=v1`,
 		});
 		let prior;
-		if (this.persistentStore !== undefined) {
+		if (persistable && this.persistentStore !== undefined) {
 			try {
 				const bytes = await this.persistentStore.get(
 					"prefetch",
@@ -391,10 +461,11 @@ export class HttpManifestResolver {
 			} catch {}
 		}
 		this.currentRun = { identity, manifest: new LookupManifest(identity) };
-		const hints = [
-			...(prior?.resolvedRequests() ?? []),
-			...this.literalPrefetchHints(context.source ?? ""),
-		];
+		const literalHints = this.literalPrefetchHints(context.source ?? "");
+		const hints = [...(prior?.resolvedRequests() ?? []), ...literalHints];
+		this.prefetchMetrics.startupPrefetchCandidates +=
+			prior?.resolvedRequests().length ?? 0;
+		this.prefetchMetrics.literalPrefetchHints += literalHints.length;
 		const maxHints = Number.isSafeInteger(context.limits?.resolvedFiles)
 			? Math.min(context.limits.resolvedFiles, MAX_RESOLVED_FILES)
 			: DEFAULT_RESOLVED_FILES;
@@ -408,7 +479,25 @@ export class HttpManifestResolver {
 	async commitRun() {
 		const run = this.currentRun;
 		this.currentRun = undefined;
+		const usedPaths = new Set(
+			[...this.prefetchAdmitted]
+				.filter(([identity]) => this.prefetchUsed.has(identity))
+				.map(([, value]) => value.virtualPath),
+		);
+		const countedPaths = new Set();
+		this.prefetchMetrics.unusedPrefetchBytes = [
+			...this.prefetchAdmitted,
+		].reduce((total, [identity, value]) => {
+			if (
+				this.prefetchUsed.has(identity) ||
+				usedPaths.has(value.virtualPath) ||
+				!countedPaths.add(value.virtualPath)
+			)
+				return total;
+			return total + value.bytes;
+		}, 0);
 		if (run === undefined || this.persistentStore === undefined) return;
+		if (run.identity.format === "unavailable") return;
 		try {
 			await this.persistentStore.put(
 				"prefetch",
@@ -420,6 +509,14 @@ export class HttpManifestResolver {
 
 	discardRun() {
 		this.currentRun = undefined;
+		this.prefetchAdmitted.clear();
+		this.prefetchCountedPaths.clear();
+		this.prefetchUsed.clear();
+		this.demandCounted.clear();
+	}
+
+	get metrics() {
+		return { ...this.prefetchMetrics };
 	}
 
 	/**
@@ -434,7 +531,16 @@ export class HttpManifestResolver {
 
 	#recordResolved(job, role) {
 		const run = this.currentRun;
-		const request = job.request;
+		const request =
+			job.request ??
+			(job.type === "file"
+				? {
+						type: "file",
+						domain: resourceDomain(decodeKey(job.manifestKey).kind),
+						...decodeKey(job.manifestKey),
+						originalName: decodeKey(job.manifestKey).name,
+					}
+				: undefined);
 		if (
 			run === undefined ||
 			request === undefined ||
@@ -445,7 +551,7 @@ export class HttpManifestResolver {
 			originalSpelling: request.originalName ?? request.name,
 			requestKey: job.manifestKey,
 			resourceKind: request.kind,
-			searchContext: "distribution",
+			searchContext: request.searchContext ?? "distribution",
 			role,
 			outcome: {
 				kind: "resolved",
@@ -470,13 +576,28 @@ export class HttpManifestResolver {
 			originalSpelling: request.originalName ?? request.name,
 			requestKey: manifestKey,
 			resourceKind: request.kind,
-			searchContext: "distribution",
+			searchContext: request.searchContext ?? "distribution",
 			role,
 			outcome: {
 				kind: "absent",
-				scope: `distribution:${this.manifest.distribution}`,
+				scope: request.negativeScope ?? `distribution:${this.rootAHash64}`,
 			},
 		});
+	}
+
+	#setReadiness(identity, state) {
+		const previous = this.readiness.get(identity);
+		if (previous === state) return;
+		for (const value of [previous, state]) {
+			if (value === "ready")
+				this.prefetchMetrics.readyResources += state === value ? 1 : -1;
+			if (value === "exists-not-ready")
+				this.prefetchMetrics.existsNotReadyResources +=
+					state === value ? 1 : -1;
+			if (value === "absent")
+				this.prefetchMetrics.absentResources += state === value ? 1 : -1;
+		}
+		this.readiness.set(identity, state);
 	}
 
 	async #select(requests, signal, blocking) {
@@ -826,6 +947,10 @@ function stableOptionsIdentity(options) {
 	if (!options || typeof options !== "object") return "{}";
 	const selected = {};
 	for (const key of [
+		"engine",
+		"formatSchema",
+		"profile",
+		"providerPrecedence",
 		"outputs",
 		"fontLayoutPolicy",
 		"fontMappingFallback",
@@ -835,6 +960,24 @@ function stableOptionsIdentity(options) {
 		if (options[key] !== undefined) selected[key] = options[key];
 	}
 	return JSON.stringify(selected, Object.keys(selected).sort());
+}
+
+function formatIdentity(value, schema) {
+	if (value === undefined) return "none";
+	if (!Number.isSafeInteger(schema) || schema < 0) return "unavailable";
+	try {
+		return `content:${deterministicAhash64Hex(toUint8Array(value))}:schema=${schema}`;
+	} catch {
+		return "unavailable";
+	}
+}
+
+function toUint8Array(value) {
+	if (value instanceof Uint8Array) return value;
+	if (value instanceof ArrayBuffer) return new Uint8Array(value);
+	if (ArrayBuffer.isView(value))
+		return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+	throw new TypeError("format identity requires byte data");
 }
 
 function validateJobBudget(jobs, maxFiles, maxBytes) {

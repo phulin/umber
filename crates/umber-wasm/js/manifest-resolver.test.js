@@ -819,6 +819,94 @@ test("accepted lookup history is reused across identical identities, not source 
 	second.discardRun();
 });
 
+test("failed discovery remains a hint until accepted commit", async () => {
+	const data = await fixture();
+	const cache = new MemoryObjectCache();
+	const options = { engine: "tex82", outputs: ["dvi"] };
+	const failed = resolverFor(data, { cacheStore: cache }).resolver;
+	await failed.beginRun({ options, source: "" });
+	await failed.resolve([{ kind: "tex", name: "plain.tex" }]);
+	failed.discardRun();
+
+	const afterFailure = resolverFor(data, { cacheStore: cache }).resolver;
+	const noHistory = await afterFailure.beginRun({ options, source: "" });
+	assert(!noHistory.hints.some(({ name }) => name === "plain.tex"));
+	afterFailure.discardRun();
+
+	const accepted = resolverFor(data, { cacheStore: cache }).resolver;
+	await accepted.beginRun({ options, source: "" });
+	await accepted.resolve([{ kind: "tex", name: "plain.tex" }]);
+	await accepted.commitRun();
+	assert.equal(accepted.metrics.unusedPrefetchBytes, 0);
+
+	const reused = resolverFor(data, { cacheStore: cache }).resolver;
+	const startup = await reused.beginRun({ options, source: "" });
+	assert(startup.hints.some(({ name }) => name === "plain.tex"));
+	reused.discardRun();
+});
+
+test("prefetch identity invalidates same-size formats and authenticated roots", async () => {
+	const data = await fixture();
+	const cache = new MemoryObjectCache();
+	const formatA = new Uint8Array([1, 2, 3, 4]);
+	const formatB = new Uint8Array([4, 3, 2, 1]);
+	const options = {
+		engine: "pdflatex",
+		outputs: ["pdf"],
+		format: formatA,
+		formatSchema: 11,
+	};
+	const first = resolverFor(data, { cacheStore: cache }).resolver;
+	await first.beginRun({ options, source: "" });
+	await first.resolve([{ kind: "tex", name: "plain.tex" }]);
+	await first.commitRun();
+
+	const same = resolverFor(data, { cacheStore: cache }).resolver;
+	const reused = await same.beginRun({ options, source: "" });
+	assert(reused.hints.some(({ name }) => name === "plain.tex"));
+	same.discardRun();
+
+	const differentFormat = resolverFor(data, { cacheStore: cache }).resolver;
+	const invalidatedFormat = await differentFormat.beginRun({
+		options: { ...options, format: formatB },
+		source: "",
+	});
+	assert(!invalidatedFormat.hints.some(({ name }) => name === "plain.tex"));
+	differentFormat.discardRun();
+
+	const changedRoot = { ...data.root, distribution: "fixture-root-changed" };
+	const differentRoot = resolverFor(
+		{ ...data, root: changedRoot },
+		{ cacheStore: cache },
+	).resolver;
+	const invalidatedRoot = await differentRoot.beginRun({
+		options,
+		source: "",
+	});
+	assert(!invalidatedRoot.hints.some(({ name }) => name === "plain.tex"));
+	differentRoot.discardRun();
+});
+
+test("does not persist format history when the format schema is unavailable", async () => {
+	const data = await fixture();
+	const cache = new MemoryObjectCache();
+	const first = resolverFor(data, { cacheStore: cache }).resolver;
+	await first.beginRun({
+		options: { engine: "tex82", format: new Uint8Array([1, 2]) },
+		source: "",
+	});
+	await first.resolve([{ kind: "tex", name: "plain.tex" }]);
+	await first.commitRun();
+
+	const second = resolverFor(data, { cacheStore: cache }).resolver;
+	const startup = await second.beginRun({
+		options: { engine: "tex82", format: new Uint8Array([1, 2]) },
+		source: "",
+	});
+	assert(!startup.hints.some(({ name }) => name === "plain.tex"));
+	second.discardRun();
+});
+
 test("cancellation and oversized streamed objects remain bounded", async () => {
 	const data = await fixture();
 	const controller = new AbortController();

@@ -58,6 +58,15 @@ export class SessionDriver {
 				);
 				throwIfAborted(controller.signal);
 				try {
+					const speculative = responses.filter(
+						(response) => response?.speculative === true,
+					);
+					if (
+						speculative.length > 0 &&
+						typeof session.authorizePrefetchResources === "function"
+					) {
+						session.authorizePrefetchResources(speculative);
+					}
 					session.provideResources(responses);
 				} catch (error) {
 					throw new SessionDriverError(
