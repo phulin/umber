@@ -1,8 +1,8 @@
 import {
-	encodeRequest,
 	fontRequestIdentity,
 	legacyMappingRequestIdentity,
 } from "./manifest-schema.js";
+import { typedRequestIdentity } from "./prefetch.js";
 
 /**
  * Ordered, output-neutral composition of typed resource providers.
@@ -23,37 +23,70 @@ export class CompositeResourceResolver {
 		}
 	}
 
+	/** Starts accepted-run prediction on providers that own immutable catalogs. */
+	async beginRun(context = {}) {
+		const hints = [];
+		for (const provider of this.providers) {
+			if (typeof provider.beginRun !== "function") continue;
+			const result = (await provider.beginRun(context)) ?? {};
+			if (Array.isArray(result.hints)) hints.push(...result.hints);
+		}
+		return { hints };
+	}
+
+	async commitRun() {
+		for (const provider of this.providers) await provider.commitRun?.();
+	}
+
+	discardRun() {
+		for (const provider of this.providers) provider.discardRun?.();
+	}
+
 	async resolve(requests, options = {}) {
 		if (!Array.isArray(requests))
 			throw new TypeError("requests must be an array");
 		const probes = options?.probes ?? [];
 		if (!Array.isArray(probes)) throw new TypeError("probes must be an array");
+		const prefetchHints = options?.prefetchHints ?? [];
+		if (!Array.isArray(prefetchHints))
+			throw new TypeError("prefetchHints must be an array");
+		const admitPrefetch = options?.admitPrefetch === true;
 		const signal = options?.signal;
 		throwIfAborted(signal);
 
-		const ordered = deduplicateRequests(requests.concat(probes));
+		const blocking = deduplicateRequests(requests.concat(probes));
+		const blockingKeys = new Set(blocking.map(resourceRequestIdentity));
+		const hints = deduplicateRequests(prefetchHints).filter(
+			(request) => !blockingKeys.has(resourceRequestIdentity(request)),
+		);
+		const ordered = blocking.concat(hints);
 		const pending = new Map(
 			ordered.map((request) => [resourceRequestIdentity(request), request]),
 		);
 		const accepted = new Map();
+		const probeKeys = new Set(probes.map(resourceRequestIdentity));
+		const hintKeys = new Set(hints.map(resourceRequestIdentity));
 
 		for (const provider of this.providers) {
 			if (pending.size === 0) break;
 			throwIfAborted(signal);
-			const providerProbeKeys = new Set(probes.map(resourceRequestIdentity));
 			const providerPending = [...pending.values()];
 			const providerProbes = providerPending.filter((request) =>
-				providerProbeKeys.has(resourceRequestIdentity(request)),
+				probeKeys.has(resourceRequestIdentity(request)),
 			);
 			const providerRequests = providerPending.filter(
-				(request) => !providerProbeKeys.has(resourceRequestIdentity(request)),
+				(request) =>
+					!probeKeys.has(resourceRequestIdentity(request)) &&
+					!hintKeys.has(resourceRequestIdentity(request)),
+			);
+			const providerHints = providerPending.filter((request) =>
+				hintKeys.has(resourceRequestIdentity(request)),
 			);
 			const responses = await provider.resolve(providerRequests, {
 				signal,
 				probes: providerProbes,
-				// A speculative response must not bind a lower-precedence provider
-				// before a higher-precedence provider sees a real request.
-				prefetchHints: [],
+				prefetchHints: providerHints,
+				admitPrefetch,
 			});
 			throwIfAborted(signal);
 			if (!responses || typeof responses[Symbol.iterator] !== "function")
@@ -78,9 +111,19 @@ export class CompositeResourceResolver {
 
 		for (const [identity, request] of pending)
 			accepted.set(identity, unavailableResponse(request));
-		return ordered.map((request) =>
+		const responses = blocking.map((request) =>
 			accepted.get(resourceRequestIdentity(request)),
 		);
+		if (admitPrefetch)
+			responses.push(
+				...hints.flatMap((request) => {
+					const response = accepted.get(resourceRequestIdentity(request));
+					return response === undefined || isUnavailable(response)
+						? []
+						: [response];
+				}),
+			);
+		return responses;
 	}
 }
 
@@ -94,11 +137,12 @@ function deduplicateRequests(requests) {
 }
 
 export function resourceRequestIdentity(request) {
+	if (request?.type === "file") return typedRequestIdentity(request);
 	if (request?.type === "font") return fontRequestIdentity(request);
 	if (request?.type === "pk-font") return pkFontRequestIdentity(request);
 	if (request?.type === "legacy-font-mapping")
 		return legacyMappingRequestIdentity(request);
-	return encodeRequest(request);
+	return typedRequestIdentity(request);
 }
 
 export function resourceResponseIdentity(response) {
@@ -113,7 +157,7 @@ export function resourceResponseIdentity(response) {
 			type: "legacy-font-mapping",
 		});
 	if (response?.type === "file" || response?.type === "file-unavailable")
-		return encodeRequest({ ...response, type: "file" });
+		return typedRequestIdentity({ ...response, type: "file" });
 	if (response?.type === "pk-font" || response?.type === "pk-font-unavailable")
 		return pkFontRequestIdentity({ ...response, type: "pk-font" });
 	throw new TypeError("resource provider returned an unknown response type");

@@ -86,13 +86,16 @@ function composeResolver(message, manifestResolver) {
 		: new CompositeResourceResolver([
 				{
 					async resolve(requests, options) {
-						return requests.concat(options?.probes ?? []).map(
+						return requests
+							.concat(options?.probes ?? [])
+							.concat(options?.prefetchHints ?? [])
+							.map(
 							(request) =>
 								resourceResponses.get(resourceRequestIdentity(request)) ?? {
 									...request,
 									type: `${request.type}-unavailable`,
 								},
-						);
+							);
 					},
 				},
 				manifestResolver,

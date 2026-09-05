@@ -18,6 +18,7 @@ export interface ResourceProvider {
 			signal?: AbortSignal;
 			probes?: readonly TypedResourceRequest[];
 			prefetchHints?: readonly TypedResourceRequest[];
+			admitPrefetch?: boolean;
 		},
 	): Promise<readonly TypedResourceResponse[]>;
 }
@@ -36,6 +37,7 @@ export class CompositeResourceResolver implements ResourceProvider {
 			signal?: AbortSignal;
 			probes?: readonly TypedResourceRequest[];
 			prefetchHints?: readonly TypedResourceRequest[];
+			admitPrefetch?: boolean;
 		},
 	): Promise<readonly TypedResourceResponse[]>;
 }

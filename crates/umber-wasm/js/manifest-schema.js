@@ -15,6 +15,13 @@ export function encodeRequest(request) {
 		![
 			"tex",
 			"tfm",
+			"format",
+			"bib-control",
+			"bib-data",
+			"bib-configuration",
+			"xml-schema",
+			"asset",
+			"image",
 			"vf",
 			"font-map",
 			"font-encoding",
@@ -31,6 +38,13 @@ export function encodeRequest(request) {
 	}
 	const kind =
 		{
+			format: "tex",
+			"bib-control": "bib-aux",
+			"bib-data": "classic-bib",
+			"bib-configuration": "tex",
+			"xml-schema": "tex",
+			asset: "tex",
+			image: "tex",
 			vf: "tex",
 			"font-map": "tex",
 			"font-encoding": "tex",
@@ -57,6 +71,9 @@ export function resourceDomain(kind) {
 	return [
 		"tex",
 		"tfm",
+		"format",
+		"asset",
+		"image",
 		"vf",
 		"font-map",
 		"font-encoding",

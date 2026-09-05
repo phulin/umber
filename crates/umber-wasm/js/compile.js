@@ -44,8 +44,11 @@ export async function compile(options, userFiles, resolver, signal, bindings) {
 		options?.bibliography !== undefined,
 	);
 	throwIfAborted(signal);
-	const session = new Session(options);
+	const prepared = await prepareResolverRun(resolver, options, userFiles, limits);
+	const sessionOptions = prepared.options;
+	const session = new Session(sessionOptions);
 	const driver = new SessionDriver(session, resolver);
+	let accepted = false;
 	try {
 		addUserFiles(session, userFiles, limits);
 		const result = await driver.drive({
@@ -58,8 +61,10 @@ export async function compile(options, userFiles, resolver, signal, bindings) {
 			signal,
 			attemptLimit: limits.attempts,
 		});
+		accepted = true;
 		return result.output;
 	} finally {
+		await finishResolverRun(resolver, accepted);
 		driver.dispose();
 	}
 }
@@ -84,11 +89,14 @@ export async function createEditorSession(
 		);
 	}
 	throwIfAborted(signal);
-	const session = new module.EditorSession(options);
+	const prepared = await prepareResolverRun(resolver, options, userFiles, limits);
+	const sessionOptions = prepared.options;
+	const session = new module.EditorSession(sessionOptions);
 	try {
 		addUserFiles(session, userFiles, limits);
-		return new EditorCompileFacade(session, resolver);
+		return new EditorCompileFacade(session, resolver, prepared.started);
 	} catch (error) {
+		await finishResolverRun(resolver, false);
 		session.dispose();
 		throw error;
 	}
@@ -97,10 +105,14 @@ export async function createEditorSession(
 export class EditorCompileFacade {
 	#session;
 	#driver;
+	#resolver;
+	#runStarted;
 
-	constructor(session, resolver) {
+	constructor(session, resolver, runStarted = false) {
 		this.#session = session;
 		this.#driver = new SessionDriver(session, resolver);
+		this.#resolver = resolver;
+		this.#runStarted = runStarted;
 	}
 
 	get disposed() {
@@ -167,22 +179,39 @@ export class EditorCompileFacade {
 
 	dispose() {
 		if (this.#session === undefined) return;
+		if (this.#runStarted) {
+			this.#runStarted = false;
+			this.#resolver?.discardRun?.();
+		}
 		this.#driver.dispose();
 		this.#session = undefined;
 	}
 
 	async #drive(phase, signal, onProgress) {
 		this.#requireSession();
-		return this.#driver.drive({
-			phase,
-			attempt: (session) =>
-				phase === "advance" ? session.advance() : session.stabilizeAttempt(),
-			isComplete: (attempt) =>
-				attempt?.kind === "provisional" || attempt?.kind === "stable",
-			signal,
-			onProgress,
-			pendingMessage: "an editor operation is already pending",
-		});
+		try {
+			const result = await this.#driver.drive({
+				phase,
+				attempt: (session) =>
+					phase === "advance" ? session.advance() : session.stabilizeAttempt(),
+				isComplete: (attempt) =>
+					attempt?.kind === "provisional" || attempt?.kind === "stable",
+				signal,
+				onProgress,
+				pendingMessage: "an editor operation is already pending",
+			});
+			if (this.#runStarted) {
+				this.#runStarted = false;
+				await this.#resolver?.commitRun?.();
+			}
+			return result;
+		} catch (error) {
+			if (this.#runStarted) {
+				this.#runStarted = false;
+				this.#resolver?.discardRun?.();
+			}
+			throw error;
+		}
 	}
 
 	#requireSession() {
@@ -257,6 +286,54 @@ function validateResolver(resolver) {
 			"resolver.resolve is required",
 		);
 	}
+}
+
+async function prepareResolverRun(resolver, options, userFiles, limits) {
+	if (typeof resolver.beginRun !== "function")
+		return { options, started: false };
+	const source = sourceText(userFiles, options?.mainPath);
+	const startup = (await resolver.beginRun({ options, source, limits })) ?? {};
+	const hints = Array.isArray(startup.hints) ? startup.hints : [];
+	if (hints.length === 0) return { options, started: true };
+	const existing = options?.formatPrefetchHints ?? [];
+	const seen = new Set();
+	const formatPrefetchHints = [...existing, ...hints].filter((request) => {
+		const identity = JSON.stringify([
+			request?.type,
+			request?.domain,
+			request?.kind,
+			request?.name,
+			request?.logicalName,
+		]);
+		if (seen.has(identity)) return false;
+		seen.add(identity);
+		return true;
+	});
+	return {
+		options: { ...options, formatPrefetchHints },
+		started: true,
+	};
+}
+
+function sourceText(userFiles, mainPath) {
+	if (typeof mainPath !== "string") return "";
+	let bytes;
+	if (userFiles instanceof Map) bytes = userFiles.get(mainPath);
+	else if (userFiles && typeof userFiles[Symbol.iterator] === "function") {
+		for (const entry of userFiles) {
+			if (Array.isArray(entry) && entry[0] === mainPath) {
+				bytes = entry[1];
+				break;
+			}
+		}
+	}
+	if (!(bytes instanceof Uint8Array)) return "";
+	return new TextDecoder().decode(bytes);
+}
+
+async function finishResolverRun(resolver, accepted) {
+	if (accepted) await resolver.commitRun?.();
+	else resolver.discardRun?.();
 }
 
 export function validateSessionLimits(partial = {}) {

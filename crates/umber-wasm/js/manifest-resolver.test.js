@@ -463,6 +463,22 @@ test("typed virtual-font requests resolve through tex shards without losing iden
 	);
 });
 
+test("canonical catalog aliases still preserve every semantic file kind", async () => {
+	const data = await fixture();
+	const { resolver } = resolverFor(data);
+	const responses = await resolver.resolve([
+		{ type: "file", domain: "tex", kind: "tex", name: "plain.tex" },
+		{ type: "file", domain: "tex", kind: "image", name: "plain.tex" },
+	]);
+	assert.deepEqual(
+		responses.map(({ kind, name }) => ({ kind, name })),
+		[
+			{ kind: "tex", name: "plain.tex" },
+			{ kind: "image", name: "plain.tex" },
+		],
+	);
+});
+
 test("HTML profile resolves exact font and mapping records while preserving authoritative absence", async () => {
 	const data = await htmlFontFixture();
 	const { resolver } = resolverFor(data);
@@ -753,6 +769,54 @@ test("prefetches dependency closures without returning dependency responses", as
 		new Set(calls.filter((object) => dependencyObjects.has(object))),
 		dependencyObjects,
 	);
+});
+
+test("admits successful speculative bytes through the engine-facing response", async () => {
+	const data = await fixture();
+	const { resolver } = resolverFor(data);
+	const downloads = await resolver.resolve(
+		[{ kind: "tex", name: "alias.tex" }],
+		{
+			prefetchHints: [{ kind: "tex", name: "hint.tex" }],
+			admitPrefetch: true,
+		},
+	);
+	assert.deepEqual(
+		downloads.map(({ type, name }) => ({ type, name })),
+		[
+			{ type: "file", name: "alias.tex" },
+			{ type: "file", name: "hint.tex" },
+		],
+	);
+});
+
+test("accepted lookup history is reused across identical identities, not source text", async () => {
+	const data = await fixture();
+	const cache = new MemoryObjectCache();
+	const first = resolverFor(data, { cacheStore: cache }).resolver;
+	const identity = {
+		engine: "pdflatex",
+		outputs: ["pdf"],
+		format: undefined,
+	};
+	const startup = await first.beginRun({
+		options: identity,
+		source: "\\input{plain.tex}",
+	});
+	assert(startup.hints.some(({ name }) => name === "plain.tex"));
+	await first.resolve(
+		[{ kind: "tex", name: "plain.tex", originalName: "plain" }],
+		{ admitPrefetch: true },
+	);
+	await first.commitRun();
+
+	const second = resolverFor(data, { cacheStore: cache }).resolver;
+	const reused = await second.beginRun({
+		options: identity,
+		source: "\\input{edited.tex}",
+	});
+	assert(reused.hints.some(({ name }) => name === "plain.tex"));
+	second.discardRun();
 });
 
 test("cancellation and oversized streamed objects remain bounded", async () => {

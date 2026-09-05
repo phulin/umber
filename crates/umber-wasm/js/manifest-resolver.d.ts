@@ -9,6 +9,26 @@ import type {
 
 export const TEXLIVE_2026_MANIFEST_URL: string;
 export const TEXLIVE_2026_MANIFEST_AHASH64: string;
+export const PREFETCH_POLICY_VERSION: string;
+export const ResourceReadiness: {
+	readonly Ready: "ready";
+	readonly ExistsNotReady: "exists-not-ready";
+	readonly Absent: "absent";
+};
+export function classifyReadiness(options?: {
+	exists?: boolean;
+	payloadAdmitted?: boolean;
+	authoritativeAbsent?: boolean;
+}): "ready" | "exists-not-ready" | "absent" | undefined;
+export function extractLiteralHints(
+	source: string,
+	limits?: { maxHints?: number; maxNameBytes?: number },
+): readonly {
+	kind: "documentclass" | "package" | "input" | "includegraphics";
+	originalSpelling: string;
+	name: string;
+	byteOffset: number;
+}[];
 
 export type FileKind =
 	| "tex"
@@ -178,10 +198,11 @@ export class HttpManifestResolver {
 		requests: readonly (ResourceRequest | LegacyMappingRequest)[],
 		options?:
 			| AbortSignal
-			| {
-					signal?: AbortSignal;
-					prefetchHints?: readonly ResourceRequest[];
-			  },
+				| {
+						signal?: AbortSignal;
+						prefetchHints?: readonly ResourceRequest[];
+						admitPrefetch?: boolean;
+				  },
 	): Promise<
 		readonly (
 			| ResolvedDownload
@@ -197,4 +218,8 @@ export class HttpManifestResolver {
 	): Promise<Uint8Array>;
 	formatMetadata(name: string): ManifestFormat;
 	formatPrefetchHints(name: string): readonly ResourceRequest[];
+	readinessOf(
+		request: ResourceRequest,
+	): "ready" | "exists-not-ready" | "absent" | undefined;
+	literalPrefetchHints(source: string): readonly ResourceRequest[];
 }

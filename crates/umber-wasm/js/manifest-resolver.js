@@ -7,8 +7,25 @@ import {
 	resourceDomain,
 } from "./manifest-schema.js";
 import { IndexedDbObjectCache } from "./persistent-cache.js";
+import {
+	PREFETCH_POLICY_VERSION,
+	LookupManifest,
+	extractLiteralHints,
+	literalHintRequest,
+	makePrefetchIdentity,
+	prefetchManifestCacheKey,
+	typedRequestIdentity,
+} from "./prefetch.js";
 
 export { ManifestResolverError } from "./manifest-schema.js";
+export {
+	LookupManifest,
+	PREFETCH_POLICY_VERSION,
+	ResourceReadiness,
+	classifyReadiness,
+	extractLiteralHints,
+	makePrefetchIdentity,
+} from "./prefetch.js";
 
 const DIGEST_PATTERN = /^[0-9a-f]{16}$/;
 const MAX_CONCURRENCY = 32;
@@ -19,6 +36,8 @@ const DEFAULT_RESOLVED_FILES = 512;
 const MAX_RESOLVED_FILES = 4096;
 const DEFAULT_CACHED_BYTES = 64 * 1024 * 1024;
 const MAX_CACHED_BYTES = 256 * 1024 * 1024;
+const MAX_PACKAGE_SCAN_BYTES = 256 * 1024;
+const MAX_PACKAGE_FOLLOWUP_HINTS = 32;
 
 // Installed by the external publication tracked in umber2-66p0.27.
 export const TEXLIVE_2026_MANIFEST_URL = undefined;
@@ -121,6 +140,7 @@ export class HttpManifestResolver {
 			maxFiles: options.maxFiles,
 			maxBytes: options.maxBytes,
 			catalog: options.catalog,
+			prefetchPolicyVersion: options.prefetchPolicyVersion,
 		});
 	}
 
@@ -176,6 +196,10 @@ export class HttpManifestResolver {
 		}
 		this.objectCache = new Map();
 		this.shardCache = new Map();
+		this.prefetchPolicyVersion =
+			options.prefetchPolicyVersion ?? PREFETCH_POLICY_VERSION;
+		this.readiness = new Map();
+		this.currentRun = undefined;
 	}
 
 	async resolve(requests, options) {
@@ -185,6 +209,12 @@ export class HttpManifestResolver {
 		const prefetchHints = Object.hasOwn(options ?? {}, "prefetchHints")
 			? options.prefetchHints
 			: [];
+		const admitPrefetch = options?.admitPrefetch === true;
+		const prefetchTrace =
+			options?.prefetchTrace instanceof Set ? options.prefetchTrace : new Set();
+		const prefetchDepth = Number.isSafeInteger(options?.prefetchDepth)
+			? options.prefetchDepth
+			: 0;
 		const probes = Object.hasOwn(options ?? {}, "probes") ? options.probes : [];
 		if (!Array.isArray(probes)) {
 			throw new ManifestResolverError(
@@ -199,6 +229,16 @@ export class HttpManifestResolver {
 			);
 		}
 		throwIfAborted(signal);
+		const requiredKeys = new Set(requests.map(typedRequestIdentity));
+		const probeKeys = new Set(probes.map(typedRequestIdentity));
+		const roleFor = (request, hinted = false) =>
+			hinted
+				? "hint"
+				: requiredKeys.has(typedRequestIdentity(request))
+					? "required"
+					: probeKeys.has(typedRequestIdentity(request))
+						? "probe"
+						: "required";
 		const required = await this.#select(requests.concat(probes), signal, true);
 		let hinted = { jobs: [], misses: [] };
 		try {
@@ -211,6 +251,14 @@ export class HttpManifestResolver {
 			...request,
 			type: `${type}-unavailable`,
 		}));
+		for (const miss of required.misses) {
+			this.readiness.set(typedRequestIdentity(miss.request), "absent");
+			this.#recordAbsent(
+				miss.request,
+				roleFor(miss.request),
+				miss.manifestKey,
+			);
+		}
 		validateJobBudget(required.jobs, this.maxFiles, this.maxBytes);
 		const jobs = mergeJobs(
 			required.jobs,
@@ -220,20 +268,35 @@ export class HttpManifestResolver {
 		);
 		const groups = groupByObject(jobs);
 		const results = new Map();
+		const followupHints = [];
 		let next = 0;
 		const worker = async () => {
 			while (next < groups.length) {
 				const group = groups[next++];
 				try {
 					const bytes = await this.#object(group[0].entry, signal);
+					if (admitPrefetch && followupHints.length < MAX_PACKAGE_FOLLOWUP_HINTS)
+						collectPackageHints(
+							group,
+							bytes,
+							prefetchTrace,
+							followupHints,
+						);
 					for (const job of group) {
+						this.readiness.set(job.key, "ready");
+						if (job.request !== undefined)
+							this.#recordResolved(
+								job,
+								roleFor(job.request, job.hinted || !job.requested),
+							);
 						results.set(
 							job.key,
 							job.type === "file"
 								? {
 										type: "file",
 										...(() => {
-											const identity = job.request ?? decodeKey(job.key);
+									const identity =
+										job.request ?? decodeKey(job.manifestKey);
 											return {
 												domain:
 													identity.domain ?? resourceDomain(identity.kind),
@@ -285,11 +348,141 @@ export class HttpManifestResolver {
 			),
 		);
 		throwIfAborted(signal);
-		return unavailable.concat(
+		const admitted = unavailable.concat(
 			jobs.flatMap((job) =>
-				job.requested && results.has(job.key) ? [results.get(job.key)] : [],
+				(job.requested || admitPrefetch) && results.has(job.key)
+					? [results.get(job.key)]
+					: [],
 			),
 		);
+		if (followupHints.length === 0 || prefetchDepth >= 1) return admitted;
+		const followup = await this.resolve([], {
+			signal,
+			prefetchHints: deduplicateTypedRequests(followupHints),
+			admitPrefetch: true,
+			prefetchTrace,
+			prefetchDepth: prefetchDepth + 1,
+		});
+		return admitted.concat(followup);
+	}
+
+	/** Returns the last catalog/payload state observed for a typed request. */
+	readinessOf(request) {
+		return this.readiness.get(typedRequestIdentity(request));
+	}
+
+	/**
+	 * Starts accepted-run lookup recording and returns bounded startup hints.
+	 * Identity fields deliberately contain execution policy, never source text.
+	 */
+	async beginRun(context = {}) {
+		const identity = makePrefetchIdentity({
+			engine: context.options?.engine ?? "tex82",
+			format:
+				context.options?.format === undefined
+					? "none"
+					: `bytes:${context.options.format.byteLength}`,
+			options: stableOptionsIdentity(context.options),
+			distribution: this.manifest.distribution,
+			searchPolicy: this.prefetchPolicyVersion,
+		});
+		let prior;
+		if (this.persistentStore !== undefined) {
+			try {
+				const bytes = await this.persistentStore.get(
+					"prefetch",
+					prefetchManifestCacheKey(identity),
+				);
+				prior = LookupManifest.decode(bytes, identity);
+			} catch {}
+		}
+		this.currentRun = { identity, manifest: new LookupManifest(identity) };
+		const hints = [
+			...(prior?.resolvedRequests() ?? []),
+			...this.literalPrefetchHints(context.source ?? ""),
+		];
+		const maxHints = Number.isSafeInteger(context.limits?.resolvedFiles)
+			? Math.min(context.limits.resolvedFiles, MAX_RESOLVED_FILES)
+			: DEFAULT_RESOLVED_FILES;
+		return {
+			identity,
+			hints: deduplicateTypedRequests(hints).slice(0, maxHints),
+		};
+	}
+
+	/** Publishes only the accepted run; failed discoveries are never persisted. */
+	async commitRun() {
+		const run = this.currentRun;
+		this.currentRun = undefined;
+		if (run === undefined || this.persistentStore === undefined) return;
+		try {
+			await this.persistentStore.put(
+				"prefetch",
+				prefetchManifestCacheKey(run.identity),
+				run.manifest.encode(),
+			);
+		} catch {}
+	}
+
+	discardRun() {
+		this.currentRun = undefined;
+	}
+
+	/**
+	 * Supplies source-independent startup hints to a caller that owns the
+	 * session options.  The engine still controls final lookup precedence.
+	 */
+	literalPrefetchHints(source, limits) {
+		return extractLiteralHints(source, limits)
+			.map(literalHintRequest)
+			.filter((request) => request !== undefined);
+	}
+
+	#recordResolved(job, role) {
+		const run = this.currentRun;
+		const request = job.request;
+		if (
+			run === undefined ||
+			request === undefined ||
+			(request.type !== undefined && request.type !== "file")
+		)
+			return;
+		run.manifest.record({
+			originalSpelling: request.originalName ?? request.name,
+			requestKey: job.manifestKey,
+			resourceKind: request.kind,
+			searchContext: "distribution",
+			role,
+			outcome: {
+				kind: "resolved",
+				manifestKey: job.manifestKey,
+				virtualPath: job.entry.virtualPath,
+				object: job.entry.object,
+				ahash64: job.entry.ahash64,
+				bytes: job.entry.bytes,
+			},
+		});
+	}
+
+	#recordAbsent(request, role, manifestKey) {
+		const run = this.currentRun;
+		if (
+			run === undefined ||
+			request === undefined ||
+			(request.type !== undefined && request.type !== "file")
+		)
+			return;
+		run.manifest.record({
+			originalSpelling: request.originalName ?? request.name,
+			requestKey: manifestKey,
+			resourceKind: request.kind,
+			searchContext: "distribution",
+			role,
+			outcome: {
+				kind: "absent",
+				scope: `distribution:${this.manifest.distribution}`,
+			},
+		});
 	}
 
 	async #select(requests, signal, blocking) {
@@ -301,15 +494,16 @@ export class HttpManifestResolver {
 					: request?.type === "legacy-font-mapping"
 						? "legacy-font-mapping"
 						: "file",
-			key:
+			catalogKey:
 				request?.type === "font"
 					? fontRequestIdentity(request)
 					: request?.type === "legacy-font-mapping"
 						? legacyMappingRequestIdentity(request)
 						: encodeRequest(request),
+			key: typedRequestIdentity(request),
 		}));
 		try {
-			const keys = descriptors.map(({ key }) => key);
+			const keys = descriptors.map(({ catalogKey }) => catalogKey);
 			const prepared = this.catalogSession.prepareBatch(keys);
 			await Promise.all(
 				prepared.shards.map(async (shard) => {
@@ -320,27 +514,54 @@ export class HttpManifestResolver {
 				}),
 			);
 			const plan = this.catalogSession.planBatch(keys);
+			const descriptorsByCatalogKey = new Map();
+			for (const descriptor of descriptors) {
+				const group = descriptorsByCatalogKey.get(descriptor.catalogKey) ?? [];
+				if (!group.some((item) => item.key === descriptor.key))
+					group.push(descriptor);
+				descriptorsByCatalogKey.set(descriptor.catalogKey, group);
+			}
 			return {
-				jobs: plan.jobs.map((job) => ({
-					key: job.manifestKey,
-					manifestKey: job.manifestKey,
-					entry: job.entry,
-					request:
-						job.requestIndex === null
-							? undefined
-							: descriptors[job.requestIndex].request,
-					requested: job.requirement === "required",
-					type: job.kind,
-				})),
-				misses: plan.misses.map((index) => ({
-					type: descriptors[index].type,
-					request: descriptors[index].request,
-					manifestKey: descriptors[index].key,
-				})),
+				jobs: plan.jobs.flatMap((job) => {
+					const matches = descriptorsByCatalogKey.get(job.manifestKey);
+					if (job.requestIndex === null || matches === undefined)
+						return [
+							{
+								key: `catalog:${job.manifestKey}`,
+								manifestKey: job.manifestKey,
+								entry: job.entry,
+								request: undefined,
+								requested: job.requirement === "required",
+								hinted: !blocking,
+								type: job.kind,
+							},
+						];
+					return matches.map((descriptor) => ({
+						key: descriptor.key,
+						manifestKey: job.manifestKey,
+						entry: job.entry,
+						request: descriptor.request,
+						requested: job.requirement === "required",
+						hinted: !blocking,
+						type: job.kind,
+					}));
+				}),
+				misses: plan.misses.flatMap((index) =>
+					(descriptorsByCatalogKey.get(descriptors[index].catalogKey) ?? []).map(
+						(descriptor) => ({
+							type: descriptor.type,
+							request: descriptor.request,
+							manifestKey: descriptor.catalogKey,
+						}),
+					),
+				),
 			};
 		} catch (error) {
 			if (blocking)
-				throw actionableError(descriptors[0]?.key ?? "catalog batch", error);
+				throw actionableError(
+					descriptors[0]?.catalogKey ?? "catalog batch",
+					error,
+				);
 			throw error;
 		}
 	}
@@ -562,6 +783,57 @@ function groupByObject(jobs) {
 		groups[index].push(job);
 	}
 	return groups;
+}
+
+function deduplicateTypedRequests(requests) {
+	const seen = new Set();
+	return requests.filter((request) => {
+		const identity = typedRequestIdentity(request);
+		if (seen.has(identity)) return false;
+		seen.add(identity);
+		return true;
+	});
+}
+
+function collectPackageHints(group, bytes, trace, output) {
+	if (!(bytes instanceof Uint8Array) || bytes.byteLength > MAX_PACKAGE_SCAN_BYTES)
+		return;
+	if (!group.some((job) => job.type === "file" && isSmallRuntimeKey(job.manifestKey)))
+		return;
+	if (group.some((job) => trace.has(job.key))) return;
+	for (const job of group) trace.add(job.key);
+	const source = new TextDecoder().decode(bytes);
+	for (const hint of extractLiteralHints(source, {
+		maxHints: MAX_PACKAGE_FOLLOWUP_HINTS,
+		maxNameBytes: 1024,
+	})) {
+		const request = literalHintRequest(hint);
+		if (request !== undefined && !trace.has(typedRequestIdentity(request))) {
+			trace.add(typedRequestIdentity(request));
+			output.push(request);
+			if (output.length >= MAX_PACKAGE_FOLLOWUP_HINTS) break;
+		}
+	}
+}
+
+function isSmallRuntimeKey(key) {
+	const name = key.split(":", 2)[1] ?? key;
+	return /\.(?:tex|sty|cls|def|ltx)$/i.test(name);
+}
+
+function stableOptionsIdentity(options) {
+	if (!options || typeof options !== "object") return "{}";
+	const selected = {};
+	for (const key of [
+		"outputs",
+		"fontLayoutPolicy",
+		"fontMappingFallback",
+		"mainPath",
+		"jobName",
+	]) {
+		if (options[key] !== undefined) selected[key] = options[key];
+	}
+	return JSON.stringify(selected, Object.keys(selected).sort());
 }
 
 function validateJobBudget(jobs, maxFiles, maxBytes) {

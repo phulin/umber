@@ -169,3 +169,31 @@ test("PK requests preserve byte names, DPI, and frozen mode", async () => {
 	assert.deepEqual(responses[0].mode, request.mode);
 	assert.equal(responses[0].dpi, 600);
 });
+
+test("speculative hints retain provider precedence and are admitted only on request", async () => {
+	const hint = file("shared.tex");
+	const calls = [];
+	const first = {
+		async resolve(requests, options) {
+			calls.push(["first", requests, options.prefetchHints]);
+			return options.prefetchHints.map((request) => resolved(request, 7));
+		},
+	};
+	const second = {
+		async resolve(requests, options) {
+			calls.push(["second", requests, options.prefetchHints]);
+			return options.prefetchHints.map((request) => resolved(request, 8));
+		},
+	};
+	const resolver = new CompositeResourceResolver([first, second]);
+	assert.deepEqual(
+		await resolver.resolve([], { prefetchHints: [hint] }),
+		[],
+	);
+	const admitted = await resolver.resolve([], {
+		prefetchHints: [hint],
+		admitPrefetch: true,
+	});
+	assert.deepEqual(admitted.map(({ bytes }) => [...bytes]), [[7]]);
+	assert.equal(calls.at(-1)[0], "first");
+});
