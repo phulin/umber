@@ -178,20 +178,6 @@ pub(crate) struct ExpressionFrame<G> {
     factor_negative: bool,
 }
 
-/// The settled scalar prefix that the compact `\the` lane hands to the
-/// canonical expression machine.  It is a small generation-owned value, not
-/// a second scanner context or an allocated continuation.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct CompactExpressionPrefix {
-    pub(crate) expression_started: bool,
-    pub(crate) expression: i64,
-    pub(crate) expression_sign: i8,
-    pub(crate) term: i64,
-    pub(crate) term_operator: u8,
-    pub(crate) term_active: bool,
-    pub(crate) factor_negative: bool,
-}
-
 impl<G> Clone for ExpressionFrame<G> {
     fn clone(&self) -> Self {
         *self
@@ -220,33 +206,6 @@ impl<G> ExpressionFrame<G> {
             ExpressionKind::Integer
         }
     }
-
-    /// Reifies the compact integer/dimension lane's already-settled prefix
-    /// into the canonical expression frame.  The conversion retains only the
-    /// typed arithmetic state; the generation-owned stack and scanner owner
-    /// remain those of this module.
-    pub(crate) fn from_compact(kind: ExpressionKind, prefix: CompactExpressionPrefix) -> Self {
-        let mut frame = Self::new(kind);
-        frame.expression = ExpressionValue::Number(prefix.expression);
-        frame.expression_operator = if prefix.expression_started {
-            if prefix.expression_sign < 0 {
-                ExpressionOperator::Subtract
-            } else {
-                ExpressionOperator::Add
-            }
-        } else {
-            ExpressionOperator::None
-        };
-        frame.term = ExpressionValue::Number(prefix.term);
-        frame.term_operator = match (prefix.term_active, prefix.term_operator) {
-            (true, 1) => ExpressionOperator::Multiply,
-            (true, 2) => ExpressionOperator::Divide,
-            (true, _) => ExpressionOperator::Scale,
-            (false, _) => ExpressionOperator::None,
-        };
-        frame.factor_negative = prefix.factor_negative;
-        frame
-    }
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -263,25 +222,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         primitive: UnexpandablePrimitive,
     ) -> Result<InternalValue, CommandError> {
-        self.scan_expression_primitive_with_frame(primitive, None)
-    }
-
-    /// Continues `scan_expr` from a compact conversion prefix.  This is the
-    /// one handoff used by the expanded `\the` lane when a factor is no longer
-    /// representable by its literal accumulator (for example, a parenthesis).
-    pub(crate) fn scan_expression_primitive_from_frame(
-        &mut self,
-        primitive: UnexpandablePrimitive,
-        frame: ExpressionFrame<G>,
-    ) -> Result<InternalValue, CommandError> {
-        self.scan_expression_primitive_with_frame(primitive, Some(frame))
-    }
-
-    fn scan_expression_primitive_with_frame(
-        &mut self,
-        primitive: UnexpandablePrimitive,
-        initial_frame: Option<ExpressionFrame<G>>,
-    ) -> Result<InternalValue, CommandError> {
         let kind = ExpressionKind::of_primitive(primitive)
             .expect("only e-TeX expression primitives reach scan_expr");
         // Web2C's `expand_depth_count` increments once per expression
@@ -297,7 +237,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
 
         let mut call = crate::scanners::scalar::ScalarCallFrame::default();
-        let status = self.scan_expression(kind, initial_frame, &mut call);
+        let status = self.scan_expression(kind, &mut call);
         self.expression_depth -= 1;
         let (mut value, overflow) = match status {
             crate::scanners::scalar::ScalarCallStatus::Complete => call.take_complete(),
@@ -351,7 +291,6 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn scan_expression(
         &mut self,
         kind: ExpressionKind,
-        initial_frame: Option<ExpressionFrame<G>>,
         call: &mut crate::scanners::scalar::ScalarCallFrame<(ExpressionValue<G>, bool)>,
     ) -> crate::scanners::scalar::ScalarCallStatus {
         use crate::scanners::scalar::ScalarCallStatus;
@@ -364,7 +303,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
 
         let stack_mark = self.command.scratch.expression_stack_len();
-        let mut frame = initial_frame.unwrap_or_else(|| ExpressionFrame::new(kind));
+        let mut frame = ExpressionFrame::new(kind);
         let mut overflow = false;
         let mut phase = ExpressionPhase::FactorLeading;
 

@@ -60,20 +60,6 @@ fn update_command_ownership_counters(update: impl FnOnce(&mut CommandOwnershipCo
     });
 }
 
-pub(crate) fn record_expansion_command_move_in() {
-    #[cfg(any(test, feature = "profiling"))]
-    update_command_ownership_counters(|counters| {
-        counters.expansion_moves_in = counters.expansion_moves_in.saturating_add(1);
-    });
-}
-
-pub(crate) fn record_expansion_command_move_out() {
-    #[cfg(any(test, feature = "profiling"))]
-    update_command_ownership_counters(|counters| {
-        counters.expansion_moves_out = counters.expansion_moves_out.saturating_add(1);
-    });
-}
-
 /// TeX's directly branchable `cur_cmd` class.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum CommandClass {

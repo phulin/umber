@@ -51,8 +51,6 @@ pub use conditionals::{ActiveCondition, IncompleteCondition};
 mod direct_command_delivery;
 mod error;
 mod execution_scratch;
-mod expansion_work;
-pub use expansion_work::ExpansionWorkKey;
 mod fatal;
 mod fuel;
 mod host;

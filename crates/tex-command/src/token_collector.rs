@@ -147,9 +147,10 @@ pub(crate) struct TokenCollector<G> {
     phase: TokenCollectorPhase,
     cursor: crate::scanner_kernel::ScannerCursor,
     pending_parameter: Option<PendingParameter>,
-    /// Episode-local direct writer for an ordinary definition. It is empty
-    /// whenever this collector is parked in a continuation; the semantic
-    /// build then remains in `tex-state` and is readmitted on resume.
+    /// Episode-local direct writer for an ordinary definition. It is borrowed
+    /// only for this synchronous scanner call; a resource miss unwinds the
+    /// call and the host replays the full checkpoint instead of retaining the
+    /// writer as a scanner continuation.
     definition_writer: Option<tex_state::DefinitionBuildWriter<G>>,
 }
 

@@ -603,8 +603,8 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     /// Admits the direct definition tail for this synchronous scanner call.
-    /// A parked scanner has already returned its writer, so resumption pays
-    /// this validation and tail lookup exactly once before ordinary delivery.
+    /// The writer remains call-local; replay after a resource miss creates a
+    /// fresh scanner and repeats this ordinary admission from the checkpoint.
     fn admit_scan_toks_definition_writer(
         &mut self,
         collector: &mut TokenCollector<G>,
@@ -1563,9 +1563,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         expansion_operand: &mut Option<crate::CurrentCommand<G>>,
     ) -> Result<CollectorExpansionOutcome, CommandError> {
         if route == CollectorExpansionRoute::Ordinary && destination.is_none() {
-            // A resumed generic expansion restores its sole parked command
-            // into this destination itself. Every outcome either advances the
-            // collector or returns its failure.
+            // A generic expansion starts from the caller's command
+            // destination. Every outcome either advances the collector or
+            // returns its failure; a resource miss unwinds the call tree.
             return match self.request_expansion_into(destination, true) {
                 Ok(()) | Err(CommandError::ParagraphInMacroArgument) => {
                     clear_command_destination(destination);

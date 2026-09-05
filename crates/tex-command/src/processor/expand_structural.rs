@@ -3,7 +3,6 @@
 use tex_state::meaning::{ExpandablePrimitive, Meaning, ResolvedMeaning};
 use tex_state::token::{OriginId, Token, TracedTokenWord};
 
-use crate::command::HotCommand;
 use crate::input::{
     BackedUpToken, BackupTreatment, PackedTokenSpanHandle, ReplayTrace, RetirementBehavior,
     TokenBehavior,
@@ -23,119 +22,6 @@ use super::{CommandProcessor, DeliveryStatus};
 pub(crate) const MISSING_ENDCSNAME_DIAGNOSTIC: u64 = 0x6373_6e61_6d65_0001;
 
 impl<G> CommandProcessor<'_, '_, G> {
-    /// Starts the hot `\csname` continuation. The name spelling is appended
-    /// directly to the generation-owned fixed-chunk lane while the control
-    /// retains only its opener origin and dynamic `ifincsname` bit.
-    pub(super) fn begin_csname_continuation_with_parent(
-        &mut self,
-        opener: OriginId,
-        parent: Option<crate::expansion_work::ExpansionControlSlot<G>>,
-    ) -> Result<(), CommandError> {
-        let previous = self.is_in_csname;
-        self.command
-            .scratch
-            .push_csname_control_with_parent(opener, previous, parent)
-            .map_err(crate::scan_toks::scratch_command_error)?;
-        self.is_in_csname = true;
-        Ok(())
-    }
-
-    /// Appends one compact character command to the active name lane. UTF-8
-    /// encoding is performed in a stack-local array; the lane itself grows in
-    /// fixed chunks and never allocates per character after warmup.
-    pub(super) fn append_csname_character(&mut self, character: char) -> Result<(), CommandError> {
-        let mut bytes = [0_u8; 4];
-        for byte in character.encode_utf8(&mut bytes).as_bytes() {
-            self.command
-                .scratch
-                .push_name_byte(*byte)
-                .map_err(crate::scan_toks::scratch_command_error)?;
-        }
-        Ok(())
-    }
-
-    /// Completes a hot `\expandafter` after its second command has settled on
-    /// an unexpandable token. Both operands remain compact until this true
-    /// backup/replay boundary, where the existing semantic input machinery
-    /// receives the materialized commands.
-    pub(super) fn complete_expandafter_continuation(
-        &mut self,
-        second: HotCommand<G>,
-    ) -> Result<(), CommandError> {
-        let control = self
-            .command
-            .scratch
-            .pop_expandafter_control()
-            .map_err(crate::scan_toks::scratch_command_error)?;
-        let first = control
-            .saved_first
-            .ok_or_else(CommandError::input_invariant)?;
-        self.back_input(second.materialize())?;
-        self.replay_expandafter_first(first.materialize())
-    }
-
-    /// Completes a hot `\expandafter` whose second expandable command
-    /// consumed itself without producing a token (an undefined command, an
-    /// empty macro, or a conditional). The saved first token is replayed
-    /// immediately; the next input token is not accidentally consumed as the
-    /// second operand.
-    pub(super) fn complete_expandafter_without_second(&mut self) -> Result<(), CommandError> {
-        let control = self
-            .command
-            .scratch
-            .pop_expandafter_control()
-            .map_err(crate::scan_toks::scratch_command_error)?;
-        let first = control
-            .saved_first
-            .ok_or_else(CommandError::input_invariant)?;
-        self.replay_expandafter_first(first.materialize())
-    }
-
-    /// Completes the active hot `\csname`, or performs TeX82's missing
-    /// `\endcsname` recovery for the already-delivered offending command.
-    /// Name materialization is a semantic boundary and therefore occurs only
-    /// once, after all expanded character delivery has settled.
-    pub(super) fn complete_csname_continuation(
-        &mut self,
-        offending: Option<CurrentCommand<G>>,
-    ) -> Result<(), CommandError> {
-        let control = self
-            .command
-            .scratch
-            .top_csname_control()
-            .map_err(crate::scan_toks::scratch_command_error)?
-            .ok_or_else(CommandError::input_invariant)?;
-        let bytes = self
-            .command
-            .scratch
-            .expansion_name_bytes(control.name)
-            .map_err(crate::scan_toks::scratch_command_error)?
-            .collect::<Vec<_>>();
-        let name = String::from_utf8(bytes).map_err(|_| CommandError::input_invariant())?;
-        let control = self
-            .command
-            .scratch
-            .pop_csname_control()
-            .map_err(crate::scan_toks::scratch_command_error)?;
-        self.is_in_csname = control.previous_in_csname;
-        if let Some(command) = offending {
-            let rendered = print_esc_text(self.state, "endcsname");
-            self.back_error_reporting(
-                command,
-                MISSING_ENDCSNAME_DIAGNOSTIC,
-                format!("Missing {rendered} inserted"),
-                &[
-                    "The control sequence marked <to be read again> should",
-                    "not appear between \\csname and \\endcsname.",
-                ],
-            )?;
-        }
-        self.command
-            .record_csname_buffer_usage(name.chars().count());
-        let symbol = self.state.intern_relaxed_control_sequence(&name);
-        self.back_input_token(TracedTokenWord::pack(Token::Cs(symbol), control.opener))
-    }
-
     /// TeX.web's `\noexpand`: read normally, then replay exactly one target
     /// from a backed-up level carrying the non-sticky suppression treatment.
     pub(super) fn expand_noexpand(&mut self) -> Result<(), CommandError> {
@@ -176,7 +62,6 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// up) the second token, then put the first token above the resulting
     /// input. The first delivery is intentionally replayed through an
     /// explicit backed-up level because it is no longer the latest delivery.
-    #[allow(dead_code)]
     pub(super) fn expand_expandafter(&mut self) -> Result<(), CommandError> {
         let mut first = None;
         match self.get_token_into(&mut first)? {
@@ -243,20 +128,32 @@ impl<G> CommandProcessor<'_, '_, G> {
                         destination = None;
                     }
                     _ => {
-                        let rendered = print_esc_text(self.state, "endcsname");
-                        let command = destination
-                            .take()
-                            .expect("csname recovery consumes the delivered command");
-                        self.back_error_reporting(
-                            command,
-                            MISSING_ENDCSNAME_DIAGNOSTIC,
-                            format!("Missing {rendered} inserted"),
-                            &[
-                                "The control sequence marked <to be read again> should",
-                                "not appear between \\csname and \\endcsname.",
-                            ],
-                        )?;
-                        break;
+                        if let Some(symbol) = command.control_sequence() {
+                            // TeX82's name scanner contributes the spelling
+                            // of a control sequence returned by a nested
+                            // `\csname`. The nested token is already fully
+                            // expanded here; using its admitted symbol keeps
+                            // the outer scanner independent of its live
+                            // meaning and preserves the exact interner
+                            // spelling.
+                            name.push_str(self.state.resolve(symbol));
+                            destination = None;
+                        } else {
+                            let rendered = print_esc_text(self.state, "endcsname");
+                            let command = destination
+                                .take()
+                                .expect("csname recovery consumes the delivered command");
+                            self.back_error_reporting(
+                                command,
+                                MISSING_ENDCSNAME_DIAGNOSTIC,
+                                format!("Missing {rendered} inserted"),
+                                &[
+                                    "The control sequence marked <to be read again> should",
+                                    "not appear between \\csname and \\endcsname.",
+                                ],
+                            )?;
+                            break;
+                        }
                     }
                 }
             }
@@ -268,6 +165,16 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
         self.is_in_csname = previous;
         result
+    }
+
+    /// TeX82 section 372's complete `\csname` expansion.  The character
+    /// collector owns its local name and the ordinary expanded-token scanner
+    /// owns every nested expansion; no caller or operand phase is retained in
+    /// command scratch.
+    pub(super) fn expand_csname(&mut self, opener: OriginId) -> Result<(), CommandError> {
+        let name = self.scan_csname_characters(String::new())?;
+        let symbol = self.state.intern_relaxed_control_sequence(&name);
+        self.back_input_token(TracedTokenWord::pack(Token::Cs(symbol), opener))
     }
 
     fn replay_expandafter_first(&mut self, command: CurrentCommand<G>) -> Result<(), CommandError> {
