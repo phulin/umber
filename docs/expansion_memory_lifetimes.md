@@ -898,15 +898,16 @@ redo preserve both transitions without constructing a complete token frame on
 every word. Each input checkpoint retains the exact total
 for direct rollback and candidate redo. Buffer high-water queries never walk
 the input rows and no prefix ledger or shadow stack is retained.
-The source exposure inverse is at most 48 bytes. One processor-owned
-resident frame loop reads the `InputStack` top index once and matches the
-authoritative `InputLevel` row directly. It constructs no universal resident-
-top enum, repeats no row discrimination, and returns no cursor carrier. Its
-source branch lends the row and resident slot together; its one resident branch
-makes one tagged storage choice among replay, durable, attempt, macro-body, and
-macro-argument coordinates. Each advances the common frame position before ending that
-top borrow, then enters the same branch-independent final-command write and
-settlement tail in that compiled frame. The same kernel settles fuel,
+The source exposure inverse is at most 48 bytes. One processor-owned,
+episode-local resident frame reader reads the `InputStack` top index once and
+retains only a compact row index plus its lifetime-specific storage tag. The
+selection is refreshed after a cold input transition, never borrowed across
+stack mutation, and is not a saved cursor or semantic owner. Its source branch
+lends the row and resident slot together; its one resident branch makes one
+tagged storage choice among replay, durable, attempt, macro-body, and
+macro-argument coordinates. Each advances the common frame position before
+ending that top borrow, then enters the same branch-independent final-command
+write and settlement tail in that compiled frame. The same kernel settles fuel,
 suppression, alignment, or parameter replay without a per-word result or
 settlement-helper handoff. No cursor/token carrier, intermediate delivery
 result, second top lookup, or diagnostic revision write crosses that boundary.

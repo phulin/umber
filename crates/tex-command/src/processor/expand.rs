@@ -31,6 +31,12 @@ enum ResidentColdOutcome {
     Finished(DeliveryStatus),
     Synthetic { literal_catcode: Option<Catcode> },
 }
+
+enum ResidentDeliveryOutcome {
+    Ready { literal_catcode: Option<Catcode> },
+    Finished(DeliveryStatus),
+    Synthetic { literal_catcode: Option<Catcode> },
+}
 #[derive(Clone, Copy)]
 enum ExpandedUntilMode {
     Protected,
@@ -57,6 +63,123 @@ enum InputFrameTransition<G> {
         arguments: Option<ArgumentSetId<G>>,
         active_source: Option<tex_state::packed_input::SourceContext>,
     },
+}
+
+/// The lifetime-specific resident storage selected for the current top row.
+///
+/// The tag is an episode-local proof only. The row remains the sole owner of
+/// its storage, and the tag is refreshed whenever a cold transition changes
+/// the input top. Keeping this tiny selection beside the reader removes the
+/// top-row lookup from the ordinary per-word instruction without retaining a
+/// borrow across input-stack mutation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ResidentStorageTag {
+    Replay,
+    Durable,
+    Attempt,
+    MacroBody,
+    MacroArgument,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ResidentFrameSelection {
+    None,
+    Source {
+        resident_index: usize,
+    },
+    Resident {
+        resident_index: usize,
+        storage: ResidentStorageTag,
+    },
+}
+
+/// Episode-local top-row selection for synchronous delivery.
+///
+/// A reader never outlives the processor call that owns it. Its index is
+/// refreshed only after parameter substitution, exhaustion, source refill, or
+/// another cold input transition, so ordinary sequential delivery advances
+/// one already-selected frame.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ResidentFrameReader {
+    selection: ResidentFrameSelection,
+}
+
+impl ResidentFrameReader {
+    #[inline(always)]
+    const fn new() -> Self {
+        Self {
+            selection: ResidentFrameSelection::None,
+        }
+    }
+
+    #[inline(always)]
+    fn refresh<G>(&mut self, command: &mut crate::CommandState<G>) {
+        let selection = command.roots.input.levels.top.checked_sub(1).map_or(
+            ResidentFrameSelection::None,
+            |resident_index| match &command.roots.input.levels.rows[resident_index] {
+                InputLevel::Source(_) => ResidentFrameSelection::Source { resident_index },
+                InputLevel::Resident(row) => ResidentFrameSelection::Resident {
+                    resident_index,
+                    storage: match &row.storage {
+                        ResidentTokenStorage::Replay { .. } => ResidentStorageTag::Replay,
+                        ResidentTokenStorage::Durable(_) => ResidentStorageTag::Durable,
+                        ResidentTokenStorage::Attempt(_) => ResidentStorageTag::Attempt,
+                        ResidentTokenStorage::MacroBody(_) => ResidentStorageTag::MacroBody,
+                        ResidentTokenStorage::MacroArgument(_) => ResidentStorageTag::MacroArgument,
+                    },
+                },
+            },
+        );
+        #[cfg(test)]
+        if !matches!(selection, ResidentFrameSelection::None) {
+            command
+                .roots
+                .input
+                .levels
+                .cursor_mutations
+                .typed_top_accesses = command
+                .roots
+                .input
+                .levels
+                .cursor_mutations
+                .typed_top_accesses
+                .saturating_add(1);
+            command.raw_delivery_path_counters.resident_transitions = command
+                .raw_delivery_path_counters
+                .resident_transitions
+                .saturating_add(1);
+        }
+        self.selection = selection;
+    }
+
+    #[inline(always)]
+    const fn source_index(self) -> Option<usize> {
+        match self.selection {
+            ResidentFrameSelection::Source { resident_index } => Some(resident_index),
+            ResidentFrameSelection::None | ResidentFrameSelection::Resident { .. } => None,
+        }
+    }
+
+    #[inline(always)]
+    const fn resident_index(self) -> Option<usize> {
+        match self.selection {
+            ResidentFrameSelection::Resident { resident_index, .. } => Some(resident_index),
+            ResidentFrameSelection::None | ResidentFrameSelection::Source { .. } => None,
+        }
+    }
+
+    #[inline(always)]
+    const fn storage_tag(self) -> Option<ResidentStorageTag> {
+        match self.selection {
+            ResidentFrameSelection::Resident { storage, .. } => Some(storage),
+            ResidentFrameSelection::None | ResidentFrameSelection::Source { .. } => None,
+        }
+    }
+
+    #[inline(always)]
+    const fn invalidate(&mut self) {
+        self.selection = ResidentFrameSelection::None;
+    }
 }
 
 /// One packed word selected from a resident token row. The selection keeps
@@ -262,36 +385,21 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// character path; source rows and all exhaustion transitions stay in the
     /// cold reader below.
     #[inline(always)]
-    fn next_resident_word(&mut self) -> Result<ResidentWordRead<G>, CommandError> {
+    fn read_selected_resident_word(
+        &mut self,
+        reader: ResidentFrameReader,
+    ) -> Result<ResidentWordRead<G>, CommandError> {
         let command_state = &mut *self.command;
-        let Some(resident_index) = command_state.roots.input.levels.top.checked_sub(1) else {
-            return Ok(ResidentWordRead::NoResident);
+        let Some(resident_index) = reader.resident_index() else {
+            return Ok(match reader.source_index() {
+                Some(resident_index) => ResidentWordRead::Source { resident_index },
+                None => ResidentWordRead::NoResident,
+            });
         };
-        #[cfg(test)]
-        {
-            command_state
-                .roots
-                .input
-                .levels
-                .cursor_mutations
-                .typed_top_accesses = command_state
-                .roots
-                .input
-                .levels
-                .cursor_mutations
-                .typed_top_accesses
-                .saturating_add(1);
-            command_state
-                .raw_delivery_path_counters
-                .resident_transitions = command_state
-                .raw_delivery_path_counters
-                .resident_transitions
-                .saturating_add(1);
-        }
 
         let InputLevel::Resident(row) = &mut command_state.roots.input.levels.rows[resident_index]
         else {
-            return Ok(ResidentWordRead::Source { resident_index });
+            return Err(CommandError::input_invariant());
         };
         let exhausted_identity = row.header.identity();
         let identity = exhausted_identity.0;
@@ -300,24 +408,35 @@ impl<G> CommandProcessor<'_, '_, G> {
             tex_state::packed_input::InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE,
         );
         #[cfg(test)]
-        let storage_kind = match &row.storage {
-            ResidentTokenStorage::MacroBody(_) => ResidentStorageKind::MacroBody,
-            ResidentTokenStorage::MacroArgument(_) => ResidentStorageKind::MacroArgument,
-            ResidentTokenStorage::Replay { .. }
-            | ResidentTokenStorage::Attempt(_)
-            | ResidentTokenStorage::Durable(_) => ResidentStorageKind::Stored,
+        let storage_kind = match reader.storage_tag() {
+            Some(ResidentStorageTag::MacroBody) => ResidentStorageKind::MacroBody,
+            Some(ResidentStorageTag::MacroArgument) => ResidentStorageKind::MacroArgument,
+            Some(
+                ResidentStorageTag::Replay
+                | ResidentStorageTag::Durable
+                | ResidentStorageTag::Attempt,
+            )
+            | None => ResidentStorageKind::Stored,
         };
         #[cfg(feature = "profiling")]
-        let raw_kind = match &row.storage {
-            ResidentTokenStorage::MacroArgument(_) => crate::fuel::RawDeliveryKind::MacroArgument,
-            ResidentTokenStorage::Replay { .. }
-            | ResidentTokenStorage::Attempt(_)
-            | ResidentTokenStorage::Durable(_)
-            | ResidentTokenStorage::MacroBody(_) => crate::fuel::RawDeliveryKind::StoredToken,
+        let raw_kind = match reader.storage_tag() {
+            Some(ResidentStorageTag::MacroArgument) => crate::fuel::RawDeliveryKind::MacroArgument,
+            Some(
+                ResidentStorageTag::Replay
+                | ResidentStorageTag::Durable
+                | ResidentStorageTag::Attempt
+                | ResidentStorageTag::MacroBody,
+            )
+            | None => crate::fuel::RawDeliveryKind::StoredToken,
         };
 
-        let current = match &mut row.storage {
-            ResidentTokenStorage::Replay { replay, cursor } => {
+        let current = match (
+            reader
+                .storage_tag()
+                .ok_or_else(CommandError::input_invariant)?,
+            &mut row.storage,
+        ) {
+            (ResidentStorageTag::Replay, ResidentTokenStorage::Replay { replay, cursor }) => {
                 #[cfg(test)]
                 {
                     command_state
@@ -369,7 +488,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .map(|word| (word.token_word(), word.origin()))
                 })
             }
-            ResidentTokenStorage::Attempt(list) => {
+            (ResidentStorageTag::Attempt, ResidentTokenStorage::Attempt(list)) => {
                 #[cfg(test)]
                 {
                     command_state
@@ -405,7 +524,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .map(|word| (word.token_word(), word.origin()))
                 })
             }
-            ResidentTokenStorage::Durable(list) => {
+            (ResidentStorageTag::Durable, ResidentTokenStorage::Durable(list)) => {
                 #[cfg(test)]
                 {
                     command_state
@@ -438,7 +557,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .map(|word| (word, tex_state::token::OriginId::UNKNOWN))
                 })
             }
-            ResidentTokenStorage::MacroBody(body) => {
+            (ResidentStorageTag::MacroBody, ResidentTokenStorage::MacroBody(body)) => {
                 #[cfg(test)]
                 {
                     command_state
@@ -456,7 +575,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 next_macro_body_word_from_current_frame(&mut row.header.frame, body)
             }
-            ResidentTokenStorage::MacroArgument(argument) => {
+            (ResidentStorageTag::MacroArgument, ResidentTokenStorage::MacroArgument(argument)) => {
                 #[cfg(test)]
                 {
                     command_state
@@ -476,6 +595,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     argument.advance_delivery(position, &command_state.scratch)
                 })
             }
+            _ => return Err(CommandError::input_invariant()),
         };
 
         let Some((word, origin, position)) = current else {
@@ -668,6 +788,37 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(resolution.literal_catcode())
     }
 
+    /// Reads and admits one resident/source delivery through the selected
+    /// frame. The reader is refreshed only when a cold transition changes the
+    /// visible input top; ordinary words therefore share one selection and
+    /// one packed-resolution tail across raw, expanded, and matcher callers.
+    #[inline(always)]
+    fn read_resident_into(
+        &mut self,
+        reader: &mut ResidentFrameReader,
+        destination: &mut Option<HotCommand<G>>,
+    ) -> Result<ResidentDeliveryOutcome, CommandError> {
+        loop {
+            let selected = self.read_selected_resident_word(*reader)?;
+            if matches!(selected, ResidentWordRead::Word { .. }) {
+                return Ok(ResidentDeliveryOutcome::Ready {
+                    literal_catcode: self.admit_resident_word(selected, destination)?,
+                });
+            }
+            match self.transition_resident_word(selected, destination)? {
+                ResidentColdOutcome::Retry => {
+                    reader.refresh(self.command);
+                }
+                ResidentColdOutcome::Finished(status) => {
+                    return Ok(ResidentDeliveryOutcome::Finished(status));
+                }
+                ResidentColdOutcome::Synthetic { literal_catcode } => {
+                    return Ok(ResidentDeliveryOutcome::Synthetic { literal_catcode });
+                }
+            }
+        }
+    }
+
     #[inline(always)]
     fn settle_hot_delivery(
         &mut self,
@@ -742,8 +893,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
+        let mut reader = ResidentFrameReader::new();
         let mut hot_destination = None;
-        let result = self.raw_next_hot(&mut hot_destination);
+        let result = self.raw_next_hot_with_reader(&mut reader, &mut hot_destination);
         self.finish_hot_delivery(destination, &mut hot_destination, result)
     }
 
@@ -759,11 +911,15 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         paragraph_token: Option<TokenWord>,
     ) -> Result<Option<MacroMatchDelivery<G>>, CommandError> {
+        let mut reader = ResidentFrameReader::new();
         let mut hot = None;
         loop {
-            match self.raw_next_hot(&mut hot)? {
+            match self.raw_next_hot_with_reader(&mut reader, &mut hot)? {
                 DeliveryStatus::End => return Ok(None),
-                DeliveryStatus::ReplayCompleted(_) => continue,
+                DeliveryStatus::ReplayCompleted(_) => {
+                    reader.refresh(self.command);
+                    continue;
+                }
                 DeliveryStatus::Command => {
                     let command = hot.take().ok_or_else(CommandError::input_invariant)?;
                     // The matcher needs the category of the delivered
@@ -779,6 +935,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
                     ) {
                         self.begin_scalar_alignment_v_template_hot(&delivery)?;
+                        reader.refresh(self.command);
                         continue;
                     }
                     #[cfg(test)]
@@ -794,13 +951,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                             .token_collector_path_counters
                             .raw_classifications
                             .saturating_add(1);
-                    }
-                    if matches!(
-                        delivery.alignment_adjustment(),
-                        crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
-                    ) {
-                        self.begin_scalar_alignment_v_template_hot(&delivery)?;
-                        continue;
                     }
                     debug_assert!(
                         !delivery.is_outer(),
@@ -824,43 +974,48 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<HotCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
+        let mut reader = ResidentFrameReader::new();
+        self.raw_next_hot_with_reader(&mut reader, destination)
+    }
+
+    #[inline(always)]
+    fn raw_next_hot_with_reader(
+        &mut self,
+        reader: &mut ResidentFrameReader,
+        destination: &mut Option<HotCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        if matches!(reader.selection, ResidentFrameSelection::None) {
+            reader.refresh(self.command);
+        }
         let depth = self.command.transient.active_expansion_depth;
-        let mut command = None;
+        let mut command = destination.take();
         if let Err(failure) = self.charge_command_action() {
             return self.fail_hot_expanded_delivery(destination, depth, failure);
         }
-        let literal_catcode = 'fetch: loop {
-            let selected = match self.next_resident_word() {
-                Ok(selected) => selected,
-                Err(failure) => {
-                    return self.fail_hot_expanded_delivery(destination, depth, failure);
-                }
-            };
-            if matches!(selected, ResidentWordRead::Word { .. }) {
-                break 'fetch self.admit_resident_word(selected, &mut command)?;
+        let literal_catcode = match self.read_resident_into(reader, &mut command) {
+            Ok(ResidentDeliveryOutcome::Ready { literal_catcode }) => literal_catcode,
+            Ok(ResidentDeliveryOutcome::Synthetic { literal_catcode }) => {
+                reader.invalidate();
+                literal_catcode
             }
-            let cold = match self.transition_resident_word(selected, &mut command) {
-                Ok(cold) => cold,
-                Err(failure) => {
-                    return self.fail_hot_expanded_delivery(destination, depth, failure);
-                }
-            };
-            match cold {
-                ResidentColdOutcome::Retry => continue 'fetch,
-                ResidentColdOutcome::Finished(status) => {
-                    destination.take();
-                    return Ok(status);
-                }
-                ResidentColdOutcome::Synthetic { literal_catcode } => {
-                    break 'fetch literal_catcode;
-                }
+            Ok(ResidentDeliveryOutcome::Finished(status)) => {
+                reader.invalidate();
+                destination.take();
+                return Ok(status);
+            }
+            Err(failure) => {
+                return self.fail_hot_expanded_delivery(destination, depth, failure);
             }
         };
         let mut command = command
             .take()
             .expect("resident admission initializes the hot command");
+        let recovers_outer = self.command.delivery_mode.scanner_active() && command.is_outer();
         if let Err(failure) = self.settle_hot_delivery(&mut command, literal_catcode) {
             return self.fail_hot_expanded_delivery(destination, depth, failure);
+        }
+        if recovers_outer {
+            reader.invalidate();
         }
         *destination = Some(command);
         Ok(DeliveryStatus::Command)
@@ -950,6 +1105,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         };
         self.command.transient.active_expansion_depth = active_depth;
         let mut command = destination.take();
+        let mut reader = ResidentFrameReader::new();
         let mut delivery_expanded = false;
         let mut initial_action = initial_action;
         let status = 'delivery: loop {
@@ -958,31 +1114,21 @@ impl<G> CommandProcessor<'_, '_, G> {
                     destination.is_none(),
                     "the caller-owned hot command must be empty before a resident fetch"
                 );
+                if matches!(reader.selection, ResidentFrameSelection::None) {
+                    reader.refresh(self.command);
+                }
                 if let Err(failure) = self.charge_command_action() {
                     return self.fail_hot_expanded_delivery(destination, depth, failure);
                 }
-                let literal_catcode = 'fetch: loop {
-                    let selected = match self.next_resident_word() {
-                        Ok(selected) => selected,
-                        Err(failure) => {
-                            return self.fail_hot_expanded_delivery(destination, depth, failure);
-                        }
-                    };
-                    if matches!(selected, ResidentWordRead::Word { .. }) {
-                        break 'fetch self.admit_resident_word(selected, &mut command)?;
+                let literal_catcode = match self.read_resident_into(&mut reader, &mut command) {
+                    Ok(ResidentDeliveryOutcome::Ready { literal_catcode }) => literal_catcode,
+                    Ok(ResidentDeliveryOutcome::Synthetic { literal_catcode }) => {
+                        reader.invalidate();
+                        literal_catcode
                     }
-                    let cold = match self.transition_resident_word(selected, &mut command) {
-                        Ok(cold) => cold,
-                        Err(failure) => {
-                            return self.fail_hot_expanded_delivery(destination, depth, failure);
-                        }
-                    };
-                    match cold {
-                        ResidentColdOutcome::Retry => continue 'fetch,
-                        ResidentColdOutcome::Finished(status) => break 'delivery status,
-                        ResidentColdOutcome::Synthetic { literal_catcode } => {
-                            break 'fetch literal_catcode;
-                        }
+                    Ok(ResidentDeliveryOutcome::Finished(status)) => break 'delivery status,
+                    Err(failure) => {
+                        return self.fail_hot_expanded_delivery(destination, depth, failure);
                     }
                 };
                 let command_ref = command
@@ -1031,6 +1177,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         }
                     }
                     command.take();
+                    reader.invalidate();
                 }
                 ExpandedCommandAction::Expand(ExpansionDispatch::Undefined) => {
                     delivery_expanded = true;
@@ -1071,6 +1218,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         return self.fail_hot_expanded_delivery(destination, depth, failure);
                     }
                     command.take();
+                    reader.invalidate();
                 }
             }
         };
@@ -1143,6 +1291,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         debug_assert!(destination.is_none());
         self.invalidate_delivery_freshness();
         let mut command = None;
+        let mut reader = ResidentFrameReader::new();
+        reader.refresh(self.command);
         let mut consumed_characters = false;
         #[cfg(feature = "profiling")]
         let mut character_run_count = 0_u32;
@@ -1150,7 +1300,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         let mut character_run_kind = None;
 
         loop {
-            let Some(resident_index) = self.command.roots.input.levels.top.checked_sub(1) else {
+            let selected = self.read_selected_resident_word(reader)?;
+            if matches!(selected, ResidentWordRead::NoResident) {
                 if consumed_characters {
                     self.invalidate_delivery_freshness();
                     #[cfg(feature = "profiling")]
@@ -1166,29 +1317,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                 {
                     return Ok(status);
                 }
+                reader.refresh(self.command);
                 continue;
-            };
+            }
 
-            let is_source = matches!(
-                self.command.roots.input.levels.rows[resident_index],
-                InputLevel::Source(_)
-            );
-            if is_source {
+            if let ResidentWordRead::Source { resident_index } = selected {
                 #[cfg(test)]
                 {
-                    self.command
-                        .roots
-                        .input
-                        .levels
-                        .cursor_mutations
-                        .typed_top_accesses = self
-                        .command
-                        .roots
-                        .input
-                        .levels
-                        .cursor_mutations
-                        .typed_top_accesses
-                        .saturating_add(1);
                     self.command
                         .roots
                         .input
@@ -1201,11 +1336,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .levels
                         .cursor_mutations
                         .source_branch_entries
-                        .saturating_add(1);
-                    self.command.raw_delivery_path_counters.resident_transitions = self
-                        .command
-                        .raw_delivery_path_counters
-                        .resident_transitions
                         .saturating_add(1);
                 }
                 if self
@@ -1227,16 +1357,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 {
                     return Ok(status);
                 }
+                reader.refresh(self.command);
                 continue;
             }
-
-            let selected = match self.next_resident_word() {
-                Ok(selected) => selected,
-                Err(failure) => {
-                    self.invalidate_delivery_freshness();
-                    return Err(failure);
-                }
-            };
             if !matches!(selected, ResidentWordRead::Word { .. }) {
                 if consumed_characters && matches!(selected, ResidentWordRead::Exhausted { .. }) {
                     self.invalidate_delivery_freshness();
@@ -1252,6 +1375,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 {
                     return Ok(status);
                 }
+                reader.refresh(self.command);
                 continue;
             }
             let is_character = matches!(

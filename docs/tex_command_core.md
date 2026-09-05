@@ -232,6 +232,12 @@ second raw representation.
 
 The frame-owned delivery loop also owns final suppression, fuel, and alignment
 settlement rather than returning through a second hot helper.
+Each synchronous raw, expanded, matcher, or main-character episode keeps an
+episode-local resident-frame selection (row index and concrete storage tag)
+until a cold input transition changes the visible top. The matcher calls that
+same read/admit authority and projects a compact `MacroMatchDelivery`; it
+settles an alignment delimiter once before continuing, so delimiter matching
+does not create a rich `CurrentCommand` or repeat the top selection.
 Parameter substitution and ordinary token exhaustion mutate the input stack
 and immediately reselect its authoritative top. Cold source-line acquisition,
 source EOF, retained templates, and replay-completion publication alone leave
