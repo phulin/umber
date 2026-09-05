@@ -120,6 +120,51 @@ fn resolved_registration_and_clear_are_reflected_in_vfs_snapshots() {
 }
 
 #[test]
+fn readiness_distinguishes_catalog_metadata_from_engine_admission() {
+    let mut registry = ProjectWorkspace::new(VfsLimits::default()).expect("registry");
+    let request = key(FileKind::TexInput, "runtime.sty");
+    assert_eq!(registry.readiness(&request), None);
+    registry.note_exists(request.clone());
+    assert_eq!(
+        registry.readiness(&request),
+        Some(ResourceReadiness::ExistsNotReady)
+    );
+    registry.expect(&FileRequestBatch::new(
+        [FileRequest::new(request.clone(), "runtime.sty")],
+        [],
+    ));
+    registry
+        .provision(response(
+            FileKind::TexInput,
+            "runtime.sty",
+            "/texlive/runtime.sty",
+            b"runtime",
+        ))
+        .expect("admit");
+    assert_eq!(registry.readiness(&request), Some(ResourceReadiness::Ready));
+}
+
+#[test]
+fn readiness_negative_is_not_created_by_metadata_or_transport_reset() {
+    let mut registry = ProjectWorkspace::new(VfsLimits::default()).expect("registry");
+    let request = key(FileKind::TexInput, "missing.sty");
+    registry.note_exists(request.clone());
+    registry.cancel_outstanding_resources();
+    assert_eq!(registry.readiness(&request), None);
+    registry.expect(&FileRequestBatch::new(
+        [FileRequest::new(request.clone(), "missing.sty")],
+        [],
+    ));
+    registry
+        .provision_unavailable(request.clone())
+        .expect("negative");
+    assert_eq!(
+        registry.readiness(&request),
+        Some(ResourceReadiness::Absent)
+    );
+}
+
+#[test]
 fn keys_include_domain_and_reject_cross_domain_kinds() {
     let tex = key(FileKind::TexInput, "shared.dat");
     let bib = FileRequestKey::for_domain(

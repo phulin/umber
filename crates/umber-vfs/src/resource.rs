@@ -354,6 +354,17 @@ pub enum ProvisionOutcome {
     AlreadyPresent,
 }
 
+/// Engine-visible readiness of one typed resource binding.
+///
+/// `ExistsNotReady` is metadata evidence only: no bytes are available through
+/// the VFS until the host admits a `ResolvedFile` (or typed non-file value).
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum ResourceReadiness {
+    Ready,
+    ExistsNotReady,
+    Absent,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProvisionError {
     UnexpectedRequest(FileRequestKey),
@@ -460,6 +471,7 @@ impl std::error::Error for RetryError {}
 #[derive(Clone, Debug, Default)]
 pub struct ResourceLedger {
     lifecycle: ResourceLifecycle<FileRequestKey, VirtualPath>,
+    known_exists: BTreeSet<FileRequestKey>,
     user_bytes: usize,
     resolved_bytes: usize,
     required_at_batch_start: usize,
@@ -476,6 +488,32 @@ impl ResourceLedger {
     #[must_use]
     pub fn is_unavailable(&self, request: &FileRequestKey) -> bool {
         self.lifecycle.is_unavailable(request)
+    }
+
+    /// Classifies only evidence already retained by this workspace.  `None`
+    /// means the resolver has not yet answered the existence question; it is
+    /// deliberately distinct from an authoritative negative.
+    #[must_use]
+    pub fn readiness(&self, request: &FileRequestKey) -> Option<ResourceReadiness> {
+        if self.lifecycle.admitted(request).is_some() {
+            Some(ResourceReadiness::Ready)
+        } else if self.lifecycle.is_unavailable(request) {
+            Some(ResourceReadiness::Absent)
+        } else if self.known_exists.contains(request) {
+            Some(ResourceReadiness::ExistsNotReady)
+        } else {
+            None
+        }
+    }
+
+    fn note_exists(&mut self, request: FileRequestKey) {
+        if !self.lifecycle.is_bound(&request) {
+            self.known_exists.insert(request);
+        }
+    }
+
+    fn mark_ready(&mut self, request: &FileRequestKey) {
+        self.known_exists.remove(request);
     }
 }
 
@@ -557,6 +595,18 @@ impl ProjectWorkspace {
         (ledger, generated)
     }
 
+    /// Records catalog/VFS metadata saying that a request exists without
+    /// admitting payload bytes.  Callers must still provision the requested
+    /// value before engine execution can observe it.
+    pub fn note_exists(&mut self, request: FileRequestKey) {
+        self.ledger.note_exists(request);
+    }
+
+    #[must_use]
+    pub fn readiness(&self, request: &FileRequestKey) -> Option<ResourceReadiness> {
+        self.ledger.readiness(request)
+    }
+
     #[must_use]
     pub fn user_file_count(&self) -> usize {
         self.storage.user().len()
@@ -622,9 +672,13 @@ impl ProjectWorkspace {
         )?;
         self.ledger
             .lifecycle
-            .admit_unavailable(request)
+            .admit_unavailable(request.clone())
             .map(|inserted| {
                 if inserted {
+                    // The negative is authoritative for the current retained
+                    // namespace.  A stale positive metadata hint must not
+                    // override it.
+                    self.ledger.known_exists.remove(&request);
                     ProvisionOutcome::Inserted
                 } else {
                     ProvisionOutcome::AlreadyPresent
@@ -657,6 +711,7 @@ impl ProjectWorkspace {
         response: ResolvedFile,
         require_expected: bool,
     ) -> Result<ProvisionOutcome, ProvisionError> {
+        let request_key = response.request.clone();
         let path = VirtualPath::distribution(&response.virtual_path).map_err(|error| {
             ProvisionError::InvalidPath {
                 request: response.request.clone(),
@@ -683,6 +738,7 @@ impl ProjectWorkspace {
                 .get(existing_path)
                 .expect("provisioned request paths remain registered");
             if existing_path == &path && existing.content_id() == content_id {
+                self.ledger.mark_ready(&response.request);
                 return Ok(ProvisionOutcome::AlreadyPresent);
             }
             return Err(ProvisionError::Conflict {
@@ -753,6 +809,7 @@ impl ProjectWorkspace {
                 .restore(response.request, path)
                 .map_err(map_admission)?;
         }
+        self.ledger.mark_ready(&request_key);
         Ok(ProvisionOutcome::Inserted)
     }
 
@@ -809,6 +866,7 @@ impl ProjectWorkspace {
 
     pub fn clear(&mut self) {
         self.ledger.lifecycle.clear();
+        self.ledger.known_exists.clear();
         self.storage.clear_resolved();
         self.ledger.resolved_bytes = 0;
         self.ledger.required_at_batch_start = 0;
@@ -818,6 +876,10 @@ impl ProjectWorkspace {
     /// immutable positive or negative session bindings.
     pub fn cancel_outstanding_resources(&mut self) {
         self.ledger.lifecycle.cancel_outstanding();
+        self.ledger.known_exists.retain(|request| {
+            self.ledger.lifecycle.admitted(request).is_some()
+                || self.ledger.lifecycle.is_unavailable(request)
+        });
         self.ledger.required_at_batch_start = 0;
     }
 

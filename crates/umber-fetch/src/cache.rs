@@ -358,6 +358,32 @@ impl BlobStore {
         )
     }
 
+    /// Loads a verified non-content-addressed metadata blob.  The caller
+    /// supplies a bounded namespace/key and may apply a schema validator after
+    /// the envelope has been authenticated.  This is used for source-
+    /// independent lookup predictions; it is not an object catalogue.
+    pub fn load_named(
+        &self,
+        namespace: &str,
+        key: &str,
+        max_bytes: u64,
+    ) -> Result<Option<Vec<u8>>, CacheError> {
+        let spec = VerifiedBlobSpec::new(namespace, key, max_bytes)?;
+        self.load(&spec)
+    }
+
+    /// Stores a bounded metadata blob atomically under its semantic identity.
+    pub fn store_named(
+        &self,
+        namespace: &str,
+        key: &str,
+        max_bytes: u64,
+        bytes: &[u8],
+    ) -> Result<(), CacheError> {
+        let spec = VerifiedBlobSpec::new(namespace, key, max_bytes)?;
+        self.store(&spec, bytes)
+    }
+
     /// Authenticates every immutable entry in the current cache namespace.
     ///
     /// This is an explicit maintenance operation. Ordinary cache lookup calls

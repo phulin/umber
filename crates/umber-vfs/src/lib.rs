@@ -16,8 +16,8 @@ pub use lifecycle::{AdmissionError, AdmissionState, RequestIntent, ResourceLifec
 pub use limits::{VfsLimitError, VfsLimitKind, VfsLimits};
 pub use resource::{
     FileKind, FileRequest, FileRequestBatch, FileRequestKey, ProjectWorkspace, ProvisionError,
-    ProvisionOutcome, RequestKeyError, ResolvedFile, ResourceDomain, ResourceLedger, RetryError,
-    UserRegistrationError,
+    ProvisionOutcome, RequestKeyError, ResolvedFile, ResourceDomain, ResourceLedger,
+    ResourceReadiness, RetryError, UserRegistrationError,
 };
 pub use snapshot::{SnapshotError, SnapshotRetention, VfsSnapshot, VirtualRoot};
 pub use storage::StorageIdentity;

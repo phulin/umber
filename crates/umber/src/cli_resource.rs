@@ -14,8 +14,9 @@ use std::time::Instant;
 use tex_fonts::AcceptedFontContainers;
 use tex_state::{FORMAT_SCHEMA_VERSION, World};
 use umber_distribution::{
-    FileKind as DistributionFileKind, FileRequestKey as DistributionFileRequestKey, ObjectEntry,
-    ShardedManifestRoot, ValidatedPackedShard, shard_index_for_key,
+    FileKind as DistributionFileKind, FileRequestKey as DistributionFileRequestKey, LookupManifest,
+    LookupOutcome, LookupRecord, LookupRole, NegativeScope, ObjectEntry, PrefetchIdentity,
+    ResolvedIdentity, ShardedManifestRoot, ValidatedPackedShard, shard_index_for_key,
 };
 use umber_fetch::{
     DistributionClient, DistributionClientError, FetchCancellation, FetchClientConfig,
@@ -23,6 +24,7 @@ use umber_fetch::{
 };
 use umber_hash::{AHash64, HashDomain};
 
+use crate::prefetch::{PREFETCH_POLICY_VERSION, PrefetchPlanner};
 use crate::{
     AcceptedFinalization, CompileAttemptResult, CompileError, CompileTelemetry, EngineMode,
     FileContentId, FileKind, FileRequest, FileRequestKey, MemoryRunOutput, NeedResources,
@@ -254,6 +256,17 @@ pub struct ResolverTelemetry {
     pub object_cache_hits: u64,
     /// Content-addressed object payload validations, excluding response IDs.
     pub object_hashes: u64,
+    /// Accepted-run predictor and readiness metrics.  Persistent cache hits
+    /// still count as prefetch bytes only when they cross the engine boundary.
+    pub startup_prefetch_candidates: u64,
+    pub literal_prefetch_hints: u64,
+    pub package_group_candidates: u64,
+    pub prefetch_bytes: u64,
+    pub demand_bytes: u64,
+    pub unused_prefetch_bytes: u64,
+    pub ready_resources: u64,
+    pub exists_not_ready_resources: u64,
+    pub absent_resources: u64,
 }
 
 impl NativeAcceptedRun {
@@ -481,8 +494,20 @@ impl<'owner> NativeCompileSession<'owner> {
         let setup_started = std::time::Instant::now();
         let source_started = std::time::Instant::now();
         let main = read(&options.input)?;
+        let source = match String::from_utf8(main.clone()) {
+            Ok(source) => source,
+            Err(error) => error.into_bytes().into_iter().map(char::from).collect(),
+        };
         let source_read_ns = source_started.elapsed().as_nanos();
         let mut resolver_telemetry = ResolverTelemetry::default();
+        let prefetch_identity = native_prefetch_identity(options);
+        let prior_manifest = distribution.load_lookup_manifest(&prefetch_identity)?;
+        let has_prior_manifest = prior_manifest.is_some();
+        let mut planner = PrefetchPlanner::with_prior(
+            prefetch_identity.clone(),
+            umber_distribution::PrefetchBudget::default(),
+            prior_manifest,
+        );
         let format_started = std::time::Instant::now();
         let format = match &options.format {
             Some(path) if path.exists() => Some(read(path)?),
@@ -507,6 +532,14 @@ impl<'owner> NativeCompileSession<'owner> {
                     .and_then(distribution_request)
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let mut initial_prefetch_hints = initial_prefetch_hints;
+        if options.format.is_none() || has_prior_manifest {
+            initial_prefetch_hints.extend(planner.startup_hints(&source));
+        }
+        let planner_metrics = planner.metrics();
+        resolver_telemetry.startup_prefetch_candidates = planner_metrics.startup_candidates;
+        resolver_telemetry.literal_prefetch_hints = planner_metrics.literal_hints;
+        distribution.set_lookup_manifest(LookupManifest::new(prefetch_identity));
         let clock = World::real().job_clock();
         let name = options
             .input
@@ -595,10 +628,6 @@ impl<'owner> NativeCompileSession<'owner> {
             .add_user_file(name, main.clone())
             .map_err(|error| NativeRunError::Compile(error.to_string()))?;
         let local = LocalResolver::from_environment(&options.input);
-        let source = match String::from_utf8(main) {
-            Ok(source) => source,
-            Err(error) => error.into_bytes().into_iter().map(char::from).collect(),
-        };
         if env::var_os("UMBER_RESOURCE_TELEMETRY").is_some_and(|value| value == "1") {
             eprintln!(
                 "RESOURCE_STARTUP_TELEMETRY source_read_ns={} format_read_ns={} format_restore_ns={} setup_ns={}",
@@ -643,6 +672,7 @@ impl<'owner> NativeCompileSession<'owner> {
                 .saturating_add(compile_attempt_started.elapsed());
             match attempt {
                 CompileAttemptResult::Complete(output) => {
+                    self.distribution.publish_lookup_manifest()?;
                     if let Some(source) = self.pending_source.take() {
                         self.source = source;
                     }
@@ -678,8 +708,10 @@ impl<'owner> NativeCompileSession<'owner> {
                         self.session.discard_suspended_candidate();
                         return Err(NativeRunError::Cancelled);
                     }
-                    // Prefetch hints remain client-cache concerns; only requested
-                    // resources cross the typed provisioning boundary.
+                    // Prefetch hints are admitted through the same typed VFS
+                    // transaction as demanded resources.  A host cache hit is
+                    // not engine readiness until this boundary has accepted
+                    // the payload and its request metadata.
                     let provision_started = Instant::now();
                     if let Err(error) = self.session.provide_resources(resolved.responses) {
                         self.session.discard_suspended_candidate();
@@ -767,6 +799,35 @@ fn selected_limit(
 ) -> Result<u64, NativeRunError> {
     let environment = env::var(environment_name).ok();
     selected_limit_value(explicit, environment.as_deref(), environment_name, default)
+}
+
+fn native_prefetch_identity(options: &NativeRunOptions) -> PrefetchIdentity {
+    let format = options.format.as_ref().map_or_else(
+        || "none".to_owned(),
+        |path| path.to_string_lossy().into_owned(),
+    );
+    let distribution = format!(
+        "{}#{}",
+        options
+            .distribution
+            .as_deref()
+            .unwrap_or(DEFAULT_DISTRIBUTION_URL),
+        options
+            .distribution_ahash64
+            .as_deref()
+            .unwrap_or("unpinned")
+    );
+    PrefetchIdentity::new(
+        options.engine.name(),
+        format,
+        format!(
+            "pdf={:?};html={:?}",
+            options.pdf_output_mode, options.outputs
+        ),
+        distribution,
+        PREFETCH_POLICY_VERSION,
+    )
+    .expect("native prefetch identity fields are bounded by CLI options")
 }
 
 fn selected_limit_value(
@@ -1026,6 +1087,14 @@ struct LoadedDistribution {
 struct SelectedDistributionRecord {
     virtual_path: String,
     object: ObjectEntry,
+    dependencies: Vec<SelectedDistributionDependency>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SelectedDistributionDependency {
+    key: String,
+    virtual_path: String,
+    object: ObjectEntry,
 }
 
 impl LoadedDistribution {
@@ -1121,6 +1190,7 @@ struct DistributionResolver {
     expected: Option<String>,
     offline: bool,
     verified: Arc<Mutex<VerifiedDistributionState>>,
+    lookup_manifest: Option<LookupManifest>,
 }
 
 impl DistributionResolver {
@@ -1153,6 +1223,134 @@ impl DistributionResolver {
             expected,
             offline,
             verified,
+            lookup_manifest: None,
+        }
+    }
+
+    fn set_lookup_manifest(&mut self, manifest: LookupManifest) {
+        self.lookup_manifest = Some(manifest);
+    }
+
+    fn load_lookup_manifest(
+        &self,
+        identity: &PrefetchIdentity,
+    ) -> Result<Option<LookupManifest>, NativeRunError> {
+        let Some(bytes) = self
+            .client
+            .store()
+            .load_named("prefetch", &identity.canonical_key(), 4 * 1024 * 1024)
+            .map_err(|error| NativeRunError::Cache(error.to_string()))?
+        else {
+            return Ok(None);
+        };
+        Ok(LookupManifest::decode(&bytes)
+            .ok()
+            .filter(|manifest| manifest.identity() == identity))
+    }
+
+    fn publish_lookup_manifest(&self) -> Result<(), NativeRunError> {
+        let Some(manifest) = &self.lookup_manifest else {
+            return Ok(());
+        };
+        self.client
+            .store()
+            .store_named(
+                "prefetch",
+                &manifest.identity().canonical_key(),
+                4 * 1024 * 1024,
+                &manifest.encode(),
+            )
+            .map_err(|error| NativeRunError::Cache(error.to_string()))
+    }
+
+    fn record_file_resolved(
+        &mut self,
+        request: &FileRequest,
+        role: LookupRole,
+        search_context: &str,
+        file: &ResolvedFile,
+        object: Option<&ObjectEntry>,
+    ) {
+        let Some(manifest_key) = distribution_file_key(request)
+            .ok()
+            .flatten()
+            .map(|key| key.manifest_key().to_string())
+        else {
+            return;
+        };
+        let digest = AHash64::for_bytes(HashDomain::DistributionContent, &file.bytes).hex();
+        let object_name = object.map_or_else(|| "local".to_owned(), |entry| entry.object.clone());
+        let Ok(identity) = ResolvedIdentity::new(
+            manifest_key.clone(),
+            Some(file.virtual_path.clone()),
+            object_name,
+            digest,
+            file.bytes.len() as u64,
+        ) else {
+            return;
+        };
+        if let Some(manifest) = &mut self.lookup_manifest
+            && let Ok(record) = LookupRecord::new(
+                request.original_name(),
+                manifest_key,
+                request.key().kind().wire_name(),
+                search_context,
+                role,
+                LookupOutcome::Resolved(identity),
+            )
+        {
+            let _ = manifest.record(record);
+        }
+    }
+
+    fn record_file_absent(
+        &mut self,
+        request: &FileRequest,
+        role: LookupRole,
+        search_context: &str,
+    ) {
+        let Some(manifest_key) = distribution_file_key(request)
+            .ok()
+            .flatten()
+            .map(|key| key.manifest_key().to_string())
+        else {
+            return;
+        };
+        let root = self
+            .lookup_manifest
+            .as_ref()
+            .map(|manifest| manifest.identity().distribution.clone())
+            .unwrap_or_else(|| "unknown".to_owned());
+        if let Some(manifest) = &mut self.lookup_manifest
+            && let Ok(record) = LookupRecord::new(
+                request.original_name(),
+                manifest_key,
+                request.key().kind().wire_name(),
+                search_context,
+                role,
+                LookupOutcome::Absent(NegativeScope::Distribution { root }),
+            )
+        {
+            let _ = manifest.record(record);
+        }
+    }
+
+    fn record_readiness(
+        &self,
+        telemetry: &mut ResolverTelemetry,
+        readiness: umber_distribution::Readiness,
+    ) {
+        match readiness {
+            umber_distribution::Readiness::Ready => {
+                telemetry.ready_resources = telemetry.ready_resources.saturating_add(1)
+            }
+            umber_distribution::Readiness::ExistsNotReady => {
+                telemetry.exists_not_ready_resources =
+                    telemetry.exists_not_ready_resources.saturating_add(1)
+            }
+            umber_distribution::Readiness::Absent => {
+                telemetry.absent_resources = telemetry.absent_resources.saturating_add(1)
+            }
         }
     }
 
@@ -1194,6 +1392,17 @@ impl DistributionResolver {
                         .saturating_add(started.elapsed());
                     if let Some(file) = resolved {
                         telemetry.local_hits = telemetry.local_hits.saturating_add(1);
+                        telemetry.demand_bytes = telemetry
+                            .demand_bytes
+                            .saturating_add(file.bytes.len() as u64);
+                        self.record_readiness(telemetry, umber_distribution::Readiness::Ready);
+                        self.record_file_resolved(
+                            request,
+                            lookup_role(batch, request, false),
+                            "local",
+                            &file,
+                            None,
+                        );
                         responses.push(ResourceResponse::File(file));
                     } else {
                         unresolved.push(request.clone());
@@ -1253,6 +1462,11 @@ impl DistributionResolver {
                 .saturating_add(started.elapsed());
             if let Some(file) = resolved {
                 telemetry.local_hits = telemetry.local_hits.saturating_add(1);
+                telemetry.prefetch_bytes = telemetry
+                    .prefetch_bytes
+                    .saturating_add(file.bytes.len() as u64);
+                self.record_readiness(telemetry, umber_distribution::Readiness::Ready);
+                self.record_file_resolved(request, LookupRole::Hint, "local", &file, None);
                 responses.push(ResourceResponse::File(file));
             } else {
                 unresolved_hints.push(request.clone());
@@ -1270,7 +1484,7 @@ impl DistributionResolver {
         telemetry.manifest_lookup_time = telemetry
             .manifest_lookup_time
             .saturating_add(manifest_started.elapsed());
-        let mut original_files = BTreeMap::<String, Vec<FileRequestKey>>::new();
+        let mut original_files = BTreeMap::<String, Vec<FileRequest>>::new();
         for request in &unresolved {
             let Some(key) = distribution_file_key(request)? else {
                 responses.push(ResourceResponse::FileUnavailable(request.key().clone()));
@@ -1279,7 +1493,7 @@ impl DistributionResolver {
             original_files
                 .entry(key.manifest_key().to_string())
                 .or_default()
-                .push(request.key().clone());
+                .push(request.clone());
         }
         let mut keys_by_shard = BTreeMap::<u32, Vec<String>>::new();
         for key in original_files.keys() {
@@ -1292,7 +1506,7 @@ impl DistributionResolver {
                 .push(key.clone());
         }
         let mut hinted_keys = BTreeMap::<u32, Vec<String>>::new();
-        let mut original_hints = BTreeMap::new();
+        let mut original_hints = BTreeMap::<String, FileRequest>::new();
         for request in &unresolved_hints {
             let Some(key) = distribution_file_key(request)? else {
                 continue;
@@ -1301,7 +1515,7 @@ impl DistributionResolver {
             if original_files.contains_key(&key) {
                 continue;
             }
-            original_hints.insert(key.clone(), request.key().clone());
+            original_hints.insert(key.clone(), request.clone());
             hinted_keys
                 .entry(
                     shard_index_for_key(&key, shard_bits)
@@ -1312,7 +1526,7 @@ impl DistributionResolver {
         }
         let mut required = BTreeMap::<String, SelectedDistributionRecord>::new();
         let mut hints = BTreeMap::<String, SelectedDistributionRecord>::new();
-        let mut fallback_files = BTreeMap::<String, Vec<FileRequestKey>>::new();
+        let mut fallback_files = BTreeMap::<String, Vec<FileRequest>>::new();
         let exact_misses = self.select_required_manifest_files(
             keys_by_shard,
             cancellation,
@@ -1324,13 +1538,15 @@ impl DistributionResolver {
                 .remove(&key)
                 .expect("requested key has an original file request");
             for original in originals {
-                if let Some(fallback) = appended_tex_distribution_key(&original)? {
+                if let Some(fallback) = appended_tex_distribution_key(original.key())? {
                     fallback_files
                         .entry(fallback.manifest_key().to_string())
                         .or_default()
                         .push(original);
                 } else {
-                    responses.push(ResourceResponse::FileUnavailable(original));
+                    self.record_file_absent(&original, LookupRole::Required, "distribution");
+                    self.record_readiness(telemetry, umber_distribution::Readiness::Absent);
+                    responses.push(ResourceResponse::FileUnavailable(original.key().clone()));
                 }
             }
         }
@@ -1354,7 +1570,11 @@ impl DistributionResolver {
             let originals = fallback_files
                 .remove(&key)
                 .expect("fallback key has an original file request");
-            responses.extend(originals.into_iter().map(ResourceResponse::FileUnavailable));
+            for original in originals {
+                self.record_file_absent(&original, LookupRole::Required, "distribution");
+                self.record_readiness(telemetry, umber_distribution::Readiness::Absent);
+                responses.push(ResourceResponse::FileUnavailable(original.key().clone()));
+            }
         }
         for (manifest_key, originals) in fallback_files {
             original_hints.remove(&manifest_key);
@@ -1375,12 +1595,43 @@ impl DistributionResolver {
                         if !required.contains_key(&key)
                             && let Some(Some(entry)) = selected.get(&key)
                         {
-                            hints.insert(key, entry.clone());
+                            hints.insert(key.clone(), entry.clone());
+                            telemetry.package_group_candidates =
+                                telemetry.package_group_candidates.saturating_add(1);
+                        } else if !required.contains_key(&key)
+                            && selected.get(&key).is_some_and(Option::is_none)
+                            && let Some(request) = original_hints.get(&key)
+                        {
+                            self.record_file_absent(request, LookupRole::Hint, "distribution");
                         }
                     }
                 }
                 Err(NativeRunError::Cancelled) => return Err(NativeRunError::Cancelled),
                 Err(_) => {}
+            }
+        }
+        // Inline TLPDB-derived dependencies are already authenticated by the
+        // packed shard.  Reuse their metadata directly; do not fetch an
+        // arbitrary locality shard just to discover package peers.
+        if !batch.prefetch_hints.is_empty() {
+            let dependency_sources = required
+                .values()
+                .chain(hints.values())
+                .flat_map(|entry| entry.dependencies.iter())
+                .cloned()
+                .collect::<Vec<_>>();
+            for dependency in dependency_sources {
+                if !required.contains_key(&dependency.key) {
+                    hints.entry(dependency.key.clone()).or_insert_with(|| {
+                        SelectedDistributionRecord {
+                            virtual_path: dependency.virtual_path.clone(),
+                            object: dependency.object.clone(),
+                            dependencies: Vec::new(),
+                        }
+                    });
+                    telemetry.package_group_candidates =
+                        telemetry.package_group_candidates.saturating_add(1);
+                }
             }
         }
         let required_fetches = required
@@ -1392,27 +1643,26 @@ impl DistributionResolver {
             })
             .collect::<Vec<_>>();
         let limits = crate::SessionLimits::default();
-        let mut hinted_files = required_fetches.len();
-        let mut hinted_bytes = required_fetches
-            .iter()
-            .map(|request| request.object.bytes)
-            .sum::<u64>();
         let mut hint_fetches = Vec::new();
-        for (key, entry) in hints.iter().filter(|(key, _)| !required.contains_key(*key)) {
-            let Some(next_files) = hinted_files.checked_add(1) else {
-                break;
-            };
-            let Some(next_bytes) = hinted_bytes.checked_add(entry.object.bytes) else {
-                break;
-            };
-            if next_files > limits.resolved_files || next_bytes > limits.cached_file_bytes as u64 {
-                continue;
-            }
-            hinted_files = next_files;
-            hinted_bytes = next_bytes;
-            hint_fetches.push(FetchRequest {
-                request_key: key.clone(),
+        let hint_candidates = hints
+            .iter()
+            .filter(|(key, _)| !required.contains_key(*key))
+            .map(|(key, entry)| umber_distribution::PrefetchCandidate {
+                key: key.clone(),
                 object: entry.object.clone(),
+                class: umber_distribution::PrefetchClass::for_key(key),
+                required: false,
+            })
+            .collect::<Vec<_>>();
+        let selected_hints = umber_distribution::select_prefetch_group(
+            [],
+            hint_candidates,
+            umber_distribution::PrefetchBudget::default(),
+        );
+        for candidate in selected_hints.hints {
+            hint_fetches.push(FetchRequest {
+                request_key: candidate.key,
+                object: candidate.object,
                 max_bytes: limits.one_file_bytes as u64,
             });
         }
@@ -1467,12 +1717,25 @@ impl DistributionResolver {
                 .content_hash_time
                 .saturating_add(hash_started.elapsed());
             for key in keys {
-                responses.push(ResourceResponse::File(ResolvedFile {
-                    request: key,
+                let request = key.clone();
+                let file = ResolvedFile {
+                    request: key.key().clone(),
                     expected_digest: Some(expected_digest),
                     virtual_path: entry.virtual_path.clone(),
                     bytes: data.clone(),
-                }));
+                };
+                telemetry.demand_bytes = telemetry
+                    .demand_bytes
+                    .saturating_add(data.len() as u64);
+                self.record_readiness(telemetry, umber_distribution::Readiness::Ready);
+                self.record_file_resolved(
+                    &request,
+                    lookup_role(batch, &request, false),
+                    "distribution",
+                    &file,
+                    Some(&entry.object),
+                );
+                responses.push(ResourceResponse::File(file));
             }
         }
         for (manifest_key, key) in original_hints {
@@ -1487,12 +1750,25 @@ impl DistributionResolver {
             telemetry.content_hash_time = telemetry
                 .content_hash_time
                 .saturating_add(hash_started.elapsed());
-            responses.push(ResourceResponse::File(ResolvedFile {
-                request: key,
+            let request = key.clone();
+            let file = ResolvedFile {
+                request: key.key().clone(),
                 expected_digest: Some(expected_digest),
                 virtual_path: entry.virtual_path.clone(),
                 bytes: data.into(),
-            }));
+            };
+            telemetry.prefetch_bytes = telemetry
+                .prefetch_bytes
+                .saturating_add(file.bytes.len() as u64);
+            self.record_readiness(telemetry, umber_distribution::Readiness::Ready);
+            self.record_file_resolved(
+                &request,
+                LookupRole::Hint,
+                "distribution",
+                &file,
+                Some(&entry.object),
+            );
+            responses.push(ResourceResponse::File(file));
         }
         drop(hints);
         telemetry.response_build_time = telemetry.response_build_time.saturating_add(
@@ -1525,6 +1801,10 @@ impl DistributionResolver {
                     .expect("verified selection covers every requested key")
                 {
                     Some(entry) => {
+                        self.record_readiness(
+                            telemetry,
+                            umber_distribution::Readiness::ExistsNotReady,
+                        );
                         required.insert(key, entry.clone());
                     }
                     None => misses.push(key),
@@ -1950,6 +2230,14 @@ fn selected_records(
                     .map(|file| SelectedDistributionRecord {
                         virtual_path: file.virtual_path().to_owned(),
                         object: file.object(),
+                        dependencies: file
+                            .dependencies()
+                            .map(|dependency| SelectedDistributionDependency {
+                                key: dependency.key().to_owned(),
+                                virtual_path: dependency.virtual_path().to_owned(),
+                                object: dependency.object(),
+                            })
+                            .collect(),
                     }),
             )
         })
@@ -1997,6 +2285,21 @@ fn distribution_file_key(
     DistributionFileRequestKey::new(kind, request.key().name())
         .map(Some)
         .map_err(|error| NativeRunError::Selection(error.to_string()))
+}
+
+fn lookup_role(batch: &NeedResources, request: &FileRequest, hint: bool) -> LookupRole {
+    if hint {
+        return LookupRole::Hint;
+    }
+    if batch
+        .required
+        .iter()
+        .any(|candidate| matches!(candidate, ResourceRequest::File(value) if value == request))
+    {
+        LookupRole::Required
+    } else {
+        LookupRole::Probe
+    }
 }
 
 /// Web2C `tex.ch` [29.537] asks Kpathsea to try both an input name as written

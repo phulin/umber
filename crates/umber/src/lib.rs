@@ -38,6 +38,7 @@ mod memory_output;
 mod pdf_import;
 mod pdf_output;
 mod pdftex;
+pub mod prefetch;
 #[cfg(not(target_arch = "wasm32"))]
 mod prepared_format;
 mod tex_fixed_point;
