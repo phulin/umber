@@ -1466,6 +1466,116 @@ fn number_integer_expression_uses_the_shared_expression_lane() {
 }
 
 #[test]
+fn integer_expression_factors_admit_typed_internal_values() {
+    crate::test_harness::with_universe(|universe| {
+        let the = install_static(
+            universe,
+            "the",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::The),
+        );
+        let numexpr = install_static(
+            universe,
+            "numexpr",
+            Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::NumExpr),
+        );
+        let count = install_static(
+            universe,
+            "count",
+            Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::Count),
+        );
+        let time = install_static(universe, "time", Meaning::IntParam(IntParam::TIME.raw()));
+        let year = install_static(universe, "year", Meaning::IntParam(IntParam::YEAR.raw()));
+        let relax = install_static(universe, "relax", Meaning::Relax);
+        universe
+            .assign_int_param(IntParam::TIME, 23, AssignmentScope::Global)
+            .expect("time parameter assignment");
+        universe
+            .assign_int_param(IntParam::YEAR, 2026, AssignmentScope::Global)
+            .expect("year parameter assignment");
+        universe
+            .assign_count(0, 17, AssignmentScope::Global)
+            .expect("count register assignment");
+        let space = Token::Char {
+            ch: ' ',
+            cat: Catcode::Space,
+        };
+
+        let cases = [
+            (vec![the, numexpr, time, relax, letter('X')], "23X"),
+            (
+                vec![
+                    the,
+                    numexpr,
+                    count,
+                    other('0'),
+                    other('+'),
+                    other('1'),
+                    relax,
+                    letter('X'),
+                ],
+                "18X",
+            ),
+            (vec![the, numexpr, year, relax, letter('X')], "2026X"),
+            (
+                vec![
+                    the,
+                    numexpr,
+                    time,
+                    space,
+                    other('+'),
+                    space,
+                    other('1'),
+                    relax,
+                    letter('X'),
+                ],
+                "24X",
+            ),
+            (
+                vec![
+                    the,
+                    numexpr,
+                    other('1'),
+                    space,
+                    other('2'),
+                    other('+'),
+                    other('3'),
+                    letter('X'),
+                ],
+                "12+3X",
+            ),
+            (
+                vec![
+                    the,
+                    numexpr,
+                    other('-'),
+                    other('-'),
+                    time,
+                    other('*'),
+                    other('2'),
+                    other('+'),
+                    other('-'),
+                    count,
+                    other('0'),
+                    relax,
+                    letter('X'),
+                ],
+                "29X",
+            ),
+            (vec![the, numexpr, letter('X')], "0X"),
+        ];
+        for (input, expected) in cases {
+            let mut command = CommandState::default();
+            let _operation = command.begin_attempt_operation();
+            crate::test_harness::push(&mut command, input);
+            assert_eq!(
+                collect_expanded_characters(universe, &mut command),
+                expected
+            );
+        }
+    });
+}
+
+#[test]
 fn number_dimension_expression_uses_the_shared_dimension_lane() {
     crate::test_harness::with_universe(|universe| {
         let number = install_static(

@@ -15,6 +15,61 @@ use super::expand_render::{
 };
 use super::{CommandProcessor, DeliveryStatus};
 
+enum CompactRegisterIndexStep {
+    Continue {
+        negative: bool,
+        value: i64,
+        seen_digit: bool,
+    },
+    Invalid,
+    Complete {
+        negative: bool,
+        value: i64,
+    },
+}
+
+fn compact_register_index_step(
+    character: Option<char>,
+    is_space: bool,
+    negative: bool,
+    value: i64,
+    seen_digit: bool,
+) -> CompactRegisterIndexStep {
+    if is_space && !seen_digit {
+        return CompactRegisterIndexStep::Continue {
+            negative,
+            value,
+            seen_digit,
+        };
+    }
+    if matches!(character, Some('+') | Some('-')) && !seen_digit {
+        return CompactRegisterIndexStep::Continue {
+            negative: character == Some('-'),
+            value,
+            seen_digit,
+        };
+    }
+    if let Some(digit) = character
+        .filter(|character| character.is_ascii_digit())
+        .map(|character| i64::from(character as u8 - b'0'))
+    {
+        return CompactRegisterIndexStep::Continue {
+            negative,
+            value: value
+                .checked_mul(10)
+                .and_then(|value| value.checked_add(digit))
+                .unwrap_or(i64::from(i32::MAX))
+                .min(i64::from(i32::MAX)),
+            seen_digit: true,
+        };
+    }
+    if !seen_digit {
+        CompactRegisterIndexStep::Invalid
+    } else {
+        CompactRegisterIndexStep::Complete { negative, value }
+    }
+}
+
 impl<G> CommandProcessor<'_, '_, G> {
     /// Advances the compact integer-expression form used by `\the`.  The
     /// ordinary expression scanner already has an explicit parenthesis stack,
@@ -43,6 +98,8 @@ impl<G> CommandProcessor<'_, '_, G> {
             negative,
             value,
             seen_digit,
+            factor_ready,
+            factor_spaced,
         } = control.phase
         else {
             return Err(CommandError::input_invariant());
@@ -65,12 +122,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .saturating_add(digit)
                 .min(i64::from(i32::MAX))
         };
-        let apply_term = |term: i64, operator: u8, factor: i64| match operator {
-            1 => term.saturating_mul(factor),
-            2 if factor != 0 => term / factor,
-            2 => 0,
-            _ => factor,
-        };
         let finish = |this: &mut Self, expression: i64, term: i64| {
             let result = expression.saturating_add(i64::from(expression_sign).saturating_mul(term));
             let result = result.clamp(i64::from(i32::MIN), i64::from(i32::MAX));
@@ -82,28 +133,109 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .map_err(crate::scan_toks::scratch_command_error)?;
             this.expand_the_value(opener, crate::InternalValue::Integer(result))
         };
-        let reset_factor = |this: &mut Self,
-                            expression,
-                            expression_sign,
-                            term,
-                            term_operator,
-                            term_active|
-         -> Result<(), CommandError> {
-            this.command
-                .scratch
-                .set_the_phase(ThePhase::Expression {
+        // Internal values are already complete factors.  Keep that fact in
+        // the compact state so a following sign is an expression operator,
+        // while a following digit terminates the expression and is restored
+        // by the common factor boundary below.
+        if factor_spaced {
+            if is_space {
+                return Ok(false);
+            }
+            let factor = if negative {
+                value.saturating_neg()
+            } else {
+                value
+            };
+            return self.finish_the_expression_factor(
+                target,
+                expression,
+                expression_sign,
+                term,
+                term_operator,
+                term_active,
+                factor,
+                command,
+                is_relax,
+            );
+        }
+        if factor_ready {
+            if is_space {
+                self.command.scratch.set_the_phase(ThePhase::Expression {
                     target,
                     expression,
                     expression_sign,
                     term,
                     term_operator,
                     term_active,
-                    negative: false,
-                    value: 0,
-                    seen_digit: false,
-                })
-                .map_err(crate::scan_toks::scratch_command_error)
-        };
+                    negative,
+                    value,
+                    seen_digit,
+                    factor_ready,
+                    factor_spaced: true,
+                })?;
+                return Ok(false);
+            }
+            let factor = if negative {
+                value.saturating_neg()
+            } else {
+                value
+            };
+            return self.finish_the_expression_factor(
+                target,
+                expression,
+                expression_sign,
+                term,
+                term_operator,
+                term_active,
+                factor,
+                command,
+                is_relax,
+            );
+        }
+
+        // §413 admits every direct internal meaning at the requested
+        // integer level.  The same typed lowering helper used by `\number`
+        // applies §429 coercion and the accumulated factor polarity here;
+        // only selector-bearing register primitives need the compact child
+        // phase below.
+        if !seen_digit && let ResolvedMeaning::Static(meaning) = command.resolved_meaning() {
+            if Self::compact_expression_register_target(meaning) {
+                self.command
+                    .scratch
+                    .set_the_phase(ThePhase::ExpressionRegisterIndex {
+                        target: meaning,
+                        expression,
+                        expression_sign,
+                        term,
+                        term_operator,
+                        term_active,
+                        outer_negative: negative,
+                        negative: false,
+                        value: 0,
+                        seen_digit: false,
+                    })?;
+                return Ok(false);
+            }
+            if let Some(value) = self.scan_number_direct_value(meaning, negative)? {
+                let value = i64::from(value);
+                let negative = value.is_negative();
+                let value = value.saturating_abs();
+                self.command.scratch.set_the_phase(ThePhase::Expression {
+                    target,
+                    expression,
+                    expression_sign,
+                    term,
+                    term_operator,
+                    term_active,
+                    negative,
+                    value,
+                    seen_digit: true,
+                    factor_ready: true,
+                    factor_spaced: false,
+                })?;
+                return Ok(false);
+            }
+        }
 
         if is_space && !seen_digit {
             return Ok(false);
@@ -116,9 +248,15 @@ impl<G> CommandProcessor<'_, '_, G> {
                 term,
                 term_operator,
                 term_active,
-                negative: character == Some('-'),
+                negative: if character == Some('-') {
+                    !negative
+                } else {
+                    negative
+                },
                 value,
                 seen_digit,
+                factor_ready: false,
+                factor_spaced: false,
             })?;
             return Ok(false);
         }
@@ -133,6 +271,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                 negative,
                 value: accumulate(value, digit),
                 seen_digit: true,
+                factor_ready: false,
+                factor_spaced: false,
             })?;
             return Ok(false);
         }
@@ -146,49 +286,254 @@ impl<G> CommandProcessor<'_, '_, G> {
             finish(self, expression, if term_active { term } else { 0 })?;
             return Ok(true);
         }
+        if is_space {
+            // Spaces between a completed factor and its operator are scanner
+            // separators.  Consume them while retaining the factor state.
+            self.command.scratch.set_the_phase(ThePhase::Expression {
+                target,
+                expression,
+                expression_sign,
+                term,
+                term_operator,
+                term_active,
+                negative,
+                value,
+                seen_digit,
+                factor_ready,
+                factor_spaced: true,
+            })?;
+            return Ok(false);
+        }
         let factor = if negative {
             value.saturating_neg()
         } else {
             value
         };
+        self.finish_the_expression_factor(
+            target,
+            expression,
+            expression_sign,
+            term,
+            term_operator,
+            term_active,
+            factor,
+            command,
+            is_relax,
+        )
+    }
+
+    /// Consumes the decimal selector following a compact register factor,
+    /// then hands the resulting typed value back to the ordinary expression
+    /// factor continuation.  The selector is deliberately the only extra
+    /// state: value admission itself remains `scan_number_register_value`,
+    /// shared with synchronous `\number` conversion.
+    pub(super) fn advance_the_expression_register_continuation(
+        &mut self,
+        command: HotCommand<G>,
+    ) -> Result<bool, CommandError> {
+        use crate::expansion_work::control::ThePhase;
+
+        let control = self
+            .command
+            .scratch
+            .top_the_control()
+            .map_err(crate::scan_toks::scratch_command_error)?
+            .ok_or_else(CommandError::input_invariant)?;
+        let ThePhase::ExpressionRegisterIndex {
+            target,
+            expression,
+            expression_sign,
+            term,
+            term_operator,
+            term_active,
+            outer_negative,
+            negative,
+            value,
+            seen_digit,
+        } = control.phase
+        else {
+            return Err(CommandError::input_invariant());
+        };
+        let character = command.character_value();
+        let is_space = command.character_catcode() == Some(tex_state::token::Catcode::Space);
+        match compact_register_index_step(character, is_space, negative, value, seen_digit) {
+            CompactRegisterIndexStep::Continue {
+                negative,
+                value,
+                seen_digit,
+            } => {
+                self.command
+                    .scratch
+                    .set_the_phase(ThePhase::ExpressionRegisterIndex {
+                        target,
+                        expression,
+                        expression_sign,
+                        term,
+                        term_operator,
+                        term_active,
+                        outer_negative,
+                        negative,
+                        value,
+                        seen_digit,
+                    })?;
+                return Ok(false);
+            }
+            CompactRegisterIndexStep::Invalid => {
+                let site = self.capture_hot_diagnostic_site(&command);
+                self.back_input(command.materialize())?;
+                self.missing_number_error_at(Some(site))?;
+                self.command.scratch.set_the_phase(ThePhase::Expression {
+                    target: Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NumExpr),
+                    expression,
+                    expression_sign,
+                    term,
+                    term_operator,
+                    term_active,
+                    negative: false,
+                    value: 0,
+                    seen_digit: true,
+                    factor_ready: true,
+                    factor_spaced: false,
+                })?;
+                Ok(false)
+            }
+            CompactRegisterIndexStep::Complete { negative, value } => {
+                let value = if negative {
+                    value.saturating_neg()
+                } else {
+                    value
+                };
+                let limit = if self.command.profile().capabilities().supports_etex() {
+                    32_767
+                } else {
+                    i64::from(u8::MAX)
+                };
+                let index = u16::try_from(value.clamp(0, limit)).unwrap_or(0);
+                let number = self
+                    .scan_number_register_value(target, index, outer_negative)?
+                    .unwrap_or(0);
+                let number = i64::from(number);
+                let negative = number.is_negative();
+                let value = number.saturating_abs();
+                self.command.scratch.set_the_phase(ThePhase::Expression {
+                    target: Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NumExpr),
+                    expression,
+                    expression_sign,
+                    term,
+                    term_operator,
+                    term_active,
+                    negative,
+                    value,
+                    seen_digit: true,
+                    factor_ready: true,
+                    factor_spaced: is_space,
+                })?;
+                if is_space {
+                    return Ok(false);
+                }
+                self.advance_the_expression_continuation(command)
+            }
+        }
+    }
+
+    fn finish_the_expression_factor(
+        &mut self,
+        target: Meaning,
+        expression: i64,
+        expression_sign: i8,
+        term: i64,
+        term_operator: u8,
+        term_active: bool,
+        factor: i64,
+        command: HotCommand<G>,
+        is_relax: bool,
+    ) -> Result<bool, CommandError> {
+        use crate::expansion_work::control::ThePhase;
+
         let term = if term_active {
-            apply_term(term, term_operator, factor)
+            match term_operator {
+                1 => term.saturating_mul(factor),
+                2 if factor != 0 => term / factor,
+                2 => 0,
+                _ => factor,
+            }
         } else {
             factor
         };
-        if character == Some('*') || character == Some('/') {
-            reset_factor(
-                self,
+        if command.character_value() == Some('*') || command.character_value() == Some('/') {
+            self.command.scratch.set_the_phase(ThePhase::Expression {
+                target,
                 expression,
                 expression_sign,
                 term,
-                if character == Some('*') { 1 } else { 2 },
-                true,
-            )?;
+                term_operator: if command.character_value() == Some('*') {
+                    1
+                } else {
+                    2
+                },
+                term_active: true,
+                negative: false,
+                value: 0,
+                seen_digit: false,
+                factor_ready: false,
+                factor_spaced: false,
+            })?;
             return Ok(false);
         }
-        if character == Some('+') || character == Some('-') {
+        if command.character_value() == Some('+') || command.character_value() == Some('-') {
             let expression =
                 expression.saturating_add(i64::from(expression_sign).saturating_mul(term));
-            reset_factor(
-                self,
+            self.command.scratch.set_the_phase(ThePhase::Expression {
+                target,
                 expression,
-                if character == Some('+') { 1 } else { -1 },
-                0,
-                0,
-                false,
-            )?;
+                expression_sign: if command.character_value() == Some('+') {
+                    1
+                } else {
+                    -1
+                },
+                term: 0,
+                term_operator: 0,
+                term_active: false,
+                negative: false,
+                value: 0,
+                seen_digit: false,
+                factor_ready: false,
+                factor_spaced: false,
+            })?;
             return Ok(false);
         }
-        if !is_relax && seen_digit {
+        if !is_relax {
             self.back_input(command.materialize())?;
         }
-        finish(self, expression, term)?;
+        let result = expression.saturating_add(i64::from(expression_sign).saturating_mul(term));
+        let result = result.clamp(i64::from(i32::MIN), i64::from(i32::MAX));
+        let result = i32::try_from(result).expect("clamped expression fits i32");
+        let opener = self
+            .command
+            .scratch
+            .pop_the_control()
+            .map_err(crate::scan_toks::scratch_command_error)?;
+        self.expand_the_value(opener, crate::InternalValue::Integer(result))?;
         Ok(true)
     }
 
     pub(super) fn compact_the_expression_target(meaning: Meaning) -> bool {
         meaning == Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NumExpr)
+    }
+
+    fn compact_expression_register_target(meaning: Meaning) -> bool {
+        matches!(
+            meaning,
+            Meaning::UnexpandablePrimitive(
+                UnexpandablePrimitive::Count
+                    | UnexpandablePrimitive::Dimen
+                    | UnexpandablePrimitive::Skip
+                    | UnexpandablePrimitive::Muskip
+                    | UnexpandablePrimitive::Wd
+                    | UnexpandablePrimitive::Ht
+                    | UnexpandablePrimitive::Dp
+            )
+        )
     }
 
     /// Advances the common literal `\the\dimexpr` form.  The full e-TeX
@@ -534,16 +879,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         };
         let character = command.character_value();
         let is_space = command.character_catcode() == Some(tex_state::token::Catcode::Space);
-        let digit = character
-            .filter(|character| character.is_ascii_digit())
-            .map(|character| i64::from(character as u8 - b'0'));
-        let accumulate = |value: i64, digit: i64| {
-            value
-                .checked_mul(10)
-                .and_then(|value| value.checked_add(digit))
-                .unwrap_or(i64::from(i32::MAX))
-                .min(i64::from(i32::MAX))
-        };
         let finish = |this: &mut Self, value: i64, negative: bool| -> Result<(), CommandError> {
             let value = value.min(i64::from(i32::MAX));
             let value = if negative {
@@ -573,8 +908,12 @@ impl<G> CommandProcessor<'_, '_, G> {
             this.expand_the_value(opener, value)
         };
 
-        match character {
-            _ if is_space && !seen_digit => {
+        match compact_register_index_step(character, is_space, negative, value, seen_digit) {
+            CompactRegisterIndexStep::Continue {
+                negative,
+                value,
+                seen_digit,
+            } => {
                 self.command.scratch.set_the_phase(ThePhase::Index {
                     target,
                     negative,
@@ -583,32 +922,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                 })?;
                 Ok(false)
             }
-            Some('+') | Some('-') if !seen_digit => {
-                self.command.scratch.set_the_phase(ThePhase::Index {
-                    target,
-                    negative: character == Some('-'),
-                    value,
-                    seen_digit,
-                })?;
-                Ok(false)
-            }
-            Some(_) if digit.is_some() => {
-                self.command.scratch.set_the_phase(ThePhase::Index {
-                    target,
-                    negative,
-                    value: accumulate(value, digit.expect("digit matched")),
-                    seen_digit: true,
-                })?;
-                Ok(false)
-            }
-            _ if !seen_digit => {
+            CompactRegisterIndexStep::Invalid => {
                 let site = self.capture_hot_diagnostic_site(&command);
                 self.back_input(command.materialize())?;
                 self.missing_number_error_at(Some(site))?;
                 finish(self, 0, false)?;
                 Ok(true)
             }
-            _ => {
+            CompactRegisterIndexStep::Complete { negative, value } => {
                 if !is_space {
                     self.back_input(command.materialize())?;
                 }
@@ -1156,6 +1477,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                         negative: outer_negative,
                         value: 0,
                         seen_digit: false,
+                        factor_ready: false,
+                        factor_spaced: false,
                     },
                 )?;
                 return Ok(false);

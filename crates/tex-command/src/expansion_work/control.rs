@@ -139,6 +139,31 @@ pub(crate) enum ThePhase {
         negative: bool,
         value: i64,
         seen_digit: bool,
+        /// A typed internal value has completed its factor before the next
+        /// expanded token arrives.  Character digits keep `false` until the
+        /// continuation sees their terminating operator; internal values
+        /// need this bit so a following sign is an expression operator, not
+        /// another leading sign.
+        factor_ready: bool,
+        /// At least one space followed a completed factor.  A subsequent
+        /// operator still belongs to the expression; a digit or other token
+        /// terminates the factor and must be backed up instead of appended.
+        factor_spaced: bool,
+    },
+    /// Selector scan for a register used as a `\numexpr` factor.  The
+    /// surrounding expression remains in this one compact control record
+    /// while the selector consumes expanded signs/digits.
+    ExpressionRegisterIndex {
+        target: Meaning,
+        expression: i64,
+        expression_sign: i8,
+        term: i64,
+        term_operator: u8,
+        term_active: bool,
+        outer_negative: bool,
+        negative: bool,
+        value: i64,
+        seen_digit: bool,
     },
     DimensionExpression {
         target: Meaning,

@@ -2117,6 +2117,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                     ExpandedCommandAction::Expand(_),
                 ) => {}
                 (
+                    crate::expansion_work::control::ThePhase::ExpressionRegisterIndex { .. },
+                    ExpandedCommandAction::Expand(_),
+                ) => {}
+                (
                     crate::expansion_work::control::ThePhase::DimensionExpression { .. },
                     ExpandedCommandAction::Expand(_),
                 ) => {}
@@ -2134,6 +2138,15 @@ impl<G> CommandProcessor<'_, '_, G> {
                     ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate,
                 ) => {
                     if self.advance_the_expression_continuation(*command)? {
+                        return Ok(ExpandedHotDispatch::Continue);
+                    }
+                    return Ok(ExpandedHotDispatch::Continue);
+                }
+                (
+                    crate::expansion_work::control::ThePhase::ExpressionRegisterIndex { .. },
+                    ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate,
+                ) => {
+                    if self.advance_the_expression_register_continuation(*command)? {
                         return Ok(ExpandedHotDispatch::Continue);
                     }
                     return Ok(ExpandedHotDispatch::Continue);
@@ -2167,6 +2180,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 negative: false,
                                 value: 0,
                                 seen_digit: false,
+                                factor_ready: false,
+                                factor_spaced: false,
                             },
                         )?;
                         return Ok(ExpandedHotDispatch::Continue);
