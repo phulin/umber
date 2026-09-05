@@ -2824,22 +2824,14 @@ Expansion may:
 There are no `Dispatch::Push` or `Dispatch::PushTransient` values that mirror
 an input level and are immediately translated back into mutation.
 
-`ExecutionScratch` also contains the production `ExpansionWork` suspension
-owner. Its fixed chunks provide stable parked-command slots, compact
-variant-specific controls, a chunked name lane, complete logical marks, and
-32-byte move-only owner/ABA root keys. Each command and control coordinate is
-stamped with the issuing work owner before lane access, while a name coordinate
-carries that owner and the live root serial so abort/reuse cannot alias new
-bytes at the same offset. It is not a second expanded-delivery interpreter:
-the ordinary synchronous path above consumes its caller-owned `CurrentCommand`
-directly and enters no work lane. Only an actual immutable-resource suspension
-moves that sole owner into a stable slot. Main control retains only the root
-key; retry consumes the parked command once into its caller destination, and a
-resuspension parks that same owner again. Completion or abort truncates the
-logical lanes to the invocation mark while retaining only reusable
-generation-local capacity. The reviewed structural controls and name lane
-remain staged for separate `expandafter`, `csname`, `scan_toks`, and PDF
-string-compare migrations.
+`ExecutionScratch` owns reusable macro-argument and bounded expression storage,
+but no expansion-work, parent-control, or parked-command lane. The ordinary
+synchronous path keeps its compact token/meaning pair in the caller-owned
+loop. Structural controls, scalar/conditional operands, `scan_toks`, and PDF
+string collectors use their existing scanner grammars and call-local state. A
+resource miss unwinds those calls and returns a typed need; the host restores a
+full checkpoint and enters the same ordinary loop again. No command, control,
+name accumulator, or scanner phase is retained at the resource boundary.
 
 Expandable primitive dispatch is a statically compiled match over a closed
 opcode enum. Pure heavyweight helpers such as regex, MD5, or numeric formatting
@@ -2849,7 +2841,7 @@ The physical implementation follows that semantic boundary without creating
 new runtime owners. `processor/expand.rs` owns the destination-directed driver,
 one borrowed classification that selects the exact static dispatch and hands
 that non-optional scalar directly to the shared expansion body, fuel and trace
-order, and typed continuation transitions. Exact `expand` callers classify in
+order, and typed delivery statuses. Exact `expand` callers classify in
 their wrapper; an already-classified expanded delivery is never wrapped and
 rediscriminated at the call boundary. Structural, source,
 TeX/e-TeX conversion, pdfTeX state/object,
@@ -3058,7 +3050,7 @@ collector and returns a cold need; the host later restores a full checkpoint.
 This keeps ordinary collection destination-directed without a returned-command
 handoff, a heap indirection, or generation-long retention.
 
-One scanner invocation likewise owns one stationary `PendingScanToks` row
+One scanner invocation likewise owns one stationary replacement-progress row
 while its ordinary call is active. Its opening phase installs
 `ReplacementProgress` once, and token delivery mutates the brace depth,
 parameter candidate, and expansion operand in place. Synchronous success and

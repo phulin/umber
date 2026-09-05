@@ -67,27 +67,23 @@ collector (see `src/conditionals.rs`).
   truncates to its absolute mark and returns suffix chunks to a reusable high
   water. A pending child can inherit a retiring parent's earlier reclaim mark,
   and its unpublished suffix may rebase only after the last active ancestor
-  retires. Activations never own a heap buffer or arena scope. Suspended
-  `scan_toks` owners occupy their own recyclable typed row lane because they
-  carry their exact destination coordinate and attempt scope; an expanded
-  definition retains its transactional build key, while a raw definition is
-  synchronous and never enters the lane. Every other typed continuation remains
-  in the bounded heterogeneous continuation lane.
+  retires. Activations never own a heap buffer or arena scope. `scan_toks`
+  owners and definition writers are call-local synchronous state; a resource
+  miss unwinds them and the host replays a full checkpoint. Only semantic
+  input/replay stacks and bounded expression storage remain in engine state.
 - `src/scanner_kernel.rs`: stack-local non-suspending scanner cursor shared by
   macro arguments and `scan_toks`. It keeps brace and first-token facts beside
   the caller-owned output sink and settles already-admitted plain input runs
   once; only a real external suspension promotes the surrounding scanner state
   into retained scratch.
-- `src/expansion_work.rs`, `src/expansion_work/control.rs`, and
-  `src/expansion_work/tests.rs`: current-generation parked-expansion owner used
-  only after a real immutable-resource suspension. Fixed command and typed
-  control chunks keep stable addresses; a suspended control alone retains its
-  enclosing delivery's has-expanded bit. One chunked name lane and complete
-  logical marks support exact abort and reuse; move-only owner/serial keys
-  reject foreign and ABA-stale access. Ordinary synchronous expansion stays in
-  the caller-owned command slot. Structural `expandafter`, `csname`, name-lane,
-  `scan_toks` wrapper, and PDF string-compare migrations remain separate
-  reviewed cutovers.
+- Ordinary expansion has no parked-expansion owner. `get_x_token` and nested
+  scanner calls keep one compact hot token/meaning pair through macro chains,
+  materializing `CurrentCommand` only at a primitive scanner, diagnostic, or
+  observation boundary. Structural `expandafter`/`csname`, scalar and
+  conditional operands, `scan_toks`, and PDF string collectors use their
+  existing synchronous scanner grammars and Rust call-local state. A resource
+  miss unwinds those calls and the host replays an eligible full checkpoint;
+  no scanner, caller, active-control, or parent frame is serialized or retained.
 - `src/host.rs`: borrow-scoped, nonserializable host-capability boundary.
   Long-lived immutable resources remain in `CommandHostCapabilities`; live
   executor mode, auxiliary, and effective-tail facts cross the synchronous
@@ -139,8 +135,10 @@ collector (see `src/conditionals.rs`).
   the one macro/font owner without first decoding `ResolvedMeaning`; the
   command class and primitive operand are directly branchable. The
   frame-owned expanded loop retains only this pair through synchronous macro
-  chains and materializes `CurrentCommand` at execution/scanner, backup,
-  observation/diagnosis, suspension, and exceptional recovery boundaries.
+  chains and materializes `CurrentCommand` at execution/scanner,
+  backup, observation/diagnosis, and exceptional recovery boundaries. Resource
+  misses unwind the call tree for host-owned full-checkpoint replay rather than
+  retaining a suspension command.
   Exact source geometry remains behind the spelling's
   packed origin and is materialized only by cold processor consumers; the hot
   value retains only source-role policy and direct-line facts. The executor then borrows the one caller-owned value through preflight and scanning,
@@ -152,32 +150,16 @@ collector (see `src/conditionals.rs`).
   acquisitions, whole-meaning/command copies, and warmed allocations without
   adding production state or an alternate delivery path.
 - `src/processor/expand.rs`: canonical destination-directed command-delivery
-  state machine and static primitive dispatch. Its singular entry admits an
-  optional rich boundary value once, then keeps one direct mutable hot-command
-  owner across ordinary fetch, settlement, classification, macro expansion,
-  and return. Raw consumers return
-  after settlement; expanded consumers classify and dispatch in that same
-  loop. Only cold
-  end/replay/failure exits clear the slot, and only genuine suspension replaces
-  and parks its command owner. There is no ordinary vacancy probe, placeholder
-  reinstall, repeated `Option` recovery, or success-path move. Only their cold
-  failure and cold-transition helpers construct `CommandError`. Expanded
-  continuation restoration likewise lives in a cold helper reached only for a
-  genuinely parked expansion. It also includes one
-  main-control preflight entry that raw-fetches into the caller's destination,
-  classifies that resident command once, publishes an ordinary unexpandable
-  result directly, and passes an expandable command's exact dispatch directly
-  into expansion without an optional classification carrier. Exact `expand`
-  callers classify in their wrapper; the shared dispatch body never repeats
-  that decision. It continues through expansion in place only when needed.
-  Undefined commands are reported and discarded before the following command
-  returns to the executor. The ordinary driver owns one live
-  current command plus one delivery-local has-expanded bit and lends the
-  command through macro and ranked primitive expansion;
-  it moves that value into continuation state only after a typed immutable-host
-  suspension, and a resumed primitive retains §367's already-emitted trace
-  instead of printing the command twice. The same rule covers the typed `\expandafter` operand and
-  `\csname` accumulator frames.
+  loop and static primitive dispatch. Its singular entry keeps one compact hot
+  token/meaning pair across fetch, settlement, classification, macro expansion,
+  and return. Raw consumers return after settlement; expanded consumers classify
+  and dispatch in that same iterative loop. Macro chains never materialize a
+  rich command. Primitive scanners and diagnostics materialize one rich command
+  at their real semantic boundary, while ordinary `Result` unwinding hands
+  resource misses to host-owned full-checkpoint replay. There is no expansion
+  parent/active-control dispatcher, parked scanner, or same-executor resume API.
+  The main-control preflight entry raw-fetches into the caller's destination,
+  classifies once, and publishes an ordinary unexpandable result directly.
 - `src/processor/expand_structural.rs`, `src/processor/expand_input.rs`, and
   `src/processor/expand_convert.rs`: direct/static structural, source, and
   TeX/e-TeX conversion primitive families. They borrow the one processor and
