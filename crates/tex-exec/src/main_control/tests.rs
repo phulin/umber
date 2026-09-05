@@ -378,37 +378,27 @@ fn tracked_advance_abandons_before_resource_suspension_rollback() {
 }
 
 #[test]
-fn math_choice_nested_font_definition_suspends_and_resumes_once() {
+fn math_choice_nested_font_definition_executes_with_preloaded_font() {
     // TeX82 §§1172/1174 executes each math-choice branch through ordinary
     // main control, and §1270 dispatches assignments in that nested episode.
-    // A missing TFM is therefore a typed host suspension of the enclosing
-    // operation, not a terminal execution error. The increment immediately
-    // before the font definition proves rollback and retry do not duplicate
-    // a nested side effect.
+    // The increment immediately before the nested definition proves that the
+    // nested branch remains an ordinary execution context. Resource replay
+    // itself is owned by the incremental session tests; this direct semantic
+    // test admits the fixture before execution.
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);
         register_cmr10_as(&mut control, stores, "cmr10.tfm");
+        register_cmr10_as(&mut control, stores, "cmti8.tfm");
         register_source(
             &mut control,
             br"\font\body=cmr10 \body $\mathchoice{\global\advance\count0 by1 \font\nested=cmti8 A}{B}{C}{D}$\global\count1=23\end",
         );
 
-        let request = loop {
-            match control.advance_episode(stores) {
-                Ok(StepResult::Suspended(ResourceNeed::Font { request })) => break request,
-                Ok(StepResult::Progress(_)) => {}
-                other => panic!("unexpected nested font step: {other:?}"),
-            }
-        };
-        assert_eq!(request.name, "cmti8");
-        assert_eq!(stores.count(0).expect("count register"), 0);
-
-        register_cmr10_as(&mut control, stores, "cmti8.tfm");
         run_to_end(&mut control, stores);
 
         assert_eq!(stores.count(0).expect("count register"), 1);
         assert_eq!(stores.count(1).expect("count register"), 23);
-        assert_eq!(control.pending_resource_site(), None);
+        assert!(control.pending_resource_site().is_none());
     });
 }
 
@@ -535,7 +525,7 @@ fn loaded_format_everyjob_preserves_number_signs_and_internal_operands() {
 }
 
 #[test]
-fn math_choice_nested_input_and_probe_resume_without_duplicate_effects() {
+fn math_choice_nested_input_and_probe_execute_without_duplicate_effects() {
     let child = SourceRegistration::new(
         RegisteredSourceKind::Generated,
         Arc::<[u8]>::from(&br"\global\advance\count2 by1 \endinput"[..]),
@@ -544,40 +534,23 @@ fn math_choice_nested_input_and_probe_resume_without_duplicate_effects() {
         crate::test_harness::with_nonstop_plain_universe(|stores| {
             let mut control = pdftex_initex(stores);
             register_cmr10_as(&mut control, stores, "cmr10.tfm");
+            if probe {
+                control.capabilities_mut().register_input_probe(
+                    "child.tex",
+                    tex_command::FileEnquiryResource::new(child.clone(), None),
+                );
+            } else {
+                control
+                    .capabilities_mut()
+                    .register_input("child.tex", child.clone());
+            }
             let source = if probe {
                 br"\font\body=cmr10 \body $\mathchoice{\global\advance\count0 by1 \openin0=child \ifeof0\fi A}{B}{C}{D}$\global\count1=23\end".as_slice()
             } else {
                 br"\font\body=cmr10 \body $\mathchoice{\global\advance\count0 by1 \input child A}{B}{C}{D}$\global\count1=23\end".as_slice()
             };
             register_source(&mut control, source);
-
-            let need = loop {
-                match control
-                    .advance_episode(stores)
-                    .expect("nested resource step")
-                {
-                    StepResult::Suspended(need) => break need,
-                    StepResult::Progress(_) => {}
-                }
-            };
             assert_eq!(stores.count(0).expect("count register"), 0);
-            if probe {
-                let ResourceNeed::InputProbe { request } = need else {
-                    panic!("expected nested input probe, got {need:?}");
-                };
-                control.capabilities_mut().register_input_probe(
-                    request.name,
-                    tex_command::FileEnquiryResource::new(child.clone(), None),
-                );
-            } else {
-                let ResourceNeed::Input { name, .. } = need else {
-                    panic!("expected nested input request, got {need:?}");
-                };
-                control
-                    .capabilities_mut()
-                    .register_input(name, child.clone());
-            }
-
             run_to_end(&mut control, stores);
             assert_eq!(stores.count(0).expect("count register"), 1);
             assert_eq!(stores.count(1).expect("count register"), 23);
@@ -590,7 +563,7 @@ fn math_choice_nested_input_and_probe_resume_without_duplicate_effects() {
 }
 
 #[test]
-fn math_choice_nested_pdf_image_suspends_and_resumes_once() {
+fn math_choice_nested_pdf_image_rejects_direct_retry_after_need() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = pdftex_initex(stores);
         register_cmr10_as(&mut control, stores, "cmr10.tfm");
@@ -606,23 +579,34 @@ fn math_choice_nested_pdf_image_suspends_and_resumes_once() {
             br"\font\body=cmr10 \body $\mathchoice{\global\advance\count0 by1 \pdfximage{image.pdf}A}{B}{C}{D}$\global\count1=23\end",
         );
 
-        let request = loop {
-            match control.advance_episode(stores).expect("nested image step") {
-                StepResult::Suspended(ResourceNeed::PdfImage { request }) => break request,
-                StepResult::Suspended(need) => panic!("unexpected nested resource: {need:?}"),
-                StepResult::Progress(_) => {}
+        let request = {
+            let mut request = None;
+            for _ in 0..TEST_STEP_LIMIT {
+                match control.advance_episode(stores).expect("nested image step") {
+                    StepResult::Suspended(ResourceNeed::PdfImage { request: need }) => {
+                        request = Some(need);
+                        break;
+                    }
+                    StepResult::Suspended(need) => {
+                        panic!("unexpected nested resource: {need:?}")
+                    }
+                    StepResult::Progress(_) => {}
+                }
             }
+            request.expect("nested image resource need must be reached in bounds")
         };
         assert_eq!(stores.count(0).expect("count register"), 0);
         control.capabilities_mut().register_pdf_image(
             request,
             PdfImageResource::Available(test_pdf_image_source()),
         );
-
-        run_to_end(&mut control, stores);
-        assert_eq!(stores.count(0).expect("count register"), 1);
-        assert_eq!(stores.count(1).expect("count register"), 23);
-        assert_ne!(
+        assert!(matches!(
+            control.advance_episode(stores),
+            Err(ExecError::ResourceReplayRequired)
+        ));
+        assert_eq!(stores.count(0).expect("count register"), 0);
+        assert_eq!(stores.count(1).expect("count register"), 0);
+        assert_eq!(
             admitted!(stores, |context| context
                 .internal_integer(tex_state::meaning::InternalInteger::PdfLastXImage)
                 .expect("last image integer")),
@@ -679,13 +663,28 @@ fn register_cmr10_as<G>(control: &mut MainControl<G>, stores: &mut Universe<G>, 
     );
 }
 
+const TEST_STEP_LIMIT: usize = 16_384;
+
 fn run_to_end<G>(control: &mut MainControl<G>, stores: &mut Universe<G>) {
-    loop {
-        match control.step(stores).expect("program executes") {
-            MainControlStep::End | MainControlStep::EndOfInput => break,
+    let mut finished = false;
+    for _ in 0..TEST_STEP_LIMIT {
+        match control.step(stores).unwrap_or_else(|error| {
+            panic!(
+                "program executes: {error:?}; terminal={}",
+                terminal_text(stores)
+            )
+        }) {
+            MainControlStep::End | MainControlStep::EndOfInput => {
+                finished = true;
+                break;
+            }
             MainControlStep::Continue => {}
         }
     }
+    assert!(
+        finished,
+        "test job exceeded the bounded {TEST_STEP_LIMIT}-step semantic driver"
+    );
 }
 
 #[test]
@@ -890,7 +889,7 @@ fn step_until_alignment_snapshot<G>(
     observations: &mut dyn CommandObserver,
     accept: impl Fn(AlignmentRuntimeSnapshot) -> bool,
 ) -> AlignmentRuntimeSnapshot {
-    loop {
+    for _ in 0..TEST_STEP_LIMIT {
         match control
             .step_with_observer(stores, observations)
             .expect("program executes")
@@ -906,6 +905,7 @@ fn step_until_alignment_snapshot<G>(
             return snapshot;
         }
     }
+    panic!("alignment semantic driver exceeded the bounded {TEST_STEP_LIMIT}-step limit");
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -5766,15 +5766,23 @@ fn run_to_end_observed<G>(
     stores: &mut Universe<G>,
     observations: &mut dyn CommandObserver,
 ) {
-    loop {
+    let mut finished = false;
+    for _ in 0..TEST_STEP_LIMIT {
         match control
             .step_with_observer(stores, observations)
             .expect("program executes")
         {
-            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::End | MainControlStep::EndOfInput => {
+                finished = true;
+                break;
+            }
             MainControlStep::Continue => {}
         }
     }
+    assert!(
+        finished,
+        "observed test job exceeded the bounded {TEST_STEP_LIMIT}-step semantic driver"
+    );
 }
 
 fn terminal_text<G>(stores: &Universe<G>) -> String {
@@ -6155,10 +6163,10 @@ fn bare_macro_parameter_reports_illegal_case_and_continues_in_every_mode() {
 }
 
 #[test]
-fn bare_macro_parameter_commit_survives_later_input_retry_without_duplication() {
+fn bare_macro_parameter_commit_survives_later_input_need_without_duplication() {
     // The §1045 diagnostic is part of the parameter command's committed
-    // operation. A later resource suspension rolls back only its own input
-    // attempt and must neither erase nor duplicate the earlier report.
+    // operation. A later resource need must neither erase nor duplicate the
+    // earlier report, even though this direct control cannot be retried.
     // The mode is the harness's `\nonstopmode` rather than an explicit
     // `\errorstopmode`: §1045's report is routed to the terminal either way,
     // and errorstop would send §82 into §83's dialog, which this harness's
@@ -6180,40 +6188,30 @@ fn bare_macro_parameter_commit_survives_later_input_retry_without_duplication() 
         assert!(first.message.contains("macro parameter character #"));
         let first_message = first.message.clone();
 
-        for _ in 0..3 {
-            assert!(matches!(
-                control.advance(stores).expect("missing input suspends"),
-                StepResult::Suspended(ResourceNeed::Input {
-                    name,
-                    original_name,
-                }) if name == "child.tex" && original_name == "child"
-            ));
-            assert_eq!(terminal_text(stores), committed);
-            assert_eq!(
-                control
-                    .first_recoverable_diagnostic()
-                    .expect("first diagnostic survives suspension")
-                    .message,
-                first_message
-            );
-        }
-
-        control.capabilities_mut().register_input(
-            "child.tex",
-            SourceRegistration::new(RegisteredSourceKind::Generated, Arc::<[u8]>::from(&b""[..])),
-        );
-        run_to_end(&mut control, stores);
+        assert!(matches!(
+            control.advance(stores).expect("missing input suspends"),
+            StepResult::Suspended(ResourceNeed::Input {
+                name,
+                original_name,
+            }) if name == "child.tex" && original_name == "child"
+        ));
+        assert_eq!(terminal_text(stores), committed);
         assert_eq!(
-            terminal_text(stores)
-                .matches("macro parameter character #")
-                .count(),
-            1
+            control
+                .first_recoverable_diagnostic()
+                .expect("first diagnostic survives suspension")
+                .message,
+            first_message
         );
+        assert!(matches!(
+            control.advance(stores),
+            Err(ExecError::ResourceReplayRequired)
+        ));
     });
 }
 
 #[test]
-fn committed_recoverable_diagnostic_survives_later_input_suspension() {
+fn committed_recoverable_diagnostic_survives_later_input_need() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);
         register_source(
@@ -6245,17 +6243,16 @@ fn committed_recoverable_diagnostic_survives_later_input_suspension() {
             .message
             .clone();
 
-        control.capabilities_mut().register_input(
-            "child.tex",
-            SourceRegistration::new(RegisteredSourceKind::Generated, Arc::<[u8]>::from(&b""[..])),
-        );
-        run_to_end(&mut control, stores);
         let first = control
             .first_recoverable_diagnostic()
-            .expect("retry commits the retained candidate");
+            .expect("resource need preserves the committed diagnostic");
         assert_eq!(first.kind, "command-recoverable");
         assert!(first.message.contains("\\badness"));
         assert_eq!(first.message, first_message);
+        assert!(matches!(
+            control.advance(stores),
+            Err(ExecError::ResourceReplayRequired)
+        ));
     });
 }
 
@@ -6341,7 +6338,7 @@ fn ranked_assignments_use_one_processor_borrow_each() {
 }
 
 #[test]
-fn production_batch_keeps_ordinary_prefix_on_resource_need() {
+fn production_batch_keeps_ordinary_prefix_and_rejects_direct_retry() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\count0=11 \input child\end");
@@ -6374,54 +6371,27 @@ fn production_batch_keeps_ordinary_prefix_on_resource_need() {
             "child.tex",
             SourceRegistration::new(RegisteredSourceKind::Generated, Arc::<[u8]>::from(&b""[..])),
         );
-        let mut retried = control.advance_episode(stores).expect("retry resumes");
-        for _ in 0..8 {
-            if retried == StepResult::Progress(ReplayStep::End) {
-                break;
-            }
-            retried = control
-                .advance_episode(stores)
-                .expect("effect-bounded retry continues");
-        }
-        assert_eq!(retried, StepResult::Progress(ReplayStep::End));
+        assert!(matches!(
+            control.advance_episode(stores),
+            Err(ExecError::ResourceReplayRequired)
+        ));
         assert_eq!(stores.count(0).expect("count register"), 11);
         let telemetry = control.advance_telemetry();
-        let resumed_interpreter = control.command.lifecycle_stats();
-        assert!(
-            resumed_interpreter.processor_entries > suspended_interpreter.processor_entries,
-            "retry resumes the same persistent interpreter through new borrow scopes"
-        );
+        let after_rejection = control.command.lifecycle_stats();
         assert_eq!(
-            resumed_interpreter.processor_entries,
-            resumed_interpreter.processor_completions
+            after_rejection.processor_entries, suspended_interpreter.processor_entries,
+            "a rejected direct retry must not re-enter the discarded interpreter"
         );
-        assert_eq!(resumed_interpreter.live_processors, 0);
-        assert_eq!(resumed_interpreter.maximum_live_processors, 1);
-        let direct_work = control.command_work();
-        assert_eq!(direct_work.fuel_charges, 17);
-        #[cfg(feature = "profiling")]
-        assert_eq!(
-            direct_work,
-            tex_command::CommandWorkCounters {
-                fuel_charges: 17,
-                token_frame_steps: 17,
-                expanded_deliveries: 14,
-                meaning_lookups: 5,
-                scanner_tokens: 0,
-                write_expansions: 0,
-                raw_delivery_kinds: [17, 0, 0, 0],
-            },
-            "the direct prefix and one-command retry have exact actual work"
-        );
+        assert_eq!(after_rejection.live_processors, 0);
+        assert_eq!(after_rejection.maximum_live_processors, 1);
         assert_eq!(telemetry.rollbacks, 1);
         assert_eq!(telemetry.resource_replayed_delivered_tokens, 0);
         assert_eq!(telemetry.resource_replayed_dispatches, 0);
-        assert_eq!(telemetry.attempts, telemetry.commits + telemetry.rollbacks);
     });
 }
 
 #[test]
-fn prepared_openin_probe_resumes_after_the_blocked_macro_command() {
+fn prepared_openin_probe_loads_after_the_blocked_macro_command() {
     let source = br"\font\bodyfont=cmr10 \bodyfont A\def\sectionref{0}\def\pagerefvalue{0}\def\newlabel#1#2{\gdef\sectionref{1}\gdef\pagerefvalue{1}}\def\load{\openin0=child \ifeof0\else\closein0\input child\fi \openin2=second \ifeof2\else\closein2\input second\fi \count0=7}\load\end";
     let child = SourceRegistration::new(
         RegisteredSourceKind::Generated,
@@ -6435,59 +6405,17 @@ fn prepared_openin_probe_resumes_after_the_blocked_macro_command() {
         Arc::<[u8]>::from(&br"\global\count2=11\endinput"[..]),
     );
 
-    let run = |preloaded: bool| {
+    let run = || {
         crate::test_harness::with_nonstop_plain_universe(|stores| {
             let mut control = MainControl::tex82_initex(stores);
-            if preloaded {
-                register_cmr10_as(&mut control, stores, "cmr10.tfm");
-                control
-                    .capabilities_mut()
-                    .register_input("child.tex", child.clone());
-                control
-                    .capabilities_mut()
-                    .register_input("second.tex", second.clone());
-            }
+            register_cmr10_as(&mut control, stores, "cmr10.tfm");
+            control
+                .capabilities_mut()
+                .register_input("child.tex", child.clone());
+            control
+                .capabilities_mut()
+                .register_input("second.tex", second.clone());
             register_source(&mut control, source);
-            if !preloaded {
-                assert!(matches!(
-                    control.advance_episode(stores).expect("font suspends"),
-                    StepResult::Suspended(ResourceNeed::Font { .. })
-                ));
-                register_cmr10_as(&mut control, stores, "cmr10.tfm");
-                let mut child_probe = control.advance_episode(stores).expect("probe step");
-                for _ in 0..8 {
-                    if matches!(child_probe, StepResult::Suspended(_)) {
-                        break;
-                    }
-                    child_probe = control.advance_episode(stores).expect("probe step");
-                }
-                assert!(matches!(
-                    child_probe,
-                    StepResult::Suspended(ResourceNeed::InputProbe { ref request })
-                        if request.name == "child.tex"
-                ));
-                control
-                    .capabilities_mut()
-                    .register_input("child.tex", child.clone());
-                let mut second_probe = control.advance_episode(stores).expect("second probe step");
-                for _ in 0..8 {
-                    if matches!(second_probe, StepResult::Suspended(_)) {
-                        break;
-                    }
-                    second_probe = control.advance_episode(stores).expect("second probe step");
-                }
-                assert!(
-                    matches!(
-                        second_probe,
-                        StepResult::Suspended(ResourceNeed::InputProbe { ref request })
-                            if request.name == "second.tex"
-                    ),
-                    "unexpected second probe: {second_probe:?}"
-                );
-                control
-                    .capabilities_mut()
-                    .register_input("second.tex", second.clone());
-            }
             run_to_end(&mut control, stores);
             (
                 stores.count(0).expect("count register"),
@@ -6498,46 +6426,23 @@ fn prepared_openin_probe_resumes_after_the_blocked_macro_command() {
         })
     };
 
-    let uninterrupted = run(true);
-    assert_eq!(uninterrupted.0, 7);
-    assert_eq!(uninterrupted.1, 0);
-    assert_eq!(uninterrupted.2, 11);
-    let suspended = run(false);
-    assert_eq!(suspended, uninterrupted);
+    let result = run();
+    assert_eq!(result.0, 7);
+    assert_eq!(result.1, 0);
+    assert_eq!(result.2, 11);
 }
 
 #[test]
-fn superscript_math_group_propagates_and_resumes_input_probe() {
+fn superscript_math_group_propagates_through_preloaded_input_probe() {
     // TeX82 §1153 returns from `scan_math` immediately after `push_math`;
     // §1030 ordinary main control executes this braced superscript until
-    // §1186's right-brace command stores the finished mlist. A resource need
-    // in that body must therefore use the ordinary typed suspension seam. The
-    // global increment before the probe proves that resumption neither
-    // replays the opener nor restarts already committed body commands.
+    // §1186's right-brace command stores the finished mlist. The global
+    // increment before the probe proves that the nested body does not replay
+    // its opener or restart already committed commands.
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);
-        register_source(
-            &mut control,
-            br"$^{\global\advance\count0 by1 \openin0=child \ifeof0\else\closein0\fi}\global\count1=23",
-        );
-
-        let need = loop {
-            match control
-                .advance_episode(stores)
-                .expect("superscript file enquiry suspends")
-            {
-                StepResult::Suspended(need @ ResourceNeed::InputProbe { .. }) => break need,
-                StepResult::Progress(_) => {}
-                other => panic!("unexpected superscript probe step: {other:?}"),
-            }
-        };
-        let ResourceNeed::InputProbe { request } = &need else {
-            unreachable!();
-        };
-        assert_eq!(request.name, "child.tex");
-        assert_eq!(stores.count(0).expect("count register"), 1);
         control.capabilities_mut().register_input_probe(
-            request.name.clone(),
+            "child.tex",
             tex_command::FileEnquiryResource::new(
                 SourceRegistration::new(
                     RegisteredSourceKind::Generated,
@@ -6546,15 +6451,11 @@ fn superscript_math_group_propagates_and_resumes_input_probe() {
                 None,
             ),
         );
-
-        for _ in 0..16 {
-            control
-                .advance_episode(stores)
-                .expect("superscript probe resumes through its right brace");
-            if stores.count(1).expect("count register") == 23 {
-                break;
-            }
-        }
+        register_source(
+            &mut control,
+            br"$^{\global\advance\count0 by1 \openin0=child \ifeof0\else\closein0\fi}\global\count1=23",
+        );
+        run_to_end(&mut control, stores);
         assert_eq!(stores.count(0).expect("count register"), 1);
         assert_eq!(stores.count(1).expect("count register"), 23);
         assert!(control.active_math_fields.is_empty());
@@ -6570,47 +6471,26 @@ fn superscript_math_group_propagates_and_resumes_input_probe() {
 }
 
 #[test]
-fn nested_file_probe_resumes_expandafter_collector_csname_and_integer_frames() {
+fn nested_file_probe_executes_expandafter_collector_csname_and_integer_frames_with_preloaded_resource()
+ {
     // e-TeX [27.465] enters a nested general-text collector for `\unexpanded`.
-    // Its expanded opener may suspend inside pdfTeX §1590 file enquiry; retry
-    // must resume the special direct-splice route rather than expand the
-    // retained `\unexpanded` command as an ordinary command. TeX82 §§368 and
-    // 372 must likewise retain `\expandafter`'s first operand and `\csname`'s
-    // accumulated name when their nested expansion suspends. TeX82 §§440--445
-    // also retain a leading scan, consumed radix prefix, or §442 character
-    // constant whose expanded optional-space probe suspended. Restarting the
-    // opcode would treat the resolved terminator as a fresh number.
+    // The direct semantic test admits the fixture before execution. The
+    // incremental session tests own full-checkpoint replay for the same
+    // scanner families, so this test can focus on the nested collectors and
+    // exact expansion destinations without retrying a discarded control.
     let child = SourceRegistration::new(
         RegisteredSourceKind::Generated,
         Arc::<[u8]>::from(&b"AB"[..]),
     );
 
-    let run = |source: &[u8], preloaded: bool| {
+    let run = |source: &[u8]| {
         crate::test_harness::with_nonstop_plain_universe(|stores| {
             let mut control = pdftex_initex(stores);
-            if preloaded {
-                control.capabilities_mut().register_input_probe(
-                    "child",
-                    tex_command::FileEnquiryResource::new(child.clone(), None),
-                );
-            }
+            control.capabilities_mut().register_input_probe(
+                "child",
+                tex_command::FileEnquiryResource::new(child.clone(), None),
+            );
             register_source(&mut control, source);
-            if !preloaded {
-                let need = loop {
-                    match control.advance_episode(stores).expect("probe step") {
-                        StepResult::Suspended(ResourceNeed::InputProbe { request }) => {
-                            break request;
-                        }
-                        StepResult::Progress(_) => {}
-                        other => panic!("unexpected nested enquiry step: {other:?}"),
-                    }
-                };
-                assert_eq!(need.name, "child");
-                control.capabilities_mut().register_input_probe(
-                    need.name,
-                    tex_command::FileEnquiryResource::new(child.clone(), None),
-                );
-            }
             run_to_end(&mut control, stores);
             terminal_text(stores)
         })
@@ -6647,41 +6527,33 @@ fn nested_file_probe_resumes_expandafter_collector_csname_and_integer_frames() {
             "[2]",
         ),
     ] {
-        let uninterrupted = run(source, true);
-        assert!(uninterrupted.contains(expected), "{uninterrupted:?}");
-        assert_eq!(run(source, false), uninterrupted);
+        let output = run(source);
+        assert!(output.contains(expected), "{output:?}");
     }
 }
 
 #[test]
-fn nested_csname_and_ifcsname_accumulators_resume_their_typed_parents() {
+fn nested_csname_and_ifcsname_accumulators_execute_with_preloaded_probes() {
     // TeX82 §372 and e-TeX [17.4765--4779] use the same expanded name scan,
-    // but each suspended invocation owns a different accumulated spelling and
-    // `\ifcsname` additionally owns an already-pushed condition frame. A
-    // caller-order name stack can make these examples appear to work only by
-    // matching recursive return order; the continuation must instead move
-    // each name directly with its enclosing expansion or conditional phase.
+    // Each invocation owns a different accumulated spelling and `\ifcsname`
+    // additionally owns an already-pushed condition frame. A caller-order name
+    // stack can make these examples appear to work only by matching recursive
+    // return order; each name must stay with its enclosing expansion or
+    // conditional phase.
     let source = br"\expandafter\def\csname inner4143\endcsname{Z}\expandafter\def\csname outerZtail\endcsname{OK}\expandafter\def\csname inner4\endcsname{Y}\expandafter\def\csname outerYtail\endcsname{YES}\edef\result{\csname outer\csname inner\pdffiledump length 1{second}\pdffiledump length 1{third}\endcsname tail\endcsname}\ifcsname outer\csname inner\pdffilesize{first}\endcsname tail\endcsname\message{[\result:YES]}\else\message{[bad-ifcsname]}\fi\unless\ifcsname missing\pdffilesize{4}\endcsname\message{[UNLESS]}\else\message{[bad-unless]}\fi\end";
 
-    let (preloaded_terminal, preloaded_requests) =
-        run_pdftex_file_probe_job(source, &["second", "third", "first", "4"]);
-    assert!(preloaded_requests.is_empty());
+    let preloaded_terminal = run_pdftex_file_probe_job(source, &["second", "third", "first", "4"]);
     assert!(
         preloaded_terminal.contains("[OK:YES] [UNLESS]"),
         "{preloaded_terminal:?}"
     );
-
-    let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
-    assert_eq!(staged_requests, ["second", "third", "first", "4"]);
-    assert_eq!(staged_terminal, preloaded_terminal);
 }
 
 #[test]
-fn count_assignment_resumes_exact_integer_operand_after_file_probe() {
-    // The literal prefix has already committed when `\pdffilesize` asks the
-    // host for `second`. Restarting the assignment or the integer scanner
-    // loses that prefix; the retained direct-operation and scalar frames must
-    // instead continue the same radix tail, yielding 12 followed by 2.
+fn count_assignment_scans_exact_integer_operand_with_preloaded_probe() {
+    // The literal prefix is part of the assignment before `\pdffilesize`
+    // contributes its scalar. The assignment and integer scanner must retain
+    // that prefix and continue the same radix tail, yielding 12 followed by 2.
     for (source, resources, expected) in [
         (
             br"\count0=12\pdffilesize{second}\message{[\the\count0]}\end".as_slice(),
@@ -6695,45 +6567,32 @@ fn count_assignment_resumes_exact_integer_operand_after_file_probe() {
             "[1222]",
         ),
     ] {
-        let (preloaded_terminal, preloaded_requests) = run_pdftex_file_probe_job(source, resources);
-        assert!(preloaded_requests.is_empty());
+        let preloaded_terminal = run_pdftex_file_probe_job(source, resources);
         assert!(
             preloaded_terminal.contains(expected),
             "{preloaded_terminal:?}"
         );
-
-        let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
-        assert_eq!(staged_requests, resources);
-        assert_eq!(staged_terminal, preloaded_terminal);
     }
 
     let source = br"\dimen0=12\pdffilesize{second}pt\message{[\the\dimen0]}\end";
-    let (preloaded_terminal, preloaded_requests) = run_pdftex_file_probe_job(source, &["second"]);
-    assert!(preloaded_requests.is_empty());
+    let preloaded_terminal = run_pdftex_file_probe_job(source, &["second"]);
     assert!(
         preloaded_terminal.contains("[122.0pt]"),
         "{preloaded_terminal:?}"
     );
-    let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
-    assert_eq!(staged_requests, ["second"]);
-    assert_eq!(staged_terminal, preloaded_terminal);
 
     let source =
         br"\skip0=1\pdffilesize{second}pt plus 3\pdffilesize{third}fil\message{[\the\skip0]}\end";
     let resources = &["second", "third"];
-    let (preloaded_terminal, preloaded_requests) = run_pdftex_file_probe_job(source, resources);
-    assert!(preloaded_requests.is_empty());
+    let preloaded_terminal = run_pdftex_file_probe_job(source, resources);
     assert!(
         preloaded_terminal.contains("[12.0pt plus 32.0fil]"),
         "{preloaded_terminal:?}"
     );
-    let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
-    assert_eq!(staged_requests, resources);
-    assert_eq!(staged_terminal, preloaded_terminal);
 }
 
 #[test]
-fn dimension_fraction_unit_and_internal_second_operand_resume_exact_phases() {
+fn dimension_fraction_unit_and_internal_second_operand_scan_exact_phases() {
     for (source, resources, expected) in [
         (
             br"\def\gobble#1X{}\def\pa{\expandafter\gobble\pdffilesize{second}X}\def\pb{\expandafter\gobble\pdffilesize{third}X}\dimen0=1.2\pa3\pb4pt\message{[\the\dimen0]}\end"
@@ -6754,20 +6613,22 @@ fn dimension_fraction_unit_and_internal_second_operand_resume_exact_phases() {
             "[0.0pt]",
         ),
     ] {
-        let (preloaded_terminal, preloaded_requests) = run_pdftex_file_probe_job(source, resources);
-        assert!(preloaded_requests.is_empty());
+        let preloaded_terminal = run_pdftex_file_probe_job(source, resources);
         assert!(
             preloaded_terminal.contains(expected),
             "{preloaded_terminal:?}"
         );
 
-        let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
-        assert_eq!(staged_requests, resources);
-        assert_eq!(staged_terminal, preloaded_terminal);
     }
 }
 
-fn run_pdftex_file_probe_job(source: &[u8], preloaded: &[&str]) -> (String, Vec<String>) {
+/// Runs a direct pdfTeX probe job only with its fixture resources admitted
+/// before execution. A direct `MainControl` has no checkpoint owner, so a
+/// resource miss cannot be answered by calling the runner again on the same
+/// control. Full miss/replay equivalence belongs to the `tex-incr` session
+/// tests; this helper keeps local scanner/collector semantics independent of
+/// that host lifecycle.
+fn run_pdftex_file_probe_job(source: &[u8], preloaded: &[&str]) -> String {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = pdftex_initex(stores);
         let resource = |name: &str| {
@@ -6790,37 +6651,27 @@ fn run_pdftex_file_probe_job(source: &[u8], preloaded: &[&str]) -> (String, Vec<
         }
         register_source(&mut control, source);
 
-        let mut requested = Vec::new();
         let mut ledger = crate::OutputLedger::new();
         let mut checkpoints = Vec::new();
         let cancellation = crate::Cancellation::new();
-        let terminal = loop {
+        let mut terminal = None;
+        for _ in 0..TEST_STEP_LIMIT {
             match crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger)
                 .step(&mut checkpoints, &cancellation)
             {
-                crate::CanonicalStepResult::ResourceNeed(
-                    need @ ResourceNeed::InputProbe { .. },
-                ) => {
-                    let request = match &need {
-                        ResourceNeed::InputProbe { request } => request.clone(),
-                        _ => unreachable!(),
-                    };
-                    requested.push(request.name.clone());
-                    let resource = resource(&request.name);
-                    ledger
-                        .fulfill(
-                            &mut control,
-                            &need,
-                            crate::ResourceFulfillment::InputProbe { request, resource },
-                        )
-                        .expect("file-enquiry fulfillment matches the suspended request");
+                crate::CanonicalStepResult::ResourceNeed(need) => panic!(
+                    "direct semantic helper crossed a resource boundary for {need:?}; use the tex-incr checkpoint owner for replay"
+                ),
+                crate::CanonicalStepResult::Completed(step @ ReplayStep::End) => {
+                    terminal = Some(step);
+                    break;
                 }
-                crate::CanonicalStepResult::Completed(step @ ReplayStep::End) => break step,
                 crate::CanonicalStepResult::Progress(_)
                 | crate::CanonicalStepResult::Committed(_) => {}
                 other => panic!("unexpected file-enquiry step: {other:?}"),
             }
-        };
+        }
+        let terminal = terminal.expect("bounded file-enquiry semantic driver reached terminal");
         assert_eq!(control.pending_resource_site(), None);
         assert!(
             control.command.named_boundary_is_quiescent(),
@@ -6830,41 +6681,29 @@ fn run_pdftex_file_probe_job(source: &[u8], preloaded: &[&str]) -> (String, Vec<
         ledger
             .terminal_receipt(&control, stores, terminal)
             .expect("fulfilled file enquiries leave terminal completion quiescent");
-        (terminal_text(stores), requested)
+        terminal_text(stores)
     })
 }
 
 #[test]
-fn expanding_retry_settles_before_resuming_nested_expanded_scanner() {
-    // TeX82 §§380 and 473--479: once the retained expandable preflight has
-    // settled to `\edef`, that command owns retry through its operand scan.
-    // pdfTeX §§495/1535 then resumes the outer macro-definition collector
-    // before its nested `\expanded` collector in exact LIFO order.
+fn expanding_command_executes_nested_expanded_scanner_with_preloaded_probe() {
+    // TeX82 §§380 and 473--479 settle the expandable preflight to `\edef`.
+    // pdfTeX §§495/1535 then run the outer macro-definition collector before
+    // its nested `\expanded` collector in exact LIFO order.
     let source = br"\def\afterfirst#1{\edef\result{\expanded{\pdffiledump length 2{second}}}}\expandafter\afterfirst\pdffilesize{first}\message{[\result]}\end";
 
-    let (preloaded_terminal, preloaded_requests) =
-        run_pdftex_file_probe_job(source, &["first", "second"]);
-    assert!(preloaded_requests.is_empty());
+    let preloaded_terminal = run_pdftex_file_probe_job(source, &["first", "second"]);
     assert!(preloaded_terminal.contains("[4142]"));
-
-    let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
-    assert_eq!(staged_requests, ["first", "second"]);
-    assert_eq!(staged_terminal, preloaded_terminal);
 }
 
 #[test]
-fn directly_delivered_edef_resumes_its_inner_expanded_scanner() {
+fn directly_delivered_edef_executes_inner_expanded_scanner_with_preloaded_probe() {
     // Negative control: without the earlier expanding-preflight suspension,
     // the directly delivered `\edef` already owns the nested scanner retry.
     let source = br"\edef\result{\expanded{\pdffiledump length 2{second}}}\message{[\result]}\end";
 
-    let (preloaded_terminal, preloaded_requests) = run_pdftex_file_probe_job(source, &["second"]);
-    assert!(preloaded_requests.is_empty());
+    let preloaded_terminal = run_pdftex_file_probe_job(source, &["second"]);
     assert!(preloaded_terminal.contains("[4142]"));
-
-    let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
-    assert_eq!(staged_requests, ["second"]);
-    assert_eq!(staged_terminal, preloaded_terminal);
 
     // The old same-stack assertion was intentionally removed: a resource
     // miss now discards this direct operation, and the retained-generation
@@ -7152,131 +6991,83 @@ fn one_and_4096_warmed_post_apply_fact_settlements_allocate_and_copy_no_context(
 }
 
 #[test]
-fn pdf_glyph_to_unicode_operands_resume_their_exact_destinations() {
+fn pdf_glyph_to_unicode_operands_scan_their_exact_destinations() {
     let source = br"\pdfglyphtounicode{\pdffiledump length 2{second}}{\pdffiledump length 2{third}}\message{[done]}\end";
 
-    let (preloaded_terminal, preloaded_requests) =
-        run_pdftex_file_probe_job(source, &["second", "third"]);
-    assert!(preloaded_requests.is_empty());
-
-    let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
-    assert_eq!(staged_requests, ["second", "third"]);
-    assert_eq!(staged_terminal, preloaded_terminal);
+    let preloaded_terminal = run_pdftex_file_probe_job(source, &["second", "third"]);
+    assert!(
+        preloaded_terminal.contains("[done]"),
+        "{preloaded_terminal:?}"
+    );
 }
 
 #[test]
-fn pdf_start_link_action_resumes_its_exact_destination() {
+fn pdf_start_link_action_scans_its_exact_destination() {
     let source =
         br"\pdfoutput=1 A\pdfstartlink goto name{\pdffiledump length 2{second}}B\pdfendlink\end";
 
-    let (preloaded_terminal, preloaded_requests) = run_pdftex_file_probe_job(source, &["second"]);
-    assert!(preloaded_requests.is_empty());
-
-    let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
-    assert_eq!(staged_requests, ["second"]);
-    assert_eq!(staged_terminal, preloaded_terminal);
+    let _preloaded_terminal = run_pdftex_file_probe_job(source, &["second"]);
 }
 
 #[test]
-fn pdf_xform_optional_texts_resume_their_exact_destinations() {
+fn pdf_xform_optional_texts_scan_their_exact_destinations() {
     let source = br"\pdfoutput=1 \setbox0=\hbox{A}\pdfxform attr{\pdffiledump length 2{second}} resources{\pdffiledump length 2{third}}0\message{[done]}\end";
 
-    let (preloaded_terminal, preloaded_requests) =
-        run_pdftex_file_probe_job(source, &["second", "third"]);
-    assert!(preloaded_requests.is_empty());
-
-    let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
-    assert_eq!(staged_requests, ["second", "third"]);
-    assert_eq!(staged_terminal, preloaded_terminal);
+    let _preloaded_terminal = run_pdftex_file_probe_job(source, &["second", "third"]);
 }
 
 #[test]
-fn scalar_optional_space_keeps_a_nested_scanner_as_its_child() {
+fn scalar_optional_space_keeps_a_nested_scanner_as_its_child_with_preloaded_probe() {
     // The nested csname/expandafter shape matches LaTeX's format-time
     // primitive-name construction. `\number` has finished its scalar before
     // its optional-space lookahead enters the suspended `\expanded` scanner.
     let source = br"\edef\result{\csname outer\expandafter\csname inner\expandafter\expandafter\expandafter\number1\expanded{\unexpanded{A}\pdffiledump length 2{second}}\endcsname\endcsname}\message{[done]}\end";
 
-    let (preloaded_terminal, preloaded_requests) = run_pdftex_file_probe_job(source, &["second"]);
-    assert!(preloaded_requests.is_empty());
+    let preloaded_terminal = run_pdftex_file_probe_job(source, &["second"]);
     assert!(
         preloaded_terminal.contains("[done]"),
         "{preloaded_terminal:?}"
     );
-
-    let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
-    assert_eq!(staged_requests, ["second"]);
-    assert_eq!(staged_terminal, preloaded_terminal);
 }
 
 #[test]
-fn nested_file_enquiries_resume_their_typed_owners() {
+fn nested_file_enquiries_execute_through_their_typed_owners() {
     let source = br"\edef\result{\pdfmdfivesum file{\pdffilesize{first}}}\message{[\result]}\end";
 
-    let (preloaded_terminal, preloaded_requests) =
-        run_pdftex_file_probe_job(source, &["first", "4"]);
-    assert!(preloaded_requests.is_empty());
+    let preloaded_terminal = run_pdftex_file_probe_job(source, &["first", "4"]);
     assert!(preloaded_terminal.contains("[2C9B682412689D6723E3B31653B5774C]"));
-
-    let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
-    assert_eq!(staged_requests, ["first", "4"]);
-    assert_eq!(staged_terminal, preloaded_terminal);
 }
 
 #[test]
-fn pdf_match_operands_resume_their_exact_destinations() {
+fn pdf_match_operands_scan_their_exact_destinations() {
     let source = br"\edef\result{\pdfmatch{\pdffiledump length 2{second}}{\pdffiledump length 2{third}}}\message{[\result]}\end";
 
-    let (preloaded_terminal, preloaded_requests) =
-        run_pdftex_file_probe_job(source, &["second", "third"]);
-    assert!(preloaded_requests.is_empty());
-
-    let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
-    assert_eq!(staged_requests, ["second", "third"]);
-    assert_eq!(staged_terminal, preloaded_terminal);
+    let _preloaded_terminal = run_pdftex_file_probe_job(source, &["second", "third"]);
 }
 
 #[test]
-fn pdf_object_optional_texts_resume_their_exact_destinations() {
+fn pdf_object_optional_texts_scan_their_exact_destinations() {
     let source = br"\pdfoutput=1 \pdfobj stream attr{\pdffiledump length 2{second}}{\pdffiledump length 2{third}}\message{[done]}\end";
 
-    let (preloaded_terminal, preloaded_requests) =
-        run_pdftex_file_probe_job(source, &["second", "third"]);
-    assert!(preloaded_requests.is_empty());
-
-    let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
-    assert_eq!(staged_requests, ["second", "third"]);
-    assert_eq!(staged_terminal, preloaded_terminal);
+    let _preloaded_terminal = run_pdftex_file_probe_job(source, &["second", "third"]);
 }
 
 #[test]
-fn pdf_outline_texts_resume_their_exact_destinations() {
+fn pdf_outline_texts_scan_their_exact_destinations() {
     let source = br"\pdfoutput=1 \pdfoutline attr{\pdffiledump length 2{first}} goto name{\pdffiledump length 2{second}} count 1 {\pdffiledump length 2{third}}\message{[done]}\end";
 
-    let (preloaded_terminal, preloaded_requests) =
-        run_pdftex_file_probe_job(source, &["first", "second", "third"]);
-    assert!(preloaded_requests.is_empty());
-
-    let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
-    assert_eq!(staged_requests, ["first", "second", "third"]);
-    assert_eq!(staged_terminal, preloaded_terminal);
+    let _preloaded_terminal = run_pdftex_file_probe_job(source, &["first", "second", "third"]);
 }
 
 #[test]
-fn pdf_catalog_text_and_action_resume_their_exact_destinations() {
+fn pdf_catalog_text_and_action_scan_their_exact_destinations() {
     let source = br"\pdfoutput=1 \pdfcatalog{\pdffiledump length 2{second}} openaction goto name{\pdffiledump length 2{third}}\message{[done]}\end";
 
-    let (preloaded_terminal, preloaded_requests) =
-        run_pdftex_file_probe_job(source, &["second", "third"]);
-    assert!(preloaded_requests.is_empty());
-
-    let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
-    assert_eq!(staged_requests, ["second", "third"]);
-    assert_eq!(staged_terminal, preloaded_terminal);
+    let _preloaded_terminal = run_pdftex_file_probe_job(source, &["second", "third"]);
 }
 
 #[test]
-fn pdf_graphics_payloads_resume_their_exact_destinations() {
+fn pdf_graphics_payloads_scan_their_exact_destinations() {
     for source in [
         br"\pdfoutput=1 \pdfliteral direct{\pdffiledump length 2{second}}\message{[done]}\end"
             .as_slice(),
@@ -7289,102 +7080,58 @@ fn pdf_graphics_payloads_resume_their_exact_destinations() {
         } else {
             &["second"][..]
         };
-        let (preloaded_terminal, preloaded_requests) =
-            run_pdftex_file_probe_job(source, resources);
-        assert!(preloaded_requests.is_empty());
-
-        let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
-        assert_eq!(staged_requests, resources);
-        assert_eq!(staged_terminal, preloaded_terminal);
+        let preloaded_terminal = run_pdftex_file_probe_job(source, resources);
+        assert!(preloaded_terminal.contains("[done]"), "{preloaded_terminal:?}");
     }
 }
 
 #[test]
-fn settled_alignment_scanner_retry_has_one_exact_operation_destination() {
+fn settled_alignment_scanner_has_one_exact_operation_destination() {
     // Alignment interception replaces the generic settled-command retry: the
     // alignment destination owns both the delivery cursor and `\edef`'s live
     // file-enquiry scanner. Retaining both destinations would let two callers
     // reuse one command-operation coordinate after the first caller commits.
     let source = br"\setbox0=\vbox{\halign{#\cr \edef\result{\pdffiledump length 2{second}}\message{[\result]}\cr}}\end";
 
-    let (preloaded_terminal, preloaded_requests) = run_pdftex_file_probe_job(source, &["second"]);
-    assert!(preloaded_requests.is_empty());
+    let preloaded_terminal = run_pdftex_file_probe_job(source, &["second"]);
     assert!(preloaded_terminal.contains("[4142]"));
-
-    let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
-    assert_eq!(staged_requests, ["second"]);
-    assert_eq!(staged_terminal, preloaded_terminal);
 }
 
 #[test]
-fn expandafter_child_completion_resumes_its_owning_expanded_collector() {
+fn expandafter_child_completion_scans_its_owning_expanded_collector_with_preloaded_resources() {
     // The outer macro-definition collector owns `\expandafter`; that frame
     // owns its second-command `\expanded` invocation; and the nested scanner
-    // owns each file-enquiry expansion. Two host suspensions force the exact
-    // child edge to be consumed and reinstalled more than once before the
-    // outer scanner may retire its attempt scope.
+    // owns each file-enquiry expansion. Preloading the fixtures keeps this
+    // direct semantic test focused on the exact child edge and collector
+    // ownership; the session tests own resource replay.
     let source = br"\edef\result{\expandafter Q\expanded{\unexpanded{U}\pdffiledump length 2{second}\pdffiledump length 2{third}}}\message{[\result]}\end";
 
-    let (preloaded_terminal, preloaded_requests) =
-        run_pdftex_file_probe_job(source, &["second", "third"]);
-    assert!(preloaded_requests.is_empty());
+    let preloaded_terminal = run_pdftex_file_probe_job(source, &["second", "third"]);
     assert!(preloaded_terminal.contains("[QU41424344]"));
-
-    let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
-    assert_eq!(staged_requests, ["second", "third"]);
-    assert_eq!(staged_terminal, preloaded_terminal);
 }
 
 #[test]
-fn pdfstrcmp_right_operand_resumes_its_exact_child_scanner() {
+fn pdfstrcmp_operands_scan_their_exact_child_scanners() {
     for source in [
         br"\edef\result{\pdfstrcmp{\pdffiledump length 2{second}}{right}}\message{[\result]}\end"
             .as_slice(),
         br"\edef\result{\pdfstrcmp{left}{\pdffiledump length 2{second}}}\message{[\result]}\end"
             .as_slice(),
     ] {
-        let (preloaded_terminal, preloaded_requests) =
-            run_pdftex_file_probe_job(source, &["second"]);
-        assert!(preloaded_requests.is_empty());
-
-        let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
-        assert_eq!(staged_requests, ["second"]);
-        assert_eq!(staged_terminal, preloaded_terminal);
+        let preloaded_terminal = run_pdftex_file_probe_job(source, &["second"]);
+        assert!(preloaded_terminal.contains("["), "{preloaded_terminal:?}");
     }
 }
 
 #[test]
-fn resource_retry_fuel_abort_releases_its_scanner_child() {
+fn preloaded_resource_fuel_abort_releases_its_scanner_child() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = pdftex_initex(stores);
         register_source(
             &mut control,
             br"\edef\result{\expanded{\pdffiledump length 2{second}}}\end",
         );
-
-        let need = loop {
-            match control
-                .advance_episode(stores)
-                .expect("file enquiry suspends")
-            {
-                StepResult::Suspended(need @ ResourceNeed::InputProbe { .. }) => break need,
-                StepResult::Progress(_) => {}
-                other => panic!("unexpected file-enquiry step: {other:?}"),
-            }
-        };
-        let ResourceNeed::InputProbe { request } = &need else {
-            unreachable!();
-        };
-        control.capabilities_mut().register_input_probe(
-            request.name.clone(),
-            tex_command::FileEnquiryResource::new(
-                SourceRegistration::new(
-                    RegisteredSourceKind::Generated,
-                    Arc::<[u8]>::from(&b"AB"[..]),
-                ),
-                None,
-            ),
-        );
+        register_named_file_size_probe(&mut control, "second", b"AB");
         control.set_fuel_limit(1).expect("bounded abort fuel");
 
         let aborted = control.advance_episode(stores);
@@ -7403,37 +7150,14 @@ fn resource_retry_fuel_abort_releases_its_scanner_child() {
 }
 
 #[test]
-fn scalar_operation_retry_fuel_abort_releases_parent_and_deepest_child() {
+fn preloaded_scalar_operation_fuel_abort_releases_parent_and_deepest_child() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = pdftex_initex(stores);
         register_source(
             &mut control,
             br"\count0=12\pdffilesize{second}\message{unreachable}\end",
         );
-
-        let need = loop {
-            match control
-                .advance_episode(stores)
-                .expect("integer operand suspends")
-            {
-                StepResult::Suspended(need @ ResourceNeed::InputProbe { .. }) => break need,
-                StepResult::Progress(_) => {}
-                other => panic!("unexpected integer-operand step: {other:?}"),
-            }
-        };
-        let ResourceNeed::InputProbe { request } = &need else {
-            unreachable!();
-        };
-        control.capabilities_mut().register_input_probe(
-            request.name.clone(),
-            tex_command::FileEnquiryResource::new(
-                SourceRegistration::new(
-                    RegisteredSourceKind::Generated,
-                    Arc::<[u8]>::from(&b"AB"[..]),
-                ),
-                None,
-            ),
-        );
+        register_named_file_size_probe(&mut control, "second", b"AB");
         control.set_fuel_limit(1).expect("bounded abort fuel");
 
         let aborted = control.advance_episode(stores);
@@ -7464,7 +7188,31 @@ fn sequential_generated_reference_probes_preserve_the_macro_cursor() {
             &mut control,
             include_bytes!("../../../../tests/corpus/stabilization/latex-references/source.tex"),
         );
-        let mut requested = Vec::new();
+        for (name, bytes) in [
+            (
+                "main.aux",
+                br"\newlabel{sec:intro}{{1}{1}}
+"
+                .as_slice(),
+            ),
+            (
+                "main.toc",
+                br"\contentsline{section}{Introduction}{1}
+"
+                .as_slice(),
+            ),
+        ] {
+            control.capabilities_mut().register_input_probe(
+                name,
+                tex_command::FileEnquiryResource::new(
+                    SourceRegistration::new(
+                        RegisteredSourceKind::Generated,
+                        Arc::<[u8]>::from(bytes),
+                    ),
+                    None,
+                ),
+            );
+        }
         let mut ledger = crate::OutputLedger::new();
         let mut checkpoints = Vec::new();
         let cancellation = crate::Cancellation::new();
@@ -7473,68 +7221,9 @@ fn sequential_generated_reference_probes_preserve_the_macro_cursor() {
             let result = crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger)
                 .step(&mut checkpoints, &cancellation);
             match result {
-                crate::CanonicalStepResult::ResourceNeed(ResourceNeed::InputProbe { request }) => {
-                    let (name, bytes): (&str, &[u8]) = match request.name.as_str() {
-                        "main.aux" => (
-                            "main.aux",
-                            br"\newlabel{sec:intro}{{1}{1}}
-",
-                        ),
-                        "main.toc" => (
-                            "main.toc",
-                            br"\contentsline{section}{Introduction}{1}
-",
-                        ),
-                        other => panic!("unexpected probe {other:?}"),
-                    };
-                    requested.push(name);
-                    let source = SourceRegistration::new(
-                        RegisteredSourceKind::Generated,
-                        Arc::<[u8]>::from(bytes),
-                    );
-                    ledger
-                        .fulfill(
-                            &mut control,
-                            &ResourceNeed::InputProbe {
-                                request: request.clone(),
-                            },
-                            crate::ResourceFulfillment::InputProbe {
-                                request,
-                                resource: tex_command::FileEnquiryResource::new(source, None),
-                            },
-                        )
-                        .expect("probe fulfillment matches");
-                }
-                crate::CanonicalStepResult::ResourceNeed(need @ ResourceNeed::Input { .. }) => {
-                    let name = match &need {
-                        ResourceNeed::Input { name, .. } => name.clone(),
-                        _ => unreachable!(),
-                    };
-                    let bytes: &[u8] = match name.as_str() {
-                        "main.aux" => {
-                            br"\newlabel{sec:intro}{{1}{1}}
-"
-                        }
-                        "main.toc" => {
-                            br"\contentsline{section}{Introduction}{1}
-"
-                        }
-                        other => panic!("unexpected input {other:?}"),
-                    };
-                    ledger
-                        .fulfill(
-                            &mut control,
-                            &need,
-                            crate::ResourceFulfillment::Input {
-                                name,
-                                source: SourceRegistration::new(
-                                    RegisteredSourceKind::Generated,
-                                    Arc::<[u8]>::from(bytes),
-                                ),
-                            },
-                        )
-                        .expect("input fulfillment matches");
-                }
+                crate::CanonicalStepResult::ResourceNeed(need) => panic!(
+                    "preloaded reference probe unexpectedly crossed a resource boundary: {need:?}"
+                ),
                 crate::CanonicalStepResult::Completed(step @ ReplayStep::End) => {
                     terminal_step = Some(step);
                     break;
@@ -7544,7 +7233,6 @@ fn sequential_generated_reference_probes_preserve_the_macro_cursor() {
                 other => panic!("unexpected reference step {other:?}"),
             }
         }
-        assert_eq!(requested, ["main.aux", "main.toc"]);
         assert_eq!(control.pending_resource_site(), None);
         ledger
             .terminal_receipt(&control, stores, terminal_step.expect("terminal step"))
@@ -7553,7 +7241,7 @@ fn sequential_generated_reference_probes_preserve_the_macro_cursor() {
 }
 
 #[test]
-fn unavailable_input_probe_releases_its_diagnostic_site_before_terminal_close() {
+fn unavailable_input_probe_releases_its_diagnostic_site_before_direct_retry_rejection() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = pdftex_initex(stores);
         register_source(
@@ -7563,26 +7251,38 @@ fn unavailable_input_probe_releases_its_diagnostic_site_before_terminal_close() 
         let mut ledger = crate::OutputLedger::new();
         let mut checkpoints = Vec::new();
         let cancellation = crate::Cancellation::new();
-        let terminal = loop {
-            match crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger)
-                .step(&mut checkpoints, &cancellation)
-            {
-                crate::CanonicalStepResult::ResourceNeed(
-                    need @ ResourceNeed::InputProbe { .. },
-                ) => {
-                    assert!(control.pending_resource_site().is_some());
-                    ledger.mark_unavailable(&mut control, &need, false);
-                    assert_eq!(control.pending_resource_site(), None);
+        let need = {
+            let mut pending = None;
+            for _ in 0..TEST_STEP_LIMIT {
+                match crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger)
+                    .step(&mut checkpoints, &cancellation)
+                {
+                    crate::CanonicalStepResult::ResourceNeed(
+                        need @ ResourceNeed::InputProbe { .. },
+                    ) => {
+                        assert!(control.pending_resource_site().is_some());
+                        pending = Some(need);
+                        break;
+                    }
+                    crate::CanonicalStepResult::Completed(_) => {
+                        panic!("unavailable probe completed before its resource need")
+                    }
+                    crate::CanonicalStepResult::Progress(_)
+                    | crate::CanonicalStepResult::Committed(_) => {}
+                    other => panic!("unexpected unavailable-probe step: {other:?}"),
                 }
-                crate::CanonicalStepResult::Completed(step) => break step,
-                crate::CanonicalStepResult::Progress(_)
-                | crate::CanonicalStepResult::Committed(_) => {}
-                other => panic!("unexpected unavailable-probe step: {other:?}"),
             }
+            pending.expect("unavailable probe need must be reached in bounds")
         };
-        ledger
-            .terminal_receipt(&control, stores, terminal)
-            .expect("unavailable probe leaves terminal completion quiescent");
+        ledger.mark_unavailable(&mut control, &need, false);
+        assert_eq!(control.pending_resource_site(), None);
+        assert!(matches!(
+            crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger)
+                .step(&mut checkpoints, &cancellation),
+            crate::CanonicalStepResult::Failed(crate::CanonicalStepFailure::Execution(
+                ExecError::ResourceReplayRequired
+            ))
+        ));
     });
 }
 
@@ -7611,8 +7311,22 @@ fn register_file_size_probe<G>(
     );
 }
 
+fn register_named_file_size_probe<G>(
+    control: &mut MainControl<G>,
+    name: &str,
+    bytes: &'static [u8],
+) {
+    control.capabilities_mut().register_input_probe(
+        name,
+        tex_command::FileEnquiryResource::new(
+            SourceRegistration::new(RegisteredSourceKind::Generated, Arc::<[u8]>::from(bytes)),
+            None,
+        ),
+    );
+}
+
 fn next_input_probe<G>(control: &mut MainControl<G>, stores: &mut Universe<G>) -> ResourceNeed {
-    loop {
+    for _ in 0..TEST_STEP_LIMIT {
         match control
             .advance_episode(stores)
             .expect("prefixed definition probe suspends")
@@ -7622,27 +7336,16 @@ fn next_input_probe<G>(control: &mut MainControl<G>, stores: &mut Universe<G>) -
             other => panic!("unexpected prefixed-definition step: {other:?}"),
         }
     }
+    panic!("prefixed-definition probe exceeded the bounded semantic driver")
 }
 
 #[test]
-fn prefixed_definition_scanner_resumes_its_exact_substantive_command() {
+fn prefixed_definition_scanner_executes_its_exact_substantive_command() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = pdftex_initex(stores);
         register_source(&mut control, PREFIXED_DEFINITION_RESOURCE_SOURCE);
-
-        let first = next_input_probe(&mut control, stores);
-        assert!(matches!(
-            &first,
-            ResourceNeed::InputProbe { request } if request.name == "first"
-        ));
-        register_file_size_probe(&mut control, &first, b"ABCD");
-
-        let second = next_input_probe(&mut control, stores);
-        assert!(matches!(
-            &second,
-            ResourceNeed::InputProbe { request } if request.name == "second"
-        ));
-        register_file_size_probe(&mut control, &second, b"AB");
+        register_named_file_size_probe(&mut control, "first", b"ABCD");
+        register_named_file_size_probe(&mut control, "second", b"AB");
         run_to_end(&mut control, stores);
 
         admitted!(stores, |context| {
@@ -7671,7 +7374,7 @@ fn prefixed_definition_scanner_resumes_its_exact_substantive_command() {
 }
 
 #[test]
-fn prefix_fetch_resumes_with_earlier_flags_and_its_exact_expansion_child() {
+fn prefix_fetch_preserves_earlier_flags_and_its_exact_expansion_child() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = pdftex_initex(stores);
         register_source(
@@ -7684,9 +7387,7 @@ fn prefix_fetch_resumes_with_earlier_flags_and_its_exact_expansion_child() {
 \end
 ",
         );
-
-        let first = next_input_probe(&mut control, stores);
-        register_file_size_probe(&mut control, &first, b"ABCD");
+        register_named_file_size_probe(&mut control, "first", b"ABCD");
         run_to_end(&mut control, stores);
 
         admitted!(stores, |context| {
@@ -7701,25 +7402,18 @@ fn prefix_fetch_resumes_with_earlier_flags_and_its_exact_expansion_child() {
 }
 
 #[test]
-fn prefixed_definition_scanner_repeatedly_resuspends_at_the_same_child() {
+fn prefixed_definition_scanner_rejects_stale_retry_after_first_child_need() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = pdftex_initex(stores);
         register_source(&mut control, PREFIXED_DEFINITION_RESOURCE_SOURCE);
 
         let first = next_input_probe(&mut control, stores);
+        assert!(matches!(&first, ResourceNeed::InputProbe { .. }));
         register_file_size_probe(&mut control, &first, b"ABCD");
-        let second = next_input_probe(&mut control, stores);
-        for _ in 0..3 {
-            let repeated = next_input_probe(&mut control, stores);
-            assert!(matches!(
-                repeated,
-                ResourceNeed::InputProbe { request } if request.name == "second"
-            ));
-        }
-
-        register_file_size_probe(&mut control, &second, b"AB");
-        run_to_end(&mut control, stores);
-        assert_eq!(macro_character_text(stores, "result4"), "2");
+        assert!(matches!(
+            control.advance_episode(stores),
+            Err(ExecError::ResourceReplayRequired)
+        ));
     });
 }
 
@@ -7728,11 +7422,8 @@ fn prefixed_definition_scanner_fuel_abort_releases_its_operation_child() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = pdftex_initex(stores);
         register_source(&mut control, PREFIXED_DEFINITION_RESOURCE_SOURCE);
-
-        let first = next_input_probe(&mut control, stores);
-        register_file_size_probe(&mut control, &first, b"ABCD");
-        let second = next_input_probe(&mut control, stores);
-        register_file_size_probe(&mut control, &second, b"AB");
+        register_named_file_size_probe(&mut control, "first", b"ABCD");
+        register_named_file_size_probe(&mut control, "second", b"AB");
         control.set_fuel_limit(1).expect("bounded abort fuel");
 
         let aborted = control.advance_episode(stores);
@@ -7829,7 +7520,7 @@ fn paragraph_with_later_macro_tokens_is_permanently_skipped() {
 }
 
 #[test]
-fn observed_resource_retry_moves_the_unpublished_prefix_exactly_once() {
+fn observed_resource_need_publishes_no_uncommitted_prefix() {
     let source = br"\input child\end";
     let child =
         SourceRegistration::new(RegisteredSourceKind::Generated, Arc::<[u8]>::from(&b""[..]));
@@ -7851,22 +7542,19 @@ fn observed_resource_retry_moves_the_unpublished_prefix_exactly_once() {
         control
             .capabilities_mut()
             .register_input("child.tex", child.clone());
-        run_to_end_observed(&mut control, stores, &mut retried);
-
-        crate::test_harness::with_nonstop_plain_universe(|direct_stores| {
-            let mut direct = MainControl::tex82_initex(direct_stores);
-            direct.capabilities_mut().register_input("child.tex", child);
-            register_source(&mut direct, source);
-            let mut direct_observations = ObservationRecorder::default();
-            run_to_end_observed(&mut direct, direct_stores, &mut direct_observations);
-
-            assert_eq!(retried.0, direct_observations.0);
-        });
+        assert!(matches!(
+            control.advance_with_observer(stores, &mut retried),
+            Err(ExecError::ResourceReplayRequired)
+        ));
+        assert!(
+            retried.0.is_empty(),
+            "a discarded observed operation cannot publish a prefix on stale retry"
+        );
     });
 }
 
 #[test]
-fn observed_alignment_resource_retry_resumes_the_exact_delivery_once() {
+fn observed_alignment_resource_need_rejects_same_control_retry() {
     let source = br"\setbox0=\vbox{\halign{#\cr \input child\cr}}\end";
     let child = SourceRegistration::new(
         RegisteredSourceKind::Generated,
@@ -7877,7 +7565,8 @@ fn observed_alignment_resource_retry_resumes_the_exact_delivery_once() {
         let mut retried_control = MainControl::tex82_initex(retried_stores);
         register_source(&mut retried_control, source);
         let mut retried = ObservationRecorder::default();
-        loop {
+        let mut suspended = false;
+        for _ in 0..TEST_STEP_LIMIT {
             if matches!(
                 retried_control
                     .advance_with_observer(retried_stores, &mut retried)
@@ -7885,45 +7574,28 @@ fn observed_alignment_resource_retry_resumes_the_exact_delivery_once() {
                 StepResult::Suspended(ResourceNeed::Input { ref name, .. })
                     if name == "child.tex"
             ) {
+                suspended = true;
                 break;
             }
         }
         assert!(
-            retried_control.pending_resource_site().is_some(),
-            "alignment resource miss retains only detached need provenance"
+            suspended,
+            "alignment resource need must be reached in bounds"
+        );
+        let observations_at_need = retried.0.len();
+        assert_eq!(
+            retried_control.pending_resource_site(),
+            None,
+            "alignment resource suspension leaves no scanner continuation"
         );
         retried_control
             .capabilities_mut()
             .register_input("child.tex", child.clone());
-        run_to_end_observed(&mut retried_control, retried_stores, &mut retried);
-
-        crate::test_harness::with_nonstop_plain_universe(|direct_stores| {
-            let mut direct_control = MainControl::tex82_initex(direct_stores);
-            direct_control
-                .capabilities_mut()
-                .register_input("child.tex", child);
-            register_source(&mut direct_control, source);
-            let mut direct = ObservationRecorder::default();
-            run_to_end_observed(&mut direct_control, direct_stores, &mut direct);
-
-            if retried.0 != direct.0 {
-                let mismatch = retried
-                    .0
-                    .iter()
-                    .zip(&direct.0)
-                    .position(|(left, right)| left != right)
-                    .unwrap_or(retried.0.len().min(direct.0.len()));
-                panic!(
-                    "first observation mismatch at {mismatch}: retried={:?} direct={:?}",
-                    retried.0.get(mismatch),
-                    direct.0.get(mismatch)
-                );
-            }
-            assert_eq!(
-                retried_control.advance_telemetry().maximum_live_savepoints,
-                0
-            );
-        });
+        assert!(matches!(
+            retried_control.advance_with_observer(retried_stores, &mut retried),
+            Err(ExecError::ResourceReplayRequired)
+        ));
+        assert_eq!(retried.0.len(), observations_at_need);
     });
 }
 
@@ -7943,17 +7615,22 @@ fn alignment_preamble_span_expansion_rejects_same_stack_retry() {
         crate::test_harness::with_nonstop_plain_universe(|stores| {
             let mut control = pdftex_initex(stores);
             register_source(&mut control, source);
-            let request = loop {
-                match control.advance_episode(stores) {
-                    Ok(StepResult::Suspended(ResourceNeed::InputProbe { request })) => {
-                        break request
+            let request = {
+                let mut request = None;
+                for _ in 0..TEST_STEP_LIMIT {
+                    match control.advance_episode(stores) {
+                        Ok(StepResult::Suspended(ResourceNeed::InputProbe { request: need })) => {
+                            request = Some(need);
+                            break;
+                        }
+                        Ok(StepResult::Progress(_)) => {}
+                        Ok(StepResult::Suspended(need)) => {
+                            panic!("unexpected alignment resource: {need:?}")
+                        }
+                        Err(error) => panic!("unexpected alignment preflight error: {error:?}"),
                     }
-                    Ok(StepResult::Progress(_)) => {}
-                    Ok(StepResult::Suspended(need)) => {
-                        panic!("unexpected alignment resource: {need:?}")
-                    }
-                    Err(error) => panic!("unexpected alignment preflight error: {error:?}"),
                 }
+                request.expect("alignment resource need must be reached in bounds")
             };
             control.capabilities_mut().register_input_probe(
                 request.name.clone(),
@@ -7982,21 +7659,8 @@ fn alignment_preamble_span_expansion_abort_releases_its_resource_child() {
             br"\setbox0=\vbox{\halign{\span\pdffiledump length 2{second}#\cr X\cr}}\end",
         );
 
-        let need = loop {
-            match control
-                .advance_episode(stores)
-                .expect("preamble file enquiry suspends")
-            {
-                StepResult::Suspended(need @ ResourceNeed::InputProbe { .. }) => break need,
-                StepResult::Progress(_) => {}
-                other => panic!("unexpected preamble file-enquiry step: {other:?}"),
-            }
-        };
-        let ResourceNeed::InputProbe { request } = &need else {
-            unreachable!();
-        };
         control.capabilities_mut().register_input_probe(
-            request.name.clone(),
+            "second",
             tex_command::FileEnquiryResource::new(
                 SourceRegistration::new(
                     RegisteredSourceKind::Generated,
@@ -8012,6 +7676,10 @@ fn alignment_preamble_span_expansion_abort_releases_its_resource_child() {
             matches!(
                 &aborted,
                 Err(ExecError::Command(CommandError::FuelExhausted { .. }))
+            ) || matches!(
+                &aborted,
+                Err(ExecError::Captured { error, .. })
+                    if matches!(**error, ExecError::Command(CommandError::FuelExhausted { .. }))
             ),
             "unexpected preamble abort: {aborted:?}"
         );
@@ -8074,7 +7742,7 @@ fn committed_token_scanner_attempt_is_discarded_before_named_checkpoint() {
 }
 
 #[test]
-fn diagnostic_assignment_resumes_font_request_without_an_aggregate_savepoint() {
+fn diagnostic_assignment_discards_font_need_before_checkpoint_capture() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);
         let checkpoint = control
@@ -8093,49 +7761,35 @@ fn diagnostic_assignment_resumes_font_request_without_an_aggregate_savepoint() {
             DiagnosticStepResult::Suspended(ResourceNeed::Font { .. })
         ));
         let state_before = stores.journal_cursor().expect("state cursor");
-        assert!(matches!(
-            control.capture_checkpoint(
+        control
+            .capture_checkpoint(
                 crate::EngineBoundary::OuterParagraphEnd,
                 stores,
                 crate::ExecutionBudgetCounters::default(),
-            ),
-            Err(tex_command::CommandSummaryError::AttemptSuspended)
-        ));
-        assert!(matches!(
-            control.restore_checkpoint(&checkpoint, stores),
-            Err(crate::CheckpointRestoreError::AttemptSuspended)
-        ));
+            )
+            .expect("discarded diagnostic need leaves a quiescent control");
         assert_eq!(
             stores.journal_cursor().expect("state cursor"),
             state_before,
-            "checkpoint rejection must not mutate the suspended operation"
+            "discarding the attempt must not mutate the semantic state"
         );
+        drop(checkpoint);
         register_cmr10_as(&mut control, stores, "cmr10.tfm");
-        assert_eq!(
-            control
-                .diagnostic_expand_step(stores)
-                .expect("font assignment resumes"),
-            DiagnosticStepResult::Progress(DiagnosticStep::Assignment)
-        );
         assert!(matches!(
-            control
-                .diagnostic_expand_step(stores)
-                .expect("following token is delivered once"),
-            DiagnosticStepResult::Progress(DiagnosticStep::Token {
-                spelling,
-                meaning: Meaning::CharToken {
-                    ch: 'X',
-                    cat: Catcode::Letter,
-                },
-                ..
-            }) if spelling.token() == Some(Token::Char { ch: 'X', cat: Catcode::Letter })
+            control.diagnostic_expand_step(stores),
+            Err(ExecError::ResourceReplayRequired)
         ));
+        assert_eq!(
+            control.pending_resource_site(),
+            None,
+            "diagnostic resource discard leaves no scanner continuation"
+        );
         assert_eq!(control.advance_telemetry().maximum_live_savepoints, 0);
     });
 }
 
 #[test]
-fn diagnostic_input_retry_reuses_the_retained_delivery_attempt() {
+fn diagnostic_input_retry_rejects_the_discarded_delivery_attempt() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\input child after");
@@ -8158,32 +7812,15 @@ fn diagnostic_input_retry_reuses_the_retained_delivery_attempt() {
                 ),
             ),
         );
-        let mut characters = String::new();
-        for _ in 0..16 {
-            match control
-                .diagnostic_expand_step(stores)
-                .expect("retained input attempt resumes")
-            {
-                DiagnosticStepResult::Progress(DiagnosticStep::Token { spelling, .. }) => {
-                    if let Some(Token::Char { ch, .. }) = spelling.token() {
-                        characters.push(ch);
-                    }
-                }
-                DiagnosticStepResult::Progress(DiagnosticStep::Assignment) => {}
-                DiagnosticStepResult::Progress(DiagnosticStep::EndOfInput) => break,
-                DiagnosticStepResult::Suspended(need) => {
-                    panic!("registered input requested another resource: {need:?}")
-                }
-            }
-        }
-        assert_eq!(characters, "INafter ");
-        control
-            .capture_checkpoint(
-                crate::EngineBoundary::OuterParagraphEnd,
-                stores,
-                crate::ExecutionBudgetCounters::default(),
-            )
-            .expect("completed diagnostic input retry releases its attempt owner");
+        assert!(matches!(
+            control.diagnostic_expand_step(stores),
+            Err(ExecError::ResourceReplayRequired)
+        ));
+        assert_eq!(
+            control.pending_resource_site(),
+            None,
+            "diagnostic resource discard leaves no scanner continuation"
+        );
     });
 }
 
@@ -10344,7 +9981,7 @@ fn pdf_form_dvi_error_precedes_invalid_register_void_box_and_missing_object() {
 }
 
 #[test]
-fn pdf_image_create_rejects_dvi_before_operands_allocation_or_resource_lookup() {
+fn pdf_image_create_rejects_dvi_and_direct_retry_before_allocation() {
     // pdftex.web §1551 orders `check_pdfoutput` before `check_pdfversion`,
     // image-object allocation, `scan_image`, and `read_image`. A failed
     // aggregate operation therefore preserves every supported rule, attr,
@@ -10379,9 +10016,19 @@ fn pdf_image_create_rejects_dvi_before_operands_allocation_or_resource_lookup() 
         )
         .expect("integer parameter assignment");
         let pdf_state_before = stores.journal_cursor().expect("state cursor");
-        let request = match control.advance(stores).expect("PDF image request suspends") {
-            StepResult::Suspended(ResourceNeed::PdfImage { request }) => request,
-            other => panic!("expected image suspension, got {other:?}"),
+        let request = {
+            let mut request = None;
+            for _ in 0..TEST_STEP_LIMIT {
+                match control.advance(stores).expect("PDF image request suspends") {
+                    StepResult::Suspended(ResourceNeed::PdfImage { request: need }) => {
+                        request = Some(need);
+                        break;
+                    }
+                    StepResult::Progress(_) => {}
+                    other => panic!("expected image suspension, got {other:?}"),
+                }
+            }
+            request.expect("PDF image resource need must be reached in bounds")
         };
         assert_eq!(
             stores.journal_cursor().expect("state cursor"),
@@ -10414,52 +10061,26 @@ fn pdf_image_create_rejects_dvi_before_operands_allocation_or_resource_lookup() 
             request,
             PdfImageResource::Available(test_pdf_image_source()),
         );
+        assert!(matches!(
+            control.advance(stores),
+            Err(ExecError::ResourceReplayRequired)
+        ));
         assert_eq!(
-            control
-                .advance(stores)
-                .expect("fulfilled retry preserves and consumes the complete request"),
-            StepResult::Progress(MainControlStep::Continue)
-        );
-        let image = admitted!(stores, |context| {
-            let raw = context
+            admitted!(stores, |context| context
                 .internal_integer(tex_state::meaning::InternalInteger::PdfLastXImage)
-                .expect("last image integer");
-            let id =
-                tex_state::PdfExternalImageId::new(raw as u32).expect("retried image is allocated");
-            context
-                .pdf_external_image_record(id)
-                .expect("image metadata")
-        });
-        assert_eq!(
-            image.dimensions().width,
-            Scaled::from_raw(10 * Scaled::UNITY)
+                .expect("last image integer")),
+            0
         );
-        assert_eq!(
-            image.dimensions().height,
-            Scaled::from_raw(20 * Scaled::UNITY)
-        );
-        assert_eq!(
-            image.dimensions().depth,
-            Scaled::from_raw(3 * Scaled::UNITY)
-        );
-        assert_eq!(image.attributes(), b"/Interpolate true");
         assert!(mode_vec(&control, stores).is_empty());
-        control
-            .capture_checkpoint(
-                crate::EngineBoundary::OuterParagraphEnd,
-                stores,
-                crate::ExecutionBudgetCounters::default(),
-            )
-            .expect("fulfilled retry discards the exact retained attempt suffix");
     });
 }
 
 #[test]
-fn immediate_pdf_image_uses_the_same_preflight_and_transactional_retry() {
+fn immediate_pdf_image_rejects_direct_retry_after_resource_need() {
     // pdftex.web §1621 expands the command after `\immediate`, then invokes
     // §1551's complete `\pdfximage` case. Its output check precedes every
-    // image operand and the recursive call performs the allocation only
-    // after resource lookup succeeds.
+    // image operand. A direct MainControl caller must reject the stale retry;
+    // full checkpoint replay is owned by the incremental session.
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = pdftex_image_control(stores);
         register_source(
@@ -10489,9 +10110,19 @@ fn immediate_pdf_image_uses_the_same_preflight_and_transactional_retry() {
         )
         .expect("integer parameter assignment");
         let pdf_state_before = stores.journal_cursor().expect("state cursor");
-        let request = match control.advance(stores).expect("immediate image suspends") {
-            StepResult::Suspended(ResourceNeed::PdfImage { request }) => request,
-            other => panic!("expected immediate image suspension, got {other:?}"),
+        let request = {
+            let mut request = None;
+            for _ in 0..TEST_STEP_LIMIT {
+                match control.advance(stores).expect("immediate image suspends") {
+                    StepResult::Suspended(ResourceNeed::PdfImage { request: need }) => {
+                        request = Some(need);
+                        break;
+                    }
+                    StepResult::Progress(_) => {}
+                    other => panic!("expected immediate image suspension, got {other:?}"),
+                }
+            }
+            request.expect("immediate PDF image resource need must be reached in bounds")
         };
         assert_eq!(
             stores.journal_cursor().expect("state cursor"),
@@ -10509,20 +10140,15 @@ fn immediate_pdf_image_uses_the_same_preflight_and_transactional_retry() {
             request,
             PdfImageResource::Available(test_pdf_image_source()),
         );
+        assert!(matches!(
+            control.advance(stores),
+            Err(ExecError::ResourceReplayRequired)
+        ));
         assert_eq!(
-            control
-                .advance(stores)
-                .expect("immediate image retry allocates in the same operation"),
-            StepResult::Progress(MainControlStep::Continue)
-        );
-        assert_eq!(
-            usize::from(
-                admitted!(stores, |context| context
-                    .internal_integer(tex_state::meaning::InternalInteger::PdfLastXImage)
-                    .expect("PDF image integer"))
-                    != 0
-            ),
-            1
+            admitted!(stores, |context| context
+                .internal_integer(tex_state::meaning::InternalInteger::PdfLastXImage)
+                .expect("PDF image integer")),
+            0
         );
         assert!(mode_vec(&control, stores).is_empty());
     });
@@ -13603,53 +13229,52 @@ fn outer_vertical_pdf_whatsits_cross_page_successors_before_final_end() {
 }
 
 #[test]
-fn suspended_output_resume_preserves_end_job_progress_and_observation_order() {
+fn preloaded_output_routine_preserves_end_job_progress_and_observation_order() {
     // TeX82 §§1025--1026/1054: immutable input acquisition inside an
-    // explicit output routine may suspend the host episode, but it cannot
-    // publish or roll back the page-builder progress that admitted that
-    // routine. Resumption must match a run where the resource was present
-    // from the start, including the stop/shipout/termination order.
+    // explicit output routine cannot publish or roll back the page-builder
+    // progress that admitted that routine. The direct semantic test admits
+    // the fixture before execution; incremental checkpoint replay owns the
+    // resource-resume equivalence test.
     let source = br"\output={\input child\shipout\box255}\hrule\end";
     let child =
         SourceRegistration::new(RegisteredSourceKind::Generated, Arc::<[u8]>::from(&b""[..]));
 
-    crate::test_harness::with_nonstop_plain_universe(|retried_stores| {
-        let mut retried_control = MainControl::tex82_initex(retried_stores);
-        register_source(&mut retried_control, source);
-        let mut retried = ObservationRecorder::default();
-        for _ in 0..3 {
-            loop {
-                match retried_control
-                    .advance_with_observer(retried_stores, &mut retried)
-                    .expect("output routine advances to its input resource")
-                {
-                    StepResult::Suspended(ResourceNeed::Input { name, .. }) => {
-                        assert_eq!(name, "child.tex");
-                        break;
-                    }
-                    StepResult::Progress(ReplayStep::Continue) => {}
-                    other => panic!("output resource reached {other:?}"),
-                }
-            }
-        }
-        retried_control
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        control
             .capabilities_mut()
-            .register_input("child.tex", child.clone());
-        run_to_end_observed(&mut retried_control, retried_stores, &mut retried);
+            .register_input("child.tex", child);
+        register_source(&mut control, source);
+        let mut observations = ObservationRecorder::default();
+        run_to_end_observed(&mut control, stores, &mut observations);
 
-        crate::test_harness::with_nonstop_plain_universe(|direct_stores| {
-            let mut direct_control = MainControl::tex82_initex(direct_stores);
-            direct_control
-                .capabilities_mut()
-                .register_input("child.tex", child);
-            register_source(&mut direct_control, source);
-            let mut direct = ObservationRecorder::default();
-            run_to_end_observed(&mut direct_control, direct_stores, &mut direct);
-
-            assert_eq!(retried.0, direct.0);
-            assert_eq!(retried_stores.world().artifact_commits().len(), 1);
-            assert_eq!(direct_stores.world().artifact_commits().len(), 1);
-        });
+        assert_eq!(stores.world().artifact_commits().len(), 1);
+        let shipout = observations
+            .0
+            .iter()
+            .position(|observation| {
+                matches!(
+                    observation,
+                    CommandObservation::Effect(effect)
+                        if effect.kind == ObservationEffectKind::Shipout
+                )
+            })
+            .expect("output routine publishes one shipout");
+        let terminate = observations
+            .0
+            .iter()
+            .position(|observation| {
+                matches!(
+                    observation,
+                    CommandObservation::Effect(effect)
+                        if effect.kind == ObservationEffectKind::Terminate
+                )
+            })
+            .expect("end-job termination is observed");
+        assert!(
+            shipout < terminate,
+            "shipout observation must precede termination"
+        );
     });
 }
 
@@ -16124,9 +15749,10 @@ fn invalid_arithmetic_targets_use_print_cmd_chr_and_commit_without_mutation() {
 }
 
 #[test]
-fn invalid_arithmetic_target_commit_survives_later_resource_retry() {
+fn invalid_arithmetic_target_commit_survives_later_resource_need() {
     // The §1236 recovery and §1269 afterassignment replay are a committed
-    // operation. A later missing-resource rollback cannot duplicate either.
+    // operation. A later missing-resource boundary cannot duplicate either;
+    // direct callers must reject a retry after the need escapes.
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);
         register_source(
@@ -16149,17 +15775,19 @@ fn invalid_arithmetic_target_commit_survives_later_resource_retry() {
         let committed = terminal_text(stores);
         assert_eq!(committed.matches("the letter x").count(), 1);
 
-        for _ in 0..3 {
-            assert!(matches!(
-                control.advance(stores).expect("missing input suspends"),
-                StepResult::Suspended(ResourceNeed::Input {
-                    name,
-                    original_name,
-                }) if name == "child.tex" && original_name == "child"
-            ));
-            assert_eq!(stores.count(0).expect("count register"), 1);
-            assert_eq!(terminal_text(stores), committed);
-        }
+        assert!(matches!(
+            control.advance(stores).expect("missing input suspends"),
+            StepResult::Suspended(ResourceNeed::Input {
+                name,
+                original_name,
+            }) if name == "child.tex" && original_name == "child"
+        ));
+        assert_eq!(stores.count(0).expect("count register"), 1);
+        assert_eq!(terminal_text(stores), committed);
+        assert!(matches!(
+            control.advance(stores),
+            Err(ExecError::ResourceReplayRequired)
+        ));
     });
 }
 
@@ -17001,7 +16629,7 @@ fn batch_undefined_recovery_after_a_live_mode_transition_keeps_the_log_only_sele
 }
 
 #[test]
-fn unavailable_font_retry_preserves_batch_mode_for_later_diagnostics() {
+fn unavailable_font_need_rejects_direct_retry_without_mode_drift() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);
         register_source(
@@ -17011,35 +16639,42 @@ fn unavailable_font_retry_preserves_batch_mode_for_later_diagnostics() {
         let mut ledger = crate::OutputLedger::new();
         let mut checkpoints = Vec::new();
         let cancellation = crate::Cancellation::new();
-        loop {
-            match crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger)
-                .step_with_observer(
-                    &mut checkpoints,
-                    &cancellation,
-                    &mut ObservationRecorder::default(),
-                ) {
-                crate::CanonicalStepResult::ResourceNeed(need @ ResourceNeed::Font { .. }) => {
-                    ledger.mark_unavailable(&mut control, &need, false);
+        let need = {
+            let mut pending = None;
+            for _ in 0..TEST_STEP_LIMIT {
+                match crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger)
+                    .step_with_observer(
+                        &mut checkpoints,
+                        &cancellation,
+                        &mut ObservationRecorder::default(),
+                    ) {
+                    crate::CanonicalStepResult::ResourceNeed(need @ ResourceNeed::Font { .. }) => {
+                        pending = Some(need);
+                        break;
+                    }
+                    crate::CanonicalStepResult::Progress(_)
+                    | crate::CanonicalStepResult::Committed(_) => {}
+                    crate::CanonicalStepResult::Completed(_) => {
+                        panic!("unavailable font completed before its resource need")
+                    }
+                    other => panic!("unexpected unavailable-font step: {other:?}"),
                 }
-                crate::CanonicalStepResult::Completed(_) => break,
-                crate::CanonicalStepResult::Progress(_)
-                | crate::CanonicalStepResult::Committed(_) => {}
-                other => panic!("unexpected unavailable-font step: {other:?}"),
             }
-        }
+            pending.expect("unavailable font need must be reached in bounds")
+        };
+        ledger.mark_unavailable(&mut control, &need, false);
+        assert!(matches!(
+            crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger).step_with_observer(
+                &mut checkpoints,
+                &cancellation,
+                &mut ObservationRecorder::default(),
+            ),
+            crate::CanonicalStepResult::Failed(crate::CanonicalStepFailure::Execution(
+                ExecError::ResourceReplayRequired
+            ))
+        ));
 
-        assert_eq!(
-            stores.interaction_mode(),
-            tex_state::InteractionMode::Scroll
-        );
-        assert!(
-            !pending_sink_text(stores, true).contains("Undefined control sequence"),
-            "batch errors must not escape the log-only selector across a resource retry"
-        );
-        assert!(
-            pending_sink_text(stores, false).contains("Undefined control sequence"),
-            "batch errors remain in the transcript log across a resource retry"
-        );
+        assert_eq!(stores.interaction_mode(), tex_state::InteractionMode::Batch);
     });
 }
 
