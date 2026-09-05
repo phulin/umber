@@ -440,25 +440,36 @@ pub(crate) struct SynchronousIfDimensionControl {
 /// requested this record retains no rich command or token-list owner.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SynchronousNumberPhase {
+    /// The scanner has not seen a digit or internal quantity yet.  TeX.web
+    /// §440 permits spaces and an unbounded sequence of signs in this state;
+    /// every `-` toggles the accumulated polarity.
     Need,
+    Leading {
+        negative: bool,
+    },
     Await {
         negative: bool,
         value: i64,
         seen_digit: bool,
+        leading: bool,
     },
     Accumulating {
         negative: bool,
         value: i64,
-        seen_digit: bool,
     },
     RegisterIndex {
         target: Meaning,
+        /// Polarity preceding the register itself (for example,
+        /// `\number-\count0`).  This is distinct from the selector's
+        /// intentionally assignment-style sign handling below.
+        outer_negative: bool,
         negative: bool,
         value: i64,
         seen_digit: bool,
     },
     RegisterIndexAwait {
         target: Meaning,
+        outer_negative: bool,
         negative: bool,
         value: i64,
         seen_digit: bool,

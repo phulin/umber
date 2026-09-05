@@ -672,6 +672,120 @@ fn nested_number_conversions_return_through_the_shared_delivery_loop() {
 }
 
 #[test]
+fn number_accepts_repeated_signs_spaces_and_macro_boundaries() {
+    crate::test_harness::with_universe(|universe| {
+        let number = install_static(
+            universe,
+            "number",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Number),
+        );
+        let minusone_definition = universe
+            .allocate_definition(
+                &[],
+                &[TokenWord::pack(other('-')), TokenWord::pack(other('1'))],
+            )
+            .expect("minus-one definition");
+        let minusone = universe.intern("minusone").expect("minus-one macro");
+        universe
+            .assign_meaning(
+                minusone,
+                MeaningWord::macro_definition(MeaningFlags::EMPTY, minusone_definition),
+                AssignmentScope::Global,
+            )
+            .expect("minus-one meaning");
+
+        let cases = [
+            (
+                vec![number, other('-'), other('-'), other('1'), letter('X')],
+                "1X",
+            ),
+            (
+                vec![
+                    number,
+                    other('-'),
+                    other('-'),
+                    other('-'),
+                    other('1'),
+                    letter('X'),
+                ],
+                "-1X",
+            ),
+            (
+                vec![number, Token::Cs(minusone.symbol()), letter('X')],
+                "-1X",
+            ),
+            (
+                vec![
+                    number,
+                    Token::Char {
+                        ch: ' ',
+                        cat: Catcode::Space,
+                    },
+                    other('+'),
+                    Token::Char {
+                        ch: ' ',
+                        cat: Catcode::Space,
+                    },
+                    Token::Cs(minusone.symbol()),
+                    letter('X'),
+                ],
+                "-1X",
+            ),
+        ];
+        for (input, expected) in cases {
+            let mut command = CommandState::default();
+            let _operation = command.begin_attempt_operation();
+            crate::test_harness::push(&mut command, input);
+            assert_eq!(
+                collect_expanded_characters(universe, &mut command),
+                expected
+            );
+            assert!(command.take_semantic_diagnostics().is_empty());
+        }
+    });
+}
+
+#[test]
+fn number_reports_a_genuinely_missing_operand_and_preserves_the_token() {
+    crate::test_harness::with_universe(|universe| {
+        let number = install_static(
+            universe,
+            "number",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Number),
+        );
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(&mut command, [number, letter('X')]);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        let mut output = String::new();
+        while let Some(command) = processor.get_x_token().expect("missing-number recovery") {
+            match command.meaning() {
+                tex_state::meaning::ResolvedMeaning::Static(Meaning::CharToken { ch, .. }) => {
+                    output.push(ch);
+                }
+                other => panic!("expected expanded character, found {other:?}"),
+            }
+        }
+        assert_eq!(output, "0X");
+        drop(processor);
+        assert!(
+            diagnostic_effects.has_first_recoverable(),
+            "a genuinely missing operand must report through the cold diagnostic effect"
+        );
+    });
+}
+
+#[test]
 fn nested_pdf_uniform_deviates_use_the_shared_integer_lane() {
     crate::test_harness::with_universe(|universe| {
         let uniform = install_static(

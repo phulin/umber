@@ -467,6 +467,69 @@ fn format_font_suspension_while_closing_box_retains_active_owner() {
 }
 
 #[test]
+fn loaded_format_everyjob_preserves_repeated_number_signs() {
+    // TeX82 §440 keeps every leading sign in the integer scanner, even when
+    // expansion supplies a later sign from a restored macro.  Build the
+    // smallest format that exercises that path through `\everyjob`, then
+    // load it before the root job so format restoration and job-start input
+    // remain part of the regression.
+    let image = crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\def\minusone{-1}\everyjob{\message{X=\number-\minusone}}\dump",
+        );
+        run_to_end(&mut control, stores);
+        admitted!(stores, |context| assert!(
+            context
+                .token_parameter(tex_state::env::banks::TokParam::EVERY_JOB)
+                .expect("everyjob parameter")
+                .is_some(),
+            "INITEX must retain the everyjob token list before dumping"
+        ));
+        control
+            .take_format_dump(stores)
+            .expect("quiescent sign format capture")
+            .expect("INITEX produced a sign format")
+            .image
+    });
+
+    tex_state::with_materialized_format(
+        tex_state::interner::InternerBudget::new(16_384, 16_384, 1 << 20)
+            .expect("test interner budget"),
+        tex_state::World::memory(),
+        image,
+        |stores| {
+            admitted!(stores, |context| assert!(
+                context
+                    .token_parameter(tex_state::env::banks::TokParam::EVERY_JOB)
+                    .expect("everyjob parameter")
+                    .is_some(),
+                "dumped everyjob token list must survive format materialization"
+            ));
+            tex_command::register_tex82_expandable_primitives(stores);
+            crate::register_unexpandable_primitives(stores);
+            let mut control = MainControl::with_profile(CommandProfile::TEX82);
+            control.set_preloaded_format(crate::PreloadedFormat {
+                dump_name: "signs".to_owned(),
+                format_name: "signs".to_owned(),
+                year: 2026,
+                month: 9,
+                day: 5,
+            });
+            control.begin_job(stores, "signs.tex");
+            register_source(&mut control, br"\end");
+            run_to_end(&mut control, stores);
+
+            let terminal = terminal_text(stores);
+            assert!(terminal.contains("X=1"), "{terminal}");
+            assert!(!terminal.contains("Missing number"), "{terminal}");
+        },
+    )
+    .expect("sign format materializes");
+}
+
+#[test]
 fn math_choice_nested_input_and_probe_resume_without_duplicate_effects() {
     let child = SourceRegistration::new(
         RegisteredSourceKind::Generated,

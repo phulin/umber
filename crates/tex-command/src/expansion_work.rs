@@ -2244,23 +2244,31 @@ impl<G> ExpansionWork<G> {
                 negative: false,
                 value: 0,
                 seen_digit: false,
+                leading: false,
             },
-            SynchronousNumberPhase::Accumulating {
+            SynchronousNumberPhase::Leading { negative } => SynchronousNumberPhase::Await {
                 negative,
-                value,
-                seen_digit,
-            } => SynchronousNumberPhase::Await {
-                negative,
-                value,
-                seen_digit,
+                value: 0,
+                seen_digit: false,
+                leading: true,
             },
+            SynchronousNumberPhase::Accumulating { negative, value } => {
+                SynchronousNumberPhase::Await {
+                    negative,
+                    value,
+                    seen_digit: true,
+                    leading: false,
+                }
+            }
             SynchronousNumberPhase::RegisterIndex {
                 target,
+                outer_negative,
                 negative,
                 value,
                 seen_digit,
             } => SynchronousNumberPhase::RegisterIndexAwait {
                 target,
+                outer_negative,
                 negative,
                 value,
                 seen_digit,
@@ -2288,23 +2296,33 @@ impl<G> ExpansionWork<G> {
                 negative,
                 value,
                 seen_digit,
-            } => SynchronousNumberPhase::Accumulating {
-                negative,
-                value,
-                seen_digit,
-            },
+                leading,
+            } => {
+                if seen_digit {
+                    SynchronousNumberPhase::Accumulating { negative, value }
+                } else if leading {
+                    SynchronousNumberPhase::Leading { negative }
+                } else if negative {
+                    SynchronousNumberPhase::Leading { negative }
+                } else {
+                    SynchronousNumberPhase::Need
+                }
+            }
             SynchronousNumberPhase::RegisterIndexAwait {
                 target,
+                outer_negative,
                 negative,
                 value,
                 seen_digit,
             } => SynchronousNumberPhase::RegisterIndex {
                 target,
+                outer_negative,
                 negative,
                 value,
                 seen_digit,
             },
             SynchronousNumberPhase::Need
+            | SynchronousNumberPhase::Leading { .. }
             | SynchronousNumberPhase::Accumulating { .. }
             | SynchronousNumberPhase::RegisterIndex { .. } => {
                 return Err(ScratchError::InvalidCoordinate);
@@ -2332,6 +2350,7 @@ impl<G> ExpansionWork<G> {
         if !matches!(
             control.phase,
             SynchronousNumberPhase::Need
+                | SynchronousNumberPhase::Leading { .. }
                 | SynchronousNumberPhase::Accumulating { .. }
                 | SynchronousNumberPhase::RegisterIndex { .. }
                 | SynchronousNumberPhase::RegisterIndexAwait { .. }
@@ -2902,18 +2921,25 @@ impl<G> ExpansionWork<G> {
                         negative,
                         value,
                         seen_digit,
-                    } => SynchronousNumberPhase::Accumulating {
-                        negative,
-                        value,
-                        seen_digit,
-                    },
+                        leading,
+                    } => {
+                        if seen_digit {
+                            SynchronousNumberPhase::Accumulating { negative, value }
+                        } else if leading || negative {
+                            SynchronousNumberPhase::Leading { negative }
+                        } else {
+                            SynchronousNumberPhase::Need
+                        }
+                    }
                     SynchronousNumberPhase::RegisterIndexAwait {
                         target,
+                        outer_negative,
                         negative,
                         value,
                         seen_digit,
                     } => SynchronousNumberPhase::RegisterIndex {
                         target,
+                        outer_negative,
                         negative,
                         value,
                         seen_digit,

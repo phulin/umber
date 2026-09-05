@@ -965,6 +965,39 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.advance_number_continuation_impl(command, false)
     }
 
+    /// Applies TeX.web §440's leading-sign loop to the shared hot integer
+    /// lane.  `Need` is the untouched state; `Leading` records that at least
+    /// one sign has already crossed the scanner, so a later `-` toggles the
+    /// polarity instead of replacing it.  Digits leave this state exactly
+    /// once, after which the ordinary accumulator no longer accepts signs.
+    fn leading_number_phase(
+        phase: crate::expansion_work::control::SynchronousNumberPhase,
+        character: Option<char>,
+        is_space: bool,
+        digit: Option<i64>,
+    ) -> Option<crate::expansion_work::control::SynchronousNumberPhase> {
+        use crate::expansion_work::control::SynchronousNumberPhase as Phase;
+
+        let negative = match phase {
+            Phase::Need => false,
+            Phase::Leading { negative } => negative,
+            _ => return None,
+        };
+        if is_space {
+            return Some(phase);
+        }
+        match character {
+            Some('+') => Some(Phase::Leading { negative }),
+            Some('-') => Some(Phase::Leading {
+                negative: !negative,
+            }),
+            _ => digit.map(|digit| Phase::Accumulating {
+                negative,
+                value: digit,
+            }),
+        }
+    }
+
     fn advance_number_continuation_impl(
         &mut self,
         command: HotCommand<G>,
@@ -1035,62 +1068,33 @@ impl<G> CommandProcessor<'_, '_, G> {
                 };
 
             match control.phase {
-                Phase::Need => {
-                    if is_space {
+                Phase::Need | Phase::Leading { .. } => {
+                    if let Some(next) =
+                        Self::leading_number_phase(control.phase, character, is_space, digit)
+                    {
+                        self.command.scratch.set_number_phase(next)?;
                         return Ok(false);
                     }
-                    if character == Some('+') || character == Some('-') {
-                        self.command.scratch.set_number_phase(Phase::Accumulating {
-                            negative: character == Some('-'),
-                            value: 0,
-                            seen_digit: false,
-                        })?;
-                        return Ok(false);
-                    }
-                    if let Some(digit) = digit {
-                        self.command.scratch.set_number_phase(Phase::Accumulating {
-                            negative: false,
-                            value: digit,
-                            seen_digit: true,
-                        })?;
-                        return Ok(false);
-                    }
+                    let site = (!at_end).then(|| self.capture_hot_diagnostic_site(&command));
                     if !at_end {
-                        let site = self.capture_hot_diagnostic_site(&command);
                         self.back_input(command.materialize())?;
-                        self.missing_number_error_at(Some(site))?;
-                    } else {
-                        self.missing_number_error_at(None)?;
                     }
+                    self.missing_number_error_at(site)?;
                     finish_margin_kern(self, *control, 0, false)?;
                     return Ok(true);
                 }
-                Phase::Accumulating {
-                    negative,
-                    value,
-                    seen_digit,
-                } => {
+                Phase::Accumulating { negative, value } => {
                     if let Some(digit) = digit {
                         self.command.scratch.set_number_phase(Phase::Accumulating {
                             negative,
                             value: saturating_digit(value, digit),
-                            seen_digit: true,
                         })?;
                         return Ok(false);
                     }
-                    if !seen_digit {
-                        let site = (!at_end).then(|| self.capture_hot_diagnostic_site(&command));
-                        if !at_end {
-                            self.back_input(command.materialize())?;
-                        }
-                        self.missing_number_error_at(site)?;
-                        finish_margin_kern(self, *control, 0, negative)?;
-                    } else {
-                        if !at_end && !is_space {
-                            self.back_input(command.materialize())?;
-                        }
-                        finish_margin_kern(self, *control, value, negative)?;
+                    if !at_end && !is_space {
+                        self.back_input(command.materialize())?;
                     }
+                    finish_margin_kern(self, *control, value, negative)?;
                     return Ok(true);
                 }
                 Phase::Await { .. }
@@ -1128,9 +1132,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         // selector in the same compact number record instead of falling back
         // to `scan_something_internal`, whose legacy selector scanner would
         // re-enter expanded delivery for a macro-valued index.
-        if matches!(control.phase, Phase::Need)
+        if matches!(control.phase, Phase::Need | Phase::Leading { .. })
             && let ResolvedMeaning::Static(meaning) = command.resolved_meaning()
         {
+            let outer_negative = matches!(control.phase, Phase::Leading { negative: true });
             if control.purpose != crate::expansion_work::control::SynchronousNumberPurpose::Roman
                 && meaning == Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NumExpr)
             {
@@ -1148,7 +1153,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         term: 0,
                         term_operator: 0,
                         term_active: false,
-                        negative: false,
+                        negative: outer_negative,
                         value: 0,
                         seen_digit: false,
                     },
@@ -1173,7 +1178,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         term: 0,
                         term_operator: 0,
                         term_active: false,
-                        negative: false,
+                        negative: outer_negative,
                         value: 0,
                         fraction: 0,
                         fraction_digits: 0,
@@ -1189,6 +1194,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .scratch
                     .set_number_phase(Phase::RegisterIndex {
                         target: meaning,
+                        outer_negative,
                         negative: false,
                         value: 0,
                         seen_digit: false,
@@ -1203,6 +1209,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .scratch
                     .pop_number_control()
                     .map_err(crate::scan_toks::scratch_command_error)?;
+                let value = if outer_negative {
+                    value.saturating_neg()
+                } else {
+                    value
+                };
                 self.finish_number_output(*control, value)?;
                 return Ok(true);
             }
@@ -1210,6 +1221,7 @@ impl<G> CommandProcessor<'_, '_, G> {
 
         if let Phase::RegisterIndex {
             target,
+            outer_negative,
             negative,
             value,
             seen_digit,
@@ -1220,6 +1232,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                  control: crate::expansion_work::control::SynchronousNumberControl,
                  target: Meaning,
                  value: i64,
+                 outer_negative: bool,
                  negative: bool|
                  -> Result<(), CommandError> {
                     let value = if negative {
@@ -1235,6 +1248,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                     let index = u16::try_from(value.clamp(0, limit)).unwrap_or(0);
                     let internal = this.scan_the_register_value(target, index)?;
                     let number = Self::number_from_internal_value(&internal).unwrap_or(0);
+                    let number = if outer_negative {
+                        number.saturating_neg()
+                    } else {
+                        number
+                    };
                     let _ = this
                         .command
                         .scratch
@@ -1248,6 +1266,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .scratch
                         .set_number_phase(Phase::RegisterIndex {
                             target,
+                            outer_negative,
                             negative,
                             value,
                             seen_digit,
@@ -1259,6 +1278,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .scratch
                         .set_number_phase(Phase::RegisterIndex {
                             target,
+                            outer_negative,
                             negative: character == Some('-'),
                             value,
                             seen_digit,
@@ -1275,6 +1295,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .scratch
                         .set_number_phase(Phase::RegisterIndex {
                             target,
+                            outer_negative,
                             negative,
                             value,
                             seen_digit: true,
@@ -1287,78 +1308,49 @@ impl<G> CommandProcessor<'_, '_, G> {
                         self.back_input(command.materialize())?;
                     }
                     self.missing_number_error_at(site)?;
-                    finish_register(self, *control, target, 0, false)?;
+                    finish_register(self, *control, target, 0, outer_negative, false)?;
                     return Ok(true);
                 }
                 _ => {
                     if !at_end && !is_space {
                         self.back_input(command.materialize())?;
                     }
-                    finish_register(self, *control, target, value, negative)?;
+                    finish_register(self, *control, target, value, outer_negative, negative)?;
                     return Ok(true);
                 }
             }
         }
         match control.phase {
-            Phase::Need => {
-                if is_space {
+            Phase::Need | Phase::Leading { .. } => {
+                if let Some(next) =
+                    Self::leading_number_phase(control.phase, character, is_space, digit)
+                {
+                    self.command.scratch.set_number_phase(next)?;
                     return Ok(false);
                 }
-                if character == Some('+') || character == Some('-') {
-                    self.command.scratch.set_number_phase(Phase::Accumulating {
-                        negative: character == Some('-'),
-                        value: 0,
-                        seen_digit: false,
-                    })?;
-                    return Ok(false);
-                }
-                if let Some(digit) = digit {
-                    self.command.scratch.set_number_phase(Phase::Accumulating {
-                        negative: false,
-                        value: digit,
-                        seen_digit: true,
-                    })?;
-                    return Ok(false);
-                }
+                let site = (!at_end).then(|| self.capture_hot_diagnostic_site(&command));
                 if !at_end {
-                    let site = self.capture_hot_diagnostic_site(&command);
                     self.back_input(command.materialize())?;
-                    self.missing_number_error_at(Some(site))?;
-                } else {
-                    self.missing_number_error_at(None)?;
                 }
+                self.missing_number_error_at(site)?;
                 finish(self, *control, 0, false)?;
                 Ok(true)
             }
             Phase::Await { .. } => Err(CommandError::input_invariant()),
             Phase::RegisterIndex { .. } => Err(CommandError::input_invariant()),
             Phase::RegisterIndexAwait { .. } => Err(CommandError::input_invariant()),
-            Phase::Accumulating {
-                negative,
-                value,
-                seen_digit,
-            } => {
+            Phase::Accumulating { negative, value } => {
                 if let Some(digit) = digit {
                     self.command.scratch.set_number_phase(Phase::Accumulating {
                         negative,
                         value: saturating_digit(value, digit),
-                        seen_digit: true,
                     })?;
                     return Ok(false);
                 }
-                if !seen_digit {
-                    let site = (!at_end).then(|| self.capture_hot_diagnostic_site(&command));
-                    if !at_end {
-                        self.back_input(command.materialize())?;
-                    }
-                    self.missing_number_error_at(site)?;
-                    finish(self, *control, 0, negative)?;
-                } else {
-                    if !at_end && !is_space {
-                        self.back_input(command.materialize())?;
-                    }
-                    finish(self, *control, value, negative)?;
+                if !at_end && !is_space {
+                    self.back_input(command.materialize())?;
                 }
+                finish(self, *control, value, negative)?;
                 Ok(true)
             }
         }

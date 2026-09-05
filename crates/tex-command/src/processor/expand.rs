@@ -311,10 +311,11 @@ impl<G> ActiveControlSnapshot<G> {
                             ..
                         }
                 ) => Some(control.slot),
-            Self::Number(control)
+                    Self::Number(control)
                 if matches!(
                     control.phase,
                     crate::expansion_work::control::SynchronousNumberPhase::Need
+                        | crate::expansion_work::control::SynchronousNumberPhase::Leading { .. }
                         | crate::expansion_work::control::SynchronousNumberPhase::Accumulating {
                             ..
                         }
