@@ -23,7 +23,7 @@ use crate::shipout_scratch::ShipoutScratchListId;
 use crate::stores::AdmittedStateMut;
 use crate::token::TokenWord;
 use crate::universe::{CommandSessionState, RetainedCommandState};
-use crate::world::JobClock;
+use crate::world::{InputDependency, JobClock, WorldError};
 
 /// The two line sources reachable by command delivery.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -3090,6 +3090,24 @@ impl<'a, G> CommandContext<'a, G> {
         self.resident
             .dependencies
             .poison(TrackedRegionBarrier::UnsupportedHostCapability);
+    }
+
+    /// Re-records semantic dependencies carried by a retained host-capability
+    /// hit in the rollback-owned World. The capability itself is executor
+    /// state and survives checkpoint restore; this operation deliberately
+    /// writes only the current World timeline.
+    pub fn record_input_dependencies(
+        &mut self,
+        dependencies: &[InputDependency],
+    ) -> Result<(), WorldError> {
+        for dependency in dependencies {
+            self.resident.world.record_input_dependency(
+                dependency.path().to_owned(),
+                dependency.outcome(),
+                dependency.access(),
+            )?;
+        }
+        Ok(())
     }
 
     #[must_use]

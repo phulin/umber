@@ -40,6 +40,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .collect::<String>();
         let request = crate::FileEnquiryRequest::new(name, crate::FileEnquiryIntent::Dump);
         self.state.unsupported_host_capability();
+        self.record_input_probe_dependencies(&request.name)?;
         let Some(source) = self.host.input_probe(&request.name) else {
             return if self.host.input_probe_is_unavailable(&request.name) {
                 Ok(())
@@ -77,6 +78,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .collect::<String>();
         let request = crate::FileEnquiryRequest::new(name, crate::FileEnquiryIntent::Size);
         self.state.unsupported_host_capability();
+        self.record_input_probe_dependencies(&request.name)?;
         let Some(source) = self.host.input_probe(&request.name) else {
             return if self.host.input_probe_is_unavailable(&request.name) {
                 Ok(())
@@ -98,6 +100,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             crate::FileEnquiryIntent::ModificationDate,
         );
         self.state.unsupported_host_capability();
+        self.record_input_probe_dependencies(&request.name)?;
         let Some(resource) = self.host.input_probe(&request.name) else {
             return if self.host.input_probe_is_unavailable(&request.name) {
                 Ok(())
@@ -127,6 +130,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             let name = bytes.iter().copied().map(char::from).collect::<String>();
             let request = crate::FileEnquiryRequest::new(name, crate::FileEnquiryIntent::MdFiveSum);
             self.state.unsupported_host_capability();
+            self.record_input_probe_dependencies(&request.name)?;
             let Some(resource) = self.host.input_probe(&request.name) else {
                 return if self.host.input_probe_is_unavailable(&request.name) {
                     Ok(())
@@ -152,6 +156,13 @@ impl<G> CommandProcessor<'_, '_, G> {
             .into_iter()
             .map(char::from)
             .collect())
+    }
+
+    fn record_input_probe_dependencies(&mut self, name: &str) -> Result<(), CommandError> {
+        let dependencies = self.host.input_probe_dependencies(name);
+        self.state
+            .record_input_dependencies(&dependencies)
+            .map_err(|_| CommandError::input_invariant())
     }
 
     fn pdftex_file_range_diagnostic(&mut self, kind: &str, value: i32) {

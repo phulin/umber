@@ -728,6 +728,22 @@ pub struct InputDependency {
 }
 
 impl InputDependency {
+    /// Constructs a detached dependency that can cross a retained-resource
+    /// boundary without borrowing the World that originally observed it.
+    #[must_use]
+    pub fn new(
+        path: impl Into<PathBuf>,
+        outcome: InputDependencyOutcome,
+        access: InputDependencyAccess,
+    ) -> Self {
+        let path: Arc<Path> = Arc::from(path.into().into_boxed_path());
+        Self {
+            path,
+            outcome,
+            access,
+        }
+    }
+
     #[must_use]
     pub fn path(&self) -> &Path {
         &self.path

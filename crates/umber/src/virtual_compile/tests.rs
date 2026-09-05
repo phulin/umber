@@ -1058,6 +1058,29 @@ fn changed_required_generated_input_retries_one_job_start_candidate_and_matches_
     let CompileAttemptResult::Complete(actual) = incremental.compile_attempt() else {
         panic!("resumed candidate must complete");
     };
+    let dependencies = incremental
+        .accepted_input_dependencies()
+        .collect::<Vec<_>>();
+    assert!(
+        dependencies.iter().any(|dependency| {
+            dependency.path() == Path::new("/job/state.aux")
+                && matches!(
+                    dependency.outcome(),
+                    tex_state::InputDependencyOutcome::Present(_)
+                )
+        }),
+        "the cached JobStart-prefix input must remain in the accepted dependency closure"
+    );
+    assert!(
+        dependencies.iter().any(|dependency| {
+            dependency.path() == Path::new("/texlive/later.tex")
+                && matches!(
+                    dependency.outcome(),
+                    tex_state::InputDependencyOutcome::Present(_)
+                )
+        }),
+        "the newly answered suffix input must join the cached prefix dependency"
+    );
     assert_eq!(
         incremental
             .reuse_metrics()
@@ -3799,6 +3822,46 @@ fn missing_startup_prefetch_hint_is_one_shot_and_nonblocking() {
         session.compile_attempt(),
         CompileAttemptResult::Complete(_)
     ));
+}
+
+#[test]
+fn unused_startup_prefetch_does_not_enter_input_dependency_closure() {
+    let request = ResourceRequest::File(FileRequest::new(
+        FileRequestKey::new(FileKind::TexInput, "unused-prefetch.tex").expect("request key"),
+        "unused-prefetch",
+    ));
+    let mut session = VirtualCompileSession::new(SessionOptions {
+        initial_prefetch_hints: Some(vec![request].into_boxed_slice()),
+        ..SessionOptions::default()
+    })
+    .expect("session");
+    session
+        .add_user_file("main.tex", b"\\end".to_vec())
+        .expect("main");
+
+    let CompileAttemptResult::NeedResources(first) = session.compile_attempt() else {
+        panic!("prefetch should receive one provider round");
+    };
+    let [ResourceRequest::File(prefetch)] = first.prefetch_hints.as_slice() else {
+        panic!("expected one prefetch request");
+    };
+    session
+        .provide_resources(vec![ResourceResponse::File(ResolvedFile {
+            request: prefetch.key().clone(),
+            virtual_path: "/texlive/unused-prefetch.tex".into(),
+            bytes: b"\\message{must-not-run}\\endinput".to_vec().into(),
+            expected_digest: None,
+        })])
+        .expect("prefetch response");
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::Complete(_)
+    ));
+    assert!(
+        !session
+            .accepted_input_dependencies()
+            .any(|dependency| dependency.path() == Path::new("/texlive/unused-prefetch.tex"))
+    );
 }
 
 #[test]

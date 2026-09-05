@@ -1222,8 +1222,14 @@ impl tex_exec::RetainedEngineOperation for CandidateRun<'_, '_> {
                     let result = pending.apply_effects(universe);
                     if result.is_ok() {
                         match pending {
-                            PendingResource::Fulfilled { fulfillment, .. } => {
-                                if ledger.fulfill(control, &need, fulfillment).is_err() {
+                            PendingResource::Fulfilled {
+                                fulfillment,
+                                effects,
+                            } => {
+                                if ledger
+                                    .fulfill_with_effects(control, &need, fulfillment, &effects)
+                                    .is_err()
+                                {
                                     return CandidateRunResult {
                                         execution: Err(SessionError::UnexpectedResource),
                                         runtime_key: None,
@@ -1231,8 +1237,9 @@ impl tex_exec::RetainedEngineOperation for CandidateRun<'_, '_> {
                                     };
                                 }
                             }
-                            PendingResource::Unavailable { .. } => {
-                                ledger.mark_unavailable(control, &need, false);
+                            PendingResource::Unavailable { effects } => {
+                                ledger
+                                    .mark_unavailable_with_effects(control, &need, false, &effects);
                             }
                         }
                         runtime.answered_needs.push(need);

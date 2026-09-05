@@ -450,29 +450,83 @@ impl OutputLedger {
         need: &ResourceNeed,
         fulfillment: ResourceFulfillment,
     ) -> Result<(), Box<ResourceFulfillment>> {
+        self.fulfill_with_dependencies(control, need, fulfillment, None)
+    }
+
+    /// Installs a retained resource answer and carries the semantic input
+    /// observations made while acquiring it into the capability binding.
+    /// Those observations are re-recorded by the command/executor lookup when
+    /// a later retry hits the retained answer directly.
+    pub fn fulfill_with_effects<G>(
+        &mut self,
+        control: &mut MainControl<G>,
+        need: &ResourceNeed,
+        fulfillment: ResourceFulfillment,
+        effects: &[crate::ResourceReplayEffect],
+    ) -> Result<(), Box<ResourceFulfillment>> {
+        let dependencies = (!effects.is_empty()).then(|| {
+            effects
+                .iter()
+                .map(crate::ResourceReplayEffect::input_dependency)
+                .collect()
+        });
+        self.fulfill_with_dependencies(control, need, fulfillment, dependencies)
+    }
+
+    fn fulfill_with_dependencies<G>(
+        &mut self,
+        control: &mut MainControl<G>,
+        need: &ResourceNeed,
+        fulfillment: ResourceFulfillment,
+        dependencies: Option<Vec<tex_state::InputDependency>>,
+    ) -> Result<(), Box<ResourceFulfillment>> {
         match (need, fulfillment) {
             (
                 ResourceNeed::Input { name: expected, .. },
                 ResourceFulfillment::Input { name, source },
-            ) if expected == &name => control.capabilities_mut().register_input(name, source),
+            ) if expected == &name => {
+                match dependencies {
+                    Some(dependencies) => control
+                        .capabilities_mut()
+                        .register_input_with_dependencies(name, source, dependencies),
+                    None => control.capabilities_mut().register_input(name, source),
+                }
+            }
             (
                 ResourceNeed::InputProbe { request: expected },
                 ResourceFulfillment::InputProbe { request, resource },
-            ) if expected == &request => control
-                .capabilities_mut()
-                .register_input_probe(request.name, resource),
+            ) if expected == &request => match dependencies {
+                Some(dependencies) => control
+                    .capabilities_mut()
+                    .register_input_probe_with_dependencies(request.name, resource, dependencies),
+                None => control
+                    .capabilities_mut()
+                    .register_input_probe(request.name, resource),
+            },
             (
                 ResourceNeed::Font { request: expected },
                 ResourceFulfillment::Font { request, resource },
-            ) if expected == &request => control
-                .capabilities_mut()
-                .register_font(canonical_font_resource_path(&request.name), *resource),
+            ) if expected == &request => match dependencies {
+                Some(dependencies) => control.capabilities_mut().register_font_with_dependencies(
+                    canonical_font_resource_path(&request.name),
+                    *resource,
+                    dependencies,
+                ),
+                None => control
+                    .capabilities_mut()
+                    .register_font(canonical_font_resource_path(&request.name), *resource),
+            },
             (
                 ResourceNeed::PdfImage { request: expected },
                 ResourceFulfillment::PdfImage { request, resource },
-            ) if expected == &request => control
-                .capabilities_mut()
-                .register_pdf_image(request, *resource),
+            ) if expected == &request => match dependencies {
+                Some(dependencies) => control
+                    .capabilities_mut()
+                    .register_pdf_image_with_dependencies(request, *resource, dependencies),
+                None => control
+                    .capabilities_mut()
+                    .register_pdf_image(request, *resource),
+            },
             (_, fulfillment) => return Err(Box::new(fulfillment)),
         }
         control.acknowledge_resource_need();
@@ -485,24 +539,70 @@ impl OutputLedger {
         need: &ResourceNeed,
         register_texinputs_alias: bool,
     ) {
+        self.mark_unavailable_with_dependencies(
+            control,
+            need,
+            register_texinputs_alias,
+            Vec::new(),
+        );
+    }
+
+    /// Settles an authoritative absence while retaining the input facts that
+    /// led to it for future cached probe/open hits.
+    pub fn mark_unavailable_with_effects<G>(
+        &mut self,
+        control: &mut MainControl<G>,
+        need: &ResourceNeed,
+        register_texinputs_alias: bool,
+        effects: &[crate::ResourceReplayEffect],
+    ) {
+        let dependencies = effects
+            .iter()
+            .map(crate::ResourceReplayEffect::input_dependency)
+            .collect();
+        self.mark_unavailable_with_dependencies(
+            control,
+            need,
+            register_texinputs_alias,
+            dependencies,
+        );
+    }
+
+    fn mark_unavailable_with_dependencies<G>(
+        &mut self,
+        control: &mut MainControl<G>,
+        need: &ResourceNeed,
+        register_texinputs_alias: bool,
+        dependencies: Vec<tex_state::InputDependency>,
+    ) {
         match need {
             ResourceNeed::Input { name, .. } => {
                 let capabilities = control.capabilities_mut();
-                capabilities.mark_input_unavailable(name);
+                capabilities.mark_input_unavailable_with_dependencies(name, dependencies.clone());
                 if register_texinputs_alias && !name.contains(['/', '\\', ':']) {
-                    capabilities.mark_input_unavailable(format!("TeXinputs:{name}"));
+                    capabilities.mark_input_unavailable_with_dependencies(
+                        format!("TeXinputs:{name}"),
+                        dependencies,
+                    );
                 }
             }
             ResourceNeed::InputProbe { request } => control
                 .capabilities_mut()
-                .mark_input_probe_unavailable(&request.name),
-            ResourceNeed::Font { request } => control.capabilities_mut().register_font(
-                canonical_font_resource_path(&request.name),
-                FontResource::Unavailable,
-            ),
+                .mark_input_probe_unavailable_with_dependencies(&request.name, dependencies),
+            ResourceNeed::Font { request } => {
+                control.capabilities_mut().register_font_with_dependencies(
+                    canonical_font_resource_path(&request.name),
+                    FontResource::Unavailable,
+                    dependencies,
+                )
+            }
             ResourceNeed::PdfImage { request } => control
                 .capabilities_mut()
-                .register_pdf_image(request.clone(), PdfImageResource::Unavailable),
+                .register_pdf_image_with_dependencies(
+                    request.clone(),
+                    PdfImageResource::Unavailable,
+                    dependencies,
+                ),
         }
         control.acknowledge_resource_need();
     }

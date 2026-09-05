@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use tex_state::source_map::SourceDescriptor;
 use tex_state::world::FileContent;
-use tex_state::{InputRecordId, SharedBytes, SourceId};
+use tex_state::{InputDependency, InputRecordId, SharedBytes, SourceId};
 
 pub use tex_state::packed_input::SourceRole;
 
@@ -102,6 +102,7 @@ pub struct SourceRegistration {
     bytes: SharedBytes,
     world_record: Option<InputRecordId>,
     modification_date: Option<tex_state::FileModificationDate>,
+    input_dependencies: Arc<[InputDependency]>,
     name: Option<Arc<str>>,
     framing_name: Option<Arc<str>>,
     framing: SourceFramingPolicy,
@@ -117,6 +118,7 @@ impl SourceRegistration {
             bytes: bytes.into(),
             world_record: None,
             modification_date: None,
+            input_dependencies: Arc::from([]),
             name: None,
             framing_name: None,
             framing: SourceFramingPolicy::Canonical,
@@ -133,6 +135,7 @@ impl SourceRegistration {
             bytes: content.shared_bytes(),
             world_record: Some(content.record()),
             modification_date: content.modification_date(),
+            input_dependencies: Arc::from([]),
             name: None,
             framing_name: None,
             framing: SourceFramingPolicy::Canonical,
@@ -165,6 +168,24 @@ impl SourceRegistration {
     #[must_use]
     pub const fn modification_date(&self) -> Option<tex_state::FileModificationDate> {
         self.modification_date
+    }
+
+    /// Attaches the immutable dependency facts observed while acquiring this
+    /// backing. The facts remain beside the source binding so a cached hit can
+    /// re-record them after a checkpoint restore without rereading bytes.
+    #[must_use]
+    pub fn with_input_dependencies(
+        mut self,
+        dependencies: impl Into<Arc<[InputDependency]>>,
+    ) -> Self {
+        self.input_dependencies = dependencies.into();
+        self
+    }
+
+    /// Returns dependencies to re-record when this retained source is used.
+    #[must_use]
+    pub fn input_dependencies(&self) -> &[InputDependency] {
+        &self.input_dependencies
     }
 
     /// Selects who owns transcript framing for this source.

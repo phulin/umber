@@ -5570,9 +5570,20 @@ impl<G> CommandProcessor<'_, '_, G> {
             let mut unresolved = false;
             for attempted_name in attempts {
                 let Some(registration) = self.host.input(&attempted_name) else {
-                    unresolved |= !self.host.input_is_unavailable(&attempted_name);
+                    if self.host.input_is_unavailable(&attempted_name) {
+                        self.state
+                            .record_input_dependencies(
+                                &self.host.input_unavailable_dependencies(&attempted_name),
+                            )
+                            .map_err(|_| CommandError::input_invariant())?;
+                    } else {
+                        unresolved = true;
+                    }
                     continue;
                 };
+                self.state
+                    .record_input_dependencies(registration.input_dependencies())
+                    .map_err(|_| CommandError::input_invariant())?;
                 let bytes = registration.shared_bytes();
                 // §537's `a_make_name_string`: tex.web records the name it
                 // actually opened on the level, and later prints exactly that

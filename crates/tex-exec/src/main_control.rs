@@ -2225,6 +2225,11 @@ impl<G> MainControl<G> {
                 request: request.clone(),
             });
         }
+        let dependencies = self
+            .capabilities
+            .font_dependencies(&path)
+            .unwrap_or_default();
+        Self::record_cached_input_dependencies(stores, &dependencies)?;
         Ok(())
     }
 
@@ -2251,8 +2256,19 @@ impl<G> MainControl<G> {
                 // host that reports the file absent reaches the closed-stream
                 // outcome.
                 match self.capabilities.input_probe_resource(&packed_name) {
-                    Some(resource) => Some(resource.source().clone()),
-                    None if self.capabilities.input_probe_is_unavailable(&packed_name) => None,
+                    Some(resource) => {
+                        let source = resource.source().clone();
+                        Self::record_cached_input_dependencies(
+                            stores,
+                            source.input_dependencies(),
+                        )?;
+                        Some(source)
+                    }
+                    None if self.capabilities.input_probe_is_unavailable(&packed_name) => {
+                        let dependencies = self.capabilities.input_probe_dependencies(&packed_name);
+                        Self::record_cached_input_dependencies(stores, &dependencies)?;
+                        None
+                    }
                     None => {
                         let error_request = tex_command::FileEnquiryRequest::new(
                             packed_name,
@@ -2310,13 +2326,30 @@ impl<G> MainControl<G> {
                     .expect("PDF image resource resolution precedes root preparation")
             }),
         };
-        let Some(resolved_resource) = self.capabilities.pdf_image(&host_request) else {
+        let Some((resolved_resource, dependencies)) =
+            self.capabilities.pdf_image_with_dependencies(&host_request)
+        else {
             return Err(ExecError::MissingPdfImage {
                 request: host_request,
             });
         };
+        Self::record_cached_input_dependencies(stores, &dependencies)?;
         *resource = resolved_resource;
         Ok(())
+    }
+
+    fn record_cached_input_dependencies(
+        stores: &mut Universe<G>,
+        dependencies: &[tex_state::InputDependency],
+    ) -> Result<(), ExecError> {
+        if dependencies.is_empty() {
+            return Ok(());
+        }
+        stores
+            .command_context()
+            .expect("live generation")
+            .record_input_dependencies(dependencies)
+            .map_err(ExecError::World)
     }
 
     /// Registers and opens the one root source selected by the host before

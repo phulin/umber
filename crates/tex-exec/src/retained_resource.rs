@@ -9,8 +9,8 @@ use tex_command::{
     PdfImageResource, RegisteredSourceKind, SourceRegistration, SourceRole,
 };
 use tex_state::{
-    FileContent, InputDependencyAccess, InputDependencyOutcome, InputReadState, SharedBytes,
-    Universe, WorldError,
+    FileContent, InputDependency, InputDependencyAccess, InputDependencyOutcome, InputReadState,
+    SharedBytes, Universe, WorldError,
 };
 
 use crate::ResourceNeed;
@@ -133,6 +133,22 @@ pub enum ResourceReplayEffect {
         outcome: InputDependencyOutcome,
         access: InputDependencyAccess,
     },
+}
+
+impl ResourceReplayEffect {
+    /// Detaches the semantic input fact carried by this retained answer so it
+    /// can be installed in a capability binding and re-recorded on a cached
+    /// hit after rollback.
+    #[must_use]
+    pub fn input_dependency(&self) -> InputDependency {
+        match self {
+            Self::InputDependency {
+                path,
+                outcome,
+                access,
+            } => InputDependency::new(path.clone(), *outcome, *access),
+        }
+    }
 }
 
 impl ResourceFulfillment {
