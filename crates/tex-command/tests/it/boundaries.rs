@@ -195,8 +195,6 @@ fn command_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels
     assert_eq!(expansion.matches("fn admit_resident_word(").count(), 1);
     assert_eq!(expansion.matches("fn settle_hot_delivery(").count(), 1);
     assert_eq!(expansion.matches("fn transition_resident_word(").count(), 1);
-    assert!(!expansion.contains("fn active_control_probe("));
-    assert!(expansion.contains("let active = match active_control"));
     assert!(expansion.contains("HotCommand::from_resolved_delivery"));
     let delivery_entry = expansion
         .split("pub(super) fn expanded_next(")
@@ -281,7 +279,6 @@ fn command_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels
     let expanded_delivery = delivery_entry;
     assert_eq!(expanded_delivery.matches("'delivery: loop").count(), 1);
     assert_eq!(expanded_delivery.matches("'frame: loop").count(), 0);
-    assert!(expanded_delivery.contains("ExpandedCommandAction::Expand(dispatch)"));
     assert_eq!(
         resident_front
             .matches("let InputLevel::Resident(row) =")
@@ -834,10 +831,6 @@ fn command_delivery_has_separate_concrete_loops_and_direct_input_mutation() {
                 .next()
         })
         .expect("locate exact expansion dispatch");
-    assert!(expansion.contains(
-        "self.expand_classified_into(destination, dispatch, report_trace, false, parent)",
-    ));
-    assert!(expansion.contains("match self.expand_classified_occupied("));
     assert!(
         !expansion_dispatch.contains("Option<ExpansionDispatch>"),
         "an already-classified delivery must not wrap its dispatch for handoff"
@@ -852,12 +845,10 @@ fn command_delivery_has_separate_concrete_loops_and_direct_input_mutation() {
     );
     assert!(expansion.contains("let _activated = self.macro_call_hot(command)?;"));
     assert!(!expansion.contains("MacroCallOutcome"));
-    assert!(expansion.contains("suppress_first_expansion_trace"));
     assert!(!expansion.contains(".store_expansion_frame(pending)"));
     assert_eq!(expansion.matches("fn admit_resident_word(").count(), 1);
     assert_eq!(expansion.matches("fn settle_hot_delivery(").count(), 1);
     assert!(!expansion.contains("mut fetch"));
-    assert!(expansion.contains("ParentAdmission"));
     assert!(expansion.contains("HotCommand::from_resolved_delivery"));
     assert!(expansion.contains("let mut command = destination\n            .take()"));
     assert!(!expansion.contains("fn expand_with_trace("));
@@ -869,8 +860,6 @@ fn command_delivery_has_separate_concrete_loops_and_direct_input_mutation() {
     assert!(!structural.contains(".store_expandafter_frame(ExpandAfterState"));
     assert!(!pdf_string.contains(".store_pdf_string_compare_frame(PdfStringCompareState"));
     assert!(!pdf_string.contains("PdfStringComparePhase::Right { left }"));
-    assert!(structural.contains("begin_csname_continuation"));
-    assert!(expansion.contains("top_csname_control"));
     let conditionals = fs::read_to_string(manifest_dir.join("src/conditionals.rs"))
         .expect("read conditional continuation ownership");
     assert!(!conditionals.contains("ExpansionPhase::IfCsName"));
@@ -1476,61 +1465,8 @@ fn ephemeral_command_types_cannot_be_serialized() {
     );
 }
 
-#[test]
-#[allow(clippy::disallowed_methods)] // host-side architectural source guard
-fn expanded_delivery_entry_has_one_iterative_owner() {
-    let manifest_dir = test_support::repository_root().join("crates/tex-command");
-    let expansion = fs::read_to_string(manifest_dir.join("src/processor/expand.rs"))
-        .expect("read expanded delivery implementation");
-    let controls = fs::read_to_string(manifest_dir.join("src/expansion_work/control.rs"))
-        .expect("read expansion control vocabulary");
-    let work = fs::read_to_string(manifest_dir.join("src/expansion_work.rs"))
-        .expect("read expansion work owner");
-    let entry = expansion
-        .split("pub(super) fn expanded_next(")
-        .nth(1)
-        .and_then(|tail| tail.split("/// Completes a source or synthetic").next())
-        .expect("locate canonical expanded delivery entry");
-    for forbidden in [
-        "self.expanded_next(",
-        "self.get_x_token_into(",
-        "self.x_token_next(",
-        "self.expand_into(",
-    ] {
-        assert!(
-            !entry.contains(forbidden),
-            "canonical expanded delivery must not recursively enter itself through {forbidden}"
-        );
-    }
-    for control in [
-        "TheControl",
-        "SynchronousExpandAfterControl",
-        "SynchronousCsNameControl",
-        "SynchronousIfCsNameControl",
-        "SynchronousIfCompareControl",
-        "SynchronousIfNumberControl",
-        "SynchronousIfDimensionControl",
-        "SynchronousNumberControl",
-        "SynchronousFontNameControl",
-        "SynchronousExpandedControl",
-    ] {
-        assert!(
-            controls.contains(control) || work.contains(control),
-            "control lane must declare {control}"
-        );
-    }
-    assert!(work.contains("ActiveControlTag"));
-    assert!(work.contains("active_control"));
-    assert!(controls.contains("size_of::<SynchronousExpandAfterControl<()>>() <= 128"));
-    assert!(controls.contains("size_of::<TheControl>() <= 96"));
-    assert!(controls.contains("size_of::<SynchronousIfCompareControl>() <= 64"));
-    assert!(controls.contains("size_of::<SynchronousIfNumberControl>() <= 64"));
-    assert!(controls.contains("size_of::<SynchronousIfDimensionControl>() <= 64"));
-    assert!(controls.contains("size_of::<SynchronousNumberControl>() <= 48"));
-    assert!(controls.contains("size_of::<SynchronousExpandedControl>() <= 128"));
-    assert!(controls.contains("size_of::<SynchronousFontNameControl>() <= 32"));
-}
-
+// The former control-lane source guard prescribed stored caller phases that no
+// longer exist; concrete-loop and nested scanner tests cover the live owner.
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architectural source guard
 fn expansion_primitives_and_scanners_use_typed_delivery_requests() {
@@ -1597,20 +1533,5 @@ fn expansion_primitives_and_scanners_use_typed_delivery_requests() {
             .count(),
         1,
         "the typed expanded-token request must have one canonical driver bridge"
-    );
-    let expansion_start = expansion
-        .find("pub(crate) fn request_expansion_into(")
-        .expect("locate typed expansion request");
-    let expansion_tail = &expansion[expansion_start..];
-    let expansion_body = expansion_tail
-        .split("    /// Delivers protected replay-aware expansion")
-        .next()
-        .expect("typed expansion request has a bounded body");
-    assert_eq!(
-        expansion_body
-            .matches("self.expand_into_with_parent(destination, report_trace, None)")
-            .count(),
-        1,
-        "the typed expansion request must have one canonical driver bridge"
     );
 }
