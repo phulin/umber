@@ -1413,6 +1413,261 @@ fn the_integer_expression_lane_preserves_operator_precedence() {
 }
 
 #[test]
+fn the_integer_and_dimension_expressions_accept_parenthesized_factors() {
+    crate::test_harness::with_universe(|universe| {
+        let the = install_static(
+            universe,
+            "the",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::The),
+        );
+        let numexpr = install_static(
+            universe,
+            "numexpr",
+            Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::NumExpr),
+        );
+        let dimexpr = install_static(
+            universe,
+            "dimexpr",
+            Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::DimExpr),
+        );
+        let relax = install_static(universe, "relax", Meaning::Relax);
+        let time = install_static(universe, "time", Meaning::IntParam(IntParam::TIME.raw()));
+        universe
+            .assign_int_param(IntParam::TIME, 23, AssignmentScope::Global)
+            .expect("time parameter assignment");
+        let grouped_definition = universe
+            .allocate_definition(
+                &[],
+                &[
+                    TokenWord::pack(other('(')),
+                    TokenWord::pack(other('1')),
+                    TokenWord::pack(other('+')),
+                    TokenWord::pack(other('2')),
+                    TokenWord::pack(other(')')),
+                ],
+            )
+            .expect("grouped expression definition");
+        let grouped = universe
+            .intern("grouped")
+            .expect("grouped expression macro");
+        universe
+            .assign_meaning(
+                grouped,
+                MeaningWord::macro_definition(MeaningFlags::EMPTY, grouped_definition),
+                AssignmentScope::Global,
+            )
+            .expect("grouped expression meaning");
+        let integer_input = [
+            the,
+            numexpr,
+            other('('),
+            other('1'),
+            other('+'),
+            other('('),
+            other('2'),
+            other('*'),
+            other('3'),
+            other(')'),
+            other(')'),
+            relax,
+            letter('X'),
+        ];
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(&mut command, integer_input);
+        assert_eq!(collect_expanded_characters(universe, &mut command), "7X");
+        assert_eq!(command.scratch.recursive_delivery_entries_with_control(), 0);
+
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(
+            &mut command,
+            [
+                the,
+                numexpr,
+                Token::Cs(grouped.symbol()),
+                relax,
+                letter('X'),
+            ],
+        );
+        assert_eq!(collect_expanded_characters(universe, &mut command), "3X");
+
+        for (input, expected) in [
+            (
+                vec![
+                    the,
+                    numexpr,
+                    other('-'),
+                    other('('),
+                    other('1'),
+                    other('+'),
+                    other('('),
+                    other('2'),
+                    other('*'),
+                    other('3'),
+                    other(')'),
+                    other(')'),
+                    relax,
+                    letter('X'),
+                ],
+                "-7X",
+            ),
+            (
+                vec![
+                    the,
+                    numexpr,
+                    other('1'),
+                    other('+'),
+                    other('-'),
+                    other('('),
+                    other('2'),
+                    other('*'),
+                    other('3'),
+                    other(')'),
+                    relax,
+                    letter('X'),
+                ],
+                "-5X",
+            ),
+            (
+                vec![
+                    the,
+                    numexpr,
+                    other('1'),
+                    other('+'),
+                    other('-'),
+                    other('-'),
+                    other('('),
+                    other('2'),
+                    other(')'),
+                    relax,
+                    letter('X'),
+                ],
+                "3X",
+            ),
+        ] {
+            let mut command = CommandState::default();
+            let _operation = command.begin_attempt_operation();
+            crate::test_harness::push(&mut command, input);
+            assert_eq!(
+                collect_expanded_characters(universe, &mut command),
+                expected
+            );
+        }
+
+        let integer_prefix_input = [
+            the,
+            numexpr,
+            other('1'),
+            other('+'),
+            other('('),
+            other('2'),
+            other('*'),
+            other('3'),
+            other(')'),
+            relax,
+            letter('X'),
+        ];
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(&mut command, integer_prefix_input);
+        assert_eq!(collect_expanded_characters(universe, &mut command), "7X");
+
+        let dimension_input = [
+            the,
+            dimexpr,
+            other('('),
+            other('1'),
+            other('p'),
+            other('t'),
+            other('+'),
+            other('('),
+            other('2'),
+            other('p'),
+            other('t'),
+            other(')'),
+            other(')'),
+            relax,
+            letter('X'),
+        ];
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(&mut command, dimension_input);
+        assert_eq!(
+            collect_expanded_characters(universe, &mut command),
+            "3.0ptX"
+        );
+        assert_eq!(command.scratch.driver_continuation_depth(), 0);
+
+        let dimension_prefix_input = [
+            the,
+            dimexpr,
+            other('1'),
+            other('p'),
+            other('t'),
+            other('*'),
+            other('('),
+            other('2'),
+            other(')'),
+            relax,
+            letter('X'),
+        ];
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(&mut command, dimension_prefix_input);
+        assert_eq!(
+            collect_expanded_characters(universe, &mut command),
+            "2.0ptX"
+        );
+
+        let internal_input = [
+            the,
+            numexpr,
+            other('('),
+            time,
+            other('+'),
+            other('1'),
+            other(')'),
+            relax,
+            letter('X'),
+        ];
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(&mut command, internal_input);
+        assert_eq!(collect_expanded_characters(universe, &mut command), "24X");
+
+        let unmatched_input = [
+            the,
+            numexpr,
+            other('('),
+            other('1'),
+            other('+'),
+            other('2'),
+            relax,
+            letter('X'),
+        ];
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(&mut command, unmatched_input);
+        assert_eq!(collect_expanded_characters(universe, &mut command), "3X");
+
+        let invalid_input = [
+            the,
+            numexpr,
+            other('('),
+            other('1'),
+            other(','),
+            other('2'),
+            letter('X'),
+        ];
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(&mut command, invalid_input);
+        assert_eq!(collect_expanded_characters(universe, &mut command), "1,2X");
+    });
+}
+
+#[test]
 fn number_integer_expression_uses_the_shared_expression_lane() {
     crate::test_harness::with_universe(|universe| {
         let number = install_static(

@@ -1007,6 +1007,7 @@ pub(crate) struct ExecutionScratch<G> {
     scanner_resumes: ResumeFrameLane<crate::scan_toks::PendingScanToks<G>, G>,
     continuation_resumes: ResumeFrameLane<StoredContinuationFrame<G>, G>,
     expression_frames: Vec<crate::scanners::ExpressionFrame<G>>,
+    pending_expression_frame: Option<crate::scanners::ExpressionFrame<G>>,
     expansion_work: crate::expansion_work::ExpansionWork<G>,
     _generation: PhantomData<fn(&G) -> &G>,
     #[cfg(test)]
@@ -1047,6 +1048,7 @@ impl<G> Default for ExecutionScratch<G> {
             scanner_resumes: ResumeFrameLane::default(),
             continuation_resumes: ResumeFrameLane::default(),
             expression_frames: Vec::new(),
+            pending_expression_frame: None,
             expansion_work: crate::expansion_work::ExpansionWork::default(),
             _generation: PhantomData,
             #[cfg(test)]
@@ -1072,7 +1074,7 @@ impl<G> Default for ExecutionScratch<G> {
 }
 
 #[derive(Debug)]
-pub(crate) struct ExecutionScratchTransientMark {
+pub(crate) struct ExecutionScratchTransientMark<G> {
     depth: u32,
     macro_slots_len: usize,
     macro_words_len: u32,
@@ -1081,6 +1083,7 @@ pub(crate) struct ExecutionScratchTransientMark {
     pending_macro_slot: u32,
     free_macro_slot: u32,
     next_macro_serial: u64,
+    pending_expression_frame: Option<crate::scanners::ExpressionFrame<G>>,
 }
 
 impl<G> ExecutionScratch<G> {
@@ -1122,6 +1125,27 @@ impl<G> ExecutionScratch<G> {
 
     pub(crate) fn expression_stack_len(&self) -> usize {
         self.expression_frames.len()
+    }
+
+    pub(crate) fn set_pending_expression_frame(
+        &mut self,
+        frame: crate::scanners::ExpressionFrame<G>,
+    ) -> Result<(), ScratchError> {
+        if self.pending_expression_frame.is_some() {
+            return Err(ScratchError::InvalidCoordinate);
+        }
+        self.pending_expression_frame = Some(frame);
+        Ok(())
+    }
+
+    pub(crate) fn take_pending_expression_frame(
+        &mut self,
+    ) -> Option<crate::scanners::ExpressionFrame<G>> {
+        self.pending_expression_frame.take()
+    }
+
+    pub(crate) fn has_pending_expression_frame(&self) -> bool {
+        self.pending_expression_frame.is_some()
     }
 
     pub(crate) fn push_expression_frame(
@@ -1999,6 +2023,7 @@ impl<G> ExecutionScratch<G> {
     }
 
     pub(crate) fn abort_synchronous_controls(&mut self) -> Result<(), ScratchError> {
+        self.pending_expression_frame = None;
         self.expansion_work.abort_synchronous_controls()
     }
 
@@ -2818,7 +2843,7 @@ impl<G> ExecutionScratch<G> {
             .flatten()
     }
 
-    pub(crate) fn begin_transient(&mut self) -> ExecutionScratchTransientMark {
+    pub(crate) fn begin_transient(&mut self) -> ExecutionScratchTransientMark<G> {
         self.transient_depth = self
             .transient_depth
             .checked_add(1)
@@ -2832,12 +2857,13 @@ impl<G> ExecutionScratch<G> {
             pending_macro_slot: self.pending_macro_slot,
             free_macro_slot: self.free_macro_slot,
             next_macro_serial: self.next_macro_serial,
+            pending_expression_frame: self.pending_expression_frame,
         }
     }
 
     pub(crate) fn rollback_transient(
         &mut self,
-        mark: ExecutionScratchTransientMark,
+        mark: ExecutionScratchTransientMark<G>,
     ) -> Result<(), ScratchError> {
         if mark.depth != self.transient_depth
             || mark.macro_slots_len > self.macro_slots.len()
@@ -2862,13 +2888,14 @@ impl<G> ExecutionScratch<G> {
         self.pending_macro_slot = mark.pending_macro_slot;
         self.free_macro_slot = mark.free_macro_slot;
         self.next_macro_serial = mark.next_macro_serial;
+        self.pending_expression_frame = mark.pending_expression_frame;
         self.transient_depth -= 1;
         Ok(())
     }
 
     pub(crate) fn commit_transient(
         &mut self,
-        mark: ExecutionScratchTransientMark,
+        mark: ExecutionScratchTransientMark<G>,
     ) -> Result<(), ScratchError> {
         if mark.depth != self.transient_depth {
             return Err(ScratchError::InvalidCoordinate);
@@ -2928,6 +2955,7 @@ impl<G> ExecutionScratch<G> {
             && self.pending_slot().is_err()
             && self.scanner_resumes.live_len() == 0
             && self.continuation_resumes.live_len() == 0
+            && self.pending_expression_frame.is_none()
             && self.expansion_work.is_quiescent()
     }
 

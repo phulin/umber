@@ -28,6 +28,16 @@ enum CompactRegisterIndexStep {
     },
 }
 
+#[derive(Clone, Copy)]
+struct CompactIntegerExpressionState {
+    target: Meaning,
+    expression: i64,
+    expression_sign: i8,
+    term: i64,
+    term_operator: u8,
+    term_active: bool,
+}
+
 fn compact_register_index_step(
     character: Option<char>,
     is_space: bool,
@@ -71,6 +81,90 @@ fn compact_register_index_step(
 }
 
 impl<G> CommandProcessor<'_, '_, G> {
+    pub(super) fn canonical_expression_resume_pending(&self) -> Result<bool, CommandError> {
+        let canonical = self
+            .command
+            .scratch
+            .top_the_control()
+            .map_err(crate::scan_toks::scratch_command_error)?
+            .is_some_and(|control| {
+                matches!(
+                    control.phase,
+                    crate::expansion_work::control::ThePhase::CanonicalExpression { .. }
+                )
+            });
+        Ok(canonical
+            && self
+                .scanner_resume
+                .as_ref()
+                .is_some_and(crate::ScannerFrameKey::is_scalar))
+    }
+
+    /// Runs one deferred canonical expression handoff after expanded delivery
+    /// has yielded back to its caller.  The scalar scanner can therefore use
+    /// the ordinary shared token request without re-entering the hot loop
+    /// while a compact `\the` control is active.
+    pub(super) fn run_pending_canonical_expression(&mut self) -> Result<(), CommandError> {
+        let frame = self.command.scratch.take_pending_expression_frame();
+        if frame.is_none()
+            && !self
+                .scanner_resume
+                .as_ref()
+                .is_some_and(crate::ScannerFrameKey::is_scalar)
+        {
+            return Err(CommandError::input_invariant());
+        }
+        let complete = self.advance_the_canonical_expression_continuation(frame)?;
+        if complete {
+            Ok(())
+        } else {
+            Err(CommandError::input_invariant())
+        }
+    }
+
+    /// Hands an e-TeX expression operand from the compact `\the` lane to the
+    /// canonical typed scanner.  The compact lane owns only the conversion
+    /// opener; expression frames, including the generation-owned parenthesis
+    /// stack, remain solely in `scanners::expression`.
+    pub(super) fn advance_the_canonical_expression_continuation(
+        &mut self,
+        initial_frame: Option<crate::scanners::ExpressionFrame<G>>,
+    ) -> Result<bool, CommandError> {
+        use crate::expansion_work::control::ThePhase;
+
+        let control = self
+            .command
+            .scratch
+            .top_the_control()
+            .map_err(crate::scan_toks::scratch_command_error)?
+            .ok_or_else(CommandError::input_invariant)?;
+        let ThePhase::CanonicalExpression {
+            primitive,
+            as_number,
+        } = control.phase
+        else {
+            return Err(CommandError::input_invariant());
+        };
+        let value = match initial_frame {
+            Some(frame) => self.scan_expression_primitive_from_frame(primitive, frame)?,
+            None => self.scan_expression_primitive(primitive)?,
+        };
+        let opener = self
+            .command
+            .scratch
+            .pop_the_control()
+            .map_err(crate::scan_toks::scratch_command_error)?;
+        if as_number {
+            let crate::InternalValue::Dimension(value) = value else {
+                return Err(CommandError::input_invariant());
+            };
+            self.push_rendered_text(&value.raw().to_string(), opener);
+        } else {
+            self.expand_the_value(opener, value)?;
+        }
+        Ok(true)
+    }
+
     /// Advances the compact integer-expression form used by `\the`.  The
     /// ordinary expression scanner already has an explicit parenthesis stack,
     /// but its scalar factors still request expanded tokens synchronously.
@@ -92,6 +186,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             target,
             expression,
             expression_sign,
+            expression_started,
             term,
             term_operator,
             term_active,
@@ -122,17 +217,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .saturating_add(digit)
                 .min(i64::from(i32::MAX))
         };
-        let finish = |this: &mut Self, expression: i64, term: i64| {
-            let result = expression.saturating_add(i64::from(expression_sign).saturating_mul(term));
-            let result = result.clamp(i64::from(i32::MIN), i64::from(i32::MAX));
-            let result = i32::try_from(result).expect("clamped expression fits i32");
-            let opener = this
-                .command
-                .scratch
-                .pop_the_control()
-                .map_err(crate::scan_toks::scratch_command_error)?;
-            this.expand_the_value(opener, crate::InternalValue::Integer(result))
-        };
         // Internal values are already complete factors.  Keep that fact in
         // the compact state so a following sign is an expression operator,
         // while a following digit terminates the expression and is restored
@@ -147,12 +231,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                 value
             };
             return self.finish_the_expression_factor(
-                target,
-                expression,
-                expression_sign,
-                term,
-                term_operator,
-                term_active,
+                CompactIntegerExpressionState {
+                    target,
+                    expression,
+                    expression_sign,
+                    term,
+                    term_operator,
+                    term_active,
+                },
                 factor,
                 command,
                 is_relax,
@@ -164,6 +250,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     target,
                     expression,
                     expression_sign,
+                    expression_started,
                     term,
                     term_operator,
                     term_active,
@@ -181,12 +268,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                 value
             };
             return self.finish_the_expression_factor(
-                target,
-                expression,
-                expression_sign,
-                term,
-                term_operator,
-                term_active,
+                CompactIntegerExpressionState {
+                    target,
+                    expression,
+                    expression_sign,
+                    term,
+                    term_operator,
+                    term_active,
+                },
                 factor,
                 command,
                 is_relax,
@@ -206,6 +295,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         target: meaning,
                         expression,
                         expression_sign,
+                        expression_started,
                         term,
                         term_operator,
                         term_active,
@@ -224,6 +314,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     target,
                     expression,
                     expression_sign,
+                    expression_started,
                     term,
                     term_operator,
                     term_active,
@@ -245,6 +336,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 target,
                 expression,
                 expression_sign,
+                expression_started,
                 term,
                 term_operator,
                 term_active,
@@ -265,6 +357,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 target,
                 expression,
                 expression_sign,
+                expression_started,
                 term,
                 term_operator,
                 term_active,
@@ -277,15 +370,55 @@ impl<G> CommandProcessor<'_, '_, G> {
             return Ok(false);
         }
 
+        // The compact accumulator owns only literal integer factors and the
+        // direct internal-value admission above.  Any other first-factor
+        // spelling is handed back to the canonical e-TeX scanner, which owns
+        // parenthesis frames, typed factors, and recovery. The signs already
+        // admitted here are carried by the canonical frame's pending factor
+        // polarity; no token or expression context is copied into a second
+        // parser.
         if !seen_digit {
-            let site = self.capture_hot_diagnostic_site(&command);
-            if !is_relax {
-                self.back_input(command.materialize())?;
-            }
-            self.missing_number_error_at(Some(site))?;
-            finish(self, expression, if term_active { term } else { 0 })?;
+            self.back_input(command.materialize())?;
+            self.command
+                .scratch
+                .set_the_phase(ThePhase::CanonicalExpression {
+                    primitive: UnexpandablePrimitive::NumExpr,
+                    as_number: false,
+                })?;
+            let frame = if expression_started {
+                crate::scanners::ExpressionFrame::from_compact(
+                    crate::scanners::ExpressionKind::Integer,
+                    crate::scanners::CompactExpressionPrefix {
+                        expression_started,
+                        expression,
+                        expression_sign,
+                        term,
+                        term_operator,
+                        term_active,
+                        factor_negative: negative,
+                    },
+                )
+            } else {
+                crate::scanners::ExpressionFrame::from_compact(
+                    crate::scanners::ExpressionKind::Integer,
+                    crate::scanners::CompactExpressionPrefix {
+                        expression_started: false,
+                        expression: 0,
+                        expression_sign: 1,
+                        term: 0,
+                        term_operator: 0,
+                        term_active: false,
+                        factor_negative: negative,
+                    },
+                )
+            };
+            self.command
+                .scratch
+                .set_pending_expression_frame(frame)
+                .map_err(crate::scan_toks::scratch_command_error)?;
             return Ok(true);
         }
+
         if is_space {
             // Spaces between a completed factor and its operator are scanner
             // separators.  Consume them while retaining the factor state.
@@ -293,6 +426,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 target,
                 expression,
                 expression_sign,
+                expression_started,
                 term,
                 term_operator,
                 term_active,
@@ -310,12 +444,14 @@ impl<G> CommandProcessor<'_, '_, G> {
             value
         };
         self.finish_the_expression_factor(
-            target,
-            expression,
-            expression_sign,
-            term,
-            term_operator,
-            term_active,
+            CompactIntegerExpressionState {
+                target,
+                expression,
+                expression_sign,
+                term,
+                term_operator,
+                term_active,
+            },
             factor,
             command,
             is_relax,
@@ -343,6 +479,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             target,
             expression,
             expression_sign,
+            expression_started,
             term,
             term_operator,
             term_active,
@@ -368,6 +505,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         target,
                         expression,
                         expression_sign,
+                        expression_started,
                         term,
                         term_operator,
                         term_active,
@@ -376,7 +514,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         value,
                         seen_digit,
                     })?;
-                return Ok(false);
+                Ok(false)
             }
             CompactRegisterIndexStep::Invalid => {
                 let site = self.capture_hot_diagnostic_site(&command);
@@ -386,6 +524,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     target: Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NumExpr),
                     expression,
                     expression_sign,
+                    expression_started,
                     term,
                     term_operator,
                     term_active,
@@ -419,6 +558,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     target: Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NumExpr),
                     expression,
                     expression_sign,
+                    expression_started,
                     term,
                     term_operator,
                     term_active,
@@ -438,17 +578,21 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     fn finish_the_expression_factor(
         &mut self,
-        target: Meaning,
-        expression: i64,
-        expression_sign: i8,
-        term: i64,
-        term_operator: u8,
-        term_active: bool,
+        state: CompactIntegerExpressionState,
         factor: i64,
         command: HotCommand<G>,
         is_relax: bool,
     ) -> Result<bool, CommandError> {
         use crate::expansion_work::control::ThePhase;
+
+        let CompactIntegerExpressionState {
+            target,
+            expression,
+            expression_sign,
+            term,
+            term_operator,
+            term_active,
+        } = state;
 
         let term = if term_active {
             match term_operator {
@@ -465,6 +609,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 target,
                 expression,
                 expression_sign,
+                expression_started: true,
                 term,
                 term_operator: if command.character_value() == Some('*') {
                     1
@@ -491,6 +636,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 } else {
                     -1
                 },
+                expression_started: true,
                 term: 0,
                 term_operator: 0,
                 term_active: false,
@@ -558,6 +704,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             as_number,
             expression,
             expression_sign,
+            expression_started,
             term,
             term_operator,
             term_active,
@@ -651,6 +798,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let reset = |this: &mut Self,
                      expression,
                      expression_sign,
+                     expression_started,
                      term,
                      term_operator,
                      term_active|
@@ -662,6 +810,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     as_number,
                     expression,
                     expression_sign,
+                    expression_started,
                     term,
                     term_operator,
                     term_active,
@@ -688,6 +837,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         as_number,
                         expression,
                         expression_sign,
+                        expression_started,
                         term,
                         term_operator,
                         term_active,
@@ -719,6 +869,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         as_number,
                         expression,
                         expression_sign,
+                        expression_started,
                         term,
                         term_operator,
                         term_active,
@@ -740,6 +891,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         as_number,
                         expression,
                         expression_sign,
+                        expression_started,
                         term,
                         term_operator,
                         term_active,
@@ -761,6 +913,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         as_number,
                         expression,
                         expression_sign,
+                        expression_started,
                         term,
                         term_operator,
                         term_active,
@@ -782,6 +935,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     as_number,
                     expression,
                     expression_sign,
+                    expression_started,
                     term,
                     term_operator,
                     term_active,
@@ -794,6 +948,48 @@ impl<G> CommandProcessor<'_, '_, G> {
                     seen_digit,
                 })?;
             return Ok(false);
+        }
+
+        if unit == 0 && !seen_digit {
+            self.back_input(command.materialize())?;
+            self.command
+                .scratch
+                .set_the_phase(ThePhase::CanonicalExpression {
+                    primitive: UnexpandablePrimitive::DimExpr,
+                    as_number,
+                })?;
+            let frame = if expression_started {
+                crate::scanners::ExpressionFrame::from_compact(
+                    crate::scanners::ExpressionKind::Dimension,
+                    crate::scanners::CompactExpressionPrefix {
+                        expression_started,
+                        expression: i64::from(expression),
+                        expression_sign,
+                        term: i64::from(term),
+                        term_operator,
+                        term_active,
+                        factor_negative: negative,
+                    },
+                )
+            } else {
+                crate::scanners::ExpressionFrame::from_compact(
+                    crate::scanners::ExpressionKind::Dimension,
+                    crate::scanners::CompactExpressionPrefix {
+                        expression_started: false,
+                        expression: 0,
+                        expression_sign: 1,
+                        term: 0,
+                        term_operator: 0,
+                        term_active: false,
+                        factor_negative: negative,
+                    },
+                )
+            };
+            self.command
+                .scratch
+                .set_pending_expression_frame(frame)
+                .map_err(crate::scan_toks::scratch_command_error)?;
+            return Ok(true);
         }
 
         if unit != 2 {
@@ -812,6 +1008,28 @@ impl<G> CommandProcessor<'_, '_, G> {
             // the completed unit marker so the next operator can commit it.
             return Ok(false);
         }
+        if character == Some('*') || character == Some('/') {
+            self.command
+                .scratch
+                .set_the_phase(ThePhase::DimensionExpression {
+                    target,
+                    as_number,
+                    expression,
+                    expression_sign,
+                    expression_started: true,
+                    term: current,
+                    term_operator: if character == Some('*') { 1 } else { 2 },
+                    term_active: true,
+                    negative: false,
+                    value: 0,
+                    fraction: 0,
+                    fraction_digits: 0,
+                    decimal: false,
+                    unit: 0,
+                    seen_digit: false,
+                })?;
+            return Ok(false);
+        }
         if character == Some('+') || character == Some('-') {
             let expression = expression.saturating_add(
                 i32::from(expression_sign).saturating_mul(if term_active { term } else { current }),
@@ -820,6 +1038,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 self,
                 expression,
                 if character == Some('+') { 1 } else { -1 },
+                true,
                 0,
                 0,
                 false,
@@ -1471,6 +1690,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         target: meaning,
                         expression: 0,
                         expression_sign: 1,
+                        expression_started: false,
                         term: 0,
                         term_operator: 0,
                         term_active: false,
@@ -1498,6 +1718,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         as_number: true,
                         expression: 0,
                         expression_sign: 1,
+                        expression_started: false,
                         term: 0,
                         term_operator: 0,
                         term_active: false,

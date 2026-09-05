@@ -2300,9 +2300,7 @@ impl<G> ExpansionWork<G> {
             } => {
                 if seen_digit {
                     SynchronousNumberPhase::Accumulating { negative, value }
-                } else if leading {
-                    SynchronousNumberPhase::Leading { negative }
-                } else if negative {
+                } else if leading || negative {
                     SynchronousNumberPhase::Leading { negative }
                 } else {
                     SynchronousNumberPhase::Need

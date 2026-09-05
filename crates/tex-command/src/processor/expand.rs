@@ -1269,7 +1269,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         destination: &mut Option<CurrentCommand<G>>,
         initial_action: Option<ExpandedCommandAction>,
     ) -> Result<DeliveryStatus, CommandError> {
-        self.expanded_next_with_boundary(destination, initial_action, None)
+        let mut initial_action = initial_action;
+        self.expanded_next_with_boundary(destination, initial_action.take(), None)
     }
 
     fn expanded_next_with_boundary(
@@ -1281,13 +1282,29 @@ impl<G> CommandProcessor<'_, '_, G> {
             crate::expansion_work::control::ExpansionReturnSink,
         )>,
     ) -> Result<DeliveryStatus, CommandError> {
-        let mut hot_destination = destination.take().map(HotCommand::from_current);
-        let result = self.expanded_next_hot_with_boundary(
-            &mut hot_destination,
-            initial_action,
-            return_boundary,
-        );
-        self.finish_hot_delivery(destination, &mut hot_destination, result)
+        let mut initial_action = initial_action;
+        loop {
+            if destination.is_none() && self.canonical_expression_resume_pending()? {
+                self.run_pending_canonical_expression()?;
+                continue;
+            }
+            let mut hot_destination = destination.take().map(HotCommand::from_current);
+            let result = self.expanded_next_hot_with_boundary(
+                &mut hot_destination,
+                initial_action.take(),
+                return_boundary,
+            );
+            if matches!(
+                result,
+                Ok(DeliveryStatus::PendingExpanded)
+                    if self.command.scratch.has_pending_expression_frame()
+            ) {
+                hot_destination.take();
+                self.run_pending_canonical_expression()?;
+                continue;
+            }
+            return self.finish_hot_delivery(destination, &mut hot_destination, result);
+        }
     }
 
     fn finish_hot_delivery(
@@ -2117,6 +2134,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                     ExpandedCommandAction::Expand(_),
                 ) => {}
                 (
+                    crate::expansion_work::control::ThePhase::CanonicalExpression { .. },
+                    ExpandedCommandAction::Expand(_),
+                ) => {}
+                (
                     crate::expansion_work::control::ThePhase::ExpressionRegisterIndex { .. },
                     ExpandedCommandAction::Expand(_),
                 ) => {}
@@ -2138,9 +2159,25 @@ impl<G> CommandProcessor<'_, '_, G> {
                     ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate,
                 ) => {
                     if self.advance_the_expression_continuation(*command)? {
+                        if self.command.scratch.has_pending_expression_frame() {
+                            return Ok(ExpandedHotDispatch::Finished(
+                                DeliveryStatus::PendingExpanded,
+                            ));
+                        }
                         return Ok(ExpandedHotDispatch::Continue);
                     }
                     return Ok(ExpandedHotDispatch::Continue);
+                }
+                (
+                    crate::expansion_work::control::ThePhase::CanonicalExpression { .. },
+                    ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate,
+                ) => {
+                    // The canonical scanner owns this token request.  It
+                    // re-enters the shared delivery loop and receives this
+                    // inert control only as the scanner's return boundary.
+                    return Ok(ExpandedHotDispatch::Finished(
+                        self.finish_expanded_command(command, *delivery_expanded),
+                    ));
                 }
                 (
                     crate::expansion_work::control::ThePhase::ExpressionRegisterIndex { .. },
@@ -2156,6 +2193,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                     ExpandedCommandAction::Return | ExpandedCommandAction::EndTemplate,
                 ) => {
                     if self.advance_the_dimension_expression_continuation(*command)? {
+                        if self.command.scratch.has_pending_expression_frame() {
+                            return Ok(ExpandedHotDispatch::Finished(
+                                DeliveryStatus::PendingExpanded,
+                            ));
+                        }
                         return Ok(ExpandedHotDispatch::Continue);
                     }
                     return Ok(ExpandedHotDispatch::Continue);
@@ -2174,6 +2216,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 target: meaning,
                                 expression: 0,
                                 expression_sign: 1,
+                                expression_started: false,
                                 term: 0,
                                 term_operator: 0,
                                 term_active: false,
@@ -2193,9 +2236,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 as_number: false,
                                 expression: 0,
                                 expression_sign: 1,
+                                expression_started: false,
                                 term: 0,
-                                term_operator: 0,
                                 term_active: false,
+                                term_operator: 0,
                                 negative: false,
                                 value: 0,
                                 fraction: 0,
@@ -3291,6 +3335,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         destination: &mut Option<CurrentCommand<G>>,
         preflight: bool,
     ) -> Result<DeliveryStatus, CommandError> {
+        if destination.is_none() && self.canonical_expression_resume_pending()? {
+            self.run_pending_canonical_expression()?;
+            return self.expanded_next(destination);
+        }
         let existing = destination.is_some();
         let mut hot_destination = if existing {
             destination.as_ref().map(HotCommand::from_current_ref)
@@ -3348,6 +3396,16 @@ impl<G> CommandProcessor<'_, '_, G> {
             return Ok(DeliveryStatus::Command);
         }
         let result = self.expanded_next_hot(&mut hot_destination, Some(action));
+        if matches!(
+            result,
+            Ok(DeliveryStatus::PendingExpanded)
+                if self.command.scratch.has_pending_expression_frame()
+        ) {
+            hot_destination.take();
+            destination.take();
+            self.run_pending_canonical_expression()?;
+            return self.expanded_next(destination);
+        }
         self.finish_hot_delivery(destination, &mut hot_destination, result)
     }
 
@@ -3983,6 +4041,13 @@ impl<G> CommandProcessor<'_, '_, G> {
         loop {
             match self.expanded_next_hot(destination, None)? {
                 DeliveryStatus::ReplayCompleted(_) => continue,
+                DeliveryStatus::PendingExpanded
+                    if self.command.scratch.has_pending_expression_frame() =>
+                {
+                    destination.take();
+                    self.run_pending_canonical_expression()?;
+                    continue;
+                }
                 DeliveryStatus::End => return Ok(DeliveryStatus::End),
                 DeliveryStatus::Command
                 | DeliveryStatus::PendingExpanded

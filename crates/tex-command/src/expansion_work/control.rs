@@ -4,7 +4,7 @@ use crate::attempt::{AttemptMark, AttemptTokenBufferId};
 use crate::command::HotCommand;
 use crate::execution_scratch::ScannerFrameKey;
 use crate::scanner_kernel::ScannerCursor;
-use tex_state::meaning::Meaning;
+use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::token::OriginId;
 
 use super::{ExpansionChild, ExpansionCommandSlot, ExpansionNameMark};
@@ -133,6 +133,7 @@ pub(crate) enum ThePhase {
         target: Meaning,
         expression: i64,
         expression_sign: i8,
+        expression_started: bool,
         term: i64,
         term_operator: u8,
         term_active: bool,
@@ -150,6 +151,14 @@ pub(crate) enum ThePhase {
         /// terminates the factor and must be backed up instead of appended.
         factor_spaced: bool,
     },
+    /// Canonical e-TeX expression scanning has taken ownership of the
+    /// expanded operand stream.  While the scalar state machine requests
+    /// tokens, the enclosing `\the` control stays in this inert phase so it
+    /// cannot consume the scanner's input itself.
+    CanonicalExpression {
+        primitive: UnexpandablePrimitive,
+        as_number: bool,
+    },
     /// Selector scan for a register used as a `\numexpr` factor.  The
     /// surrounding expression remains in this one compact control record
     /// while the selector consumes expanded signs/digits.
@@ -157,6 +166,7 @@ pub(crate) enum ThePhase {
         target: Meaning,
         expression: i64,
         expression_sign: i8,
+        expression_started: bool,
         term: i64,
         term_operator: u8,
         term_active: bool,
@@ -170,6 +180,7 @@ pub(crate) enum ThePhase {
         as_number: bool,
         expression: i32,
         expression_sign: i8,
+        expression_started: bool,
         term: i32,
         term_operator: u8,
         term_active: bool,
@@ -686,7 +697,7 @@ const _: () = assert!(core::mem::size_of::<ExpansionReturnCapability<()>>() <= 2
 
 const _: () = {
     assert!(core::mem::size_of::<SynchronousExpandAfterControl<()>>() <= 128);
-    assert!(core::mem::size_of::<TheControl>() <= 64);
+    assert!(core::mem::size_of::<TheControl>() <= 96);
     assert!(core::mem::size_of::<SynchronousIfCompareControl>() <= 64);
     assert!(core::mem::size_of::<SynchronousIfNumberControl>() <= 64);
     assert!(core::mem::size_of::<SynchronousIfDimensionControl>() <= 64);
