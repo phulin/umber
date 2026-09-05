@@ -1876,7 +1876,13 @@ impl<G> MainControl<G> {
         // be resumed against the restored arena; clear that linear owner
         // before the fresh replay operation begins.
         self.command.abandon_attempt_after_checkpoint_restore();
-        self.capabilities = CommandHostCapabilities::default();
+        // Host capabilities are the monotonic admission registry for this
+        // retained run.  They intentionally live outside the checkpoint:
+        // restoring the parser/runtime/output roots must not discard inputs
+        // (or other resources) admitted by an earlier replay.  The fresh
+        // command episode below will consult the same registry through its
+        // ordinary scanner path; only the executor-owned continuation state
+        // is reset here.
         self.active_alignment = None;
         self.boxes = ReplayBoxes::default();
         self.active_discretionaries.clear();

@@ -708,26 +708,6 @@ pub enum RevisionCandidateResult {
     Complete,
 }
 
-/// Bounded diagnostic state sampled while a candidate is parked at a resource
-/// replay boundary.
-///
-/// This is deliberately a value-only probe. It does not expose a checkpoint,
-/// generation, input backing, or any other retained owner, and it cannot be
-/// used to resume a candidate. The loaded-format replay regression uses it to
-/// compare the parked command/input state before and after each host answer.
-#[derive(Clone, Debug, Eq, PartialEq)]
-#[doc(hidden)]
-pub struct ReplayProbeSnapshot {
-    pub input_frame_count: usize,
-    pub input_frame_tail: Vec<&'static str>,
-    pub current_file_line: u32,
-    pub current_file_source_id: Option<tex_state::SourceId>,
-    pub live_physical_root_source_id: Option<tex_state::SourceId>,
-    pub fuel_burned: u64,
-    pub command_work: tex_command::CommandWorkCounters,
-    pub command_timeline: tex_command::CommandTimelineCounters,
-}
-
 impl<'store> RevisionCandidate<'store> {
     fn job_start_session_metadata(&self) -> JobStartSessionMetadata {
         JobStartSessionMetadata {
@@ -889,27 +869,6 @@ impl<'store> RevisionCandidate<'store> {
             savepoint_capture_time: Duration::ZERO,
             savepoint_restore_time: Duration::ZERO,
         }
-    }
-
-    /// Reads the parked command/input context without changing the candidate.
-    ///
-    /// This seam exists for bounded replay diagnostics. A candidate that is
-    /// currently executing, complete, or has no attached runtime returns
-    /// `None`; callers must treat the snapshot as observational evidence only.
-    #[doc(hidden)]
-    pub fn replay_probe_snapshot(&mut self) -> Result<Option<ReplayProbeSnapshot>, SessionError> {
-        let Some(generation) = self.generation.as_mut() else {
-            return Ok(None);
-        };
-        let Some(key) = self.runtime_key.take() else {
-            return Ok(None);
-        };
-        let result = generation
-            .with_admitted(ReadReplayProbeSnapshot { key })
-            .map_err(SessionError::RetainedEngine)?;
-        let (key, snapshot) = result.map_err(SessionError::RetainedEngine)?;
-        self.runtime_key = Some(key);
-        Ok(Some(snapshot))
     }
 
     #[must_use]
@@ -1306,42 +1265,6 @@ struct CandidateRunResult {
     execution: Result<PlanExecution, SessionError>,
     runtime_key: Option<tex_exec::RetainedEngineAttachmentKey>,
     discarded_fuel: u64,
-}
-
-struct ReadReplayProbeSnapshot {
-    key: tex_exec::RetainedEngineAttachmentKey,
-}
-
-impl tex_exec::RetainedEngineOperation for ReadReplayProbeSnapshot {
-    type Output = Result<
-        (tex_exec::RetainedEngineAttachmentKey, ReplayProbeSnapshot),
-        tex_exec::RetainedEngineAccessError,
-    >;
-
-    fn run<G: 'static>(
-        self,
-        mut admitted: tex_exec::AdmittedEngineGeneration<'_, G>,
-    ) -> Self::Output {
-        let key = self.key;
-        let mut attached = admitted.prepare_attached_checkpoint_control::<CandidateRuntime>(key)?;
-        let snapshot = {
-            let (_, _, _, control, _) = attached.parts::<CandidateRuntime>();
-            let command = control.command_mut();
-            let (input_frame_count, input_frame_tail) = command.diagnostic_input_context(8);
-            ReplayProbeSnapshot {
-                input_frame_count,
-                input_frame_tail,
-                current_file_line: command.current_file_line_number(),
-                current_file_source_id: command.current_file_source_id(),
-                live_physical_root_source_id: command.live_physical_root_source_id(),
-                fuel_burned: control.fuel_burned(),
-                command_work: control.command_work(),
-                command_timeline: control.command_timeline_counters(),
-            }
-        };
-        let key = attached.park();
-        Ok((key, snapshot))
-    }
 }
 
 struct SettleCandidateRuntime {
