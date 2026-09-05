@@ -198,7 +198,7 @@ for an admitted episode; they are not smuggled into tokens or definitions.
 The active profile is a direct immutable command root. Expansion execution has
 no persistent counter or root: one expanded-delivery invocation owns a local
 bit recording whether that delivery expanded, and drops it on return. A
-a resource miss unwinds the invocation and is represented only by the
+resource miss unwinds the invocation and is represented only by the
 host-owned full-checkpoint replay request.
 Recoverable reports live once in the canonical semantic-diagnostic queue and
 transfer to the executor as one owner; resource resolution, dependency
@@ -227,12 +227,12 @@ admitted context and reborrow it through tracked-region projection, main-control
 command processing, and scanner settlement. The direct-episode caller passes
 only its already-known tracking bit; nested cold execution propagates that bit
 without retaining the context. The callback ends before diagnostic reporting,
-resource preparation, suspension, cold or hot semantic application, and
+resource preparation, host replay, cold or hot semantic application, and
 rollback or publication.
 Diagnostic or host boundaries which can change the sampled state refresh only
 their affected fields after the live dialogue. No layer returns, takes, or
 stores a whole admitted context or duplicate facts aggregate. Resource
-resolution, suspension packaging, rollback, and outer executor publication
+resolution, full-checkpoint replay, rollback, and outer executor publication
 still occur only after the applicable call-local context is dropped, so this
 adds no owner, cache, heap indirection, or lifetime mechanism.
 
@@ -266,8 +266,9 @@ PDF is the concrete mutable-runtime exception to generation copying. A
 checkpoint holds a fixed scalar `PdfStateSnapshot`, not cloned PDF rows. The
 reachability store exclusively moves the one `PdfState` authority from the
 accepted slot into the candidate; accepted admission is unavailable until
-that transaction commits or rejects, and suspension retains the same
-candidate owner. Dense row families keep accepted storage in place behind
+that transaction commits or rejects. A resource miss leaves the candidate
+owner available for full-checkpoint replay; it does not retain a suspended
+executor continuation. Dense row families keep accepted storage in place behind
 logical base lengths and append candidate rows to private deltas. Exact undo
 entries above the base swap in place into redo entries, so rejection restores
 the accepted state and history while acceptance discards prior-only suffixes.
@@ -454,8 +455,9 @@ Resolved-command and delivery-stamp writes obey the same rule: each successful
 raw delivery writes both fields exactly once, so production profiling derives
 their volume from the singular command-work ledger rather than updating a
 second thread-local ownership census. Test builds retain the direct counters
-for structural assertions. Backup copies and suspension moves remain distinct
-because the raw-delivery vector does not imply them.
+for structural assertions. Backup copies remain distinct from host replay:
+replay re-admits the restored input rather than moving a suspended command
+cursor.
 No decoded provenance copy, command projection, or delivery owner is stored in
 executor preparation.
 
@@ -673,8 +675,8 @@ The context-consumer audit has these publication boundaries:
   `Unbox`, and `LastBox` carry one compact coordinate through the ordinary
   executor operation frame and render only inside the apply-side reporter;
 - page building borrows live `CommandState` and renders only after selecting a
-  page diagnostic; replay that has already crossed a real suspension boundary
-  supplies detached text instead;
+  page diagnostic; replay after a resource-restart boundary supplies detached
+  text instead;
 - terminal/fatal reporting renders at the terminal error seam, before command
   rollback can retire the triggering input; failure-only causal summaries are
   separate content-free bounded facts;
@@ -1047,7 +1049,7 @@ Diagnostics are transactional output, not generation ownership. A
 `DiagnosticEffects`. Rollback drops them; commit moves them into `World` and
 its effect/output journal. Observation buffers follow the same single-owner
 rule and commit or roll back with the operation; they never move into a parser
-suspension. Published effects may grow with the document because they are
+resource-replay request. Published effects may grow with the document because they are
 externally observable output, then end with the world/output owner. Queue
 capacities may remain as bounded high water.
 
@@ -1236,7 +1238,7 @@ to one reusable-chain owner in constant work. It visits no discarded row and
 manufactures no row key; the next publication takes one row lazily and assigns
 its fresh incarnation then. Production
 non-JobStart coverage crosses input, macro-definition, scanner, condition,
-alignment, mode/page, suspension, and cancellation boundaries; the standalone
+alignment, mode/page, resource-need, and cancellation boundaries; the standalone
 gate exposes exact delta work, identical one-versus-4,096 settlement counters,
 zero settlement allocations, and the single lazy reuse visit/incarnation.
 
@@ -1261,7 +1263,8 @@ identities, or node closures merely to discover the current total.
 Borrow-scoped host preparation similarly owns no copied page-insertion map.
 Expansion-time insertion enquiries read the authoritative row through the live
 `CommandContext`; the borrow ends with that processor episode and no projection
-survives list mutation, suspension, or error re-entry.
+survives list mutation or error re-entry. A resource miss ends the borrow and
+the host restores a full checkpoint before ordinary parsing resumes.
 
 `Universe` does not collect these command-visible stores into a by-value
 resident aggregate. Session identity, retained-generation state, durable box
@@ -1270,9 +1273,9 @@ with their existing transfer and reclamation boundaries. `CommandContext` is
 only the bounded safe-reference view that brings those owners together with the
 admitted dense core for an uninterrupted interpreter run; the same admitted
 view is reused by every raw, expanded, scanner, and ordinary semantic command
-until a boundary. A genuine host,
-diagnostic, suspension, rollback, or publication barrier ends the borrow before
-the owning `Universe` transition runs.
+until a boundary. A genuine host-resource, diagnostic, rollback, or publication
+barrier ends the borrow before the owning `Universe` transition runs; no
+resource continuation is packaged at that boundary.
 
 ## Non-negotiable prohibitions
 

@@ -44,7 +44,7 @@ Command operands are scanned by `tex-command` into typed request and result valu
   Resource misses unwind command processing; scanner operands are call-local,
   with no parked expansion, scanner, or caller-resume frame retained here.
 - `src/main_control/settlement.rs`: direct-operation evidence ownership,
-  begin/commit/rollback, resource suspension and diagnostic settlement, ordered
+  begin/commit/rollback, resource-need and diagnostic settlement, ordered
   semantic/effect/artifact publication, and exact-cut main-source paragraph
   checkpoint sealing. Shipout contributes only output-ledger evidence. Its direct-operation mark
   moves only tex-command's opaque lifecycle edge; the authoritative ordinary
@@ -56,7 +56,7 @@ Command operands are scanned by `tex-command` into typed request and result valu
   effective-tail traversal. The caller-owned preparation slot retains only
   delivery and checked-save state across admitted stages; it contains
   no command classification. No live fact or provider survives a processor
-  episode or enters suspension.
+  episode or enters a host resource-replay request.
 - The resident `CommandEpisode` owns the admitted current command, delivery
   phase/cursor, source role, and attempt error. Scalar scanners use a local
   call frame and return typed values synchronously; an adjacent caller-owned
@@ -84,9 +84,9 @@ Command operands are scanned by `tex-command` into typed request and result valu
 - Executor host facts are demand-only borrows of the authoritative live mode
   and page state. Conditional mode, auxiliary values, and effective-tail
   quantities are sampled at their consuming scanner/primitive; scanner
-  continuations never cross a suspension. Delivery fields remain in the same
-  caller slot and no fact cache, compatibility preparation path, or per-token
-  payload exists.
+  continuations never cross a resource-need unwind. Delivery fields remain in
+  the same caller slot and no fact cache, compatibility preparation path, or
+  per-token payload exists.
 - `src/main_control/hot_apply.rs`: fused family-sized scan operands and direct
   in-place semantic handlers for the measured definition, let, catcode, and
   ordinary-group families. These commands bypass `ColdOperation`; dispatch
@@ -119,12 +119,12 @@ Command operands are scanned by `tex-command` into typed request and result valu
   cold scanning constructs its admitted `CommandContext` directly and reborrows
   it through tracked-region projection, main-control entry, and scanner
   settlement. The admission ends before diagnostic
-  reporting, resource preparation, suspension, semantic apply, or rollback;
+  reporting, resource preparation, full-checkpoint replay, semantic apply, or rollback;
   nested cold execution carries only the already-known tracking bit.
 - `src/canonical_step.rs`: shared bounded-step result protocol and the direct
   caller-owned fixed-chunk output ledger for exact-cut paragraph checkpoint
   publication, exact prior/current settlement, resource fulfillment,
-  suspension accounting, cancellation, and borrowed terminal page capture.
+  resource-restart accounting, cancellation, and borrowed terminal page capture.
 - `src/engine_completion.rs`: handle-free terminal engine capture, aligned
   page/PDF projection, and non-clone effects-before-artifacts publication with
   exact suffix retry.
@@ -210,8 +210,8 @@ Command operands are scanned by `tex-command` into typed request and result valu
   stores that fixed scalar level directly and candidate forks retain no shared
   mode tail or transient mode payload. Candidate accept/reject consume one
   explicit lifecycle capability; normal drop cannot choose rejection, and
-  terminal MainControl parking preserves the capability until Session settles
-  the aggregate. The move-only mode succession receipt is composed with state
+  terminal MainControl parking (which is not resource-replay packaging)
+  preserves the capability until Session settles the aggregate. The move-only mode succession receipt is composed with state
   only after all exact roots are consumed. Alignment brace depth belongs only
   to `tex-command`.
 - `src/job.rs` and `src/job_output.rs`: TeX job framing, terminal continuation, final cleanup, and lazy DVI/transcript output. See `docs/job_framing.md`.
@@ -222,14 +222,14 @@ Command operands are scanned by `tex-command` into typed request and result valu
   context in place, and assertion-bearing interpreter lifecycle accounting
   across semantic and host barriers.
 - `src/retained_generation.rs`: Non-generic move-only external-store slot
-  lease, universally generic admitted engine episodes, one singular typed
-  same-thread suspension seam for non-atomic semantic owners, the canonical
-  packed reusable-row boundary lane whose cells pair detached evidence with an
-  optional move-only checkpoint root, stale-safe private owner-relative keys,
-  typed cross-owner release transactions, and exact transfer of the sole output
-  pool between accepted/current sidecars. An attached checkpoint-control guard
-  restores runtime and MainControl sidecars without allocation or panic during
-  unwind so the outer aggregate rejection can always reach every owner.
+  lease, universally generic admitted engine episodes, host-owned
+  full-checkpoint replay for resource needs, the canonical packed reusable-row
+  boundary lane whose cells pair detached evidence with an optional move-only
+  checkpoint root, stale-safe private owner-relative keys, typed cross-owner
+  release transactions, and exact transfer of the sole output pool between
+  accepted/current sidecars. An attached checkpoint-control guard restores
+  runtime and MainControl sidecars without allocation or panic during unwind;
+  it is an ownership guard, not a packaged scanner or executor continuation.
 - `src/typeset_context.rs`: crate-private pure-kernel trait adapter over one
   already-admitted `CommandContext`; it owns no state, owner, or arena root.
 - `src/**/tests.rs` and crate-local `#[cfg(test)]` modules: active semantic,
