@@ -1864,6 +1864,11 @@ impl<G> MainControl<G> {
         let root_main_source = (boundary != crate::EngineBoundary::JobStart)
             .then_some(self.root_main_source)
             .flatten();
+        // Aggregate restore has replaced the command/input roots. The
+        // discarded direct operation's scratch coordinates therefore cannot
+        // be resumed against the restored arena; clear that linear owner
+        // before the fresh replay operation begins.
+        self.command.abandon_attempt_after_checkpoint_restore();
         self.capabilities = CommandHostCapabilities::default();
         self.active_alignment = None;
         self.boxes = ReplayBoxes::default();
