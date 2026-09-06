@@ -519,7 +519,7 @@ fn expanded_missing_opening_brace_uses_balanced_recovery() {
 }
 
 #[test]
-fn expanded_unterminated_body_aborts_synchronous_controls_at_end() {
+fn expanded_unterminated_body_recovers_at_end_and_exposes_collected_text() {
     crate::test_harness::with_universe(|universe| {
         let expanded = install_static(
             universe,
@@ -553,13 +553,35 @@ fn expanded_unterminated_body_aborts_synchronous_controls_at_end() {
             &mut fuel,
             &mut diagnostic_effects,
         );
+        let recovered = processor
+            .get_x_token()
+            .expect("unterminated delivery")
+            .expect("runaway recovery exposes the collected body");
+        assert_eq!(
+            recovered.meaning(),
+            Meaning::CharToken {
+                ch: 'A',
+                cat: Catcode::Letter,
+            }
+        );
         assert!(
             processor
                 .get_x_token()
-                .expect("unterminated delivery")
+                .expect("terminal delivery after recovered body")
                 .is_none()
         );
         drop(processor);
+        let diagnostics = command.take_semantic_diagnostics();
+        assert!(matches!(
+            diagnostics.as_slice(),
+            [crate::CommandSemanticDiagnostic::Recoverable {
+                message,
+                runaway: Some(crate::state::RunawayPrelude { heading, partial }),
+                ..
+            }] if message.starts_with("File ended while scanning text")
+                && *heading == "Runaway text?"
+                && partial == "A"
+        ));
         command
             .rollback_attempt_operation(operation)
             .expect("rollback after unterminated expanded body");
