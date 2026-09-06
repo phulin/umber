@@ -802,8 +802,7 @@ impl<G> ExecutionScratch<G> {
         matching: &PendingArgumentSet<G>,
     ) -> Result<MacroArgumentWriter<G>, ScratchError> {
         let start = self.macro_words.len();
-        let slot_index = matching.frame.slot() as usize;
-        let slot = self.pending_slot_for(matching.frame)?;
+        let (slot_index, slot) = self.pending_slot_for(matching.frame)?;
         if slot.current_argument.is_some() || slot.argument_count >= 9 {
             return Err(ScratchError::InvalidCoordinate);
         }
@@ -1057,8 +1056,7 @@ impl<G> ExecutionScratch<G> {
         &mut self,
         writer: MacroArgumentWriter<G>,
     ) -> Result<(), ScratchError> {
-        let slot_index = writer.owner.slot() as usize;
-        let slot = self.pending_slot_for(writer.owner)?;
+        let (slot_index, slot) = self.pending_slot_for(writer.owner)?;
         if slot.current_argument != Some(writer.slot) || slot.argument_count != writer.slot {
             return Err(ScratchError::InvalidCoordinate);
         }
@@ -1137,21 +1135,13 @@ impl<G> ExecutionScratch<G> {
         &mut self,
         matching: PendingArgumentSet<G>,
     ) -> Result<ArgumentSetId<G>, ScratchError> {
-        if self
-            .macro_slots
-            .get(self.pending_macro_slot as usize)
-            .is_some_and(|slot| slot.current_argument.is_some())
-        {
-            return Err(ScratchError::InvalidCoordinate);
-        }
-        let slot_index = self.pending_slot_index()? as u32;
-        if matching.frame.slot() != slot_index {
-            return Err(ScratchError::InvalidCoordinate);
-        }
-        let slot = self.pending_slot_for(matching.frame)?;
-        if slot.current_argument.is_some() {
-            return Err(ScratchError::InvalidCoordinate);
-        }
+        let slot_index = {
+            let (slot_index, slot) = self.pending_slot_for(matching.frame)?;
+            if slot.current_argument.is_some() {
+                return Err(ScratchError::InvalidCoordinate);
+            }
+            slot_index
+        };
         let next_depth = self
             .macro_depth
             .checked_add(1)
@@ -1160,10 +1150,10 @@ impl<G> ExecutionScratch<G> {
         // pending frame's role or the live-depth scalars. Even deliberately
         // corrupted/capacity-exhausted state therefore fails atomically.
         let frame = matching.frame;
-        let slot = &mut self.macro_slots[slot_index as usize];
+        let slot = &mut self.macro_slots[slot_index];
         slot.parent_slot = self.active_macro_slot;
         slot.sealed = true;
-        self.active_macro_slot = slot_index;
+        self.active_macro_slot = slot_index as u32;
         self.pending_macro_slot = NO_MACRO_SLOT;
         self.macro_depth = next_depth;
         Ok(frame)
@@ -1173,9 +1163,8 @@ impl<G> ExecutionScratch<G> {
         &mut self,
         matching: PendingArgumentSet<G>,
     ) -> Result<(), ScratchError> {
-        self.pending_slot_for(matching.frame)?;
-        let slot_index = self.pending_slot_index()?;
-        let reclaim_mark = self.macro_slots[slot_index].reclaim_mark;
+        let (slot_index, slot) = self.pending_slot_for(matching.frame)?;
+        let reclaim_mark = slot.reclaim_mark;
         self.pending_macro_slot = NO_MACRO_SLOT;
         self.truncate_macro_words(reclaim_mark)?;
         self.release_macro_slot(slot_index as u32);
@@ -1512,14 +1501,17 @@ impl<G> ExecutionScratch<G> {
             .ok_or(ScratchError::InvalidCoordinate)
     }
 
-    fn pending_slot_for(&self, frame: ArgumentSetId<G>) -> Result<&MacroSlot, ScratchError> {
+    fn pending_slot_for(
+        &self,
+        frame: ArgumentSetId<G>,
+    ) -> Result<(usize, &MacroSlot), ScratchError> {
         let index = self.pending_slot_index()?;
         let slot = &self.macro_slots[index];
         (frame.slot() as usize == index
             && slot.live
             && !slot.sealed
             && slot.serial == frame.serial())
-        .then_some(slot)
+        .then_some((index, slot))
         .ok_or(ScratchError::InvalidCoordinate)
     }
 
@@ -1623,6 +1615,41 @@ mod tests {
 
     fn brace(ch: char, cat: Catcode) -> TracedTokenWord {
         TracedTokenWord::pack(Token::Char { ch, cat }, OriginId::UNKNOWN)
+    }
+
+    #[derive(Debug, Eq, PartialEq)]
+    struct PendingLifecycleState {
+        active_slot: u32,
+        pending_slot: u32,
+        free_slot: u32,
+        macro_depth: u32,
+        word_len: u32,
+        serial: u64,
+        lane_mark: u32,
+        current_argument: Option<u8>,
+        parent_slot: u32,
+        sealed: bool,
+        live: bool,
+    }
+
+    fn pending_lifecycle_state(
+        scratch: &ExecutionScratch<()>,
+        pending: u32,
+    ) -> PendingLifecycleState {
+        let slot = &scratch.macro_slots[pending as usize];
+        PendingLifecycleState {
+            active_slot: scratch.active_macro_slot,
+            pending_slot: scratch.pending_macro_slot,
+            free_slot: scratch.free_macro_slot,
+            macro_depth: scratch.macro_depth,
+            word_len: scratch.macro_words.len(),
+            serial: slot.serial,
+            lane_mark: slot.lane_mark,
+            current_argument: slot.current_argument,
+            parent_slot: slot.parent_slot,
+            sealed: slot.sealed,
+            live: slot.live,
+        }
     }
 
     fn seal_argument<G>(
@@ -1729,6 +1756,49 @@ mod tests {
             ),
             before_commit
         );
+    }
+
+    #[test]
+    fn foreign_pending_handle_is_rejected_without_mutating_the_pending_frame() {
+        let mut foreign_scratch = ExecutionScratch::<()>::default();
+        let first_foreign = foreign_scratch
+            .begin_macro_match()
+            .expect("first foreign match");
+        foreign_scratch
+            .discard_macro_match(first_foreign)
+            .expect("first foreign discard");
+        let foreign = foreign_scratch
+            .begin_macro_match()
+            .expect("reused foreign match");
+
+        let mut scratch = ExecutionScratch::<()>::default();
+        let matching = scratch.begin_macro_match().expect("local match");
+        let pending = scratch.pending_macro_slot;
+        let before = pending_lifecycle_state(&scratch, pending);
+        assert_eq!(
+            scratch.commit_macro_match(foreign),
+            Err(ScratchError::InvalidCoordinate)
+        );
+        assert_eq!(pending_lifecycle_state(&scratch, pending), before);
+        scratch
+            .discard_macro_match(matching)
+            .expect("local discard");
+    }
+
+    #[test]
+    fn unfinished_argument_rejects_commit_before_sealing_or_depth_change() {
+        let mut scratch = ExecutionScratch::<()>::default();
+        let matching = scratch.begin_macro_match().expect("macro match");
+        let _writer = scratch
+            .begin_argument_writer(&matching)
+            .expect("unfinished argument writer");
+        let pending = scratch.pending_macro_slot;
+        let before = pending_lifecycle_state(&scratch, pending);
+        assert_eq!(
+            scratch.commit_macro_match(matching),
+            Err(ScratchError::InvalidCoordinate)
+        );
+        assert_eq!(pending_lifecycle_state(&scratch, pending), before);
     }
 
     #[test]
