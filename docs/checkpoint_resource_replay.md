@@ -51,7 +51,7 @@ same externally visible prefix. It reuses the existing aggregate
 checkpoint/fork/restore machinery; it does not copy the whole engine, create a
 third lineage, or retain a checkpoint per request.
 
-On replay the host:
+When the legacy outer host path receives a resource response, the host:
 
 1. unwinds and discards the failed direct `MainControl` operation, detaching
    the owned need and any source origin that must survive the attempt;
@@ -63,7 +63,10 @@ On replay the host:
    post-anchor suffixes; and
 5. stages the admitted outcome after the full restore, then starts a fresh
    ordinary main-control operation with it visible through the normal
-   VFS/World path.
+   VFS/World path. Provider-capable command execution has a separate
+   synchronous path described below: a ready or unavailable answer is
+   installed during the current cold call, while only a declined answer uses
+   this full-replay sequence.
 
 The checkpoint and every retained host prefix must describe the same source
 revision, generated-output transaction, and output state. An accepted ancestor
@@ -90,10 +93,12 @@ Pending              request is still being acquired or admitted
 FetchError           access, transport, validation, or provider failure
 ```
 
-`FetchError` is actionable failure, never `AuthoritativeAbsent`. A fulfilled
-or authoritative-absent response is staged once outside rollback, the candidate
-is rewound, and replay observes that answer at the original lookup. A pending
-request returns to the host. A response for a cancelled or discarded candidate
+`FetchError` is actionable failure, never `AuthoritativeAbsent`. On the legacy
+outer fallback path, a fulfilled or authoritative-absent response is staged
+once outside rollback, the candidate is rewound, and replay observes that
+answer at the original lookup. On the provider path, those same outcomes
+continue the current operation after capability installation. A pending request
+returns to the host. A response for a cancelled or discarded candidate
 may remain in a shared verified cache, but it is not installed into that
 dropped execution. A direct operation never resumes after its need escapes.
 
@@ -123,6 +128,44 @@ negatives are scoped to the pinned distribution root; project negatives to the
 frozen project source revision; generated negatives to the current generated
 transaction and are invalidated on rollback or write. Payload arrival never
 changes winner or search precedence.
+
+### Synchronous resolution of resident resources
+
+An already host-resolvable resource is settled at the cold command site in
+the same ordinary Rust call. `CommandHostContext` carries an optional,
+borrow-scoped `ResourceProvider`; its `resolve` method receives the live
+`CommandContext` and an owned-neutral `ResourceNeed`, and returns an owned
+fulfilled or unavailable answer with the dependency reads that produced it.
+The provider borrow ends before the command resumes, so no provider, world,
+scanner, or caller borrow can enter a checkpoint or parser state.
+
+The command crate owns the canonical request, fulfillment, outcome, failure,
+and dependency-effect vocabulary. A single capability installer validates the
+typed request/answer pair, installs the binding or scoped negative, and
+records the dependency reads. The executor's fallback ledger retains its
+existing acknowledgement at the same call site; replay and startup fallback
+call the installer as well and do not maintain a second answer protocol.
+When a tex-exec adapter invokes the legacy `ResourceHost`, it exposes only a
+closure-scoped `InputReadState` view of the live World. World effects recorded
+by that call are already present in the speculative candidate and are not
+applied a second time when the capability is installed.
+
+An unavailable answer continues the existing TeX diagnostic or optional-file
+path immediately. A failed answer propagates its original failure. A declined
+answer carries one call-scoped already-attempted marker to the outer driver;
+that marker suppresses exactly one duplicate host call while the operation
+unwinds, then is consumed. It is neither part of request equality nor a
+persistent cache or generation identity. A subsequent drive may ask the host
+again.
+
+Resource producers construct their complete typed request before capability
+lookup. Input size/date/MD5/dump/openin probes retain `AuthoritativeProbe`
+dependencies, while a later required input read records `RequiredRead`; a
+probe binding never promotes itself to input backing. Font requests retain
+their full target, name, size, recovery, and diagnostic context. Image
+requests retain the live pdfoutput/pagebox/resolution/dimensions/colorspace
+identity, with attempt-local attributes excluded as required by
+`same_resource_as`.
 
 ## Startup preflight
 
