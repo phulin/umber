@@ -50,6 +50,52 @@ pub struct LiteralHint {
     pub byte_offset: usize,
 }
 
+impl LiteralHint {
+    /// Returns the bounded catalogue candidate for this semantic hint.
+    ///
+    /// Extraction deliberately retains the source spelling in [`Self::name`]
+    /// so callers can preserve the lookup context.  TeX's known class,
+    /// package, and input surfaces have a predictable default suffix when the
+    /// final path component has no explicit extension; graphics keep their
+    /// existing extension/search behavior.
+    #[must_use]
+    pub fn normalized_name(&self) -> String {
+        normalize_literal_hint_name(self.kind, &self.name)
+    }
+}
+
+/// Normalizes one literal hint into a bounded catalogue candidate without
+/// changing the spelling used by the eventual resolver.
+///
+/// This is predictor-only behavior: it does not assert that the candidate
+/// exists or alter provider precedence.  Only a missing extension on the
+/// final path component receives a semantic default.  Dots in directory
+/// names do not suppress the default, and graphics remain extensionless so
+/// their existing image search policy continues to decide the winner.
+#[must_use]
+pub fn normalize_literal_hint_name(kind: LiteralHintKind, name: &str) -> String {
+    let extension = match kind {
+        LiteralHintKind::DocumentClass => Some("cls"),
+        LiteralHintKind::Package => Some("sty"),
+        LiteralHintKind::Input => Some("tex"),
+        LiteralHintKind::IncludeGraphics => None,
+    };
+    let Some(extension) = extension else {
+        return name.to_owned();
+    };
+    let component = name.rsplit('/').next().unwrap_or(name);
+    let has_extension = !matches!(component, "." | "..")
+        && component.rfind('.').is_some_and(|position| position > 0);
+    if has_extension {
+        return name.to_owned();
+    }
+    let mut normalized = String::with_capacity(name.len() + extension.len() + 1);
+    normalized.push_str(name);
+    normalized.push('.');
+    normalized.push_str(extension);
+    normalized
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct LiteralHintLimits {
     pub max_hints: usize,
@@ -531,6 +577,48 @@ impl PrefetchRequest {
     }
 }
 
+fn literal_hint_request(
+    hint: &LiteralHint,
+    search_context: &str,
+    required: bool,
+    typed: bool,
+    depth: usize,
+) -> Option<PrefetchRequest> {
+    let name = hint.normalized_name();
+    let key = crate::FileRequestKey::new(FileKind::Tex, name).ok()?;
+    let file_key = PrefetchFileKey::new(
+        "tex",
+        if hint.kind == LiteralHintKind::IncludeGraphics {
+            "image"
+        } else {
+            "tex"
+        },
+        key.normalized_name(),
+    )?;
+    let transport_key = key.manifest_key().to_string();
+    let class = match hint.kind {
+        LiteralHintKind::IncludeGraphics => PrefetchClass::Image,
+        _ => PrefetchClass::for_key(&transport_key),
+    };
+    let request = if typed {
+        PrefetchRequest::for_file_key(
+            file_key,
+            transport_key,
+            hint.original_spelling.clone(),
+            search_context,
+            required,
+        )
+    } else {
+        PrefetchRequest::new(
+            transport_key,
+            hint.original_spelling.clone(),
+            search_context,
+            required,
+        )
+    };
+    Some(request.with_class(class).with_depth(depth))
+}
+
 /// Stable region identity supplied by a retained checkpoint owner.
 ///
 /// This is intentionally opaque to the policy.  Native and WASM callers may
@@ -842,34 +930,10 @@ impl PrefetchPolicy {
     pub fn enqueue_literal_hints(&mut self, source: &str) -> usize {
         let mut count = 0;
         for hint in extract_literal_hints(source, LiteralHintLimits::default()) {
-            let Ok(key) = crate::FileRequestKey::new(FileKind::Tex, hint.name.clone()) else {
+            let Some(request) = literal_hint_request(&hint, "literal", false, true, 0) else {
                 continue;
             };
-            let file_key = PrefetchFileKey::new(
-                "tex",
-                if hint.kind == LiteralHintKind::IncludeGraphics {
-                    "image"
-                } else {
-                    "tex"
-                },
-                key.normalized_name(),
-            )
-            .expect("validated literal hint key");
-            let key = key.manifest_key().to_string();
-            let class = match hint.kind {
-                LiteralHintKind::IncludeGraphics => PrefetchClass::Image,
-                _ => PrefetchClass::for_key(&key),
-            };
-            if self.enqueue(
-                PrefetchRequest::for_file_key(
-                    file_key,
-                    key,
-                    hint.original_spelling,
-                    "literal",
-                    false,
-                )
-                .with_class(class),
-            ) {
+            if self.enqueue(request) {
                 count += 1;
             }
         }
@@ -1018,37 +1082,15 @@ impl PrefetchPolicy {
                 max_name_bytes: MAX_DEFAULT_NAME_BYTES,
             },
         ) {
-            let Ok(key) = crate::FileRequestKey::new(FileKind::Tex, hint.name.clone()) else {
+            let Some(request) = literal_hint_request(
+                &hint,
+                "runtime",
+                false,
+                typed_parent,
+                parent_depth.saturating_add(1),
+            ) else {
                 continue;
             };
-            let file_key = PrefetchFileKey::new(
-                "tex",
-                if hint.kind == LiteralHintKind::IncludeGraphics {
-                    "image"
-                } else {
-                    "tex"
-                },
-                key.normalized_name(),
-            )
-            .expect("validated runtime hint key");
-            let key = key.manifest_key().to_string();
-            let class = match hint.kind {
-                LiteralHintKind::IncludeGraphics => PrefetchClass::Image,
-                _ => PrefetchClass::for_key(&key),
-            };
-            let request = if typed_parent {
-                PrefetchRequest::for_file_key(
-                    file_key,
-                    key,
-                    hint.original_spelling,
-                    "runtime",
-                    false,
-                )
-            } else {
-                PrefetchRequest::new(key, hint.original_spelling, "runtime", false)
-            }
-            .with_class(class)
-            .with_depth(parent_depth.saturating_add(1));
             if self.enqueue(request) {
                 self.metrics.followup_hints = self.metrics.followup_hints.saturating_add(1);
             }

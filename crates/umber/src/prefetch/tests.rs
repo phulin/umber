@@ -43,7 +43,7 @@ fn startup_policy_combines_prior_manifest_and_literal_hints() {
             _ => "other",
         })
         .collect::<Vec<_>>();
-    assert_eq!(names, ["prior.sty", "newpkg"]);
+    assert_eq!(names, ["prior.sty", "newpkg.sty"]);
     assert_eq!(planner.metrics().startup_candidates, 1);
 }
 
@@ -54,6 +54,14 @@ fn source_edits_do_not_change_identity_or_publish_predictions() {
     let second = planner.startup_hints("\\input{second}");
     assert_eq!(first.len(), 1);
     assert_eq!(second.len(), 1);
+    assert!(matches!(
+        &first[0],
+        ResourceRequest::File(request) if request.key().name() == "first.tex"
+    ));
+    assert!(matches!(
+        &second[0],
+        ResourceRequest::File(request) if request.key().name() == "second.tex"
+    ));
     assert!(planner.into_manifest().records().is_empty());
 }
 

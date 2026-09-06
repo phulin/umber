@@ -29,6 +29,96 @@ fn literal_hints_ignore_comments_and_expand_package_lists_only() {
 }
 
 #[test]
+fn literal_hint_normalization_uses_kind_defaults_only_for_final_components() {
+    let cases = [
+        (LiteralHintKind::DocumentClass, "article", "article.cls"),
+        (
+            LiteralHintKind::DocumentClass,
+            "latex/base/article.cls",
+            "latex/base/article.cls",
+        ),
+        (LiteralHintKind::Package, "vendor/pkg", "vendor/pkg.sty"),
+        (LiteralHintKind::Package, "vendor/pkg.sty", "vendor/pkg.sty"),
+        (
+            LiteralHintKind::Input,
+            "chapters.v1/intro",
+            "chapters.v1/intro.tex",
+        ),
+        (
+            LiteralHintKind::Input,
+            "chapters/intro.ltx",
+            "chapters/intro.ltx",
+        ),
+        (
+            LiteralHintKind::IncludeGraphics,
+            "figures/plot",
+            "figures/plot",
+        ),
+    ];
+    for (kind, name, expected) in cases {
+        assert_eq!(normalize_literal_hint_name(kind, name), expected);
+    }
+}
+
+#[test]
+fn literal_hints_enqueue_typed_default_keys_and_preserve_lookup_spelling() {
+    let source = r#"\documentclass[11pt]{latex/base/article.cls}
+\usepackage{vendor/amsmath.sty, vendor/graphicx}
+\RequirePackage{vendor/keyval}
+\input{chapters.v1/intro}
+\include{parts/chapter.tex}
+\includegraphics[width=2cm]{figures/plot}
+"#;
+    let mut policy = PrefetchPolicy::new(PrefetchBudget::default());
+    assert_eq!(policy.enqueue_literal_hints(source), 7);
+    let requests = policy.drain(64);
+    assert_eq!(
+        requests
+            .iter()
+            .map(|request| request.key.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "tex:latex/base/article.cls",
+            "tex:vendor/amsmath.sty",
+            "tex:vendor/graphicx.sty",
+            "tex:vendor/keyval.sty",
+            "tex:chapters.v1/intro.tex",
+            "tex:parts/chapter.tex",
+            "tex:figures/plot",
+        ]
+    );
+    assert_eq!(
+        requests
+            .iter()
+            .map(|request| request.original_spelling.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "latex/base/article.cls",
+            "vendor/amsmath.sty",
+            "vendor/graphicx",
+            "vendor/keyval",
+            "chapters.v1/intro",
+            "parts/chapter.tex",
+            "figures/plot",
+        ]
+    );
+    assert!(
+        requests[..6]
+            .iter()
+            .all(|request| request.class == PrefetchClass::SmallRuntime)
+    );
+    assert_eq!(requests[6].class, PrefetchClass::Image);
+    assert_eq!(
+        requests[2]
+            .file_key
+            .as_ref()
+            .expect("typed request")
+            .normalized_name,
+        "vendor/graphicx.sty"
+    );
+}
+
+#[test]
 fn malformed_or_dynamic_arguments_are_not_hints() {
     let source = r#"\usepackage{foo % missing close
 \input \macro
@@ -140,6 +230,31 @@ fn admitted_runtime_closure_is_bounded_and_deduplicated() {
     policy.admitted("tex:child.tex", br#"\input{root.sty}\input{grand.tex}"#);
     assert!(policy.drain(64).is_empty());
     assert_eq!(policy.metrics().followup_hints, 1);
+}
+
+#[test]
+fn admitted_typed_runtime_closure_normalizes_package_and_input_children() {
+    let root_key = PrefetchFileKey::new("tex", "tex", "root.sty").expect("root key");
+    let root =
+        PrefetchRequest::for_file_key(root_key, "tex:root.sty", "root.sty", "literal", false);
+    let mut policy = PrefetchPolicy::new(PrefetchBudget::default());
+    assert!(policy.enqueue(root.clone()));
+    assert_eq!(policy.drain(1), [root.clone()]);
+    policy.admitted_request_with_class(
+        &root,
+        PrefetchClass::SmallRuntime,
+        br#"\RequirePackage{child}\input{chapters/intro}"#,
+        std::iter::empty(),
+    );
+    let children = policy.drain(64);
+    assert_eq!(
+        children
+            .iter()
+            .map(|request| request.key.as_str())
+            .collect::<Vec<_>>(),
+        ["tex:child.sty", "tex:chapters/intro.tex"]
+    );
+    assert!(children.iter().all(|request| request.file_key.is_some()));
 }
 
 #[test]

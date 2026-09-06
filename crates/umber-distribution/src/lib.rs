@@ -29,7 +29,7 @@ pub use prefetch::{
     LiteralHint, LiteralHintKind, LiteralHintLimits, PrefetchBudget, PrefetchCandidate,
     PrefetchClass, PrefetchEscalation, PrefetchFileKey, PrefetchPolicy, PrefetchPolicyMetrics,
     PrefetchRegionKey, PrefetchRequest, PrefetchSelection, extract_literal_hints,
-    select_prefetch_group,
+    normalize_literal_hint_name, select_prefetch_group,
 };
 pub use readiness::{
     LookupManifest, LookupOutcome, LookupRecord, LookupRole, ManifestError, NegativeScope,
