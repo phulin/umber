@@ -598,7 +598,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(self.scan_integer_value_for_condition()? & 1 != 0)
     }
 
-    #[inline(always)]
+    #[inline(never)]
     fn evaluate_ifnum_operand(&mut self, kind: ConditionalKind) -> Result<bool, CommandError> {
         let absolute = kind == ConditionalKind::IfPdfAbsNum;
         let left = self.scan_integer_value_for_condition()?;

@@ -789,7 +789,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// scalar-only result keeps the full retained result out of the caller
     /// while preserving the same resource-failure cleanup as the public
     /// retained entry.
-    #[inline(always)]
+    #[inline(never)]
     pub(crate) fn scan_integer_value_for_condition(&mut self) -> Result<i32, CommandError> {
         match self.scan_integer_with_resource_continuation() {
             Ok(value) => Ok(value.value),

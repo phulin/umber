@@ -1003,12 +1003,11 @@ impl<G> CommandProcessor<'_, '_, G> {
             );
         };
         self.command.transient.active_expansion_depth = active_depth;
-        let mut command = destination.take();
         let mut reader = ResidentFrameReader::new();
         let mut delivery_expanded = false;
         let mut initial_action = initial_action;
         let status = 'delivery: loop {
-            if command.is_none() {
+            if destination.is_none() {
                 debug_assert!(
                     destination.is_none(),
                     "the caller-owned hot command must be empty before a resident fetch"
@@ -1050,11 +1049,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 storage_kind,
                                 #[cfg(feature = "profiling")]
                                 raw_kind,
-                                &mut command,
+                                destination,
                             );
                         }
                         selected => {
-                            let cold = match self.transition_resident_word(selected, &mut command) {
+                            let cold = match self.transition_resident_word(selected, destination) {
                                 Ok(cold) => cold,
                                 Err(failure) => {
                                     return self.fail_hot_expanded_delivery(
@@ -1075,7 +1074,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         }
                     }
                 };
-                let command_ref = command
+                let command_ref = destination
                     .as_mut()
                     .expect("resident delivery initializes the hot command");
                 if let Err(failure) = self.settle_hot_delivery(command_ref, literal_catcode) {
@@ -1084,20 +1083,20 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
 
             let action = initial_action.take().unwrap_or_else(|| {
-                let hot_command = command
+                let hot_command = destination
                     .as_ref()
                     .expect("resident delivery initializes the hot command");
                 classify_hot_command(hot_command)
             });
             match action {
                 ExpandedCommandAction::Return => {
-                    let hot_command = command
+                    let hot_command = destination
                         .as_ref()
                         .expect("resident delivery initializes the hot command");
                     break self.finish_expanded_command(hot_command, delivery_expanded);
                 }
                 ExpandedCommandAction::EndTemplate => {
-                    let hot_command = command
+                    let hot_command = destination
                         .as_mut()
                         .expect("resident delivery initializes the hot command");
                     if matches!(
@@ -1112,7 +1111,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 ExpandedCommandAction::Expand(ExpansionDispatch::Macro) => {
                     delivery_expanded = true;
                     if let Err(failure) = self.expand_hot_definition_action(
-                        &mut command,
+                        destination,
                         &mut reader,
                         ExpansionDispatch::Macro,
                     ) {
@@ -1122,7 +1121,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 ExpandedCommandAction::Expand(ExpansionDispatch::Undefined) => {
                     delivery_expanded = true;
                     if let Err(failure) = self.expand_hot_definition_action(
-                        &mut command,
+                        destination,
                         &mut reader,
                         ExpansionDispatch::Undefined,
                     ) {
@@ -1131,20 +1130,31 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(primitive)) => {
                     delivery_expanded = true;
-                    let hot_command = command
-                        .as_mut()
-                        .expect("resident delivery initializes the hot command");
                     let result = if let Some(kind) =
                         crate::conditionals::ConditionalKind::from_primitive(primitive)
                     {
-                        self.expand_conditional_occupied(hot_command, primitive, kind, true)
+                        {
+                            let hot_command = destination
+                                .as_ref()
+                                .expect("resident delivery initializes the hot command");
+                            self.trace_hot_conditional(hot_command);
+                        }
+                        // The conditional stack owns the opener's semantic
+                        // identity. Consume the compact delivery before the
+                        // recursive operand scan so no command-sized local is
+                        // retained at each waiting level.
+                        destination.take();
+                        self.expand_conditional_occupied(primitive, kind)
                     } else {
+                        let hot_command = destination
+                            .as_mut()
+                            .expect("resident delivery initializes the hot command");
                         self.expand_compact_occupied(hot_command, primitive, true)
                     };
                     if let Err(failure) = result {
                         return self.fail_hot_expanded_delivery(destination, depth, failure);
                     }
-                    command.take();
+                    destination.take();
                     reader.invalidate();
                 }
             }
@@ -1159,8 +1169,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             DeliveryStatus::End | DeliveryStatus::ReplayCompleted(_) | DeliveryStatus::CharacterRun
         ) {
             destination.take();
-        } else {
-            *destination = command.take();
         }
         Ok(status)
     }
@@ -1809,11 +1817,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             match self.expanded_next_hot(destination, None)? {
                 DeliveryStatus::ReplayCompleted(_) => continue,
                 DeliveryStatus::AlignmentEndTemplate => {
-                    let command = destination
-                        .take()
-                        .ok_or_else(CommandError::input_invariant)?
-                        .materialize();
-                    self.begin_scalar_alignment_v_template(&command)?;
+                    self.finish_alignment_end_template_hot(destination)?;
                 }
                 DeliveryStatus::PendingExpanded | DeliveryStatus::AlignmentClosingBrace => {
                     return Ok(DeliveryStatus::Command);
@@ -1824,6 +1828,24 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
             }
         }
+    }
+
+    /// Finishes the alignment-only rich boundary of
+    /// [`Self::request_expanded_hot_token`]. Ordinary scalar requests keep
+    /// their compact destination through the shared expanded loop; only the
+    /// active-cell delimiter needs a `CurrentCommand` for the existing
+    /// freshness and delimiter-line checks.
+    #[cold]
+    #[inline(never)]
+    fn finish_alignment_end_template_hot(
+        &mut self,
+        destination: &mut Option<HotCommand<G>>,
+    ) -> Result<(), CommandError> {
+        let command = destination
+            .take()
+            .ok_or_else(CommandError::input_invariant)?
+            .materialize();
+        self.begin_scalar_alignment_v_template(&command)
     }
 
     /// Requests one already-delivered command's expansion from the same
@@ -3117,21 +3139,26 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.back_input_token(TracedTokenWord::pack(frozen_endv, OriginId::UNKNOWN))
     }
 
-    /// Executes one already-classified primitive while the expanded loop's
-    /// hot command remains occupied. This is deliberately the primitive
-    /// dispatch point rather than another delivery result: the loop owns
-    /// fetching, classification, and the continue/return decision, while
-    /// this method owns only the synchronous semantic operation. A rich
-    /// command is formed below only for scanners whose public semantic
-    /// boundary genuinely needs one (for example `\pdfprimitive`'s operand
-    /// query or an error recovery report).
+    /// Emits the conditional command trace while the opener remains in the
+    /// caller-owned hot slot. This boundary is cold because tracing is an
+    /// observer-only path outside ordinary scanner recursion.
+    #[cold]
+    #[inline(never)]
+    fn trace_hot_conditional(&mut self, command: &HotCommand<G>) {
+        if self.command.delivery_mode.tracing() {
+            self.print_hot_command_trace(command);
+        }
+    }
+
+    /// Executes one already-classified conditional while the expanded loop's
+    /// caller-owned hot slot is empty. The conditional stack retains the
+    /// semantic opener state; no token, provenance, or rich command crosses
+    /// the recursive operand scan.
     #[inline(never)]
     fn expand_conditional_occupied(
         &mut self,
-        command: &HotCommand<G>,
         _primitive: ExpandablePrimitive,
         kind: crate::conditionals::ConditionalKind,
-        report_trace: bool,
     ) -> Result<(), CommandError> {
         #[cfg(feature = "profiling")]
         {
@@ -3142,9 +3169,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             if self.write_expansion_depth != 0 {
                 self.record_write_expansion();
             }
-        }
-        if report_trace && self.command.delivery_mode.tracing() {
-            self.print_hot_command_trace(command);
         }
         let result = self.expand_conditional_primitive(kind, false);
         if result

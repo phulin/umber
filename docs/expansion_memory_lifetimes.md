@@ -425,15 +425,22 @@ admitted argument and continues inside the resident loop. Only EOF, line,
 retirement, replay, diagnostic, checkpoint, or failure paths materialize a cold
 status; no semantic-token value or raw-command phase crosses into a result
 relay. Nested delivery has its own compact pair. The expanded fetch/inspect
-loop keeps that value in place while synchronous expansion mutates input, then
-raw delivery overwrites it for the next token. It does not construct a rich
-`CurrentCommand` between macros or redispatch through `ResolvedMeaning`. The
+loop operates directly on the caller-owned hot destination while synchronous
+expansion mutates input, then raw delivery overwrites it for the next token. A
+conditional opener is traced while that destination is borrowed, then
+consumed before recursive operand scanning; `ConditionStack` owns the
+conditional kind, source line, and inversion, so no opener command or
+provenance survives in the waiting scanner frame. It does not construct a
+rich `CurrentCommand` between macros or redispatch through `ResolvedMeaning`. The
 expanded loop keeps its one has-expanded bit on the stack, and a host replay
 recomputes it from restored input. Each
 concrete loop returns only its final compact status. Cold end, replay, and
 failure clear the provisional destination; scanner, diagnostic, observation,
 backup, and primitive boundaries materialize a rich command only when their
-ordinary grammar needs those fields. A resource error unwinds the call tree
+ordinary grammar needs those fields. The shared hot request keeps its
+alignment-end-template `CurrentCommand` construction in a cold helper, so
+normal scalar recursion does not retain that alternate branch's rich local. A
+resource error unwinds the call tree
 and clears local scanner/expression scratch; the host restores a full
 checkpoint and invokes the same loop again. Thus an ordinary successful token
 neither copies nor reconstructs an error or continuation envelope.
