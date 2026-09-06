@@ -1278,6 +1278,30 @@ impl LocalResolver {
     }
 
     fn resolve(&self, request: &FileRequest) -> Result<Option<ResolvedFile>, NativeRunError> {
+        self.resolve_with_name(request, request.original_name())
+    }
+
+    /// Resolves a speculative candidate by its canonical typed name while
+    /// retaining the request's original spelling for the eventual engine
+    /// lookup and input-path accounting. Literal class/package hints add
+    /// their kind-specific suffix to the typed key, but TeX's generic input
+    /// search path cannot infer that suffix from the original spelling.
+    fn resolve_prefetch(
+        &self,
+        request: &FileRequest,
+    ) -> Result<Option<ResolvedFile>, NativeRunError> {
+        let lookup_name = match request.key().kind() {
+            FileKind::TexInput | FileKind::Image => request.key().name(),
+            _ => request.original_name(),
+        };
+        self.resolve_with_name(request, lookup_name)
+    }
+
+    fn resolve_with_name(
+        &self,
+        request: &FileRequest,
+        lookup_name: &str,
+    ) -> Result<Option<ResolvedFile>, NativeRunError> {
         if matches!(
             request.key().kind(),
             FileKind::BibAux | FileKind::ClassicBibData | FileKind::BibStyle
@@ -1286,19 +1310,19 @@ impl LocalResolver {
         }
         let mut world = World::real();
         let read = match request.key().kind() {
-            FileKind::TexInput | FileKind::Image => self
-                .input
-                .read_from_world_detailed(&mut world, request.original_name()),
+            FileKind::TexInput | FileKind::Image => {
+                self.input.read_from_world_detailed(&mut world, lookup_name)
+            }
             FileKind::Tfm => self
                 .font
-                .read_from_world_detailed(&mut world, Path::new(request.original_name())),
+                .read_from_world_detailed(&mut world, Path::new(lookup_name)),
             FileKind::GenericAsset
             | FileKind::VirtualFont
             | FileKind::PdfFontMap
             | FileKind::PdfEncoding
             | FileKind::PdfFontProgram => self
                 .font
-                .read_program_from_world_detailed(&mut world, Path::new(request.original_name())),
+                .read_program_from_world_detailed(&mut world, Path::new(lookup_name)),
             _ => return Ok(None),
         };
         let content = match read {
@@ -2146,7 +2170,7 @@ impl DistributionResolver {
             };
             let started = Instant::now();
             telemetry.local_lookups = telemetry.local_lookups.saturating_add(1);
-            let resolved = local.resolve(request)?;
+            let resolved = local.resolve_prefetch(request)?;
             telemetry.local_lookup_time = telemetry
                 .local_lookup_time
                 .saturating_add(started.elapsed());
@@ -2422,7 +2446,7 @@ impl DistributionResolver {
             }
             let started = Instant::now();
             telemetry.local_lookups = telemetry.local_lookups.saturating_add(1);
-            let resolved = local.resolve(&request)?;
+            let resolved = local.resolve_prefetch(&request)?;
             telemetry.local_lookup_time = telemetry
                 .local_lookup_time
                 .saturating_add(started.elapsed());

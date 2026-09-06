@@ -8,6 +8,193 @@ use umber_distribution::{ManifestShard, pack_shard};
 use super::*;
 
 #[test]
+fn local_startup_prefetch_is_visible_to_input() {
+    let directory = TempDir::new().expect("temporary project");
+    std::fs::write(directory.path().join("main.tex"), b"\\input class \\end").expect("main");
+    std::fs::write(
+        directory.path().join("class.tex"),
+        b"\\message{LOCAL-CLASS}\\endinput",
+    )
+    .expect("class");
+    let options = NativeRunOptions {
+        input: directory.path().join("main.tex"),
+        format: None,
+        initial_prefetch_keys: vec!["tex:class.tex".to_owned()],
+        engine: EngineMode::Tex82,
+        pdf_output_mode: None,
+        outputs: OutputCapabilitySet::DVI,
+        html_asset_directory: None,
+        distribution: None,
+        distribution_ahash64: None,
+        offline: true,
+        expansion_fuel: Some(100_000),
+        execution_steps: Some(100_000),
+    };
+    let mut session = NativeCompileSession::new_with_cache(
+        &options,
+        &FetchCancellation::new(),
+        ObjectCache::new(directory.path().join("cache")),
+    )
+    .expect("native session");
+    let output = session
+        .compile(&FetchCancellation::new())
+        .expect("local startup prefetch compile");
+    assert!(String::from_utf8_lossy(&output.terminal).contains("LOCAL-CLASS"));
+}
+
+#[test]
+fn local_startup_prefetch_is_visible_to_probe() {
+    let directory = TempDir::new().expect("temporary project");
+    std::fs::write(
+        directory.path().join("main.tex"),
+        b"\\openin0=class.tex \\ifeof0 \\message{EOF} \\else \\message{LOCAL-PROBE} \\fi \\closein0 \\end",
+    )
+    .expect("main");
+    std::fs::write(directory.path().join("class.tex"), b"probe payload").expect("class");
+    let options = NativeRunOptions {
+        input: directory.path().join("main.tex"),
+        format: None,
+        initial_prefetch_keys: vec!["tex:class.tex".to_owned()],
+        engine: EngineMode::PdfTex,
+        pdf_output_mode: None,
+        outputs: OutputCapabilitySet::DVI,
+        html_asset_directory: None,
+        distribution: None,
+        distribution_ahash64: None,
+        offline: true,
+        expansion_fuel: Some(100_000),
+        execution_steps: Some(100_000),
+    };
+    let mut session = NativeCompileSession::new_with_cache(
+        &options,
+        &FetchCancellation::new(),
+        ObjectCache::new(directory.path().join("cache")),
+    )
+    .expect("native session");
+    let output = session
+        .compile(&FetchCancellation::new())
+        .expect("local startup prefetch probe compile");
+    assert!(String::from_utf8_lossy(&output.terminal).contains("LOCAL-PROBE"));
+}
+
+#[test]
+fn local_prefetch_uses_typed_extension_defaults_and_preserves_explicit_paths() {
+    let directory = TempDir::new().expect("temporary project");
+    let main = directory.path().join("main.tex");
+    std::fs::write(&main, b"\\end").expect("main");
+    let nested = directory.path().join("nested");
+    std::fs::create_dir(&nested).expect("nested directory");
+    std::fs::write(nested.join("class.cls"), b"class").expect("class");
+    std::fs::write(nested.join("package.sty"), b"package").expect("package");
+    std::fs::write(nested.join("input.tex"), b"input").expect("input");
+    let local = LocalResolver::from_environment(&main);
+    let cases = [
+        ("nested/class.cls", "nested/class"),
+        ("nested/package.sty", "nested/package"),
+        ("nested/input.tex", "nested/input"),
+    ];
+    for (name, original) in cases {
+        let request = FileRequest::new(
+            FileRequestKey::new(FileKind::TexInput, name).expect("typed key"),
+            original,
+        );
+        let resolved = local
+            .resolve_prefetch(&request)
+            .expect("local prefetch lookup")
+            .expect("project-local candidate");
+        assert_eq!(resolved.request, request.key().clone());
+        assert!(resolved.virtual_path.ends_with(name));
+        assert!(local.input_path_map().contains_key(Path::new(original)));
+    }
+    let explicit = FileRequest::new(
+        FileRequestKey::new(FileKind::TexInput, "nested/class.cls").expect("typed key"),
+        "nested/class.cls",
+    );
+    assert!(
+        local
+            .resolve(&explicit)
+            .expect("explicit demand lookup")
+            .is_some()
+    );
+}
+
+#[test]
+fn literal_class_and_package_hints_resolve_project_extensions() {
+    let directory = TempDir::new().expect("temporary project");
+    let input = directory.path().join("main.tex");
+    std::fs::write(
+        &input,
+        b"\\documentclass{class}\n\\usepackage{package}\n\\end",
+    )
+    .expect("main");
+    std::fs::write(directory.path().join("class.cls"), b"class").expect("class");
+    std::fs::write(directory.path().join("package.sty"), b"package").expect("package");
+    let options = NativeRunOptions {
+        input,
+        format: None,
+        initial_prefetch_keys: Vec::new(),
+        engine: EngineMode::Tex82,
+        pdf_output_mode: None,
+        outputs: OutputCapabilitySet::DVI,
+        html_asset_directory: None,
+        distribution: None,
+        distribution_ahash64: None,
+        offline: true,
+        expansion_fuel: Some(100_000),
+        execution_steps: Some(100_000),
+    };
+    let mut session = NativeCompileSession::new_with_cache(
+        &options,
+        &FetchCancellation::new(),
+        ObjectCache::new(directory.path().join("cache")),
+    )
+    .expect("native session");
+    let batch = match session.session.compile_attempt() {
+        CompileAttemptResult::NeedResources(batch) => batch,
+        other => panic!("literal hints must be preflighted before execution: {other:?}"),
+    };
+    assert!(batch.prefetch_hints.iter().any(|request| {
+        matches!(
+            request,
+            ResourceRequest::File(request)
+                if request.key().name() == "class.cls" && request.original_name() == "class"
+        )
+    }));
+    assert!(batch.prefetch_hints.iter().any(|request| {
+        matches!(
+            request,
+            ResourceRequest::File(request)
+                if request.key().name() == "package.sty" && request.original_name() == "package"
+        )
+    }));
+    let cancellation = FetchCancellation::new();
+    let resolved = {
+        let distribution = &mut session.distribution;
+        let local = &session.local;
+        let telemetry = &mut session.host_telemetry.resolver;
+        let planner = &mut session.prefetch;
+        distribution
+            .resolve_batch_with_catalog(
+                local,
+                &batch,
+                &cancellation,
+                telemetry,
+                planner,
+                &mut |_| {},
+            )
+            .expect("project-local startup candidates")
+    };
+    for name in ["class.cls", "package.sty"] {
+        assert!(resolved.responses.iter().any(|response| {
+            matches!(
+                response,
+                ResourceResponse::File(file) if file.request.name() == name
+            )
+        }));
+    }
+}
+
+#[test]
 fn native_engine_guard_selection_preserves_precedence_and_default() {
     assert_eq!(SessionLimits::default().engine_steps, 10_000_000);
     assert_eq!(
