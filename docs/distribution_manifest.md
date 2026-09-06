@@ -148,6 +148,15 @@ for full and 9 for HTML publication, with `treeAhash64` roots. The typed
 `ManifestShard` and its JSON parser remain publisher/test construction APIs;
 production shard payloads and runtime selection are packed only.
 
+Full publication stages each validated payload through a filesystem-backed
+content-addressed sink, so preparation retains object descriptors and catalog
+metadata rather than the complete payload corpus. Duplicate identities are
+revalidated in place, packed shards use the same sink, and the canonical root
+manifest is atomically committed only after staged payload and shard checks;
+the final root/shard reread is a post-commit authentication pass. A failed
+publication can therefore leave recoverable staged objects without exposing a
+new root manifest, while an existing root remains immutable.
+
 `scripts/publish-texlive-r2.sh` validates all staged bytes first, uploads
 objects immutably, verifies remote inventory, and publishes `manifest-v8.json`
 or `manifest-v9.json` last. Python provisioning validates the complete packed
