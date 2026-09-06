@@ -822,6 +822,114 @@ fn ifx_macro_equality_uses_flags_and_borrowed_token_content() {
     });
 }
 
+fn push_unless_boolean_cases<G>(
+    command: &mut CommandState<G>,
+    unless: Token,
+    if_true: Token,
+    if_false: Token,
+    otherwise: Token,
+    fi: Token,
+) {
+    crate::test_harness::push(
+        command,
+        [
+            unless,
+            if_true,
+            other('F'),
+            otherwise,
+            other('T'),
+            fi,
+            other('a'),
+            unless,
+            if_false,
+            other('T'),
+            otherwise,
+            other('F'),
+            fi,
+            other('b'),
+        ],
+    );
+}
+
+fn assert_unless_boolean_cases<G>(processor: &mut CommandProcessor<'_, '_, G>) {
+    assert_eq!(next_character(processor), 'T');
+    let frame = processor
+        .command
+        .conditions
+        .current()
+        .expect("inverted iftrue remains until fi");
+    assert_eq!(frame.kind, ConditionalKind::IfTrue);
+    assert!(frame.inverted);
+    assert_eq!(next_character(processor), 'a');
+    assert!(processor.command.conditions.current().is_none());
+    assert!(processor.command.scanner.is_quiescent());
+    assert!(!processor.command.delivery_mode.scanner_active());
+
+    assert_eq!(next_character(processor), 'T');
+    let frame = processor
+        .command
+        .conditions
+        .current()
+        .expect("inverted iffalse remains until fi");
+    assert_eq!(frame.kind, ConditionalKind::IfFalse);
+    assert!(frame.inverted);
+    assert_eq!(next_character(processor), 'b');
+    assert!(processor.command.conditions.current().is_none());
+    assert!(processor.command.scanner.is_quiescent());
+    assert!(!processor.command.delivery_mode.scanner_active());
+    assert_expanded_end(processor);
+    assert!(processor.command.conditions.current().is_none());
+    assert!(processor.command.scanner.is_quiescent());
+}
+
+#[test]
+fn unless_inverts_boolean_conditions_and_restores_the_scanner_after_fi() {
+    crate::test_harness::with_universe(|universe| {
+        let unless = install(universe, "unless", ExpandablePrimitive::Unless);
+        let if_true = install(universe, "unless-iftrue", ExpandablePrimitive::IfTrue);
+        let if_false = install(universe, "unless-iffalse", ExpandablePrimitive::IfFalse);
+        let otherwise = install(universe, "unless-else", ExpandablePrimitive::Else);
+        let fi = install(universe, "unless-fi", ExpandablePrimitive::Fi);
+
+        for observed in [false, true] {
+            let mut command = CommandState::default();
+            push_unless_boolean_cases(&mut command, unless, if_true, if_false, otherwise, fi);
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut fuel = crate::CommandFuelLedger::default();
+            let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut context = universe.command_context().expect("command context");
+            context
+                .assign_int_param(
+                    tex_state::env::banks::IntParam::ESCAPE_CHAR,
+                    '\\' as i32,
+                    AssignmentScope::Global,
+                )
+                .expect("canonical escape character");
+            if observed {
+                let mut observer = InsertedRowBalanceObserver::default();
+                let mut processor = crate::test_harness::processor(
+                    &mut command,
+                    &mut context,
+                    &mut capabilities,
+                    &mut fuel,
+                    &mut diagnostic_effects,
+                )
+                .with_observer(&mut observer);
+                assert_unless_boolean_cases(&mut processor);
+            } else {
+                let mut processor = crate::test_harness::processor(
+                    &mut command,
+                    &mut context,
+                    &mut capabilities,
+                    &mut fuel,
+                    &mut diagnostic_effects,
+                );
+                assert_unless_boolean_cases(&mut processor);
+            }
+        }
+    });
+}
+
 #[test]
 fn extra_delimiter_recovery_keeps_following_input_and_owns_its_diagnostic() {
     crate::test_harness::with_universe(|universe| {
