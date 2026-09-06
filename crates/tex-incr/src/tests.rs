@@ -854,6 +854,136 @@ impl ResourceHost for DeclineOnceInput {
     }
 }
 
+struct RetainedInputLifecycleHost {
+    child_calls: usize,
+    other_calls: usize,
+}
+
+impl RetainedInputLifecycleHost {
+    fn input(world: &mut ResourceWorld<'_>, name: &str) -> ResourceOutcome {
+        let path = Path::new(name);
+        match world.read_file(path) {
+            Ok(content) => {
+                if let Err(error) = world.record_input_dependency(
+                    path,
+                    tex_state::InputDependencyOutcome::Present(content.hash()),
+                    tex_state::InputDependencyAccess::RequiredRead,
+                ) {
+                    return ResourceOutcome::Failed(error.into());
+                }
+                ResourceOutcome::Fulfilled(ResourceFulfillment::world_input_with_role(
+                    name,
+                    content,
+                    tex_command::SourceRole::UserDocumentInclude,
+                ))
+            }
+            Err(error) if error.io_error_kind() == Some(std::io::ErrorKind::NotFound) => {
+                ResourceOutcome::Unavailable
+            }
+            Err(error) => ResourceOutcome::Failed(error.into()),
+        }
+    }
+}
+
+impl ResourceHost for RetainedInputLifecycleHost {
+    fn fulfill(&mut self, world: &mut ResourceWorld<'_>, need: &ResourceNeed) -> ResourceOutcome {
+        let ResourceNeed::Input { name, .. } = need else {
+            return ResourceOutcome::Unavailable;
+        };
+        match name.as_str() {
+            "child.tex" => {
+                self.child_calls += 1;
+                Self::input(world, name)
+            }
+            "other.tex" => {
+                self.other_calls += 1;
+                if self.other_calls == 1 {
+                    ResourceOutcome::Declined
+                } else {
+                    Self::input(world, name)
+                }
+            }
+            _ => ResourceOutcome::Unavailable,
+        }
+    }
+}
+
+#[test]
+fn retained_world_input_survives_aggregate_resource_restore_and_openin_reuses_it() {
+    let source = r"\input child \openin0=child \ifeof0\message{openin-miss}\else\message{openin-ok}\fi \closein0 \input other \end";
+    let mut session = session(RevisionId::new(1), source);
+    session
+        .register_input_file(
+            Path::new("child.tex"),
+            br"\message{child}\endinput".to_vec(),
+        )
+        .expect("child input registers");
+    session
+        .register_input_file(
+            Path::new("other.tex"),
+            br"\message{other}\endinput".to_vec(),
+        )
+        .expect("other input registers");
+
+    let mut candidate = session.start_cold_candidate().expect("candidate");
+    let mut host = RetainedInputLifecycleHost {
+        child_calls: 0,
+        other_calls: 0,
+    };
+    assert!(matches!(
+        candidate
+            .drive_with_resource_resolvers(&mut host, &Cancellation::new())
+            .expect("initial drive suspends at the unrelated miss"),
+        RevisionCandidateResult::AwaitingResources(ResourceNeed::Input { ref name, .. })
+            if name == "other.tex"
+    ));
+    assert_eq!(candidate.resource_restarts, 1);
+    assert_eq!(host.child_calls, 1, "provider fulfills child once");
+    assert_eq!(host.other_calls, 1, "first other lookup declines once");
+
+    assert!(matches!(
+        candidate
+            .drive_with_resource_resolvers(&mut host, &Cancellation::new())
+            .expect("aggregate restore retries the declined lookup"),
+        RevisionCandidateResult::Complete
+    ));
+    assert_eq!(host.child_calls, 1, "restored child uses retained bytes");
+    assert_eq!(host.other_calls, 2, "declined handoff is retried once");
+    let output = session
+        .accept_cold_candidate(candidate)
+        .expect("restored candidate accepts");
+    let text = terminal_effect_text(&output);
+    assert!(
+        text.contains("openin-ok"),
+        "openin must consume live bytes: {text:?}"
+    );
+    assert!(
+        text.contains("child"),
+        "child source must execute: {text:?}"
+    );
+    assert!(
+        text.contains("other"),
+        "unrelated retry must execute: {text:?}"
+    );
+
+    let dependencies = session.accepted_input_dependencies().collect::<Vec<_>>();
+    assert!(dependencies.iter().any(|dependency| {
+        dependency.path() == Path::new("child.tex")
+            && dependency.outcome()
+                == tex_state::InputDependencyOutcome::Present(tex_state::ContentHash::from_bytes(
+                    br"\message{child}\endinput",
+                ))
+            && dependency.access() == tex_state::InputDependencyAccess::RequiredRead
+    }));
+    assert!(dependencies.iter().any(|dependency| {
+        dependency.path() == Path::new("other.tex")
+            && dependency.outcome()
+                == tex_state::InputDependencyOutcome::Present(tex_state::ContentHash::from_bytes(
+                    br"\message{other}\endinput",
+                ))
+    }));
+}
+
 #[test]
 fn resource_suspension_replays_from_detached_plan_and_accepts_once() {
     let mut session = session(RevisionId::new(1), "\\input child \\end");

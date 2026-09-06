@@ -2127,6 +2127,115 @@ mod tests {
     }
 
     #[test]
+    fn native_file_session_resolvers_commit_probe_read_and_missing_dependencies() {
+        let mut world = World::memory();
+        world
+            .set_memory_file("/job/child.tex", b"native-child".to_vec())
+            .expect("native child input is staged");
+
+        with_engine_world(world, |stores| {
+            let mut host = FileSessionResolvers::new(
+                Path::new("/job/main.tex"),
+                vec![PathBuf::from("/tree")],
+                Vec::new(),
+            );
+            let probe = tex_command::FileEnquiryRequest::new(
+                "child",
+                tex_command::FileEnquiryIntent::OpenInProbe,
+            );
+            {
+                let mut resource_world = tex_exec::ResourceWorld::new(stores);
+                let outcome = tex_exec::ResourceHost::fulfill(
+                    &mut host,
+                    &mut resource_world,
+                    &tex_exec::ResourceNeed::InputProbe { request: probe },
+                );
+                assert!(matches!(
+                    outcome,
+                    tex_exec::ResourceOutcome::Fulfilled(
+                        tex_exec::ResourceFulfillment::InputProbe { .. }
+                    )
+                ));
+            }
+            let probe_dependency = stores
+                .world()
+                .input_dependencies()
+                .find(|dependency| dependency.path() == Path::new("/job/child.tex"))
+                .expect("probe dependency is accepted by the native adapter");
+            assert_eq!(
+                probe_dependency.outcome(),
+                tex_state::InputDependencyOutcome::Present(tex_state::ContentHash::from_bytes(
+                    b"native-child"
+                ))
+            );
+            assert_eq!(
+                probe_dependency.access(),
+                tex_state::InputDependencyAccess::AuthoritativeProbe
+            );
+
+            {
+                let mut resource_world = tex_exec::ResourceWorld::new(stores);
+                let outcome = tex_exec::ResourceHost::fulfill(
+                    &mut host,
+                    &mut resource_world,
+                    &tex_exec::ResourceNeed::Input {
+                        name: "child".to_owned(),
+                        original_name: "child".to_owned(),
+                    },
+                );
+                assert!(matches!(
+                    outcome,
+                    tex_exec::ResourceOutcome::Fulfilled(
+                        tex_exec::ResourceFulfillment::Input { .. }
+                    )
+                ));
+            }
+            let required_dependency = stores
+                .world()
+                .input_dependencies()
+                .find(|dependency| dependency.path() == Path::new("/job/child.tex"))
+                .expect("required dependency is accepted by the native adapter");
+            assert_eq!(
+                required_dependency.access(),
+                tex_state::InputDependencyAccess::RequiredRead
+            );
+
+            {
+                let mut resource_world = tex_exec::ResourceWorld::new(stores);
+                let outcome = tex_exec::ResourceHost::fulfill(
+                    &mut host,
+                    &mut resource_world,
+                    &tex_exec::ResourceNeed::InputProbe {
+                        request: tex_command::FileEnquiryRequest::new(
+                            "missing",
+                            tex_command::FileEnquiryIntent::OpenInProbe,
+                        ),
+                    },
+                );
+                assert!(matches!(outcome, tex_exec::ResourceOutcome::Unavailable));
+            }
+            let missing = stores
+                .world()
+                .input_dependencies()
+                .filter(|dependency| {
+                    matches!(
+                        dependency.outcome(),
+                        tex_state::InputDependencyOutcome::Missing
+                    )
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(missing.len(), 2, "both native search attempts are accepted");
+            assert!(missing.iter().all(|dependency| {
+                matches!(
+                    dependency.path().to_str(),
+                    Some("/job/missing.tex") | Some("/tree/missing.tex")
+                ) && dependency.access() == tex_state::InputDependencyAccess::AuthoritativeProbe
+            }));
+        })
+        .expect("fresh universe");
+    }
+
+    #[test]
     fn deferred_pdf_nodes_follow_the_explicit_session_profile() {
         let source = "\\pdfoutput=1\\shipout\\hbox{\\pdfliteral{q}}\\end";
         for profile in [CommandProfile::TEX82, CommandProfile::ETEX26] {

@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::sync::Arc;
 
 use tex_command::{
@@ -6745,6 +6746,170 @@ fn prepared_openin_probe_loads_after_the_blocked_macro_command() {
     assert_eq!(result.0, 7);
     assert_eq!(result.1, 0);
     assert_eq!(result.2, 11);
+}
+
+#[test]
+fn retained_native_probe_actual_use_tracks_pending_and_committed_overwrites() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        let path = Path::new("child.tex");
+        stores
+            .world_mut()
+            .set_memory_file(path, b"external".to_vec())
+            .expect("external probe input stages");
+        let initial = stores
+            .world_mut()
+            .read_file(path)
+            .expect("external probe input reads");
+        let initial_hash = initial.hash();
+        let initial_bytes = initial.shared_bytes();
+        let dependency = tex_state::InputDependency::new(
+            path,
+            tex_state::InputDependencyOutcome::Present(initial_hash),
+            tex_state::InputDependencyAccess::AuthoritativeProbe,
+        );
+        control
+            .capabilities_mut()
+            .register_input_probe_with_dependencies(
+                "child.tex",
+                tex_command::FileEnquiryResource::world(initial),
+                vec![dependency],
+            );
+        let retained = control
+            .capabilities_mut()
+            .input_probe_resource("child.tex")
+            .expect("retained native probe");
+        assert!(
+            retained.source().active_world_record().is_none(),
+            "capability must not retain the acquisition record"
+        );
+        assert!(tex_state::SharedBytes::ptr_eq(
+            &initial_bytes,
+            &retained.source().shared_bytes()
+        ));
+
+        let first = retained
+            .actual_use(&mut stores.input_open_context())
+            .expect("external retained probe materializes")
+            .expect("external retained probe remains available");
+        assert_eq!(first.source().bytes(), b"external");
+        assert!(first.source().active_world_record().is_some());
+        assert!(tex_state::SharedBytes::ptr_eq(
+            &initial_bytes,
+            &first.source().shared_bytes()
+        ));
+        let first_dependencies = retained.dependencies_for_actual_use(&first);
+        admitted!(stores, |context| context
+            .record_input_dependencies(&first_dependencies)
+            .expect("external probe dependency records"));
+
+        let slot = tex_state::StreamSlot::new(1);
+        stores.world_mut().open_out(slot, path);
+        stores
+            .world_mut()
+            .write_text(tex_state::PrintSink::Stream(slot), "pending");
+        stores.world_mut().close_out(slot);
+        let pending = retained
+            .actual_use(&mut stores.input_open_context())
+            .expect("pending generated probe materializes")
+            .expect("pending generated probe remains available");
+        assert_eq!(pending.source().bytes(), b"pending");
+        assert_ne!(
+            tex_state::ContentHash::from_bytes(pending.source().bytes()),
+            initial_hash
+        );
+        let pending_dependencies = retained.dependencies_for_actual_use(&pending);
+        admitted!(stores, |context| context
+            .record_input_dependencies(&pending_dependencies)
+            .expect("pending dependency records"));
+
+        let effect_pos = stores.world().effect_pos();
+        stores
+            .publish_effect_prefix(effect_pos)
+            .expect("pending output commits");
+        let committed = retained
+            .actual_use(&mut stores.input_open_context())
+            .expect("committed generated probe materializes")
+            .expect("committed generated probe remains available");
+        assert_eq!(committed.source().bytes(), b"pending");
+
+        stores.world_mut().open_out(slot, path);
+        stores
+            .world_mut()
+            .write_text(tex_state::PrintSink::Stream(slot), "committed-new");
+        stores.world_mut().close_out(slot);
+        let effect_pos = stores.world().effect_pos();
+        stores
+            .publish_effect_prefix(effect_pos)
+            .expect("replacement output commits");
+        let replaced = retained
+            .actual_use(&mut stores.input_open_context())
+            .expect("replacement generated probe materializes")
+            .expect("replacement generated probe remains available");
+        assert_eq!(replaced.source().bytes(), b"committed-new");
+        let replaced_hash = tex_state::ContentHash::from_bytes(replaced.source().bytes());
+        assert_ne!(
+            replaced_hash,
+            tex_state::ContentHash::from_bytes(committed.source().bytes())
+        );
+        let replaced_dependencies = retained.dependencies_for_actual_use(&replaced);
+        admitted!(stores, |context| context
+            .record_input_dependencies(&replaced_dependencies)
+            .expect("replacement dependency records"));
+        let current_dependency = stores
+            .world()
+            .input_dependencies()
+            .find(|dependency| dependency.path() == path)
+            .expect("current accepted probe dependency");
+        assert_eq!(
+            current_dependency.outcome(),
+            tex_state::InputDependencyOutcome::Present(replaced_hash)
+        );
+        assert_eq!(
+            current_dependency.access(),
+            tex_state::InputDependencyAccess::AuthoritativeProbe
+        );
+
+        let generated_only = {
+            let mut transaction = stores.begin_shipout();
+            let generated_path = Path::new("rolled-back.tex");
+            let generated_slot = tex_state::StreamSlot::new(2);
+            transaction
+                .world_mut()
+                .open_out(generated_slot, generated_path);
+            transaction
+                .world_mut()
+                .write_text(tex_state::PrintSink::Stream(generated_slot), "discarded");
+            transaction.world_mut().close_out(generated_slot);
+            let content = transaction
+                .world_mut()
+                .read_file(generated_path)
+                .expect("generated-only content reads before rollback");
+            let hash = content.hash();
+            control
+                .capabilities_mut()
+                .register_input_probe_with_dependencies(
+                    "rolled-back.tex",
+                    tex_command::FileEnquiryResource::world(content),
+                    vec![tex_state::InputDependency::new(
+                        generated_path,
+                        tex_state::InputDependencyOutcome::Present(hash),
+                        tex_state::InputDependencyAccess::AuthoritativeProbe,
+                    )],
+                );
+            control
+                .capabilities_mut()
+                .input_probe_resource("rolled-back.tex")
+                .expect("generated-only retained capability")
+        };
+        let after_rollback = generated_only
+            .actual_use(&mut stores.input_open_context())
+            .expect("rolled-back generated-only probe checks current output");
+        assert!(
+            after_rollback.is_none(),
+            "a generated-only capability must not revive bytes after rollback"
+        );
+    });
 }
 
 #[test]
