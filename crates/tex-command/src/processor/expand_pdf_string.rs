@@ -5,8 +5,8 @@ use std::fmt::Write as _;
 use posix_regex::{PosixRegexBuilder, compile::Error as PosixRegexError};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
+use crate::CommandError;
 use crate::observation::{CommandObservation, TokenListRecord};
-use crate::{CommandError, CurrentCommand};
 
 use super::CommandProcessor;
 
@@ -73,10 +73,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// Starts a balanced expanded-text collector for one of pdfTeX's string
     /// projections. The body is consumed by the canonical expanded-delivery
     /// loop; only the finished attempt buffer crosses into the byte renderer.
-    pub(super) fn expand_string_compare(
-        &mut self,
-        opener: CurrentCommand<G>,
-    ) -> Result<(), CommandError> {
+    pub(super) fn expand_string_compare(&mut self, opener: OriginId) -> Result<(), CommandError> {
         let left = self
             .scan_toks(crate::scan_toks::ScanToksMode::General { expanded: true })?
             .replacement_text;
@@ -88,7 +85,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             std::cmp::Ordering::Equal => 0,
             std::cmp::Ordering::Greater => 1,
         };
-        self.push_rendered_text(&value.to_string(), opener.origin());
+        self.push_rendered_text(&value.to_string(), opener);
         Ok(())
     }
 
@@ -101,7 +98,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// digits. The result reenters expansion as category-12 characters.
     pub(super) fn expand_pdf_escape_string(
         &mut self,
-        opener: CurrentCommand<G>,
+        opener: OriginId,
     ) -> Result<(), CommandError> {
         let scanned = self.scan_toks(crate::scan_toks::ScanToksMode::General { expanded: true })?;
         let text = self.attempt_token_list_string_text(scanned.replacement_text)?;
@@ -125,7 +122,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .collect(),
             }),
         );
-        self.push_rendered_text(&escaped, opener.origin());
+        self.push_rendered_text(&escaped, opener);
         Ok(())
     }
 
@@ -135,10 +132,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// projects that list to pdfTeX bytes, then `escapehex` writes exactly two
     /// uppercase hexadecimal digits for every byte, without angle brackets.
     /// TeX82 §464's `str_toks` returns those digits as category-12 characters.
-    pub(super) fn expand_pdf_escape_hex(
-        &mut self,
-        opener: CurrentCommand<G>,
-    ) -> Result<(), CommandError> {
+    pub(super) fn expand_pdf_escape_hex(&mut self, opener: OriginId) -> Result<(), CommandError> {
         let scanned = self.scan_toks(crate::scan_toks::ScanToksMode::General { expanded: true })?;
         let bytes = self.attempt_token_list_bytes(scanned.replacement_text)?;
         let escaped = escape_pdf_hex(&bytes);
@@ -161,7 +155,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .collect(),
             }),
         );
-        self.push_rendered_text(&escaped, opener.origin());
+        self.push_rendered_text(&escaped, opener);
         Ok(())
     }
 
@@ -172,10 +166,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// remaining digits case-insensitively, and pads a final high nibble with
     /// zero. TeX82 §464's `str_toks` makes a decoded space category 10 and
     /// every other decoded byte category 12.
-    pub(super) fn expand_pdf_unescape_hex(
-        &mut self,
-        opener: CurrentCommand<G>,
-    ) -> Result<(), CommandError> {
+    pub(super) fn expand_pdf_unescape_hex(&mut self, opener: OriginId) -> Result<(), CommandError> {
         let scanned = self.scan_toks(crate::scan_toks::ScanToksMode::General { expanded: true })?;
         let bytes = self.attempt_token_list_bytes(scanned.replacement_text)?;
         let unescaped = unescape_pdf_hex(&bytes);
@@ -202,7 +193,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .collect(),
             }),
         );
-        self.push_rendered_text(&unescaped, opener.origin());
+        self.push_rendered_text(&unescaped, opener);
         Ok(())
     }
 
@@ -211,10 +202,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// §386 is `begin_token_list(cur_mark[cur_chr], mark_text)`, a distinct
     /// §307 token type from §467's `inserted`: a mark's text is the stored list
     /// itself, never a copy handed back through `ins_list`.
-    pub(super) fn expand_pdf_match(
-        &mut self,
-        opener: CurrentCommand<G>,
-    ) -> Result<(), CommandError> {
+    pub(super) fn expand_pdf_match(&mut self, opener: OriginId) -> Result<(), CommandError> {
         let mut case_insensitive = false;
         let mut subcount = 10_u32;
         loop {
@@ -238,7 +226,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             Ok(regex) => regex.case_insensitive(case_insensitive),
             Err(error) => {
                 self.pdftex_regex_warning(posix_regex_diagnostic(&error, &pattern));
-                self.push_rendered_text("-1", opener.origin());
+                self.push_rendered_text("-1", opener);
                 return Ok(());
             }
         };
@@ -259,7 +247,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .collect();
         self.state
             .set_pdf_match_state(haystack, captures, subcount, matched);
-        self.push_rendered_text(if matched { "1" } else { "0" }, opener.origin());
+        self.push_rendered_text(if matched { "1" } else { "0" }, opener);
         Ok(())
     }
 

@@ -1,6 +1,8 @@
 //! pdfTeX immutable-file enquiry expansion primitives.
 
-use crate::{CommandError, CurrentCommand};
+use tex_state::token::OriginId;
+
+use crate::CommandError;
 
 use super::CommandProcessor;
 use super::expand_render::format_pdf_date;
@@ -12,10 +14,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// consulted. An absent capability retains the corrected range and typed
     /// request, so the host retry neither repeats diagnostics nor rescans the
     /// consumed operands.
-    pub(super) fn expand_pdf_file_dump(
-        &mut self,
-        opener: CurrentCommand<G>,
-    ) -> Result<(), CommandError> {
+    pub(super) fn expand_pdf_file_dump(&mut self, opener: OriginId) -> Result<(), CommandError> {
         let mut offset = 0;
         if self.scan_keyword_retained("offset").into_result()?.value {
             offset = self.scan_integer_retained().into_result()?.value;
@@ -61,15 +60,12 @@ impl<G> CommandProcessor<'_, '_, G> {
             use std::fmt::Write as _;
             write!(rendered, "{byte:02X}").expect("writing to a String cannot fail");
         }
-        self.push_rendered_text(&rendered, opener.origin());
+        self.push_rendered_text(&rendered, opener);
         Ok(())
     }
 
     /// pdftex.web §1590's `pdf_file_size_code` conversion.
-    pub(super) fn expand_pdf_file_size(
-        &mut self,
-        opener: CurrentCommand<G>,
-    ) -> Result<(), CommandError> {
+    pub(super) fn expand_pdf_file_size(&mut self, opener: OriginId) -> Result<(), CommandError> {
         let tokens = self.scan_balanced_text(true)?.tokens;
         let name = self
             .attempt_token_list_bytes(tokens)?
@@ -86,14 +82,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                 Err(CommandError::MissingInputProbe(request))
             };
         };
-        self.push_rendered_text(&source.source().bytes().len().to_string(), opener.origin());
+        self.push_rendered_text(&source.source().bytes().len().to_string(), opener);
         Ok(())
     }
 
     /// pdftex.web §1590's `pdf_file_mod_date_code` conversion.
     pub(super) fn expand_pdf_file_modification_date(
         &mut self,
-        opener: CurrentCommand<G>,
+        opener: OriginId,
     ) -> Result<(), CommandError> {
         let request = crate::FileEnquiryRequest::new(
             self.scan_pdf_file_name()?,
@@ -111,17 +107,14 @@ impl<G> CommandProcessor<'_, '_, G> {
         if let Some(date) = resource.modification_date() {
             self.push_rendered_text(
                 &format_pdf_date(date.clock, date.utc_offset_minutes),
-                opener.origin(),
+                opener,
             );
         }
         Ok(())
     }
 
     /// pdftex.web §1590's string/file MD5 conversion.
-    pub(super) fn expand_pdf_md_five_sum(
-        &mut self,
-        opener: CurrentCommand<G>,
-    ) -> Result<(), CommandError> {
+    pub(super) fn expand_pdf_md_five_sum(&mut self, opener: OriginId) -> Result<(), CommandError> {
         use md5::{Digest, Md5};
         let file = self.scan_keyword_retained("file").into_result()?.value;
         let tokens = self.scan_balanced_text(true)?.tokens;
@@ -145,7 +138,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .iter()
             .map(|byte| format!("{byte:02X}"))
             .collect::<String>();
-        self.push_rendered_text(&rendered, opener.origin());
+        self.push_rendered_text(&rendered, opener);
         Ok(())
     }
 

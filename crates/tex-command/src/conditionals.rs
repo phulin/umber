@@ -8,6 +8,7 @@ use tex_state::env::banks::IntParam;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, ResolvedMeaning};
 use tex_state::token::{OriginId, TracedTokenWord};
 
+use crate::command::HotCommand;
 use crate::input::{PackedTokenSpanHandle, ReplayTrace, RetirementBehavior, TokenBehavior};
 use crate::processor::CommandProcessor;
 use crate::processor::status::{
@@ -504,20 +505,15 @@ impl IfRelation {
 }
 
 impl<G> CommandProcessor<'_, '_, G> {
-    /// TeX.web part 28's `conditional`, entered after delivery of an `if`
-    /// primitive.  The frame is installed before any operand scan because
-    /// those scans may recursively expand another conditional.
-    pub(crate) fn expand_conditional(
+    /// Executes a classified conditional directly from its packed primitive.
+    /// The expanded delivery loop has already performed the only meaning
+    /// lookup, so this path does not manufacture a rich opener merely to
+    /// recover its opcode.
+    pub(crate) fn expand_conditional_primitive(
         &mut self,
-        command: &crate::CurrentCommand<G>,
+        kind: ConditionalKind,
         inverted: bool,
     ) -> Result<(), CommandError> {
-        let ResolvedMeaning::Static(Meaning::ExpandablePrimitive(primitive)) = command.meaning()
-        else {
-            return Err(CommandError::input_invariant());
-        };
-        let kind =
-            ConditionalKind::from_primitive(primitive).ok_or(CommandError::input_invariant())?;
         let source_line = u32::try_from(self.command.input.current_file_line_number()).unwrap_or(0);
         let condition = self
             .command
@@ -605,27 +601,23 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.complete_boolean(condition, result ^ inverted)
     }
 
-    /// e-TeX's `\\unless` has no independent condition state: it consumes
-    /// precisely one following conditional and flips only boolean results.
-    /// A non-conditional or `\\ifcase` operand follows e-TeX 2.6's merged
-    /// change [28.498]: `back_error` restores that command, reports the exact
-    /// prefix diagnostic, and leaves the conditional stack untouched.
-    pub(crate) fn expand_unless(
-        &mut self,
-        _command: &crate::CurrentCommand<G>,
-    ) -> Result<(), CommandError> {
+    /// e-TeX's compact `\\unless` path. The operand is a raw token, so it is
+    /// fetched through the raw hot loop and remains compact when it is the
+    /// conditional that will be evaluated next. Only the recoverable
+    /// bad-operand path materializes the token for `back_error`.
+    pub(crate) fn expand_unless_compact(&mut self) -> Result<(), CommandError> {
         let mut next = None;
-        if self.get_token_into(&mut next)? != crate::DeliveryStatus::Command {
-            return Err(CommandError::input_invariant());
+        match self.raw_next_hot(&mut next)? {
+            crate::DeliveryStatus::End => return Err(CommandError::input_invariant()),
+            crate::DeliveryStatus::Command => {}
+            _ => return Err(CommandError::input_invariant()),
         }
-        let next = next.expect("command status initializes destination");
-        let kind = match next.meaning_ref() {
-            ResolvedMeaning::Static(Meaning::ExpandablePrimitive(primitive)) => {
-                ConditionalKind::from_primitive(*primitive)
-            }
-            _ => None,
-        };
-        let Some(_kind) = kind.filter(|kind| *kind != ConditionalKind::IfCase) else {
+        let next = next.take().ok_or(CommandError::input_invariant())?;
+        let kind = next
+            .command_word()
+            .expandable_primitive()
+            .and_then(ConditionalKind::from_primitive);
+        let Some(kind) = kind.filter(|kind| *kind != ConditionalKind::IfCase) else {
             let mut message = String::from("You can't use `");
             crate::processor::expand_render::append_print_esc_text(
                 self.state,
@@ -635,13 +627,13 @@ impl<G> CommandProcessor<'_, '_, G> {
             message.push_str("' before `");
             crate::processor::expand_render::append_print_cmd_chr_text(
                 self.state,
-                crate::processor::expand_render::PrintCommand::from_current(&next),
+                crate::processor::expand_render::PrintCommand::from_hot(&next),
                 &mut message,
             );
             message.push_str("'.");
-            self.observe_command_diagnostic("illegal_unless_operand", &next);
+            self.observe_hot_command_diagnostic("illegal_unless_operand", &next);
             self.back_error_reporting(
-                next,
+                next.materialize(),
                 ILLEGAL_UNLESS_OPERAND_DIAGNOSTIC,
                 message,
                 &["I'll pretend you didn't say \\unless."],
@@ -652,10 +644,10 @@ impl<G> CommandProcessor<'_, '_, G> {
             && self.state.int_param(IntParam::TRACING_IFS) <= 0
         {
             self.print_unless_command_trace(
-                crate::processor::expand_render::PrintCommand::from_current(&next),
+                crate::processor::expand_render::PrintCommand::from_hot(&next),
             );
         }
-        self.expand_conditional(&next, true)
+        self.expand_conditional_primitive(kind, true)
     }
 
     fn complete_boolean(
@@ -1172,9 +1164,13 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(())
     }
 
-    pub(crate) fn expand_conditional_delimiter(
+    /// Compact delimiter handling for the expanded delivery loop.  A
+    /// delimiter is retained in the occupied hot owner until this method has
+    /// either closed the condition, queued the cold skip, or chosen the
+    /// exceptional recovery that backs the exact delivery up.
+    pub(crate) fn expand_conditional_delimiter_hot(
         &mut self,
-        command: &crate::CurrentCommand<G>,
+        command: &HotCommand<G>,
         primitive: ExpandablePrimitive,
     ) -> Result<(), CommandError> {
         let delimiter = match primitive {
@@ -1184,7 +1180,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             _ => return Err(CommandError::input_invariant()),
         };
         let Some(frame) = self.command.conditions.current().cloned() else {
-            let site = self.capture_diagnostic_site(Some(command));
+            let site = self.capture_hot_diagnostic_site(command);
             self.record_extra_delimiter(delimiter, Some(site));
             return Ok(());
         };
@@ -1195,16 +1191,12 @@ impl<G> CommandProcessor<'_, '_, G> {
             .evaluating_delimiter_recovery(frame.identity, delimiter)
             .is_some()
         {
-            // TeX.web's incomplete-conditional path uses `back_error`: the
-            // delimiter is replayed below the inserted frozen `\relax`.
-            // That ordering matters because the resumed operand scanner must
-            // see the delimiter through ordinary raw delivery after recovery.
-            self.back_input(command.copy_for_backup())?;
+            self.back_input_hot(*command)?;
             self.recover_incomplete_if()?;
             return Ok(());
         }
         if !frame.limit.accepts_delimiter(delimiter) {
-            let site = self.capture_diagnostic_site(Some(command));
+            let site = self.capture_hot_diagnostic_site(command);
             self.record_extra_delimiter(delimiter, Some(site));
             return Ok(());
         }

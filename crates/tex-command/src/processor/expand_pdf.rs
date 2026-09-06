@@ -1,6 +1,8 @@
 //! pdfTeX state and object enquiry expansion primitives.
 
-use crate::{CommandError, CurrentCommand};
+use tex_state::token::OriginId;
+
+use crate::CommandError;
 
 use super::CommandProcessor;
 use super::expand_render::format_scaled;
@@ -13,7 +15,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// pdftex.web §495's `pdf_colorstack_init_code` conversion.
     pub(super) fn expand_pdf_color_stack_init(
         &mut self,
-        opener: CurrentCommand<G>,
+        opener: OriginId,
     ) -> Result<(), CommandError> {
         let mut restore_at_page_start = false;
         let mode = if self.scan_keyword_retained("page").into_result()?.value {
@@ -52,25 +54,22 @@ impl<G> CommandProcessor<'_, '_, G> {
                 0
             }
         };
-        self.push_rendered_text(&id.to_string(), opener.origin());
+        self.push_rendered_text(&id.to_string(), opener);
         Ok(())
     }
 
     pub(super) fn expand_pdf_uniform_deviate(
         &mut self,
-        opener: &CurrentCommand<G>,
+        opener: OriginId,
     ) -> Result<(), CommandError> {
         let scan = self.scan_integer_retained();
         let bound = scan.into_result()?.value;
         let value = self.state.pdf_uniform_deviate(bound);
-        self.push_rendered_text(&value.to_string(), opener.origin());
+        self.push_rendered_text(&value.to_string(), opener);
         Ok(())
     }
 
-    pub(super) fn expand_pdf_ximage_bbox(
-        &mut self,
-        opener: &CurrentCommand<G>,
-    ) -> Result<(), CommandError> {
+    pub(super) fn expand_pdf_ximage_bbox(&mut self, opener: OriginId) -> Result<(), CommandError> {
         let scan = self.scan_integer_retained();
         let object = u32::try_from(scan.into_result()?.value).ok();
         let id = object.and_then(|raw| tex_state::PdfExternalImageId::new(raw).ok());
@@ -93,28 +92,22 @@ impl<G> CommandProcessor<'_, '_, G> {
                 "pdfTeX error (pdfximagebbox): invalid parameter.",
             ));
         };
-        self.push_rendered_text(&format_scaled(coordinate), opener.origin());
+        self.push_rendered_text(&format_scaled(coordinate), opener);
         Ok(())
     }
 
-    pub(super) fn expand_pdf_xform_name(
-        &mut self,
-        opener: &CurrentCommand<G>,
-    ) -> Result<(), CommandError> {
+    pub(super) fn expand_pdf_xform_name(&mut self, opener: OriginId) -> Result<(), CommandError> {
         let scan = self.scan_integer_retained();
         let object = scan.into_result()?.value;
         let resource = u32::try_from(object)
             .ok()
             .and_then(|object| self.state.pdf_form_resource(object))
             .unwrap_or(0);
-        self.push_rendered_text(&resource.to_string(), opener.origin());
+        self.push_rendered_text(&resource.to_string(), opener);
         Ok(())
     }
 
-    pub(super) fn expand_pdf_page_ref(
-        &mut self,
-        opener: &CurrentCommand<G>,
-    ) -> Result<(), CommandError> {
+    pub(super) fn expand_pdf_page_ref(&mut self, opener: OriginId) -> Result<(), CommandError> {
         let scan = self.scan_integer_retained();
         let page = scan.into_result()?.value;
         if page <= 0 {
@@ -126,14 +119,11 @@ impl<G> CommandProcessor<'_, '_, G> {
             .ok()
             .and_then(|page| self.state.pdf_page_object(page))
             .unwrap_or(0);
-        self.push_rendered_text(&object.to_string(), opener.origin());
+        self.push_rendered_text(&object.to_string(), opener);
         Ok(())
     }
 
-    pub(super) fn expand_pdf_last_match(
-        &mut self,
-        opener: CurrentCommand<G>,
-    ) -> Result<(), CommandError> {
+    pub(super) fn expand_pdf_last_match(&mut self, opener: OriginId) -> Result<(), CommandError> {
         let scan = self.scan_integer_retained();
         let mut index = scan.into_result()?.value;
         if index < 0 {
@@ -151,7 +141,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         if let Some((_, bytes)) = capture {
             rendered.extend(bytes.into_iter().map(char::from));
         }
-        self.push_rendered_text(&rendered, opener.origin());
+        self.push_rendered_text(&rendered, opener);
         Ok(())
     }
 
@@ -161,7 +151,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// therefore remain distinguishable as `0.0pt`.
     pub(super) fn expand_pdf_insert_height(
         &mut self,
-        opener: CurrentCommand<G>,
+        opener: OriginId,
     ) -> Result<(), CommandError> {
         let scan = self.scan_extended_register_index_retained();
         let class = scan.into_result()?;
@@ -170,7 +160,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .page_insertion(class)
             .map(|insertion| insertion.height())
             .map_or_else(|| "0pt".to_owned(), format_scaled);
-        self.push_rendered_text(&rendered, opener.origin());
+        self.push_rendered_text(&rendered, opener);
         Ok(())
     }
 

@@ -3,9 +3,9 @@
 use tex_state::meaning::ExpandablePrimitive;
 use tex_state::token::{OriginId, Token};
 
+use crate::CommandError;
 use crate::input::{PackedTokenSpanHandle, ReplayTrace, RetirementBehavior, TokenBehavior};
 use crate::observation::{CommandObservation, InputReason, InputRecord, InputTransition};
-use crate::{CommandError, CurrentCommand};
 
 use super::expand_render::{
     append_scaled_without_unit, format_scaled, meaning_text, page_mark, render_the_value,
@@ -20,15 +20,12 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// the frozen spelling exactly as for `\scantokens`, and `str_toks`
     /// projects the resulting string to category-10 spaces and category-12
     /// other characters.
-    pub(super) fn expand_detokenize(
-        &mut self,
-        opener: &CurrentCommand<G>,
-    ) -> Result<(), CommandError> {
+    pub(super) fn expand_detokenize(&mut self, opener: OriginId) -> Result<(), CommandError> {
         let scanned = self.scan_toks(crate::scan_toks::ScanToksMode::GeneralText {
             purpose: "detokenize",
         })?;
         let text = self.attempt_token_list_string_text(scanned.replacement_text)?;
-        self.push_rendered_text(&text, opener.origin());
+        self.push_rendered_text(&text, opener);
         Ok(())
     }
 
@@ -54,7 +51,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     /// `\\string` observes spelling, never an effective control-sequence meaning.
-    pub(super) fn expand_string(&mut self, opener: &CurrentCommand<G>) -> Result<(), CommandError> {
+    pub(super) fn expand_string(&mut self, opener: OriginId) -> Result<(), CommandError> {
         let mut destination = None;
         match self.get_token_with_normal_scanner_status_into(&mut destination)? {
             DeliveryStatus::End => return Err(CommandError::input_invariant()),
@@ -66,15 +63,12 @@ impl<G> CommandProcessor<'_, '_, G> {
             .expect("command status initializes destination");
         self.push_rendered_text(
             &string_text(self.state, target.spelling().semantic_token()),
-            opener.origin(),
+            opener,
         );
         Ok(())
     }
 
-    pub(super) fn expand_meaning(
-        &mut self,
-        opener: &CurrentCommand<G>,
-    ) -> Result<(), CommandError> {
+    pub(super) fn expand_meaning(&mut self, opener: OriginId) -> Result<(), CommandError> {
         let mut destination = None;
         match self.get_token_with_normal_scanner_status_into(&mut destination)? {
             DeliveryStatus::End => return Err(CommandError::input_invariant()),
@@ -85,13 +79,13 @@ impl<G> CommandProcessor<'_, '_, G> {
             .take()
             .expect("command status initializes destination");
         let text = meaning_text(self.state, &target);
-        self.push_rendered_text(&text, opener.origin());
+        self.push_rendered_text(&text, opener);
         Ok(())
     }
 
     pub(super) fn expand_number(
         &mut self,
-        opener: &CurrentCommand<G>,
+        opener: OriginId,
         roman: bool,
     ) -> Result<(), CommandError> {
         let scan = self.scan_integer_retained();
@@ -101,7 +95,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         } else {
             value.to_string()
         };
-        self.push_rendered_text(&text, opener.origin());
+        self.push_rendered_text(&text, opener);
         Ok(())
     }
 
@@ -151,10 +145,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// `\fontname` owns no operand reading of its own: §577's
     /// `scan_font_ident` is the only routine that turns a command into a
     /// font, including its invalid-identifier recovery to `nullfont`.
-    pub(super) fn expand_fontname(
-        &mut self,
-        opener: CurrentCommand<G>,
-    ) -> Result<(), CommandError> {
+    pub(super) fn expand_fontname(&mut self, opener: OriginId) -> Result<(), CommandError> {
         let scan = self.scan_font_selector_retained();
         let font = scan.into_result()?;
         let mut name = self.state.font_name(font);
@@ -168,24 +159,46 @@ impl<G> CommandProcessor<'_, '_, G> {
             append_scaled_without_unit(size, &mut name);
             name.push_str("pt");
         }
-        self.push_rendered_text(&name, opener.origin());
+        self.push_rendered_text(&name, opener);
         Ok(())
     }
 
-    pub(super) fn expand_pdf_font_size(
-        &mut self,
-        opener: CurrentCommand<G>,
-    ) -> Result<(), CommandError> {
+    pub(super) fn expand_pdf_font_size(&mut self, opener: OriginId) -> Result<(), CommandError> {
         let scan = self.scan_font_selector_retained();
         let font = scan.into_result()?;
         let size = format_scaled(self.state.tracked_font_size(font));
-        self.push_rendered_text(&size, opener.origin());
+        self.push_rendered_text(&size, opener);
+        Ok(())
+    }
+
+    /// pdftex.web's `pdf_font_name_code` conversion.  Unlike `\fontname`,
+    /// this enquiry reports the selected font's external name without
+    /// reserving any PDF resource identity.
+    pub(super) fn expand_pdf_font_name(&mut self, opener: OriginId) -> Result<(), CommandError> {
+        let font = self.scan_font_selector_retained().into_result()?;
+        let name = self.state.font_name(font);
+        self.push_rendered_text(&name, opener);
+        Ok(())
+    }
+
+    /// pdftex.web's `pdf_font_objnum_code` conversion.  Object identities are
+    /// queried, never allocated, so an unused font reports zero.
+    pub(super) fn expand_pdf_font_object_number(
+        &mut self,
+        opener: OriginId,
+    ) -> Result<(), CommandError> {
+        let font = self.scan_font_selector_retained().into_result()?;
+        let object = self
+            .state
+            .pdf_font_resource(font)
+            .map_or(0, |resource| resource.object_number());
+        self.push_rendered_text(&object.to_string(), opener);
         Ok(())
     }
 
     pub(super) fn expand_margin_kern(
         &mut self,
-        opener: CurrentCommand<G>,
+        opener: OriginId,
         primitive: ExpandablePrimitive,
     ) -> Result<(), CommandError> {
         let scan = self.scan_extended_register_index_retained();
@@ -200,7 +213,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 "pdfTeX error (marginkern): a non-empty hbox expected",
             ));
         };
-        self.push_rendered_text(&format_scaled(amount), opener.origin());
+        self.push_rendered_text(&format_scaled(amount), opener);
         Ok(())
     }
 

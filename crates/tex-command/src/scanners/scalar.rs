@@ -1402,14 +1402,21 @@ impl<G> CommandProcessor<'_, '_, G> {
                 primary: provenance,
             },
         };
+        self.observe_integer_value(scanned.value);
+        scanned
+    }
+
+    /// Publishes the scanner event for a compact decimal conversion that
+    /// never enters the retained scalar scanner.  The direct expansion lane
+    /// still has the same observable scanner boundary as `finish_integer`.
+    pub(crate) fn observe_integer_value(&mut self, value: i32) {
         observe!(
             self,
             CommandObservation::Scanner(ScannerRecord {
                 kind: "integer",
-                value: ObservationValue::Integer(i64::from(scanned.value)),
+                value: ObservationValue::Integer(i64::from(value)),
             }),
         );
-        scanned
     }
 
     /// TeX82 §416's and §446's shared outcome: the offending token has
@@ -1423,13 +1430,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 primary: provenance,
             },
         };
-        observe!(
-            self,
-            CommandObservation::Scanner(ScannerRecord {
-                kind: "integer",
-                value: ObservationValue::Integer(i64::from(scanned.value)),
-            }),
-        );
+        self.observe_integer_value(scanned.value);
         scanned
     }
 
@@ -3204,7 +3205,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     /// TeX82 §445's capped integer recovery.
-    fn number_too_big_error(
+    pub(crate) fn number_too_big_error(
         &mut self,
         site: Option<tex_state::diagnostic::DiagnosticSite>,
     ) -> Result<(), CommandError> {

@@ -3,6 +3,7 @@
 use tex_state::env::banks::IntParam;
 use tex_state::token::{Token, TracedTokenWord};
 
+use crate::command::HotCommand;
 use crate::input::{
     BackedUpToken, BackupTreatment, PackedTokenSpanHandle, ReplayTrace, RetirementBehavior,
     TokenBehavior,
@@ -10,9 +11,7 @@ use crate::input::{
 use crate::observation::{
     CommandObservation, EffectRecord, InputReason, InputRecord, InputTransition,
 };
-use crate::{
-    CommandError, CurrentCommand, RegisteredSourceKind, SourceNameClass, SourceRegistration,
-};
+use crate::{CommandError, RegisteredSourceKind, SourceNameClass, SourceRegistration};
 
 use super::CommandProcessor;
 
@@ -89,17 +88,18 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(())
     }
 
-    pub(super) fn expand_input(&mut self, opener: CurrentCommand<G>) -> Result<(), CommandError> {
+    /// Compact source-input expansion.  Opening a registered file only needs
+    /// the opener provenance; the hot command remains the owner while the
+    /// source transition is installed.  Name-in-progress recovery is the
+    /// genuine backup boundary and therefore uses the stamped hot backup
+    /// path instead of constructing a rich command first.
+    pub(super) fn expand_input_hot(
+        &mut self,
+        opener: &mut HotCommand<G>,
+    ) -> Result<(), CommandError> {
+        let opener_origin = opener.origin();
         if self.command.name_in_progress() {
-            // TeX82 §§378/527 call §378's `insert_relax`: two distinct
-            // `back_input` operations first restore the recursively
-            // encountered `\input`, then place inaccessible `frozen_relax`
-            // above it and retype only that second level as `inserted`. The
-            // distinction is observable after the relax terminates the
-            // active filename scan: its depleted inserted level retires, so
-            // a diagnostic on the restored command says `<recently read>`.
-            let opener_origin = opener.origin();
-            self.back_input(opener)?;
+            self.back_input_hot(*opener)?;
             let frozen_relax = TracedTokenWord::pack(Token::frozen_relax(), opener_origin);
             let level = self.command.push_token_level(
                 PackedTokenSpanHandle::backed_up([BackedUpToken {
@@ -114,7 +114,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
         let _input = self
             .open_registered_input()
-            .map_err(|error| error.at_origin_unless_resource(opener.origin()))?;
+            .map_err(|error| error.at_origin_unless_resource(opener_origin))?;
         observe!(
             self,
             CommandObservation::Effect(EffectRecord {
@@ -127,7 +127,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }),
             }),
         );
-        let _ = opener;
         Ok(())
     }
 
