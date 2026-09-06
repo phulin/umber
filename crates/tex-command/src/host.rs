@@ -1,13 +1,239 @@
 //! Borrow-scoped host capabilities.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::{PdfImageRequest, SourceRegistration};
-use std::path::{Path, PathBuf};
+use crate::{FontLoadRequest, PdfImageRequest, SourceRegistration, SourceRole};
 use tex_state::glue::GlueSpec;
 use tex_state::scaled::Scaled;
-use tex_state::world::{FileContent, InputDependency};
+use tex_state::world::{
+    FileContent, InputDependency, InputDependencyAccess, InputDependencyOutcome, WorldError,
+};
+
+/// Returns the exact transient capability key for a canonical font request.
+///
+/// TeX TFM names receive §1257's default `.tfm` extension. Umber's explicit
+/// `opentype:` namespace is already a complete typed resource name and must
+/// never be rewritten as a TFM path.
+#[must_use]
+pub fn canonical_font_resource_path(name: &str) -> PathBuf {
+    let mut path = PathBuf::from(name);
+    if !name.starts_with("opentype:") && path.extension().is_none() {
+        path.set_extension("tfm");
+    }
+    path
+}
+
+/// The host-neutral identity of one immutable resource request.
+///
+/// This is the retained protocol shared by command producers and executor
+/// fallback drivers. It remains separate from `tex_state::ResourceNeed`,
+/// whose integer identity belongs to the older resolver contract.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ResourceNeed {
+    /// TeX82's `start_input` scanned this logical filename (§529 / §1030+),
+    /// but the host has not supplied its immutable source registration.
+    Input { name: String, original_name: String },
+    /// A non-opening `\openin` or pdfTeX file enquiry needs bytes or
+    /// authoritative absence.
+    InputProbe { request: FileEnquiryRequest },
+    /// TeX82's `new_font` completed its filename and size scan (§1254), but
+    /// the host has not supplied the immutable font bytes.
+    Font { request: FontLoadRequest },
+    /// pdfTeX's `scan_image` completed an immutable request, but its retained
+    /// bytes and validated metadata have not been supplied by the host.
+    PdfImage { request: PdfImageRequest },
+}
+
+/// Typed answer to one [`ResourceNeed`].
+#[derive(Clone, Debug)]
+pub enum ResourceFulfillment {
+    Input {
+        name: String,
+        source: SourceRegistration,
+    },
+    /// Immutable bytes answering a non-opening pdfTeX file enquiry or
+    /// `\openin` probe. This remains distinct from required input backing so
+    /// a later opening read can upgrade host dependency accounting.
+    InputProbe {
+        request: FileEnquiryRequest,
+        resource: FileEnquiryResource,
+    },
+    Font {
+        request: FontLoadRequest,
+        resource: Box<FontResource>,
+    },
+    PdfImage {
+        request: PdfImageRequest,
+        resource: Box<PdfImageResource>,
+    },
+}
+
+/// An owned, actionable failure while resolving a resource.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ResourceFailure {
+    World(WorldError),
+    Message(String),
+}
+
+impl ResourceFailure {
+    #[must_use]
+    pub fn message(message: impl Into<String>) -> Self {
+        Self::Message(message.into())
+    }
+
+    #[must_use]
+    pub fn world(error: WorldError) -> Self {
+        Self::World(error)
+    }
+
+    #[must_use]
+    pub fn as_world_error(&self) -> Option<&WorldError> {
+        match self {
+            Self::World(error) => Some(error),
+            Self::Message(_) => None,
+        }
+    }
+}
+
+impl From<WorldError> for ResourceFailure {
+    fn from(error: WorldError) -> Self {
+        Self::World(error)
+    }
+}
+
+impl fmt::Display for ResourceFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::World(error) => error.fmt(formatter),
+            Self::Message(message) => formatter.write_str(message),
+        }
+    }
+}
+
+impl std::error::Error for ResourceFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::World(error) => Some(error),
+            Self::Message(_) => None,
+        }
+    }
+}
+
+/// Outcome of one synchronous provider call.
+#[derive(Clone, Debug)]
+pub enum ResourceOutcome {
+    Fulfilled(ResourceFulfillment),
+    Unavailable,
+    Declined,
+    Failed(ResourceFailure),
+}
+
+/// Owned provider result, including semantic reads performed while producing
+/// it. Dependencies belong beside the installed capability; they do not
+/// enter request identity or form a second resource cache.
+#[derive(Clone, Debug)]
+pub struct ResourceResolution {
+    pub outcome: ResourceOutcome,
+    pub dependencies: Vec<InputDependency>,
+}
+
+impl ResourceResolution {
+    #[must_use]
+    pub fn new(outcome: ResourceOutcome, dependencies: Vec<InputDependency>) -> Self {
+        Self {
+            outcome,
+            dependencies,
+        }
+    }
+
+    #[must_use]
+    pub fn outcome(outcome: ResourceOutcome) -> Self {
+        Self::new(outcome, Vec::new())
+    }
+}
+
+/// Semantic bookkeeping performed while a host resolves one immutable
+/// resource. This remains useful to public executor fallback consumers.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ResourceReplayEffect {
+    InputDependency {
+        path: PathBuf,
+        outcome: InputDependencyOutcome,
+        access: InputDependencyAccess,
+    },
+}
+
+impl ResourceReplayEffect {
+    /// Detaches the semantic input fact carried by this retained answer.
+    #[must_use]
+    pub fn input_dependency(&self) -> InputDependency {
+        match self {
+            Self::InputDependency {
+                path,
+                outcome,
+                access,
+            } => InputDependency::new(path.clone(), *outcome, *access),
+        }
+    }
+}
+
+impl ResourceFulfillment {
+    #[must_use]
+    pub fn input(
+        name: impl Into<String>,
+        kind: crate::RegisteredSourceKind,
+        bytes: Arc<[u8]>,
+    ) -> Self {
+        Self::Input {
+            name: name.into(),
+            source: SourceRegistration::new(kind, bytes),
+        }
+    }
+
+    #[must_use]
+    pub fn input_with_role(
+        name: impl Into<String>,
+        kind: crate::RegisteredSourceKind,
+        bytes: Arc<[u8]>,
+        role: SourceRole,
+    ) -> Self {
+        Self::Input {
+            name: name.into(),
+            source: SourceRegistration::new(kind, bytes).with_role(role),
+        }
+    }
+
+    #[must_use]
+    pub fn world_input(name: impl Into<String>, content: FileContent) -> Self {
+        Self::Input {
+            name: name.into(),
+            source: SourceRegistration::world(content),
+        }
+    }
+
+    #[must_use]
+    pub fn world_input_with_role(
+        name: impl Into<String>,
+        content: FileContent,
+        role: SourceRole,
+    ) -> Self {
+        Self::Input {
+            name: name.into(),
+            source: SourceRegistration::world(content).with_role(role),
+        }
+    }
+
+    #[must_use]
+    pub fn world_input_probe(request: FileEnquiryRequest, content: FileContent) -> Self {
+        Self::InputProbe {
+            request,
+            resource: FileEnquiryResource::world(content),
+        }
+    }
+}
 
 /// Why canonical command processing needs a non-opening file lookup.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -288,6 +514,84 @@ pub struct CommandHostCapabilities {
 }
 
 impl CommandHostCapabilities {
+    /// Installs a typed answer for the exact resource request that produced
+    /// it. Keeping validation here gives command producers and executor
+    /// fallback ledgers one canonical capability mutation path.
+    pub fn install_resource_answer(
+        &mut self,
+        need: &ResourceNeed,
+        fulfillment: ResourceFulfillment,
+        dependencies: impl Into<Arc<[InputDependency]>>,
+    ) -> Result<(), Box<ResourceFulfillment>> {
+        let dependencies = dependencies.into();
+        match (need, fulfillment) {
+            (
+                ResourceNeed::Input { name: expected, .. },
+                ResourceFulfillment::Input { name, source },
+            ) if expected == &name => {
+                self.register_input_with_dependencies(name, source, dependencies);
+            }
+            (
+                ResourceNeed::InputProbe { request: expected },
+                ResourceFulfillment::InputProbe { request, resource },
+            ) if expected == &request => {
+                self.register_input_probe_with_dependencies(request.name, resource, dependencies);
+            }
+            (
+                ResourceNeed::Font { request: expected },
+                ResourceFulfillment::Font { request, resource },
+            ) if expected == &request => {
+                self.register_font_with_dependencies(
+                    canonical_font_resource_path(&request.name),
+                    *resource,
+                    dependencies,
+                );
+            }
+            (
+                ResourceNeed::PdfImage { request: expected },
+                ResourceFulfillment::PdfImage { request, resource },
+            ) if expected == &request => {
+                self.register_pdf_image_with_dependencies(request, *resource, dependencies);
+            }
+            (_, fulfillment) => return Err(Box::new(fulfillment)),
+        }
+        Ok(())
+    }
+
+    /// Installs an authoritative absence for the exact typed request.
+    pub fn install_resource_unavailable(
+        &mut self,
+        need: &ResourceNeed,
+        register_texinputs_alias: bool,
+        dependencies: impl Into<Arc<[InputDependency]>>,
+    ) {
+        let dependencies = dependencies.into();
+        match need {
+            ResourceNeed::Input { name, .. } => {
+                self.mark_input_unavailable_with_dependencies(name, Arc::clone(&dependencies));
+                if register_texinputs_alias && !name.contains(['/', '\\', ':']) {
+                    self.mark_input_unavailable_with_dependencies(
+                        format!("TeXinputs:{name}"),
+                        dependencies,
+                    );
+                }
+            }
+            ResourceNeed::InputProbe { request } => {
+                self.mark_input_probe_unavailable_with_dependencies(&request.name, dependencies)
+            }
+            ResourceNeed::Font { request } => self.register_font_with_dependencies(
+                canonical_font_resource_path(&request.name),
+                FontResource::Unavailable,
+                dependencies,
+            ),
+            ResourceNeed::PdfImage { request } => self.register_pdf_image_with_dependencies(
+                request.clone(),
+                PdfImageResource::Unavailable,
+                dependencies,
+            ),
+        }
+    }
+
     /// Installs immutable backing for one logical `\input` request.
     ///
     /// Acquisition is complete before this capability is constructed.  The
@@ -596,6 +900,21 @@ pub trait CommandHostFacts<G> {
     fn last_node_type(&mut self, state: &tex_state::CommandContext<'_, G>) -> i32;
 }
 
+/// Cold-only provider for resources that are absent from command capabilities.
+/// Implementations receive a closure-scoped command-state world view and must
+/// return owned data before the borrow ends. Input reads and their dependency
+/// facts are performed through that view; the returned dependency list mirrors
+/// those already-recorded facts so an initial installation does not apply the
+/// same World mutation twice. A later capability hit records the retained
+/// dependencies as a normal semantic reuse.
+pub trait ResourceProvider<G> {
+    fn resolve(
+        &mut self,
+        state: &mut tex_state::CommandContext<'_, G>,
+        need: &ResourceNeed,
+    ) -> ResourceResolution;
+}
+
 /// Exact initial outer-vertical facts for command processors without an
 /// executor mode nest, such as tokenizer/scanner fixtures and stream tools.
 ///
@@ -664,6 +983,8 @@ fn trim_current_directory_prefix(mut name: &str) -> &str {
 pub struct CommandHostContext<'a, G> {
     capabilities: &'a mut CommandHostCapabilities,
     facts: CommandHostFactAccess<'a, G>,
+    resource_provider: Option<&'a mut dyn ResourceProvider<G>>,
+    attempted_resource: Option<&'a mut Option<ResourceNeed>>,
 }
 
 enum CommandHostFactAccess<'a, G> {
@@ -679,6 +1000,8 @@ impl<'a, G> CommandHostContext<'a, G> {
         Self {
             capabilities,
             facts: CommandHostFactAccess::Initial(InitialCommandHostFacts),
+            resource_provider: None,
+            attempted_resource: None,
         }
     }
 
@@ -692,6 +1015,103 @@ impl<'a, G> CommandHostContext<'a, G> {
         Self {
             capabilities,
             facts: CommandHostFactAccess::Borrowed(facts),
+            resource_provider: None,
+            attempted_resource: None,
+        }
+    }
+
+    /// Borrows capabilities, live facts, and a cold-only provider for one
+    /// synchronous command episode. The optional attempt slot is a
+    /// call-scoped sideband consumed by the outer driver when a provider
+    /// declines after already making its one host call.
+    #[must_use]
+    pub fn with_facts_and_resource_provider(
+        capabilities: &'a mut CommandHostCapabilities,
+        facts: &'a mut dyn CommandHostFacts<G>,
+        resource_provider: &'a mut dyn ResourceProvider<G>,
+        attempted_resource: &'a mut Option<ResourceNeed>,
+    ) -> Self {
+        Self {
+            capabilities,
+            facts: CommandHostFactAccess::Borrowed(facts),
+            resource_provider: Some(resource_provider),
+            attempted_resource: Some(attempted_resource),
+        }
+    }
+
+    /// Borrows capabilities and a cold-only provider with initial facts.
+    #[must_use]
+    pub fn with_resource_provider(
+        capabilities: &'a mut CommandHostCapabilities,
+        resource_provider: &'a mut dyn ResourceProvider<G>,
+        attempted_resource: &'a mut Option<ResourceNeed>,
+    ) -> Self {
+        Self {
+            capabilities,
+            facts: CommandHostFactAccess::Initial(InitialCommandHostFacts),
+            resource_provider: Some(resource_provider),
+            attempted_resource: Some(attempted_resource),
+        }
+    }
+
+    /// Calls the provider synchronously, if one is installed. The returned
+    /// resolution owns every payload and dependency, so no provider or World
+    /// borrow survives this call.
+    pub(crate) fn resolve_resource(
+        &mut self,
+        state: &mut tex_state::CommandContext<'_, G>,
+        need: &ResourceNeed,
+    ) -> Option<ResourceResolution> {
+        let provider = self.resource_provider.as_deref_mut()?;
+        let resolution = provider.resolve(state, need);
+        if matches!(resolution.outcome, ResourceOutcome::Declined)
+            && let Some(attempted) = self.attempted_resource.as_deref_mut()
+        {
+            *attempted = Some(need.clone());
+        }
+        Some(resolution)
+    }
+
+    /// Resolves and installs one provider answer in the canonical capability
+    /// owner. `None` means this context has no provider and callers should
+    /// preserve their ordinary missing-capability path.
+    pub(crate) fn resolve_and_install_resource(
+        &mut self,
+        state: &mut tex_state::CommandContext<'_, G>,
+        need: &ResourceNeed,
+        register_texinputs_alias: bool,
+    ) -> Result<Option<bool>, crate::CommandError> {
+        let Some(resolution) = self.resolve_resource(state, need) else {
+            return Ok(None);
+        };
+        let ResourceResolution {
+            outcome,
+            dependencies,
+        } = resolution;
+        match outcome {
+            ResourceOutcome::Fulfilled(fulfillment) => self
+                .capabilities
+                .install_resource_answer(need, fulfillment, dependencies)
+                .map_err(|_| crate::CommandError::ResourceFailure {
+                    need: Box::new(need.clone()),
+                    failure: Box::new(crate::ResourceFailure::message(
+                        "resource provider returned a mismatched typed answer",
+                    )),
+                })
+                .map(|()| Some(true)),
+            ResourceOutcome::Unavailable => {
+                self.capabilities.install_resource_unavailable(
+                    need,
+                    register_texinputs_alias,
+                    dependencies,
+                );
+                Ok(Some(true))
+            }
+            ResourceOutcome::Declined => Ok(Some(false)),
+            ResourceOutcome::Failed(failure) => Err(crate::CommandError::ResourceFailure {
+                need: Box::new(need.clone()),
+                failure: Box::new(failure),
+            }),
         }
     }
 

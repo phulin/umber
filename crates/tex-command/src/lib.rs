@@ -103,7 +103,9 @@ pub use fuel::{
 pub use host::{
     CommandHostCapabilities, CommandHostContext, CommandHostFacts, ConditionalMode,
     ConditionalState, FileEnquiryIntent, FileEnquiryRequest, FileEnquiryResource, FontResource,
-    LastNodeItem, PdfImageResource,
+    LastNodeItem, PdfImageResource, ResourceFailure, ResourceFulfillment, ResourceNeed,
+    ResourceOutcome, ResourceProvider, ResourceReplayEffect, ResourceResolution,
+    canonical_font_resource_path,
 };
 pub use input::{
     BorrowedSourceCharacterRun, CONTROL_SEQUENCE_NAME_INLINE_CAPACITY, CatcodeQueries,

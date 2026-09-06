@@ -133,6 +133,13 @@ pub enum CommandError {
     /// A non-opening file enquiry has no retained bytes or authoritative
     /// absence yet and requests a typed host probe.
     MissingInputProbe(crate::FileEnquiryRequest),
+    /// A synchronous resource provider failed while resolving a typed need.
+    /// The original need and owned cause remain intact so the executor does
+    /// not misclassify a real failure as an authoritative absence.
+    ResourceFailure {
+        need: Box<crate::ResourceNeed>,
+        failure: Box<crate::ResourceFailure>,
+    },
     /// An otherwise-originless command failure annotated by the expandable
     /// delivery which triggered it. Typed resource needs deliberately remain
     /// unwrapped so the host can replay them.
@@ -243,6 +250,9 @@ impl std::fmt::Display for CommandError {
             }
             Self::MissingInputProbe(request) => {
                 write!(formatter, "input enquiry `{}` is unresolved", request.name)
+            }
+            Self::ResourceFailure { failure, .. } => {
+                write!(formatter, "resource resolution failed: {failure}")
             }
             Self::AtOrigin { error, .. } => std::fmt::Display::fmt(error, formatter),
             Self::UnsupportedExpandablePrimitive(primitive) => {

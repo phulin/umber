@@ -38,14 +38,8 @@ impl<G> CommandProcessor<'_, '_, G> {
             .map(char::from)
             .collect::<String>();
         let request = crate::FileEnquiryRequest::new(name, crate::FileEnquiryIntent::Dump);
-        self.state.unsupported_host_capability();
-        self.record_input_probe_dependencies(&request.name)?;
-        let Some(source) = self.host.input_probe(&request.name) else {
-            return if self.host.input_probe_is_unavailable(&request.name) {
-                Ok(())
-            } else {
-                Err(CommandError::MissingInputProbe(request))
-            };
+        let Some(source) = self.resolve_input_probe(&request)? else {
+            return Ok(());
         };
         let start = usize::try_from(offset).expect("recovered file offset is nonnegative");
         let bytes = source.source().bytes();
@@ -73,14 +67,8 @@ impl<G> CommandProcessor<'_, '_, G> {
             .map(char::from)
             .collect::<String>();
         let request = crate::FileEnquiryRequest::new(name, crate::FileEnquiryIntent::Size);
-        self.state.unsupported_host_capability();
-        self.record_input_probe_dependencies(&request.name)?;
-        let Some(source) = self.host.input_probe(&request.name) else {
-            return if self.host.input_probe_is_unavailable(&request.name) {
-                Ok(())
-            } else {
-                Err(CommandError::MissingInputProbe(request))
-            };
+        let Some(source) = self.resolve_input_probe(&request)? else {
+            return Ok(());
         };
         self.push_rendered_text(&source.source().bytes().len().to_string(), opener);
         Ok(())
@@ -95,14 +83,8 @@ impl<G> CommandProcessor<'_, '_, G> {
             self.scan_pdf_file_name()?,
             crate::FileEnquiryIntent::ModificationDate,
         );
-        self.state.unsupported_host_capability();
-        self.record_input_probe_dependencies(&request.name)?;
-        let Some(resource) = self.host.input_probe(&request.name) else {
-            return if self.host.input_probe_is_unavailable(&request.name) {
-                Ok(())
-            } else {
-                Err(CommandError::MissingInputProbe(request))
-            };
+        let Some(resource) = self.resolve_input_probe(&request)? else {
+            return Ok(());
         };
         if let Some(date) = resource.modification_date() {
             self.push_rendered_text(
@@ -122,14 +104,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         if file {
             let name = bytes.iter().copied().map(char::from).collect::<String>();
             let request = crate::FileEnquiryRequest::new(name, crate::FileEnquiryIntent::MdFiveSum);
-            self.state.unsupported_host_capability();
-            self.record_input_probe_dependencies(&request.name)?;
-            let Some(resource) = self.host.input_probe(&request.name) else {
-                return if self.host.input_probe_is_unavailable(&request.name) {
-                    Ok(())
-                } else {
-                    Err(CommandError::MissingInputProbe(request))
-                };
+            let Some(resource) = self.resolve_input_probe(&request)? else {
+                return Ok(());
             };
             bytes = resource.source().bytes().to_vec();
         }
@@ -149,6 +125,37 @@ impl<G> CommandProcessor<'_, '_, G> {
             .into_iter()
             .map(char::from)
             .collect())
+    }
+
+    fn resolve_input_probe(
+        &mut self,
+        request: &crate::FileEnquiryRequest,
+    ) -> Result<Option<crate::FileEnquiryResource>, CommandError> {
+        self.state.unsupported_host_capability();
+        let provider_settled = if self.host.input_probe(&request.name).is_none()
+            && !self.host.input_probe_is_unavailable(&request.name)
+        {
+            let need = crate::ResourceNeed::InputProbe {
+                request: request.clone(),
+            };
+            matches!(
+                self.host
+                    .resolve_and_install_resource(self.state, &need, false)?,
+                Some(true)
+            )
+        } else {
+            false
+        };
+        if !provider_settled {
+            self.record_input_probe_dependencies(&request.name)?;
+        }
+        if let Some(resource) = self.host.input_probe(&request.name) {
+            Ok(Some(resource))
+        } else if self.host.input_probe_is_unavailable(&request.name) {
+            Ok(None)
+        } else {
+            Err(CommandError::MissingInputProbe(request.clone()))
+        }
     }
 
     fn record_input_probe_dependencies(&mut self, name: &str) -> Result<(), CommandError> {
