@@ -177,17 +177,22 @@ engine. The baseline sources, in order, are:
    engine/profile, format identity, options, authenticated distribution, and
    provider/search policy while allowing document-text edits;
 2. literal-only `documentclass`, `usepackage`, `RequirePackage`, `input`, and
-   `includegraphics` hints resolved through the canonical resolver;
-3. bounded small package runtime/dependency groups from the existing packed
-   metadata; and
+   `includegraphics` hints resolved through the canonical resolver, plus
+   bounded literal `DeclareFontShape` TFM hints for direct or statically scaled
+   font names;
+3. authenticated dependency metadata attached to an admitted seed, which the
+   planner may enqueue only after that seed is engine-readable; and
 4. a bounded escalation of the demanded resource and relevant small group
    after repeated expensive replay in the same region.
 
-Literal hints never interpret macros or execute TeX. Recursive hint discovery
-may inspect already-fetched small runtime text only with bounded deduplication
-and separate font/image/document budgets. Hints are suggestions, not semantic
-input. Required lookups always win, and absence of a speculative hint never
-creates a negative binding.
+Literal hints never interpret macros or execute TeX. `DeclareFontShape` TFM
+extraction accepts only the direct or literal numeric-scale forms of its
+balanced declaration; aliases, dynamic names/scales, size selectors, trailing
+expressions, and malformed or nested controls are skipped. Recursive hint
+discovery may inspect already-fetched small runtime text only with bounded
+deduplication and separate font/image/document budgets. Hints are suggestions,
+not semantic input. Required lookups always win, and absence of a speculative
+hint never creates a negative binding.
 
 `umber-distribution::PrefetchPolicy` is the one policy owner for both native
 and WASM. It owns literal extraction, complete semantic file-key
@@ -199,22 +204,26 @@ kind. The WASM DTO serializes those semantic fields explicitly, so a shared
 `tex:<name>` payload can satisfy distinct VF, PDF, image, or asset admissions
 without aliasing their request identities. `PrefetchPlanner` and the WASM DTO
 binding are adapters; native resolution and browser JavaScript retain provider
-ordering and issue the original typed request. The shared defaults are 64
+ordering and issue the original typed request. The native planner drains
+high-confidence startup and literal closure waves before broad metadata peers,
+while one phase reservation spans every such wave. The shared defaults are 64
 files/16 MiB total, 8 MiB small-runtime, 2 MiB font and image, 512 KiB
 document, 256 KiB scanned runtime text, 32 follow-up hints, and one
 follow-up tier.
 
-The byte and class limits are reservations owned by one policy instance for
-the entire run. Every selected semantic key is charged once, while a payload
-identified by its object, digest, and declared length is charged once even
-when it serves multiple semantic admissions. Required demand is tracked
-independently and never consumes speculative ceilings. Reservations happen
-before acquisition and remain charged after an optional fetch fails, so a
-retry, batch split, or recursive closure cannot exceed the run's budget.
-Drained optional keys remain owned by the run's attempted set; a declined or
-unadmitted hint is not requeued by a later scan. Only a new run/context resets
-these ledgers, and direct required demand may still request a previously
-declined key.
+The byte, file, and class limits are one reservation owned by the current
+automatic prefetch phase. A phase begins for startup preflight and for each
+new actual engine `NeedResources` suspension. It remains live while its
+required response is resolved, admitted, and its post-admission closure waves
+are drained; a `provide_resources` call or another closure wave does not reset
+it. Every selected semantic key is reserved once, while a payload identified
+by its object, digest, and declared length is reserved once even when it
+serves multiple semantic admissions. Required demand is tracked
+independently and never consumes speculative ceilings. Queue insertion is not
+a second file reservation: an unselected optional request remains pending or
+deferred until a later phase, and an optional failure is never represented as
+engine readiness. Only a genuinely new demanded resource starts another
+phase; direct required demand may still request a previously declined key.
 
 The admission callback runs only after a verified response has successfully
 crossed the engine VFS transaction. It receives the canonical key, retained
@@ -232,12 +241,14 @@ package/dependency companions by bounded tiers after additional discarded
 work. It resets those counters for a new run/context and never substitutes a
 suspension serial, creates a checkpoint, or fetches a whole distribution.
 
-The host confirms the startup set's readiness before the run and the demanded
-set's readiness before retry. A successful lookup manifest is published only
-after accepted output and generated state commit. Failed-attempt discoveries
-may schedule work but cannot overwrite that manifest. Native and WASM share
-the semantic manifest and readiness policy; acquisition and cache transport
-remain platform-specific.
+The host confirms each selected set's readiness before spending the next
+closure wave or retrying the engine. A successful lookup manifest is published
+only after accepted output and generated state commit. Failed-attempt
+discoveries may schedule work but cannot overwrite that manifest. Native and
+WASM share the semantic manifest and readiness policy; acquisition and cache
+transport remain platform-specific. Unselected optional requests stay
+pending/deferred and are never reported `Ready` or `Unavailable` merely
+because the phase cap was reached.
 
 ## Accounting and ownership
 

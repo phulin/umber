@@ -213,15 +213,17 @@ Authored JavaScript forwards resolver batches unchanged and retains no request,
 path, duplicate, progress, or byte-accounting shadow state. Empty and partial
 batches therefore reach the same Rust retry state as native calls; stable Rust
 error categories are serialized through direct and worker browser APIs.
-Manifest dependency closures remain resolver-private prefetches that only warm
-the verified object cache. Validated schema-3 format closures enter the session
-with the selected format and are emitted once after the first format-input
-miss. The session authorizes positive file responses for that exact emitted
-hint set, so a host may atomically install the closure for the next retry
-without weakening the unexpected-response check. Already required, registered,
-unavailable, or user-supplied keys are removed before emission; native local
-search has first refusal; and stale or ignored hints create no unavailable
-binding and do not count as retry progress.
+Authenticated manifest dependency entries are scheduling evidence, not a
+resolver-owned eager closure. The resolver records the metadata alongside a
+successfully resolved payload and the compile session gives it to the shared
+planner only after that payload crosses the engine VFS admission boundary.
+Literal hints and prior successful lookups are likewise seeds; their admitted
+runtime text may add the next bounded literal tier. Already required,
+registered, unavailable, or user-supplied keys are removed before emission;
+native local search has first refusal; and stale or ignored hints create no
+unavailable binding and do not count as retry progress. Validated format
+closures may still seed the same planner, but they do not create a second
+resolver or readiness path.
 `ProjectWorkspace` also owns the session's layered user and resolved-resource
 storage plus its accepted generated layer. Each TeX attempt reads inputs and
 TFM files from one immutable transaction snapshot; the resolver passes selected
