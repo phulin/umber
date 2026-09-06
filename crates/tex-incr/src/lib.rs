@@ -26,8 +26,8 @@ use tex_exec::{
     Cancellation, CanonicalStepFailure, CanonicalStepResult, CanonicalStepRunner, CheckpointSink,
     DetachedEngineCompletion, DetachedFormatDump, DetachedPreparedPage, EngineBoundary,
     EngineCheckpoint, EngineCompletionDemand, MainControl, MainControlStep, OutputLedger,
-    ResourceFailure, ResourceFulfillment, ResourceHost, ResourceNeed, ResourceOutcome,
-    ResourceReplayEffect, ResourceWorld, canonical_font_resource_path,
+    ResourceFailure, ResourceFulfillment, ResourceHost, ResourceHostProvider, ResourceNeed,
+    ResourceOutcome, ResourceWorld, canonical_font_resource_path,
 };
 use tex_out::dvi::{DviError, DviStreamWriter};
 pub use tex_out::html::RenderedOutputId;
@@ -755,68 +755,52 @@ impl<'store> RevisionCandidate<'store> {
         let checkpoint_control_key = self.checkpoint_control_key.take();
         let runtime_key = self.runtime_key.take();
         let mut generation = OwnedCandidateGeneration::new(generation);
-        let mut checkpoint_control_key = checkpoint_control_key;
-        let mut runtime_key = runtime_key;
-        loop {
-            let result = generation
-                .generation_mut()
-                .with_admitted(CandidateRun {
-                    candidate: self,
-                    host,
-                    cancellation,
-                    failed_attempt_fuel: &mut failed_attempt_fuel,
-                    checkpoint_control_key,
-                    runtime_key,
-                })
-                .map_err(SessionError::RetainedEngine)?;
-            checkpoint_control_key = None;
-            self.runtime_key = result.runtime_key;
-            let discarded_fuel = result.discarded_fuel;
-            self.cumulative_fuel = self.cumulative_fuel.saturating_add(discarded_fuel);
-            self.discarded_fuel = self.discarded_fuel.saturating_add(discarded_fuel);
-            let result = match result.execution {
-                Ok(result) => result,
-                Err(error) => {
-                    self.cumulative_fuel = self.cumulative_fuel.saturating_add(failed_attempt_fuel);
-                    return Err(error);
-                }
-            };
-            match result {
-                PlanExecution::Replay(need) => {
-                    // CandidateRun has already rewound to the selected full
-                    // checkpoint before returning either replay outcome. Count
-                    // the restart here, once per actual rewind, rather than
-                    // tying it to whether the host answered synchronously.
-                    self.resource_restarts = self.resource_restarts.saturating_add(1);
-                    self.replayed_dispatches = self.replayed_dispatches.saturating_add(1);
-                    let _ = need;
-                    runtime_key = self.runtime_key.take();
-                }
-                PlanExecution::Suspended(need) => {
-                    // A declined host answer still rewinds the candidate and
-                    // parks the restored generation. The next host drive is
-                    // not the first restart; it is a later restart if the
-                    // answer is then admitted and the plan misses again.
-                    self.resource_restarts = self.resource_restarts.saturating_add(1);
-                    self.replayed_dispatches = self.replayed_dispatches.saturating_add(1);
-                    self.suspension_serial = self.suspension_serial.saturating_add(1);
-                    self.generation = Some(generation.into_generation());
-                    return Ok(RevisionCandidateResult::AwaitingResources(need));
-                }
-                PlanExecution::Complete(completion, fuel) => {
-                    self.advance_calls = self
-                        .advance_calls
-                        .saturating_add(completion.delivered_commands as u64);
-                    // The command ledger is monotonic across host waits and
-                    // full replay. Discarded attempts have already been
-                    // charged above, so completion contributes only the
-                    // ledger high-water mark rather than the same prefix a
-                    // second time.
-                    self.cumulative_fuel = self.cumulative_fuel.max(fuel);
-                    self.completed = Some(*completion);
-                    self.generation = Some(generation.into_generation());
-                    return Ok(RevisionCandidateResult::Complete);
-                }
+        let result = generation
+            .generation_mut()
+            .with_admitted(CandidateRun {
+                candidate: self,
+                host,
+                cancellation,
+                failed_attempt_fuel: &mut failed_attempt_fuel,
+                checkpoint_control_key,
+                runtime_key,
+            })
+            .map_err(SessionError::RetainedEngine)?;
+        self.runtime_key = result.runtime_key;
+        let discarded_fuel = result.discarded_fuel;
+        self.cumulative_fuel = self.cumulative_fuel.saturating_add(discarded_fuel);
+        self.discarded_fuel = self.discarded_fuel.saturating_add(discarded_fuel);
+        let result = match result.execution {
+            Ok(result) => result,
+            Err(error) => {
+                self.cumulative_fuel = self.cumulative_fuel.saturating_add(failed_attempt_fuel);
+                return Err(error);
+            }
+        };
+        match result {
+            PlanExecution::Suspended(need) => {
+                // A declined host answer is the only resource path that
+                // rewinds this candidate. Ready and unavailable answers
+                // are installed during the same canonical operation.
+                self.resource_restarts = self.resource_restarts.saturating_add(1);
+                self.replayed_dispatches = self.replayed_dispatches.saturating_add(1);
+                self.suspension_serial = self.suspension_serial.saturating_add(1);
+                self.generation = Some(generation.into_generation());
+                Ok(RevisionCandidateResult::AwaitingResources(need))
+            }
+            PlanExecution::Complete(completion, fuel) => {
+                self.advance_calls = self
+                    .advance_calls
+                    .saturating_add(completion.delivered_commands as u64);
+                // The command ledger is monotonic across host waits and
+                // full replay. Discarded attempts have already been
+                // charged above, so completion contributes only the
+                // ledger high-water mark rather than the same prefix a
+                // second time.
+                self.cumulative_fuel = self.cumulative_fuel.max(fuel);
+                self.completed = Some(*completion);
+                self.generation = Some(generation.into_generation());
+                Ok(RevisionCandidateResult::Complete)
             }
         }
     }
@@ -945,7 +929,6 @@ impl<'store> RevisionCandidate<'store> {
 }
 
 enum PlanExecution {
-    Replay(ResourceNeed),
     Suspended(ResourceNeed),
     Complete(Box<CandidateCompletion>, u64),
 }
@@ -1105,10 +1088,7 @@ impl tex_exec::RetainedEngineOperation for CandidateRun<'_, '_> {
                 self.failed_attempt_fuel,
             )
         };
-        let should_rewind = matches!(
-            &execution,
-            Ok(PlanExecution::Replay(_) | PlanExecution::Suspended(_))
-        );
+        let should_rewind = matches!(&execution, Ok(PlanExecution::Suspended(_)));
         let mut discarded_fuel = 0;
         if should_rewind {
             let delivered_after = {
@@ -1201,54 +1181,6 @@ impl tex_exec::RetainedEngineOperation for CandidateRun<'_, '_> {
                 if let Err(error) = start_candidate_job(universe, control, options) {
                     return CandidateRunResult {
                         execution: Err(error),
-                        runtime_key: None,
-                        discarded_fuel: attempt_fuel,
-                    };
-                }
-            }
-            // Resource answers are outside the rewindable aggregate.  Install
-            // the detached outcome only after the full checkpoint and (for a
-            // JobStart replay) startup framing have been restored.  The next
-            // ordinary scanner call therefore runs on a fresh control object;
-            // no NeedResource path resumes the discarded direct operation.
-            let pending = {
-                let (_, _, _, _, runtime) = attached.parts::<CandidateRuntime>();
-                runtime.pending_resource.take()
-            };
-            if let Some((need, pending)) = pending {
-                let apply_result = {
-                    let (universe, ledger, _, control, runtime) =
-                        attached.parts::<CandidateRuntime>();
-                    let result = pending.apply_effects(universe);
-                    if result.is_ok() {
-                        match pending {
-                            PendingResource::Fulfilled {
-                                fulfillment,
-                                effects,
-                            } => {
-                                if ledger
-                                    .fulfill_with_effects(control, &need, fulfillment, &effects)
-                                    .is_err()
-                                {
-                                    return CandidateRunResult {
-                                        execution: Err(SessionError::UnexpectedResource),
-                                        runtime_key: None,
-                                        discarded_fuel: attempt_fuel,
-                                    };
-                                }
-                            }
-                            PendingResource::Unavailable { effects } => {
-                                ledger
-                                    .mark_unavailable_with_effects(control, &need, false, &effects);
-                            }
-                        }
-                        runtime.answered_needs.push(need);
-                    }
-                    result
-                };
-                if let Err(error) = apply_result {
-                    return CandidateRunResult {
-                        execution: Err(SessionError::World(error)),
                         runtime_key: None,
                         discarded_fuel: attempt_fuel,
                     };
@@ -1458,56 +1390,7 @@ fn prepare_candidate_runtime<'store>(
 struct CandidateRuntime {
     history: LiveHistoryState,
     delivered_commands: usize,
-    answered_needs: Vec<ResourceNeed>,
-    pending_resource: Option<(ResourceNeed, PendingResource)>,
-    resource_cache: Vec<(ResourceNeed, PendingResource)>,
     job_start_anchor: Option<FrozenJobStartAnchor>,
-}
-
-enum PendingResource {
-    Fulfilled {
-        fulfillment: ResourceFulfillment,
-        effects: Vec<ResourceReplayEffect>,
-    },
-    Unavailable {
-        effects: Vec<ResourceReplayEffect>,
-    },
-}
-
-impl Clone for PendingResource {
-    fn clone(&self) -> Self {
-        match self {
-            Self::Fulfilled {
-                fulfillment,
-                effects,
-            } => Self::Fulfilled {
-                fulfillment: fulfillment.clone(),
-                effects: effects.clone(),
-            },
-            Self::Unavailable { effects } => Self::Unavailable {
-                effects: effects.clone(),
-            },
-        }
-    }
-}
-
-impl PendingResource {
-    fn apply_effects<G>(&self, universe: &mut Universe<G>) -> Result<(), WorldError> {
-        let effects = match self {
-            Self::Fulfilled { effects, .. } | Self::Unavailable { effects } => effects,
-        };
-        for effect in effects {
-            let ResourceReplayEffect::InputDependency {
-                path,
-                outcome,
-                access,
-            } = effect;
-            universe
-                .world_mut()
-                .record_input_dependency(path.clone(), *outcome, *access)?;
-        }
-        Ok(())
-    }
 }
 
 struct ReplayAnchorLease {
@@ -1594,7 +1477,6 @@ impl CandidateRuntime {
                 self.history.checkpoint_keys[index] = Some(anchor.key);
             }
         }
-        self.answered_needs.clear();
     }
 }
 
@@ -2208,9 +2090,6 @@ fn initialize_candidate_runtime<G: 'static>(
     Ok(CandidateRuntime {
         history,
         delivered_commands: 0,
-        answered_needs: Vec::new(),
-        pending_resource: None,
-        resource_cache: Vec::new(),
         job_start_anchor: candidate.job_start_anchor.clone(),
     })
 }
@@ -2258,9 +2137,6 @@ fn execute_plan_inner<G>(
     let CandidateRuntime {
         history,
         delivered_commands,
-        answered_needs,
-        pending_resource,
-        resource_cache,
         job_start_anchor,
     } = runtime;
     let mut sink = LiveHistorySink {
@@ -2317,13 +2193,18 @@ fn execute_plan_inner<G>(
         // accepted as a normal detached output. `step` retains the captured
         // source evidence and returns the fatal to the outer host, which may
         // publish its diagnostic effects without publishing the revision.
-        let step =
-            CanonicalStepRunner::new(control, universe, ledger).step(&mut sink, cancellation);
+        let step = {
+            let mut resource_provider = ResourceHostProvider::new(host);
+            CanonicalStepRunner::new(control, universe, ledger).step_with_resource_provider(
+                &mut sink,
+                cancellation,
+                &mut resource_provider,
+            )
+        };
         match step {
             CanonicalStepResult::Progress(step)
             | CanonicalStepResult::Committed(step)
             | CanonicalStepResult::Completed(step) => {
-                answered_needs.clear();
                 *delivered_commands = delivered_commands.saturating_add(1);
                 if u64::try_from(*delivered_commands).unwrap_or(u64::MAX)
                     > candidate.execution_budgets.steps
@@ -2427,68 +2308,16 @@ fn execute_plan_inner<G>(
                     ));
                 }
             }
+            CanonicalStepResult::ResourceSuspended(need) => {
+                return Ok(PlanExecution::Suspended(need));
+            }
             CanonicalStepResult::ResourceNeed(need) => {
-                // Resource answers live outside the rewindable engine state.
-                // A full restart can therefore encounter an already-answered
-                // need again before it reaches the next miss. Reuse the
-                // immutable host answer instead of asking the host a second
-                // time (which would duplicate external effects and would
-                // otherwise make multi-resource attempts look inconsistent).
-                let pending_matches = pending_resource
-                    .as_ref()
-                    .is_some_and(|(pending_need, _)| pending_need == &need);
-                let pending = (pending_matches.then(|| {
-                    pending_resource
-                        .take()
-                        .expect("matching pending resource remains available")
-                        .1
-                }))
-                .or_else(|| {
-                    (!answered_needs.contains(&need)).then(|| {
-                        resource_cache
-                            .iter()
-                            .find(|(cached_need, _)| cached_need == &need)
-                            .map(|(_, answer)| answer.clone())
-                    })?
+                // Every candidate operation installs a provider. This legacy
+                // result is retained only as a typed guard for a missed
+                // provider-aware call site; it must never drive replay.
+                return Err(SessionError::ResourceNoProgress {
+                    need: Box::new(need),
                 });
-                if let Some(pending) = pending {
-                    *pending_resource = Some((need.clone(), pending));
-                    return Ok(PlanExecution::Replay(need));
-                }
-                if answered_needs.contains(&need) {
-                    return Err(SessionError::ResourceNoProgress {
-                        need: Box::new(need),
-                    });
-                }
-                let (outcome, effects) = {
-                    let mut world = ResourceWorld::new(universe);
-                    let outcome = host.fulfill(&mut world, &need);
-                    (outcome, world.take_replay_effects())
-                };
-                match outcome {
-                    ResourceOutcome::Fulfilled(fulfillment) => {
-                        let pending = PendingResource::Fulfilled {
-                            fulfillment,
-                            effects,
-                        };
-                        resource_cache.push((need.clone(), pending.clone()));
-                        *pending_resource = Some((need.clone(), pending));
-                        return Ok(PlanExecution::Replay(need));
-                    }
-                    ResourceOutcome::Unavailable => {
-                        let pending = PendingResource::Unavailable { effects };
-                        resource_cache.push((need.clone(), pending.clone()));
-                        *pending_resource = Some((need.clone(), pending));
-                        return Ok(PlanExecution::Replay(need));
-                    }
-                    ResourceOutcome::Declined => return Ok(PlanExecution::Suspended(need)),
-                    ResourceOutcome::Failed(failure) => {
-                        return Err(SessionError::ResourceFailure {
-                            need: Box::new(need),
-                            failure,
-                        });
-                    }
-                }
             }
             CanonicalStepResult::Failed(error) => return Err(map_step_failure(error)),
         }
@@ -4195,7 +4024,32 @@ fn drive_synchronous_candidate(
 
 fn map_step_failure(error: CanonicalStepFailure) -> SessionError {
     match error {
-        CanonicalStepFailure::Execution(error) => SessionError::Execute(error),
+        CanonicalStepFailure::Execution(error) => match error {
+            tex_exec::ExecError::ResourceFailure { need, failure } => {
+                SessionError::ResourceFailure {
+                    need,
+                    failure: *failure,
+                }
+            }
+            tex_exec::ExecError::Captured {
+                error,
+                site,
+                frozen,
+            } => match *error {
+                tex_exec::ExecError::ResourceFailure { need, failure } => {
+                    SessionError::ResourceFailure {
+                        need,
+                        failure: *failure,
+                    }
+                }
+                error => SessionError::Execute(tex_exec::ExecError::Captured {
+                    error: Box::new(error),
+                    site,
+                    frozen,
+                }),
+            },
+            error => SessionError::Execute(error),
+        },
         CanonicalStepFailure::Checkpoint(error) => SessionError::CommandSummary(error),
     }
 }

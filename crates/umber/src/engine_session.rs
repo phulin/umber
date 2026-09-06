@@ -875,6 +875,11 @@ impl<'a, G> EngineSession<'a, G> {
                         self.stores.world().memory_materialization_checkpoint();
                     return Ok(SessionState::NeedResource(need));
                 }
+                CanonicalStepResult::ResourceSuspended(need) => {
+                    self.retry_materialization =
+                        self.stores.world().memory_materialization_checkpoint();
+                    return Ok(SessionState::NeedResource(need));
+                }
                 CanonicalStepResult::Progress(_) | CanonicalStepResult::Committed(_) => {
                     self.record_current_mode();
                     if checkpoints.stop_requested() {

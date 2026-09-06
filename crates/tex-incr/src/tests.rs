@@ -934,7 +934,7 @@ fn resource_failure_surfaces_without_replay_or_retry() {
 }
 
 #[test]
-fn resource_replay_reuses_latest_candidate_checkpoint() {
+fn resource_decline_rewinds_once_then_ready_continues_without_replay() {
     let source = "A\\par\n\\input child \\end";
     let mut incremental = session(RevisionId::new(1), source);
     let mut candidate = incremental.start_cold_candidate().expect("candidate");
@@ -953,13 +953,13 @@ fn resource_replay_reuses_latest_candidate_checkpoint() {
     assert!(matches!(
         candidate
             .drive_with_resource_resolvers(&mut host, &Cancellation::new())
-            .expect("checkpoint replay"),
+            .expect("ready retry"),
         RevisionCandidateResult::Complete
     ));
     let telemetry = candidate.execution_telemetry();
-    assert_eq!(telemetry.resource_restarts, 2);
-    assert_eq!(telemetry.replayed_dispatches, 2);
-    assert!(telemetry.discarded_fuel > 0);
+    assert_eq!(telemetry.resource_restarts, 1);
+    assert_eq!(telemetry.replayed_dispatches, 1);
+    assert_eq!(telemetry.discarded_fuel, suspended.discarded_fuel);
     let replayed = incremental
         .accept_cold_candidate(candidate)
         .expect("replayed candidate accepts");
@@ -1028,13 +1028,13 @@ fn alignment_preamble_resource_replays_from_latest_paragraph_checkpoint() {
     assert!(matches!(
         staged_candidate
             .drive_with_resource_resolvers(&mut staged_host, &Cancellation::new())
-            .expect("alignment checkpoint replay"),
+            .expect("alignment ready retry"),
         RevisionCandidateResult::Complete
     ));
     let staged_telemetry = staged_candidate.execution_telemetry();
-    assert_eq!(staged_telemetry.resource_restarts, 2);
-    assert_eq!(staged_telemetry.replayed_dispatches, 2);
-    assert!(staged_telemetry.discarded_fuel > suspended.discarded_fuel);
+    assert_eq!(staged_telemetry.resource_restarts, 1);
+    assert_eq!(staged_telemetry.replayed_dispatches, 1);
+    assert_eq!(staged_telemetry.discarded_fuel, suspended.discarded_fuel);
     let staged_output = staged
         .accept_cold_candidate(staged_candidate)
         .expect("staged alignment candidate accepts");
@@ -1052,9 +1052,9 @@ fn alignment_preamble_resource_replays_from_latest_paragraph_checkpoint() {
         RevisionCandidateResult::Complete
     ));
     let immediate_telemetry = immediate_candidate.execution_telemetry();
-    assert_eq!(immediate_telemetry.resource_restarts, 1);
-    assert_eq!(immediate_telemetry.replayed_dispatches, 1);
-    assert!(immediate_telemetry.discarded_fuel > 0);
+    assert_eq!(immediate_telemetry.resource_restarts, 0);
+    assert_eq!(immediate_telemetry.replayed_dispatches, 0);
+    assert_eq!(immediate_telemetry.discarded_fuel, 0);
     let immediate_output = immediate
         .accept_cold_candidate(immediate_candidate)
         .expect("immediate alignment candidate accepts");
