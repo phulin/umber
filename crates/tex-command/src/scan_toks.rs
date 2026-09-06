@@ -316,15 +316,6 @@ enum CollectorExpansionOutcome {
     Retained,
 }
 
-/// One delivery as it crosses the collector grammar. Expanded collection
-/// remains in the canonical compact command until a real recovery or outward
-/// scanner operation needs the rich facade. Unexpanded collection keeps its
-/// established rich boundary for now.
-enum CollectorDelivery<G> {
-    Hot(HotCommand<G>),
-    Rich(crate::CurrentCommand<G>),
-}
-
 #[inline(always)]
 fn is_expandable_hot_command<G>(command: &HotCommand<G>) -> bool {
     match command.command_word().class() {
@@ -340,24 +331,6 @@ fn is_expandable_hot_command<G>(command: &HotCommand<G>) -> bool {
         | CommandClass::Unexpandable
         | CommandClass::Font
         | CommandClass::Value => false,
-    }
-}
-
-impl<G> CollectorDelivery<G> {
-    #[inline(always)]
-    fn is_outer_recovery_space(&self) -> bool {
-        match self {
-            Self::Hot(command) => command.is_outer_recovery_space(),
-            Self::Rich(command) => command.is_outer_recovery_space(),
-        }
-    }
-
-    #[inline(always)]
-    fn back_input(self, processor: &mut CommandProcessor<'_, '_, G>) -> Result<(), CommandError> {
-        match self {
-            Self::Hot(command) => processor.back_input_hot(command),
-            Self::Rich(command) => processor.back_input(command),
-        }
     }
 }
 
@@ -1468,7 +1441,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let mut malformed_parameter = false;
         let mut destination = None;
         loop {
-            if self.get_token_into(&mut destination)? != crate::DeliveryStatus::Command {
+            if self.get_token_hot_into(&mut destination)? != crate::DeliveryStatus::Command {
                 return Err(CommandError::input_invariant());
             }
             let command = destination
@@ -1477,7 +1450,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             if primary == OriginId::UNKNOWN {
                 primary = command.origin();
             }
-            let token = self.classify_collector_token(&command, None);
+            let token = self.classify_collector_hot_token(&command, None);
             if token.spelling_is_begin_group() {
                 self.finish_scan_toks_parameters(collector)?;
                 return Ok(ScannedParameterText {
@@ -1526,13 +1499,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                 self.push_scan_toks_word(collector, token.word())?;
                 continue;
             }
-            if self.get_token_into(&mut destination)? != crate::DeliveryStatus::Command {
+            if self.get_token_hot_into(&mut destination)? != crate::DeliveryStatus::Command {
                 return Err(CommandError::input_invariant());
             }
             let follower = destination
                 .take()
                 .expect("command status initializes destination");
-            let follower_token = self.classify_collector_token(&follower, None);
+            let follower_token = self.classify_collector_hot_token(&follower, None);
             if follower_token.spelling_is_begin_group() {
                 self.push_scan_toks_word(collector, follower_token.word())?;
                 self.finish_scan_toks_parameters(collector)?;
@@ -1580,7 +1553,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             // supplies the expected parameter number.  The pending outer
             // validity operation remains responsible for all inaccessible
             // token recovery.
-            self.back_input(follower)?;
+            self.back_input_hot(follower)?;
             self.report_macro_parameter_diagnostic(MacroParameterDiagnostic::NonconsecutiveNumber)?;
             malformed_parameter = true;
             if next_parameter <= 9 {
@@ -1682,70 +1655,55 @@ impl<G> CommandProcessor<'_, '_, G> {
         episode: &ScannerEpisode,
         collector: &mut TokenCollector<G>,
     ) -> Result<(), CommandError> {
-        let mut hot_destination = None;
-        let mut rich_destination = None;
+        // Both raw (`get_token`) and expanded (`get_next`) collection reuse
+        // one compact destination.  Their source-creation and expansion
+        // policies remain distinct, but an unexpanded token no longer crosses
+        // a rich `CurrentCommand` projection merely to append its spelling.
+        let mut destination = None;
 
         loop {
-            let delivered = if expansion.is_expanded() {
-                match self.get_next_hot_into(&mut hot_destination)? {
-                    crate::DeliveryStatus::Command => {}
-                    crate::DeliveryStatus::End => {
-                        return Err(CommandError::input_invariant());
-                    }
-                    _ => unreachable!("ordinary raw delivery has no side event"),
-                }
-                let command = hot_destination
-                    .as_ref()
-                    .expect("compact command delivery initializes destination");
-                if is_expandable_hot_command(command) {
-                    let route = match command.command_word().expandable_primitive() {
-                        Some(ExpandablePrimitive::The) => CollectorExpansionRoute::The,
-                        Some(ExpandablePrimitive::Unexpanded) => {
-                            CollectorExpansionRoute::Unexpanded
-                        }
-                        Some(ExpandablePrimitive::Detokenize) => {
-                            CollectorExpansionRoute::Detokenize
-                        }
-                        _ => CollectorExpansionRoute::Ordinary,
-                    };
-                    if self.drive_collector_expansion_hot(
-                        route,
-                        episode,
-                        collector,
-                        &mut hot_destination,
-                    )? == CollectorExpansionOutcome::Expanded
-                    {
-                        continue;
-                    }
-                }
-                let command = hot_destination
-                    .take()
-                    .expect("compact command delivery initializes destination");
-                self.observe_expanded_hot_delivery(&command);
-                CollectorDelivery::Hot(command)
+            let status = if expansion.is_expanded() {
+                self.get_next_hot_into(&mut destination)?
             } else {
-                match self.get_token_into(&mut rich_destination)? {
-                    crate::DeliveryStatus::Command => {}
-                    crate::DeliveryStatus::End => {
-                        return Err(CommandError::input_invariant());
-                    }
-                    _ => unreachable!("ordinary raw delivery has no side event"),
-                }
-                CollectorDelivery::Rich(
-                    rich_destination
-                        .take()
-                        .expect("command delivery initializes destination"),
-                )
+                self.get_token_hot_into(&mut destination)?
             };
+            match status {
+                crate::DeliveryStatus::Command => {}
+                crate::DeliveryStatus::End => return Err(CommandError::input_invariant()),
+                _ => unreachable!("ordinary raw delivery has no side event"),
+            }
+
+            let command = destination
+                .as_ref()
+                .expect("compact command delivery initializes destination");
+            if expansion.is_expanded() && is_expandable_hot_command(command) {
+                let route = match command.command_word().expandable_primitive() {
+                    Some(ExpandablePrimitive::The) => CollectorExpansionRoute::The,
+                    Some(ExpandablePrimitive::Unexpanded) => CollectorExpansionRoute::Unexpanded,
+                    Some(ExpandablePrimitive::Detokenize) => CollectorExpansionRoute::Detokenize,
+                    _ => CollectorExpansionRoute::Ordinary,
+                };
+                if self.drive_collector_expansion_hot(
+                    route,
+                    episode,
+                    collector,
+                    &mut destination,
+                )? == CollectorExpansionOutcome::Expanded
+                {
+                    continue;
+                }
+            }
 
             // The expanded collector has completed a get_x-style delivery
-            // for each retained unexpandable token. Its packed spelling is
-            // classified directly; the unexpanded path retains the existing
-            // rich scanner boundary.
-            let token = match &delivered {
-                CollectorDelivery::Hot(command) => self.classify_collector_hot_token(command, None),
-                CollectorDelivery::Rich(command) => self.classify_collector_token(command, None),
-            };
+            // for each retained unexpandable token. Both collection policies
+            // classify the already-settled packed spelling directly.
+            let command = destination
+                .as_ref()
+                .expect("compact command delivery initializes destination");
+            if expansion.is_expanded() {
+                self.observe_expanded_hot_delivery(command);
+            }
+            let token = self.classify_collector_hot_token(command, None);
             let spelling = token.word();
 
             // TeX82 §342 has already replaced a delivered `\cr`/`\span`/tab
@@ -1762,7 +1720,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             // changes only the live current command to a space. That space is
             // recovery state, not input: §477 resumes with the inserted brace
             // and must not append the temporary current-command value.
-            if delivered.is_outer_recovery_space() {
+            if command.is_outer_recovery_space() {
                 continue;
             }
             if let Some(PendingParameter {
@@ -1794,7 +1752,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 // §479's text is already rendered by
                 // `report_macro_parameter_diagnostic` below.
-                delivered.back_input(self)?;
+                self.back_input_hot(
+                    destination
+                        .take()
+                        .ok_or_else(CommandError::input_invariant)?,
+                )?;
                 self.report_macro_parameter_diagnostic(
                     MacroParameterDiagnostic::IllegalReplacementNumber { target },
                 )?;
@@ -1821,6 +1783,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 {
                     self.command.token_collector_path_counters.state_updates += 1;
                 }
+                destination.take();
                 return Ok(());
             }
             #[cfg(test)]

@@ -7,7 +7,7 @@ use tex_state::meaning::MeaningFlags;
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 use tex_state::{DefinitionRef, ResidentMacroBody};
 
-use crate::command::MacroMatchDelivery;
+use crate::command::HotCommand;
 use crate::execution_scratch::{ArgumentSetId, MacroArgumentWriter, PendingArgumentSet};
 use crate::processor::status::{
     ArgumentBuilderId, MatchingContext, ScannerStatus, ScannerStatusVisibility, ScannerWarning,
@@ -436,12 +436,14 @@ impl<G> CommandProcessor<'_, '_, G> {
         plan: &MacroPlan<G>,
     ) -> Result<(), CommandError> {
         let paragraph_token = self.state.symbol("par").map(Token::Cs).map(TokenWord::pack);
+        let mut delivery = None;
         for index in 0..plan.pattern.leading_end(plan.parameter_len) {
             let expected = plan.parameter_word(index)?;
-            let actual = self
-                .get_macro_match_token(paragraph_token)?
-                .ok_or(CommandError::MacroPrefixMismatch)?;
-            if actual.word() != expected {
+            if self.get_macro_match_token(&mut delivery)? != crate::DeliveryStatus::Command {
+                return Err(CommandError::MacroPrefixMismatch);
+            }
+            let actual = delivery.take().ok_or_else(CommandError::input_invariant)?;
+            if actual.spelling_word() != expected {
                 // TeX82 §391 tests every compulsory parameter-text token
                 // after raw delivery has completed §336 recovery. An outer
                 // control sequence therefore contributes the inserted
@@ -709,17 +711,19 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// undelimited and delimited branches of §394's parameter matcher.
     fn recover_extra_right_brace_argument(
         &mut self,
-        delivery: MacroMatchDelivery<G>,
+        delivery: HotCommand<G>,
     ) -> Result<MacroArgumentWriter<G>, CommandError> {
-        self.back_input_hot(delivery.into_hot())?;
+        self.back_input_hot(delivery)?;
         self.insert_macro_argument_recovery_par()?;
         // §395 ends with `ins_error`, so §82 renders the context with
         // the inserted `\par` level already on the stack.
         self.report_extra_right_brace_argument();
-        let par = self
-            .get_macro_match_token(None)?
-            .ok_or(CommandError::ParagraphInMacroArgument)?;
-        self.back_input_hot(par.into_hot())?;
+        let mut par = None;
+        if self.get_macro_match_token(&mut par)? != crate::DeliveryStatus::Command {
+            return Err(CommandError::ParagraphInMacroArgument);
+        }
+        let par = par.take().ok_or_else(CommandError::input_invariant)?;
+        self.back_input_hot(par)?;
         // §395's `goto continue` immediately reads the inserted `\par`;
         // `long_state := call` makes §396 abort even a `\long` macro.
         self.report_paragraph_ended_before_complete(&[]);
@@ -732,23 +736,29 @@ impl<G> CommandProcessor<'_, '_, G> {
         flags: MeaningFlags,
         paragraph_token: Option<TokenWord>,
     ) -> Result<MacroArgumentWriter<G>, CommandError> {
+        let mut delivery = None;
         let first = loop {
-            let delivery = self
-                .get_macro_match_token(paragraph_token)?
-                .ok_or(CommandError::ParagraphInMacroArgument)?;
-            if self.outer_recovered_while_matching && delivery.effective_paragraph() {
+            if self.get_macro_match_token(&mut delivery)? != crate::DeliveryStatus::Command {
+                return Err(CommandError::ParagraphInMacroArgument);
+            }
+            let current = delivery
+                .as_ref()
+                .ok_or_else(CommandError::input_invariant)?;
+            if self.outer_recovered_while_matching && current.is_effective_paragraph() {
                 return Err(CommandError::OuterInMacroArgument);
             }
-            if delivery.word().literal_catcode() == Some(Catcode::Space) {
+            if current.literal_catcode() == Some(Catcode::Space) {
                 continue;
             }
-            if delivery.word().literal_catcode() == Some(Catcode::EndGroup) {
-                return self.recover_extra_right_brace_argument(delivery);
+            if current.literal_catcode() == Some(Catcode::EndGroup) {
+                return self.recover_extra_right_brace_argument(
+                    delivery.take().ok_or_else(CommandError::input_invariant)?,
+                );
             }
-            break delivery;
+            break delivery.take().ok_or_else(CommandError::input_invariant)?;
         };
-        self.check_argument_paragraph(&first, flags, None)?;
-        if first.word().literal_catcode() != Some(Catcode::BeginGroup) {
+        self.check_argument_paragraph(&first, paragraph_token, flags, None)?;
+        if first.literal_catcode() != Some(Catcode::BeginGroup) {
             let mut tokens = self
                 .command
                 .scratch
@@ -756,7 +766,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .map_err(|_| CommandError::input_invariant())?;
             self.command
                 .scratch
-                .append_match_delivery(&mut tokens, &first, true)
+                .append_hot_delivery(&mut tokens, &first, true, paragraph_token)
                 .map_err(|_| CommandError::input_invariant())?;
             return Ok(tokens);
         }
@@ -773,7 +783,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let first_depth = self
             .command
             .scratch
-            .append_match_delivery(&mut tokens, &first, true)
+            .append_hot_delivery(&mut tokens, &first, true, paragraph_token)
             .map_err(|_| CommandError::input_invariant())?;
         debug_assert_eq!(first_depth, 1);
         loop {
@@ -785,18 +795,21 @@ impl<G> CommandProcessor<'_, '_, G> {
             {
                 continue;
             }
-            let delivery = self
-                .get_macro_match_token(paragraph_token)?
-                .ok_or(CommandError::ParagraphInMacroArgument)?;
+            if self.get_macro_match_token(&mut delivery)? != crate::DeliveryStatus::Command {
+                return Err(CommandError::ParagraphInMacroArgument);
+            }
+            let current = delivery
+                .as_ref()
+                .ok_or_else(CommandError::input_invariant)?;
             // TeX82 §23's recovered `cur_cmd := spacer` is the return
             // value of the interrupted raw delivery, not a token linked into
             // §394's temporary argument list. The inserted `\par`
             // aborts this match on the next demand; §306's already-owned
             // runaway pseudoprint must therefore end at the last real token.
-            if delivery.is_outer_recovery_space() {
+            if current.is_outer_recovery_space() {
                 continue;
             }
-            if self.outer_recovered_while_matching && delivery.effective_paragraph() {
+            if self.outer_recovered_while_matching && current.is_effective_paragraph() {
                 let partial = self
                     .command
                     .scratch
@@ -806,12 +819,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                 self.set_runaway_partial(crate::processor::RUNAWAY_SCAN_DIAGNOSTIC, &partial);
                 return Err(CommandError::OuterInMacroArgument);
             }
-            self.check_argument_paragraph(&delivery, flags, Some(&tokens))?;
-            let closes_outer_group = delivery.word().literal_catcode() == Some(Catcode::EndGroup);
+            self.check_argument_paragraph(current, paragraph_token, flags, Some(&tokens))?;
+            let closes_outer_group = current.literal_catcode() == Some(Catcode::EndGroup);
             let depth = self
                 .command
                 .scratch
-                .append_match_delivery(&mut tokens, &delivery, true)
+                .append_hot_delivery(&mut tokens, current, true, paragraph_token)
                 .map_err(|_| CommandError::input_invariant())?;
             if closes_outer_group && depth == 0 {
                 tokens = self.strip_argument_outer_group(tokens)?;
@@ -844,6 +857,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .scratch
             .begin_argument_writer(matching)
             .map_err(|_| CommandError::input_invariant())?;
+        let mut delivery = None;
 
         loop {
             // Delimiters are inactive inside a balanced group. Consume the
@@ -858,13 +872,16 @@ impl<G> CommandProcessor<'_, '_, G> {
             {
                 continue;
             }
-            let delivery = self
-                .get_macro_match_token(paragraph_token)?
-                .ok_or(CommandError::ParagraphInMacroArgument)?;
-            if delivery.is_outer_recovery_space() {
+            if self.get_macro_match_token(&mut delivery)? != crate::DeliveryStatus::Command {
+                return Err(CommandError::ParagraphInMacroArgument);
+            }
+            let current = delivery
+                .as_ref()
+                .ok_or_else(CommandError::input_invariant)?;
+            if current.is_outer_recovery_space() {
                 continue;
             }
-            if self.outer_recovered_while_matching && delivery.effective_paragraph() {
+            if self.outer_recovered_while_matching && current.is_effective_paragraph() {
                 let mut partial = self
                     .command
                     .scratch
@@ -881,7 +898,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 return Err(CommandError::OuterInMacroArgument);
             }
 
-            let spelling = delivery.word();
+            let spelling = current.spelling_word();
             let prefix_len = self
                 .command
                 .scratch
@@ -893,7 +910,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             {
                 self.command
                     .scratch
-                    .append_delimiter_word(&mut tokens, delivery.spelling())
+                    .append_delimiter_word(&mut tokens, current.spelling())
                     .map_err(|_| CommandError::input_invariant())?;
                 if self
                     .command
@@ -905,7 +922,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     // `#{` consumes the opening brace as parameter text. Raw
                     // delivery has accounted for it, but no replacement-body
                     // replay exists yet to provide the balancing delivery.
-                    if delivery.literal_catcode() == Some(Catcode::BeginGroup) {
+                    if current.literal_catcode() == Some(Catcode::BeginGroup) {
                         self.undo_delimiter_begin_group_delivery();
                     }
                     self.command
@@ -957,7 +974,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     // until the complete delimiter truncates the holdback.
                     self.command
                         .scratch
-                        .append_delimiter_word(&mut tokens, delivery.spelling())
+                        .append_delimiter_word(&mut tokens, current.spelling())
                         .map_err(|_| CommandError::input_invariant())?;
                     continue;
                 }
@@ -966,13 +983,15 @@ impl<G> CommandProcessor<'_, '_, G> {
             // The failed delimiter prefix is revealed before §395 examines
             // the current token. A held opening brace can consequently make a
             // closing brace ordinary argument material.
-            if tokens.brace_depth() == 0 && delivery.literal_catcode() == Some(Catcode::EndGroup) {
-                return self.recover_extra_right_brace_argument(delivery);
+            if tokens.brace_depth() == 0 && current.literal_catcode() == Some(Catcode::EndGroup) {
+                return self.recover_extra_right_brace_argument(
+                    delivery.take().ok_or_else(CommandError::input_invariant)?,
+                );
             }
-            self.check_argument_paragraph(&delivery, flags, Some(&tokens))?;
+            self.check_argument_paragraph(current, paragraph_token, flags, Some(&tokens))?;
             self.command
                 .scratch
-                .append_match_delivery(&mut tokens, &delivery, true)
+                .append_hot_delivery(&mut tokens, current, true, paragraph_token)
                 .map_err(|_| CommandError::input_invariant())?;
         }
     }
@@ -1034,11 +1053,12 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     fn check_argument_paragraph(
         &mut self,
-        delivery: &MacroMatchDelivery<G>,
+        delivery: &HotCommand<G>,
+        paragraph_token: Option<TokenWord>,
         flags: MeaningFlags,
         partial: Option<&MacroArgumentWriter<G>>,
     ) -> Result<(), CommandError> {
-        if self.eof_recovered_while_matching && delivery.effective_paragraph() {
+        if self.eof_recovered_while_matching && delivery.is_effective_paragraph() {
             // TeX82 §23 calls `check_outer_validity` after source EOF and
             // changes `long_state` to `outer_call`, even for a `\long` macro.
             // Its inserted frozen `\par` terminates the match but is consumed
@@ -1056,13 +1076,13 @@ impl<G> CommandProcessor<'_, '_, G> {
             self.set_runaway_partial(crate::processor::RUNAWAY_SCAN_DIAGNOSTIC, &partial);
             return Err(CommandError::ParagraphInMacroArgument);
         }
-        if delivery.paragraph_spelling() && !flags.contains(MeaningFlags::LONG) {
+        if delivery.is_paragraph_spelling(paragraph_token) && !flags.contains(MeaningFlags::LONG) {
             // TeX82 §394 reports this through `back_error` while the macro
             // matcher is still live.  The caller will then restore its
             // enclosing scanner status, so retain the exact `\par` input
             // ahead of that restoration rather than merely returning an
             // error from the scalar matcher.
-            self.back_input_hot((*delivery).into_hot())?;
+            self.back_input_hot(*delivery)?;
             // §396 ends with `back_error`, so §82 renders the context with the
             // replayed `\par` already on the stack.
             let partial = partial

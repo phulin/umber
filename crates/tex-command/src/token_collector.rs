@@ -25,25 +25,10 @@ pub(crate) enum ReplayWordTransform {
 }
 
 impl<G> crate::CommandProcessor<'_, '_, G> {
-    /// Classifies one raw command once at the shared collector boundary.
-    #[inline]
-    pub(crate) fn classify_collector_token(
-        &mut self,
-        command: &crate::CurrentCommand<G>,
-        paragraph_token: Option<TokenWord>,
-    ) -> ClassifiedToken {
-        #[cfg(test)]
-        {
-            self.command
-                .token_collector_path_counters
-                .raw_classifications += 1;
-        }
-        ClassifiedToken::from_command(command, paragraph_token)
-    }
-
-    /// Classifies one compact expanded delivery at the shared collector
-    /// boundary. The collector only needs the packed spelling and paragraph
-    /// fact, so this path avoids constructing a `CurrentCommand` per token.
+    /// Classifies one compact delivery at the shared collector boundary. The
+    /// collector only needs the packed spelling and paragraph fact, so this
+    /// path avoids constructing a `CurrentCommand` per token in either raw or
+    /// expanded collection.
     #[inline(always)]
     pub(crate) fn classify_collector_hot_token(
         &mut self,
@@ -75,17 +60,6 @@ pub(crate) struct ClassifiedToken {
 const _: () = assert!(core::mem::size_of::<ClassifiedToken>() == 16);
 
 impl ClassifiedToken {
-    pub(crate) fn from_command<G>(
-        command: &crate::CurrentCommand<G>,
-        paragraph_token: Option<TokenWord>,
-    ) -> Self {
-        let word = command.spelling();
-        Self {
-            word,
-            paragraph: Some(word.token_word()) == paragraph_token,
-        }
-    }
-
     /// Classifies a compact expanded delivery without materializing its
     /// rich command facade. Collector grammar decisions use only the
     /// delivered spelling, so the hot command remains the sole per-token

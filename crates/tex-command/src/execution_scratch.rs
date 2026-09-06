@@ -12,7 +12,7 @@ use core::num::NonZeroU64;
 
 use tex_state::token::{Catcode, OriginId, TokenWord, TracedTokenWord};
 
-use crate::command::MacroMatchDelivery;
+use crate::command::HotCommand;
 #[cfg(any(test, feature = "profiling"))]
 use crate::token_collector::ClassifiedToken;
 
@@ -860,16 +860,17 @@ impl<G> ExecutionScratch<G> {
         Ok(brace_depth)
     }
 
-    /// Appends one compact matcher delivery directly to the parent sink. The
-    /// packed spelling and paragraph fact are already available from the raw
-    /// delivery, so no rich command or second semantic classification is
-    /// needed on the ordinary accepted path.
+    /// Appends one compact raw delivery directly to the parent sink. The
+    /// packed spelling and effective command remain in the caller-owned hot
+    /// command, so no rich command or matcher-specific wrapper is needed on
+    /// the ordinary accepted path.
     #[inline(always)]
-    pub(crate) fn append_match_delivery(
+    pub(crate) fn append_hot_delivery(
         &mut self,
         writer: &mut MacroArgumentWriter<G>,
-        delivery: &MacroMatchDelivery<G>,
+        delivery: &HotCommand<G>,
         paragraph_checked: bool,
+        paragraph_token: Option<TokenWord>,
     ) -> Result<u32, ScratchError> {
         if writer.holdback_len != 0 {
             return Err(ScratchError::InvalidCoordinate);
@@ -878,8 +879,8 @@ impl<G> ExecutionScratch<G> {
         debug_assert_eq!(spelling.origin(), delivery.origin());
         self.macro_words.append_at(&mut writer.append, spelling)?;
         let brace_depth = writer.cursor.settle_argument_word(
-            delivery.word(),
-            paragraph_checked && delivery.paragraph_spelling(),
+            delivery.spelling_word(),
+            paragraph_checked && delivery.is_paragraph_spelling(paragraph_token),
         );
         writer.visible_end = writer.append.absolute;
         #[cfg(test)]

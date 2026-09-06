@@ -751,10 +751,31 @@ impl<G> HotCommand<G> {
         TracedTokenWord::from_parts(self.token.word, self.token.origin)
     }
 
+    /// Returns the category attached to the delivered spelling.  Matcher and
+    /// raw token-list scans use this compact fact; it is deliberately distinct
+    /// from the effective command class in `CommandWord`.
+    #[inline(always)]
+    pub(crate) const fn literal_catcode(&self) -> Option<Catcode> {
+        self.token.word.literal_catcode()
+    }
+
+    /// Whether the settled effective meaning is TeX's paragraph command.
+    /// This is kept on the compact command so the matcher does not project a
+    /// `ResolvedMeaning` merely to identify `\par`.
+    #[inline(always)]
+    pub(crate) fn is_effective_paragraph(&self) -> bool {
+        self.command.unexpandable_primitive() == Some(UnexpandablePrimitive::Par)
+    }
+
+    #[inline(always)]
+    pub(crate) fn is_paragraph_spelling(&self, paragraph: Option<TokenWord>) -> bool {
+        matches!(paragraph, Some(token) if token == self.token.word)
+    }
+
     /// Whether this compact delivery was replaced by TeX82 §23's temporary
-    /// recovery space.  Macro matching consumes this fact directly; the
-    /// ordinary command facade exposes the same bit through
-    /// [`CurrentCommand::is_outer_recovery_space`].
+    /// recovery space.  Macro matching and raw token collection consume this
+    /// fact directly; a rich command is needed only at a genuine recovery
+    /// boundary.
     pub(crate) const fn is_outer_recovery_space(&self) -> bool {
         self.token
             .site
@@ -1036,111 +1057,6 @@ impl<G> HotCommand<G> {
     }
 }
 
-/// One raw token delivered specifically to the macro matcher.
-///
-/// The matcher never needs TeX's rich `CurrentCommand`: literal spelling,
-/// effective command class, outer/recovery state, paragraph identity, and the
-/// exact delivery/alignment coordinates are sufficient.  The compact command
-/// remains attached so an exceptional paragraph/right-brace path can perform
-/// the canonical stamped backup without reconstructing a rich value.
-#[derive(Debug)]
-pub(crate) struct MacroMatchDelivery<G> {
-    command: HotCommand<G>,
-    literal_catcode: Option<Catcode>,
-    paragraph_spelling: bool,
-    effective_paragraph: bool,
-}
-
-impl<G> Copy for MacroMatchDelivery<G> {}
-
-impl<G> Clone for MacroMatchDelivery<G> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<G> MacroMatchDelivery<G> {
-    #[inline(always)]
-    pub(crate) fn from_hot(
-        command: HotCommand<G>,
-        literal_catcode: Option<Catcode>,
-        paragraph_token: Option<TokenWord>,
-    ) -> Self {
-        let paragraph_spelling =
-            paragraph_token.is_some_and(|token| token == command.spelling_word());
-        let effective_paragraph =
-            command.command_word().unexpandable_primitive() == Some(UnexpandablePrimitive::Par);
-        Self {
-            command,
-            literal_catcode,
-            paragraph_spelling,
-            effective_paragraph,
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn word(&self) -> TokenWord {
-        self.command.spelling_word()
-    }
-
-    #[inline(always)]
-    pub(crate) const fn spelling(&self) -> TracedTokenWord {
-        self.command.spelling()
-    }
-
-    #[inline(always)]
-    pub(crate) const fn origin(&self) -> OriginId {
-        self.command.origin()
-    }
-
-    #[inline(always)]
-    pub(crate) const fn literal_catcode(&self) -> Option<Catcode> {
-        self.literal_catcode
-    }
-
-    #[inline(always)]
-    pub(crate) const fn paragraph_spelling(&self) -> bool {
-        self.paragraph_spelling
-    }
-
-    #[inline(always)]
-    pub(crate) const fn effective_paragraph(&self) -> bool {
-        self.effective_paragraph
-    }
-
-    #[inline(always)]
-    pub(crate) const fn is_outer(&self) -> bool {
-        self.command.is_outer()
-    }
-
-    #[inline(always)]
-    pub(crate) const fn is_outer_recovery_space(&self) -> bool {
-        self.command.is_outer_recovery_space()
-    }
-
-    #[inline(always)]
-    pub(crate) const fn delivery_stamp(&self) -> DeliveryStamp {
-        self.command.delivery_stamp()
-    }
-
-    #[inline(always)]
-    pub(crate) const fn alignment_adjustment(
-        &self,
-    ) -> crate::processor::AlignmentDeliveryAdjustment {
-        self.command.alignment_adjustment()
-    }
-
-    #[inline(always)]
-    pub(crate) const fn direct_source_line_number(&self) -> Option<u32> {
-        self.command.direct_source_line_number()
-    }
-
-    #[inline(always)]
-    pub(crate) fn into_hot(self) -> HotCommand<G> {
-        self.command
-    }
-}
-
 impl<G> CurrentCommand<G> {
     /// Resolves one delivered spelling into TeX's effective current command.
     ///
@@ -1273,17 +1189,6 @@ impl<G> CurrentCommand<G> {
             .set(CommandDeliveryFlags::DIRECT_SOURCE, false);
         self.delivery_flags
             .set(CommandDeliveryFlags::OUTER_RECOVERY_SPACE, true);
-    }
-
-    /// Whether §23 replaced this delivery by its temporary recovery space.
-    ///
-    /// The space is TeX's effective current command after the forbidden
-    /// outer token has been backed up; it is not an input token for an active
-    /// `scan_toks` collector to append before the inserted right brace closes
-    /// the runaway text.
-    pub(crate) const fn is_outer_recovery_space(&self) -> bool {
-        self.delivery_flags
-            .contains(CommandDeliveryFlags::OUTER_RECOVERY_SPACE)
     }
 
     /// Completes TeX82's `get_x_token` conversion of inaccessible

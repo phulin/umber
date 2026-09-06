@@ -10,7 +10,7 @@ use tex_state::meaning::{Meaning, ResolvedMeaning};
 use tex_state::token::{Catcode, Token, TracedTokenWord};
 
 use crate::CommandReplayDelivery;
-use crate::command::{CurrentCommand, HotCommand, MacroMatchDelivery};
+use crate::command::{CurrentCommand, HotCommand};
 use crate::error::CommandError;
 
 use super::CommandProcessor;
@@ -83,9 +83,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                     if delimiter {
                         let command = destination
                             .take()
-                            .ok_or_else(CommandError::input_invariant)?
-                            .materialize();
-                        self.begin_scalar_alignment_v_template(&command)?;
+                            .ok_or_else(CommandError::input_invariant)?;
+                        self.begin_scalar_alignment_v_template_hot(&command)?;
                         continue;
                     }
                     return Ok(super::DeliveryStatus::Command);
@@ -195,17 +194,41 @@ impl<G> CommandProcessor<'_, '_, G> {
         delivery
     }
 
-    /// Delivers one raw token for TeX82 §394's macro matcher.  The canonical
-    /// source/resident reader still owns tokenization and settlement; only
-    /// the final command projection is kept compact so successful matching
-    /// does not materialize `CurrentCommand` values.
+    /// Delivers one raw token for TeX82 §394's macro matcher into the same
+    /// caller-owned compact slot used by the other synchronous collectors.
+    /// The canonical source/resident reader still owns tokenization and
+    /// settlement; no matcher-specific delivery wrapper is constructed.
     pub(crate) fn get_macro_match_token(
         &mut self,
-        paragraph_token: Option<tex_state::token::TokenWord>,
-    ) -> Result<Option<MacroMatchDelivery<G>>, CommandError> {
+        destination: &mut Option<HotCommand<G>>,
+    ) -> Result<super::DeliveryStatus, CommandError> {
+        let delivery = self.get_token_hot_into(destination);
+        #[cfg(test)]
+        if matches!(delivery, Ok(super::DeliveryStatus::Command)) {
+            // Keep the existing matcher-path metric: one compact
+            // classification per raw token accepted by the scalar matcher.
+            self.command
+                .token_collector_path_counters
+                .raw_classifications = self
+                .command
+                .token_collector_path_counters
+                .raw_classifications
+                .saturating_add(1);
+        }
+        delivery
+    }
+
+    /// Delivers one raw token into compact caller-owned storage.  This is the
+    /// `get_token` counterpart to [`Self::get_next_hot_into`]: control-sequence
+    /// creation is enabled for the duration of the exact same raw loop, while
+    /// the settled hot command remains reusable by the caller.
+    pub(crate) fn get_token_hot_into(
+        &mut self,
+        destination: &mut Option<HotCommand<G>>,
+    ) -> Result<super::DeliveryStatus, CommandError> {
         debug_assert!(!self.create_source_control_sequences);
         self.create_source_control_sequences = true;
-        let delivery = self.raw_next_matcher(paragraph_token);
+        let delivery = self.get_next_hot_into(destination);
         self.create_source_control_sequences = false;
         delivery
     }

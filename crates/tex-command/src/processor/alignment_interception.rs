@@ -2,7 +2,7 @@
 
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
 
-use crate::command::{CurrentCommand, MacroMatchDelivery};
+use crate::command::{CurrentCommand, HotCommand};
 use crate::error::CommandError;
 use crate::input::{InputLevel, RetirementBehavior, TokenBehavior};
 use crate::observation::{AlignmentRecord, CommandObservation};
@@ -260,7 +260,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// a `CurrentCommand` solely for this boundary.
     pub(crate) fn begin_scalar_alignment_v_template_hot(
         &mut self,
-        delivery: &MacroMatchDelivery<G>,
+        delivery: &HotCommand<G>,
     ) -> Result<(), CommandError> {
         let alignment = self
             .command

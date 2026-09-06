@@ -235,30 +235,31 @@ settlement rather than returning through a second hot helper.
 Each synchronous raw, expanded, matcher, or main-character episode keeps an
 episode-local resident-frame selection (row index and concrete storage tag)
 until a cold input transition changes the visible top. The matcher calls that
-same read/admit authority and projects a compact `MacroMatchDelivery`; it
-settles an alignment delimiter once before continuing, so delimiter matching
-does not create a rich `CurrentCommand` or repeat the top selection.
+same read/admit authority into its caller-owned `HotCommand` slot and reads
+the settled spelling and command facts directly; it settles an alignment
+delimiter once before continuing, so delimiter matching does not create a
+rich `CurrentCommand`, a matcher wrapper, or a repeated top selection.
 Parameter substitution and ordinary token exhaustion mutate the input stack
 and immediately reselect its authoritative top. Cold source-line acquisition,
 source EOF, retained templates, and replay-completion publication alone leave
 that compiled resident loop through an explicit transition.
 
-The structural collectors consume that same compact expanded delivery. The
+The structural collectors consume that same compact delivery. The
 `\csname`/`\ifcsname` name scan keeps one caller-owned `HotCommand` slot and
 tests its packed command class or literal character word directly; ordinary
 name characters append to the existing name builder without materializing a
 `CurrentCommand`. An `end_cs_name` command is recognized by its packed
 meaning, not by source spelling. Only missing-`\endcsname` recovery takes the
-hot value across the established rich `back_error` boundary. The expanded
-`scan_toks` replacement collector uses the same hot slot for every retained
-token, appending its packed spelling and origin directly to the selected
-builder. Its `\the`, `\unexpanded`, and `\detokenize` branches retain their
-existing synchronous child-scan semantics; they do not introduce a second
-expansion loop or result envelope. Observation projects directly from the hot
-value; outer recovery, diagnostics, and genuine outward scanner boundaries are
-the only rich paths. A resource miss unwinds these ordinary collector calls
-and returns to host-owned full-checkpoint replay, with no collector
-continuation or per-token command reconstruction.
+hot value across the established rich `back_error` boundary. The `scan_toks`
+replacement collector uses the same hot slot for every retained token in both
+expanded and unexpanded (`get_token`) modes, appending its packed spelling and
+origin directly to the selected builder. Its `\the`, `\unexpanded`, and
+`\detokenize` branches retain their existing synchronous child-scan semantics;
+they do not introduce a second expansion loop or result envelope. Observation
+projects directly from the hot value; outer recovery, diagnostics, and genuine
+outward scanner boundaries are the only rich paths. A resource miss unwinds
+these ordinary collector calls and returns to host-owned full-checkpoint replay,
+with no collector continuation or per-token command reconstruction.
 
 The input side writes into that same final command value. The top input level
 keeps its packed frame position, backing handle, source cursor, and rollback
@@ -3057,11 +3058,13 @@ For an expanded scan it follows the canonical structure:
 7. preserve compact `OutParameter` and escaped-parameter rules; and
 8. stop at the inaccessible collector boundary without reading caller input.
 
-The replacement loop supplies one caller-owned `Option<CurrentCommand<G>>`
-as the delivery destination. Classification, observation, and spelling borrow
-the resident command, then successful progress clears the option in place.
-Only TeX's real backup path consumes it. A resource miss unwinds the local
-collector and returns a cold need; the host later restores a full checkpoint.
+The replacement loop supplies one caller-owned `Option<HotCommand<G>>` as the
+delivery destination in both expanded and unexpanded modes. Classification,
+observation, and spelling borrow the resident command, then successful
+progress clears the option in place. Only TeX's real backup path consumes it;
+an outward scanner still materializes `CurrentCommand` at its established
+boundary. A resource miss unwinds the local collector and returns a cold need;
+the host later restores a full checkpoint.
 This keeps ordinary collection destination-directed without a returned-command
 handoff, a heap indirection, or generation-long retention.
 

@@ -395,11 +395,12 @@ coarse region lease until that row drains. A global `\let` of a local source is
 the exceptional one-time span copy into revision-global storage and reuses the
 source-region-owned promotion key.
 
-Raw and expanded command delivery uses one concrete destination loop. Each
-active request admits its caller-provided `Option<CurrentCommand<G>>` only at
-the boundary, then owns one compact `HotToken { word, origin, site }` and one
-fixed 16-byte `CommandWord<G>` across resident retries, classification, and
-synchronous macro expansion.
+Raw and expanded command delivery uses the existing concrete destination
+loops. Public and outward scanner requests admit their caller-provided
+`Option<CurrentCommand<G>>` at the rich boundary; synchronous raw collectors
+instead pass one caller-owned `Option<HotCommand<G>>` and retain the same
+compact `HotToken { word, origin, site }` and fixed 16-byte `CommandWord<G>`
+across resident retries, classification, and synchronous macro expansion.
 Every concrete resident arm advances its existing storage-domain cursor and
 ends that borrow with only the packed word, origin, position, and source
 scalars. One branch-independent `HotCommand::write_resolved_delivery` call
@@ -468,17 +469,19 @@ macro-parameter replay. The ordinary path therefore does not reconstruct a
 complete token merely to ask whether it needs interception, and meaning
 resolution remains the single full spelling classification.
 
-Macro argument collection begins only after that raw-delivery boundary. Each
-delivered command projects its spelling, brace kind, paragraph-token identity,
-and required recovery flags once. An admitted `MacroMatchWriter` owns the one
-accepted-token settlement over the reusable word lane: the lane returns its
-new absolute cursor and the same borrow updates writer-local paragraph,
-brace-depth, and removable-outer-group aggregates. Delimiter-prefix storage is
-the existing semantic holdback lane, enriched with those first facts; overlap
-recovery moves the retained record into the writer without classifying its word
-or provenance again. The matcher reads the writer's depth directly, and sealing
-projects its aggregate without scanning stored words. No command, input frame,
-token buffer, or second argument representation crosses this transition.
+Macro argument collection begins only after that raw-delivery boundary. The
+matcher reuses the caller-owned `HotCommand` slot and reads its spelling,
+literal brace kind, paragraph-token identity, and required recovery flags
+directly; there is no matcher-specific delivery wrapper or rich intermediate
+projection. An admitted `MacroMatchWriter` owns the one accepted-token
+settlement over the reusable word lane: the lane returns its new absolute
+cursor and the same borrow updates writer-local paragraph, brace-depth, and
+removable-outer-group aggregates. Delimiter-prefix storage is the existing
+semantic holdback lane, enriched with those first facts; overlap recovery moves
+the retained record into the writer without classifying its word or provenance
+again. The matcher reads the writer's depth directly, and sealing projects its
+aggregate without scanning stored words. No command, input frame, token buffer,
+or second argument representation crosses this transition.
 Definitions carry their validated marker offsets in the immutable header, so
 invocation does not reconstruct that pattern. A compulsory literal prefix with
 no numbered parameters is matched directly and never creates a `MacroMatch`,
@@ -589,10 +592,10 @@ never becomes command-state storage, rollback state, or a searchable result
 channel.
 
 The canonical `scan_toks` replacement collector keeps one caller-owned
-`HotCommand` destination for its complete synchronous expanded loop. Packed
-class/operand inspection, observation, brace accounting, and token spelling
-all use that value directly, and a successful iteration clears it for immediate
-reuse. `\csname` and `\ifcsname` use the same compact destination while
+`HotCommand` destination for both its synchronous expanded and unexpanded
+(`get_token`) loops. Packed class/operand inspection, observation, brace
+accounting, and token spelling all use that value directly, and a successful
+iteration clears it for immediate reuse. `\csname` and `\ifcsname` use the same compact destination while
 appending literal character words to their existing name builder; the
 `end_cs_name` meaning is a packed command boundary rather than a source-spelling
 test. Only actual backup, diagnostic, outer-recovery, or an outward scanner
@@ -982,17 +985,20 @@ snapshot roots share immutable active segments and never relocate live words.
 The input-stack vector may keep capacity for reuse, but it must not keep the
 popped source backing.
 
-Raw delivery writes directly into the active request's caller-owned
-`CurrentCommand`. Admission consumes the `PackedTokenSpanHandle` into a
+Public raw delivery writes directly into the active request's caller-owned
+`CurrentCommand`. Synchronous macro matching and raw `scan_toks` use the
+parallel compact `get_macro_match_token`/`get_token_hot_into` entry and keep
+the settled `HotCommand` in their caller-owned slot until they append or take
+an actual backup. Admission consumes the `PackedTokenSpanHandle` into a
 concrete replay, attempt, or durable input-row variant; stored delivery
-dispatches from that top-row tag and projects the resident packed word into final
-meaning and spelling fields, and advance their packed frame in place. Source
-levels write the same destination after tokenization. Parameter interception
-is a direct frame-loop exit before resolution and may push a literal argument
-level before the loop reselects the new top. The reference-only empty-slot proof
-retains no backing handle or cursor, needs no rollback record, and is never
-retained across a resource miss; cold input transitions return only copy-small
-facts after its reborrow has ended.
+dispatches from that top-row tag and projects the resident packed word into
+final meaning and spelling fields, and advance their packed frame in place.
+Source levels write the same destination after tokenization. Parameter
+interception is a direct frame-loop exit before resolution and may push a
+literal argument level before the loop reselects the new top. The reference-only
+empty-slot proof retains no backing handle or cursor, needs no rollback record,
+and is never retained across a resource miss; cold input transitions return only
+copy-small facts after its reborrow has ended.
 
 Resolution consumes the empty-slot reborrow and returns only packed scalar
 facts to the same loop. It then borrows the caller-owned command slot directly.
