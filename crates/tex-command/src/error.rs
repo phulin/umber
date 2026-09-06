@@ -113,7 +113,9 @@ pub enum CommandError {
     FuelExhausted {
         limit: u64,
         burned: u64,
-        work: crate::CommandWorkCounters,
+        /// Fuel diagnostics are cold; keep their detailed snapshot out of
+        /// every hot `Result<_, CommandError>` carrier.
+        work: Box<crate::CommandWorkCounters>,
     },
     /// A stale or malformed input-level transition was observed.
     InputInvariant(InputInvariantOrigin),

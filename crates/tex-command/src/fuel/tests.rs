@@ -11,10 +11,10 @@ fn exact_limit_funds_exactly_that_many_actions() {
         Err(crate::CommandError::FuelExhausted {
             limit: 3,
             burned: 3,
-            work: CommandWorkCounters {
+            work: Box::new(CommandWorkCounters {
                 fuel_charges: 3,
                 ..CommandWorkCounters::default()
-            },
+            }),
         })
     );
     assert_eq!(fuel.burned(), 3);
@@ -35,10 +35,10 @@ fn authority_scale_limits_publish_exact_terminal_counts() {
             Err(crate::CommandError::FuelExhausted {
                 limit,
                 burned: limit,
-                work: CommandWorkCounters {
+                work: Box::new(CommandWorkCounters {
                     fuel_charges: limit,
                     ..CommandWorkCounters::default()
-                },
+                }),
             })
         );
     }

@@ -202,7 +202,7 @@ impl CommandFuel {
     #[cold]
     #[inline(never)]
     fn exhausted_error(&self) -> crate::CommandError {
-        let work = self.work();
+        let work = Box::new(self.work());
         crate::CommandError::FuelExhausted {
             limit: self.limit,
             burned: work.fuel_charges,
