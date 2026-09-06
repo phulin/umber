@@ -705,7 +705,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 next.materialize(),
                 ILLEGAL_UNLESS_OPERAND_DIAGNOSTIC,
                 message,
-                &["I'll pretend you didn't say \\unless."],
+                &["Continue, and I'll forget that it ever happened."],
             )?;
             return Ok(());
         };

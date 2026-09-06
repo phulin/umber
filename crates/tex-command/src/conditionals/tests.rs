@@ -930,6 +930,124 @@ fn unless_inverts_boolean_conditions_and_restores_the_scanner_after_fi() {
     });
 }
 
+fn assert_unless_illegal_operand_recovers_to_relax_and_continues<G>(
+    processor: &mut CommandProcessor<'_, '_, G>,
+    relax: Token,
+) {
+    let mut destination = None;
+    assert_eq!(
+        processor
+            .get_x_token_into(&mut destination)
+            .expect("illegal unless recovery delivery"),
+        DeliveryStatus::Command
+    );
+    let recovered = destination
+        .take()
+        .expect("back_error returns the rejected token");
+    assert_eq!(recovered.spelling().semantic_token(), relax);
+    assert_eq!(recovered.meaning(), ResolvedMeaning::Static(Meaning::Relax));
+
+    assert_eq!(next_character(processor), 'T');
+    assert_eq!(next_character(processor), 'S');
+    assert_expanded_end(processor);
+    assert!(processor.command.conditions.current().is_none());
+    assert!(processor.command.scanner.is_quiescent());
+    assert!(!processor.command.delivery_mode.scanner_active());
+}
+
+#[test]
+fn unless_illegal_operand_uses_canonical_help_and_preserves_following_condition() {
+    crate::test_harness::with_universe(|universe| {
+        let unless = install(universe, "unless-illegal", ExpandablePrimitive::Unless);
+        let if_true = install(
+            universe,
+            "unless-illegal-iftrue",
+            ExpandablePrimitive::IfTrue,
+        );
+        let otherwise = install(universe, "unless-illegal-else", ExpandablePrimitive::Else);
+        let fi = install(universe, "unless-illegal-fi", ExpandablePrimitive::Fi);
+        let relax_symbol = universe.intern("relax").expect("relax name");
+        universe
+            .assign_meaning(
+                relax_symbol,
+                MeaningWord::from_static(Meaning::Relax),
+                AssignmentScope::Global,
+            )
+            .expect("relax meaning");
+        let relax = Token::Cs(relax_symbol.symbol());
+
+        for observed in [false, true] {
+            let mut command = CommandState::default();
+            crate::test_harness::push(
+                &mut command,
+                [
+                    unless,
+                    relax,
+                    if_true,
+                    other('T'),
+                    otherwise,
+                    other('F'),
+                    fi,
+                    other('S'),
+                ],
+            );
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut fuel = crate::CommandFuelLedger::default();
+            let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut context = universe.command_context().expect("command context");
+            context
+                .assign_int_param(
+                    tex_state::env::banks::IntParam::ESCAPE_CHAR,
+                    '\\' as i32,
+                    AssignmentScope::Global,
+                )
+                .expect("canonical escape character");
+            if observed {
+                let mut observer = InsertedRowBalanceObserver::default();
+                let mut processor = crate::test_harness::processor(
+                    &mut command,
+                    &mut context,
+                    &mut capabilities,
+                    &mut fuel,
+                    &mut diagnostic_effects,
+                )
+                .with_observer(&mut observer);
+                assert_unless_illegal_operand_recovers_to_relax_and_continues(
+                    &mut processor,
+                    relax,
+                );
+            } else {
+                let mut processor = crate::test_harness::processor(
+                    &mut command,
+                    &mut context,
+                    &mut capabilities,
+                    &mut fuel,
+                    &mut diagnostic_effects,
+                );
+                assert_unless_illegal_operand_recovers_to_relax_and_continues(
+                    &mut processor,
+                    relax,
+                );
+            }
+
+            let diagnostics = command.take_semantic_diagnostics();
+            assert!(matches!(
+                diagnostics.as_slice(),
+                [CommandSemanticDiagnostic::Recoverable {
+                    identity,
+                    message,
+                    help,
+                    ..
+                }] if *identity == ILLEGAL_UNLESS_OPERAND_DIAGNOSTIC
+                    && message == "You can't use `\\unless' before `\\relax'."
+                    // e-TeX 2.6 change [25.367] supplies this canonical help.
+                    && *help == ["Continue, and I'll forget that it ever happened."]
+            ));
+            assert!(command.take_semantic_diagnostics().is_empty());
+        }
+    });
+}
+
 #[test]
 fn extra_delimiter_recovery_keeps_following_input_and_owns_its_diagnostic() {
     crate::test_harness::with_universe(|universe| {
