@@ -20,6 +20,7 @@ pub enum LiteralHintKind {
     Package,
     Input,
     IncludeGraphics,
+    FontMetric,
 }
 
 impl LiteralHintKind {
@@ -30,15 +31,19 @@ impl LiteralHintKind {
             Self::Package => "usepackage",
             Self::Input => "input",
             Self::IncludeGraphics => "includegraphics",
+            Self::FontMetric => "DeclareFontShape",
         }
     }
 
     #[must_use]
     pub const fn file_kind(self) -> FileKind {
-        // TeX Live's canonical file catalogue keeps graphics and runtime
-        // inputs in the tex namespace; the caller retains its richer engine
-        // FileKind when admitting the resulting hint.
-        FileKind::Tex
+        match self {
+            Self::FontMetric => FileKind::Tfm,
+            // TeX Live's canonical file catalogue keeps graphics and runtime
+            // inputs in the tex namespace; the caller retains its richer
+            // engine FileKind when admitting the resulting hint.
+            _ => FileKind::Tex,
+        }
     }
 }
 
@@ -54,10 +59,11 @@ impl LiteralHint {
     /// Returns the bounded catalogue candidate for this semantic hint.
     ///
     /// Extraction deliberately retains the source spelling in [`Self::name`]
-    /// so callers can preserve the lookup context.  TeX's known class,
-    /// package, and input surfaces have a predictable default suffix when the
-    /// final path component has no explicit extension; graphics keep their
-    /// existing extension/search behavior.
+    /// so callers can preserve the lookup context. TeX's known class, package,
+    /// and input surfaces have a predictable default suffix when the final
+    /// path component has no explicit extension; font metrics always use one
+    /// terminal `.tfm`; graphics keep their existing extension/search
+    /// behavior.
     #[must_use]
     pub fn normalized_name(&self) -> String {
         normalize_literal_hint_name(self.kind, &self.name)
@@ -68,17 +74,33 @@ impl LiteralHint {
 /// changing the spelling used by the eventual resolver.
 ///
 /// This is predictor-only behavior: it does not assert that the candidate
-/// exists or alter provider precedence.  Only a missing extension on the
-/// final path component receives a semantic default.  Dots in directory
-/// names do not suppress the default, and graphics remain extensionless so
-/// their existing image search policy continues to decide the winner.
+/// exists or alter provider precedence. Class, package, and input hints
+/// receive a semantic default only when the final path component has no
+/// extension; dots in directory names do not suppress the default. Font
+/// metrics always use one terminal `.tfm`, and graphics remain extensionless
+/// so their existing image search policy continues to decide the winner.
 #[must_use]
 pub fn normalize_literal_hint_name(kind: LiteralHintKind, name: &str) -> String {
+    if kind == LiteralHintKind::FontMetric {
+        // A font declaration names a metric, whose canonical request always
+        // carries exactly one lowercase `.tfm` suffix.  Remove repeated
+        // terminal suffixes before adding the canonical one so a source typo
+        // cannot create a distinct transport identity for the same spelling.
+        let mut base = name;
+        while let Some(stripped) = base.strip_suffix(".tfm") {
+            base = stripped;
+        }
+        let mut normalized = String::with_capacity(base.len() + 4);
+        normalized.push_str(base);
+        normalized.push_str(".tfm");
+        return normalized;
+    }
     let extension = match kind {
         LiteralHintKind::DocumentClass => Some("cls"),
         LiteralHintKind::Package => Some("sty"),
         LiteralHintKind::Input => Some("tex"),
         LiteralHintKind::IncludeGraphics => None,
+        LiteralHintKind::FontMetric => Some("tfm"),
     };
     let Some(extension) = extension else {
         return name.to_owned();
@@ -160,8 +182,29 @@ pub fn extract_literal_hints(source: &str, limits: LiteralHintLimits) -> Vec<Lit
             "usepackage" | "RequirePackage" => LiteralHintKind::Package,
             "input" | "include" => LiteralHintKind::Input,
             "includegraphics" => LiteralHintKind::IncludeGraphics,
+            "DeclareFontShape" => LiteralHintKind::FontMetric,
             _ => continue,
         };
+        if kind == LiteralHintKind::FontMetric {
+            let cursor = skip_hint_space(source, index);
+            let Some((payload, end)) = font_metric_payload(source, cursor) else {
+                continue;
+            };
+            // A declaration's five balanced groups are one lexical unit. Even
+            // an unsupported payload must not expose control sequences nested
+            // inside it as unrelated top-level hints.
+            index = end;
+            let Some(name) = parse_font_shape_payload(payload, limits.max_name_bytes) else {
+                continue;
+            };
+            output.push(LiteralHint {
+                kind,
+                original_spelling: name.to_owned(),
+                name: name.to_owned(),
+                byte_offset: slash,
+            });
+            continue;
+        }
         let mut cursor = skip_horizontal_space(source, index);
         if matches!(
             kind,
@@ -213,6 +256,19 @@ fn skip_horizontal_space(source: &str, mut index: usize) -> usize {
     index
 }
 
+fn skip_hint_space(source: &str, mut index: usize) -> usize {
+    loop {
+        index = skip_horizontal_space(source, index);
+        if source.as_bytes().get(index) == Some(&b'%') && !escaped(source, index) {
+            index = source[index..]
+                .find('\n')
+                .map_or(source.len(), |offset| index + offset);
+            continue;
+        }
+        return index;
+    }
+}
+
 fn balanced_bracket(source: &str, start: usize, open: u8, close: u8) -> Option<usize> {
     let mut depth = 0_u32;
     let mut index = start;
@@ -250,6 +306,117 @@ fn literal_argument(source: &str, start: usize, max_name_bytes: usize) -> Option
         let argument = source.get(start..end)?;
         (!argument.is_empty() && argument.len() <= max_name_bytes).then_some((argument, end))
     }
+}
+
+fn font_metric_payload(source: &str, start: usize) -> Option<(&str, usize)> {
+    let mut cursor = start;
+    for group in 0..5 {
+        cursor = skip_hint_space(source, cursor);
+        if source.as_bytes().get(cursor) != Some(&b'{') {
+            return None;
+        }
+        let end = balanced_bracket(source, cursor, b'{', b'}')?;
+        if group == 4 {
+            let payload = source.get(cursor + 1..end - 1)?;
+            return Some((payload, end));
+        }
+        cursor = end;
+    }
+    None
+}
+
+fn parse_font_shape_payload(payload: &str, max_name_bytes: usize) -> Option<&str> {
+    let mut cursor = skip_hint_space(payload, 0);
+    if payload.get(cursor..cursor + 3) != Some("<->") {
+        return None;
+    }
+    cursor += 3;
+    cursor = skip_hint_space(payload, cursor);
+
+    // The direct form permits a metric literally named `s`; only treat `s`
+    // as the scale marker when the following token is actually `*`.
+    let direct_start = cursor;
+    if payload.get(cursor..cursor + 1) == Some("s") {
+        let after_marker = skip_hint_space(payload, cursor + 1);
+        if payload.as_bytes().get(after_marker) == Some(&b'*') {
+            cursor = skip_hint_space(payload, after_marker + 1);
+            if payload.as_bytes().get(cursor) != Some(&b'[') {
+                return None;
+            }
+            let scale_end = balanced_bracket(payload, cursor, b'[', b']')?;
+            let scale = payload.get(cursor + 1..scale_end - 1)?;
+            if !literal_numeric_scale(scale) {
+                return None;
+            }
+            cursor = skip_hint_space(payload, scale_end);
+        } else {
+            cursor = direct_start;
+        }
+    }
+
+    let (name, end) = literal_font_name(payload, cursor, max_name_bytes)?;
+    if skip_hint_space(payload, end) != payload.len() {
+        return None;
+    }
+    Some(name)
+}
+
+fn literal_numeric_scale(scale: &str) -> bool {
+    let mut cursor = skip_hint_space(scale, 0);
+    if matches!(scale.as_bytes().get(cursor), Some(b'+' | b'-')) {
+        cursor += 1;
+        cursor = skip_hint_space(scale, cursor);
+    }
+    let integer_start = cursor;
+    while scale
+        .as_bytes()
+        .get(cursor)
+        .is_some_and(|byte| byte.is_ascii_digit())
+    {
+        cursor += 1;
+    }
+    let integer_digits = cursor != integer_start;
+    let fractional_digits = if scale.as_bytes().get(cursor) == Some(&b'.') {
+        cursor += 1;
+        let fractional_start = cursor;
+        while scale
+            .as_bytes()
+            .get(cursor)
+            .is_some_and(|byte| byte.is_ascii_digit())
+        {
+            cursor += 1;
+        }
+        cursor != fractional_start
+    } else {
+        false
+    };
+    (integer_digits || fractional_digits) && skip_hint_space(scale, cursor) == scale.len()
+}
+
+fn literal_font_name(source: &str, start: usize, max_name_bytes: usize) -> Option<(&str, usize)> {
+    let mut end = start;
+    while end < source.len() {
+        let character = source.get(end..)?.chars().next()?;
+        if character.is_whitespace()
+            || matches!(character, '%' | '#' | '{' | '}' | '\\')
+            || character.is_control()
+        {
+            break;
+        }
+        end += character.len_utf8();
+    }
+    let name = source.get(start..end)?;
+    if name.is_empty()
+        || name.len() > max_name_bytes
+        || name.starts_with('/')
+        || name.contains(':')
+        || name
+            .split('/')
+            .any(|component| component.is_empty() || matches!(component, "." | ".."))
+    {
+        return None;
+    }
+    Some((name, end))
 }
 
 fn escaped(source: &str, index: usize) -> bool {
@@ -585,19 +752,21 @@ fn literal_hint_request(
     depth: usize,
 ) -> Option<PrefetchRequest> {
     let name = hint.normalized_name();
-    let key = crate::FileRequestKey::new(FileKind::Tex, name).ok()?;
+    let file_kind = hint.kind.file_kind();
+    let key = crate::FileRequestKey::new(file_kind, name).ok()?;
     let file_key = PrefetchFileKey::new(
         "tex",
         if hint.kind == LiteralHintKind::IncludeGraphics {
             "image"
         } else {
-            "tex"
+            file_kind.manifest_name()
         },
         key.normalized_name(),
     )?;
     let transport_key = key.manifest_key().to_string();
     let class = match hint.kind {
         LiteralHintKind::IncludeGraphics => PrefetchClass::Image,
+        LiteralHintKind::FontMetric => PrefetchClass::Font,
         _ => PrefetchClass::for_key(&transport_key),
     };
     let request = if typed {

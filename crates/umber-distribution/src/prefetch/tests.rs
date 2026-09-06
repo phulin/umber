@@ -135,6 +135,108 @@ fn malformed_or_dynamic_arguments_are_not_hints() {
 }
 
 #[test]
+fn font_metric_hints_extract_direct_and_literal_scaled_names() {
+    let source = r#"
+\DeclareFontShape {OT1}{ptm}{m}{n}{<-> ptmr7t}
+\DeclareFontShape{OT1}{ptm}{b}{n}{<->s*[1.04]ptmb7t.tfm}
+\DeclareFontShape{OT1}{ptm}{m}{it}{<-> s * [1.0] ptmri7t}
+"#;
+    let hints = extract_literal_hints(source, LiteralHintLimits::default());
+    assert_eq!(
+        hints
+            .iter()
+            .map(|hint| (
+                hint.kind,
+                hint.name.as_str(),
+                hint.original_spelling.as_str()
+            ))
+            .collect::<Vec<_>>(),
+        [
+            (LiteralHintKind::FontMetric, "ptmr7t", "ptmr7t"),
+            (LiteralHintKind::FontMetric, "ptmb7t.tfm", "ptmb7t.tfm"),
+            (LiteralHintKind::FontMetric, "ptmri7t", "ptmri7t"),
+        ]
+    );
+    assert_eq!(LiteralHintKind::FontMetric.command(), "DeclareFontShape");
+    assert_eq!(LiteralHintKind::FontMetric.file_kind(), FileKind::Tfm);
+    assert_eq!(
+        normalize_literal_hint_name(LiteralHintKind::FontMetric, "ptmb7t.tfm.tfm"),
+        "ptmb7t.tfm"
+    );
+}
+
+#[test]
+fn font_metric_hints_skip_dynamic_alias_and_trailing_payloads() {
+    let source = r#"
+\DeclareFontShape{OT1}{ptm}{m}{n}{<-> ssub * ptm/m/n}
+\DeclareFontShape{OT1}{ptm}{m}{n}{<-> sub * ptm/m/n}
+\DeclareFontShape{OT1}{ptm}{m}{n}{<-> gen * ptm}
+\DeclareFontShape{OT1}{ptm}{m}{n}{<-> fixed * ptm}
+\DeclareFontShape{OT1}{ptm}{m}{n}{<5-10> ptm}
+\DeclareFontShape{OT1}{ptm}{m}{n}{<-> s * [\scale] ptm}
+\DeclareFontShape{OT1}{ptm}{m}{n}{<-> s * [1.04] \fontname}
+\DeclareFontShape{OT1}{ptm}{m}{n}{<-> \input{nested}}
+\DeclareFontShape{OT1}{ptm}{m}{n}{<-> ptm extra}
+"#;
+    assert!(extract_literal_hints(source, LiteralHintLimits::default()).is_empty());
+}
+
+#[test]
+fn font_metric_hints_honor_comments_group_bounds_and_literal_limits() {
+    let source = r#"
+\DeclareFontShape% declaration comment
+  {OT1}% family comment
+  {ptm}{m}{n}% series comment
+  {<-> s % scale marker comment
+    * [1.04] % scale comment
+    ptmb7t}% payload comment
+\DeclareFontShape{OT1}{ptm}{m}{n}{<-> ptmr7t trailing}
+\DeclareFontShape{OT1}{ptm}{m}{n}{<-> ptm{nested}}
+"#;
+    let hints = extract_literal_hints(
+        source,
+        LiteralHintLimits {
+            max_hints: 1,
+            max_name_bytes: 6,
+        },
+    );
+    assert_eq!(
+        hints
+            .iter()
+            .map(|hint| hint.name.as_str())
+            .collect::<Vec<_>>(),
+        ["ptmb7t"]
+    );
+
+    let unbalanced = r#"\DeclareFontShape{OT1}{ptm}{m}{n}{<-> ptmr7t"#;
+    assert!(extract_literal_hints(unbalanced, LiteralHintLimits::default()).is_empty());
+}
+
+#[test]
+fn font_metric_prefetch_requests_use_tfm_identity_and_font_budget_class() {
+    let source = r#"
+\DeclareFontShape{OT1}{ptm}{m}{n}{<-> ptmr7t}
+\DeclareFontShape{OT1}{ptm}{b}{n}{<-> s*[1.04]ptmb7t.tfm}
+"#;
+    let mut policy = PrefetchPolicy::new(PrefetchBudget {
+        max_files: 1,
+        ..PrefetchBudget::default()
+    });
+    assert_eq!(policy.enqueue_literal_hints(source), 1);
+    let requests = policy.drain(2);
+    let [request] = requests.as_slice() else {
+        panic!("expected one bounded font request");
+    };
+    assert_eq!(request.key, "tfm:ptmr7t.tfm");
+    assert_eq!(request.class, PrefetchClass::Font);
+    assert_eq!(request.original_spelling, "ptmr7t");
+    assert_eq!(
+        request.file_key,
+        Some(PrefetchFileKey::new("tex", "tfm", "ptmr7t.tfm").expect("typed TFM key"))
+    );
+}
+
+#[test]
 fn group_selection_keeps_required_and_separate_class_budgets() {
     let entry = |key: &str, bytes: u64| PrefetchCandidate {
         key: key.to_owned(),
