@@ -42,7 +42,7 @@ impl PackageDatabase {
                 }
             } else if runfiles
                 && let (Some(package), Some(path)) =
-                    (package.as_ref(), line.strip_prefix(" texmf-dist/"))
+                    (package.as_ref(), runtime_path(line))
                 && let Some(previous) = owners.insert(path.to_owned(), package.clone())
                 && previous != *package
             {
@@ -99,6 +99,11 @@ impl PackageDatabase {
     }
 }
 
+fn runtime_path(line: &str) -> Option<&str> {
+    line.strip_prefix(" texmf-dist/")
+        .or_else(|| line.strip_prefix(" RELOC/"))
+}
+
 fn extend_peer_hints(hints: &mut BTreeSet<String>, owner: &str, peers: &BTreeSet<String>) {
     hints.extend(
         peers
@@ -127,5 +132,23 @@ mod tests {
         assert_eq!(database.owners["tex/a.sty"], "alpha");
         assert!(!database.owners.contains_key("doc/a.tex"));
         assert_eq!(database.dependencies["alpha"], ["beta"]);
+    }
+
+    #[test]
+    fn treats_reloc_and_texmf_dist_runfiles_as_equivalent_runtime_paths() {
+        let legacy = PackageDatabase::parse(
+            "name amsmath\nrunfiles size=4\n texmf-dist/tex/latex-dev/amsmath/amsbsy.sty\n texmf-dist/tex/latex-dev/amsmath/amsmath.sty\n texmf-dist/tex/latex-dev/amsmath/amsopn.sty\n texmf-dist/tex/latex-dev/amsmath/amstext.sty\n",
+        )
+        .expect("legacy tlpdb");
+        let reloc = PackageDatabase::parse(
+            "name amsmath\nrunfiles size=4\n RELOC/tex/latex-dev/amsmath/amsbsy.sty\n RELOC/tex/latex-dev/amsmath/amsmath.sty\n RELOC/tex/latex-dev/amsmath/amsopn.sty\n RELOC/tex/latex-dev/amsmath/amstext.sty\n",
+        )
+        .expect("reloc tlpdb");
+
+        assert_eq!(legacy.owners, reloc.owners);
+        assert_eq!(
+            reloc.owners["tex/latex-dev/amsmath/amsmath.sty"],
+            "amsmath"
+        );
     }
 }

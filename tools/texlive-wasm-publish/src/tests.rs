@@ -910,6 +910,42 @@ fn derives_bounded_cross_package_and_package_peer_hints_from_tlpdb() -> Result<(
 }
 
 #[test]
+fn derives_amsmath_peer_hints_from_reloc_runfiles() -> Result<()> {
+    let fixture = TempDir::new()?;
+    let root_path = fixture.path().join("root");
+    fs::create_dir_all(&root_path)?;
+    let package_files = ["amsmath", "amsbsy", "amsopn", "amstext"];
+    for name in package_files {
+        write(
+            &root_path,
+            &format!("tex/latex-dev/amsmath/{name}.sty"),
+            name.as_bytes(),
+        )?;
+    }
+    let database = fixture.path().join("texlive.tlpdb");
+    let runfiles = package_files
+        .iter()
+        .map(|name| format!(" RELOC/tex/latex-dev/amsmath/{name}.sty"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(
+        &database,
+        format!("name amsmath\nrunfiles size=4\n{runfiles}\n"),
+    )?;
+    let mut config = config(vec![root("runtime", &root_path)?]);
+    config.dependencies.clear();
+    config.package_database = Some(database);
+
+    let manifest = publish(&config, &fixture.path().join("out"))?;
+    assert_eq!(
+        manifest.files["tex:amsmath.sty"].dependencies,
+        ["tex:amsbsy.sty", "tex:amsopn.sty", "tex:amstext.sty"]
+    );
+    assert!(manifest.files["tex:amsmath.sty"].dependencies.len() <= 16);
+    Ok(())
+}
+
+#[test]
 fn large_package_peer_hints_rotate_with_bounded_deterministic_output() -> Result<()> {
     const FILE_COUNT: usize = 24;
     const PEER_BUDGET: usize = 16;
