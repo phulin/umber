@@ -930,9 +930,22 @@ fn scan_toks_keeps_its_one_step_collector_and_direct_splice_boundary() {
         .split("fn expand_unexpanded(")
         .nth(1)
         .expect("locate standalone unexpanded replay");
+    let production_scan = scanner
+        .split("pub(crate) fn scan_toks_buffers(")
+        .nth(1)
+        .and_then(|tail| {
+            tail.split("/// Rejects one unpublished scanner result")
+                .next()
+        })
+        .expect("locate production scan_toks ownership");
 
     assert_eq!(scanner.matches("fn scan_toks_inner(").count(), 1);
-    assert!(scanner.contains("let mut pending = ScanToksLocal"));
+    assert!(production_scan.contains("let mut collector = TokenCollector::default();"));
+    assert!(production_scan.contains("self.prepare_scan_toks_collector("));
+    assert!(!production_scan.contains("begin_scan_toks_collector"));
+    assert!(!production_scan.contains("Result<TokenCollector"));
+    assert!(!scanner.contains("ScanToksLocal"));
+    assert!(production_scan.contains("let mut phase = ScanToksStage::Opening;"));
     assert!(scanner.contains("phase: &mut ScanToksStage"));
     assert!(collector.contains("let mut destination = None;"));
     for retired_carrier in [
@@ -970,8 +983,11 @@ fn scan_toks_keeps_its_one_step_collector_and_direct_splice_boundary() {
             "resident collector must not retain retired route {retired_route}"
         );
     }
-    assert!(scanner.contains("collector: TokenCollector<G>"));
     assert!(scanner.contains("collector: &mut TokenCollector<G>"));
+    assert!(scanner.contains("fn prepare_scan_toks_collector("));
+    assert!(scanner.contains("fn settle_failed_scan_toks("));
+    assert!(token_collector.contains("destination: Option<TokenCollectorDestination<G>>"));
+    assert!(token_collector.contains("fn prepare_destination("));
     assert!(!scanner.contains("struct ScanToksCollector"));
     assert!(token_collector.contains("pub(crate) struct TokenCollector<G>"));
     assert!(!token_collector.contains("TokenCollectorDestination::MacroArgument"));

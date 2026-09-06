@@ -91,6 +91,17 @@ run, without a second pending-facts representation. A resource miss unwinds
 the collector; no `scan_toks` continuation is published. The host restores a
 full replay anchor before ordinary collection runs again.
 
+The production `scan_toks_buffers` path keeps its one `TokenCollector` in one
+stack location from destination admission through scanning, sealing, and
+cleanup. Its scope, scanner episode, diagnostic start, configuration, and
+phase remain adjacent locals rather than a `ScanToksLocal` aggregate that owns
+the collector or a by-value successful `Result<TokenCollector, ...>` carrier.
+The admitted definition writer is still released before attempt-scope or
+resource rollback; only the small completed storage descriptor crosses the
+scanner boundary. The separate `read_toks` line collector may retain its cold
+by-value construction because it uses attempt-owned definition storage and is
+not the production `scan_toks_buffers` route.
+
 ## Lifetime matrix
 
 "May cross" below means that the value may intentionally survive the named

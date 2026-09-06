@@ -246,50 +246,6 @@ impl<G> ScannedWords<'_, G> {
     }
 }
 
-/// Local owner of one token collector while its synchronous scan is running.
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) struct ScanToksLocal<G> {
-    /// Exact parent suffix before either mutable sink was admitted.
-    ///
-    /// Successful completion publishes the sinks to the parent operation.
-    /// Cancellation or failed publication first closes the live
-    /// scanner scope, then truncates through this mark so no unreachable sink
-    /// row survives the failed transaction.
-    attempt_opening: AttemptMark,
-    scope: crate::attempt::OwnedAttemptScope,
-    collector: TokenCollector<G>,
-    /// First deferred diagnostic which can belong to this scanner episode.
-    ///
-    /// Completion never mistakes an older, still-unpublished runaway report
-    /// for recovery produced by this scan.
-    diagnostic_start: usize,
-    config: ScanToksConfig,
-    episode: ScannerEpisode,
-    phase: ScanToksStage,
-}
-
-impl<G> ScanToksLocal<G> {
-    pub(crate) fn macro_definition_target(&self, expanded: bool) -> Option<Symbol> {
-        let expected = if expanded {
-            ScanToksExpansion::Expanded
-        } else {
-            ScanToksExpansion::Unexpanded
-        };
-        match (
-            self.config.grammar,
-            self.config.owner,
-            self.config.expansion,
-        ) {
-            (
-                ScanToksGrammar::MacroDefinition,
-                ScanToksOwner::Definition(Some(target)),
-                expansion,
-            ) if expansion == expected => Some(target),
-            _ => None,
-        }
-    }
-}
-
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Eq, PartialEq)]
 enum ScanToksStage {
@@ -553,13 +509,20 @@ impl<G> CommandProcessor<'_, '_, G> {
             .map_err(attempt_command_error)
     }
 
-    fn begin_scan_toks_collector(
+    /// Admits only the destination-specific storage needed by one collector.
+    ///
+    /// The collector itself is initialized by its caller before this fallible
+    /// work starts. Keeping admission separate means a partial allocation can
+    /// be unwound through the attempt mark without constructing and moving a
+    /// complete `TokenCollector` result.
+    fn prepare_scan_toks_collector(
         &mut self,
+        collector: &mut TokenCollector<G>,
         grammar: ScanToksGrammar,
         destination: ScanToksDestination,
         observed: bool,
-    ) -> Result<TokenCollector<G>, CommandError> {
-        let collector = match (grammar, destination) {
+    ) -> Result<(), CommandError> {
+        match (grammar, destination) {
             (ScanToksGrammar::General, ScanToksDestination::Attempt) => {
                 let parameter = self
                     .command
@@ -573,7 +536,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .arena_mut()
                     .allocate_token_buffer()
                     .map_err(attempt_command_error)?;
-                TokenCollector::token_buffers(parameter, replacement)
+                collector
+                    .prepare_token_buffers(parameter, replacement)
+                    .map_err(|()| CommandError::input_invariant())?;
             }
             (ScanToksGrammar::MacroDefinition, ScanToksDestination::Attempt) => {
                 let definition = self
@@ -582,7 +547,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .arena_mut()
                     .allocate_definition_builder()
                     .map_err(attempt_command_error)?;
-                TokenCollector::attempt_definition(definition)
+                collector
+                    .prepare_attempt_definition(definition)
+                    .map_err(|()| CommandError::input_invariant())?;
             }
             (ScanToksGrammar::General, ScanToksDestination::ReplayInput { transform }) => {
                 let builder = self
@@ -592,14 +559,18 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .replay
                     .begin_input_builder()
                     .map_err(scratch_command_error)?;
-                TokenCollector::replay_input(builder, transform, observed)
+                collector
+                    .prepare_replay_input(builder, transform, observed)
+                    .map_err(|()| CommandError::input_invariant())?;
             }
             (ScanToksGrammar::MacroDefinition, ScanToksDestination::Definition { global }) => {
                 let definition = self
                     .state
                     .begin_definition_build(global, OriginId::UNKNOWN)
                     .map_err(definition_allocation_command_error)?;
-                TokenCollector::definition(definition)
+                collector
+                    .prepare_definition(definition)
+                    .map_err(|()| CommandError::input_invariant())?;
             }
             (ScanToksGrammar::MacroDefinition, ScanToksDestination::ReplayInput { .. })
             | (ScanToksGrammar::General, ScanToksDestination::Definition { .. }) => {
@@ -612,6 +583,19 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .token_collector_path_counters
                 .collectors_started += 1;
         }
+        Ok(())
+    }
+
+    /// Cold compatibility path used by `read_toks`. Production
+    /// `scan_toks_buffers` prepares its caller-owned collector directly.
+    fn begin_scan_toks_collector(
+        &mut self,
+        grammar: ScanToksGrammar,
+        destination: ScanToksDestination,
+        observed: bool,
+    ) -> Result<TokenCollector<G>, CommandError> {
+        let mut collector = TokenCollector::default();
+        self.prepare_scan_toks_collector(&mut collector, grammar, destination, observed)?;
         Ok(collector)
     }
 
@@ -997,21 +981,20 @@ impl<G> CommandProcessor<'_, '_, G> {
         // miss is cleaned up below and propagated to the host checkpoint; no
         // collector owner is published into execution scratch.
         let attempt_opening = self.command.attempt.arena().mark();
-        let mut collector = match self.begin_scan_toks_collector(
+        let mut collector = TokenCollector::default();
+        if let Err(error) = self.prepare_scan_toks_collector(
+            &mut collector,
             config.grammar,
             config.destination,
             self.is_observed(),
         ) {
-            Ok(collector) => collector,
-            Err(error) => {
-                self.command
-                    .attempt
-                    .arena_mut()
-                    .truncate(attempt_opening)
-                    .map_err(attempt_command_error)?;
-                return Err(error);
-            }
-        };
+            self.command
+                .attempt
+                .arena_mut()
+                .truncate(attempt_opening)
+                .map_err(attempt_command_error)?;
+            return Err(error);
+        }
         let scope = match self.command.begin_attempt_scanner_scope() {
             Ok(scope) => scope,
             Err(error) => {
@@ -1028,63 +1011,48 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.command.transient.next_builder_identity =
             self.command.transient.next_builder_identity.wrapping_add(1);
         let warning = ScannerWarning(builder.0);
-        let mut pending = ScanToksLocal {
-            attempt_opening,
-            scope,
-            collector,
-            diagnostic_start: self.command.semantic_diagnostics.len(),
-            config,
-            episode: self.begin_scanner_episode(
-                config.scanner_status(builder, warning),
-                config.status_visibility,
-            ),
-            phase: ScanToksStage::Opening,
-        };
-        if let Err(error) = self.admit_scan_toks_definition_writer(&mut pending.collector) {
-            self.settle_failed_scan_toks(pending)?;
+        let diagnostic_start = self.command.semantic_diagnostics.len();
+        let episode = self.begin_scanner_episode(
+            config.scanner_status(builder, warning),
+            config.status_visibility,
+        );
+        let mut phase = ScanToksStage::Opening;
+        if let Err(error) = self.admit_scan_toks_definition_writer(&mut collector) {
+            self.settle_failed_scan_toks(&mut collector, episode, scope, attempt_opening)?;
             return Err(error);
         }
-        let result = self.scan_toks_inner(
-            pending.config,
-            &mut pending.collector,
-            &pending.episode,
-            &mut pending.phase,
-        );
+        let result = self.scan_toks_inner(config, &mut collector, &episode, &mut phase);
         let mut result = match result {
             Ok(result) => result,
             Err(error) if error.is_resource_suspension() => {
                 // `scan_toks` is a synchronous parser.  A missing immutable
                 // resource unwinds the collector and lets the host restore a
                 // full aggregate checkpoint; it never enters a scanner lane.
-                self.settle_failed_scan_toks(pending)?;
+                self.settle_failed_scan_toks(&mut collector, episode, scope, attempt_opening)?;
                 let _ = self.command.scratch.unwind_resource_failure();
                 return Err(error);
             }
             Err(error) => {
-                self.finish_scanner_episode(pending.episode);
-                self.discard_scan_toks_collector(&mut pending.collector)?;
+                self.finish_scanner_episode(episode);
+                self.discard_scan_toks_collector(&mut collector)?;
                 self.command
-                    .discard_attempt_scope_suffix(pending.scope)
+                    .discard_attempt_scope_suffix(scope)
                     .map_err(attempt_command_error)?;
                 self.command
                     .attempt
                     .arena_mut()
-                    .truncate(pending.attempt_opening)
+                    .truncate(attempt_opening)
                     .map_err(attempt_command_error)?;
                 return Err(error);
             }
         };
-        self.render_scan_toks_runaway_if_recovered(
-            pending.config,
-            pending.diagnostic_start,
-            &result,
-        )?;
-        self.finish_scanner_episode(pending.episode);
+        self.render_scan_toks_runaway_if_recovered(config, diagnostic_start, &result)?;
+        self.finish_scanner_episode(episode);
         let completed_tokens = if !self.is_observed() {
             Vec::new()
-        } else if let Some(observed_source) = pending.collector.take_observed_source() {
+        } else if let Some(observed_source) = collector.take_observed_source() {
             observed_source
-        } else if pending.config.purpose.renders_detokenized_result() {
+        } else if config.purpose.renders_detokenized_result() {
             let words = self.scanned_replacement_words(&result)?;
             let mut text = String::new();
             for index in 0..words.len() {
@@ -1118,12 +1086,12 @@ impl<G> CommandProcessor<'_, '_, G> {
             self,
             CommandObservation::TokenList(TokenListRecord {
                 transition: "complete",
-                purpose: pending.config.purpose.canonical_name(),
+                purpose: config.purpose.canonical_name(),
                 tokens: completed_tokens,
             }),
         );
         self.command
-            .defer_attempt_scope_retirement(pending.scope)
+            .defer_attempt_scope_retirement(scope)
             .map_err(attempt_command_error)?;
         if let ScannedToksStorage::ReplayInputBuilder { builder, .. } = result.storage {
             let span = match self
@@ -1159,17 +1127,20 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// the scope first and separately truncates the exact pre-sink suffix.
     fn settle_failed_scan_toks(
         &mut self,
-        mut pending: ScanToksLocal<G>,
+        collector: &mut TokenCollector<G>,
+        episode: ScannerEpisode,
+        scope: crate::attempt::OwnedAttemptScope,
+        attempt_opening: AttemptMark,
     ) -> Result<(), CommandError> {
-        self.finish_scanner_episode(pending.episode);
-        self.discard_scan_toks_collector(&mut pending.collector)?;
+        self.finish_scanner_episode(episode);
+        self.discard_scan_toks_collector(collector)?;
         self.command
-            .discard_attempt_scope_suffix(pending.scope)
+            .discard_attempt_scope_suffix(scope)
             .map_err(attempt_command_error)?;
         self.command
             .attempt
             .arena_mut()
-            .truncate(pending.attempt_opening)
+            .truncate(attempt_opening)
             .map_err(attempt_command_error)
     }
 

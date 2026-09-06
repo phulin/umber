@@ -149,7 +149,11 @@ pub(crate) enum TokenCollectorPhase {
 /// balanced token lists, writes, token assignments, and read-token lists.
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) struct TokenCollector<G> {
-    destination: TokenCollectorDestination<G>,
+    /// Destination admission is separate from the collector's stack-local
+    /// initialization. The production scanner initializes this owner once,
+    /// then prepares this small field after fallible destination admission;
+    /// no by-value collector result needs to cross that boundary.
+    destination: Option<TokenCollectorDestination<G>>,
     phase: TokenCollectorPhase,
     cursor: crate::scanner_kernel::ScannerCursor,
     pending_parameter: Option<PendingParameter>,
@@ -160,61 +164,65 @@ pub(crate) struct TokenCollector<G> {
     definition_writer: Option<tex_state::DefinitionBuildWriter<G>>,
 }
 
+impl<G> Default for TokenCollector<G> {
+    fn default() -> Self {
+        Self {
+            destination: None,
+            phase: TokenCollectorPhase::Parameter,
+            cursor: crate::scanner_kernel::ScannerCursor::default(),
+            pending_parameter: None,
+            definition_writer: None,
+        }
+    }
+}
+
 impl<G> TokenCollector<G> {
-    pub(crate) fn token_buffers(
+    fn prepare_destination(&mut self, destination: TokenCollectorDestination<G>) -> Result<(), ()> {
+        if self.destination.is_some() {
+            return Err(());
+        }
+        self.destination = Some(destination);
+        Ok(())
+    }
+
+    pub(crate) fn prepare_token_buffers(
+        &mut self,
         parameter: AttemptTokenBufferId,
         replacement: AttemptTokenBufferId,
-    ) -> Self {
-        Self {
-            destination: TokenCollectorDestination::TokenBuffers {
-                writer: parameter,
-                replacement,
-                parameter_result: None,
-            },
-            phase: TokenCollectorPhase::Parameter,
-            cursor: crate::scanner_kernel::ScannerCursor::default(),
-            pending_parameter: None,
-            definition_writer: None,
-        }
+    ) -> Result<(), ()> {
+        self.prepare_destination(TokenCollectorDestination::TokenBuffers {
+            writer: parameter,
+            replacement,
+            parameter_result: None,
+        })
     }
 
-    pub(crate) fn definition(definition: tex_state::DefinitionBuildKey<G>) -> Self {
-        Self {
-            destination: TokenCollectorDestination::Definition { definition },
-            phase: TokenCollectorPhase::Parameter,
-            cursor: crate::scanner_kernel::ScannerCursor::default(),
-            pending_parameter: None,
-            definition_writer: None,
-        }
+    pub(crate) fn prepare_definition(
+        &mut self,
+        definition: tex_state::DefinitionBuildKey<G>,
+    ) -> Result<(), ()> {
+        self.prepare_destination(TokenCollectorDestination::Definition { definition })
     }
 
-    pub(crate) fn attempt_definition(definition: AttemptDefinitionId) -> Self {
-        Self {
-            destination: TokenCollectorDestination::AttemptDefinition { definition },
-            phase: TokenCollectorPhase::Parameter,
-            cursor: crate::scanner_kernel::ScannerCursor::default(),
-            pending_parameter: None,
-            definition_writer: None,
-        }
+    pub(crate) fn prepare_attempt_definition(
+        &mut self,
+        definition: AttemptDefinitionId,
+    ) -> Result<(), ()> {
+        self.prepare_destination(TokenCollectorDestination::AttemptDefinition { definition })
     }
 
-    pub(crate) fn replay_input(
+    pub(crate) fn prepare_replay_input(
+        &mut self,
         builder: ReplayInputBuilderId<G>,
         transform: ReplayWordTransform,
         observed: bool,
-    ) -> Self {
-        Self {
-            destination: TokenCollectorDestination::ReplayInput {
-                builder,
-                transform,
-                observed_source: (observed && transform != ReplayWordTransform::Identity)
-                    .then(Vec::new),
-            },
-            phase: TokenCollectorPhase::Parameter,
-            cursor: crate::scanner_kernel::ScannerCursor::default(),
-            pending_parameter: None,
-            definition_writer: None,
-        }
+    ) -> Result<(), ()> {
+        self.prepare_destination(TokenCollectorDestination::ReplayInput {
+            builder,
+            transform,
+            observed_source: (observed && transform != ReplayWordTransform::Identity)
+                .then(Vec::new),
+        })
     }
 
     pub(crate) const fn phase(&self) -> TokenCollectorPhase {
@@ -239,11 +247,17 @@ impl<G> TokenCollector<G> {
     }
 
     pub(crate) const fn destination(&self) -> &TokenCollectorDestination<G> {
-        &self.destination
+        match &self.destination {
+            Some(destination) => destination,
+            None => panic!("token collector destination is not prepared"),
+        }
     }
 
     pub(crate) const fn destination_mut(&mut self) -> &mut TokenCollectorDestination<G> {
-        &mut self.destination
+        match &mut self.destination {
+            Some(destination) => destination,
+            None => panic!("token collector destination is not prepared"),
+        }
     }
 
     pub(crate) fn install_definition_writer(
@@ -251,7 +265,7 @@ impl<G> TokenCollector<G> {
         writer: tex_state::DefinitionBuildWriter<G>,
     ) -> Result<(), ()> {
         if !matches!(
-            &self.destination,
+            self.destination(),
             TokenCollectorDestination::Definition { .. }
         ) || self.definition_writer.replace(writer).is_some()
         {
@@ -273,7 +287,7 @@ impl<G> TokenCollector<G> {
     pub(crate) fn take_observed_source(
         &mut self,
     ) -> Option<Vec<crate::observation::ObservedToken>> {
-        match &mut self.destination {
+        match self.destination_mut() {
             TokenCollectorDestination::ReplayInput {
                 observed_source, ..
             } => observed_source.take(),
