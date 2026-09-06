@@ -13,6 +13,38 @@ use super::{
     PublishConfig, RootConfig, publish, publish_successor, shard_index, tree_ahash64,
     verify_sharded_snapshot, verify_successor,
 };
+use super::sharded::{ObjectInventory, ObjectSink};
+
+#[derive(Default)]
+struct MemoryObjectSink {
+    objects: BTreeMap<String, Vec<u8>>,
+    inventory: ObjectInventory,
+}
+
+impl ObjectSink for MemoryObjectSink {
+    fn write_bytes(
+        &mut self,
+        object: &str,
+        expected_ahash64: &str,
+        expected_bytes: u64,
+        bytes: Vec<u8>,
+    ) -> Result<()> {
+        assert_eq!(object, format!("ahash64-v1-{expected_ahash64}"));
+        assert_eq!(bytes.len() as u64, expected_bytes);
+        if let Some(previous) = self.objects.get(object) {
+            assert_eq!(previous, &bytes, "content-addressed duplicate changed");
+            return Ok(());
+        }
+        self.inventory.objects += 1;
+        self.inventory.bytes += expected_bytes;
+        self.objects.insert(object.to_owned(), bytes);
+        Ok(())
+    }
+
+    fn inventory(&self) -> ObjectInventory {
+        self.inventory
+    }
+}
 
 fn write(root: &Path, relative: &str, bytes: &[u8]) -> Result<()> {
     let path = root.join(relative);
@@ -359,6 +391,64 @@ fn fixture_publication_is_byte_stable_and_content_addressed() -> Result<()> {
         objects_a.get(&format.object).map(Vec::len),
         Some(format.bytes as usize)
     );
+    Ok(())
+}
+
+#[test]
+fn incremental_preparation_matches_filesystem_objects_and_deduplicates() -> Result<()> {
+    let fixture = TempDir::new()?;
+    let root_path = fixture.path().join("root");
+    fs::create_dir_all(&root_path)?;
+    write(&root_path, "tex/first/shared.tex", b"shared bytes")?;
+    write(&root_path, "tex/second/shared.tex", b"shared bytes")?;
+    write(&root_path, "fonts/tfm/public/cm/cmr10.tfm", b"metric")?;
+    let mut config = config(vec![root("runtime", &root_path)?]);
+    config.dependencies.clear();
+
+    let output = fixture.path().join("filesystem");
+    let publication = publish(&config, &output)?;
+    let mut memory = MemoryObjectSink::default();
+    let prepared = super::prepare_full(&config, &mut memory)?;
+    let in_memory = super::sharded::shard_manifest(&prepared.manifest, config.shard_bits)?;
+
+    assert_eq!(publication.files, in_memory.files);
+    assert_eq!(publication.formats, in_memory.formats);
+    let payloads = publication
+        .files
+        .values()
+        .map(|file| file.object.clone())
+        .chain(publication.formats.values().map(|format| format.object.clone()))
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(memory.inventory.objects, payloads.len());
+    assert_eq!(memory.inventory.bytes, payloads.iter().try_fold(0_u64, |total, object| {
+        total.checked_add(memory.objects[object].len() as u64)
+    }).expect("fixture object bytes fit"));
+    for object in payloads {
+        let filesystem_bytes = fs::read(output.join("objects").join(&object))?;
+        assert_eq!(memory.objects[&object], filesystem_bytes);
+    }
+    Ok(())
+}
+
+#[test]
+fn failed_incremental_publication_commits_no_root_manifest() -> Result<()> {
+    let fixture = TempDir::new()?;
+    let root_path = fixture.path().join("root");
+    fs::create_dir_all(&root_path)?;
+    write(&root_path, "tex/plain.tex", b"plain")?;
+    let mut config = config(vec![root("runtime", &root_path)?]);
+    config.dependencies.clear();
+    config.inventory = Some(InventoryConfig {
+        minimum_logical_files: 2,
+        minimum_objects: 2,
+        minimum_bytes: 1,
+    });
+    let output = fixture.path().join("failed");
+
+    let error = publish(&config, &output).expect_err("inventory validation must fail");
+    assert!(error.to_string().contains("inventory is incomplete"));
+    assert!(!output.join("manifest.json").exists());
+    assert!(output.join("objects").is_dir());
     Ok(())
 }
 

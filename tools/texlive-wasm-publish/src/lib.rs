@@ -25,6 +25,10 @@ pub use sharded::{
 
 pub use scan::tree_ahash64;
 use scan::{Candidate, scan_roots};
+use sharded::{
+    FilesystemObjectSink, ObjectSink, write_root_manifest, write_shard_objects,
+    verify_staged_objects, verify_staged_shard_objects,
+};
 use tlpdb::PackageDatabase;
 pub use umber_distribution::Manifest;
 
@@ -127,39 +131,45 @@ struct FormatInputIdentity {
 
 struct PreparedPublication {
     manifest: Manifest,
-    objects: BTreeMap<String, Vec<u8>>,
     fonts: BTreeMap<String, FontManifestRecord>,
     legacy_mappings: BTreeMap<String, LegacyMappingManifestRecord>,
 }
 
 pub fn publish(config: &PublishConfig, output: &Path) -> Result<ShardedPublication> {
     validate_config(config)?;
-    let prepared = match config.profile {
-        PublicationProfile::Full => prepare_full(config)?,
-        PublicationProfile::Html => prepare_html(config)?,
-    };
-    let objects = output.join("objects");
-    fs::create_dir_all(&objects)
-        .with_context(|| format!("create output directory {}", objects.display()))?;
-    for (object, bytes) in &prepared.objects {
-        fs::write(objects.join(object), bytes)
-            .with_context(|| format!("write prepared object {object}"))?;
+    if output.join("manifest.json").exists() {
+        bail!(
+            "publication output already contains a root manifest: {}",
+            output.display()
+        );
     }
+    let mut sink = FilesystemObjectSink::new(output)?;
+    let prepared = match config.profile {
+        PublicationProfile::Full => prepare_full(config, &mut sink)?,
+        PublicationProfile::Html => prepare_html(config, &mut sink)?,
+    };
     let publication = if config.profile == PublicationProfile::Html {
-        write_html_sharded_manifest(
+        let publication = sharded::shard_manifest_with_records(
             &prepared.manifest,
             config.shard_bits,
-            output,
+            HTML_SHARDED_ROOT_SCHEMA,
             &prepared.fonts,
             &prepared.legacy_mappings,
-        )?
+        )?;
+        write_shard_objects(&publication, &mut sink)?;
+        publication
     } else {
-        write_sharded_manifest(&prepared.manifest, config.shard_bits, output)?
+        let publication = sharded::shard_manifest(&prepared.manifest, config.shard_bits)?;
+        write_shard_objects(&publication, &mut sink)?;
+        publication
     };
+    let objects = output.join("objects");
     remove_stale_objects(&objects, &sharded::referenced_objects(&publication))?;
     if let Some(html) = &config.html {
         validate_html_inventory(&html.inventory, output, &publication)?;
     }
+    verify_staged_objects(output, &publication).context("verify staged sharded snapshot")?;
+    write_root_manifest(&publication, output)?;
     verify_sharded_snapshot(output).context("verify staged sharded snapshot")
 }
 
@@ -182,6 +192,12 @@ pub fn publish_successor(
     }
     if config.package_database.is_some() || !config.dependencies.is_empty() {
         bail!("sparse successors preserve the base dependency graph");
+    }
+    if output.join("manifest.json").exists() {
+        bail!(
+            "publication output already contains a root manifest: {}",
+            output.display()
+        );
     }
     verify_base_root(base, base_ahash64)?;
     let base = read_sharded_catalog(base).context("verify successor base catalog")?;
@@ -217,7 +233,8 @@ pub fn publish_successor(
             )
         })
         .collect::<BTreeMap<_, _>>();
-    let mut objects = BTreeMap::new();
+    let mut sink = FilesystemObjectSink::new(output)?;
+    let mut staged_payloads = BTreeSet::new();
     for (key, replacement) in replacements {
         let dependencies = files
             .get(&key)
@@ -226,6 +243,7 @@ pub fn publish_successor(
         let bytes = fs::read(&replacement.source)
             .with_context(|| format!("read successor object {}", replacement.source.display()))?;
         let object = format!("ahash64-v1-{}", replacement.ahash64);
+        sink.write_bytes(&object, &replacement.ahash64, replacement.bytes, bytes)?;
         files.insert(
             key.clone(),
             ManifestFile {
@@ -237,16 +255,16 @@ pub fn publish_successor(
             },
         );
         winners.insert(key, replacement);
-        objects.entry(object).or_insert(bytes);
+        staged_payloads.insert(object);
     }
 
     let mut formats = BTreeMap::new();
     for format in &config.formats {
-        let (name, metadata, bytes) = load_format(format, &winners)?;
+        let (name, metadata) = load_format(format, &winners, &mut sink)?;
         if formats.insert(name.clone(), metadata.clone()).is_some() {
             bail!("duplicate published format name {name:?}");
         }
-        objects.entry(metadata.object).or_insert(bytes);
+        staged_payloads.insert(metadata.object);
     }
     if formats.keys().collect::<Vec<_>>() != base.formats.keys().collect::<Vec<_>>() {
         bail!("sparse successor must replace exactly the base format names");
@@ -259,14 +277,26 @@ pub fn publish_successor(
         fonts: BTreeMap::new(),
         formats,
     };
-    let publication = write_sharded_manifest(&manifest, config.shard_bits, output)?;
-    let referenced_payloads = objects.keys().cloned().collect::<BTreeSet<_>>();
-    let object_dir = output.join("objects");
-    for (object, bytes) in objects {
-        fs::write(object_dir.join(&object), bytes)
-            .with_context(|| format!("write successor payload {object}"))?;
+    let publication = sharded::shard_manifest(&manifest, config.shard_bits)?;
+    write_shard_objects(&publication, &mut sink)?;
+    verify_staged_shard_objects(output, &publication)?;
+    for (key, file) in &publication.files {
+        if base.files.get(key).is_some_and(|prior| file == prior) {
+            continue;
+        }
+        if !staged_payloads.contains(&file.object) {
+            bail!("changed successor key {key:?} has no staged payload");
+        }
+        read_verified_successor_object(output, &file.object_entry(), key)?;
     }
-    verify_sparse_successor(&base, &publication, output, &referenced_payloads)?;
+    for (name, format) in &publication.formats {
+        if !staged_payloads.contains(&format.object) {
+            bail!("successor format {name:?} has no staged payload");
+        }
+        read_verified_successor_object(output, &format.object_entry(), name)?;
+    }
+    write_root_manifest(&publication, output)?;
+    verify_sparse_successor(&base, &publication, output, &staged_payloads)?;
     Ok(publication)
 }
 
@@ -366,23 +396,24 @@ fn read_verified_successor_object(
     Ok(())
 }
 
-fn prepare_full(config: &PublishConfig) -> Result<PreparedPublication> {
+fn prepare_full<S: ObjectSink>(
+    config: &PublishConfig,
+    sink: &mut S,
+) -> Result<PreparedPublication> {
     let candidates = scan_roots(&config.roots)?;
     let winners = flatten_candidates(candidates)?;
     let dependencies = publication_dependencies(config, &winners)?;
     validate_dependencies(&dependencies, &winners)?;
 
-    let mut objects = BTreeMap::new();
     let mut formats = BTreeMap::new();
     for format in &config.formats {
-        let (name, manifest_format, bytes) = load_format(format, &winners)?;
+        let (name, manifest_format) = load_format(format, &winners, sink)?;
         if formats
             .insert(name.clone(), manifest_format.clone())
             .is_some()
         {
             bail!("duplicate published format name {name:?}");
         }
-        objects.entry(manifest_format.object).or_insert(bytes);
     }
 
     let mut files = BTreeMap::new();
@@ -390,38 +421,36 @@ fn prepare_full(config: &PublishConfig) -> Result<PreparedPublication> {
         let bytes = fs::read(&candidate.source)
             .with_context(|| format!("read {}", candidate.source.display()))?;
         let object = format!("ahash64-v1-{}", candidate.ahash64);
-        objects.entry(object.clone()).or_insert(bytes.clone());
+        sink.write_bytes(&object, &candidate.ahash64, candidate.bytes, bytes)?;
         files.insert(
             key.clone(),
             ManifestFile {
                 virtual_path: format!("/texlive/{}", candidate.relative),
                 object,
                 ahash64: candidate.ahash64,
-                bytes: u64::try_from(bytes.len()).context("file length exceeds u64")?,
+                bytes: candidate.bytes,
                 dependencies: dependencies.get(&key).cloned().unwrap_or_default(),
             },
         );
     }
-    let published_bytes = objects.values().try_fold(0_u64, |total, bytes| {
-        total
-            .checked_add(u64::try_from(bytes.len()).context("object length exceeds u64")?)
-            .context("publication byte count overflow")
-    })?;
+    let inventory = sink.inventory();
     validate_inventory(
         config.inventory.as_ref(),
         files.len(),
-        objects.len(),
-        published_bytes,
+        inventory.objects,
+        inventory.bytes,
     )?;
     Ok(PreparedPublication {
         manifest: publication_manifest(config, files, formats),
-        objects,
         fonts: BTreeMap::new(),
         legacy_mappings: BTreeMap::new(),
     })
 }
 
-fn prepare_html(config: &PublishConfig) -> Result<PreparedPublication> {
+fn prepare_html<S: ObjectSink>(
+    config: &PublishConfig,
+    sink: &mut S,
+) -> Result<PreparedPublication> {
     let html = config
         .html
         .as_ref()
@@ -430,7 +459,6 @@ fn prepare_html(config: &PublishConfig) -> Result<PreparedPublication> {
     let mut winners = flatten_candidates(candidates)?;
 
     let mut formats = BTreeMap::new();
-    let mut objects = BTreeMap::new();
     let mut selected_keys = html
         .runtime_file_keys
         .iter()
@@ -440,7 +468,7 @@ fn prepare_html(config: &PublishConfig) -> Result<PreparedPublication> {
         bail!("HTML runtimeFileKeys contains duplicate keys");
     }
     for format in &config.formats {
-        let (name, manifest_format, bytes) = load_format(format, &winners)?;
+        let (name, manifest_format) = load_format(format, &winners, sink)?;
         let closure = manifest_format.input_closure.as_ref().with_context(|| {
             format!("HTML format {name:?} must carry an verified input closure")
         })?;
@@ -451,9 +479,6 @@ fn prepare_html(config: &PublishConfig) -> Result<PreparedPublication> {
         {
             bail!("duplicate published format name {name:?}");
         }
-        objects
-            .entry(manifest_format.object.clone())
-            .or_insert(bytes);
     }
     if formats.is_empty() {
         bail!("HTML publication profile requires at least one selected format");
@@ -500,22 +525,21 @@ fn prepare_html(config: &PublishConfig) -> Result<PreparedPublication> {
         let bytes = fs::read(&candidate.source)
             .with_context(|| format!("read {}", candidate.source.display()))?;
         let object = format!("ahash64-v1-{}", candidate.ahash64);
-        objects.entry(object.clone()).or_insert(bytes.clone());
+        sink.write_bytes(&object, &candidate.ahash64, candidate.bytes, bytes)?;
         files.insert(
             key.clone(),
             ManifestFile {
                 virtual_path: format!("/texlive/{}", candidate.relative),
                 object,
                 ahash64: candidate.ahash64,
-                bytes: u64::try_from(bytes.len()).context("file length exceeds u64")?,
+                bytes: candidate.bytes,
                 dependencies: selected_dependencies.get(&key).cloned().unwrap_or_default(),
             },
         );
     }
-    prepare_html_catalog_objects(html, &catalog, &mut objects)?;
+    prepare_html_catalog_objects(html, &catalog, sink)?;
     Ok(PreparedPublication {
         manifest: publication_manifest(config, files, formats),
-        objects,
         fonts: catalog.fonts,
         legacy_mappings: catalog.legacy_mappings,
     })
@@ -574,10 +598,10 @@ fn validate_html_catalog(
     Ok(())
 }
 
-fn prepare_html_catalog_objects(
+fn prepare_html_catalog_objects<S: ObjectSink>(
     html: &HtmlProfileConfig,
     catalog: &ManifestShard,
-    objects: &mut BTreeMap<String, Vec<u8>>,
+    sink: &mut S,
 ) -> Result<()> {
     let expected = catalog
         .fonts
@@ -604,7 +628,7 @@ fn prepare_html_catalog_objects(
         {
             bail!("HTML catalog object {digest} does not match its declared digest and length");
         }
-        objects.entry(entry.object).or_insert(bytes);
+        sink.write_bytes(&entry.object, digest.as_str(), entry.bytes, bytes)?;
     }
     Ok(())
 }
@@ -709,10 +733,11 @@ fn validate_inventory(
     Ok(())
 }
 
-fn load_format(
+fn load_format<S: ObjectSink>(
     config: &FormatConfig,
     winners: &BTreeMap<String, Candidate>,
-) -> Result<(String, ManifestFormat, Vec<u8>)> {
+    sink: &mut S,
+) -> Result<(String, ManifestFormat)> {
     let metadata_text = fs::read_to_string(&config.metadata)
         .with_context(|| format!("read format metadata {}", config.metadata.display()))?;
     let named = NamedFormat::parse(&metadata_text).context("parse format metadata")?;
@@ -744,7 +769,8 @@ fn load_format(
             named.name
         );
     }
-    Ok((named.name, metadata, bytes))
+    sink.write_bytes(&metadata.object, &metadata.ahash64, metadata.bytes, bytes)?;
+    Ok((named.name, metadata))
 }
 
 fn distribution_ahash64(bytes: &[u8]) -> String {

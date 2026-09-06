@@ -34,7 +34,26 @@ pub(crate) fn scan_roots(roots: &[RootConfig]) -> Result<Vec<Candidate>> {
     for root in roots {
         validate_digest(&root.tree_ahash64)?;
         let entries = supported_files(&root.path)?;
-        let actual = digest_entries(&entries)?;
+        let mut digest = AHash64Hasher::new(HashDomain::DistributionTree);
+        let mut root_candidates = Vec::with_capacity(entries.len());
+        for (relative, source) in entries {
+            let bytes = fs::read(&source)
+                .with_context(|| format!("read source object {}", source.display()))?;
+            let ahash64 = AHash64::for_bytes(HashDomain::DistributionContent, &bytes);
+            digest.write(relative.as_bytes());
+            digest.write([0]);
+            digest.write((bytes.len() as u64).to_be_bytes());
+            digest.write(ahash64.to_le_bytes());
+            let kind = kind_for(Path::new(&relative)).context("supported file lost its kind")?;
+            root_candidates.push(Candidate {
+                kind,
+                relative,
+                source,
+                ahash64: ahash64.hex(),
+                bytes: u64::try_from(bytes.len()).context("source object length exceeds u64")?,
+            });
+        }
+        let actual = digest.finish().hex();
         if actual != root.tree_ahash64 {
             bail!(
                 "TEXMF root {:?} digest mismatch: expected {}, got {}",
@@ -43,24 +62,18 @@ pub(crate) fn scan_roots(roots: &[RootConfig]) -> Result<Vec<Candidate>> {
                 actual
             );
         }
-        for (relative, source) in entries {
-            let fold = relative.to_lowercase();
+        for candidate in root_candidates {
+            let fold = candidate.relative.to_lowercase();
             if let Some(previous) = physical_casefold.get(&fold)
-                && previous != &relative
+                && previous != &candidate.relative
             {
-                bail!("case-fold path collision between {previous:?} and {relative:?}");
+                bail!(
+                    "case-fold path collision between {previous:?} and {:?}",
+                    candidate.relative
+                );
             }
-            physical_casefold.insert(fold, relative.clone());
-            let kind = kind_for(Path::new(&relative)).context("supported file lost its kind")?;
-            let bytes = fs::read(&source)
-                .with_context(|| format!("read source object {}", source.display()))?;
-            all.push(Candidate {
-                kind,
-                relative,
-                source,
-                ahash64: hex_ahash64(&bytes),
-                bytes: u64::try_from(bytes.len()).context("source object length exceeds u64")?,
-            });
+            physical_casefold.insert(fold, candidate.relative.clone());
+            all.push(candidate);
         }
     }
     Ok(all)
@@ -130,9 +143,9 @@ fn digest_entries(entries: &[(String, PathBuf)]) -> Result<String> {
     for (relative, source) in entries {
         let bytes = fs::read(source).with_context(|| format!("read {}", source.display()))?;
         digest.write(relative.as_bytes());
-        digest.write(&[0]);
-        digest.write(&(bytes.len() as u64).to_be_bytes());
-        digest.write(&AHash64::for_bytes(HashDomain::DistributionContent, &bytes).to_le_bytes());
+        digest.write([0]);
+        digest.write((bytes.len() as u64).to_be_bytes());
+        digest.write(AHash64::for_bytes(HashDomain::DistributionContent, &bytes).to_le_bytes());
     }
     Ok(digest.finish().hex())
 }
@@ -173,8 +186,4 @@ fn validate_digest(value: &str) -> Result<()> {
         bail!("treeAHash64 must use lowercase hexadecimal");
     }
     Ok(())
-}
-
-fn hex_ahash64(bytes: &[u8]) -> String {
-    AHash64::for_bytes(HashDomain::DistributionContent, bytes).hex()
 }
