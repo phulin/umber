@@ -11,6 +11,8 @@ use umber_distribution::{
 };
 use umber_hash::{AHash64, AHash64Hasher, HashDomain};
 
+mod bounded_verify;
+
 pub const ROOT_SCHEMA: u32 = SHARDED_ROOT_SCHEMA;
 
 type FetchEntry = ObjectEntry;
@@ -94,9 +96,7 @@ impl ObjectSink for FilesystemObjectSink {
         let actual_bytes = u64::try_from(bytes.len()).context("object length exceeds u64")?;
         let actual_ahash64 = ahash64(&bytes);
         if actual_bytes != expected_bytes || actual_ahash64 != expected_ahash64 {
-            bail!(
-                "object {object} does not match declared digest and length"
-            );
+            bail!("object {object} does not match declared digest and length");
         }
         let first_write = self.admit_identity(object, expected_ahash64, expected_bytes)?;
         if !first_write {
@@ -238,10 +238,16 @@ pub(crate) fn write_root_manifest(publication: &ShardedPublication, output: &Pat
     Ok(())
 }
 
-pub fn verify_sharded_snapshot(output: &Path) -> Result<ShardedPublication> {
-    let publication = read_sharded_catalog(output)?;
-    verify_catalog_objects(output, &publication)?;
-    Ok(publication)
+/// Authenticate a complete sharded publication without assembling a catalog.
+///
+/// Verification is deliberately separate from [`read_sharded_catalog`]. The
+/// latter is the catalog-producing API used by successor and comparison
+/// callers, while this path keeps only compact cross-reference metadata and
+/// one packed shard at a time. Payload objects are streamed in a final pass so
+/// a large publication does not retain either dependency hints or payload
+/// bytes proportional to the complete snapshot.
+pub fn verify_sharded_snapshot(output: &Path) -> Result<()> {
+    bounded_verify::verify(output)
 }
 
 /// Authenticate a complete root and all of its shards without requiring the
@@ -300,10 +306,7 @@ fn verify_catalog_objects(output: &Path, publication: &ShardedPublication) -> Re
 /// Validate all staged payload and packed-shard objects before the root is
 /// committed. This is intentionally separate from `read_sharded_catalog`,
 /// whose root file is the post-commit trust boundary.
-pub(crate) fn verify_staged_objects(
-    output: &Path,
-    publication: &ShardedPublication,
-) -> Result<()> {
+pub(crate) fn verify_staged_objects(output: &Path, publication: &ShardedPublication) -> Result<()> {
     verify_catalog_objects(output, publication)?;
     verify_staged_shard_objects(output, publication)
 }

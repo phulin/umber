@@ -8,12 +8,12 @@ use tempfile::TempDir;
 use umber_distribution::{FontRequestKey, LegacyMappingRequestKey};
 use umber_hash::{AHash64, HashDomain};
 
+use super::sharded::{ObjectInventory, ObjectSink};
 use super::{
     FormatConfig, HtmlInventoryConfig, HtmlProfileConfig, InventoryConfig, PublicationProfile,
-    PublishConfig, RootConfig, publish, publish_successor, shard_index, tree_ahash64,
-    verify_sharded_snapshot, verify_successor,
+    PublishConfig, RootConfig, publish, publish_successor, read_sharded_catalog, shard_index,
+    tree_ahash64, verify_sharded_snapshot, verify_successor,
 };
-use super::sharded::{ObjectInventory, ObjectSink};
 
 #[derive(Default)]
 struct MemoryObjectSink {
@@ -55,6 +55,25 @@ fn write(root: &Path, relative: &str, bytes: &[u8]) -> Result<()> {
 
 fn digest(bytes: &[u8]) -> String {
     AHash64::for_bytes(HashDomain::DistributionContent, bytes).hex()
+}
+
+fn rewrite_packed_shard(
+    output: &Path,
+    index: usize,
+    shard: &umber_distribution::ManifestShard,
+) -> Result<()> {
+    let bytes = umber_distribution::pack_shard(shard)?;
+    let digest = digest(&bytes);
+    fs::write(
+        output.join("objects").join(format!("ahash64-v1-{digest}")),
+        bytes,
+    )?;
+    let manifest_path = output.join("manifest.json");
+    let mut root =
+        umber_distribution::ShardedManifestRoot::parse(&fs::read_to_string(&manifest_path)?)?;
+    root.shards[index] = digest;
+    fs::write(manifest_path, root.to_json())?;
+    Ok(())
 }
 
 fn migrated_plain_format(
@@ -798,6 +817,76 @@ fn verifier_rejects_noncanonical_and_tampered_shards() -> Result<()> {
 }
 
 #[test]
+fn bounded_verifier_rejects_cross_shard_reference_corruption() -> Result<()> {
+    let fixture = TempDir::new()?;
+    let root_path = fixture.path().join("root");
+    fs::create_dir_all(&root_path)?;
+    let names = (0..64)
+        .map(|index| format!("file-{index:02}.tex"))
+        .collect::<Vec<_>>();
+    let shard_bits = 3;
+    let mut pair = None;
+    'owners: for owner in &names {
+        for target in &names {
+            if shard_index(&format!("tex:{owner}"), shard_bits)
+                != shard_index(&format!("tex:{target}"), shard_bits)
+            {
+                pair = Some((owner.clone(), target.clone()));
+                break 'owners;
+            }
+        }
+    }
+    let (owner, target) = pair.expect("fixture names span multiple shards");
+    for name in [&owner, &target] {
+        write(&root_path, &format!("tex/{name}"), b"shared payload")?;
+    }
+    let owner_key = format!("tex:{owner}");
+    let target_key = format!("tex:{target}");
+    let mut config = config(vec![root("runtime", &root_path)?]);
+    config.shard_bits = shard_bits;
+    config.dependencies = BTreeMap::from([(owner_key.clone(), vec![target_key.clone()])]);
+    let output = fixture.path().join("out");
+    let publication = publish(&config, &output)?;
+    assert_eq!(read_sharded_catalog(&output)?, publication);
+    verify_sharded_snapshot(&output)?;
+
+    let target_index = shard_index(&target_key, shard_bits);
+    let mut missing = publication.shards[target_index].clone();
+    missing.files.remove(&target_key);
+    rewrite_packed_shard(&output, target_index, &missing)?;
+    let error = verify_sharded_snapshot(&output).expect_err("missing cross-shard dependency");
+    assert!(error.to_string().contains(&format!(
+        "dependency {target_key} from {owner_key} is absent"
+    )));
+
+    rewrite_packed_shard(&output, target_index, &publication.shards[target_index])?;
+    let owner_index = shard_index(&owner_key, shard_bits);
+    let mut stale = publication.shards[owner_index].clone();
+    stale
+        .files
+        .get_mut(&owner_key)
+        .expect("owner file")
+        .dependencies[0]
+        .virtual_path = "/texlive/tex/stale-target.tex".to_owned();
+    rewrite_packed_shard(&output, owner_index, &stale)?;
+    let error = verify_sharded_snapshot(&output).expect_err("stale cross-shard dependency hint");
+    assert!(error.to_string().contains("has stale inline metadata"));
+
+    rewrite_packed_shard(&output, owner_index, &publication.shards[owner_index])?;
+    let mut conflicting = publication.shards[target_index].clone();
+    conflicting
+        .files
+        .get_mut(&target_key)
+        .expect("target file")
+        .bytes += 1;
+    rewrite_packed_shard(&output, target_index, &conflicting)?;
+    let error =
+        verify_sharded_snapshot(&output).expect_err("conflicting cross-shard object length");
+    assert!(error.to_string().contains("conflicting lengths"));
+    Ok(())
+}
+
+#[test]
 fn ordered_roots_and_paths_define_duplicate_basename_precedence() -> Result<()> {
     let fixture = TempDir::new()?;
     let root_a = fixture.path().join("a");
@@ -1130,6 +1219,31 @@ fn html_profile_is_reproducible_bounded_and_contains_only_html_resources() -> Re
     assert_eq!(
         directory_bytes(&output_a.join("objects"))?,
         directory_bytes(&output_b.join("objects"))?
+    );
+
+    let mapping_output = fixture.path().join("html-mapping-corrupt");
+    let mapping_publication = publish(&config, &mapping_output)?;
+    let mapping_key = mapping_publication
+        .legacy_mappings
+        .keys()
+        .next()
+        .expect("legacy mapping")
+        .clone();
+    let mapping_index = shard_index(&mapping_key, config.shard_bits);
+    let mut mapping_shard = mapping_publication.shards[mapping_index].clone();
+    mapping_shard
+        .legacy_mappings
+        .get_mut(&mapping_key)
+        .expect("mapping record")
+        .license
+        .spdx = "MIT".to_owned();
+    rewrite_packed_shard(&mapping_output, mapping_index, &mapping_shard)?;
+    let error = verify_sharded_snapshot(&mapping_output)
+        .expect_err("mapping/font license mismatch must fail");
+    assert!(
+        error
+            .to_string()
+            .contains("does not match its declared font")
     );
 
     let license = &publication

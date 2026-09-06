@@ -26,8 +26,8 @@ pub use sharded::{
 pub use scan::tree_ahash64;
 use scan::{Candidate, scan_roots};
 use sharded::{
-    FilesystemObjectSink, ObjectSink, write_root_manifest, write_shard_objects,
-    verify_staged_objects, verify_staged_shard_objects,
+    FilesystemObjectSink, ObjectSink, verify_staged_objects, verify_staged_shard_objects,
+    write_root_manifest, write_shard_objects,
 };
 use tlpdb::PackageDatabase;
 pub use umber_distribution::Manifest;
@@ -170,7 +170,8 @@ pub fn publish(config: &PublishConfig, output: &Path) -> Result<ShardedPublicati
     }
     verify_staged_objects(output, &publication).context("verify staged sharded snapshot")?;
     write_root_manifest(&publication, output)?;
-    verify_sharded_snapshot(output).context("verify staged sharded snapshot")
+    verify_sharded_snapshot(output).context("verify staged sharded snapshot")?;
+    Ok(publication)
 }
 
 /// Publish a sparse successor to an verified complete sharded catalog.

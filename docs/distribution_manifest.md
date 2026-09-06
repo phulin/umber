@@ -153,7 +153,11 @@ content-addressed sink, so preparation retains object descriptors and catalog
 metadata rather than the complete payload corpus. Duplicate identities are
 revalidated in place, packed shards use the same sink, and the canonical root
 manifest is atomically committed only after staged payload and shard checks;
-the final root/shard reread is a post-commit authentication pass. A failed
+the final root/shard reread is a bounded three-pass post-commit authentication
+pass. It retains exact compact key metadata, rereads one packed shard at a time,
+and streams each distinct payload through a fixed buffer; it does not assemble
+the catalog or retain dependency hints. `read_sharded_catalog` remains the
+catalog-producing API for successor and comparison callers. A failed
 publication can therefore leave recoverable staged objects without exposing a
 new root manifest, while an existing root remains immutable.
 
