@@ -405,8 +405,12 @@ Every concrete resident arm advances its existing storage-domain cursor and
 ends that borrow with only the packed word, origin, position, and source
 scalars. One branch-independent `HotCommand::write_resolved_delivery` call
 then writes that compact owner. The frame-owned processor loop keeps it and
-consumes the resolver's literal catcode for
-required brace handling, and applies one-delivery suppression before it makes
+consumes the resolver's literal catcode for required brace handling. At
+settlement it reads suppression and outer-ness
+directly from that already-decoded hot command; the persistent
+`DeliveryMode` carries only scanner, observing, alignment, and tracing regime
+bits, so no token-local flag is written, cleared, or read back between
+deliveries. The same local facts drive the existing exceptional branch before
 the expansion-or-return decision. The input row passes its
 already-resident `TokenWord` to the dense meaning lookup, which writes the
 validated packed static meaning or one macro/font operand without first

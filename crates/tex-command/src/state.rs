@@ -154,9 +154,10 @@ pub struct CommandState<G> {
     /// rollback; named checkpoints require this field to be empty. A resource
     /// miss unwinds the operation and the host replays from a full checkpoint.
     pub(crate) active_attempt_operation: Option<crate::CommandAttemptMark>,
-    /// Singular exceptional-delivery authority. Rich scanner/alignment values
-    /// retain cold-path context but are not polled by resident input; bounded
-    /// processor episodes directly install and clear their temporary bits.
+    /// Singular persistent exceptional-delivery authority. Rich
+    /// scanner/alignment values retain cold-path context but are not polled by
+    /// resident input; token-local suppression and outerness arrive directly
+    /// from the settled hot command.
     pub(crate) delivery_mode: DeliveryMode,
     /// Assertion-bearing proof that ordinary input bypasses out-parameter
     /// interception. Shipping builds contain neither the counters nor updates.
@@ -1705,8 +1706,9 @@ impl<G> CommandState<G> {
     }
 
     /// Reinstalls persistent exceptional-delivery bits after a root-level
-    /// checkpoint transition. Episode and per-token bits remain owned by the
-    /// active processor and are never reconstructed here.
+    /// checkpoint transition. Episode state is owned by the active processor,
+    /// while token-local suppression and outerness are read from each hot
+    /// command and are never reconstructed here.
     pub(crate) fn synchronize_delivery_mode_roots(&mut self) {
         self.delivery_mode.set_scanner_active(!matches!(
             self.scanner.status(),

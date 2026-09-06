@@ -3574,6 +3574,7 @@ fn noexpand_suppresses_exactly_one_expandable_delivery() {
             &mut fuel,
             &mut diagnostic_effects,
         );
+        let persistent_mode = processor.command.delivery_mode;
 
         let suppressed = processor
             .get_x_token()
@@ -3581,6 +3582,7 @@ fn noexpand_suppresses_exactly_one_expandable_delivery() {
             .expect("suppressed command");
         assert_eq!(suppressed.spelling().semantic_token(), macro_token);
         assert_eq!(suppressed.meaning(), Meaning::Relax);
+        assert_eq!(processor.command.delivery_mode, persistent_mode);
         assert_eq!(
             processor
                 .get_x_token()
@@ -3590,6 +3592,7 @@ fn noexpand_suppresses_exactly_one_expandable_delivery() {
                 .semantic_token(),
             replacement
         );
+        assert_eq!(processor.command.delivery_mode, persistent_mode);
     });
 }
 

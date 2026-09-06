@@ -781,10 +781,12 @@ impl<G> CommandProcessor<'_, '_, G> {
         command: &mut HotCommand<G>,
         literal_catcode: Option<Catcode>,
     ) -> Result<(), CommandError> {
-        self.command.delivery_mode.begin_token(
-            command.suppresses_expandable_control_sequence(),
-            command.is_outer(),
-        );
+        // These are token-local facts from the already-decoded compact
+        // command. Keep them at the same point where the old token bits were
+        // installed; exceptional settlement may rewrite the command.
+        let suppresses_expandable_control_sequence =
+            command.suppresses_expandable_control_sequence();
+        let outer = command.is_outer();
         self.command.roots.alignment.account_literal_brace(
             &mut self.command.timeline,
             command,
@@ -794,8 +796,16 @@ impl<G> CommandProcessor<'_, '_, G> {
         if command.is_direct_source_delivery() {
             self.readmit_delivery_stamp(command.delivery_stamp());
         }
-        if self.command.delivery_mode.requires_slow_settlement() {
-            self.settle_exceptional_delivery(command)?;
+        if self
+            .command
+            .delivery_mode
+            .requires_slow_settlement(suppresses_expandable_control_sequence, outer)
+        {
+            self.settle_exceptional_delivery(
+                command,
+                suppresses_expandable_control_sequence,
+                outer,
+            )?;
         }
         Ok(())
     }
@@ -2912,19 +2922,22 @@ impl<G> CommandProcessor<'_, '_, G> {
 }
 
 impl<G> CommandProcessor<'_, '_, G> {
-    /// Settles the semantic conditions represented by the authoritative
-    /// delivery-mode word without widening the ordinary hot loops.
+    /// Settles the persistent semantic conditions and token-local facts
+    /// represented by one delivered command without widening the ordinary hot
+    /// loops.
     #[cold]
     #[inline(never)]
     fn settle_exceptional_delivery(
         &mut self,
         command: &mut HotCommand<G>,
+        suppresses_expandable_control_sequence: bool,
+        outer: bool,
     ) -> Result<(), CommandError> {
         let mode = self.command.delivery_mode;
-        if mode.suppresses_next() {
+        if suppresses_expandable_control_sequence {
             command.suppress_expandable();
         }
-        if mode.scanner_active() && mode.outer() {
+        if mode.scanner_active() && outer {
             let mut rich = command.materialize();
             self.check_outer_validity_entry(&mut rich)?;
             *command = HotCommand::from_current(rich);

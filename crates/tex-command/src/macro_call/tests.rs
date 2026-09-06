@@ -171,6 +171,60 @@ fn unobserved_parameterless_macro_activates_directly_and_elides_empty_body_row()
 }
 
 #[test]
+fn outer_macro_matching_returns_to_ordinary_delivery() {
+    crate::test_harness::with_universe(|universe| {
+        let outer = install_macro_with_flags(
+            universe,
+            "outer_sequence",
+            &[Token::Param(1)],
+            MeaningFlags::OUTER,
+        );
+        let begin = Token::Char {
+            ch: '{',
+            cat: Catcode::BeginGroup,
+        };
+        let end = Token::Char {
+            ch: '}',
+            cat: Catcode::EndGroup,
+        };
+        let argument = letter('x');
+        let following = letter('z');
+        let mut command = CommandState::default();
+        crate::test_harness::push(&mut command, [outer, begin, argument, end, following]);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+
+        assert_eq!(
+            processor
+                .get_x_token()
+                .expect("outer macro matching")
+                .expect("matched argument")
+                .spelling()
+                .semantic_token(),
+            argument
+        );
+        assert_eq!(
+            processor
+                .get_x_token()
+                .expect("following ordinary token")
+                .expect("ordinary command")
+                .spelling()
+                .semantic_token(),
+            following
+        );
+    });
+}
+
+#[test]
 fn observed_parameterless_macro_keeps_exceptional_activation_semantics() {
     crate::test_harness::with_universe(|universe| {
         let macro_token = install_replacement_macro(universe, "observedempty", &[]);

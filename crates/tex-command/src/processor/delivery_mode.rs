@@ -1,11 +1,12 @@
-//! Compact authority for exceptional raw-delivery settlement.
+//! Compact authority for persistent exceptional raw-delivery settlement.
 
 /// Conditions that move a delivered token off the ordinary path.
 ///
 /// Rich scanner and alignment values retain context needed by cold handlers.
-/// This byte is nevertheless the delivery authority: transition sites
-/// maintain it directly, and resident delivery never reconstructs it from
-/// those values.
+/// This byte is nevertheless the delivery authority for persistent regime
+/// state: transition sites maintain it directly, and resident delivery never
+/// reconstructs it from those values. Token-local suppression and outerness
+/// are supplied by the already-decoded hot command at settlement time.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct DeliveryMode(u8);
 
@@ -15,12 +16,9 @@ impl DeliveryMode {
     const SCANNER: u8 = 1 << 0;
     const OBSERVING: u8 = 1 << 1;
     const ALIGNMENT: u8 = 1 << 2;
-    const SUPPRESS_NEXT: u8 = 1 << 3;
-    const OUTER: u8 = 1 << 4;
     const TRACING: u8 = 1 << 5;
-    const TOKEN: u8 = Self::SUPPRESS_NEXT | Self::OUTER;
-    const EPISODE: u8 = Self::OBSERVING | Self::TRACING | Self::TOKEN;
-    const SETTLEMENT: u8 = Self::OBSERVING | Self::ALIGNMENT | Self::SUPPRESS_NEXT;
+    const EPISODE: u8 = Self::OBSERVING | Self::TRACING;
+    const SETTLEMENT: u8 = Self::OBSERVING | Self::ALIGNMENT;
 
     #[inline(always)]
     const fn set(&mut self, flag: u8, enabled: bool) {
@@ -54,16 +52,21 @@ impl DeliveryMode {
     }
 
     #[inline(always)]
-    pub(crate) const fn begin_token(&mut self, suppress_next: bool, outer: bool) {
-        self.0 &= !Self::TOKEN;
-        self.set(Self::SUPPRESS_NEXT, suppress_next);
-        self.set(Self::OUTER, outer);
+    pub(crate) const fn requires_slow_settlement(
+        self,
+        suppresses_expandable_control_sequence: bool,
+        outer: bool,
+    ) -> bool {
+        self.0 & Self::SETTLEMENT != 0
+            || suppresses_expandable_control_sequence
+            || (outer && self.0 & Self::SCANNER != 0)
     }
 
+    /// Returns whether persistent delivery state needs settlement after the
+    /// token-local facts have already been consumed.
     #[inline(always)]
-    pub(crate) const fn requires_slow_settlement(self) -> bool {
-        self.0 & Self::SETTLEMENT != 0
-            || self.0 & (Self::SCANNER | Self::OUTER) == (Self::SCANNER | Self::OUTER)
+    pub(crate) const fn requires_persistent_settlement(self) -> bool {
+        self.requires_slow_settlement(false, false)
     }
 
     #[inline(always)]
@@ -83,14 +86,6 @@ impl DeliveryMode {
         self.0 & Self::ALIGNMENT != 0
     }
 
-    pub(crate) const fn suppresses_next(self) -> bool {
-        self.0 & Self::SUPPRESS_NEXT != 0
-    }
-
-    pub(crate) const fn outer(self) -> bool {
-        self.0 & Self::OUTER != 0
-    }
-
     pub(crate) const fn tracing(self) -> bool {
         self.0 & Self::TRACING != 0
     }
@@ -105,17 +100,14 @@ mod tests {
     use crate::processor::{AlignmentIdentity, ScannerStatus};
 
     #[test]
-    fn token_conditions_replace_only_token_bits() {
+    fn persistent_state_is_unchanged_by_token_facts() {
         let mut mode = DeliveryMode::default();
         mode.set_alignment_active(true);
-        mode.begin_token(true, false);
         assert!(mode.alignment_active());
-        assert!(mode.suppresses_next());
-
-        mode.begin_token(false, true);
-        assert!(mode.alignment_active());
-        assert!(!mode.suppresses_next());
-        assert!(mode.outer());
+        let before = mode;
+        assert!(mode.requires_slow_settlement(true, false));
+        assert!(mode.requires_slow_settlement(false, true));
+        assert_eq!(mode, before);
     }
 
     #[test]
@@ -143,18 +135,33 @@ mod tests {
     }
 
     #[test]
-    fn slow_settlement_requires_delivery_context() {
+    fn slow_settlement_matches_the_previous_boolean_rule() {
+        for scanner in [false, true] {
+            for observing in [false, true] {
+                for alignment in [false, true] {
+                    for tracing in [false, true] {
+                        let mut mode = DeliveryMode::default();
+                        mode.begin_episode(observing, tracing);
+                        mode.set_scanner_active(scanner);
+                        mode.set_alignment_active(alignment);
+                        for suppresses in [false, true] {
+                            for outer in [false, true] {
+                                let old = observing || alignment || suppresses || scanner && outer;
+                                assert_eq!(
+                                    mode.requires_slow_settlement(suppresses, outer),
+                                    old,
+                                    "persistent_bits=(scanner={scanner}, observing={observing}, alignment={alignment}, tracing={tracing}), suppresses={suppresses}, outer={outer}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         let mut mode = DeliveryMode::default();
-        mode.begin_episode(false, true);
-        assert!(!mode.requires_slow_settlement());
-
         mode.set_scanner_active(true);
-        assert!(!mode.requires_slow_settlement());
-
-        mode.begin_token(false, true);
-        assert!(mode.requires_slow_settlement());
-
-        mode.set_scanner_active(false);
-        assert!(!mode.requires_slow_settlement());
+        assert!(!mode.requires_persistent_settlement());
+        assert!(!mode.requires_slow_settlement(false, false));
     }
 }

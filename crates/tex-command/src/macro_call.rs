@@ -370,7 +370,12 @@ impl<G> CommandProcessor<'_, '_, G> {
         parameterless: bool,
         replacement_is_empty: bool,
     ) -> MacroActivationClass {
-        let exceptional = self.command.delivery_mode.requires_slow_settlement()
+        // Settlement has already consumed token-local suppression and outer
+        // facts: suppression leaves a Relax command, while scanner+outer
+        // recovery leaves a space. Neither can be a valid macro dispatch, so
+        // this aggregate check is intentionally persistent-only.
+        let persistent_settlement = self.command.delivery_mode.requires_persistent_settlement();
+        let exceptional = persistent_settlement
             || self.state.int_param(IntParam::TRACING_MACROS) > 0
             || (replacement_is_empty && self.empty_macro_needs_completion_descendant());
         if exceptional {
