@@ -1058,17 +1058,6 @@ impl<'store> VirtualCompileSession<'store> {
         self.reachability_store.clone()
     }
 
-    /// Selects restart-history retention independently of resource caching.
-    /// One-shot clients keep detached evidence but have no future edit whose
-    /// live restart roots could serve.
-    pub(crate) fn set_checkpoint_budget(&mut self, bytes: usize) {
-        assert!(
-            self.incremental.is_none() && self.candidate.is_none(),
-            "checkpoint retention is selected before execution starts"
-        );
-        self.checkpoint_budget = bytes;
-    }
-
     fn execution_budgets(&self) -> tex_exec::ExecutionBudgets {
         tex_exec::ExecutionBudgets {
             steps: self.limits.engine_steps,
@@ -1154,6 +1143,8 @@ impl<'store> VirtualCompileSession<'store> {
             pdf_output_mode: options.pdf_output_mode,
             clock: options.clock,
             limits,
+            // One-shot resource misses use the same bounded restart policy as
+            // incremental sessions so they can replay from a full checkpoint.
             checkpoint_budget: limits.cached_file_bytes,
             workspace: ProjectWorkspace::new(limits.vfs_limits()).map_err(map_vfs_limit)?,
             font_cached_bytes: 0,
