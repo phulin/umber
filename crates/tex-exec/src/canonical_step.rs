@@ -1,13 +1,13 @@
 use std::fmt;
+use std::sync::Arc;
 
-use tex_command::{CommandObserver, CommandSummaryError, FontResource, PdfImageResource};
+use tex_command::{CommandObserver, CommandSummaryError, ResourceProvider};
 use tex_state::Universe;
 use tex_state::fork_arena::{CheckpointMark, ChunkPool, ForkArena};
 
 use crate::{
     Cancellation, CheckpointSink, EngineBoundary, ExecError, ExecutionBudgetCounters, MainControl,
     MainControlStep, ResourceFulfillment, ResourceNeed, SemanticEpisodeBarrier, StepResult,
-    canonical_font_resource_path,
 };
 
 /// Failure returned through the canonical step protocol.
@@ -33,6 +33,11 @@ impl std::error::Error for CanonicalStepFailure {}
 pub enum CanonicalStepResult {
     Progress(MainControlStep),
     ResourceNeed(ResourceNeed),
+    /// A resource provider was called during this operation but declined to
+    /// answer it.  The caller must suspend once and may retry the operation
+    /// with a provider that can answer the owned need; no replay answer has
+    /// been installed in the semantic state.
+    ResourceSuspended(ResourceNeed),
     Committed(MainControlStep),
     Completed(MainControlStep),
     Failed(CanonicalStepFailure),
@@ -480,55 +485,10 @@ impl OutputLedger {
         fulfillment: ResourceFulfillment,
         dependencies: Option<Vec<tex_state::InputDependency>>,
     ) -> Result<(), Box<ResourceFulfillment>> {
-        match (need, fulfillment) {
-            (
-                ResourceNeed::Input { name: expected, .. },
-                ResourceFulfillment::Input { name, source },
-            ) if expected == &name => {
-                match dependencies {
-                    Some(dependencies) => control
-                        .capabilities_mut()
-                        .register_input_with_dependencies(name, source, dependencies),
-                    None => control.capabilities_mut().register_input(name, source),
-                }
-            }
-            (
-                ResourceNeed::InputProbe { request: expected },
-                ResourceFulfillment::InputProbe { request, resource },
-            ) if expected == &request => match dependencies {
-                Some(dependencies) => control
-                    .capabilities_mut()
-                    .register_input_probe_with_dependencies(request.name, resource, dependencies),
-                None => control
-                    .capabilities_mut()
-                    .register_input_probe(request.name, resource),
-            },
-            (
-                ResourceNeed::Font { request: expected },
-                ResourceFulfillment::Font { request, resource },
-            ) if expected == &request => match dependencies {
-                Some(dependencies) => control.capabilities_mut().register_font_with_dependencies(
-                    canonical_font_resource_path(&request.name),
-                    *resource,
-                    dependencies,
-                ),
-                None => control
-                    .capabilities_mut()
-                    .register_font(canonical_font_resource_path(&request.name), *resource),
-            },
-            (
-                ResourceNeed::PdfImage { request: expected },
-                ResourceFulfillment::PdfImage { request, resource },
-            ) if expected == &request => match dependencies {
-                Some(dependencies) => control
-                    .capabilities_mut()
-                    .register_pdf_image_with_dependencies(request, *resource, dependencies),
-                None => control
-                    .capabilities_mut()
-                    .register_pdf_image(request, *resource),
-            },
-            (_, fulfillment) => return Err(Box::new(fulfillment)),
-        }
+        let dependencies = dependencies.map_or_else(|| Arc::from([]), Into::into);
+        control
+            .capabilities_mut()
+            .install_resource_answer(need, fulfillment, dependencies)?;
         control.acknowledge_resource_need();
         Ok(())
     }
@@ -575,35 +535,11 @@ impl OutputLedger {
         register_texinputs_alias: bool,
         dependencies: Vec<tex_state::InputDependency>,
     ) {
-        match need {
-            ResourceNeed::Input { name, .. } => {
-                let capabilities = control.capabilities_mut();
-                capabilities.mark_input_unavailable_with_dependencies(name, dependencies.clone());
-                if register_texinputs_alias && !name.contains(['/', '\\', ':']) {
-                    capabilities.mark_input_unavailable_with_dependencies(
-                        format!("TeXinputs:{name}"),
-                        dependencies,
-                    );
-                }
-            }
-            ResourceNeed::InputProbe { request } => control
-                .capabilities_mut()
-                .mark_input_probe_unavailable_with_dependencies(&request.name, dependencies),
-            ResourceNeed::Font { request } => {
-                control.capabilities_mut().register_font_with_dependencies(
-                    canonical_font_resource_path(&request.name),
-                    FontResource::Unavailable,
-                    dependencies,
-                )
-            }
-            ResourceNeed::PdfImage { request } => control
-                .capabilities_mut()
-                .register_pdf_image_with_dependencies(
-                    request.clone(),
-                    PdfImageResource::Unavailable,
-                    dependencies,
-                ),
-        }
+        control.capabilities_mut().install_resource_unavailable(
+            need,
+            register_texinputs_alias,
+            dependencies,
+        );
         control.acknowledge_resource_need();
     }
 
@@ -664,7 +600,26 @@ impl<'a, G> CanonicalStepRunner<'a, G> {
         sink: &mut dyn CheckpointSink<G>,
         cancellation: &Cancellation,
     ) -> CanonicalStepResult {
-        let result = self.step_inner(sink, cancellation, None);
+        let result = self.step_inner(sink, cancellation, None, None);
+        if let Some(error) = self.control.captured_fatal_error() {
+            CanonicalStepResult::Failed(CanonicalStepFailure::Execution(error))
+        } else if let Some(fatal) = self.control.fatal_error() {
+            CanonicalStepResult::Failed(CanonicalStepFailure::Execution(ExecError::Fatal(fatal)))
+        } else {
+            result
+        }
+    }
+
+    /// Runs one canonical operation with the cold resource provider enabled.
+    /// Ready and unavailable answers continue in this call; only a provider
+    /// decline reaches the outer suspension seam.
+    pub fn step_with_resource_provider(
+        &mut self,
+        sink: &mut dyn CheckpointSink<G>,
+        cancellation: &Cancellation,
+        resource_provider: &mut dyn ResourceProvider<G>,
+    ) -> CanonicalStepResult {
+        let result = self.step_inner(sink, cancellation, None, Some(resource_provider));
         if let Some(error) = self.control.captured_fatal_error() {
             CanonicalStepResult::Failed(CanonicalStepFailure::Execution(error))
         } else if let Some(fatal) = self.control.fatal_error() {
@@ -685,7 +640,7 @@ impl<'a, G> CanonicalStepRunner<'a, G> {
         sink: &mut dyn CheckpointSink<G>,
         cancellation: &Cancellation,
     ) -> CanonicalStepResult {
-        let result = self.step_inner(sink, cancellation, None);
+        let result = self.step_inner(sink, cancellation, None, None);
         match result {
             CanonicalStepResult::Failed(CanonicalStepFailure::Execution(error)) => {
                 if let Some(fatal) = error.as_fatal() {
@@ -707,7 +662,18 @@ impl<'a, G> CanonicalStepRunner<'a, G> {
         cancellation: &Cancellation,
         observer: &mut dyn CommandObserver,
     ) -> CanonicalStepResult {
-        self.step_inner(sink, cancellation, Some(observer))
+        self.step_inner(sink, cancellation, Some(observer), None)
+    }
+
+    /// Observed canonical operation with the cold resource provider enabled.
+    pub fn step_with_observer_and_resource_provider(
+        &mut self,
+        sink: &mut dyn CheckpointSink<G>,
+        cancellation: &Cancellation,
+        observer: &mut dyn CommandObserver,
+        resource_provider: &mut dyn ResourceProvider<G>,
+    ) -> CanonicalStepResult {
+        self.step_inner(sink, cancellation, Some(observer), Some(resource_provider))
     }
 
     fn step_inner(
@@ -715,6 +681,7 @@ impl<'a, G> CanonicalStepRunner<'a, G> {
         sink: &mut dyn CheckpointSink<G>,
         cancellation: &Cancellation,
         observer: Option<&mut dyn CommandObserver>,
+        resource_provider: Option<&mut dyn ResourceProvider<G>>,
     ) -> CanonicalStepResult {
         if cancellation.is_cancelled() {
             self.control
@@ -728,14 +695,27 @@ impl<'a, G> CanonicalStepRunner<'a, G> {
             wants_paragraph
                 .then(|| sink.wants_reachable_state_identity(EngineBoundary::OuterParagraphEnd)),
         );
-        let result = match observer {
-            Some(observer) => self.control.advance_with_observer(self.universe, observer),
-            None => self.control.advance_episode(self.universe),
+        let result = match (observer, resource_provider) {
+            (Some(observer), Some(resource_provider)) => {
+                self.control.advance_with_observer_and_resource_provider(
+                    self.universe,
+                    observer,
+                    resource_provider,
+                )
+            }
+            (Some(observer), None) => self.control.advance_with_observer(self.universe, observer),
+            (None, Some(resource_provider)) => self
+                .control
+                .advance_episode_with_resource_provider(self.universe, resource_provider),
+            (None, None) => self.control.advance_episode(self.universe),
         };
         let step = match result {
             Ok(StepResult::Progress(step)) => step,
             Ok(StepResult::Suspended(need)) => {
-                return CanonicalStepResult::ResourceNeed(need);
+                return self.control.take_declined_resource_attempt().map_or(
+                    CanonicalStepResult::ResourceNeed(need),
+                    CanonicalStepResult::ResourceSuspended,
+                );
             }
             Err(error) => {
                 return CanonicalStepResult::Failed(CanonicalStepFailure::Execution(error));

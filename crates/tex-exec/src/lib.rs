@@ -89,8 +89,8 @@ pub use job::{
 };
 pub use main_control::{
     AdvanceOutcome, AdvanceReadiness, AdvanceTelemetry, DiagnosticStep, DiagnosticStepResult,
-    MainControl, MainControlStep, PreparedCheckpointControl, ResourceNeed, RootCompletionPolicy,
-    StepResult, TrackedStepResult,
+    MainControl, MainControlStep, PreparedCheckpointControl, RootCompletionPolicy, StepResult,
+    TrackedStepResult,
 };
 pub use mode::{
     AlignColumn, AlignState, AlignmentKind, AlignmentPackSpec, Mode, ModeLevelSummary, ModeList,
@@ -105,11 +105,12 @@ pub use retained_generation::{
     RetainedEngineForkError, RetainedEngineGeneration, RetainedEngineOperation,
     RetainedEngineRetirement,
 };
-pub use retained_resource::{
-    ResourceFailure, ResourceFulfillment, ResourceHost, ResourceOutcome, ResourceReplayEffect,
-    ResourceWorld, canonical_font_resource_path,
-};
+pub use retained_resource::{ResourceHost, ResourceHostProvider, ResourceWorld};
 pub use session_api::{
     Cancellation, ExecutionBudgetCounters, ExecutionBudgets, ExecutionTelemetry, PendingInterrupt,
 };
 pub use shipout::retry_unavailable_stream_open;
+pub use tex_command::{
+    ResourceFailure, ResourceFulfillment, ResourceNeed, ResourceOutcome, ResourceProvider,
+    ResourceReplayEffect, ResourceResolution, canonical_font_resource_path,
+};

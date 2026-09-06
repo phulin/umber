@@ -287,6 +287,12 @@ pub enum ExecError {
     MissingPdfImage {
         request: tex_command::PdfImageRequest,
     },
+    /// A synchronous retained-resource provider failed. This is distinct
+    /// from all missing-resource variants and must not enter replay.
+    ResourceFailure {
+        need: Box<tex_command::ResourceNeed>,
+        failure: Box<tex_command::ResourceFailure>,
+    },
     MissingTracedToken {
         context: TracedTokenWord,
     },
@@ -533,6 +539,9 @@ impl fmt::Display for ExecError {
             Self::MissingPdfImage { request } => {
                 write!(f, "image resource `{}` is unavailable", request.name)
             }
+            Self::ResourceFailure { failure, .. } => {
+                write!(f, "resource resolution failed: {failure}")
+            }
             Self::MissingTracedToken { .. } => f.write_str("missing token while scanning input"),
             Self::Command(err) => write!(f, "{err}"),
             Self::InvalidLetRhs { token, .. } => {
@@ -683,6 +692,7 @@ impl std::error::Error for ExecError {
             Self::FontParse(err) => Some(err),
             Self::PdfFontMap(err) => Some(err),
             Self::Command(err) => Some(err),
+            Self::ResourceFailure { failure, .. } => Some(failure),
             Self::NeedResource(_)
             | Self::ExecutionAlreadyTerminated
             | Self::ResourceReplayRequired
@@ -831,6 +841,7 @@ impl ExecError {
             | Self::MissingInputProbe { .. }
             | Self::MissingFont { .. }
             | Self::MissingPdfImage { .. }
+            | Self::ResourceFailure { .. }
             | Self::Fatal(_)
             | Self::Command(_)
             | Self::UnsupportedAssignmentTarget

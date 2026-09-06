@@ -46,7 +46,7 @@ pub(in crate::main_control) const fn assignment_scope(
 }
 
 pub(in crate::main_control) fn command_diagnostic_context<G>(
-    command: &CommandMachine<'_, G>,
+    command: &CommandMachine<'_, '_, G>,
     stores: &tex_state::CommandContext<'_, G>,
 ) -> crate::diagnostics::ExecutionDiagnosticContext {
     // TeX82 §§660--661 formats standalone box diagnostics with the live
@@ -62,7 +62,7 @@ pub(in crate::main_control) fn command_diagnostic_context<G>(
 }
 
 pub(in crate::main_control) fn render_diagnostic_coordinate<G>(
-    command: &CommandMachine<'_, G>,
+    command: &CommandMachine<'_, '_, G>,
     stores: &tex_state::CommandContext<'_, G>,
     coordinate: tex_command::DiagnosticContextCoordinate,
 ) -> Result<String, ExecError> {
@@ -119,7 +119,7 @@ pub(in crate::main_control) fn assign_box_dimension<G>(
 /// survives rollback and final host commit.
 pub(in crate::main_control) fn write_immediate_encoded_text<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, G>,
+    command: &mut CommandMachine<'_, '_, G>,
     sink: PrintSink,
     text: String,
     bytes: Vec<u8>,
@@ -147,7 +147,7 @@ pub(in crate::main_control) fn write_immediate_encoded_text<G>(
 /// that one canonical break into a blank line.
 pub(in crate::main_control) fn write_preframed_immediate_text<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, G>,
+    command: &mut CommandMachine<'_, '_, G>,
     sink: PrintSink,
     text: String,
 ) {
@@ -186,7 +186,7 @@ pub(in crate::main_control) fn print_display_content<G>(
 /// over in save order, so backing it up in reverse reproduces both the input
 /// structure and the order `unsave` observes it in.
 pub(in crate::main_control) fn schedule_aftergroup<G>(
-    command: &mut CommandMachine<'_, G>,
+    command: &mut CommandMachine<'_, '_, G>,
     stores: &mut tex_state::CommandContext<'_, G>,
     tokens: Vec<tex_state::token::TracedTokenWord>,
 ) -> Result<(), ExecError> {
@@ -203,7 +203,7 @@ pub(in crate::main_control) fn schedule_aftergroup<G>(
 
 pub(in crate::main_control) fn warn_cross_file_group_close<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, G>,
+    command: &mut CommandMachine<'_, '_, G>,
 ) {
     let (level, frame) = {
         let frames = stores.group_frames();
@@ -566,7 +566,7 @@ pub(in crate::main_control) fn begin_replay_box<G>(
     modes: &mut ModeNest,
     stores: &mut tex_state::CommandContext<'_, G>,
     boxes: &mut ReplayBoxes<G>,
-    command: &mut CommandMachine<'_, G>,
+    command: &mut CommandMachine<'_, '_, G>,
 ) -> Result<(), ExecError> {
     let kind = ReplayBoxKind::from_scanned(construction.kind);
     let packing = match construction.packing {
@@ -622,7 +622,7 @@ pub(in crate::main_control) fn begin_replay_box<G>(
 pub(in crate::main_control) fn commit_box_normal_paragraph<G>(
     modes: &mut ModeNest,
     stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, G>,
+    command: &mut CommandMachine<'_, '_, G>,
 ) {
     let record =
         (!stores.penalty_array(PenaltyArrayKind::InterLine).is_empty()).then(|| MutationRecord {
@@ -648,7 +648,7 @@ pub(in crate::main_control) fn commit_box_normal_paragraph<G>(
 /// shift.
 pub(in crate::main_control) fn apply_box_shift<G>(
     shift: &mut ScannedBoxShift,
-    command: &mut CommandMachine<'_, G>,
+    command: &mut CommandMachine<'_, '_, G>,
     modes: &mut ModeNest,
     stores: &mut tex_state::CommandContext<'_, G>,
     boxes: &mut ReplayBoxes<G>,
@@ -795,7 +795,7 @@ pub(in crate::main_control) fn read_box_register<G>(
     index: u16,
     copy: bool,
     stores: &mut tex_state::CommandContext<'_, G>,
-    _command: &CommandMachine<'_, G>,
+    _command: &CommandMachine<'_, '_, G>,
 ) -> Option<tex_state::node_arena::PageListId> {
     if !copy {
         return stores.take_box_to_page(index);
@@ -840,7 +840,7 @@ pub(in crate::main_control) fn box_end<G>(
     modes: &mut ModeNest,
     stores: &mut tex_state::CommandContext<'_, G>,
     _prepared_dvi_pages: &mut PreparedDviPages,
-    command: &mut CommandMachine<'_, G>,
+    command: &mut CommandMachine<'_, '_, G>,
 ) -> Result<(), ExecError> {
     match context {
         BoxContext::Append(delta) => append_shifted_box(modes, stores, node, delta, command),
@@ -880,7 +880,7 @@ pub(in crate::main_control) fn commit_set_box_target<G>(
     pending: PendingSetBox,
     boxed: Option<tex_state::node_arena::PageListId>,
     stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, G>,
+    command: &mut CommandMachine<'_, '_, G>,
 ) {
     let PendingSetBox { target, region } = pending;
     let traced_box = boxed;
@@ -907,7 +907,7 @@ pub(in crate::main_control) fn append_shifted_box<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     node: Option<Node>,
     delta: Scaled,
-    command: &mut CommandMachine<'_, G>,
+    command: &mut CommandMachine<'_, '_, G>,
 ) -> Result<(), ExecError> {
     let Some(mut node) = node else {
         return Ok(());
@@ -929,7 +929,7 @@ pub(in crate::main_control) fn append_shifted_box<G>(
 }
 
 pub(in crate::main_control) fn apply_scanned_rule<G>(
-    command: &mut CommandMachine<'_, G>,
+    command: &mut CommandMachine<'_, '_, G>,
     modes: &mut ModeNest,
     stores: &mut tex_state::CommandContext<'_, G>,
     width: Option<Scaled>,
@@ -1273,7 +1273,7 @@ pub(in crate::main_control) fn finish_insert_or_adjust_group<G>(
     pre: bool,
     modes: &mut ModeNest,
     stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, G>,
+    command: &mut CommandMachine<'_, '_, G>,
 ) -> Result<ReplayStep, ExecError> {
     // TeX82 §§993/1100: an outer-vertical insertion invokes `build_page`
     // before main control fetches another command. Preserve this closing
@@ -1923,6 +1923,9 @@ pub(in crate::main_control) fn command_error(error: CommandError) -> ExecError {
             original_name,
         },
         CommandError::MissingInputProbe(request) => ExecError::MissingInputProbe { request },
+        CommandError::ResourceFailure { need, failure } => {
+            ExecError::ResourceFailure { need, failure }
+        }
         CommandError::PdfNavigation(message) => ExecError::PdfNavigation(message),
         // §93 `succumb` is not a command failure to be re-described; it keeps
         // its own identity all the way up to the driver.

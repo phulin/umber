@@ -8,7 +8,7 @@ pub(in crate::main_control) fn begin_next_replay_alignment_cell<G>(
     alignment: AlignmentIdentity,
     delimiter: AlignmentCellDelimiter,
     delimiter_line: u32,
-    command: &mut CommandMachine<'_, G>,
+    command: &mut CommandMachine<'_, '_, G>,
     active_alignment: &mut Option<ActiveReplayAlignment<G>>,
     modes: &mut ModeNest,
     stores: &mut tex_state::CommandContext<'_, G>,
@@ -212,7 +212,7 @@ pub(in crate::main_control) fn report_extra_alignment_tab<G>(
 /// releases the level's `\aftergroup` tokens, so they are backed up here just
 /// as every other canonical group exit does.
 pub(in crate::main_control) fn replace_alignment_entry_save_level<G>(
-    command: &mut CommandMachine<'_, G>,
+    command: &mut CommandMachine<'_, '_, G>,
     stores: &mut tex_state::CommandContext<'_, G>,
 ) -> Result<(), ExecError> {
     let aftergroup = leave_alignment_save_level(

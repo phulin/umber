@@ -1,206 +1,15 @@
 //! Host-neutral immutable resource protocol for retained canonical execution.
 
-use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use tex_command::{
-    FileEnquiryRequest, FileEnquiryResource, FontLoadRequest, FontResource, PdfImageRequest,
-    PdfImageResource, RegisteredSourceKind, SourceRegistration, SourceRole,
+    ResourceNeed, ResourceOutcome, ResourceProvider, ResourceReplayEffect, ResourceResolution,
 };
 use tex_state::{
-    FileContent, InputDependency, InputDependencyAccess, InputDependencyOutcome, InputReadState,
-    SharedBytes, Universe, WorldError,
+    FileContent, InputDependencyAccess, InputDependencyOutcome, InputReadState, SharedBytes,
+    Universe, WorldError,
 };
-
-use crate::ResourceNeed;
-
-/// Returns the exact transient capability key for a canonical font request.
-///
-/// TeX TFM names receive §1257's default `.tfm` extension. Umber's explicit
-/// `opentype:` namespace is already a complete typed resource name and must
-/// never be rewritten as a TFM path.
-#[must_use]
-pub fn canonical_font_resource_path(name: &str) -> std::path::PathBuf {
-    let mut path = std::path::PathBuf::from(name);
-    if !name.starts_with("opentype:") && path.extension().is_none() {
-        path.set_extension("tfm");
-    }
-    path
-}
-
-#[derive(Clone, Debug)]
-pub enum ResourceFulfillment {
-    Input {
-        name: String,
-        source: SourceRegistration,
-    },
-    /// Immutable bytes answering a non-opening pdfTeX file enquiry or
-    /// `\openin` probe. This remains distinct from required input backing so
-    /// a later opening read can upgrade host dependency accounting.
-    InputProbe {
-        request: FileEnquiryRequest,
-        resource: FileEnquiryResource,
-    },
-    Font {
-        request: FontLoadRequest,
-        resource: Box<FontResource>,
-    },
-    PdfImage {
-        request: PdfImageRequest,
-        resource: Box<PdfImageResource>,
-    },
-}
-
-/// An owned, actionable failure while resolving a resource.
-///
-/// This is deliberately separate from [`ResourceOutcome::Declined`]. A
-/// declined request is still pending and may be fulfilled by a later host
-/// round; a failure is final for the current drive and must be surfaced to
-/// the caller without being replayed or recorded as an absence. World-backed
-/// failures retain the shared typed error, including its I/O classification
-/// and path, while host adapters that cannot expose a typed error can retain
-/// their rendered cause.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ResourceFailure {
-    World(WorldError),
-    Message(String),
-}
-
-impl ResourceFailure {
-    #[must_use]
-    pub fn message(message: impl Into<String>) -> Self {
-        Self::Message(message.into())
-    }
-
-    #[must_use]
-    pub fn world(error: WorldError) -> Self {
-        Self::World(error)
-    }
-
-    #[must_use]
-    pub fn as_world_error(&self) -> Option<&WorldError> {
-        match self {
-            Self::World(error) => Some(error),
-            Self::Message(_) => None,
-        }
-    }
-}
-
-impl From<WorldError> for ResourceFailure {
-    fn from(error: WorldError) -> Self {
-        Self::World(error)
-    }
-}
-
-impl fmt::Display for ResourceFailure {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::World(error) => error.fmt(formatter),
-            Self::Message(message) => formatter.write_str(message),
-        }
-    }
-}
-
-impl std::error::Error for ResourceFailure {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::World(error) => Some(error),
-            Self::Message(_) => None,
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub enum ResourceOutcome {
-    /// Immutable bytes or metadata are ready for replay into the engine.
-    Fulfilled(ResourceFulfillment),
-    /// The host authoritatively knows that this request is absent.
-    Unavailable,
-    /// The request is still pending and may be fulfilled by a later host round.
-    Declined,
-    /// Resolving the request failed; the cause must be surfaced immediately.
-    Failed(ResourceFailure),
-}
-
-/// Semantic bookkeeping performed while a host resolves one immutable
-/// resource. The host answer itself is cached outside rollback, while these
-/// effects are replayed into the restored world on every full restart.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ResourceReplayEffect {
-    InputDependency {
-        path: PathBuf,
-        outcome: InputDependencyOutcome,
-        access: InputDependencyAccess,
-    },
-}
-
-impl ResourceReplayEffect {
-    /// Detaches the semantic input fact carried by this retained answer so it
-    /// can be installed in a capability binding and re-recorded on a cached
-    /// hit after rollback.
-    #[must_use]
-    pub fn input_dependency(&self) -> InputDependency {
-        match self {
-            Self::InputDependency {
-                path,
-                outcome,
-                access,
-            } => InputDependency::new(path.clone(), *outcome, *access),
-        }
-    }
-}
-
-impl ResourceFulfillment {
-    #[must_use]
-    pub fn input(name: impl Into<String>, kind: RegisteredSourceKind, bytes: Arc<[u8]>) -> Self {
-        Self::Input {
-            name: name.into(),
-            source: SourceRegistration::new(kind, bytes),
-        }
-    }
-
-    #[must_use]
-    pub fn input_with_role(
-        name: impl Into<String>,
-        kind: RegisteredSourceKind,
-        bytes: Arc<[u8]>,
-        role: SourceRole,
-    ) -> Self {
-        Self::Input {
-            name: name.into(),
-            source: SourceRegistration::new(kind, bytes).with_role(role),
-        }
-    }
-
-    #[must_use]
-    pub fn world_input(name: impl Into<String>, content: FileContent) -> Self {
-        Self::Input {
-            name: name.into(),
-            source: SourceRegistration::world(content),
-        }
-    }
-
-    #[must_use]
-    pub fn world_input_with_role(
-        name: impl Into<String>,
-        content: FileContent,
-        role: SourceRole,
-    ) -> Self {
-        Self::Input {
-            name: name.into(),
-            source: SourceRegistration::world(content).with_role(role),
-        }
-    }
-
-    #[must_use]
-    pub fn world_input_probe(request: FileEnquiryRequest, content: FileContent) -> Self {
-        Self::InputProbe {
-            request,
-            resource: FileEnquiryResource::world(content),
-        }
-    }
-}
 
 trait ResourceWorldBackend {
     fn with_input_read_state(&mut self, operation: &mut dyn FnMut(&mut dyn InputReadState));
@@ -231,8 +40,49 @@ impl<G> ResourceWorldBackend for Universe<G> {
     }
 }
 
+impl<G> ResourceWorldBackend for &mut Universe<G> {
+    fn with_input_read_state(&mut self, operation: &mut dyn FnMut(&mut dyn InputReadState)) {
+        operation(&mut self.input_open_context());
+    }
+
+    fn read_file(&mut self, path: &Path) -> Result<FileContent, WorldError> {
+        self.world_mut().read_file(path)
+    }
+
+    fn register_selected_file(
+        &mut self,
+        path: &Path,
+        bytes: Arc<[u8]>,
+    ) -> Result<FileContent, WorldError> {
+        self.input_open_context()
+            .read_supplied_input_file(path, bytes.into())
+    }
+}
+
+struct InputReadStateBackend<'a> {
+    input: &'a mut dyn InputReadState,
+}
+
+impl ResourceWorldBackend for InputReadStateBackend<'_> {
+    fn with_input_read_state(&mut self, operation: &mut dyn FnMut(&mut dyn InputReadState)) {
+        operation(self.input);
+    }
+
+    fn read_file(&mut self, path: &Path) -> Result<FileContent, WorldError> {
+        self.input.read_input_file(path)
+    }
+
+    fn register_selected_file(
+        &mut self,
+        path: &Path,
+        bytes: Arc<[u8]>,
+    ) -> Result<FileContent, WorldError> {
+        self.input.read_supplied_input_file(path, bytes.into())
+    }
+}
+
 pub struct ResourceWorld<'a> {
-    backend: &'a mut dyn ResourceWorldBackend,
+    backend: Box<dyn ResourceWorldBackend + 'a>,
     replay_effects: Vec<ResourceReplayEffect>,
 }
 
@@ -240,7 +90,18 @@ impl<'a> ResourceWorld<'a> {
     #[must_use]
     pub fn new<G>(stores: &'a mut Universe<G>) -> Self {
         Self {
-            backend: stores,
+            backend: Box::new(stores),
+            replay_effects: Vec::new(),
+        }
+    }
+
+    /// Borrows only the admitted command episode's input World view. The
+    /// resulting resource world cannot reach the surrounding Universe or any
+    /// parser owner.
+    #[must_use]
+    pub fn from_input_read_state(input: &'a mut dyn InputReadState) -> Self {
+        Self {
+            backend: Box::new(InputReadStateBackend { input }),
             replay_effects: Vec::new(),
         }
     }
@@ -328,4 +189,40 @@ impl InputReadState for RecordingInputReadState<'_> {
 
 pub trait ResourceHost {
     fn fulfill(&mut self, world: &mut ResourceWorld<'_>, need: &ResourceNeed) -> ResourceOutcome;
+}
+
+/// Adapter used by ordinary candidate execution. It gives the legacy host
+/// resolver exactly one call through the command episode's narrow input view;
+/// all payloads and dependency facts are owned before returning to command
+/// processing.
+pub struct ResourceHostProvider<'a> {
+    host: &'a mut dyn ResourceHost,
+}
+
+impl<'a> ResourceHostProvider<'a> {
+    #[must_use]
+    pub fn new(host: &'a mut dyn ResourceHost) -> Self {
+        Self { host }
+    }
+}
+
+impl<G> ResourceProvider<G> for ResourceHostProvider<'_> {
+    fn resolve(
+        &mut self,
+        state: &mut tex_state::CommandContext<'_, G>,
+        need: &ResourceNeed,
+    ) -> ResourceResolution {
+        let mut effects = Vec::new();
+        let outcome = state.with_input_read_state(|input| {
+            let mut world = ResourceWorld::from_input_read_state(input);
+            let outcome = self.host.fulfill(&mut world, need);
+            effects = world.take_replay_effects();
+            outcome
+        });
+        let dependencies = effects
+            .iter()
+            .map(ResourceReplayEffect::input_dependency)
+            .collect();
+        ResourceResolution::new(outcome, dependencies)
+    }
 }

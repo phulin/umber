@@ -801,6 +801,13 @@ impl<G> MainControl<G> {
             let terminal = self.succumb(fatal);
             return evidence_error.map_or(Ok(StepResult::Progress(terminal)), Err);
         }
+        // A provider decline is surfaced by the scanner as the ordinary
+        // missing-capability error so that all transient command state can
+        // unwind. Preserve the provider's exact canonical request here;
+        // aliases (notably `TeXinputs:` input lookup) must not be rewritten
+        // to the scanner's packed fallback before the outer driver consumes
+        // the one attempted-resource sideband.
+        let declined_need = self.declined_resource_attempt.clone();
         match error {
             ExecError::Captured {
                 error,
@@ -812,22 +819,30 @@ impl<G> MainControl<G> {
                     original_name,
                 } => {
                     self.pending_resource_site = site.primary_origin();
-                    Ok(self.observed_suspension(ResourceNeed::Input {
-                        name,
-                        original_name,
-                    }))
+                    Ok(
+                        self.observed_suspension(declined_need.unwrap_or(ResourceNeed::Input {
+                            name,
+                            original_name,
+                        })),
+                    )
                 }
                 ExecError::MissingInputProbe { request } => {
                     self.pending_resource_site = site.primary_origin();
-                    Ok(self.observed_suspension(ResourceNeed::InputProbe { request }))
+                    Ok(self.observed_suspension(
+                        declined_need.unwrap_or(ResourceNeed::InputProbe { request }),
+                    ))
                 }
                 ExecError::MissingFont { request } => {
                     self.pending_resource_site = site.primary_origin();
-                    Ok(self.observed_suspension(ResourceNeed::Font { request }))
+                    Ok(self.observed_suspension(
+                        declined_need.unwrap_or(ResourceNeed::Font { request }),
+                    ))
                 }
                 ExecError::MissingPdfImage { request } => {
                     self.pending_resource_site = site.primary_origin();
-                    Ok(self.observed_suspension(ResourceNeed::PdfImage { request }))
+                    Ok(self.observed_suspension(
+                        declined_need.unwrap_or(ResourceNeed::PdfImage { request }),
+                    ))
                 }
                 error => Err(ExecError::Captured {
                     error: Box::new(error),
@@ -838,19 +853,21 @@ impl<G> MainControl<G> {
             ExecError::MissingInput {
                 name,
                 original_name,
-            } => Ok(self.observed_suspension(ResourceNeed::Input {
-                name,
-                original_name,
-            })),
-            ExecError::MissingInputProbe { request } => {
-                Ok(self.observed_suspension(ResourceNeed::InputProbe { request }))
-            }
+            } => Ok(
+                self.observed_suspension(declined_need.unwrap_or(ResourceNeed::Input {
+                    name,
+                    original_name,
+                })),
+            ),
+            ExecError::MissingInputProbe { request } => Ok(self.observed_suspension(
+                declined_need.unwrap_or(ResourceNeed::InputProbe { request }),
+            )),
             ExecError::MissingFont { request } => {
-                Ok(self.observed_suspension(ResourceNeed::Font { request }))
+                Ok(self
+                    .observed_suspension(declined_need.unwrap_or(ResourceNeed::Font { request })))
             }
-            ExecError::MissingPdfImage { request } => {
-                Ok(self.observed_suspension(ResourceNeed::PdfImage { request }))
-            }
+            ExecError::MissingPdfImage { request } => Ok(self
+                .observed_suspension(declined_need.unwrap_or(ResourceNeed::PdfImage { request }))),
             error => Err(error),
         }
     }

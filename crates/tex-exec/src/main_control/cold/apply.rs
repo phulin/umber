@@ -61,7 +61,7 @@ pub(in crate::main_control) fn apply<G>(
     modes: &mut ModeNest,
     next_alignment_identity: &mut u64,
     active_alignment: &mut Option<ActiveReplayAlignment<G>>,
-    command: &mut CommandMachine<'_, G>,
+    command: &mut CommandMachine<'_, '_, G>,
     boxes: &mut ReplayBoxes<G>,
     active_discretionaries: &[ActiveDiscretionary],
     active_math_choices: &[usize],

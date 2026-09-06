@@ -86,6 +86,15 @@ impl<G> Universe<G> {
     }
 }
 
+impl World {
+    /// Returns the input-only view used by a command episode while its
+    /// aggregate owners are already admitted. This keeps providers from
+    /// borrowing the whole Universe merely to read or record one input.
+    pub(crate) fn input_open_context(&mut self) -> InputOpenContext<'_> {
+        InputOpenContext { world: self }
+    }
+}
+
 /// A host resource lookup distinguishes authoritative absence from a request
 /// which can be satisfied before replaying the current operation.
 #[derive(Debug)]

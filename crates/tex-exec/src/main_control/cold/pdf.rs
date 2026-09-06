@@ -606,7 +606,7 @@ pub(in crate::main_control) fn apply_pdf_form_request<G>(
     request: &mut RootedPdfFormRequest<OperationTokenRoot<G>>,
     stores: &mut tex_state::CommandContext<'_, G>,
     modes: &mut ModeNest,
-    command: &mut CommandMachine<'_, G>,
+    command: &mut CommandMachine<'_, '_, G>,
     immediate: bool,
 ) -> Result<Option<tex_state::PdfFormRecord<G>>, ExecError> {
     if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
@@ -693,7 +693,7 @@ pub(in crate::main_control) fn apply_pdf_form_request<G>(
 #[allow(clippy::too_many_arguments)] // keeps unrelated publication capabilities borrow-typed
 pub(in crate::main_control) fn publish_immediate_pdf_form<G>(
     form: tex_state::PdfFormRecord<G>,
-    command: &mut CommandMachine<'_, G>,
+    command: &mut CommandMachine<'_, '_, G>,
     modes: &ModeNest,
     stores: &mut Universe<G>,
     source_resolver: &dyn crate::output_provenance::ArtifactSourceResolver,
@@ -757,7 +757,7 @@ pub(in crate::main_control) fn publish_immediate_pdf_form<G>(
 }
 
 pub(in crate::main_control) fn replay_text<G>(
-    command: &mut CommandMachine<'_, G>,
+    command: &mut CommandMachine<'_, '_, G>,
     modes: &ModeNest,
     stores: &mut tex_state::CommandContext<'_, G>,
     kind: crate::shipout::ReplayTextKind,
@@ -813,7 +813,7 @@ pub(in crate::main_control) fn replay_text<G>(
 }
 
 pub(in crate::main_control) fn replay_write<G>(
-    command: &mut CommandMachine<'_, G>,
+    command: &mut CommandMachine<'_, '_, G>,
     modes: &ModeNest,
     stores: &mut tex_state::CommandContext<'_, G>,
     tokens: tex_state::TokenListId<G>,
@@ -862,7 +862,7 @@ pub(in crate::main_control) fn replay_write<G>(
 }
 
 fn replay_text_transaction<G>(
-    command: &mut CommandMachine<'_, G>,
+    command: &mut CommandMachine<'_, '_, G>,
     modes: &ModeNest,
     stores: &mut Universe<G>,
     kind: crate::shipout::ReplayTextKind,
@@ -897,7 +897,7 @@ fn replay_text_transaction<G>(
 }
 
 fn replay_write_transaction<G>(
-    command: &mut CommandMachine<'_, G>,
+    command: &mut CommandMachine<'_, '_, G>,
     modes: &ModeNest,
     stores: &mut Universe<G>,
     tokens: tex_state::ShipoutTokenSource<G>,
@@ -1494,7 +1494,7 @@ impl crate::shipout::ShipoutGeometrySink for DetachedShipoutGeometry {
 pub(in crate::main_control) fn shipout_replay_box<G>(
     shipout: PreparedShipout,
     stores: &mut Universe<G>,
-    command: &mut CommandMachine<'_, G>,
+    command: &mut CommandMachine<'_, '_, G>,
     modes: &ModeNest,
 ) -> Result<Option<crate::dispatch::CommittedPagePublication>, ExecError> {
     let PreparedShipout { source, region } = shipout;

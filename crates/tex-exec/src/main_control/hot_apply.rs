@@ -152,7 +152,7 @@ pub(super) fn apply<G>(
     operation: &mut HotOperation<G>,
     stores: &mut tex_state::CommandContext<'_, G>,
     modes: &mut ModeNest,
-    command: &mut CommandMachine<'_, G>,
+    command: &mut CommandMachine<'_, '_, G>,
 ) -> Result<ReplayStep, ExecError> {
     let mut stores = LinearCommandContext::new(stores);
     let stores = &mut stores;
@@ -189,7 +189,7 @@ fn apply_macro_definition<G>(
     flags: MeaningFlags,
     global: bool,
     stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, G>,
+    command: &mut CommandMachine<'_, '_, G>,
 ) -> Result<ReplayStep, ExecError> {
     let observed_definition = command.observes_mutations().then_some(definition);
     assignment_tracing::trace_meaning_write(
@@ -251,7 +251,7 @@ fn apply_let<G>(
     mut meaning: tex_state::meaning::ResolvedMeaning<G>,
     global: bool,
     stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, G>,
+    command: &mut CommandMachine<'_, '_, G>,
 ) -> Result<ReplayStep, ExecError> {
     if global && let tex_state::meaning::ResolvedMeaning::Macro { definition, .. } = &mut meaning {
         *definition = stores.promote_definition_global(*definition).map_err(|_| {
@@ -304,7 +304,7 @@ fn apply_catcode<G>(
     raw_value: i32,
     global: bool,
     stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, G>,
+    command: &mut CommandMachine<'_, '_, G>,
 ) -> Result<ReplayStep, ExecError> {
     let mut value = raw_value;
     if !(0..=15).contains(&value) {
@@ -394,7 +394,7 @@ fn catcode_from_value(value: i32) -> Result<Catcode, ExecError> {
 fn flush_group_boundary<G>(
     modes: &mut ModeNest,
     stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, G>,
+    command: &mut CommandMachine<'_, '_, G>,
 ) -> Result<(), ExecError> {
     crate::box_runtime::flush_pending_hchars_with_fuel(
         modes,
@@ -409,7 +409,7 @@ fn leave_group<G>(
     context: &'static str,
     modes: &mut ModeNest,
     stores: &mut LinearCommandContext<'_, '_, G>,
-    command: &mut CommandMachine<'_, G>,
+    command: &mut CommandMachine<'_, '_, G>,
 ) -> Result<ReplayStep, ExecError> {
     flush_group_boundary(modes, stores, command)?;
     warn_cross_file_group_close(stores, command);

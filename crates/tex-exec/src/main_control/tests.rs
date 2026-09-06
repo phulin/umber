@@ -8,6 +8,11 @@ use tex_state::hyphenation::PatternSpec;
 use tex_state::page::PageMark;
 use tex_state::token::{Catcode, Token};
 
+use crate::{
+    ResourceFulfillment, ResourceHost, ResourceHostProvider, ResourceWorld,
+    canonical_font_resource_path,
+};
+
 use super::*;
 mod etex_diagnostic_tracing;
 #[path = "tests/material_property_matrices.rs"]
@@ -374,6 +379,311 @@ fn tracked_advance_abandons_before_resource_suspension_rollback() {
         ));
         assert_eq!(tracked.region, None);
         assert!(!admitted!(stores, |context| context.tracked_region_is_active()));
+    });
+}
+
+struct ImmediateInputResourceHost {
+    calls: usize,
+}
+
+impl ResourceHost for ImmediateInputResourceHost {
+    fn fulfill(&mut self, world: &mut ResourceWorld<'_>, need: &ResourceNeed) -> ResourceOutcome {
+        self.calls += 1;
+        let ResourceNeed::Input { name, .. } = need else {
+            return ResourceOutcome::Unavailable;
+        };
+        match world.read_file(name) {
+            Ok(content) => {
+                ResourceOutcome::Fulfilled(ResourceFulfillment::world_input(name, content))
+            }
+            Err(error) if error.io_error_kind() == Some(std::io::ErrorKind::NotFound) => {
+                ResourceOutcome::Unavailable
+            }
+            Err(error) => ResourceOutcome::Failed(error.into()),
+        }
+    }
+}
+
+fn run_immediate_input_provider_route(observed: bool) -> (String, usize, u64) {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        stores
+            .world_mut()
+            .set_memory_file("child.tex", br"B\par".to_vec())
+            .expect("child input installs");
+        register_source(&mut control, br"A\input child \message{done}\end");
+        let mut host = ImmediateInputResourceHost { calls: 0 };
+        let mut provider = ResourceHostProvider::new(&mut host);
+        let mut observer = ObservationRecorder::default();
+        let mut finished = false;
+        for _ in 0..TEST_STEP_LIMIT {
+            let step = if observed {
+                control
+                    .advance_with_observer_and_resource_provider(
+                        stores,
+                        &mut observer,
+                        &mut provider,
+                    )
+                    .expect("observed provider route executes")
+            } else {
+                control
+                    .advance_with_resource_provider(stores, &mut provider)
+                    .expect("ordinary provider route executes")
+            };
+            match step {
+                StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput) => {
+                    finished = true;
+                    break;
+                }
+                StepResult::Progress(MainControlStep::Continue) => {}
+                StepResult::Suspended(need) => {
+                    panic!("ready provider unexpectedly suspended: {need:?}")
+                }
+            }
+        }
+        assert!(
+            finished,
+            "ready input provider route exceeded the step bound"
+        );
+        (
+            terminal_text(stores),
+            host.calls,
+            control.advance_telemetry().resource_replayed_dispatches,
+        )
+    })
+}
+
+#[test]
+fn ready_input_provider_stays_in_one_execution_for_observed_and_ordinary_routes() {
+    let ordinary = run_immediate_input_provider_route(false);
+    let observed = run_immediate_input_provider_route(true);
+    assert_eq!(ordinary.0, observed.0);
+    assert_eq!(ordinary.1, 1, "ordinary route resolves input exactly once");
+    assert_eq!(observed.1, 1, "observed route resolves input exactly once");
+    assert_eq!(
+        ordinary.2, 0,
+        "ready input does not rewind ordinary execution"
+    );
+    assert_eq!(
+        observed.2, 0,
+        "ready input does not rewind observed execution"
+    );
+}
+
+struct UnavailableInputResourceHost {
+    calls: usize,
+}
+
+impl ResourceHost for UnavailableInputResourceHost {
+    fn fulfill(&mut self, _world: &mut ResourceWorld<'_>, need: &ResourceNeed) -> ResourceOutcome {
+        self.calls += 1;
+        assert!(matches!(need, ResourceNeed::Input { .. }));
+        ResourceOutcome::Unavailable
+    }
+}
+
+#[test]
+fn unavailable_input_provider_continues_to_existing_diagnostic_path() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(&mut control, br"\input missing \end");
+        let mut host = UnavailableInputResourceHost { calls: 0 };
+        let mut provider = ResourceHostProvider::new(&mut host);
+        let mut suspended = false;
+        let mut finished = false;
+        for _ in 0..TEST_STEP_LIMIT {
+            match control
+                .advance_with_resource_provider(stores, &mut provider)
+                .expect("unavailable provider route executes")
+            {
+                StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput) => {
+                    finished = true;
+                    break;
+                }
+                StepResult::Progress(MainControlStep::Continue) => {}
+                StepResult::Suspended(_) => {
+                    suspended = true;
+                    break;
+                }
+            }
+        }
+        assert!(finished, "unavailable input route exceeded the step bound");
+        assert!(!suspended, "authoritative absence must not suspend");
+        assert_eq!(host.calls, 1, "unavailable input is resolved once");
+    });
+}
+
+struct ImmediateFontResourceHost {
+    calls: usize,
+}
+
+impl ResourceHost for ImmediateFontResourceHost {
+    fn fulfill(&mut self, world: &mut ResourceWorld<'_>, need: &ResourceNeed) -> ResourceOutcome {
+        self.calls += 1;
+        let ResourceNeed::Font { request } = need else {
+            return ResourceOutcome::Unavailable;
+        };
+        let path = canonical_font_resource_path(&request.name);
+        match world.read_file(&path) {
+            Ok(metrics) => ResourceOutcome::Fulfilled(ResourceFulfillment::Font {
+                request: request.clone(),
+                resource: Box::new(FontResource::Tfm {
+                    metrics,
+                    opentype: None,
+                }),
+            }),
+            Err(error) if error.io_error_kind() == Some(std::io::ErrorKind::NotFound) => {
+                ResourceOutcome::Unavailable
+            }
+            Err(error) => ResourceOutcome::Failed(error.into()),
+        }
+    }
+}
+
+#[test]
+fn ready_font_provider_stays_in_one_execution() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        stores
+            .world_mut()
+            .set_memory_file(
+                "cmr10.tfm",
+                include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmr10.tfm").to_vec(),
+            )
+            .expect("font installs");
+        register_source(&mut control, br"\font\f=cmr10 \f A\end");
+        let mut host = ImmediateFontResourceHost { calls: 0 };
+        let mut provider = ResourceHostProvider::new(&mut host);
+        let mut finished = false;
+        for _ in 0..TEST_STEP_LIMIT {
+            match control
+                .advance_with_resource_provider(stores, &mut provider)
+                .expect("font provider route executes")
+            {
+                StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput) => {
+                    finished = true;
+                    break;
+                }
+                StepResult::Progress(MainControlStep::Continue) => {}
+                StepResult::Suspended(need) => {
+                    panic!("ready font unexpectedly suspended: {need:?}")
+                }
+            }
+        }
+        assert!(
+            finished,
+            "ready font provider route exceeded the step bound"
+        );
+        assert_eq!(host.calls, 1);
+        assert_eq!(control.advance_telemetry().resource_replayed_dispatches, 0);
+    });
+}
+
+struct ImmediatePdfImageResourceHost {
+    calls: usize,
+}
+
+impl ResourceHost for ImmediatePdfImageResourceHost {
+    fn fulfill(&mut self, _world: &mut ResourceWorld<'_>, need: &ResourceNeed) -> ResourceOutcome {
+        self.calls += 1;
+        let ResourceNeed::PdfImage { request } = need else {
+            return ResourceOutcome::Unavailable;
+        };
+        ResourceOutcome::Fulfilled(ResourceFulfillment::PdfImage {
+            request: request.clone(),
+            resource: Box::new(PdfImageResource::Available(test_pdf_image_source())),
+        })
+    }
+}
+
+#[test]
+fn ready_pdf_image_provider_stays_in_one_execution() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = pdftex_initex(stores);
+        register_source(&mut control, br"\pdfoutput=1 \pdfximage{image.pdf}\end");
+        let mut host = ImmediatePdfImageResourceHost { calls: 0 };
+        let mut provider = ResourceHostProvider::new(&mut host);
+        let mut finished = false;
+        for _ in 0..TEST_STEP_LIMIT {
+            match control
+                .advance_with_resource_provider(stores, &mut provider)
+                .expect("image provider route executes")
+            {
+                StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput) => {
+                    finished = true;
+                    break;
+                }
+                StepResult::Progress(MainControlStep::Continue) => {}
+                StepResult::Suspended(need) => {
+                    panic!("ready image unexpectedly suspended: {need:?}")
+                }
+            }
+        }
+        assert!(
+            finished,
+            "ready image provider route exceeded the step bound"
+        );
+        assert_eq!(host.calls, 1);
+        assert_eq!(control.advance_telemetry().resource_replayed_dispatches, 0);
+    });
+}
+
+struct ImmediateInputProbeResourceHost {
+    calls: usize,
+}
+
+impl ResourceHost for ImmediateInputProbeResourceHost {
+    fn fulfill(&mut self, world: &mut ResourceWorld<'_>, need: &ResourceNeed) -> ResourceOutcome {
+        self.calls += 1;
+        let ResourceNeed::InputProbe { request } = need else {
+            return ResourceOutcome::Unavailable;
+        };
+        match world.read_file(&request.name) {
+            Ok(content) => ResourceOutcome::Fulfilled(ResourceFulfillment::world_input_probe(
+                request.clone(),
+                content,
+            )),
+            Err(error) if error.io_error_kind() == Some(std::io::ErrorKind::NotFound) => {
+                ResourceOutcome::Unavailable
+            }
+            Err(error) => ResourceOutcome::Failed(error.into()),
+        }
+    }
+}
+
+#[test]
+fn ready_input_probe_provider_stays_in_one_execution() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = pdftex_initex(stores);
+        stores
+            .world_mut()
+            .set_memory_file("child.tex", br"probe".to_vec())
+            .expect("probe installs");
+        register_source(&mut control, br"\openin0=child \ifeof0\fi \closein0\end");
+        let mut host = ImmediateInputProbeResourceHost { calls: 0 };
+        let mut provider = ResourceHostProvider::new(&mut host);
+        let mut finished = false;
+        for _ in 0..TEST_STEP_LIMIT {
+            match control
+                .advance_with_resource_provider(stores, &mut provider)
+                .expect("probe provider route executes")
+            {
+                StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput) => {
+                    finished = true;
+                    break;
+                }
+                StepResult::Progress(MainControlStep::Continue) => {}
+                StepResult::Suspended(need) => {
+                    panic!("ready probe unexpectedly suspended: {need:?}")
+                }
+            }
+        }
+        assert!(
+            finished,
+            "ready probe provider route exceeded the step bound"
+        );
+        assert_eq!(host.calls, 1);
+        assert_eq!(control.advance_telemetry().resource_replayed_dispatches, 0);
     });
 }
 

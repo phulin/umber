@@ -13,12 +13,12 @@ use tex_command::{
     GeneratedFontKind, HyphenationDataKind, ImmediateExtension, MathDelimiterBoundary,
     MathDelimiterBoundaryKind, MathFieldBody, MathLimitKind, MathRequest, MathScriptKind,
     MathStyleKind, MathTextFieldKind, PdfImageRequest, PdfImageResource, PdfReferenceObjectRequest,
-    PreparedAlignmentCellTemplates, RegisteredSourceKind, RestrictedIntegerClass, ScannedAccent,
-    ScannedAccentBase, ScannedBoxConstruction, ScannedBoxKind, ScannedBoxShift,
-    ScannedBoxShiftPayload, ScannedDiscretionaryOpening, ScannedDisplayDiagnostic,
-    ScannedGeneratedFontDefinition, ScannedInsertConstruction, ScannedLeaderPayload,
-    ScannedMathMuMaterial, ScannedPackingSpec, ScannedSetBoxPath, ScannedVSplit,
-    SourceRegistration, SourceRegistrationError,
+    PreparedAlignmentCellTemplates, RegisteredSourceKind, ResourceNeed, ResourceOutcome,
+    ResourceProvider, RestrictedIntegerClass, ScannedAccent, ScannedAccentBase,
+    ScannedBoxConstruction, ScannedBoxKind, ScannedBoxShift, ScannedBoxShiftPayload,
+    ScannedDiscretionaryOpening, ScannedDisplayDiagnostic, ScannedGeneratedFontDefinition,
+    ScannedInsertConstruction, ScannedLeaderPayload, ScannedMathMuMaterial, ScannedPackingSpec,
+    ScannedSetBoxPath, ScannedVSplit, SourceRegistration, SourceRegistrationError,
 };
 use tex_command::{
     CommandObservation, CommandObserver, EffectRecord, GeometryRecord, MutationRecord,
@@ -411,6 +411,11 @@ pub struct MainControl<G> {
     /// retained outside snapshots so a host protocol no-progress invariant
     /// can still identify the command whose retry failed to advance.
     pending_resource_site: Option<OriginId>,
+    /// One call-scoped provider decline, kept beside its canonical need until
+    /// the outer step driver consumes the suspension sideband. It is never
+    /// checkpointed, compared for resource identity, or retained across the
+    /// next drive.
+    declined_resource_attempt: Option<ResourceNeed>,
     /// A direct operation has been fully unwound at a resource boundary.
     /// Only aggregate checkpoint replay clears this latch; answering the
     /// detached request in-place must not make the old execution object look
@@ -661,30 +666,6 @@ struct ActiveDiscretionary {
     rejected: bool,
 }
 
-/// The only normal reason a operation may be retried by its host.
-///
-/// The command core has already classified the unavailable resource, while
-/// this value deliberately retains neither a command nor a host capability.
-/// Retrying therefore starts a fresh TeX82 §§24--25 processor episode at the
-/// enclosing main-control operation.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ResourceNeed {
-    /// TeX82's `start_input` scanned this logical filename (§529 / §1030+),
-    /// but the host has not supplied its immutable source registration.
-    Input { name: String, original_name: String },
-    /// A non-opening `\openin` or pdfTeX file enquiry needs bytes or
-    /// authoritative absence.
-    InputProbe {
-        request: tex_command::FileEnquiryRequest,
-    },
-    /// TeX82's `new_font` completed its filename and size scan (§1254), but
-    /// the host has not supplied the immutable font bytes.
-    Font { request: FontLoadRequest },
-    /// pdfTeX's `scan_image` completed an immutable request, but its retained
-    /// bytes and validated metadata have not been supplied by the host.
-    PdfImage { request: PdfImageRequest },
-}
-
 /// Outcome of one atomic main-control operation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StepResult {
@@ -798,10 +779,12 @@ pub enum DiagnosticStepResult {
 /// needs to build a processor of its own -- rather than being handed one --
 /// takes this instead, so passing the command machine along costs one
 /// parameter instead of four.
-struct CommandMachine<'a, G> {
+struct CommandMachine<'a, 'provider, G> {
     state: &'a mut PersistentInterpreter<G>,
     fuel: &'a mut tex_command::CommandFuel,
     capabilities: &'a mut CommandHostCapabilities,
+    resource_provider: Option<&'provider mut dyn ResourceProvider<G>>,
+    declined_resource_attempt: &'a mut Option<ResourceNeed>,
     host_facts: CommandMachineHostFacts<'a, G>,
     observations: &'a mut ObservationSlot,
     assignment_receipts: Option<&'a mut Vec<MutationRecord>>,
@@ -901,7 +884,7 @@ struct PendingShowCompletion {
     context: String,
 }
 
-impl<G> CommandMachine<'_, G> {
+impl<G> CommandMachine<'_, '_, G> {
     fn with_processor_for_modes<R>(
         &mut self,
         context: &mut tex_state::CommandContext<'_, G>,
@@ -912,6 +895,8 @@ impl<G> CommandMachine<'_, G> {
             state,
             fuel,
             capabilities,
+            resource_provider,
+            declined_resource_attempt,
             host_facts,
             observations,
             diagnostic_effects,
@@ -923,13 +908,17 @@ impl<G> CommandMachine<'_, G> {
                 let observer = observations
                     .as_mut()
                     .map(|buffer| buffer as &mut dyn CommandObserver);
-                let mut processor = state.processor(
-                    context,
-                    CommandHostContext::with_facts(capabilities, facts),
-                    fuel,
-                    observer,
-                    diagnostic_effects,
-                );
+                let host = match resource_provider.as_deref_mut() {
+                    Some(provider) => CommandHostContext::with_facts_and_resource_provider(
+                        capabilities,
+                        facts,
+                        provider,
+                        declined_resource_attempt,
+                    ),
+                    None => CommandHostContext::with_facts(capabilities, facts),
+                };
+                let mut processor =
+                    state.processor(context, host, fuel, observer, diagnostic_effects);
                 processor.set_output_routine_active(*output_routine_active);
                 use_processor(&mut processor)
             }
@@ -945,13 +934,17 @@ impl<G> CommandMachine<'_, G> {
                     pdf_ignore_depth: *pdf_ignore_depth,
                     telemetry,
                 };
-                let mut processor = state.processor(
-                    context,
-                    CommandHostContext::with_facts(capabilities, &mut facts),
-                    fuel,
-                    observer,
-                    diagnostic_effects,
-                );
+                let host = match resource_provider.as_deref_mut() {
+                    Some(provider) => CommandHostContext::with_facts_and_resource_provider(
+                        capabilities,
+                        &mut facts,
+                        provider,
+                        declined_resource_attempt,
+                    ),
+                    None => CommandHostContext::with_facts(capabilities, &mut facts),
+                };
+                let mut processor =
+                    state.processor(context, host, fuel, observer, diagnostic_effects);
                 processor.set_output_routine_active(*output_routine_active);
                 use_processor(&mut processor)
             }
@@ -972,6 +965,8 @@ impl<G> CommandMachine<'_, G> {
             state,
             fuel,
             capabilities,
+            resource_provider,
+            declined_resource_attempt,
             host_facts,
             observations,
             output_routine_active,
@@ -982,13 +977,17 @@ impl<G> CommandMachine<'_, G> {
                 let observer = observations
                     .as_mut()
                     .map(|buffer| buffer as &mut dyn CommandObserver);
-                let mut processor = state.processor(
-                    context,
-                    CommandHostContext::with_facts(capabilities, facts),
-                    fuel,
-                    observer,
-                    diagnostic_effects,
-                );
+                let host = match resource_provider.as_deref_mut() {
+                    Some(provider) => CommandHostContext::with_facts_and_resource_provider(
+                        capabilities,
+                        facts,
+                        provider,
+                        declined_resource_attempt,
+                    ),
+                    None => CommandHostContext::with_facts(capabilities, facts),
+                };
+                let mut processor =
+                    state.processor(context, host, fuel, observer, diagnostic_effects);
                 processor.set_output_routine_active(*output_routine_active);
                 use_processor(&mut processor)
             }
@@ -1004,13 +1003,17 @@ impl<G> CommandMachine<'_, G> {
                     pdf_ignore_depth: *pdf_ignore_depth,
                     telemetry,
                 };
-                let mut processor = state.processor(
-                    context,
-                    CommandHostContext::with_facts(capabilities, &mut facts),
-                    fuel,
-                    observer,
-                    diagnostic_effects,
-                );
+                let host = match resource_provider.as_deref_mut() {
+                    Some(provider) => CommandHostContext::with_facts_and_resource_provider(
+                        capabilities,
+                        &mut facts,
+                        provider,
+                        declined_resource_attempt,
+                    ),
+                    None => CommandHostContext::with_facts(capabilities, &mut facts),
+                };
+                let mut processor =
+                    state.processor(context, host, fuel, observer, diagnostic_effects);
                 processor.set_output_routine_active(*output_routine_active);
                 use_processor(&mut processor)
             }
@@ -1045,13 +1048,18 @@ impl<G> CommandMachine<'_, G> {
             .observations
             .as_mut()
             .map(|buffer| buffer as &mut dyn CommandObserver);
-        let mut processor = self.state.processor(
-            context,
-            CommandHostContext::with_facts(self.capabilities, &mut self.host_facts),
-            self.fuel,
-            observer,
-            self.diagnostic_effects,
-        );
+        let host = match self.resource_provider.as_deref_mut() {
+            Some(provider) => CommandHostContext::with_facts_and_resource_provider(
+                self.capabilities,
+                &mut self.host_facts,
+                provider,
+                self.declined_resource_attempt,
+            ),
+            None => CommandHostContext::with_facts(self.capabilities, &mut self.host_facts),
+        };
+        let mut processor =
+            self.state
+                .processor(context, host, self.fuel, observer, self.diagnostic_effects);
         processor.set_output_routine_active(self.output_routine_active);
         processor
     }
@@ -1119,6 +1127,34 @@ fn command_processor<'episode, 'admission, G>(
     command.processor(
         stores,
         CommandHostContext::with_facts(capabilities, host_facts),
+        fuel,
+        observer,
+        diagnostic_effects,
+    )
+}
+
+fn command_processor_with_resource_provider<'episode, 'admission, G>(
+    command: &'episode mut PersistentInterpreter<G>,
+    fuel: &'episode mut tex_command::CommandFuel,
+    capabilities: &'episode mut CommandHostCapabilities,
+    host_facts: &'episode mut dyn tex_command::CommandHostFacts<G>,
+    resource_provider: &'episode mut dyn ResourceProvider<G>,
+    declined_resource_attempt: &'episode mut Option<ResourceNeed>,
+    observations: &'episode mut ObservationSlot,
+    diagnostic_effects: &'episode mut DiagnosticEffects,
+    stores: &'episode mut CommandContext<'admission, G>,
+) -> InterpreterProcessor<'episode, 'admission, G> {
+    let observer = observations
+        .as_mut()
+        .map(|buffer| buffer as &mut dyn CommandObserver);
+    command.processor(
+        stores,
+        CommandHostContext::with_facts_and_resource_provider(
+            capabilities,
+            host_facts,
+            resource_provider,
+            declined_resource_attempt,
+        ),
         fuel,
         observer,
         diagnostic_effects,
@@ -1208,6 +1244,7 @@ impl<G> Default for MainControl<G> {
             paragraph_checkpoint_cut: false,
             job_start_eligibility: Some(crate::checkpoint::CheckpointEligibility::job_start()),
             pending_resource_site: None,
+            declined_resource_attempt: None,
             resource_replay_required: false,
             pending_first_recoverable_diagnostic: None,
             ended: false,
@@ -1910,6 +1947,7 @@ impl<G> MainControl<G> {
         self.paragraph_checkpoint_demand = None;
         self.paragraph_checkpoint_cut = false;
         self.pending_resource_site = None;
+        self.declined_resource_attempt = None;
         self.resource_replay_required = false;
         self.ended = false;
         self.fatal = None;
@@ -2210,33 +2248,101 @@ impl<G> MainControl<G> {
         }
     }
 
+    fn resolve_provider_resource(
+        &mut self,
+        stores: &mut Universe<G>,
+        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
+        need: &ResourceNeed,
+        register_texinputs_alias: bool,
+    ) -> Result<Option<bool>, ExecError> {
+        let Some(resource_provider) = resource_provider.as_deref_mut() else {
+            return Ok(None);
+        };
+        let resolution = {
+            let mut context = stores
+                .command_context()
+                .expect("resource provider admission");
+            resource_provider.resolve(&mut context, need)
+        };
+        let tex_command::ResourceResolution {
+            outcome,
+            dependencies,
+        } = resolution;
+        match outcome {
+            ResourceOutcome::Fulfilled(fulfillment) => self
+                .capabilities
+                .install_resource_answer(need, fulfillment, dependencies)
+                .map(|()| Some(true))
+                .map_err(|_| ExecError::ResourceFailure {
+                    need: Box::new(need.clone()),
+                    failure: Box::new(tex_command::ResourceFailure::message(
+                        "resource provider returned a mismatched typed answer",
+                    )),
+                }),
+            ResourceOutcome::Unavailable => {
+                self.capabilities.install_resource_unavailable(
+                    need,
+                    register_texinputs_alias,
+                    dependencies,
+                );
+                Ok(Some(true))
+            }
+            ResourceOutcome::Declined => {
+                self.declined_resource_attempt = Some(need.clone());
+                Ok(Some(false))
+            }
+            ResourceOutcome::Failed(failure) => Err(ExecError::ResourceFailure {
+                need: Box::new(need.clone()),
+                failure: Box::new(failure),
+            }),
+        }
+    }
+
     fn resolve_font_resource(
-        &self,
+        &mut self,
         scanned: &mut ColdOperation<G>,
         stores: &mut Universe<G>,
+        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<(), ExecError> {
         let ColdOperation::<G>::FontDefinition { request, .. } = scanned else {
             return Ok(());
         };
         stores.poison_dependency_region(TrackedRegionBarrier::UnsupportedHostCapability);
         let path = crate::canonical_font_resource_path(&request.name);
+        let mut provider_settled = false;
         if self.capabilities.font(&path).is_none() {
-            return Err(ExecError::MissingFont {
+            let need = ResourceNeed::Font {
                 request: request.clone(),
-            });
+            };
+            match self.resolve_provider_resource(stores, resource_provider, &need, false)? {
+                Some(true) => provider_settled = true,
+                Some(false) | None => {
+                    return Err(ExecError::MissingFont {
+                        request: request.clone(),
+                    });
+                }
+            }
+            if self.capabilities.font(&path).is_none() {
+                return Err(ExecError::MissingFont {
+                    request: request.clone(),
+                });
+            }
         }
-        let dependencies = self
-            .capabilities
-            .font_dependencies(&path)
-            .unwrap_or_default();
-        Self::record_cached_input_dependencies(stores, &dependencies)?;
+        if !provider_settled {
+            let dependencies = self
+                .capabilities
+                .font_dependencies(&path)
+                .unwrap_or_default();
+            Self::record_cached_input_dependencies(stores, &dependencies)?;
+        }
         Ok(())
     }
 
     fn resolve_input_stream_resource(
-        &self,
+        &mut self,
         scanned: &mut ColdOperation<G>,
         stores: &mut Universe<G>,
+        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<(), ExecError> {
         let ColdOperation::<G>::InputStream { request, resource } = scanned else {
             return Ok(());
@@ -2271,12 +2377,36 @@ impl<G> MainControl<G> {
                     }
                     None => {
                         let error_request = tex_command::FileEnquiryRequest::new(
-                            packed_name,
+                            packed_name.clone(),
                             tex_command::FileEnquiryIntent::OpenInProbe,
                         );
-                        return Err(ExecError::MissingInputProbe {
-                            request: error_request,
-                        });
+                        let need = ResourceNeed::InputProbe {
+                            request: error_request.clone(),
+                        };
+                        match self.resolve_provider_resource(
+                            stores,
+                            resource_provider,
+                            &need,
+                            false,
+                        )? {
+                            Some(true) => {}
+                            Some(false) | None => {
+                                return Err(ExecError::MissingInputProbe {
+                                    request: error_request,
+                                });
+                            }
+                        }
+                        match self.capabilities.input_probe_resource(&packed_name) {
+                            Some(resource) => Some(resource.source().clone()),
+                            None if self.capabilities.input_probe_is_unavailable(&packed_name) => {
+                                None
+                            }
+                            None => {
+                                return Err(ExecError::MissingInputProbe {
+                                    request: error_request,
+                                });
+                            }
+                        }
                     }
                 }
             }
@@ -2287,9 +2417,10 @@ impl<G> MainControl<G> {
     }
 
     fn resolve_pdf_image_resource(
-        &self,
+        &mut self,
         scanned: &mut ColdOperation<G>,
         stores: &mut Universe<G>,
+        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<(), ExecError> {
         let ColdOperation::<G>::PdfXImage { request, resource } = scanned else {
             return Ok(());
@@ -2329,9 +2460,26 @@ impl<G> MainControl<G> {
         let Some((resolved_resource, dependencies)) =
             self.capabilities.pdf_image_with_dependencies(&host_request)
         else {
-            return Err(ExecError::MissingPdfImage {
-                request: host_request,
-            });
+            let need = ResourceNeed::PdfImage {
+                request: host_request.clone(),
+            };
+            match self.resolve_provider_resource(stores, resource_provider, &need, false)? {
+                Some(true) => {}
+                Some(false) | None => {
+                    return Err(ExecError::MissingPdfImage {
+                        request: host_request,
+                    });
+                }
+            }
+            let Some((resolved_resource, _dependencies)) =
+                self.capabilities.pdf_image_with_dependencies(&host_request)
+            else {
+                return Err(ExecError::MissingPdfImage {
+                    request: host_request,
+                });
+            };
+            *resource = resolved_resource;
+            return Ok(());
         };
         Self::record_cached_input_dependencies(stores, &dependencies)?;
         *resource = resolved_resource;
@@ -2544,11 +2692,21 @@ impl<G> MainControl<G> {
     fn command_machine<'operation>(
         &'operation mut self,
         diagnostic_effects: &'operation mut DiagnosticEffects,
-    ) -> CommandMachine<'operation, G> {
+    ) -> CommandMachine<'operation, 'operation, G> {
+        self.command_machine_with_resource_provider(diagnostic_effects, None)
+    }
+
+    fn command_machine_with_resource_provider<'operation, 'provider>(
+        &'operation mut self,
+        diagnostic_effects: &'operation mut DiagnosticEffects,
+        resource_provider: Option<&'provider mut dyn ResourceProvider<G>>,
+    ) -> CommandMachine<'operation, 'provider, G> {
         CommandMachine {
             state: &mut self.command,
             fuel: self.fuel.fuel_mut(),
             capabilities: &mut self.capabilities,
+            resource_provider,
+            declined_resource_attempt: &mut self.declined_resource_attempt,
             host_facts: CommandMachineHostFacts::Live(ExecutorHostFacts {
                 modes: &self.modes,
                 pdf_ignore_depth: self.pdf_ignore_depth,
@@ -2612,6 +2770,13 @@ impl<G> MainControl<G> {
     /// invalidation latch below.
     pub(crate) fn acknowledge_resource_need(&mut self) {
         self.pending_resource_site = None;
+    }
+
+    /// Consumes the one provider-decline sideband produced during the current
+    /// step. The outer driver uses it to suspend without invoking its legacy
+    /// host a second time.
+    pub(crate) fn take_declined_resource_attempt(&mut self) -> Option<ResourceNeed> {
+        self.declined_resource_attempt.take()
     }
 
     fn ensure_resource_replay_boundary(&self) -> Result<(), ExecError> {
@@ -2825,6 +2990,7 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
         tracked_region_is_active: bool,
+        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> Option<Result<ReplayStep, ExecError>> {
         let applied = match scanned {
             ColdOperation::ReplayCompleted(episode) => {
@@ -2836,9 +3002,10 @@ impl<G> MainControl<G> {
                 stores,
                 diagnostic_effects,
                 tracked_region_is_active,
+                resource_provider,
             ),
             ColdOperation::DisplayAlignmentRecovery => {
-                self.recover_display_alignment_closer(stores, diagnostic_effects)
+                self.recover_display_alignment_closer(stores, diagnostic_effects, resource_provider)
             }
             ColdOperation::MathDelimiter(boundary) => {
                 self.apply_math_delimiter(*boundary, stores, diagnostic_effects)
@@ -2849,13 +3016,13 @@ impl<G> MainControl<G> {
             // and runs `new_graf(true)` first, so vertical mode never reaches
             // this step.
             ColdOperation::MathShift { pairing } => {
-                self.apply_math_shift(*pairing, stores, diagnostic_effects)
+                self.apply_math_shift(*pairing, stores, diagnostic_effects, resource_provider)
             }
             ColdOperation::DiscretionaryOpening(opening) => {
                 self.begin_discretionary(*opening, stores, diagnostic_effects)
             }
             ColdOperation::DiscretionaryPartEnd => {
-                self.finish_discretionary_part(stores, diagnostic_effects)
+                self.finish_discretionary_part(stores, diagnostic_effects, resource_provider)
             }
             ColdOperation::DiscretionaryHyphen { origin } => {
                 self.apply_discretionary_hyphen(*origin, stores, diagnostic_effects)
@@ -2868,6 +3035,7 @@ impl<G> MainControl<G> {
                 stores,
                 diagnostic_effects,
                 tracked_region_is_active,
+                resource_provider,
             ),
             ColdOperation::InputStream { request, resource } => match request {
                 RootedInputStreamRequest::Open {
@@ -3018,6 +3186,7 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
+        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<ReplayStep, ExecError> {
         let mut level = {
             let mut context = stores.command_context().expect("live generation");
@@ -3114,15 +3283,29 @@ impl<G> MainControl<G> {
                     pdf_ignore_depth: self.pdf_ignore_depth,
                     telemetry: &mut self.episode_telemetry,
                 };
-                let mut processor = command_processor(
-                    &mut self.command,
-                    self.fuel.fuel_mut(),
-                    &mut self.capabilities,
-                    &mut host_facts,
-                    &mut self.operation_observations,
-                    diagnostic_effects,
-                    &mut context,
-                );
+                let mut processor = if let Some(provider) = resource_provider.as_deref_mut() {
+                    command_processor_with_resource_provider(
+                        &mut self.command,
+                        self.fuel.fuel_mut(),
+                        &mut self.capabilities,
+                        &mut host_facts,
+                        provider,
+                        &mut self.declined_resource_attempt,
+                        &mut self.operation_observations,
+                        diagnostic_effects,
+                        &mut context,
+                    )
+                } else {
+                    command_processor(
+                        &mut self.command,
+                        self.fuel.fuel_mut(),
+                        &mut self.capabilities,
+                        &mut host_facts,
+                        &mut self.operation_observations,
+                        diagnostic_effects,
+                        &mut context,
+                    )
+                };
                 let _ = processor
                     .scan_discretionary_opening()
                     .map_err(command_error)?;
@@ -3371,6 +3554,7 @@ impl<G> MainControl<G> {
         max_operations: usize,
         mut initial_delivery: Option<OperationDelivery>,
         mut tracked_region: Option<&mut Option<Result<TrackedRegionRecord, DependencyRegionError>>>,
+        mut resource_provider: Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<StepResult, ExecError> {
         let initial_effect_pos = stores.world().effect_pos();
         let initial_artifacts = stores.world().artifact_commits().len();
@@ -3489,6 +3673,7 @@ impl<G> MainControl<G> {
                     &mut diagnostic_effects,
                     &mut command_episode,
                     &mut cold_operation,
+                    &mut resource_provider,
                 );
                 operation_mark =
                     admitted_operation_mark.expect("preflight returns its current operation mark");
@@ -3570,6 +3755,7 @@ impl<G> MainControl<G> {
                     &mut command_episode,
                     &mut cold_operation,
                     tracked_mark.is_some(),
+                    &mut resource_provider,
                 ) {
                     Err(TypedOperationError::Preparation(error)) => {
                         command_episode.error = Some(error);
@@ -3715,6 +3901,7 @@ impl<G> MainControl<G> {
                     &mut command_episode,
                     &mut cold_operation,
                     tracked_mark.is_some(),
+                    &mut resource_provider,
                 ) {
                     Err(TypedOperationError::Preparation(error)) => {
                         command_episode.error = Some(error);
@@ -3897,6 +4084,7 @@ impl<G> MainControl<G> {
                     &mut command_episode,
                     &mut cold_operation,
                     tracked_mark.is_some(),
+                    &mut resource_provider,
                 ) {
                     Err(TypedOperationError::Preparation(error)) => {
                         command_episode.error = Some(error);
@@ -4072,7 +4260,34 @@ impl<G> MainControl<G> {
         self.job_start_eligibility = None;
         let initial_delivery =
             matches!(transaction, OperationTransaction::Alignment).then_some(delivery);
-        self.execute_direct_episode(stores, max_operations, initial_delivery, tracked_region)
+        self.execute_direct_episode(
+            stores,
+            max_operations,
+            initial_delivery,
+            tracked_region,
+            None,
+        )
+    }
+
+    fn execute_operation_with_resource_provider(
+        &mut self,
+        stores: &mut Universe<G>,
+        delivery: OperationDelivery,
+        transaction: OperationTransaction,
+        max_operations: usize,
+        tracked_region: Option<&mut Option<Result<TrackedRegionRecord, DependencyRegionError>>>,
+        resource_provider: &mut dyn ResourceProvider<G>,
+    ) -> Result<StepResult, ExecError> {
+        self.job_start_eligibility = None;
+        let initial_delivery =
+            matches!(transaction, OperationTransaction::Alignment).then_some(delivery);
+        self.execute_direct_episode(
+            stores,
+            max_operations,
+            initial_delivery,
+            tracked_region,
+            Some(resource_provider),
+        )
     }
 
     /// Attempts one atomic main-control operation.
@@ -4085,6 +4300,7 @@ impl<G> MainControl<G> {
         if self.ended {
             return Err(ExecError::ExecutionAlreadyTerminated);
         }
+        self.declined_resource_attempt = None;
         self.ensure_resource_replay_boundary()?;
         if !self.pure_memo_initialized {
             let runtime = stores.take_pure_memo_config().map_or_else(
@@ -4106,6 +4322,40 @@ impl<G> MainControl<G> {
         )
     }
 
+    /// Provider-aware ordinary advance. A ready or unavailable resource is
+    /// installed during this call and the operation continues in place;
+    /// only a declined provider result reaches the outer suspension seam.
+    pub fn advance_with_resource_provider(
+        &mut self,
+        stores: &mut Universe<G>,
+        resource_provider: &mut dyn ResourceProvider<G>,
+    ) -> Result<StepResult, ExecError> {
+        if self.ended {
+            return Err(ExecError::ExecutionAlreadyTerminated);
+        }
+        self.declined_resource_attempt = None;
+        self.ensure_resource_replay_boundary()?;
+        if !self.pure_memo_initialized {
+            let runtime = stores.take_pure_memo_config().map_or_else(
+                tex_state::PureMemoRuntime::default,
+                tex_state::PureMemoRuntime::new,
+            );
+            self.install_pure_memo_runtime(runtime);
+        }
+        stores.attach_pure_memo_capability(&self.pure_memo);
+        if self.fatal.is_some() {
+            return Ok(StepResult::Progress(MainControlStep::End));
+        }
+        self.execute_operation_with_resource_provider(
+            stores,
+            OperationDelivery::Replay,
+            OperationTransaction::Advance,
+            1,
+            None,
+            resource_provider,
+        )
+    }
+
     /// Advances one production driver chunk under a single bounded retry
     /// point. The public one-operation [`Self::advance`] contract remains
     /// available to diagnostic and focused-test callers.
@@ -4113,6 +4363,7 @@ impl<G> MainControl<G> {
         if self.ended {
             return Err(ExecError::ExecutionAlreadyTerminated);
         }
+        self.declined_resource_attempt = None;
         self.ensure_resource_replay_boundary()?;
         if !self.pure_memo_initialized {
             let runtime = stores.take_pure_memo_config().map_or_else(
@@ -4134,6 +4385,38 @@ impl<G> MainControl<G> {
         )
     }
 
+    /// Provider-aware production-sized episode advance.
+    pub fn advance_episode_with_resource_provider(
+        &mut self,
+        stores: &mut Universe<G>,
+        resource_provider: &mut dyn ResourceProvider<G>,
+    ) -> Result<StepResult, ExecError> {
+        if self.ended {
+            return Err(ExecError::ExecutionAlreadyTerminated);
+        }
+        self.declined_resource_attempt = None;
+        self.ensure_resource_replay_boundary()?;
+        if !self.pure_memo_initialized {
+            let runtime = stores.take_pure_memo_config().map_or_else(
+                tex_state::PureMemoRuntime::default,
+                tex_state::PureMemoRuntime::new,
+            );
+            self.install_pure_memo_runtime(runtime);
+        }
+        stores.attach_pure_memo_capability(&self.pure_memo);
+        if self.fatal.is_some() {
+            return Ok(StepResult::Progress(MainControlStep::End));
+        }
+        self.execute_operation_with_resource_provider(
+            stores,
+            OperationDelivery::Replay,
+            OperationTransaction::Advance,
+            256,
+            None,
+            resource_provider,
+        )
+    }
+
     /// Attempts one ordinary main-control operation while collecting detached
     /// semantic dependency evidence for that operation only.
     ///
@@ -4147,6 +4430,7 @@ impl<G> MainControl<G> {
         if self.ended {
             return Err(ExecError::ExecutionAlreadyTerminated);
         }
+        self.declined_resource_attempt = None;
         self.ensure_resource_replay_boundary()?;
         if !self.pure_memo_initialized {
             let runtime = stores.take_pure_memo_config().map_or_else(
@@ -4173,6 +4457,43 @@ impl<G> MainControl<G> {
         Ok(TrackedStepResult { step, region })
     }
 
+    /// Provider-aware tracked advance used by observed dependency routes.
+    pub fn advance_with_tracked_region_and_resource_provider(
+        &mut self,
+        stores: &mut Universe<G>,
+        resource_provider: &mut dyn ResourceProvider<G>,
+    ) -> Result<TrackedStepResult, ExecError> {
+        if self.ended {
+            return Err(ExecError::ExecutionAlreadyTerminated);
+        }
+        self.declined_resource_attempt = None;
+        self.ensure_resource_replay_boundary()?;
+        if !self.pure_memo_initialized {
+            let runtime = stores.take_pure_memo_config().map_or_else(
+                tex_state::PureMemoRuntime::default,
+                tex_state::PureMemoRuntime::new,
+            );
+            self.install_pure_memo_runtime(runtime);
+        }
+        stores.attach_pure_memo_capability(&self.pure_memo);
+        if self.fatal.is_some() {
+            return Ok(TrackedStepResult {
+                step: StepResult::Progress(MainControlStep::End),
+                region: None,
+            });
+        }
+        let mut region = None;
+        let step = self.execute_operation_with_resource_provider(
+            stores,
+            OperationDelivery::Replay,
+            OperationTransaction::Advance,
+            1,
+            Some(&mut region),
+            resource_provider,
+        )?;
+        Ok(TrackedStepResult { step, region })
+    }
+
     /// Expands one command for an analysis host without entering ordinary
     /// typesetting. TeX82 §1270's command-code partition still routes every
     /// assignment through §1211 `prefixed_command`; other spellings, including
@@ -4180,6 +4501,27 @@ impl<G> MainControl<G> {
     pub fn diagnostic_expand_step(
         &mut self,
         stores: &mut Universe<G>,
+    ) -> Result<DiagnosticStepResult, ExecError> {
+        self.declined_resource_attempt = None;
+        self.diagnostic_expand_step_inner(stores, None)
+    }
+
+    /// Provider-aware diagnostic expansion. Resource answers are resolved in
+    /// the same admitted command operation; only a declined answer reaches
+    /// the diagnostic suspension result.
+    pub fn diagnostic_expand_step_with_resource_provider(
+        &mut self,
+        stores: &mut Universe<G>,
+        resource_provider: &mut dyn ResourceProvider<G>,
+    ) -> Result<DiagnosticStepResult, ExecError> {
+        self.declined_resource_attempt = None;
+        self.diagnostic_expand_step_inner(stores, Some(resource_provider))
+    }
+
+    fn diagnostic_expand_step_inner(
+        &mut self,
+        stores: &mut Universe<G>,
+        mut resource_provider: Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<DiagnosticStepResult, ExecError> {
         self.ensure_resource_replay_boundary()?;
         let mut command_episode = CommandEpisode::default();
@@ -4197,15 +4539,29 @@ impl<G> MainControl<G> {
                     pdf_ignore_depth: self.pdf_ignore_depth,
                     telemetry: &mut self.episode_telemetry,
                 };
-                let mut processor = command_processor(
-                    &mut self.command,
-                    self.fuel.fuel_mut(),
-                    &mut self.capabilities,
-                    &mut host_facts,
-                    &mut self.operation_observations,
-                    &mut diagnostic_effects,
-                    &mut context,
-                );
+                let mut processor = if let Some(provider) = resource_provider.as_deref_mut() {
+                    command_processor_with_resource_provider(
+                        &mut self.command,
+                        self.fuel.fuel_mut(),
+                        &mut self.capabilities,
+                        &mut host_facts,
+                        provider,
+                        &mut self.declined_resource_attempt,
+                        &mut self.operation_observations,
+                        &mut diagnostic_effects,
+                        &mut context,
+                    )
+                } else {
+                    command_processor(
+                        &mut self.command,
+                        self.fuel.fuel_mut(),
+                        &mut self.capabilities,
+                        &mut host_facts,
+                        &mut self.operation_observations,
+                        &mut diagnostic_effects,
+                        &mut context,
+                    )
+                };
                 let command = processor
                     .get_x_token_preserving_undefined()
                     .map_err(command_error);
@@ -4269,6 +4625,7 @@ impl<G> MainControl<G> {
             &mut command_episode,
             &mut cold_operation,
             false,
+            &mut resource_provider,
         ) {
             Err(TypedOperationError::Preparation(error)) => {
                 command_episode.error = Some(error);
@@ -4363,12 +4720,14 @@ impl<G> MainControl<G> {
         settled: Option<tex_command::CurrentCommand<G>>,
         diagnostic_effects: &mut DiagnosticEffects,
         tracked_region_is_active: bool,
+        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<ReplayStep, ExecError> {
         let result = self.apply_operation(
             stores,
             settled,
             diagnostic_effects,
             tracked_region_is_active,
+            resource_provider,
         );
         if result.is_ok()
             && let Some(error) = self.operation_evidence_limit_error()
@@ -4399,6 +4758,7 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
         tracked_region_is_active: bool,
+        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<ReplayStep, ExecError> {
         if matches!(
             self.modes.current_mode(),
@@ -4443,6 +4803,7 @@ impl<G> MainControl<G> {
             stores,
             diagnostic_effects,
             tracked_region_is_active,
+            resource_provider,
         )?;
         let accent_origin = scanned.accent_provenance.primary;
         let etex_extended = self.command_profile() == CommandProfile::ETEX26;
@@ -4477,6 +4838,7 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
         tracked_region_is_active: bool,
+        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<Option<(u8, tex_state::token::OriginId)>, ExecError> {
         // None of §1270's assignments is a §1030 `main_loop` entry.
         self.main_loop_active = false;
@@ -4488,15 +4850,29 @@ impl<G> MainControl<G> {
                     pdf_ignore_depth: self.pdf_ignore_depth,
                     telemetry: &mut self.episode_telemetry,
                 };
-                let mut processor = command_processor(
-                    &mut self.command,
-                    self.fuel.fuel_mut(),
-                    &mut self.capabilities,
-                    &mut host_facts,
-                    &mut self.operation_observations,
-                    diagnostic_effects,
-                    &mut context,
-                );
+                let mut processor = if let Some(provider) = resource_provider.as_deref_mut() {
+                    command_processor_with_resource_provider(
+                        &mut self.command,
+                        self.fuel.fuel_mut(),
+                        &mut self.capabilities,
+                        &mut host_facts,
+                        provider,
+                        &mut self.declined_resource_attempt,
+                        &mut self.operation_observations,
+                        diagnostic_effects,
+                        &mut context,
+                    )
+                } else {
+                    command_processor(
+                        &mut self.command,
+                        self.fuel.fuel_mut(),
+                        &mut self.capabilities,
+                        &mut host_facts,
+                        &mut self.operation_observations,
+                        diagnostic_effects,
+                        &mut context,
+                    )
+                };
                 let outcome = processor.scan_accent_base();
                 outcome.map_err(command_error)?
             };
@@ -4517,6 +4893,7 @@ impl<G> MainControl<G> {
                         Some(command),
                         diagnostic_effects,
                         tracked_region_is_active,
+                        resource_provider,
                     );
                     self.set_box_forbidden_depth -= 1;
                     match step? {
@@ -4609,6 +4986,8 @@ impl<G> MainControl<G> {
                         state: &mut self.command,
                         fuel: self.fuel.fuel_mut(),
                         capabilities: &mut self.capabilities,
+                        resource_provider: None,
+                        declined_resource_attempt: &mut self.declined_resource_attempt,
                         host_facts: CommandMachineHostFacts::Live(ExecutorHostFacts {
                             modes: &self.modes,
                             pdf_ignore_depth: self.pdf_ignore_depth,
@@ -4719,6 +5098,7 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
         tracked_region_is_active: bool,
+        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<tex_state::node_arena::PageListId, ExecError> {
         // The depth sampled before `push_math`, not the innermost group
         // kind, is what identifies this group's own closing brace: a nested
@@ -4764,6 +5144,7 @@ impl<G> MainControl<G> {
                 None,
                 diagnostic_effects,
                 tracked_region_is_active,
+                resource_provider,
             )?;
             // `execute_live_math_choice_group` fuses the body into its opener's
             // outer operation, but TeX finishes each nested command before
@@ -4847,9 +5228,15 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
         tracked_region_is_active: bool,
+        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<tex_state::node_arena::PageListId, ExecError> {
-        self.command_scan_math_choice_group(stores, diagnostic_effects)?;
-        self.execute_live_math_choice_group(stores, diagnostic_effects, tracked_region_is_active)
+        self.command_scan_math_choice_group(stores, diagnostic_effects, resource_provider)?;
+        self.execute_live_math_choice_group(
+            stores,
+            diagnostic_effects,
+            tracked_region_is_active,
+            resource_provider,
+        )
     }
 
     /// Stores one completed TeX82 §1151 field or opens its live §1153 group.
@@ -4916,6 +5303,7 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
         tracked_region_is_active: bool,
+        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<ReplayStep, ExecError> {
         match request {
             MathRequest::Character(value) => {
@@ -4949,7 +5337,8 @@ impl<G> MainControl<G> {
                     Node::MathNoad(MathNoad::new(noad_kind_for_text(kind), MathField::Empty)),
                 );
                 drop(context);
-                let episode = self.command_scan_math_field(stores, diagnostic_effects)?;
+                let episode =
+                    self.command_scan_math_field(stores, diagnostic_effects, resource_provider)?;
                 self.accept_math_field(
                     episode,
                     ActiveMathFieldTarget::Nucleus {
@@ -4967,7 +5356,8 @@ impl<G> MainControl<G> {
                     diagnostic_effects,
                     script.kind,
                 )?;
-                let episode = self.command_scan_math_field(stores, diagnostic_effects)?;
+                let episode =
+                    self.command_scan_math_field(stores, diagnostic_effects, resource_provider)?;
                 self.accept_math_field(
                     episode,
                     ActiveMathFieldTarget::Script(target),
@@ -5033,6 +5423,7 @@ impl<G> MainControl<G> {
                         stores,
                         diagnostic_effects,
                         tracked_region_is_active,
+                        resource_provider,
                     )?;
                     *self
                         .active_math_choices
@@ -5042,6 +5433,7 @@ impl<G> MainControl<G> {
                         stores,
                         diagnostic_effects,
                         tracked_region_is_active,
+                        resource_provider,
                     )?;
                     *self
                         .active_math_choices
@@ -5051,6 +5443,7 @@ impl<G> MainControl<G> {
                         stores,
                         diagnostic_effects,
                         tracked_region_is_active,
+                        resource_provider,
                     )?;
                     *self
                         .active_math_choices
@@ -5060,6 +5453,7 @@ impl<G> MainControl<G> {
                         stores,
                         diagnostic_effects,
                         tracked_region_is_active,
+                        resource_provider,
                     )?;
                     Ok::<_, ExecError>((display, text, script, script_script))
                 })();
@@ -5088,7 +5482,8 @@ impl<G> MainControl<G> {
                     )),
                 );
                 drop(context);
-                let episode = self.command_scan_math_field(stores, diagnostic_effects)?;
+                let episode =
+                    self.command_scan_math_field(stores, diagnostic_effects, resource_provider)?;
                 self.accept_math_field(
                     episode,
                     ActiveMathFieldTarget::Nucleus {
@@ -5119,7 +5514,7 @@ impl<G> MainControl<G> {
                     report.context(context);
                     report.error().defer_recovery(diagnostic_effects)?;
                     self.apply_error_stop_transition(stores, diagnostic_effects)?;
-                    self.command_scan_math_character(stores, diagnostic_effects)?
+                    self.command_scan_math_character(stores, diagnostic_effects, resource_provider)?
                 };
                 let accent = math_char(
                     &stores.command_context().expect("live generation"),
@@ -5134,7 +5529,8 @@ impl<G> MainControl<G> {
                     Node::MathNoad(MathNoad::new(NoadKind::Accent { accent }, MathField::Empty)),
                 );
                 drop(context);
-                let episode = self.command_scan_math_field(stores, diagnostic_effects)?;
+                let episode =
+                    self.command_scan_math_field(stores, diagnostic_effects, resource_provider)?;
                 self.accept_math_field(
                     episode,
                     ActiveMathFieldTarget::Nucleus {
@@ -5233,6 +5629,7 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
+        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<ReplayStep, ExecError> {
         let Some((nodes, aux_prev_depth)) =
             self.modes.current_list_mutation().take_display_alignment()
@@ -5268,6 +5665,7 @@ impl<G> MainControl<G> {
                 aux_prev_depth,
                 aux_space_factor: None,
             },
+            resource_provider,
         )?;
         Ok(ReplayStep::Continue)
     }
@@ -5277,6 +5675,7 @@ impl<G> MainControl<G> {
         pairing: MathShiftPairing,
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
+        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<ReplayStep, ExecError> {
         match self.modes.current_mode() {
             Mode::Horizontal | Mode::RestrictedHorizontal => {
@@ -5307,7 +5706,8 @@ impl<G> MainControl<G> {
                     debug_assert_eq!(pairing, MathShiftPairing::ProbeDisplayEnd);
                     let content = self.prepare_math_list(stores, diagnostic_effects)?;
                     let eq = self.finish_equation_number_mlist(stores, diagnostic_effects)?;
-                    let paired = self.scan_display_end(stores, diagnostic_effects)?;
+                    let paired =
+                        self.scan_display_end(stores, diagnostic_effects, resource_provider)?;
                     if !paired {
                         report_unpaired_display_end(&self.command, diagnostic_effects, stores)?;
                     }
@@ -5320,6 +5720,7 @@ impl<G> MainControl<G> {
                         Some(finished),
                         false,
                         None,
+                        resource_provider,
                     )?;
                 } else {
                     debug_assert_eq!(pairing, MathShiftPairing::Unpaired);
@@ -5330,7 +5731,8 @@ impl<G> MainControl<G> {
                 debug_assert_eq!(pairing, MathShiftPairing::ProbeDisplayEnd);
                 let display_alignment = self.modes.current_list_mutation().take_display_alignment();
                 if let Some((nodes, aux_prev_depth)) = display_alignment {
-                    let paired = self.scan_display_end(stores, diagnostic_effects)?;
+                    let paired =
+                        self.scan_display_end(stores, diagnostic_effects, resource_provider)?;
                     if !paired {
                         report_unpaired_display_end(&self.command, diagnostic_effects, stores)?;
                     }
@@ -5342,12 +5744,14 @@ impl<G> MainControl<G> {
                             aux_prev_depth,
                             aux_space_factor: None,
                         },
+                        resource_provider,
                     )?;
                     return Ok(ReplayStep::Continue);
                 }
                 let (content, display_level) =
                     self.prepare_display_math_list(stores, diagnostic_effects)?;
-                let paired = self.scan_display_end(stores, diagnostic_effects)?;
+                let paired =
+                    self.scan_display_end(stores, diagnostic_effects, resource_provider)?;
                 if !paired {
                     report_unpaired_display_end(&self.command, diagnostic_effects, stores)?;
                 }
@@ -5358,6 +5762,7 @@ impl<G> MainControl<G> {
                     None,
                     true,
                     Some(display_level),
+                    resource_provider,
                 )?;
             }
             Mode::Vertical | Mode::InternalVertical => {
@@ -5413,10 +5818,11 @@ impl<G> MainControl<G> {
         Ok((content, level))
     }
 
-    fn scan_display_end(
+    fn scan_display_end<'provider>(
         &mut self,
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
+        resource_provider: &mut Option<&'provider mut dyn ResourceProvider<G>>,
     ) -> Result<bool, ExecError> {
         // TeX82 §§1185/1194's `fin_mlist` has already popped the display
         // level. Publish that live nest before §1197's nested expansion
@@ -5428,7 +5834,8 @@ impl<G> MainControl<G> {
         let mut context = stores
             .command_context()
             .expect("display-end scan requires a live generation");
-        let mut machine = self.command_machine(diagnostic_effects);
+        let provider = resource_provider.take();
+        let mut machine = self.command_machine_with_resource_provider(diagnostic_effects, provider);
         let mut processor = machine.processor(&mut context);
         prepare_command_trace(&mut processor, mode, shown_mode);
         let paired = processor
@@ -5439,7 +5846,9 @@ impl<G> MainControl<G> {
         if command_trace_printed {
             *machine.shown_mode = Some(mode);
         }
+        let provider = machine.resource_provider.take();
         drop(machine);
+        *resource_provider = provider;
         drop(context);
         Ok(paired)
     }
@@ -5706,8 +6115,15 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
         finished: crate::align::FinishedAlignment,
+        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<(), ExecError> {
-        self.finish_display_alignment_inner(stores, diagnostic_effects, finished, true)
+        self.finish_display_alignment_inner(
+            stores,
+            diagnostic_effects,
+            finished,
+            true,
+            resource_provider,
+        )
     }
 
     fn finish_display_alignment_inner(
@@ -5716,6 +6132,7 @@ impl<G> MainControl<G> {
         diagnostic_effects: &mut DiagnosticEffects,
         finished: crate::align::FinishedAlignment,
         scan_optional_space: bool,
+        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<(), ExecError> {
         let mut context = stores
             .command_context()
@@ -5755,6 +6172,7 @@ impl<G> MainControl<G> {
             diagnostic_effects,
             interrupt.active_directions,
             scan_optional_space,
+            resource_provider,
         )
     }
 
@@ -5766,6 +6184,7 @@ impl<G> MainControl<G> {
         eq_no: Option<crate::math::display::FinishedEqNo>,
         fonts_checked: bool,
         display_level: Option<crate::mode::ModeLevelSummary>,
+        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<(), ExecError> {
         let diagnostic_text = self
             .command
@@ -5841,7 +6260,12 @@ impl<G> MainControl<G> {
             aftergroup,
         )?;
         drop(context);
-        self.resume_display(stores, diagnostic_effects, active_directions)
+        self.resume_display(
+            stores,
+            diagnostic_effects,
+            active_directions,
+            resource_provider,
+        )
     }
 
     fn resume_display(
@@ -5849,8 +6273,15 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
         directions: Vec<tex_state::node::Direction>,
+        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<(), ExecError> {
-        self.resume_display_inner(stores, diagnostic_effects, directions, true)
+        self.resume_display_inner(
+            stores,
+            diagnostic_effects,
+            directions,
+            true,
+            resource_provider,
+        )
     }
 
     fn resume_display_inner(
@@ -5859,6 +6290,7 @@ impl<G> MainControl<G> {
         diagnostic_effects: &mut DiagnosticEffects,
         directions: Vec<tex_state::node::Direction>,
         scan_optional_space: bool,
+        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<(), ExecError> {
         let prev = self
             .modes
@@ -5893,7 +6325,7 @@ impl<G> MainControl<G> {
             directions.into_iter().map(Node::Direction),
         );
         if scan_optional_space {
-            self.scan_optional_space(stores, diagnostic_effects)?;
+            self.scan_optional_space(stores, diagnostic_effects, resource_provider)?;
         }
         let mut context = stores.command_context().expect("display-resume admission");
         let error_context = self.command.output_open_context(&context);
@@ -5916,17 +6348,19 @@ impl<G> MainControl<G> {
     /// vertical list gained an empty line box and its interline glue
     /// (`umber2-johp.231`). The scan is a plain `get_x_token`, so a macro
     /// following the display is expanded here exactly as TeX82 expands it.
-    fn scan_optional_space(
+    fn scan_optional_space<'provider>(
         &mut self,
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
+        resource_provider: &mut Option<&'provider mut dyn ResourceProvider<G>>,
     ) -> Result<(), ExecError> {
         let mode = self.modes.current_mode();
         let shown_mode = self.shown_mode;
         let mut context = stores
             .command_context()
             .expect("optional-space scan requires a live generation");
-        let mut machine = self.command_machine(diagnostic_effects);
+        let provider = resource_provider.take();
+        let mut machine = self.command_machine_with_resource_provider(diagnostic_effects, provider);
         let mut processor = machine.processor(&mut context);
         let mut diagnostics = Vec::new();
         // TeX82 §§299/1200: resume_after_display has already pushed the new
@@ -5969,7 +6403,9 @@ impl<G> MainControl<G> {
         if command_trace_printed {
             *machine.shown_mode = Some(mode);
         }
+        let provider = machine.resource_provider.take();
         drop(machine);
+        *resource_provider = provider;
         drop(context);
         // §1200 performs this expanded fetch synchronously before §1125's
         // page builder. Diagnostics produced by expansion therefore belong
@@ -6152,6 +6588,7 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
+        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<tex_command::MathFieldEpisode, ExecError> {
         let mut context = stores.command_context().expect("live generation");
         let mut host_facts = ExecutorHostFacts {
@@ -6159,15 +6596,29 @@ impl<G> MainControl<G> {
             pdf_ignore_depth: self.pdf_ignore_depth,
             telemetry: &mut self.episode_telemetry,
         };
-        let mut processor = command_processor(
-            &mut self.command,
-            self.fuel.fuel_mut(),
-            &mut self.capabilities,
-            &mut host_facts,
-            &mut self.operation_observations,
-            diagnostic_effects,
-            &mut context,
-        );
+        let mut processor = if let Some(provider) = resource_provider.as_deref_mut() {
+            command_processor_with_resource_provider(
+                &mut self.command,
+                self.fuel.fuel_mut(),
+                &mut self.capabilities,
+                &mut host_facts,
+                provider,
+                &mut self.declined_resource_attempt,
+                &mut self.operation_observations,
+                diagnostic_effects,
+                &mut context,
+            )
+        } else {
+            command_processor(
+                &mut self.command,
+                self.fuel.fuel_mut(),
+                &mut self.capabilities,
+                &mut host_facts,
+                &mut self.operation_observations,
+                diagnostic_effects,
+                &mut context,
+            )
+        };
         let scanned = processor.scan_math_field_episode();
         scanned.map_err(command_error)
     }
@@ -6178,6 +6629,7 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
+        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<tex_command::ScannedMathCharacter, ExecError> {
         let mut context = stores.command_context().expect("live generation");
         let mut host_facts = ExecutorHostFacts {
@@ -6185,15 +6637,29 @@ impl<G> MainControl<G> {
             pdf_ignore_depth: self.pdf_ignore_depth,
             telemetry: &mut self.episode_telemetry,
         };
-        let mut processor = command_processor(
-            &mut self.command,
-            self.fuel.fuel_mut(),
-            &mut self.capabilities,
-            &mut host_facts,
-            &mut self.operation_observations,
-            diagnostic_effects,
-            &mut context,
-        );
+        let mut processor = if let Some(provider) = resource_provider.as_deref_mut() {
+            command_processor_with_resource_provider(
+                &mut self.command,
+                self.fuel.fuel_mut(),
+                &mut self.capabilities,
+                &mut host_facts,
+                provider,
+                &mut self.declined_resource_attempt,
+                &mut self.operation_observations,
+                diagnostic_effects,
+                &mut context,
+            )
+        } else {
+            command_processor(
+                &mut self.command,
+                self.fuel.fuel_mut(),
+                &mut self.capabilities,
+                &mut host_facts,
+                &mut self.operation_observations,
+                diagnostic_effects,
+                &mut context,
+            )
+        };
         processor.scan_math_character().map_err(command_error)
     }
 
@@ -6204,6 +6670,7 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
+        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<bool, ExecError> {
         let mut context = stores.command_context().expect("live generation");
         let mut host_facts = ExecutorHostFacts {
@@ -6211,15 +6678,29 @@ impl<G> MainControl<G> {
             pdf_ignore_depth: self.pdf_ignore_depth,
             telemetry: &mut self.episode_telemetry,
         };
-        let mut processor = command_processor(
-            &mut self.command,
-            self.fuel.fuel_mut(),
-            &mut self.capabilities,
-            &mut host_facts,
-            &mut self.operation_observations,
-            diagnostic_effects,
-            &mut context,
-        );
+        let mut processor = if let Some(provider) = resource_provider.as_deref_mut() {
+            command_processor_with_resource_provider(
+                &mut self.command,
+                self.fuel.fuel_mut(),
+                &mut self.capabilities,
+                &mut host_facts,
+                provider,
+                &mut self.declined_resource_attempt,
+                &mut self.operation_observations,
+                diagnostic_effects,
+                &mut context,
+            )
+        } else {
+            command_processor(
+                &mut self.command,
+                self.fuel.fuel_mut(),
+                &mut self.capabilities,
+                &mut host_facts,
+                &mut self.operation_observations,
+                diagnostic_effects,
+                &mut context,
+            )
+        };
         let scanned = processor.scan_math_choice_group();
         scanned.map_err(command_error)
     }
@@ -6257,9 +6738,31 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         observer: &mut dyn CommandObserver,
     ) -> Result<StepResult, ExecError> {
+        self.advance_with_observer_inner(stores, observer, None)
+    }
+
+    /// Atomic observed advance with the cold resource provider enabled.
+    /// Ready and unavailable answers continue inside this operation; a
+    /// declined answer is returned as the ordinary resource suspension.
+    pub fn advance_with_observer_and_resource_provider(
+        &mut self,
+        stores: &mut Universe<G>,
+        observer: &mut dyn CommandObserver,
+        resource_provider: &mut dyn ResourceProvider<G>,
+    ) -> Result<StepResult, ExecError> {
+        self.advance_with_observer_inner(stores, observer, Some(resource_provider))
+    }
+
+    fn advance_with_observer_inner(
+        &mut self,
+        stores: &mut Universe<G>,
+        observer: &mut dyn CommandObserver,
+        mut resource_provider: Option<&mut dyn ResourceProvider<G>>,
+    ) -> Result<StepResult, ExecError> {
         if self.ended {
             return Err(ExecError::ExecutionAlreadyTerminated);
         }
+        self.declined_resource_attempt = None;
         self.ensure_resource_replay_boundary()?;
         if !self.pure_memo_initialized {
             let runtime = stores.take_pure_memo_config().map_or_else(
@@ -6282,13 +6785,23 @@ impl<G> MainControl<G> {
             effect: effect_start.raw(),
             artifact: artifact_start,
         });
-        let stepped = self.execute_operation(
-            stores,
-            OperationDelivery::Replay,
-            OperationTransaction::Advance,
-            1,
-            None,
-        );
+        let stepped = match resource_provider.as_deref_mut() {
+            Some(resource_provider) => self.execute_operation_with_resource_provider(
+                stores,
+                OperationDelivery::Replay,
+                OperationTransaction::Advance,
+                1,
+                None,
+                resource_provider,
+            ),
+            None => self.execute_operation(
+                stores,
+                OperationDelivery::Replay,
+                OperationTransaction::Advance,
+                1,
+                None,
+            ),
+        };
         let mut pending = self.operation_observations.take().unwrap_or_default();
         self.operation_receipt_start.take();
         match &stepped {
@@ -6414,6 +6927,7 @@ impl<G> MainControl<G> {
         command: Option<tex_command::CurrentCommand<G>>,
         diagnostic_effects: &mut DiagnosticEffects,
         tracked_region_is_active: bool,
+        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<ReplayStep, ExecError> {
         let mut frame = CommandEpisode::default();
         let mut cold = ColdOperationSlot::default();
@@ -6432,6 +6946,7 @@ impl<G> MainControl<G> {
             &mut frame,
             &mut cold,
             tracked_region_is_active,
+            resource_provider,
         );
         self.settle_save_stack_usage(stores, &mut host_preparation);
         result.map_err(TypedOperationError::into_exec_error)
@@ -6480,6 +6995,7 @@ impl<G> MainControl<G> {
         frame: &mut CommandEpisode<G>,
         cold: &mut ColdOperationSlot<G>,
         tracked_region_is_active: bool,
+        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<ReplayStep, TypedOperationError> {
         let result = self.dispatch_typed_operation(
             stores,
@@ -6488,6 +7004,7 @@ impl<G> MainControl<G> {
             frame,
             cold,
             tracked_region_is_active,
+            resource_provider,
         );
         if result.is_ok() {
             self.apply_error_stop_transition(stores, diagnostic_effects)
@@ -6506,6 +7023,7 @@ impl<G> MainControl<G> {
         frame: &mut CommandEpisode<G>,
         cold: &mut ColdOperationSlot<G>,
         tracked_region_is_active: bool,
+        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<ReplayStep, TypedOperationError> {
         let delivery = host_preparation.take_delivery();
         // Resource retries replay the aggregate checkpoint. No scanner or
@@ -6549,6 +7067,7 @@ impl<G> MainControl<G> {
                     prepared_page_count: self.prepared_dvi_pages.len(),
                     tracked_region_is_active,
                 },
+                resource_provider,
             );
         }
         let mode_fingerprint =
@@ -6641,15 +7160,29 @@ impl<G> MainControl<G> {
                     pdf_ignore_depth: self.pdf_ignore_depth,
                     telemetry: &mut self.episode_telemetry,
                 };
-                let mut processor = command_processor(
-                    &mut self.command,
-                    self.fuel.fuel_mut(),
-                    &mut self.capabilities,
-                    &mut host_facts,
-                    &mut self.operation_observations,
-                    diagnostic_effects,
-                    context,
-                );
+                let mut processor = if let Some(provider) = resource_provider.as_deref_mut() {
+                    command_processor_with_resource_provider(
+                        &mut self.command,
+                        self.fuel.fuel_mut(),
+                        &mut self.capabilities,
+                        &mut host_facts,
+                        provider,
+                        &mut self.declined_resource_attempt,
+                        &mut self.operation_observations,
+                        diagnostic_effects,
+                        context,
+                    )
+                } else {
+                    command_processor(
+                        &mut self.command,
+                        self.fuel.fuel_mut(),
+                        &mut self.capabilities,
+                        &mut host_facts,
+                        &mut self.operation_observations,
+                        diagnostic_effects,
+                        context,
+                    )
+                };
                 processor.set_output_routine_active(self.boxes.output_routine_active);
                 let display_alignment_tail = matches!(&delivery, OperationDelivery::Replay)
                     && mode == Mode::DisplayMath
@@ -6812,6 +7345,7 @@ impl<G> MainControl<G> {
                     prepared_page_count: self.prepared_dvi_pages.len(),
                     tracked_region_is_active,
                 },
+                resource_provider,
             ),
             ScannedOperation::Hot(mut operation) => {
                 let applied = self.apply_hot_operation(
@@ -6842,6 +7376,7 @@ impl<G> MainControl<G> {
         frame: &mut CommandEpisode<G>,
         cold: &mut ColdOperationSlot<G>,
         output_start: OperationOutputStart,
+        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<ReplayStep, TypedOperationError> {
         let immediate_pdf_retry = match frame.unavailable_mut(cold) {
             ColdOperation::ImmediateExtension(RootedImmediateExtension::PdfExtensionInDviMode(
@@ -6853,10 +7388,20 @@ impl<G> MainControl<G> {
             frame.clear_preflight();
             frame.admit_immediate_pdf(primitive);
         }
-        let episode =
-            self.prepare_cold_execution_episode(stores, frame.unavailable_mut(cold), output_start)?;
+        let episode = self.prepare_cold_execution_episode(
+            stores,
+            frame.unavailable_mut(cold),
+            output_start,
+            resource_provider,
+        )?;
         let result = self
-            .execute_cold_episode(stores, host_preparation, episode, diagnostic_effects)
+            .execute_cold_episode(
+                stores,
+                host_preparation,
+                episode,
+                diagnostic_effects,
+                resource_provider,
+            )
             .map_err(TypedOperationError::Application);
         if result.is_ok() {
             frame.clear_cold(cold);
@@ -6869,13 +7414,16 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         operation: &'operation mut PreparedColdCommand<G>,
         output_start: OperationOutputStart,
+        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<ColdExecutionEpisode<'operation, G>, TypedOperationError> {
-        let resource_result = {
-            self.resolve_font_resource(operation, stores)
-                .and_then(|()| self.resolve_input_stream_resource(operation, stores))
-                .and_then(|()| self.resolve_pdf_image_resource(operation, stores))
-        };
-        if let Err(error) = resource_result {
+        if let Err(error) = self.resolve_font_resource(operation, stores, resource_provider) {
+            return Err(TypedOperationError::Preparation(error));
+        }
+        if let Err(error) = self.resolve_input_stream_resource(operation, stores, resource_provider)
+        {
+            return Err(TypedOperationError::Preparation(error));
+        }
+        if let Err(error) = self.resolve_pdf_image_resource(operation, stores, resource_provider) {
             return Err(TypedOperationError::Preparation(error));
         }
         let completed_preamble = match &*operation {
@@ -7021,6 +7569,8 @@ impl<G> MainControl<G> {
                 state: &mut self.command,
                 fuel: self.fuel.fuel_mut(),
                 capabilities: &mut self.capabilities,
+                resource_provider: None,
+                declined_resource_attempt: &mut self.declined_resource_attempt,
                 host_facts: CommandMachineHostFacts::Forbidden,
                 observations: &mut self.operation_observations,
                 assignment_receipts: assignment_receipts.as_mut(),
@@ -7125,6 +7675,8 @@ impl<G> MainControl<G> {
             state: &mut self.command,
             fuel: self.fuel.fuel_mut(),
             capabilities: &mut self.capabilities,
+            resource_provider: None,
+            declined_resource_attempt: &mut self.declined_resource_attempt,
             host_facts: CommandMachineHostFacts::Forbidden,
             observations: &mut self.operation_observations,
             assignment_receipts: None,
@@ -7278,13 +7830,15 @@ impl<G> MainControl<G> {
         result
     }
 
-    fn execute_cold_episode(
+    fn execute_cold_episode<'provider>(
         &mut self,
         stores: &mut Universe<G>,
         host_preparation: &mut OperationPreparation<G>,
         episode: ColdExecutionEpisode<'_, G>,
         diagnostic_effects: &mut DiagnosticEffects,
+        resource_provider: &mut Option<&'provider mut dyn ResourceProvider<G>>,
     ) -> Result<ReplayStep, ExecError> {
+        let mut operation_resource_provider = resource_provider.take();
         let ColdExecutionEpisode {
             operation,
             alignment_preamble,
@@ -7316,6 +7870,7 @@ impl<G> MainControl<G> {
             stores,
             diagnostic_effects,
             tracked_region_is_active,
+            &mut operation_resource_provider,
         ) {
             let result =
                 self.finish_host_owned_step(applied, output_start, stores, diagnostic_effects);
@@ -7331,6 +7886,7 @@ impl<G> MainControl<G> {
                     context: "nested operation command settlement",
                 })?;
             }
+            *resource_provider = operation_resource_provider;
             return result;
         }
         if let Some(preamble) = alignment_preamble {
@@ -7513,6 +8069,8 @@ impl<G> MainControl<G> {
             state: &mut self.command,
             fuel: self.fuel.fuel_mut(),
             capabilities: &mut self.capabilities,
+            resource_provider: operation_resource_provider.take(),
+            declined_resource_attempt: &mut self.declined_resource_attempt,
             host_facts: CommandMachineHostFacts::Detached {
                 pdf_ignore_depth: self.pdf_ignore_depth,
                 telemetry: &mut self.episode_telemetry,
@@ -7786,6 +8344,7 @@ impl<G> MainControl<G> {
         }
         let completed_output_routine =
             output_routine_was_active && !self.boxes.output_routine_active;
+        operation_resource_provider = command.resource_provider.take();
         drop(command);
         if result.is_ok() && completed_output_routine {
             // §1026 has consumed the output mode list and established the
@@ -8000,6 +8559,7 @@ impl<G> MainControl<G> {
                 stores,
             );
         }
+        *resource_provider = operation_resource_provider;
         result
     }
 
@@ -8301,7 +8861,7 @@ fn set_math_char<G>(
     origin: tex_state::token::OriginId,
     stores: &mut CommandContext<'_, G>,
     modes: &mut ModeNest,
-    command: &mut CommandMachine<'_, G>,
+    command: &mut CommandMachine<'_, '_, G>,
 ) -> Result<(), ExecError> {
     let code = stores.mathcode(ch);
     stores.observe_command_projection(

@@ -710,6 +710,17 @@ impl<'a, G> CommandContext<'a, G> {
         operation
     }
 
+    /// Reborrows the operation's World through the narrow input-resource
+    /// capability. The provider call must finish before this closure returns;
+    /// no World or input-state borrow can therefore survive a checkpoint or
+    /// enter command state.
+    pub fn with_input_read_state<T>(
+        &mut self,
+        operation: impl FnOnce(&mut dyn crate::InputReadState) -> T,
+    ) -> T {
+        operation(&mut self.resident.world.input_open_context())
+    }
+
     /// Commits an operation opened by [`Self::begin_state_operation`].
     pub fn commit_state_operation(&mut self, mut operation: crate::StateOperation<G>) {
         let durable = operation.take_durable_box();

@@ -195,6 +195,7 @@ impl<G> MainControl<G> {
         diagnostic_effects: &mut DiagnosticEffects,
         frame: &mut CommandEpisode<G>,
         cold: &mut ColdOperationSlot<G>,
+        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> PreflightReadiness {
         frame.assert_empty();
         self.ensure_primitive_handles(stores);
@@ -324,15 +325,29 @@ impl<G> MainControl<G> {
                         pdf_ignore_depth: self.pdf_ignore_depth,
                         telemetry: &mut self.episode_telemetry,
                     };
-                    let mut processor = command_processor(
-                        &mut self.command,
-                        self.fuel.fuel_mut(),
-                        &mut self.capabilities,
-                        &mut host_facts,
-                        &mut self.operation_observations,
-                        diagnostic_effects,
-                        context,
-                    );
+                    let mut processor = if let Some(provider) = resource_provider.as_deref_mut() {
+                        command_processor_with_resource_provider(
+                            &mut self.command,
+                            self.fuel.fuel_mut(),
+                            &mut self.capabilities,
+                            &mut host_facts,
+                            provider,
+                            &mut self.declined_resource_attempt,
+                            &mut self.operation_observations,
+                            diagnostic_effects,
+                            context,
+                        )
+                    } else {
+                        command_processor(
+                            &mut self.command,
+                            self.fuel.fuel_mut(),
+                            &mut self.capabilities,
+                            &mut host_facts,
+                            &mut self.operation_observations,
+                            diagnostic_effects,
+                            context,
+                        )
+                    };
                     processor.set_output_routine_active(self.boxes.output_routine_active);
                     prepare_command_trace(&mut processor, mode, self.shown_mode);
                     // TeX82 has one raw-fetch/classification loop. Enter it once with
