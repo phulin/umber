@@ -8,7 +8,7 @@ use crate::execution_scratch::ArgumentSetId;
 use crate::input::{
     InputLevel, InputLevelId, PackedInputFrame, ResidentBoundary, ResidentSourceAdvance,
     ResidentSourceCharacterRun, ResidentSourceTop, ResidentTokenStorage, SourceLocation,
-    SourceNameClass, TokenBehavior,
+    SourceNameClass,
 };
 use crate::{CommandError, CommandReplayDelivery, CurrentCommand};
 
@@ -599,8 +599,10 @@ impl<G> CommandProcessor<'_, '_, G> {
 
         let arguments = match &row.storage {
             ResidentTokenStorage::MacroBody(body) => Some(body.arguments),
-            _ if !matches!(row.header.behavior(), TokenBehavior::Parameter) => Some(None),
-            _ => None,
+            ResidentTokenStorage::MacroArgument(_) => None,
+            ResidentTokenStorage::Replay { .. }
+            | ResidentTokenStorage::Durable(_)
+            | ResidentTokenStorage::Attempt(_) => Some(None),
         };
         if let Some(arguments) = arguments
             && let Some(slot) = word.out_parameter_slot()
