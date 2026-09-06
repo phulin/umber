@@ -604,7 +604,7 @@ impl<'a> VirtualFileResolver<'a> {
             RequestedFile::UserOnly(path) => path.as_path(),
             RequestedFile::Remote { key, .. } => Path::new(key.name()),
         };
-        if let Some(content) = self.read_pending_output(input, pending_path)? {
+        if let Some(content) = self.read_pending_output(input, pending_path, intent)? {
             return Ok(HostLookup::Available(content));
         }
 
@@ -690,12 +690,28 @@ impl<'a> VirtualFileResolver<'a> {
         &mut self,
         input: &mut dyn InputReadState,
         path: &Path,
+        intent: FileOpenIntent,
     ) -> Result<Option<FileContent>, String> {
-        input.read_pending_output_file(path).map_err(|error| {
+        let Some(content) = input.read_pending_output_file(path).map_err(|error| {
             let failure = CompileError::World(error.to_string());
             self.record_fatal(failure.clone());
             failure.to_string()
-        })
+        })?
+        else {
+            return Ok(None);
+        };
+        input
+            .record_input_dependency(
+                path,
+                InputDependencyOutcome::Present(content.hash()),
+                dependency_access(intent),
+            )
+            .map_err(|error| {
+                let failure = CompileError::World(error.to_string());
+                self.record_fatal(failure.clone());
+                failure.to_string()
+            })?;
+        Ok(Some(content))
     }
 
     fn read_snapshot(

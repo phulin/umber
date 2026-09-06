@@ -6,10 +6,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::{FontLoadRequest, PdfImageRequest, SourceRegistration, SourceRole};
+use tex_state::InputReadState;
 use tex_state::glue::GlueSpec;
 use tex_state::scaled::Scaled;
 use tex_state::world::{
-    FileContent, InputDependency, InputDependencyAccess, InputDependencyOutcome, WorldError,
+    ContentHash, FileContent, FileModificationDate, InputDependency, InputDependencyAccess,
+    InputDependencyOutcome, InputOrigin, WorldError,
 };
 
 /// Returns the exact transient capability key for a canonical font request.
@@ -138,6 +140,50 @@ pub enum ResourceOutcome {
 pub struct ResourceResolution {
     pub outcome: ResourceOutcome,
     pub dependencies: Vec<InputDependency>,
+}
+
+/// Result of settling a provider answer in the capability owner.
+///
+/// A fulfilled result carries the original active payload for the cold
+/// consumer. The capability owner stores only its retained, record-free form;
+/// the active value is dropped after the current operation and never becomes
+/// a mailbox or parser continuation.
+#[derive(Debug)]
+pub enum ResourceInstallOutcome {
+    Fulfilled(ResourceFulfillment),
+    Unavailable,
+    Declined,
+    Failed(ResourceFailure),
+}
+
+/// Rewrites retained resolver observations for the content selected by one
+/// actual use. Missing candidate attempts remain useful search facts, while
+/// stale Present hashes from an older winner are discarded before the current
+/// path/hash is recorded.
+#[must_use]
+pub fn dependencies_for_actual_content(
+    dependencies: &[InputDependency],
+    path: &Path,
+    hash: ContentHash,
+) -> Arc<[InputDependency]> {
+    let access = dependencies
+        .iter()
+        .find(|dependency| dependency.path() == path)
+        .map_or(InputDependencyAccess::RequiredRead, InputDependency::access);
+    let mut actual = dependencies
+        .iter()
+        .filter(|dependency| {
+            matches!(dependency.outcome(), InputDependencyOutcome::Missing)
+                && dependency.path() != path
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    actual.push(InputDependency::new(
+        path.to_owned(),
+        InputDependencyOutcome::Present(hash),
+        access,
+    ));
+    actual.into()
 }
 
 impl ResourceResolution {
@@ -292,6 +338,34 @@ impl FileEnquiryResource {
         &self.source
     }
 
+    /// Returns the record-free retained form of this enquiry resource.
+    #[must_use]
+    pub(crate) fn without_world_record(&self) -> Self {
+        Self {
+            source: self.source.without_world_record(),
+            modification_date: self.modification_date,
+        }
+    }
+
+    /// Re-registers the retained source backing for one actual enquiry.
+    ///
+    /// The source helper gives current same-run output precedence and returns
+    /// `None` for a generated-only selection whose output was rolled back.
+    pub fn actual_use(&self, input: &mut dyn InputReadState) -> Result<Option<Self>, WorldError> {
+        let Some(source) = self.source.actual_use(input)? else {
+            return Ok(None);
+        };
+        let modification_date = source.modification_date().or(self.modification_date);
+        Ok(Some(Self {
+            source,
+            modification_date,
+        }))
+    }
+
+    pub fn dependencies_for_actual_use(&self, active: &Self) -> Arc<[InputDependency]> {
+        self.source.dependencies_for_actual_use(&active.source)
+    }
+
     /// Attaches semantic dependencies to this retained enquiry answer while
     /// preserving its modification metadata.
     #[must_use]
@@ -334,6 +408,126 @@ pub enum FontResource {
     OpenType(tex_fonts::OpenTypeFont),
 }
 
+/// Record-free retained bytes for a host-selected font metrics file.
+#[derive(Clone, Debug)]
+#[doc(hidden)]
+pub struct RetainedFileContent {
+    path: PathBuf,
+    bytes: tex_state::SharedBytes,
+    modification_date: Option<FileModificationDate>,
+    origin: InputOrigin,
+}
+
+impl RetainedFileContent {
+    fn from_active(content: &FileContent) -> Self {
+        Self {
+            path: content.path().to_owned(),
+            bytes: content.shared_bytes(),
+            modification_date: content.modification_date(),
+            origin: content.origin(),
+        }
+    }
+
+    fn actual_use(
+        &self,
+        input: &mut dyn InputReadState,
+        dependencies: &[InputDependency],
+    ) -> Result<Option<FileContent>, WorldError> {
+        input.read_selected_input_file(
+            &self.path,
+            self.bytes.clone(),
+            self.modification_date,
+            self.origin,
+            dependencies,
+        )
+    }
+}
+
+/// Record-free capability payload for one host-selected font answer.
+#[derive(Clone, Debug)]
+pub enum RetainedFontResource {
+    Unavailable,
+    Tfm {
+        metrics: RetainedFileContent,
+        opentype: Option<tex_fonts::OpenTypeFont>,
+    },
+    MappedTfm {
+        metrics: RetainedFileContent,
+        opentype: tex_fonts::OpenTypeFont,
+        encoding_map: tex_fonts::LegacyEncodingMap,
+    },
+    ClassicTfmFallback {
+        metrics: RetainedFileContent,
+    },
+    OpenType(tex_fonts::OpenTypeFont),
+}
+
+impl RetainedFontResource {
+    fn from_active(resource: &FontResource) -> Self {
+        match resource {
+            FontResource::Unavailable => Self::Unavailable,
+            FontResource::Tfm { metrics, opentype } => Self::Tfm {
+                metrics: RetainedFileContent::from_active(metrics),
+                opentype: opentype.clone(),
+            },
+            FontResource::MappedTfm {
+                metrics,
+                opentype,
+                encoding_map,
+            } => Self::MappedTfm {
+                metrics: RetainedFileContent::from_active(metrics),
+                opentype: opentype.clone(),
+                encoding_map: encoding_map.clone(),
+            },
+            FontResource::ClassicTfmFallback { metrics } => Self::ClassicTfmFallback {
+                metrics: RetainedFileContent::from_active(metrics),
+            },
+            FontResource::OpenType(selection) => Self::OpenType(selection.clone()),
+        }
+    }
+
+    pub fn actual_use(
+        &self,
+        input: &mut dyn InputReadState,
+        dependencies: &[InputDependency],
+    ) -> Result<Option<FontResource>, WorldError> {
+        let resource = match self {
+            Self::Unavailable => FontResource::Unavailable,
+            Self::Tfm { metrics, opentype } => {
+                let Some(metrics) = metrics.actual_use(input, dependencies)? else {
+                    return Ok(None);
+                };
+                FontResource::Tfm {
+                    metrics,
+                    opentype: opentype.clone(),
+                }
+            }
+            Self::MappedTfm {
+                metrics,
+                opentype,
+                encoding_map,
+            } => {
+                let Some(metrics) = metrics.actual_use(input, dependencies)? else {
+                    return Ok(None);
+                };
+                FontResource::MappedTfm {
+                    metrics,
+                    opentype: opentype.clone(),
+                    encoding_map: encoding_map.clone(),
+                }
+            }
+            Self::ClassicTfmFallback { metrics } => {
+                let Some(metrics) = metrics.actual_use(input, dependencies)? else {
+                    return Ok(None);
+                };
+                FontResource::ClassicTfmFallback { metrics }
+            }
+            Self::OpenType(selection) => FontResource::OpenType(selection.clone()),
+        };
+        Ok(Some(resource))
+    }
+}
+
 /// Compact coordinate into the capability owner's immutable font-resource
 /// payloads. Paths remain lookup keys only; moving the ordered index must not
 /// shift the much larger resource values.
@@ -353,14 +547,14 @@ struct HostFontResources {
 
 #[derive(Debug)]
 struct HostFontResource {
-    resource: FontResource,
+    resource: RetainedFontResource,
     dependencies: Arc<[InputDependency]>,
 }
 
 impl HostFontResources {
-    fn push(
+    fn push_retained(
         &mut self,
-        resource: FontResource,
+        resource: RetainedFontResource,
         dependencies: Arc<[InputDependency]>,
     ) -> HostFontResourceId {
         if self
@@ -386,7 +580,7 @@ impl HostFontResources {
         id
     }
 
-    fn get(&self, id: HostFontResourceId) -> Option<&FontResource> {
+    fn get(&self, id: HostFontResourceId) -> Option<&RetainedFontResource> {
         let raw = id.0 as usize;
         self.chunks
             .get(raw / HOST_FONT_RESOURCE_CHUNK_CAPACITY)?
@@ -402,10 +596,10 @@ impl HostFontResources {
             .map(|entry| entry.dependencies.as_ref())
     }
 
-    fn replace(
+    fn replace_retained(
         &mut self,
         id: HostFontResourceId,
-        resource: FontResource,
+        resource: RetainedFontResource,
         dependencies: Arc<[InputDependency]>,
     ) {
         let raw = id.0 as usize;
@@ -431,6 +625,24 @@ pub enum PdfImageResource {
     Unavailable,
     Invalid(String),
     Available(tex_state::PdfExternalImageSource),
+}
+
+/// Physical input provenance retained alongside a value-only parsed image.
+/// Unlike source and TFM capabilities, images do not retain a live
+/// `FileContent`; this small selection fact lets the executor detect a
+/// generated-output replacement before reusing parsed bytes.
+#[derive(Clone, Debug)]
+struct RetainedImageSelection {
+    path: PathBuf,
+    origin: InputOrigin,
+}
+
+#[derive(Debug)]
+struct HostPdfImageResource {
+    request: PdfImageRequest,
+    resource: PdfImageResource,
+    dependencies: Arc<[InputDependency]>,
+    selection: Option<RetainedImageSelection>,
 }
 
 /// The executor facts observed by TeX's mode predicates.
@@ -509,7 +721,7 @@ pub struct CommandHostCapabilities {
     unavailable_input_probes: BTreeMap<String, Arc<[InputDependency]>>,
     font_paths: BTreeMap<PathBuf, HostFontResourceId>,
     font_resources: HostFontResources,
-    images: Vec<(PdfImageRequest, PdfImageResource, Arc<[InputDependency]>)>,
+    images: Vec<HostPdfImageResource>,
     job_name: String,
 }
 
@@ -522,40 +734,85 @@ impl CommandHostCapabilities {
         need: &ResourceNeed,
         fulfillment: ResourceFulfillment,
         dependencies: impl Into<Arc<[InputDependency]>>,
-    ) -> Result<(), Box<ResourceFulfillment>> {
+    ) -> Result<ResourceFulfillment, Box<ResourceFulfillment>> {
         let dependencies = dependencies.into();
         match (need, fulfillment) {
             (
                 ResourceNeed::Input { name: expected, .. },
                 ResourceFulfillment::Input { name, source },
             ) if expected == &name => {
-                self.register_input_with_dependencies(name, source, dependencies);
+                self.register_input_with_dependencies(
+                    name.clone(),
+                    source.without_world_record(),
+                    Arc::clone(&dependencies),
+                );
+                Ok(ResourceFulfillment::Input { name, source })
             }
             (
                 ResourceNeed::InputProbe { request: expected },
                 ResourceFulfillment::InputProbe { request, resource },
             ) if expected == &request => {
-                self.register_input_probe_with_dependencies(request.name, resource, dependencies);
+                self.register_input_probe_with_dependencies(
+                    request.name.clone(),
+                    resource.without_world_record(),
+                    Arc::clone(&dependencies),
+                );
+                Ok(ResourceFulfillment::InputProbe { request, resource })
             }
             (
                 ResourceNeed::Font { request: expected },
                 ResourceFulfillment::Font { request, resource },
             ) if expected == &request => {
-                self.register_font_with_dependencies(
+                self.register_retained_font_with_dependencies(
                     canonical_font_resource_path(&request.name),
-                    *resource,
-                    dependencies,
+                    RetainedFontResource::from_active(&resource),
+                    Arc::clone(&dependencies),
                 );
+                Ok(ResourceFulfillment::Font { request, resource })
             }
             (
                 ResourceNeed::PdfImage { request: expected },
                 ResourceFulfillment::PdfImage { request, resource },
             ) if expected == &request => {
-                self.register_pdf_image_with_dependencies(request, *resource, dependencies);
+                let resource = *resource;
+                self.register_pdf_image_with_dependencies(
+                    request.clone(),
+                    resource.clone(),
+                    Arc::clone(&dependencies),
+                );
+                Ok(ResourceFulfillment::PdfImage {
+                    request,
+                    resource: Box::new(resource),
+                })
             }
-            (_, fulfillment) => return Err(Box::new(fulfillment)),
+            (_, fulfillment) => Err(Box::new(fulfillment)),
         }
-        Ok(())
+    }
+
+    /// Applies one provider resolution through the canonical capability
+    /// installer while preserving the original active fulfillment for the
+    /// current cold consumer.
+    pub fn install_resource_resolution(
+        &mut self,
+        need: &ResourceNeed,
+        resolution: ResourceResolution,
+        register_texinputs_alias: bool,
+    ) -> Result<ResourceInstallOutcome, Box<ResourceFulfillment>> {
+        let ResourceResolution {
+            outcome,
+            dependencies,
+        } = resolution;
+        match outcome {
+            ResourceOutcome::Fulfilled(fulfillment) => self
+                .install_resource_answer(need, fulfillment, dependencies)
+                .map(ResourceInstallOutcome::Fulfilled),
+            ResourceOutcome::Unavailable => {
+                self.install_resource_unavailable(need, register_texinputs_alias, dependencies);
+                Ok(ResourceInstallOutcome::Unavailable)
+            }
+            ResourceOutcome::Declined => Ok(ResourceInstallOutcome::Declined),
+            ResourceOutcome::Failed(failure) => Ok(ResourceInstallOutcome::Failed(failure)),
+        }
     }
 
     /// Installs an authoritative absence for the exact typed request.
@@ -601,7 +858,7 @@ impl CommandHostCapabilities {
         let name = name.into();
         self.unavailable_input.remove(&name);
         self.unavailable_input_requests.remove(&name);
-        self.input.insert(name, source);
+        self.input.insert(name, source.without_world_record());
     }
 
     /// Installs immutable input backing together with the semantic reads that
@@ -616,8 +873,12 @@ impl CommandHostCapabilities {
         let name = name.into();
         self.unavailable_input.remove(&name);
         self.unavailable_input_requests.remove(&name);
-        self.input
-            .insert(name, source.with_input_dependencies(dependencies));
+        self.input.insert(
+            name,
+            source
+                .without_world_record()
+                .with_input_dependencies(dependencies),
+        );
     }
 
     /// Records a completed host lookup which found no input backing.
@@ -652,7 +913,8 @@ impl CommandHostCapabilities {
     pub fn register_input_probe(&mut self, name: impl Into<String>, resource: FileEnquiryResource) {
         let name = name.into();
         self.unavailable_input_probes.remove(&name);
-        self.input_probes.insert(name, resource);
+        self.input_probes
+            .insert(name, resource.without_world_record());
     }
 
     /// Installs a non-opening answer with the semantic observations made by
@@ -665,8 +927,12 @@ impl CommandHostCapabilities {
     ) {
         let name = name.into();
         self.unavailable_input_probes.remove(&name);
-        self.input_probes
-            .insert(name, resource.with_input_dependencies(dependencies));
+        self.input_probes.insert(
+            name,
+            resource
+                .without_world_record()
+                .with_input_dependencies(dependencies),
+        );
     }
 
     /// Records a completed non-opening lookup which found no backing.
@@ -702,6 +968,40 @@ impl CommandHostCapabilities {
             .retain(|candidate, _| !same_current_directory_name(candidate, name));
     }
 
+    /// Drops image answers whose search touched an output path that has just
+    /// been opened. Images retain parsed bytes rather than an active
+    /// [`FileContent`] record, so the next use must resolve the current
+    /// output before reusing those bytes. Missing image attempts are dropped
+    /// as well: an output can turn an earlier negative into a positive.
+    pub fn invalidate_pdf_images_for_output(&mut self, name: &Path) {
+        self.images.retain(|image| {
+            !image
+                .dependencies
+                .iter()
+                .any(|dependency| same_current_directory_path(dependency.path(), name))
+        });
+    }
+
+    /// Drops an authoritative missing-font answer when its output path is
+    /// opened. Positive font answers remain in place and validate their
+    /// selected metrics through the actual-use helper.
+    pub fn invalidate_font_unavailability_for_output(&mut self, name: &Path) {
+        let paths = self
+            .font_paths
+            .iter()
+            .filter_map(|(path, id)| {
+                (matches!(
+                    self.font_resources.get(*id),
+                    Some(RetainedFontResource::Unavailable)
+                ) && same_current_directory_path(path, name))
+                .then_some(path.clone())
+            })
+            .collect::<Vec<_>>();
+        for path in paths {
+            self.font_paths.remove(&path);
+        }
+    }
+
     /// Registers a host-acquired immutable font resource for one request path.
     pub fn register_font(&mut self, path: impl Into<PathBuf>, resource: FontResource) {
         self.register_font_with_dependencies(path, resource, Arc::from([]));
@@ -714,13 +1014,27 @@ impl CommandHostCapabilities {
         resource: FontResource,
         dependencies: impl Into<Arc<[InputDependency]>>,
     ) {
+        self.register_retained_font_with_dependencies(
+            path,
+            RetainedFontResource::from_active(&resource),
+            dependencies,
+        );
+    }
+
+    fn register_retained_font_with_dependencies(
+        &mut self,
+        path: impl Into<PathBuf>,
+        resource: RetainedFontResource,
+        dependencies: impl Into<Arc<[InputDependency]>>,
+    ) {
         let path = path.into();
         let dependencies = dependencies.into();
         if let Some(id) = self.font_paths.get(&path).copied() {
-            self.font_resources.replace(id, resource, dependencies);
+            self.font_resources
+                .replace_retained(id, resource, dependencies);
             return;
         }
-        let id = self.font_resources.push(resource, dependencies);
+        let id = self.font_resources.push_retained(resource, dependencies);
         self.font_paths.insert(path, id);
     }
 
@@ -738,15 +1052,22 @@ impl CommandHostCapabilities {
         dependencies: impl Into<Arc<[InputDependency]>>,
     ) {
         let dependencies = dependencies.into();
-        if let Some((_, existing, existing_dependencies)) = self
+        let selection = retained_image_selection(&dependencies);
+        if let Some(existing) = self
             .images
             .iter_mut()
-            .find(|(key, _, _)| key.same_resource_as(&request))
+            .find(|image| image.request.same_resource_as(&request))
         {
-            *existing = resource;
-            *existing_dependencies = dependencies;
+            existing.resource = resource;
+            existing.dependencies = dependencies;
+            existing.selection = selection;
         } else {
-            self.images.push((request, resource, dependencies));
+            self.images.push(HostPdfImageResource {
+                request,
+                resource,
+                dependencies,
+                selection,
+            });
         }
     }
 
@@ -754,8 +1075,8 @@ impl CommandHostCapabilities {
     pub fn pdf_image(&self, request: &PdfImageRequest) -> Option<PdfImageResource> {
         self.images
             .iter()
-            .find(|(key, _, _)| key.same_resource_as(request))
-            .map(|(_, resource, _)| resource.clone())
+            .find(|image| image.request.same_resource_as(request))
+            .map(|image| image.resource.clone())
     }
 
     #[must_use]
@@ -765,16 +1086,67 @@ impl CommandHostCapabilities {
     ) -> Option<(PdfImageResource, Arc<[InputDependency]>)> {
         self.images
             .iter()
-            .find(|(key, _, _)| key.same_resource_as(request))
-            .map(|(_, resource, dependencies)| (resource.clone(), Arc::clone(dependencies)))
+            .find(|image| image.request.same_resource_as(request))
+            .map(|image| (image.resource.clone(), Arc::clone(&image.dependencies)))
+    }
+
+    /// Returns the selected physical path and its retained origin for a
+    /// value-only image capability.
+    #[must_use]
+    pub fn pdf_image_selection(&self, request: &PdfImageRequest) -> Option<(PathBuf, InputOrigin)> {
+        self.images
+            .iter()
+            .find(|image| image.request.same_resource_as(request))
+            .and_then(|image| image.selection.as_ref())
+            .map(|selection| (selection.path.clone(), selection.origin))
+    }
+
+    /// Refreshes an image's origin after provider settlement. The active host
+    /// read already happened; this only records its current same-run status.
+    pub fn set_pdf_image_origin(&mut self, request: &PdfImageRequest, origin: InputOrigin) {
+        if let Some(image) = self
+            .images
+            .iter_mut()
+            .find(|image| image.request.same_resource_as(request))
+            && let Some(selection) = image.selection.as_mut()
+        {
+            selection.origin = origin;
+        }
+    }
+
+    /// Drops one positive image answer after its selected output bytes have
+    /// changed. The next cold use must ask the provider to parse current
+    /// bytes and metadata.
+    pub fn invalidate_pdf_image(&mut self, request: &PdfImageRequest) {
+        self.images
+            .retain(|image| !image.request.same_resource_as(request));
     }
 
     /// Borrows a registered font resource for one replay operation. The
     /// capability owner itself is transient and excluded from snapshots.
     #[must_use]
-    pub fn font(&self, path: &Path) -> Option<&FontResource> {
+    pub fn font(&self, path: &Path) -> Option<&RetainedFontResource> {
         let id = self.font_paths.get(path)?;
         self.font_resources.get(*id)
+    }
+
+    /// Drops a positive input capability whose selected backing is no longer
+    /// valid in the current World timeline. The next use must resolve again.
+    pub fn invalidate_input_resource(&mut self, name: &str) {
+        self.input.remove(name);
+    }
+
+    /// Drops a positive probe capability whose selected backing is no longer
+    /// valid in the current World timeline. A required input capability used
+    /// as a stronger probe answer is dropped from the same exact namespace.
+    pub fn invalidate_input_probe_resource(&mut self, name: &str) {
+        self.input.remove(name);
+        self.input_probes.remove(name);
+    }
+
+    /// Drops a positive font capability whose metrics output disappeared.
+    pub fn invalidate_font_resource(&mut self, path: &Path) {
+        self.font_paths.remove(path);
     }
 
     #[must_use]
@@ -969,6 +1341,27 @@ fn same_current_directory_name(left: &str, right: &str) -> bool {
     trim_current_directory_prefix(left) == trim_current_directory_prefix(right)
 }
 
+fn retained_image_selection(dependencies: &[InputDependency]) -> Option<RetainedImageSelection> {
+    dependencies
+        .iter()
+        .find(|dependency| matches!(dependency.outcome(), InputDependencyOutcome::Present(_)))
+        .map(|dependency| RetainedImageSelection {
+            path: dependency.path().to_owned(),
+            origin: InputOrigin::External,
+        })
+}
+
+fn same_current_directory_path(left: &Path, right: &Path) -> bool {
+    trim_current_directory_prefix_path(left) == trim_current_directory_prefix_path(right)
+}
+
+fn trim_current_directory_prefix_path(mut path: &Path) -> &Path {
+    while let Ok(rest) = path.strip_prefix(".") {
+        path = rest;
+    }
+    path
+}
+
 fn trim_current_directory_prefix(mut name: &str) -> &str {
     while let Some(rest) = name.strip_prefix("./") {
         name = rest;
@@ -1080,39 +1473,28 @@ impl<'a, G> CommandHostContext<'a, G> {
         state: &mut tex_state::CommandContext<'_, G>,
         need: &ResourceNeed,
         register_texinputs_alias: bool,
-    ) -> Result<Option<bool>, crate::CommandError> {
+    ) -> Result<Option<ResourceInstallOutcome>, crate::CommandError> {
         let Some(resolution) = self.resolve_resource(state, need) else {
             return Ok(None);
         };
-        let ResourceResolution {
-            outcome,
-            dependencies,
-        } = resolution;
-        match outcome {
-            ResourceOutcome::Fulfilled(fulfillment) => self
-                .capabilities
-                .install_resource_answer(need, fulfillment, dependencies)
-                .map_err(|_| crate::CommandError::ResourceFailure {
-                    need: Box::new(need.clone()),
-                    failure: Box::new(crate::ResourceFailure::message(
-                        "resource provider returned a mismatched typed answer",
-                    )),
-                })
-                .map(|()| Some(true)),
-            ResourceOutcome::Unavailable => {
-                self.capabilities.install_resource_unavailable(
-                    need,
-                    register_texinputs_alias,
-                    dependencies,
-                );
-                Ok(Some(true))
-            }
-            ResourceOutcome::Declined => Ok(Some(false)),
-            ResourceOutcome::Failed(failure) => Err(crate::CommandError::ResourceFailure {
+        self.capabilities
+            .install_resource_resolution(need, resolution, register_texinputs_alias)
+            .map(Some)
+            .map_err(|_| crate::CommandError::ResourceFailure {
                 need: Box::new(need.clone()),
-                failure: Box::new(failure),
-            }),
-        }
+                failure: Box::new(crate::ResourceFailure::message(
+                    "resource provider returned a mismatched typed answer",
+                )),
+            })
+            .and_then(|outcome| match outcome {
+                Some(ResourceInstallOutcome::Failed(failure)) => {
+                    Err(crate::CommandError::ResourceFailure {
+                        need: Box::new(need.clone()),
+                        failure: Box::new(failure),
+                    })
+                }
+                other => Ok(other),
+            })
     }
 
     pub(crate) fn input(&self, name: &str) -> Option<SourceRegistration> {
@@ -1148,8 +1530,16 @@ impl<'a, G> CommandHostContext<'a, G> {
     /// Resolves a previously registered font only while the host capability
     /// is borrowed by a bounded replay operation.
     #[must_use]
-    pub fn font(&self, path: &Path) -> Option<&FontResource> {
+    pub fn font(&self, path: &Path) -> Option<&RetainedFontResource> {
         self.capabilities.font(path)
+    }
+
+    pub(crate) fn invalidate_input_resource(&mut self, name: &str) {
+        self.capabilities.invalidate_input_resource(name);
+    }
+
+    pub(crate) fn invalidate_input_probe_resource(&mut self, name: &str) {
+        self.capabilities.invalidate_input_probe_resource(name);
     }
 
     #[must_use]
@@ -1246,7 +1636,10 @@ impl<'a, G> CommandHostContext<'a, G> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CommandHostCapabilities, FileEnquiryResource, FontResource, HostFontResourceId};
+    use super::{
+        CommandHostCapabilities, FileEnquiryResource, FontResource, HostFontResourceId,
+        RetainedFontResource,
+    };
     use crate::RegisteredSourceKind;
     use std::path::PathBuf;
     use tex_state::{ContentHash, InputDependency, InputDependencyAccess, InputDependencyOutcome};
@@ -1289,7 +1682,7 @@ mod tests {
         );
         assert_eq!(
             capabilities.input_probe_dependencies("probe.cfg").as_ref(),
-            [probe_dependency.clone()]
+            std::slice::from_ref(&probe_dependency)
         );
 
         capabilities.register_font_with_dependencies(
@@ -1313,7 +1706,7 @@ mod tests {
             capabilities
                 .input_probe_dependencies("missing.cfg")
                 .as_ref(),
-            [probe_dependency]
+            std::slice::from_ref(&probe_dependency)
         );
     }
 
@@ -1353,7 +1746,7 @@ mod tests {
         );
         assert!(matches!(
             capabilities.font(&retained),
-            Some(FontResource::Unavailable)
+            Some(RetainedFontResource::Unavailable)
         ));
         capabilities.register_font(&retained, FontResource::Unavailable);
         assert_eq!(capabilities.font_resources.len(), 65);

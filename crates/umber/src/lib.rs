@@ -375,7 +375,7 @@ impl ResourceHost for FileSessionResolvers {
                 match self
                     .input
                     .0
-                    .read_from_resource_world_detailed(world, &request.name)
+                    .read_probe_from_resource_world_detailed(world, &request.name)
                 {
                     Ok(content) => ResourceOutcome::Fulfilled(
                         ResourceFulfillment::world_input_probe(request.clone(), content),

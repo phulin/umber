@@ -2,7 +2,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use tex_state::World;
-use tex_state::{FileContent, InputReadState};
+use tex_state::{FileContent, InputDependencyAccess, InputDependencyOutcome, InputReadState};
 
 /// Ordered search can continue past a candidate that is absent, but an
 /// inaccessible candidate must not be reported as an authoritative miss.
@@ -182,7 +182,29 @@ impl TexInputSearchPath {
                 }
             }
         }
-        read_first_resource_detailed(world, candidates)
+        read_first_resource_detailed(world, candidates, InputDependencyAccess::RequiredRead)
+    }
+
+    pub(crate) fn read_probe_from_resource_world_detailed(
+        &self,
+        world: &mut crate::ResourceWorld<'_>,
+        name: &str,
+    ) -> Result<FileContent, WorldSearchError> {
+        let name = Path::new(name);
+        let requested = with_default_extension(name, "tex");
+        let mut candidates = search_candidates(&self.user_area, &self.system_areas, &requested);
+        if name.extension().is_some_and(|extension| extension != "tex") {
+            for candidate in search_candidates(
+                &self.user_area,
+                &self.system_areas,
+                &append_extension(name, "tex"),
+            ) {
+                if !candidates.contains(&candidate) {
+                    candidates.push(candidate);
+                }
+            }
+        }
+        read_first_resource_detailed(world, candidates, InputDependencyAccess::AuthoritativeProbe)
     }
 
     pub(crate) fn read_exact_from_resource_world(
@@ -202,6 +224,7 @@ impl TexInputSearchPath {
         read_first_resource_detailed(
             world,
             search_candidates(&self.user_area, &self.system_areas, Path::new(name)),
+            InputDependencyAccess::RequiredRead,
         )
     }
 
@@ -332,6 +355,7 @@ impl TexFontSearchPath {
         read_first_resource_detailed(
             world,
             font_candidates(&self.user_area, &self.system_areas, &requested),
+            InputDependencyAccess::RequiredRead,
         )
     }
 
@@ -370,19 +394,44 @@ impl TexFontSearchPath {
         path: &Path,
     ) -> Result<FileContent, WorldSearchError> {
         let candidates = font_candidates(&self.user_area, &self.system_areas, path);
-        read_first_resource_detailed(world, candidates)
+        read_first_resource_detailed(world, candidates, InputDependencyAccess::RequiredRead)
     }
 }
 
 fn read_first_resource_detailed(
     world: &mut crate::ResourceWorld<'_>,
     candidates: Vec<PathBuf>,
+    access: InputDependencyAccess,
 ) -> Result<FileContent, WorldSearchError> {
     let mut failures = Vec::with_capacity(candidates.len());
     for candidate in candidates {
         match world.read_file(&candidate) {
-            Ok(content) => return Ok(content),
-            Err(error) => failures.push((candidate, error)),
+            Ok(content) => {
+                if let Err(error) = world.record_input_dependency(
+                    &candidate,
+                    InputDependencyOutcome::Present(content.hash()),
+                    access,
+                ) {
+                    return Err(WorldSearchError {
+                        failures: vec![(candidate, error)],
+                    });
+                }
+                return Ok(content);
+            }
+            Err(error) => {
+                if error.io_error_kind() == Some(io::ErrorKind::NotFound)
+                    && let Err(record_error) = world.record_input_dependency(
+                        &candidate,
+                        InputDependencyOutcome::Missing,
+                        access,
+                    )
+                {
+                    return Err(WorldSearchError {
+                        failures: vec![(candidate, record_error)],
+                    });
+                }
+                failures.push((candidate, error));
+            }
         }
     }
     Err(WorldSearchError { failures })

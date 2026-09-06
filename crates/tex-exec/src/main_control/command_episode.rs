@@ -81,6 +81,10 @@ impl<G> ColdOperationSlot<G> {
 pub(super) struct ColdExecutionEpisode<'operation, G> {
     pub(super) operation: &'operation mut PreparedColdCommand<G>,
     pub(super) alignment_preamble: Option<PreparedAlignmentPreamble<G>>,
+    /// Active font payload returned by the provider or materialized from a
+    /// retained capability. It is scoped to this cold application only; the
+    /// capability owner keeps a record-free retained copy.
+    pub(super) font_resource: Option<tex_command::FontResource>,
     pub(super) output_start: OperationOutputStart,
 }
 

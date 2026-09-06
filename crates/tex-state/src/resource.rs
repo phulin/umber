@@ -2,7 +2,10 @@
 
 use std::path::Path;
 
-use crate::world::{InputDependencyAccess, InputDependencyOutcome, World, WorldError};
+use crate::world::{
+    FileModificationDate, InputDependency, InputDependencyAccess, InputDependencyOutcome,
+    InputOrigin, World, WorldError,
+};
 use crate::{FileContent, SharedBytes, Universe};
 
 /// Narrow mutable capability exposed to driver-owned input resolvers.
@@ -16,6 +19,23 @@ pub trait InputReadState {
         path: &Path,
         bytes: SharedBytes,
     ) -> Result<FileContent, WorldError>;
+
+    /// Materializes retained selected bytes for one actual use.
+    ///
+    /// Current same-run output has precedence over the retained external
+    /// selection, including output committed earlier in this run. A retained
+    /// generated selection is not allowed to fall back to stale bytes after
+    /// its output disappears on rollback. The dependency slice is the
+    /// resolver's ordered candidate list, so an output shadowing a selected
+    /// lower-precedence path still wins at the same boundary.
+    fn read_selected_input_file(
+        &mut self,
+        path: &Path,
+        bytes: SharedBytes,
+        modification_date: Option<FileModificationDate>,
+        origin: InputOrigin,
+        dependencies: &[InputDependency],
+    ) -> Result<Option<FileContent>, WorldError>;
 
     fn record_input_dependency(
         &mut self,
@@ -45,6 +65,18 @@ impl InputReadState for InputOpenContext<'_> {
         bytes: SharedBytes,
     ) -> Result<FileContent, WorldError> {
         self.world.read_supplied_file(path, bytes)
+    }
+
+    fn read_selected_input_file(
+        &mut self,
+        path: &Path,
+        bytes: SharedBytes,
+        modification_date: Option<FileModificationDate>,
+        origin: InputOrigin,
+        dependencies: &[InputDependency],
+    ) -> Result<Option<FileContent>, WorldError> {
+        self.world
+            .read_selected_input_file(path, bytes, modification_date, origin, dependencies)
     }
 
     fn record_input_dependency(

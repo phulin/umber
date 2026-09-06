@@ -132,29 +132,66 @@ impl<G> CommandProcessor<'_, '_, G> {
         request: &crate::FileEnquiryRequest,
     ) -> Result<Option<crate::FileEnquiryResource>, CommandError> {
         self.state.unsupported_host_capability();
-        let provider_settled = if self.host.input_probe(&request.name).is_none()
-            && !self.host.input_probe_is_unavailable(&request.name)
-        {
-            let need = crate::ResourceNeed::InputProbe {
-                request: request.clone(),
+        loop {
+            let mut provider_fulfillment = None;
+            let mut provider_settled = false;
+            if self.host.input_probe(&request.name).is_none()
+                && !self.host.input_probe_is_unavailable(&request.name)
+            {
+                let need = crate::ResourceNeed::InputProbe {
+                    request: request.clone(),
+                };
+                match self
+                    .host
+                    .resolve_and_install_resource(self.state, &need, false)?
+                {
+                    Some(crate::ResourceInstallOutcome::Fulfilled(fulfillment)) => {
+                        provider_settled = true;
+                        provider_fulfillment = Some(fulfillment);
+                    }
+                    Some(crate::ResourceInstallOutcome::Unavailable) => {
+                        provider_settled = true;
+                    }
+                    Some(crate::ResourceInstallOutcome::Declined) => {
+                        return Err(CommandError::MissingInputProbe(request.clone()));
+                    }
+                    None => {}
+                    Some(crate::ResourceInstallOutcome::Failed(_)) => {
+                        unreachable!("failed provider outcomes are returned as errors")
+                    }
+                }
+            }
+
+            if let Some(crate::ResourceFulfillment::InputProbe { resource, .. }) =
+                provider_fulfillment
+            {
+                return Ok(Some(resource));
+            }
+
+            let Some(retained) = self.host.input_probe(&request.name) else {
+                if self.host.input_probe_is_unavailable(&request.name) {
+                    if !provider_settled {
+                        self.record_input_probe_dependencies(&request.name)?;
+                    }
+                    return Ok(None);
+                }
+                return Err(CommandError::MissingInputProbe(request.clone()));
             };
-            matches!(
-                self.host
-                    .resolve_and_install_resource(self.state, &need, false)?,
-                Some(true)
-            )
-        } else {
-            false
-        };
-        if !provider_settled {
-            self.record_input_probe_dependencies(&request.name)?;
-        }
-        if let Some(resource) = self.host.input_probe(&request.name) {
-            Ok(Some(resource))
-        } else if self.host.input_probe_is_unavailable(&request.name) {
-            Ok(None)
-        } else {
-            Err(CommandError::MissingInputProbe(request.clone()))
+            let actual = self
+                .state
+                .with_input_read_state(|input| retained.actual_use(input))
+                .map_err(|_| CommandError::input_invariant())?;
+            let Some(actual) = actual else {
+                self.host.invalidate_input_probe_resource(&request.name);
+                continue;
+            };
+            if !provider_settled {
+                let dependencies = retained.dependencies_for_actual_use(&actual);
+                self.state
+                    .record_input_dependencies(&dependencies)
+                    .map_err(|_| CommandError::input_invariant())?;
+            }
+            return Ok(Some(actual));
         }
     }
 

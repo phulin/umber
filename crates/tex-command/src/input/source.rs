@@ -5,8 +5,10 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use tex_state::source_map::SourceDescriptor;
-use tex_state::world::FileContent;
-use tex_state::{InputDependency, InputRecordId, SharedBytes, SourceId};
+use tex_state::world::{FileContent, InputOrigin};
+use tex_state::{
+    InputDependency, InputReadState, InputRecordId, SharedBytes, SourceId, WorldError,
+};
 
 pub use tex_state::packed_input::SourceRole;
 
@@ -100,7 +102,14 @@ pub struct SourceRegistration {
     /// external source when this registration is opened as nested input.
     role: Option<SourceRole>,
     bytes: SharedBytes,
+    /// Physical path selected by the host for a World-backed resource.
+    ///
+    /// The path and bytes are stable retained payload. `world_record` is only
+    /// an execution-local descriptor used while opening the source; retained
+    /// capability copies clear it and materialize a fresh record on use.
+    world_path: Option<Arc<std::path::Path>>,
     world_record: Option<InputRecordId>,
+    world_origin: Option<InputOrigin>,
     modification_date: Option<tex_state::FileModificationDate>,
     input_dependencies: Arc<[InputDependency]>,
     name: Option<Arc<str>>,
@@ -116,7 +125,9 @@ impl SourceRegistration {
             kind,
             role: None,
             bytes: bytes.into(),
+            world_path: None,
             world_record: None,
+            world_origin: None,
             modification_date: None,
             input_dependencies: Arc::from([]),
             name: None,
@@ -133,7 +144,9 @@ impl SourceRegistration {
             kind: RegisteredSourceKind::World,
             role: None,
             bytes: content.shared_bytes(),
+            world_path: Some(Arc::from(content.path().to_owned().into_boxed_path())),
             world_record: Some(content.record()),
+            world_origin: Some(content.origin()),
             modification_date: content.modification_date(),
             input_dependencies: Arc::from([]),
             name: None,
@@ -229,6 +242,92 @@ impl SourceRegistration {
     #[must_use]
     pub fn shared_bytes(&self) -> SharedBytes {
         self.bytes.clone()
+    }
+
+    /// Returns the physical path selected by the host for this backing.
+    #[must_use]
+    pub(crate) fn world_path(&self) -> Option<&std::path::Path> {
+        self.world_path.as_deref()
+    }
+
+    /// Returns whether this registration still carries an execution-local
+    /// World input record. Retained capability owners must always return false.
+    #[must_use]
+    pub(crate) const fn has_world_record(&self) -> bool {
+        self.world_record.is_some()
+    }
+
+    /// Returns the live World record carried by an active provider answer.
+    ///
+    /// Capability owners clear this value before retention. The executor may
+    /// use the returned id to open the already-recorded content without
+    /// copying bytes into a temporary memory file or allocating a second
+    /// input record.
+    #[must_use]
+    pub fn active_world_record(&self) -> Option<InputRecordId> {
+        self.world_record
+    }
+
+    /// Drops the timeline-local record while retaining the selected physical
+    /// backing for a future actual-use materialization.
+    #[must_use]
+    pub(crate) fn without_world_record(&self) -> Self {
+        let mut retained = self.clone();
+        retained.world_record = None;
+        retained
+    }
+
+    /// Re-registers a retained World selection in the current input timeline.
+    ///
+    /// Same-run generated output is selected by the narrow World helper when
+    /// present. External bytes otherwise reuse the retained `Arc` directly;
+    /// no host I/O or byte copy occurs. `None` means a generated-only backing
+    /// no longer has its current output and must be resolved again.
+    pub fn actual_use(&self, input: &mut dyn InputReadState) -> Result<Option<Self>, WorldError> {
+        let Some(path) = self.world_path.as_deref() else {
+            return Ok(Some(self.clone()));
+        };
+        if self.has_world_record() {
+            // A provider's active value is already registered in this World.
+            // The caller only uses this path for retained capability hits,
+            // but keeping the guard makes accidental double registration
+            // impossible at the boundary.
+            return Ok(Some(self.clone()));
+        }
+        let origin = self.world_origin.unwrap_or(InputOrigin::External);
+        let Some(content) = input.read_selected_input_file(
+            path,
+            self.bytes.clone(),
+            self.modification_date,
+            origin,
+            &self.input_dependencies,
+        )?
+        else {
+            return Ok(None);
+        };
+        let mut active = self.clone();
+        active.bytes = content.shared_bytes();
+        active.world_path = Some(Arc::from(content.path().to_owned().into_boxed_path()));
+        active.world_record = Some(content.record());
+        active.world_origin = Some(content.origin());
+        active.modification_date = content.modification_date();
+        Ok(Some(active))
+    }
+
+    /// Returns dependency facts for the content selected by this actual use.
+    ///
+    /// Retained capability hits must not re-record the stale Present hash that
+    /// produced the capability. Missing search attempts remain useful, while
+    /// the current physical path and hash become the sole Present fact.
+    pub fn dependencies_for_actual_use(&self, active: &Self) -> Arc<[InputDependency]> {
+        let Some(path) = active.world_path() else {
+            return self.input_dependencies.clone();
+        };
+        crate::host::dependencies_for_actual_content(
+            &self.input_dependencies,
+            path,
+            tex_state::ContentHash::from_bytes(active.bytes()),
+        )
     }
 
     /// Returns the §537 name attached by [`Self::with_name`], if any.

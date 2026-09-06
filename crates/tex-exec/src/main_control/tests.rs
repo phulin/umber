@@ -9,7 +9,7 @@ use tex_state::page::PageMark;
 use tex_state::token::{Catcode, Token};
 
 use crate::{
-    ResourceFulfillment, ResourceHost, ResourceHostProvider, ResourceWorld,
+    ResourceFulfillment, ResourceHost, ResourceHostProvider, ResourceOutcome, ResourceWorld,
     canonical_font_resource_path,
 };
 
@@ -683,6 +683,11 @@ fn ready_input_probe_provider_stays_in_one_execution() {
             "ready probe provider route exceeded the step bound"
         );
         assert_eq!(host.calls, 1);
+        assert_eq!(
+            stores.world().input_records().len(),
+            1,
+            "active World probe is opened from its existing record"
+        );
         assert_eq!(control.advance_telemetry().resource_replayed_dispatches, 0);
     });
 }

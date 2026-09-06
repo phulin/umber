@@ -7,8 +7,8 @@ use tex_command::{
     ResourceNeed, ResourceOutcome, ResourceProvider, ResourceReplayEffect, ResourceResolution,
 };
 use tex_state::{
-    FileContent, InputDependencyAccess, InputDependencyOutcome, InputReadState, SharedBytes,
-    Universe, WorldError,
+    FileContent, FileModificationDate, InputDependency, InputDependencyAccess,
+    InputDependencyOutcome, InputOrigin, InputReadState, SharedBytes, Universe, WorldError,
 };
 
 trait ResourceWorldBackend {
@@ -146,6 +146,18 @@ impl<'a> ResourceWorld<'a> {
     ) -> Result<FileContent, WorldError> {
         self.backend.register_selected_file(path.as_ref(), bytes)
     }
+
+    /// Records one resolver observation in the admitted World and retains the
+    /// same fact in this provider call's replay-effect list.
+    pub fn record_input_dependency(
+        &mut self,
+        path: impl AsRef<Path>,
+        outcome: InputDependencyOutcome,
+        access: InputDependencyAccess,
+    ) -> Result<(), WorldError> {
+        let path = path.as_ref().to_owned();
+        self.with_input_read_state(|input| input.record_input_dependency(&path, outcome, access))
+    }
 }
 
 struct RecordingInputReadState<'a> {
@@ -168,6 +180,18 @@ impl InputReadState for RecordingInputReadState<'_> {
         bytes: SharedBytes,
     ) -> Result<FileContent, WorldError> {
         self.input.read_supplied_input_file(path, bytes)
+    }
+
+    fn read_selected_input_file(
+        &mut self,
+        path: &Path,
+        bytes: SharedBytes,
+        modification_date: Option<FileModificationDate>,
+        origin: InputOrigin,
+        dependencies: &[InputDependency],
+    ) -> Result<Option<FileContent>, WorldError> {
+        self.input
+            .read_selected_input_file(path, bytes, modification_date, origin, dependencies)
     }
 
     fn record_input_dependency(

@@ -69,6 +69,7 @@ pub(in crate::main_control) fn apply<G>(
     active_math_left_boundaries: &[bool],
     active_math_shifts: &[MathShiftContext],
     prepared_dvi_pages: &mut PreparedDviPages,
+    font_resource: Option<&FontResource>,
 ) -> Result<ReplayStep, ExecError> {
     let mut stores = LinearCommandContext::new(stores);
     let stores = &mut stores;
@@ -1334,11 +1335,7 @@ pub(in crate::main_control) fn apply<G>(
                         },
                     )
                 };
-            let path = crate::canonical_font_resource_path(&request.name);
-            let resource = command
-                .capabilities
-                .font(&path)
-                .expect("font resource is resolved after the processor borrow");
+            let resource = font_resource.expect("font resource is resolved before application");
             if matches!(resource, FontResource::Unavailable) {
                 // TeX.web §§1257/561 diagnose the failed TFM open before
                 // continuing with the selector bound to `null_font`. The
@@ -2390,6 +2387,12 @@ pub(in crate::main_control) fn apply<G>(
                     command
                         .capabilities
                         .invalidate_input_unavailability_for_output(&target);
+                    command
+                        .capabilities
+                        .invalidate_font_unavailability_for_output(std::path::Path::new(&target));
+                    command
+                        .capabilities
+                        .invalidate_pdf_images_for_output(std::path::Path::new(&target));
                     if command.state.engine_semantics().supports_pdftex() {
                         let tracing_online = stores.int_param(IntParam::TRACING_ONLINE);
                         let (terminal_line_is_open, log_line_is_open) = {

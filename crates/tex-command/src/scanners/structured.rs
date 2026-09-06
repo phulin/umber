@@ -5568,49 +5568,90 @@ impl<G> CommandProcessor<'_, '_, G> {
             self.state.unsupported_host_capability();
 
             let mut unresolved = false;
+            let mut provider_declined = false;
             for attempted_name in attempts {
-                let mut provider_settled = false;
-                if self.host.input(&attempted_name).is_none()
-                    && !self.host.input_is_unavailable(&attempted_name)
-                {
-                    let need = crate::ResourceNeed::Input {
-                        name: attempted_name.clone(),
-                        original_name: original_name.clone(),
-                    };
-                    match self
-                        .host
-                        .resolve_and_install_resource(self.state, &need, true)?
+                let registration = loop {
+                    let mut provider_fulfillment = None;
+                    let mut provider_settled = false;
+                    if self.host.input(&attempted_name).is_none()
+                        && !self.host.input_is_unavailable(&attempted_name)
                     {
-                        Some(false) => {
-                            // A provider has already made its one scoped
-                            // attempt. Do not probe the alias or invoke it
-                            // again before the outer unwind.
-                            unresolved = true;
-                            break;
+                        let need = crate::ResourceNeed::Input {
+                            name: attempted_name.clone(),
+                            original_name: original_name.clone(),
+                        };
+                        match self
+                            .host
+                            .resolve_and_install_resource(self.state, &need, true)?
+                        {
+                            Some(crate::ResourceInstallOutcome::Fulfilled(fulfillment)) => {
+                                provider_settled = true;
+                                provider_fulfillment = Some(fulfillment);
+                            }
+                            Some(crate::ResourceInstallOutcome::Unavailable) => {
+                                provider_settled = true;
+                            }
+                            Some(crate::ResourceInstallOutcome::Declined) => {
+                                // A provider has already made its one scoped
+                                // attempt. Do not probe the alias or invoke it
+                                // again before the outer unwind.
+                                unresolved = true;
+                                provider_declined = true;
+                                break None;
+                            }
+                            None => {}
+                            Some(crate::ResourceInstallOutcome::Failed(_)) => {
+                                unreachable!("failed provider outcomes are returned as errors")
+                            }
                         }
-                        Some(true) => provider_settled = true,
-                        None => {}
                     }
-                }
-                let Some(registration) = self.host.input(&attempted_name) else {
-                    if self.host.input_is_unavailable(&attempted_name) {
-                        if !provider_settled {
-                            self.state
-                                .record_input_dependencies(
-                                    &self.host.input_unavailable_dependencies(&attempted_name),
-                                )
-                                .map_err(|_| CommandError::input_invariant())?;
+
+                    if let Some(crate::ResourceFulfillment::Input { source, .. }) =
+                        provider_fulfillment
+                    {
+                        break Some((source, true));
+                    }
+
+                    let Some(retained) = self.host.input(&attempted_name) else {
+                        if self.host.input_is_unavailable(&attempted_name) {
+                            if !provider_settled {
+                                self.state
+                                    .record_input_dependencies(
+                                        &self.host.input_unavailable_dependencies(&attempted_name),
+                                    )
+                                    .map_err(|_| CommandError::input_invariant())?;
+                            }
+                        } else {
+                            unresolved = true;
                         }
-                    } else {
-                        unresolved = true;
+                        break None;
+                    };
+
+                    let actual = self
+                        .state
+                        .with_input_read_state(|input| retained.actual_use(input))
+                        .map_err(|_| CommandError::input_invariant())?;
+                    let Some(actual) = actual else {
+                        // A generated-only retained answer lost its current
+                        // output on rollback. Remove only this positive entry
+                        // and resolve the current request again.
+                        self.host.invalidate_input_resource(&attempted_name);
+                        continue;
+                    };
+                    if !provider_settled {
+                        let dependencies = retained.dependencies_for_actual_use(&actual);
+                        self.state
+                            .record_input_dependencies(&dependencies)
+                            .map_err(|_| CommandError::input_invariant())?;
+                    }
+                    break Some((actual, provider_settled));
+                };
+                let Some((registration, _provider_settled)) = registration else {
+                    if provider_declined {
+                        break;
                     }
                     continue;
                 };
-                if !provider_settled {
-                    self.state
-                        .record_input_dependencies(registration.input_dependencies())
-                        .map_err(|_| CommandError::input_invariant())?;
-                }
                 let bytes = registration.shared_bytes();
                 // §537's `a_make_name_string`: tex.web records the name it
                 // actually opened on the level, and later prints exactly that

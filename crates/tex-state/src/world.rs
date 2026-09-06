@@ -3183,6 +3183,78 @@ impl World {
         )))
     }
 
+    /// Peeks at the current same-run output without allocating an input
+    /// record. Retained value-only resources use this to detect an output
+    /// replacement before deciding whether their parsed bytes remain valid.
+    pub fn same_run_output_hash(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> Result<Option<ContentHash>, WorldError> {
+        let path = path.as_ref();
+        if let Some(bytes) = self.pending_output_bytes(path)? {
+            return Ok(Some(ContentHash::from_bytes(&bytes)));
+        }
+        if self.committed_output_paths.contains(path) {
+            let bytes = self.materialized_file_bytes(path)?;
+            return Ok(Some(ContentHash::from_bytes(&bytes)));
+        }
+        Ok(None)
+    }
+
+    /// Materializes one retained resolver selection for an actual use.
+    ///
+    /// Same-run output is authoritative and is checked before the retained
+    /// selection. The dependency slice preserves the resolver's ordered
+    /// candidate paths, so a newly-created higher-precedence output shadows a
+    /// cached lower-precedence winner. If no output exists, immutable external
+    /// bytes are registered directly without host I/O or a byte copy. A
+    /// generated-only selection returns `None` instead of reviving bytes that
+    /// disappeared when its output transaction was rolled back.
+    pub(crate) fn read_selected_input_file(
+        &mut self,
+        path: &Path,
+        bytes: SharedBytes,
+        modification_date: Option<FileModificationDate>,
+        origin: InputOrigin,
+        dependencies: &[InputDependency],
+    ) -> Result<Option<FileContent>, WorldError> {
+        // Peek without allocating a record. The selected path is checked
+        // before external fallback, while higher-precedence candidates are
+        // still allowed to shadow it without leaving an unused read record.
+        let selected_output = self.same_run_output_hash(path)?;
+        let selected_rank = dependencies
+            .iter()
+            .position(|dependency| dependency.path() == path)
+            .unwrap_or(dependencies.len());
+        for (rank, dependency) in dependencies.iter().enumerate() {
+            if dependency.path() == path {
+                continue;
+            }
+            // Only candidates which precede the selected winner can shadow
+            // its retained bytes. A lower-precedence output must not replace
+            // an external winner merely because that output was created
+            // after the resolver ran.
+            if rank >= selected_rank {
+                break;
+            }
+            if self.same_run_output_hash(dependency.path())?.is_some() {
+                return self.read_same_run_output_file(dependency.path());
+            }
+        }
+        if selected_output.is_some() {
+            return self.read_same_run_output_file(path);
+        }
+        if matches!(origin, InputOrigin::SameRunGenerated) {
+            return Ok(None);
+        }
+        Ok(Some(self.register_input_content(
+            path,
+            bytes,
+            modification_date,
+            origin,
+        )))
+    }
+
     /// Registers immutable bytes supplied by a driver-owned resolver as one
     /// successful input read.
     ///
@@ -3525,6 +3597,27 @@ impl World {
             next_byte: 0,
         });
         Ok(())
+    }
+
+    /// Opens an input stream from a record already registered in this World.
+    ///
+    /// Host resource providers use this after returning an active
+    /// `SourceRegistration::World`. Reusing the live record preserves the
+    /// exactly-once input registration contract; callers with only retained
+    /// bytes must first materialize a fresh [`FileContent`] instead.
+    pub fn open_in_record(
+        &mut self,
+        slot: StreamSlot,
+        record: InputRecordId,
+    ) -> Result<(), WorldError> {
+        let content = self.recorded_input_content(record).ok_or_else(|| {
+            WorldError::new(
+                "open input stream",
+                None,
+                "resolved input record is not live in this World",
+            )
+        })?;
+        self.open_in_content(slot, &content)
     }
 
     pub fn close_in(&mut self, slot: StreamSlot) {

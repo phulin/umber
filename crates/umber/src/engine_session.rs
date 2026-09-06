@@ -916,11 +916,6 @@ impl<'a, G> EngineSession<'a, G> {
             })
     }
 
-    fn mark_unavailable(&mut self, need: &ResourceNeed) {
-        self.output_ledger
-            .mark_unavailable(&mut self.control, need, true);
-    }
-
     /// Runs the engine using host policy only for typed immutable
     /// needs. Repeated declines or definitive absences are bounded; successful
     /// fulfillment resets the no-progress epoch because the next operation is
@@ -993,9 +988,11 @@ impl<'a, G> EngineSession<'a, G> {
         host: &mut dyn ResourceHost,
         need: &ResourceNeed,
     ) -> Result<bool, SessionError> {
-        let outcome = {
+        let (outcome, effects) = {
             let mut world = ResourceWorld::new(self.stores);
-            host.fulfill(&mut world, need)
+            let outcome = host.fulfill(&mut world, need);
+            let effects = world.take_replay_effects();
+            (outcome, effects)
         };
         if let ResourceOutcome::Failed(failure) = &outcome {
             return Err(SessionError::ResourceFailure {
@@ -1004,15 +1001,30 @@ impl<'a, G> EngineSession<'a, G> {
             });
         }
         if let ResourceOutcome::Fulfilled(fulfillment) = outcome {
-            self.fulfill(need, fulfillment)?;
+            self.output_ledger
+                .fulfill_with_effects(&mut self.control, need, fulfillment, &effects)
+                .map_err(|fulfillment| SessionError::UnexpectedFulfillment {
+                    need: Box::new(need.clone()),
+                    fulfillment,
+                })?;
             return Ok(true);
         }
         if let Some(fulfillment) = self.same_run_output(need) {
-            self.fulfill(need, fulfillment)?;
+            self.output_ledger
+                .fulfill_with_effects(&mut self.control, need, fulfillment, &effects)
+                .map_err(|fulfillment| SessionError::UnexpectedFulfillment {
+                    need: Box::new(need.clone()),
+                    fulfillment,
+                })?;
             return Ok(true);
         }
         if matches!(outcome, ResourceOutcome::Unavailable) {
-            self.mark_unavailable(need);
+            self.output_ledger.mark_unavailable_with_effects(
+                &mut self.control,
+                need,
+                true,
+                &effects,
+            );
         }
         Ok(false)
     }

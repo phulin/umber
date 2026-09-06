@@ -13,12 +13,13 @@ use tex_command::{
     GeneratedFontKind, HyphenationDataKind, ImmediateExtension, MathDelimiterBoundary,
     MathDelimiterBoundaryKind, MathFieldBody, MathLimitKind, MathRequest, MathScriptKind,
     MathStyleKind, MathTextFieldKind, PdfImageRequest, PdfImageResource, PdfReferenceObjectRequest,
-    PreparedAlignmentCellTemplates, RegisteredSourceKind, ResourceNeed, ResourceOutcome,
-    ResourceProvider, RestrictedIntegerClass, ScannedAccent, ScannedAccentBase,
-    ScannedBoxConstruction, ScannedBoxKind, ScannedBoxShift, ScannedBoxShiftPayload,
-    ScannedDiscretionaryOpening, ScannedDisplayDiagnostic, ScannedGeneratedFontDefinition,
-    ScannedInsertConstruction, ScannedLeaderPayload, ScannedMathMuMaterial, ScannedPackingSpec,
-    ScannedSetBoxPath, ScannedVSplit, SourceRegistration, SourceRegistrationError,
+    PreparedAlignmentCellTemplates, RegisteredSourceKind, ResourceFulfillment,
+    ResourceInstallOutcome, ResourceNeed, ResourceProvider, RestrictedIntegerClass, ScannedAccent,
+    ScannedAccentBase, ScannedBoxConstruction, ScannedBoxKind, ScannedBoxShift,
+    ScannedBoxShiftPayload, ScannedDiscretionaryOpening, ScannedDisplayDiagnostic,
+    ScannedGeneratedFontDefinition, ScannedInsertConstruction, ScannedLeaderPayload,
+    ScannedMathMuMaterial, ScannedPackingSpec, ScannedSetBoxPath, ScannedVSplit,
+    SourceRegistration, SourceRegistrationError,
 };
 use tex_command::{
     CommandObservation, CommandObserver, EffectRecord, GeometryRecord, MutationRecord,
@@ -113,6 +114,15 @@ use delivery::*;
 use executor_facts::ExecutorHostFacts;
 use executor_facts::OperationPreparation;
 use settlement::*;
+
+fn font_metrics(resource: &FontResource) -> Option<&tex_state::FileContent> {
+    match resource {
+        FontResource::Tfm { metrics, .. }
+        | FontResource::MappedTfm { metrics, .. }
+        | FontResource::ClassicTfmFallback { metrics } => Some(metrics),
+        FontResource::Unavailable | FontResource::OpenType(_) => None,
+    }
+}
 
 type PreparedDviPages = Vec<crate::dispatch::PreparedDviPage>;
 type GluePointerSource<G> = Option<(GlueId<G>, Option<GlueId<G>>)>;
@@ -1133,6 +1143,7 @@ fn command_processor<'episode, 'admission, G>(
     )
 }
 
+#[allow(clippy::too_many_arguments)] // each argument is a distinct replay owner
 fn command_processor_with_resource_provider<'episode, 'admission, G>(
     command: &'episode mut PersistentInterpreter<G>,
     fuel: &'episode mut tex_command::CommandFuel,
@@ -2254,7 +2265,7 @@ impl<G> MainControl<G> {
         resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
         need: &ResourceNeed,
         register_texinputs_alias: bool,
-    ) -> Result<Option<bool>, ExecError> {
+    ) -> Result<Option<ResourceInstallOutcome>, ExecError> {
         let Some(resource_provider) = resource_provider.as_deref_mut() else {
             return Ok(None);
         };
@@ -2264,38 +2275,26 @@ impl<G> MainControl<G> {
                 .expect("resource provider admission");
             resource_provider.resolve(&mut context, need)
         };
-        let tex_command::ResourceResolution {
-            outcome,
-            dependencies,
-        } = resolution;
-        match outcome {
-            ResourceOutcome::Fulfilled(fulfillment) => self
-                .capabilities
-                .install_resource_answer(need, fulfillment, dependencies)
-                .map(|()| Some(true))
-                .map_err(|_| ExecError::ResourceFailure {
-                    need: Box::new(need.clone()),
-                    failure: Box::new(tex_command::ResourceFailure::message(
-                        "resource provider returned a mismatched typed answer",
-                    )),
-                }),
-            ResourceOutcome::Unavailable => {
-                self.capabilities.install_resource_unavailable(
-                    need,
-                    register_texinputs_alias,
-                    dependencies,
-                );
-                Ok(Some(true))
-            }
-            ResourceOutcome::Declined => {
-                self.declined_resource_attempt = Some(need.clone());
-                Ok(Some(false))
-            }
-            ResourceOutcome::Failed(failure) => Err(ExecError::ResourceFailure {
+        self.capabilities
+            .install_resource_resolution(need, resolution, register_texinputs_alias)
+            .map(Some)
+            .map_err(|_| ExecError::ResourceFailure {
                 need: Box::new(need.clone()),
-                failure: Box::new(failure),
-            }),
-        }
+                failure: Box::new(tex_command::ResourceFailure::message(
+                    "resource provider returned a mismatched typed answer",
+                )),
+            })
+            .and_then(|outcome| match outcome {
+                Some(ResourceInstallOutcome::Declined) => {
+                    self.declined_resource_attempt = Some(need.clone());
+                    Ok(Some(ResourceInstallOutcome::Declined))
+                }
+                Some(ResourceInstallOutcome::Failed(failure)) => Err(ExecError::ResourceFailure {
+                    need: Box::new(need.clone()),
+                    failure: Box::new(failure),
+                }),
+                other => Ok(other),
+            })
     }
 
     fn resolve_font_resource(
@@ -2303,39 +2302,63 @@ impl<G> MainControl<G> {
         scanned: &mut ColdOperation<G>,
         stores: &mut Universe<G>,
         resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
-    ) -> Result<(), ExecError> {
+    ) -> Result<Option<FontResource>, ExecError> {
         let ColdOperation::<G>::FontDefinition { request, .. } = scanned else {
-            return Ok(());
+            return Ok(None);
         };
         stores.poison_dependency_region(TrackedRegionBarrier::UnsupportedHostCapability);
         let path = crate::canonical_font_resource_path(&request.name);
-        let mut provider_settled = false;
-        if self.capabilities.font(&path).is_none() {
+        loop {
+            if let Some(retained) = self.capabilities.font(&path) {
+                let dependencies = self
+                    .capabilities
+                    .font_dependencies(&path)
+                    .unwrap_or_default();
+                let actual = stores
+                    .command_context()
+                    .expect("font resource admission")
+                    .with_input_read_state(|input| retained.actual_use(input, &dependencies))
+                    .map_err(ExecError::World)?;
+                let Some(actual) = actual else {
+                    self.capabilities.invalidate_font_resource(&path);
+                    continue;
+                };
+                if let Some(metrics) = font_metrics(&actual) {
+                    let dependencies = tex_command::dependencies_for_actual_content(
+                        &dependencies,
+                        metrics.path(),
+                        metrics.hash(),
+                    );
+                    Self::record_cached_input_dependencies(stores, &dependencies)?;
+                } else {
+                    Self::record_cached_input_dependencies(stores, &dependencies)?;
+                }
+                return Ok(Some(actual));
+            }
+
             let need = ResourceNeed::Font {
                 request: request.clone(),
             };
             match self.resolve_provider_resource(stores, resource_provider, &need, false)? {
-                Some(true) => provider_settled = true,
-                Some(false) | None => {
+                Some(ResourceInstallOutcome::Fulfilled(fulfillment)) => {
+                    let ResourceFulfillment::Font { resource, .. } = fulfillment else {
+                        unreachable!("font provider fulfillment was type-checked by installer")
+                    };
+                    return Ok(Some(*resource));
+                }
+                Some(ResourceInstallOutcome::Unavailable) => {
+                    return Ok(Some(FontResource::Unavailable));
+                }
+                Some(ResourceInstallOutcome::Declined) | None => {
                     return Err(ExecError::MissingFont {
                         request: request.clone(),
                     });
                 }
-            }
-            if self.capabilities.font(&path).is_none() {
-                return Err(ExecError::MissingFont {
-                    request: request.clone(),
-                });
+                Some(ResourceInstallOutcome::Failed(_)) => {
+                    unreachable!("failed provider outcomes are returned as errors")
+                }
             }
         }
-        if !provider_settled {
-            let dependencies = self
-                .capabilities
-                .font_dependencies(&path)
-                .unwrap_or_default();
-            Self::record_cached_input_dependencies(stores, &dependencies)?;
-        }
-        Ok(())
     }
 
     fn resolve_input_stream_resource(
@@ -2361,51 +2384,53 @@ impl<G> MainControl<G> {
                 // suspends the step so the driver can acquire it, and only a
                 // host that reports the file absent reaches the closed-stream
                 // outcome.
-                match self.capabilities.input_probe_resource(&packed_name) {
-                    Some(resource) => {
-                        let source = resource.source().clone();
-                        Self::record_cached_input_dependencies(
-                            stores,
-                            source.input_dependencies(),
-                        )?;
-                        Some(source)
+                let error_request = tex_command::FileEnquiryRequest::new(
+                    packed_name.clone(),
+                    tex_command::FileEnquiryIntent::OpenInProbe,
+                );
+                loop {
+                    if let Some(retained) = self.capabilities.input_probe_resource(&packed_name) {
+                        let actual = stores
+                            .command_context()
+                            .expect("openin probe admission")
+                            .with_input_read_state(|input| retained.actual_use(input))
+                            .map_err(ExecError::World)?;
+                        let Some(actual) = actual else {
+                            self.capabilities
+                                .invalidate_input_probe_resource(&packed_name);
+                            continue;
+                        };
+                        let dependencies = retained.dependencies_for_actual_use(&actual);
+                        Self::record_cached_input_dependencies(stores, &dependencies)?;
+                        break Some(actual.source().clone());
                     }
-                    None if self.capabilities.input_probe_is_unavailable(&packed_name) => {
+                    if self.capabilities.input_probe_is_unavailable(&packed_name) {
                         let dependencies = self.capabilities.input_probe_dependencies(&packed_name);
                         Self::record_cached_input_dependencies(stores, &dependencies)?;
-                        None
+                        break None;
                     }
-                    None => {
-                        let error_request = tex_command::FileEnquiryRequest::new(
-                            packed_name.clone(),
-                            tex_command::FileEnquiryIntent::OpenInProbe,
-                        );
-                        let need = ResourceNeed::InputProbe {
-                            request: error_request.clone(),
-                        };
-                        match self.resolve_provider_resource(
-                            stores,
-                            resource_provider,
-                            &need,
-                            false,
-                        )? {
-                            Some(true) => {}
-                            Some(false) | None => {
-                                return Err(ExecError::MissingInputProbe {
-                                    request: error_request,
-                                });
-                            }
+
+                    let need = ResourceNeed::InputProbe {
+                        request: error_request.clone(),
+                    };
+                    match self.resolve_provider_resource(stores, resource_provider, &need, false)? {
+                        Some(ResourceInstallOutcome::Fulfilled(fulfillment)) => {
+                            let ResourceFulfillment::InputProbe { resource, .. } = fulfillment
+                            else {
+                                unreachable!(
+                                    "input probe provider fulfillment was type-checked by installer"
+                                )
+                            };
+                            break Some(resource.source().clone());
                         }
-                        match self.capabilities.input_probe_resource(&packed_name) {
-                            Some(resource) => Some(resource.source().clone()),
-                            None if self.capabilities.input_probe_is_unavailable(&packed_name) => {
-                                None
-                            }
-                            None => {
-                                return Err(ExecError::MissingInputProbe {
-                                    request: error_request,
-                                });
-                            }
+                        Some(ResourceInstallOutcome::Unavailable) => break None,
+                        Some(ResourceInstallOutcome::Declined) | None => {
+                            return Err(ExecError::MissingInputProbe {
+                                request: error_request.clone(),
+                            });
+                        }
+                        Some(ResourceInstallOutcome::Failed(_)) => {
+                            unreachable!("failed provider outcomes are returned as errors")
                         }
                     }
                 }
@@ -2457,33 +2482,127 @@ impl<G> MainControl<G> {
                     .expect("PDF image resource resolution precedes root preparation")
             }),
         };
-        let Some((resolved_resource, dependencies)) =
-            self.capabilities.pdf_image_with_dependencies(&host_request)
-        else {
-            let need = ResourceNeed::PdfImage {
-                request: host_request.clone(),
-            };
-            match self.resolve_provider_resource(stores, resource_provider, &need, false)? {
-                Some(true) => {}
-                Some(false) | None => {
-                    return Err(ExecError::MissingPdfImage {
-                        request: host_request,
-                    });
-                }
-            }
-            let Some((resolved_resource, _dependencies)) =
+        loop {
+            let Some((resolved_resource, dependencies)) =
                 self.capabilities.pdf_image_with_dependencies(&host_request)
             else {
-                return Err(ExecError::MissingPdfImage {
-                    request: host_request,
-                });
+                let need = ResourceNeed::PdfImage {
+                    request: host_request.clone(),
+                };
+                match self.resolve_provider_resource(stores, resource_provider, &need, false)? {
+                    Some(ResourceInstallOutcome::Fulfilled(fulfillment)) => {
+                        let ResourceFulfillment::PdfImage {
+                            resource: active_resource,
+                            ..
+                        } = fulfillment
+                        else {
+                            unreachable!("image provider fulfillment was type-checked by installer")
+                        };
+                        self.refresh_pdf_image_origin(&host_request, stores)?;
+                        *resource = *active_resource;
+                        return Ok(());
+                    }
+                    Some(ResourceInstallOutcome::Unavailable)
+                    | Some(ResourceInstallOutcome::Declined)
+                    | None => {
+                        return Err(ExecError::MissingPdfImage {
+                            request: host_request,
+                        });
+                    }
+                    Some(ResourceInstallOutcome::Failed(_)) => {
+                        unreachable!("failed provider outcomes are returned as errors")
+                    }
+                }
             };
+
+            let dependencies_for_use = if let Some((selected_path, origin)) =
+                self.capabilities.pdf_image_selection(&host_request)
+            {
+                let current_output = Self::current_pdf_image_output(
+                    stores,
+                    &dependencies,
+                    std::path::Path::new(&selected_path),
+                )?;
+                match current_output {
+                    Some((path, hash))
+                        if Self::pdf_image_identity(&resolved_resource) == Some(hash) =>
+                    {
+                        tex_command::dependencies_for_actual_content(&dependencies, &path, hash)
+                    }
+                    Some(_) => {
+                        self.capabilities.invalidate_pdf_image(&host_request);
+                        continue;
+                    }
+                    None if origin == tex_state::InputOrigin::SameRunGenerated => {
+                        self.capabilities.invalidate_pdf_image(&host_request);
+                        continue;
+                    }
+                    None => dependencies,
+                }
+            } else {
+                dependencies
+            };
+            Self::record_cached_input_dependencies(stores, &dependencies_for_use)?;
             *resource = resolved_resource;
             return Ok(());
+        }
+    }
+
+    fn refresh_pdf_image_origin(
+        &mut self,
+        request: &PdfImageRequest,
+        stores: &Universe<G>,
+    ) -> Result<(), ExecError> {
+        let Some((path, _)) = self.capabilities.pdf_image_selection(request) else {
+            return Ok(());
         };
-        Self::record_cached_input_dependencies(stores, &dependencies)?;
-        *resource = resolved_resource;
+        let origin = stores
+            .world()
+            .same_run_output_hash(path)
+            .map_err(ExecError::World)?
+            .map_or(tex_state::InputOrigin::External, |_| {
+                tex_state::InputOrigin::SameRunGenerated
+            });
+        self.capabilities.set_pdf_image_origin(request, origin);
         Ok(())
+    }
+
+    fn current_pdf_image_output(
+        stores: &Universe<G>,
+        dependencies: &[tex_state::InputDependency],
+        selected_path: &std::path::Path,
+    ) -> Result<Option<(PathBuf, tex_state::ContentHash)>, ExecError> {
+        let selected_rank = dependencies
+            .iter()
+            .position(|dependency| dependency.path() == selected_path)
+            .unwrap_or(dependencies.len());
+        for (rank, dependency) in dependencies.iter().enumerate() {
+            if dependency.path() == selected_path {
+                continue;
+            }
+            if rank >= selected_rank {
+                break;
+            }
+            if let Some(hash) = stores
+                .world()
+                .same_run_output_hash(dependency.path())
+                .map_err(ExecError::World)?
+            {
+                return Ok(Some((dependency.path().to_owned(), hash)));
+            }
+        }
+        stores
+            .world()
+            .same_run_output_hash(selected_path)
+            .map_err(ExecError::World)
+            .map(|hash| hash.map(|hash| (selected_path.to_owned(), hash)))
+    }
+
+    fn pdf_image_identity(resource: &PdfImageResource) -> Option<tex_state::ContentHash> {
+        match resource {
+            PdfImageResource::Available(source) => Some(source.identity),
+            PdfImageResource::Unavailable | PdfImageResource::Invalid(_) => None,
+        }
     }
 
     fn record_cached_input_dependencies(
@@ -3045,21 +3164,27 @@ impl<G> MainControl<G> {
                     let packed_name = file_name.packed();
                     stores.world_mut().close_in(slot);
                     if let Some(resource) = resource {
-                        if let Err(error) = stores
-                            .world_mut()
-                            .set_memory_file(&packed_name, resource.bytes().to_vec())
-                        {
-                            return Some(Err(error.into()));
-                        }
-                        let content = match InputReadState::read_input_file(
-                            &mut stores.input_open_context(),
-                            std::path::Path::new(&packed_name),
-                        ) {
-                            Ok(content) => content,
-                            Err(error) => return Some(Err(error.into())),
-                        };
-                        if let Err(error) = stores.world_mut().open_in_content(slot, &content) {
-                            return Some(Err(error.into()));
+                        if let Some(record) = resource.active_world_record() {
+                            if let Err(error) = stores.world_mut().open_in_record(slot, record) {
+                                return Some(Err(error.into()));
+                            }
+                        } else {
+                            if let Err(error) = stores
+                                .world_mut()
+                                .set_memory_file(&packed_name, resource.bytes().to_vec())
+                            {
+                                return Some(Err(error.into()));
+                            }
+                            let content = match InputReadState::read_input_file(
+                                &mut stores.input_open_context(),
+                                std::path::Path::new(&packed_name),
+                            ) {
+                                Ok(content) => content,
+                                Err(error) => return Some(Err(error.into())),
+                            };
+                            if let Err(error) = stores.world_mut().open_in_content(slot, &content) {
+                                return Some(Err(error.into()));
+                            }
                         }
                     }
                     Ok(ReplayStep::Continue)
@@ -5818,11 +5943,11 @@ impl<G> MainControl<G> {
         Ok((content, level))
     }
 
-    fn scan_display_end<'provider>(
+    fn scan_display_end(
         &mut self,
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
-        resource_provider: &mut Option<&'provider mut dyn ResourceProvider<G>>,
+        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<bool, ExecError> {
         // TeX82 §§1185/1194's `fin_mlist` has already popped the display
         // level. Publish that live nest before §1197's nested expansion
@@ -6176,6 +6301,7 @@ impl<G> MainControl<G> {
         )
     }
 
+    #[allow(clippy::too_many_arguments)] // display completion owns independent mode/PDF/replay state
     fn finish_display_math_content(
         &mut self,
         stores: &mut Universe<G>,
@@ -6348,11 +6474,11 @@ impl<G> MainControl<G> {
     /// vertical list gained an empty line box and its interline glue
     /// (`umber2-johp.231`). The scan is a plain `get_x_token`, so a macro
     /// following the display is expanded here exactly as TeX82 expands it.
-    fn scan_optional_space<'provider>(
+    fn scan_optional_space(
         &mut self,
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
-        resource_provider: &mut Option<&'provider mut dyn ResourceProvider<G>>,
+        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<(), ExecError> {
         let mode = self.modes.current_mode();
         let shown_mode = self.shown_mode;
@@ -6785,14 +6911,14 @@ impl<G> MainControl<G> {
             effect: effect_start.raw(),
             artifact: artifact_start,
         });
-        let stepped = match resource_provider.as_deref_mut() {
+        let stepped = match resource_provider.as_mut() {
             Some(resource_provider) => self.execute_operation_with_resource_provider(
                 stores,
                 OperationDelivery::Replay,
                 OperationTransaction::Advance,
                 1,
                 None,
-                resource_provider,
+                &mut **resource_provider,
             ),
             None => self.execute_operation(
                 stores,
@@ -6987,6 +7113,7 @@ impl<G> MainControl<G> {
     /// families scan and apply here without a
     /// universal DTO; cold and barrier families enter a borrow-typed execution
     /// episode immediately after immutable resource resolution.
+    #[allow(clippy::too_many_arguments)] // typed dispatch keeps each rollback owner explicit
     fn execute_typed_operation(
         &mut self,
         stores: &mut Universe<G>,
@@ -7015,6 +7142,7 @@ impl<G> MainControl<G> {
         result
     }
 
+    #[allow(clippy::too_many_arguments)] // typed dispatch keeps each rollback owner explicit
     fn dispatch_typed_operation(
         &mut self,
         stores: &mut Universe<G>,
@@ -7368,6 +7496,7 @@ impl<G> MainControl<G> {
     }
 
     /// Executes a completed cold branch through its typed borrow-owned episode.
+    #[allow(clippy::too_many_arguments)] // cold execution owns separate scan, output, and provider state
     fn execute_scanned_cold_episode(
         &mut self,
         stores: &mut Universe<G>,
@@ -7416,9 +7545,9 @@ impl<G> MainControl<G> {
         output_start: OperationOutputStart,
         resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<ColdExecutionEpisode<'operation, G>, TypedOperationError> {
-        if let Err(error) = self.resolve_font_resource(operation, stores, resource_provider) {
-            return Err(TypedOperationError::Preparation(error));
-        }
+        let font_resource = self
+            .resolve_font_resource(operation, stores, resource_provider)
+            .map_err(TypedOperationError::Preparation)?;
         if let Err(error) = self.resolve_input_stream_resource(operation, stores, resource_provider)
         {
             return Err(TypedOperationError::Preparation(error));
@@ -7498,6 +7627,7 @@ impl<G> MainControl<G> {
         Ok(ColdExecutionEpisode {
             operation,
             alignment_preamble,
+            font_resource,
             output_start,
         })
     }
@@ -7704,6 +7834,7 @@ impl<G> MainControl<G> {
             &self.active_math_left_boundaries,
             &self.active_math_shifts,
             &mut self.prepared_dvi_pages,
+            None,
         );
         if result.is_ok() {
             command.publish_named_token_list_pushes(context);
@@ -7830,18 +7961,20 @@ impl<G> MainControl<G> {
         result
     }
 
-    fn execute_cold_episode<'provider>(
+    #[allow(clippy::too_many_arguments)] // cold execution keeps host preparation and provider borrows distinct
+    fn execute_cold_episode(
         &mut self,
         stores: &mut Universe<G>,
         host_preparation: &mut OperationPreparation<G>,
         episode: ColdExecutionEpisode<'_, G>,
         diagnostic_effects: &mut DiagnosticEffects,
-        resource_provider: &mut Option<&'provider mut dyn ResourceProvider<G>>,
+        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<ReplayStep, ExecError> {
         let mut operation_resource_provider = resource_provider.take();
         let ColdExecutionEpisode {
             operation,
             alignment_preamble,
+            font_resource,
             output_start,
         } = episode;
         let tracked_region_is_active = output_start.tracked_region_is_active;
@@ -8207,6 +8340,7 @@ impl<G> MainControl<G> {
                     &self.active_math_left_boundaries,
                     &self.active_math_shifts,
                     &mut self.prepared_dvi_pages,
+                    font_resource.as_ref(),
                 );
                 if result.is_ok() {
                     command.publish_named_token_list_pushes(context);
