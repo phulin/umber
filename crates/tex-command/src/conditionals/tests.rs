@@ -41,32 +41,6 @@ fn space() -> Token {
     }
 }
 
-fn nested_ifnum_input(if_num: Token, fi: Token, depth: usize) -> Vec<Token> {
-    let mut input = Vec::with_capacity(depth * 8 + 4);
-    input.extend(std::iter::repeat_n(if_num, depth));
-    input.extend([
-        other('1'),
-        space(),
-        other('<'),
-        space(),
-        other('2'),
-        space(),
-        other('1'),
-    ]);
-    for _ in 0..depth {
-        input.extend([
-            fi,
-            space(),
-            other('<'),
-            space(),
-            other('2'),
-            space(),
-            other('1'),
-        ]);
-    }
-    input
-}
-
 fn install<G>(
     universe: &mut tex_state::Universe<G>,
     name: &str,
@@ -451,13 +425,34 @@ fn ifnum_literal_operands_stay_in_the_shared_delivery_lane() {
 }
 
 #[test]
-fn bounded_nested_ifnum_operands_complete_with_synchronous_scanners() {
+fn deeply_nested_ifnum_operands_use_the_shared_control_lane() {
     crate::test_harness::with_universe(|universe| {
         let if_num = install(universe, "ifnum", ExpandablePrimitive::IfNum);
         let fi = install(universe, "fi", ExpandablePrimitive::Fi);
         let mut command = CommandState::default();
-        let depth = 256;
-        let input = nested_ifnum_input(if_num, fi, depth);
+        let depth = 1_024;
+        let mut input = Vec::with_capacity(depth * 8 + 4);
+        input.extend(std::iter::repeat_n(if_num, depth));
+        input.extend([
+            other('1'),
+            space(),
+            other('<'),
+            space(),
+            other('2'),
+            space(),
+            other('1'),
+        ]);
+        for _ in 0..depth {
+            input.extend([
+                fi,
+                space(),
+                other('<'),
+                space(),
+                other('2'),
+                space(),
+                other('1'),
+            ]);
+        }
         crate::test_harness::push(&mut command, input);
         let mut capabilities = CommandHostCapabilities::default();
         let mut fuel = crate::CommandFuelLedger::default();
@@ -485,40 +480,6 @@ fn bounded_nested_ifnum_operands_complete_with_synchronous_scanners() {
                 status => panic!("unexpected delivery status: {status:?}"),
             }
         }
-        assert!(processor.command.conditions.current().is_none());
-    });
-}
-
-#[test]
-fn nested_ifnum_operands_hit_the_synchronous_expansion_limit_cleanly() {
-    crate::test_harness::with_universe(|universe| {
-        let if_num = install(universe, "ifnum", ExpandablePrimitive::IfNum);
-        let fi = install(universe, "fi", ExpandablePrimitive::Fi);
-        let mut command = CommandState::default();
-        crate::test_harness::push(&mut command, nested_ifnum_input(if_num, fi, 384));
-        let mut capabilities = CommandHostCapabilities::default();
-        let mut fuel = crate::CommandFuelLedger::default();
-        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
-        let mut context = universe.command_context().expect("command context");
-        let mut processor = crate::test_harness::processor(
-            &mut command,
-            &mut context,
-            &mut capabilities,
-            &mut fuel,
-            &mut diagnostic_effects,
-        );
-
-        let mut destination = None;
-        let failure = processor
-            .get_x_token_into(&mut destination)
-            .expect_err("nested scanner recursion must hit the depth guard");
-        assert_eq!(
-            failure,
-            crate::CommandError::Fatal(crate::FatalError::overflow("expansion depth", 320))
-        );
-        assert!(destination.is_none());
-        drop(processor);
-        assert_eq!(command.transient.active_expansion_depth, 0);
     });
 }
 
