@@ -756,6 +756,33 @@ impl PrefetchPolicy {
         self.metrics
     }
 
+    /// Reports whether a semantic candidate has already been accounted for by
+    /// this policy.  Hosts use this only for opt-in diagnostics; it does not
+    /// participate in selection or admission.
+    #[must_use]
+    pub fn candidate_is_known(&self, candidate: &PrefetchCandidate) -> bool {
+        let identity = candidate_identity(candidate);
+        self.admitted.contains(&identity)
+            || self.accounting.semantic_keys.contains(&identity)
+            || self.accounting.demanded_keys.contains(&identity)
+            || self.queued.contains_key(&identity)
+            || self.attempted.contains(&identity)
+    }
+
+    /// Reports whether a typed file key's payload has crossed the planner's
+    /// engine-admission boundary.  This is host telemetry only.
+    #[must_use]
+    pub fn file_key_is_admitted(&self, request_key: &PrefetchFileKey) -> bool {
+        self.admitted.contains(&request_key.identity())
+    }
+
+    /// Reports whether a typed file key's runtime payload has been scanned for
+    /// bounded lexical follow-up hints.  This is host telemetry only.
+    #[must_use]
+    pub fn file_key_was_scanned(&self, request_key: &PrefetchFileKey) -> bool {
+        self.scanned.contains(&request_key.identity())
+    }
+
     /// Selects one host batch against the policy's cumulative per-run
     /// reservation ledger. Required payloads are always returned and never
     /// consume speculative byte or file ceilings. Optional reservations are
@@ -1045,7 +1072,7 @@ impl PrefetchPolicy {
             self.enqueue(dependency);
         }
         let class = self.classes.get(&identity).copied().unwrap_or(class);
-        if class != PrefetchClass::SmallRuntime || !self.scanned.insert(identity) {
+        if class != PrefetchClass::SmallRuntime || self.scanned.contains(&identity) {
             return;
         }
         let byte_count = bytes.len() as u64;
@@ -1058,6 +1085,11 @@ impl PrefetchPolicy {
         {
             return;
         }
+        // Mark a runtime file only after it passes the bounded scan budget so
+        // the host diagnostic can distinguish admitted text from text whose
+        // lexical follow-up scan was skipped. Admission itself remains the
+        // deduplication boundary above.
+        self.scanned.insert(identity);
         self.scanned_runtime_bytes = self.scanned_runtime_bytes.saturating_add(byte_count);
         self.metrics.scanned_runtime_bytes = self
             .metrics

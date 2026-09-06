@@ -171,3 +171,33 @@ fn planner_preserves_shared_transport_names_for_distinct_file_kinds() {
         ]
     );
 }
+
+#[test]
+fn opt_in_diagnostics_are_bounded_at_planner_seams() {
+    let mut planner = planner();
+    assert!(!planner.diagnostics_enabled());
+    planner.enable_diagnostics();
+    let startup = planner.startup_hints("\\usepackage{telemetry-test}");
+    let request = startup
+        .iter()
+        .find_map(|request| match request {
+            ResourceRequest::File(request) => Some(request.clone()),
+            ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => None,
+        })
+        .expect("literal package hint");
+    planner.note_catalog_result(&request, true);
+    planner.admit_file(&request, b"% runtime text");
+    planner.admit_file(&request, b"% already resident");
+
+    for index in 0..(MAX_PREFETCH_DIAGNOSTIC_DECISIONS + 4) {
+        let name = format!("diagnostic-{index}.tex");
+        let request = FileRequest::new(
+            FileRequestKey::new(FileKind::TexInput, &name).expect("diagnostic key"),
+            "diagnostic",
+        );
+        planner.note_catalog_result(&request, false);
+    }
+    let (emitted, dropped) = planner.diagnostic_counts().expect("diagnostics enabled");
+    assert_eq!(emitted, MAX_PREFETCH_DIAGNOSTIC_DECISIONS as u64);
+    assert!(dropped > 0);
+}

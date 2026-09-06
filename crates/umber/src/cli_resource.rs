@@ -25,7 +25,9 @@ use umber_fetch::{
 use umber_hash::{AHash64, HashDomain};
 
 use crate::input_search::{WorldSearchError, read_first_world_detailed};
-use crate::prefetch::{PREFETCH_POLICY_VERSION, PrefetchPlanner, semantic_file_key};
+use crate::prefetch::{
+    PREFETCH_POLICY_VERSION, PrefetchDiagnosticDisposition, PrefetchPlanner, semantic_file_key,
+};
 use crate::{
     AcceptedFinalization, CompileAttemptResult, CompileError, CompileTelemetry, EngineMode,
     FileContentId, FileKind, FileRequest, FileRequestKey, MemoryRunOutput, NeedResources,
@@ -38,6 +40,10 @@ pub const DEFAULT_DISTRIBUTION_URL: &str =
     "https://assets.umber.ink/texlive/texlive-20260301/manifest-v8.json";
 
 const MAX_INDEX_SHARD_BYTES: u64 = 32 * 1024 * 1024;
+
+fn resource_telemetry_enabled() -> bool {
+    env::var_os("UMBER_RESOURCE_TELEMETRY").is_some_and(|value| value == "1")
+}
 
 #[derive(Clone, Debug)]
 pub struct NativeRunOptions {
@@ -212,6 +218,9 @@ pub struct NativeHostTelemetry {
     pub accepted_handoff_time: Duration,
     pub resolver: ResolverTelemetry,
 }
+
+const MAX_RESOURCE_RESTART_BATCHES: u64 = 32;
+const MAX_RESOURCE_BATCH_KEYS: usize = 64;
 
 /// Nested resolver phases and cache outcomes. Phase durations are mutually exclusive.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -407,9 +416,11 @@ pub fn run_for_finalization(
         Ok(output) => output,
         Err(error) => {
             emit_failed_distribution_telemetry(session.host_telemetry.resolver);
+            session.emit_resource_boundary_summary();
             return Err(error);
         }
     };
+    session.emit_resource_boundary_summary();
     let accepted_handoff_started = Instant::now();
     let input_path_map = session.local.input_path_map();
     let resolved_inputs = session.local.resolved_inputs();
@@ -447,6 +458,8 @@ pub struct NativeCompileSession<'owner> {
     source: String,
     pending_source: Option<String>,
     host_telemetry: NativeHostTelemetry,
+    resource_restart_batches: u64,
+    resource_restart_batch_drops: u64,
 }
 
 impl<'owner> NativeCompileSession<'owner> {
@@ -535,11 +548,15 @@ impl<'owner> NativeCompileSession<'owner> {
         } else {
             None
         };
+        let resource_telemetry_enabled = resource_telemetry_enabled();
         let mut planner = PrefetchPlanner::with_prior(
             prefetch_identity.clone(),
             umber_distribution::PrefetchBudget::default(),
             prior_manifest,
         );
+        if resource_telemetry_enabled {
+            planner.enable_diagnostics_with_sink(emit_planner_diagnostic);
+        }
         let initial_prefetch_hints = options
             .initial_prefetch_keys
             .iter()
@@ -592,7 +609,7 @@ impl<'owner> NativeCompileSession<'owner> {
         };
         if options.expansion_fuel.is_some()
             || options.execution_steps.is_some()
-            || env::var_os("UMBER_RESOURCE_TELEMETRY").is_some_and(|value| value == "1")
+            || resource_telemetry_enabled
         {
             eprintln!(
                 "RUN_GUARDS expansion_fuel_cap={} execution_steps_cap={}",
@@ -650,7 +667,7 @@ impl<'owner> NativeCompileSession<'owner> {
         session
             .add_user_file(name, main.clone())
             .map_err(|error| NativeRunError::Compile(error.to_string()))?;
-        if env::var_os("UMBER_RESOURCE_TELEMETRY").is_some_and(|value| value == "1") {
+        if resource_telemetry_enabled {
             eprintln!(
                 "RESOURCE_STARTUP_TELEMETRY source_read_ns={} format_read_ns={} format_restore_ns={} setup_ns={}",
                 source_read_ns,
@@ -674,6 +691,8 @@ impl<'owner> NativeCompileSession<'owner> {
                 resolver: resolver_telemetry,
                 ..NativeHostTelemetry::default()
             },
+            resource_restart_batches: 0,
+            resource_restart_batch_drops: 0,
         })
     }
 
@@ -705,6 +724,7 @@ impl<'owner> NativeCompileSession<'owner> {
                 return Err(NativeRunError::Cancelled);
             }
             let compile_attempt_started = Instant::now();
+            let execution_before = self.session.compile_telemetry().execution;
             let attempt = self.session.compile_attempt();
             self.host_telemetry.compile_attempt_time = self
                 .host_telemetry
@@ -736,6 +756,7 @@ impl<'owner> NativeCompileSession<'owner> {
                     // Merge them at the same preflight seam so they are
                     // admitted before the next engine retry.
                     batch.prefetch_hints.extend(self.prefetch.drain_followups());
+                    self.record_resource_restart_batch(&batch, execution_before);
                     if let Some((region, discarded_work)) = self.session.resource_replay_context() {
                         let required_keys = batch
                             .required
@@ -965,6 +986,73 @@ impl<'owner> NativeCompileSession<'owner> {
         self.host_telemetry.resolver.unused_prefetch_bytes =
             self.distribution.unused_prefetch_bytes();
     }
+
+    fn record_resource_restart_batch(
+        &mut self,
+        batch: &NeedResources,
+        execution_before: tex_exec::ExecutionTelemetry,
+    ) {
+        if !resource_telemetry_enabled() {
+            return;
+        }
+        self.resource_restart_batches = self.resource_restart_batches.saturating_add(1);
+        let index = self.resource_restart_batches;
+        if index > MAX_RESOURCE_RESTART_BATCHES {
+            self.resource_restart_batch_drops = self.resource_restart_batch_drops.saturating_add(1);
+            return;
+        }
+        let execution_after = self.session.compile_telemetry().execution;
+        let engine_telemetry_available = execution_after.cold_starts > 0;
+        let (required, required_omitted) = diagnostic_request_keys(&batch.required);
+        let (probes, probe_omitted) = diagnostic_request_keys(&batch.probes);
+        let (prefetch_hints, hint_omitted) = diagnostic_request_keys(&batch.prefetch_hints);
+        let checkpoint = self
+            .session
+            .resource_replay_context()
+            .map(|(region, _)| region);
+        let attempt_fuel = engine_telemetry_available.then(|| {
+            execution_after
+                .cumulative_fuel
+                .saturating_sub(execution_before.cumulative_fuel)
+        });
+        let cumulative_fuel = engine_telemetry_available.then_some(execution_after.cumulative_fuel);
+        let cumulative_discarded_fuel =
+            engine_telemetry_available.then_some(execution_after.discarded_fuel);
+        eprintln!(
+            "RESOURCE_RESTART_BATCH index={} checkpoint={} resource_restarts={} attempt_fuel={} cumulative_fuel={} cumulative_discarded_fuel={} omitted_keys={} required={} probes={} prefetch_hints={}",
+            index,
+            checkpoint
+                .as_deref()
+                .map_or_else(|| "none".to_owned(), escape_telemetry_field),
+            execution_after.resource_restarts,
+            optional_u64(attempt_fuel),
+            optional_u64(cumulative_fuel),
+            optional_u64(cumulative_discarded_fuel),
+            required_omitted
+                .saturating_add(probe_omitted)
+                .saturating_add(hint_omitted),
+            required.join(","),
+            probes.join(","),
+            prefetch_hints.join(","),
+        );
+    }
+
+    fn emit_resource_boundary_summary(&self) {
+        if !resource_telemetry_enabled() {
+            return;
+        }
+        let (planner_decisions, dropped_planner_decisions) =
+            self.prefetch.diagnostic_counts().unwrap_or_default();
+        eprintln!(
+            "RESOURCE_BOUNDARY_SUMMARY observed_restart_batches={} retained_restart_batches={} dropped_restart_batches={} planner_decisions={} dropped_planner_decisions={}",
+            self.resource_restart_batches,
+            self.resource_restart_batches
+                .min(MAX_RESOURCE_RESTART_BATCHES),
+            self.resource_restart_batch_drops,
+            planner_decisions,
+            dropped_planner_decisions,
+        );
+    }
 }
 
 fn selected_limit(
@@ -1074,6 +1162,53 @@ fn selected_limit_value(
             ))
         })
     })
+}
+
+fn diagnostic_request_keys(requests: &[ResourceRequest]) -> (Vec<String>, u64) {
+    let mut keys = Vec::with_capacity(requests.len().min(MAX_RESOURCE_BATCH_KEYS));
+    let mut omitted = 0_u64;
+    for request in requests {
+        if keys.len() < MAX_RESOURCE_BATCH_KEYS {
+            keys.push(diagnostic_request_key(request));
+        } else {
+            omitted = omitted.saturating_add(1);
+        }
+    }
+    (keys, omitted)
+}
+
+fn diagnostic_request_key(request: &ResourceRequest) -> String {
+    match request {
+        ResourceRequest::File(request) => format!(
+            "file:{}:{}:{}",
+            request.key().domain().wire_name(),
+            request.key().kind().wire_name(),
+            escape_telemetry_field(request.key().name()),
+        ),
+        ResourceRequest::Font(request) => {
+            format!(
+                "font:{}",
+                escape_telemetry_field(&format!("{:?}", request.key))
+            )
+        }
+        ResourceRequest::PkFont(request) => format!(
+            "pk-font:{}",
+            escape_telemetry_field(&format!("{:?}", request))
+        ),
+    }
+}
+
+fn escape_telemetry_field(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b'/') {
+            output.push(char::from(byte));
+        } else {
+            output.push('%');
+            output.push_str(&format!("{byte:02x}"));
+        }
+    }
+    output
 }
 
 fn contiguous_edit(old: &str, new: &str) -> (std::ops::Range<usize>, String) {
@@ -2100,6 +2235,7 @@ impl DistributionResolver {
         let mut original_hints = BTreeMap::<String, Vec<FileRequest>>::new();
         for request in &unresolved_hints {
             let Some(key) = distribution_file_key(request)? else {
+                planner.note_catalog_result(request, false);
                 continue;
             };
             let key = key.manifest_key().to_string();
@@ -2139,6 +2275,7 @@ impl DistributionResolver {
                         .or_default()
                         .push(original);
                 } else {
+                    planner.note_catalog_result(&original, false);
                     self.record_file_absent(
                         &original,
                         lookup_role(batch, &original, false),
@@ -2171,6 +2308,7 @@ impl DistributionResolver {
                 .remove(&key)
                 .expect("fallback key has an original file request");
             for original in originals {
+                planner.note_catalog_result(&original, false);
                 self.record_file_absent(
                     &original,
                     lookup_role(batch, &original, false),
@@ -2197,6 +2335,12 @@ impl DistributionResolver {
                         .manifest_lookup_time
                         .saturating_add(manifest_started.elapsed());
                     for key in keys {
+                        let present = selected.get(&key).is_some_and(Option::is_some);
+                        if let Some(requests) = original_hints.get(&key) {
+                            for request in requests {
+                                planner.note_catalog_result(request, present);
+                            }
+                        }
                         if let Some(Some(entry)) = selected.get(&key) {
                             hints.insert(key.clone(), entry.clone());
                             telemetry.package_group_candidates =
@@ -2299,6 +2443,12 @@ impl DistributionResolver {
                     .entry(dependency.key.clone())
                     .or_default()
                     .push(request);
+                if let Some(request) = original_hints
+                    .get(&dependency.key)
+                    .and_then(|requests| requests.last())
+                {
+                    planner.note_catalog_result(request, true);
+                }
                 dependency_keys.insert(dependency.key.clone());
                 telemetry.package_group_candidates =
                     telemetry.package_group_candidates.saturating_add(1);
@@ -2307,6 +2457,7 @@ impl DistributionResolver {
         for (manifest_key, requests) in &original_files {
             if required.contains_key(manifest_key) {
                 for request in requests {
+                    planner.note_catalog_result(request, true);
                     catalog_exists.insert(request.key().clone());
                     self.record_request_readiness(
                         telemetry,
@@ -3054,7 +3205,7 @@ fn selected_records(
 }
 
 fn emit_failed_distribution_telemetry(telemetry: ResolverTelemetry) {
-    if env::var_os("UMBER_RESOURCE_TELEMETRY").is_some_and(|value| value == "1") {
+    if resource_telemetry_enabled() {
         eprintln!(
             "DISTRIBUTION_MANIFEST_TELEMETRY manifest_reads={} manifest_read_bytes={} manifest_parses={} manifest_validations={} shard_loads={} packed_selection_calls={} packed_selection_keys={} packed_selection_bytes={} packed_validation_calls={} packed_validation_bytes={} manifest_parse_peak_bytes={} retained_manifest_shards={} retained_manifest_bytes={}",
             telemetry.manifest_reads,
@@ -3071,6 +3222,40 @@ fn emit_failed_distribution_telemetry(telemetry: ResolverTelemetry) {
             telemetry.retained_manifest_shards,
             telemetry.retained_manifest_bytes,
         );
+    }
+}
+
+fn optional_u64(value: Option<u64>) -> String {
+    value.map_or_else(|| "na".to_owned(), |value| value.to_string())
+}
+
+fn emit_planner_diagnostic(
+    index: u64,
+    key: &umber_distribution::PrefetchFileKey,
+    disposition: PrefetchDiagnosticDisposition,
+) {
+    eprintln!(
+        "RESOURCE_PLANNER_DECISION index={} key={} disposition={}",
+        index,
+        escape_telemetry_field(&format!(
+            "{}:{}:{}",
+            key.domain, key.kind, key.normalized_name
+        )),
+        planner_disposition_name(disposition),
+    );
+}
+
+const fn planner_disposition_name(disposition: PrefetchDiagnosticDisposition) -> &'static str {
+    match disposition {
+        PrefetchDiagnosticDisposition::HintSelected => "hint_selected",
+        PrefetchDiagnosticDisposition::CandidateSelected => "candidate_selected",
+        PrefetchDiagnosticDisposition::CatalogPresent => "catalog_present",
+        PrefetchDiagnosticDisposition::CatalogAbsent => "catalog_absent",
+        PrefetchDiagnosticDisposition::ContentAdmitted => "content_admitted",
+        PrefetchDiagnosticDisposition::AlreadyResident => "already_resident",
+        PrefetchDiagnosticDisposition::RuntimeTextScanned => "runtime_text_scanned",
+        PrefetchDiagnosticDisposition::RuntimeTextScanSkipped => "runtime_text_scan_skipped",
+        PrefetchDiagnosticDisposition::BudgetSkipped => "budget_skipped",
     }
 }
 

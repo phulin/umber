@@ -17,6 +17,10 @@ mod tests;
 
 pub const PREFETCH_POLICY_VERSION: &str = "literal-groups-v1";
 
+/// Maximum number of planner decisions emitted by the opt-in resource-boundary
+/// flight recorder.
+pub const MAX_PREFETCH_DIAGNOSTIC_DECISIONS: usize = 64;
+
 /// Metrics deliberately describe work avoided and bytes admitted, rather than
 /// only reporting cache hits (a warm persistent cache still needs admission).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -32,6 +36,31 @@ pub struct PrefetchMetrics {
     pub absent_resources: u64,
 }
 
+/// One cold planner-boundary observation. The native host formats these
+/// directly; the shared planner only supplies a small disposition enum.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PrefetchDiagnosticDisposition {
+    /// A literal/prior hint was discovered and selected as its typed key.
+    HintSelected,
+    CandidateSelected,
+    CatalogPresent,
+    CatalogAbsent,
+    ContentAdmitted,
+    AlreadyResident,
+    RuntimeTextScanned,
+    RuntimeTextScanSkipped,
+    BudgetSkipped,
+}
+
+pub type PrefetchDiagnosticSink = fn(u64, &PrefetchFileKey, PrefetchDiagnosticDisposition);
+
+#[derive(Clone, Copy, Debug)]
+struct PrefetchDiagnostics {
+    sink: PrefetchDiagnosticSink,
+    emitted: u64,
+    dropped: u64,
+}
+
 /// Host-neutral predictor.  It never reads bytes or performs I/O; adapters
 /// feed it accepted lookup outcomes and use its startup set to schedule host
 /// acquisition before the first engine attempt.
@@ -44,6 +73,7 @@ pub struct PrefetchPlanner {
     seen_startup: BTreeSet<String>,
     policy: PrefetchPolicy,
     metrics: PrefetchMetrics,
+    diagnostics: Option<PrefetchDiagnostics>,
 }
 
 impl PrefetchPlanner {
@@ -56,6 +86,7 @@ impl PrefetchPlanner {
             seen_startup: BTreeSet::new(),
             policy: PrefetchPolicy::new(budget),
             metrics: PrefetchMetrics::default(),
+            diagnostics: None,
         }
     }
 
@@ -82,12 +113,65 @@ impl PrefetchPlanner {
         self.budget
     }
 
+    /// Enables bounded planner counters without selecting an output sink.
+    /// This is used by focused policy tests; native callers should use
+    /// [`Self::enable_diagnostics_with_sink`].
+    pub fn enable_diagnostics(&mut self) {
+        self.enable_diagnostics_with_sink(|_, _, _| {});
+    }
+
+    /// Enables bounded planner observations. The sink is called only at cold
+    /// resource/planner seams and is responsible for native formatting.
+    pub fn enable_diagnostics_with_sink(&mut self, sink: PrefetchDiagnosticSink) {
+        self.diagnostics = Some(PrefetchDiagnostics {
+            sink,
+            emitted: 0,
+            dropped: 0,
+        });
+    }
+
+    #[must_use]
+    pub const fn diagnostics_enabled(&self) -> bool {
+        self.diagnostics.is_some()
+    }
+
+    #[must_use]
+    pub const fn diagnostic_counts(&self) -> Option<(u64, u64)> {
+        match self.diagnostics {
+            Some(diagnostics) => Some((diagnostics.emitted, diagnostics.dropped)),
+            None => None,
+        }
+    }
+
     pub fn select_prefetch_group(
         &mut self,
         required: impl IntoIterator<Item = umber_distribution::PrefetchCandidate>,
         candidates: impl IntoIterator<Item = umber_distribution::PrefetchCandidate>,
     ) -> umber_distribution::PrefetchSelection {
-        self.policy.select_prefetch_group(required, candidates)
+        if self.diagnostics.is_none() {
+            return self.policy.select_prefetch_group(required, candidates);
+        }
+        let required = required.into_iter().collect::<Vec<_>>();
+        let candidates = candidates.into_iter().collect::<Vec<_>>();
+        let selection = self
+            .policy
+            .select_prefetch_group(required.clone(), candidates.clone());
+        let selected = selection
+            .required
+            .iter()
+            .chain(&selection.hints)
+            .map(candidate_identity)
+            .collect::<BTreeSet<_>>();
+        for candidate in required.iter().chain(&candidates) {
+            if selected.contains(&candidate_identity(candidate)) {
+                if !self.startup_seen_candidate(candidate) {
+                    self.note_selected_candidate(candidate);
+                }
+            } else if !self.policy.candidate_is_known(candidate) {
+                self.note_budget_skipped_candidate(candidate);
+            }
+        }
+        selection
     }
 
     #[must_use]
@@ -99,12 +183,19 @@ impl PrefetchPlanner {
     /// deduplicated by typed key and remain in stable source/history order.
     pub fn startup_hints(&mut self, source: &str) -> Vec<ResourceRequest> {
         self.enqueue_startup_requests(source);
-        self.policy
+        let requests = self
+            .policy
             .drain(self.budget.max_files)
             .into_iter()
             .filter_map(|request| resource_request(&request))
             .filter(|request| self.seen_startup.insert(request_identity(request)))
-            .collect()
+            .collect::<Vec<_>>();
+        if self.diagnostics.is_some() {
+            for request in &requests {
+                self.note_hint_selected(request);
+            }
+        }
+        requests
     }
 
     /// Starts scheduling for a new source/context without carrying replay
@@ -114,6 +205,10 @@ impl PrefetchPlanner {
         self.accepted = LookupManifest::new(self.identity.clone());
         self.seen_startup.clear();
         self.policy = PrefetchPolicy::new(self.budget);
+        if let Some(diagnostics) = self.diagnostics.as_mut() {
+            diagnostics.emitted = 0;
+            diagnostics.dropped = 0;
+        }
         self.metrics = PrefetchMetrics {
             startup_candidates: self
                 .prior_manifest()
@@ -176,6 +271,14 @@ impl PrefetchPlanner {
         } else {
             PrefetchClass::for_key(key.manifest_key().as_str())
         };
+        let diagnostic_key = self
+            .diagnostics
+            .is_some()
+            .then(|| prefetch_file_key(request.key()))
+            .flatten();
+        let was_admitted = diagnostic_key
+            .as_ref()
+            .is_some_and(|key| self.policy.file_key_is_admitted(key));
         let Some(parent) =
             policy_request(&ResourceRequest::File(request.clone()), "admission", false)
         else {
@@ -183,14 +286,103 @@ impl PrefetchPlanner {
         };
         self.policy
             .admitted_request_with_class(&parent, class, bytes, dependencies);
+        if let Some(key) = diagnostic_key {
+            if was_admitted {
+                self.note_diagnostic(&key, PrefetchDiagnosticDisposition::AlreadyResident);
+            } else {
+                self.note_diagnostic(&key, PrefetchDiagnosticDisposition::ContentAdmitted);
+                if class == PrefetchClass::SmallRuntime {
+                    let disposition = if self.policy.file_key_was_scanned(&key) {
+                        PrefetchDiagnosticDisposition::RuntimeTextScanned
+                    } else {
+                        PrefetchDiagnosticDisposition::RuntimeTextScanSkipped
+                    };
+                    self.note_diagnostic(&key, disposition);
+                }
+            }
+        }
     }
 
     pub fn drain_followups(&mut self) -> Vec<ResourceRequest> {
-        self.policy
+        let requests = self
+            .policy
             .drain(self.budget.max_files)
             .into_iter()
             .filter_map(|request| resource_request(&request))
-            .collect()
+            .collect::<Vec<_>>();
+        if self.diagnostics.is_some() {
+            for request in &requests {
+                self.note_hint_selected(request);
+            }
+        }
+        requests
+    }
+
+    /// Records whether a planner candidate was present in the authenticated
+    /// catalogue.  This is a diagnostic observation only; a negative result
+    /// never changes the ordinary resolver outcome.
+    pub fn note_catalog_result(&mut self, request: &FileRequest, present: bool) {
+        if self.diagnostics.is_none() {
+            return;
+        }
+        let Some(key) = prefetch_file_key(request.key()) else {
+            return;
+        };
+        self.note_diagnostic(
+            &key,
+            if present {
+                PrefetchDiagnosticDisposition::CatalogPresent
+            } else {
+                PrefetchDiagnosticDisposition::CatalogAbsent
+            },
+        );
+    }
+
+    fn note_hint_selected(&mut self, request: &ResourceRequest) {
+        let ResourceRequest::File(request) = request else {
+            return;
+        };
+        let Some(key) = prefetch_file_key(request.key()) else {
+            return;
+        };
+        self.note_diagnostic(&key, PrefetchDiagnosticDisposition::HintSelected);
+    }
+
+    fn note_selected_candidate(&mut self, candidate: &umber_distribution::PrefetchCandidate) {
+        let Some(key) = candidate.file_key.as_ref() else {
+            return;
+        };
+        self.note_diagnostic(key, PrefetchDiagnosticDisposition::CandidateSelected);
+    }
+
+    fn startup_seen_candidate(&self, candidate: &umber_distribution::PrefetchCandidate) -> bool {
+        candidate.file_key.as_ref().is_some_and(|key| {
+            self.seen_startup
+                .contains(&format!("file:{}:{}", key.kind, key.normalized_name))
+        })
+    }
+
+    fn note_budget_skipped_candidate(&mut self, candidate: &umber_distribution::PrefetchCandidate) {
+        let Some(key) = candidate.file_key.as_ref() else {
+            return;
+        };
+        self.note_diagnostic(key, PrefetchDiagnosticDisposition::BudgetSkipped);
+    }
+
+    fn note_diagnostic(
+        &mut self,
+        key: &PrefetchFileKey,
+        disposition: PrefetchDiagnosticDisposition,
+    ) {
+        let Some(diagnostics) = self.diagnostics.as_mut() else {
+            return;
+        };
+        if diagnostics.emitted >= MAX_PREFETCH_DIAGNOSTIC_DECISIONS as u64 {
+            diagnostics.dropped = diagnostics.dropped.saturating_add(1);
+            return;
+        }
+        diagnostics.emitted += 1;
+        (diagnostics.sink)(diagnostics.emitted, key, disposition);
     }
 
     #[must_use]
@@ -339,6 +531,13 @@ fn request_identity(request: &ResourceRequest) -> String {
         ResourceRequest::Font(request) => format!("font:{:?}", request.key),
         ResourceRequest::PkFont(request) => format!("pk-font:{:?}", request),
     }
+}
+
+fn candidate_identity(candidate: &umber_distribution::PrefetchCandidate) -> String {
+    candidate.file_key.as_ref().map_or_else(
+        || format!("transport:{}", candidate.key),
+        PrefetchFileKey::identity,
+    )
 }
 
 fn policy_request(
