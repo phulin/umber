@@ -581,19 +581,27 @@ phase; the host retries from a full checkpoint. There is no global pending-scan
 or pending-expansion scheduler, configuration search, or coordinate repair.
 
 Scalar, expression, font, hyphenation, and token-list assignment scanners
-deliver each raw or expanded command into their own call-local command slot.
-Nested expansion is a normal Rust call, and a resource error unwinds both
-scanners; retry recreates the same local slot from the restored checkpoint.
-The slot ends with the scanner call and never becomes command-state storage,
-rollback state, or a searchable result channel.
+materialize a call-local command only at the outward scanner boundary that
+consumes rich command state. Nested expansion is a normal Rust call, and a
+resource error unwinds both scanners; retry recreates the same compact delivery
+from the restored checkpoint. The rich value ends with the scanner call and
+never becomes command-state storage, rollback state, or a searchable result
+channel.
 
-The canonical `scan_toks` replacement collector keeps one such destination
-for its complete synchronous loop. Raw delivery, expansion classification,
-observation, and token spelling all borrow the command in that slot; a
-successful iteration clears it in place for immediate reuse. A resource error
-unwinds the collector and its nested expansion, and the host restores a full
-checkpoint before entering the same resident loop again. The destination
-never retains a command across a generation or acts as a hidden result cache.
+The canonical `scan_toks` replacement collector keeps one caller-owned
+`HotCommand` destination for its complete synchronous expanded loop. Packed
+class/operand inspection, observation, brace accounting, and token spelling
+all use that value directly, and a successful iteration clears it for immediate
+reuse. `\csname` and `\ifcsname` use the same compact destination while
+appending literal character words to their existing name builder; the
+`end_cs_name` meaning is a packed command boundary rather than a source-spelling
+test. Only actual backup, diagnostic, outer-recovery, or an outward scanner
+boundary materializes `CurrentCommand`; observation projects directly from the
+compact value. A resource error unwinds the collector and its nested
+expansion, and the host restores a full checkpoint before entering the same
+resident loop again. No collector
+continuation, per-token rich command, or hidden result cache survives that
+boundary.
 
 The same invocation keeps its complete replacement progress stationary in
 one local row. Opening installs `ReplacementProgress` into that row once;

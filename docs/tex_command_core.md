@@ -243,6 +243,23 @@ and immediately reselect its authoritative top. Cold source-line acquisition,
 source EOF, retained templates, and replay-completion publication alone leave
 that compiled resident loop through an explicit transition.
 
+The structural collectors consume that same compact expanded delivery. The
+`\csname`/`\ifcsname` name scan keeps one caller-owned `HotCommand` slot and
+tests its packed command class or literal character word directly; ordinary
+name characters append to the existing name builder without materializing a
+`CurrentCommand`. An `end_cs_name` command is recognized by its packed
+meaning, not by source spelling. Only missing-`\endcsname` recovery takes the
+hot value across the established rich `back_error` boundary. The expanded
+`scan_toks` replacement collector uses the same hot slot for every retained
+token, appending its packed spelling and origin directly to the selected
+builder. Its `\the`, `\unexpanded`, and `\detokenize` branches retain their
+existing synchronous child-scan semantics; they do not introduce a second
+expansion loop or result envelope. Observation projects directly from the hot
+value; outer recovery, diagnostics, and genuine outward scanner boundaries are
+the only rich paths. A resource miss unwinds these ordinary collector calls
+and returns to host-owned full-checkpoint replay, with no collector
+continuation or per-token command reconstruction.
+
 The input side writes into that same final command value. The top input level
 keeps its packed frame position, backing handle, source cursor, and rollback
 authority. A replay completion fence separately names the exact input level
