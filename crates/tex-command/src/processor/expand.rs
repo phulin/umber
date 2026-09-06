@@ -1809,6 +1809,37 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.get_x_token_into(destination)
     }
 
+    /// Requests one expanded token while retaining the delivery loop's
+    /// compact owner. Synchronous collectors use this entry when their
+    /// ordinary body only needs the packed command class and spelling; the
+    /// rich command remains reserved for an actual scanner or recovery
+    /// boundary. Alignment template admission is such a boundary and keeps
+    /// the established rich handoff.
+    pub(crate) fn request_expanded_hot_token(
+        &mut self,
+        destination: &mut Option<HotCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        loop {
+            match self.expanded_next_hot(destination, None)? {
+                DeliveryStatus::ReplayCompleted(_) => continue,
+                DeliveryStatus::AlignmentEndTemplate => {
+                    let command = destination
+                        .take()
+                        .ok_or_else(CommandError::input_invariant)?
+                        .materialize();
+                    self.begin_scalar_alignment_v_template(&command)?;
+                }
+                DeliveryStatus::PendingExpanded | DeliveryStatus::AlignmentClosingBrace => {
+                    return Ok(DeliveryStatus::Command);
+                }
+                status @ (DeliveryStatus::End | DeliveryStatus::Command) => return Ok(status),
+                DeliveryStatus::CharacterRun | DeliveryStatus::CharacterRunBoundary => {
+                    return Err(CommandError::input_invariant());
+                }
+            }
+        }
+    }
+
     /// Requests one already-delivered command's expansion from the same
     /// driver.  This is the only nested expansion request used by structural
     /// scanners; suspension and completion remain represented by the typed
@@ -1856,6 +1887,50 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
         // The expanded opener is consumed by the nested call and cannot
         // become the scanner's next operand.
+        Ok(())
+    }
+
+    /// Expands one already-delivered hot command in place. This is the
+    /// collector counterpart to [`Self::request_expansion_into`]: successful
+    /// expansion consumes the opener, while an error leaves the compact
+    /// owner available to the caller's existing recovery/unwind path.
+    pub(crate) fn request_expansion_hot(
+        &mut self,
+        destination: &mut Option<HotCommand<G>>,
+        report_trace: bool,
+    ) -> Result<(), CommandError> {
+        let mut command = destination
+            .take()
+            .ok_or_else(CommandError::input_invariant)?;
+        let action = classify_hot_command(&command);
+        let result = match action {
+            ExpandedCommandAction::Return => Err(CommandError::input_invariant()),
+            ExpandedCommandAction::EndTemplate => self.expand_compact_occupied(
+                &mut command,
+                ExpandablePrimitive::EndTemplate,
+                report_trace,
+            ),
+            ExpandedCommandAction::Expand(ExpansionDispatch::Macro) => {
+                #[cfg(feature = "profiling")]
+                {
+                    tex_state::measurement::record_hot_core_macro_expansion();
+                    if self.write_expansion_depth != 0 {
+                        self.record_write_expansion();
+                    }
+                }
+                self.macro_call_hot(&mut command).map(|_| ())
+            }
+            ExpandedCommandAction::Expand(ExpansionDispatch::Undefined) => {
+                self.expand_undefined_hot(&command, report_trace)
+            }
+            ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(primitive)) => {
+                self.expand_compact_occupied(&mut command, primitive, report_trace)
+            }
+        };
+        if result.is_err() {
+            *destination = Some(command);
+            return result;
+        }
         Ok(())
     }
 
@@ -2998,7 +3073,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// delivery.  The terminal command remains in the hot slot while its
     /// canonical identity, spelling, and provenance are projected into the
     /// observer record.
-    fn observe_expanded_hot_delivery(&mut self, command: &HotCommand<G>) {
+    pub(crate) fn observe_expanded_hot_delivery(&mut self, command: &HotCommand<G>) {
         observe!(self, {
             #[cfg(test)]
             {}

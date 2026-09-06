@@ -1,6 +1,6 @@
 //! Structural TeX expansion primitives.
 
-use tex_state::meaning::{ExpandablePrimitive, Meaning, ResolvedMeaning};
+use tex_state::meaning::ExpandablePrimitive;
 use tex_state::token::{OriginId, Token, TracedTokenWord};
 
 use crate::input::{
@@ -107,10 +107,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let result = (|| {
             let mut destination = None;
             loop {
-                let status = match self.request_expanded_token(&mut destination) {
-                    Ok(status) => status,
-                    Err(error) => return Err(error),
-                };
+                let status = self.request_expanded_hot_token(&mut destination)?;
                 match status {
                     DeliveryStatus::End => return Err(CommandError::input_invariant()),
                     DeliveryStatus::Command => {}
@@ -119,31 +116,31 @@ impl<G> CommandProcessor<'_, '_, G> {
                 let command = destination
                     .as_ref()
                     .expect("command status initializes destination");
-                match command.meaning_ref() {
-                    ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
-                        ExpandablePrimitive::EndCsName,
-                    )) => break,
-                    ResolvedMeaning::Static(Meaning::CharToken { ch, .. }) => {
-                        name.push(*ch);
-                        destination = None;
-                    }
-                    _ => {
-                        let rendered = print_esc_text(self.state, "endcsname");
-                        let command = destination
-                            .take()
-                            .expect("csname recovery consumes the delivered command");
-                        self.back_error_reporting(
-                            command,
-                            MISSING_ENDCSNAME_DIAGNOSTIC,
-                            format!("Missing {rendered} inserted"),
-                            &[
-                                "The control sequence marked <to be read again> should",
-                                "not appear between \\csname and \\endcsname.",
-                            ],
-                        )?;
-                        break;
-                    }
+                if command.command_word().expandable_primitive()
+                    == Some(ExpandablePrimitive::EndCsName)
+                {
+                    break;
                 }
+                if let Some(ch) = command.character_token() {
+                    name.push(ch);
+                    destination.take();
+                    continue;
+                }
+                let rendered = print_esc_text(self.state, "endcsname");
+                let command = destination
+                    .take()
+                    .expect("csname recovery consumes the delivered command")
+                    .materialize();
+                self.back_error_reporting(
+                    command,
+                    MISSING_ENDCSNAME_DIAGNOSTIC,
+                    format!("Missing {rendered} inserted"),
+                    &[
+                        "The control sequence marked <to be read again> should",
+                        "not appear between \\csname and \\endcsname.",
+                    ],
+                )?;
+                break;
             }
             Ok(name)
         })();

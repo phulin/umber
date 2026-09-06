@@ -737,9 +737,21 @@ fn expanded_collection_keeps_its_builder_live_across_nested_macro_retirement() {
             &mut diagnostic_effects,
         );
 
+        let ownership_before = crate::command::command_ownership_counters();
         let scanned = processor
             .scan_toks(ScanToksMode::General { expanded: true })
             .expect("expanded scan");
+        let ownership_after = crate::command::command_ownership_counters();
+        assert_eq!(
+            ownership_after.rich_materializations - ownership_before.rich_materializations,
+            1,
+            "only the required opening-brace boundary materializes a rich command",
+        );
+        assert_eq!(
+            ownership_after.hot_reconstructions - ownership_before.hot_reconstructions,
+            0,
+            "expanded collector does not reconstruct rich commands per token",
+        );
         assert_eq!(
             processor
                 .command

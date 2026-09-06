@@ -2187,16 +2187,23 @@ fn ifcsname_collects_in_the_shared_delivery_lane() {
             &mut fuel,
             &mut diagnostic_effects,
         );
+        let ownership_before = crate::command::command_ownership_counters();
         let result = processor
             .get_x_token()
             .expect("ifcsname delivery")
             .expect("selected branch");
+        let ownership_after = crate::command::command_ownership_counters();
         assert_eq!(
             result.spelling().semantic_token(),
             Token::Char {
                 ch: 'T',
                 cat: Catcode::Letter,
             }
+        );
+        assert_eq!(
+            ownership_after.rich_materializations - ownership_before.rich_materializations,
+            1,
+            "only the outward selected branch materializes a rich command",
         );
         drop(processor);
     });

@@ -13,8 +13,8 @@ use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, ResolvedMea
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
 use crate::attempt::{AttemptDefinitionId, AttemptError, AttemptMark, AttemptTokenListId};
+use crate::command::{CommandClass, HotCommand};
 use crate::processor::alignment::TEMPLATE_ALIGN_STATE;
-use crate::processor::expand::is_expandable_command;
 use crate::processor::status::{
     AbsorbingContext, DefinitionContext, ScannerEpisode, ScannerStatus, ScannerStatusVisibility,
     ScannerWarning, TokenBuilderId,
@@ -316,9 +316,49 @@ enum CollectorExpansionOutcome {
     Retained,
 }
 
+/// One delivery as it crosses the collector grammar. Expanded collection
+/// remains in the canonical compact command until a real recovery or outward
+/// scanner operation needs the rich facade. Unexpanded collection keeps its
+/// established rich boundary for now.
+enum CollectorDelivery<G> {
+    Hot(HotCommand<G>),
+    Rich(crate::CurrentCommand<G>),
+}
+
 #[inline(always)]
-fn clear_command_destination<G>(destination: &mut Option<crate::CurrentCommand<G>>) {
-    *destination = None;
+fn is_expandable_hot_command<G>(command: &HotCommand<G>) -> bool {
+    match command.command_word().class() {
+        CommandClass::Macro => true,
+        CommandClass::Expandable => command
+            .command_word()
+            .expandable_primitive()
+            .is_some_and(|primitive| primitive != ExpandablePrimitive::EndCsName),
+        CommandClass::Undefined => command.spelling_word().out_parameter_slot().is_none(),
+        CommandClass::Relax
+        | CommandClass::Character
+        | CommandClass::EndV
+        | CommandClass::Unexpandable
+        | CommandClass::Font
+        | CommandClass::Value => false,
+    }
+}
+
+impl<G> CollectorDelivery<G> {
+    #[inline(always)]
+    fn is_outer_recovery_space(&self) -> bool {
+        match self {
+            Self::Hot(command) => command.is_outer_recovery_space(),
+            Self::Rich(command) => command.is_outer_recovery_space(),
+        }
+    }
+
+    #[inline(always)]
+    fn back_input(self, processor: &mut CommandProcessor<'_, '_, G>) -> Result<(), CommandError> {
+        match self {
+            Self::Hot(command) => processor.back_input_hot(command),
+            Self::Rich(command) => processor.back_input(command),
+        }
+    }
 }
 
 impl ScanToksConfig {
@@ -1554,41 +1594,22 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     #[inline(always)]
-    fn drive_collector_expansion(
+    fn drive_collector_expansion_hot(
         &mut self,
         route: CollectorExpansionRoute,
         episode: &ScannerEpisode,
         collector: &mut TokenCollector<G>,
-        destination: &mut Option<crate::CurrentCommand<G>>,
-        expansion_operand: &mut Option<crate::CurrentCommand<G>>,
+        destination: &mut Option<HotCommand<G>>,
     ) -> Result<CollectorExpansionOutcome, CommandError> {
-        if route == CollectorExpansionRoute::Ordinary && destination.is_none() {
-            // A generic expansion starts from the caller's command
-            // destination. Every outcome either advances the collector or
-            // returns its failure; a resource miss unwinds the call tree.
-            return match self.request_expansion_into(destination, true) {
-                Ok(()) | Err(CommandError::ParagraphInMacroArgument) => {
-                    clear_command_destination(destination);
-                    Ok(CollectorExpansionOutcome::Expanded)
-                }
-                Err(CommandError::OuterInMacroArgument) => {
-                    self.resume_scanner_episode_after_recovery(episode);
-                    clear_command_destination(destination);
-                    Ok(CollectorExpansionOutcome::Expanded)
-                }
-                Err(error) => Err(error),
-            };
-        }
-
-        let command = destination
-            .as_mut()
-            .expect("direct collector expansion retains its command destination");
         if route == CollectorExpansionRoute::The {
             // TeX82 §478 handles `\the` directly in `scan_toks` instead of
-            // routing it through §380's ordinary expanded-fetch loop.
-            match self.append_direct_the_toks(collector, expansion_operand) {
+            // routing it through §380's ordinary expanded-fetch loop. The
+            // opener stays hot; only the target crosses the existing scalar
+            // scanner boundary when that scanner needs rich command state.
+            let mut expansion_operand = None;
+            match self.append_direct_the_toks(collector, &mut expansion_operand) {
                 Ok(true) => {
-                    clear_command_destination(destination);
+                    destination.take();
                     return Ok(CollectorExpansionOutcome::Expanded);
                 }
                 Ok(false) => {}
@@ -1596,27 +1617,25 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
         }
         if route == CollectorExpansionRoute::Unexpanded {
-            match self.append_unexpanded(collector) {
-                Ok(()) => {
-                    clear_command_destination(destination);
-                    return Ok(CollectorExpansionOutcome::Expanded);
-                }
-                Err(error) => return Err(error),
-            }
+            self.append_unexpanded(collector)?;
+            destination.take();
+            return Ok(CollectorExpansionOutcome::Expanded);
         }
         if route == CollectorExpansionRoute::Detokenize {
-            match self.append_detokenize(collector) {
-                Ok(()) => {
-                    clear_command_destination(destination);
-                    return Ok(CollectorExpansionOutcome::Expanded);
-                }
-                Err(error) => {
-                    return Err(error);
-                }
-            }
+            self.append_detokenize(collector)?;
+            destination.take();
+            return Ok(CollectorExpansionOutcome::Expanded);
         }
-        let protected = matches!(command.meaning_ref(), ResolvedMeaning::Macro { flags, .. } if flags.contains(MeaningFlags::PROTECTED));
-        if protected {
+
+        let command = destination
+            .as_mut()
+            .expect("direct collector expansion retains its command destination");
+        if command
+            .command_word()
+            .flags()
+            .contains(MeaningFlags::PROTECTED)
+            && command.command_word().class() == CommandClass::Macro
+        {
             // e-TeX 2.6 change section [27.465] represents a protected macro
             // as `relax/no_expand_flag` for this collector iteration.
             observe!(
@@ -1634,14 +1653,14 @@ impl<G> CommandProcessor<'_, '_, G> {
         // TeX82 §394 returns from a failed macro call after either an ordinary
         // non-`\long` `\par` or §23's outer-validity recovery. Both return to
         // §380's get_x_token loop, which this collector owns while active.
-        match self.request_expansion_into(destination, true) {
+        match self.request_expansion_hot(destination, true) {
             Ok(()) | Err(CommandError::ParagraphInMacroArgument) => {
-                clear_command_destination(destination);
+                destination.take();
                 Ok(CollectorExpansionOutcome::Expanded)
             }
             Err(CommandError::OuterInMacroArgument) => {
                 self.resume_scanner_episode_after_recovery(episode);
-                clear_command_destination(destination);
+                destination.take();
                 Ok(CollectorExpansionOutcome::Expanded)
             }
             Err(error) => Err(error),
@@ -1663,63 +1682,70 @@ impl<G> CommandProcessor<'_, '_, G> {
         episode: &ScannerEpisode,
         collector: &mut TokenCollector<G>,
     ) -> Result<(), CommandError> {
-        let mut destination = None;
+        let mut hot_destination = None;
+        let mut rich_destination = None;
 
         loop {
-            let delivery = if expansion.is_expanded() {
-                self.get_next_into(&mut destination)
-            } else {
-                self.get_token_into(&mut destination)
-            };
-            match delivery {
-                Ok(crate::DeliveryStatus::Command) => {}
-                Ok(crate::DeliveryStatus::End) => {
-                    return Err(CommandError::input_invariant());
+            let delivered = if expansion.is_expanded() {
+                match self.get_next_hot_into(&mut hot_destination)? {
+                    crate::DeliveryStatus::Command => {}
+                    crate::DeliveryStatus::End => {
+                        return Err(CommandError::input_invariant());
+                    }
+                    _ => unreachable!("ordinary raw delivery has no side event"),
                 }
-                Ok(_) => unreachable!("ordinary raw delivery has no side event"),
-                Err(error) => return Err(error),
-            }
-            if expansion.is_expanded() && destination.as_ref().is_some_and(is_expandable_command) {
-                let route = match destination
+                let command = hot_destination
                     .as_ref()
-                    .expect("command delivery initializes destination")
-                    .meaning_ref()
-                {
-                    ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
-                        ExpandablePrimitive::The,
-                    )) => CollectorExpansionRoute::The,
-                    ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
-                        ExpandablePrimitive::Unexpanded,
-                    )) => CollectorExpansionRoute::Unexpanded,
-                    ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
-                        ExpandablePrimitive::Detokenize,
-                    )) => CollectorExpansionRoute::Detokenize,
-                    _ => CollectorExpansionRoute::Ordinary,
-                };
-                let mut expansion_operand = None;
-                if self.drive_collector_expansion(
-                    route,
-                    episode,
-                    collector,
-                    &mut destination,
-                    &mut expansion_operand,
-                )? == CollectorExpansionOutcome::Expanded
-                {
-                    continue;
+                    .expect("compact command delivery initializes destination");
+                if is_expandable_hot_command(command) {
+                    let route = match command.command_word().expandable_primitive() {
+                        Some(ExpandablePrimitive::The) => CollectorExpansionRoute::The,
+                        Some(ExpandablePrimitive::Unexpanded) => {
+                            CollectorExpansionRoute::Unexpanded
+                        }
+                        Some(ExpandablePrimitive::Detokenize) => {
+                            CollectorExpansionRoute::Detokenize
+                        }
+                        _ => CollectorExpansionRoute::Ordinary,
+                    };
+                    if self.drive_collector_expansion_hot(
+                        route,
+                        episode,
+                        collector,
+                        &mut hot_destination,
+                    )? == CollectorExpansionOutcome::Expanded
+                    {
+                        continue;
+                    }
                 }
-            }
+                let command = hot_destination
+                    .take()
+                    .expect("compact command delivery initializes destination");
+                self.observe_expanded_hot_delivery(&command);
+                CollectorDelivery::Hot(command)
+            } else {
+                match self.get_token_into(&mut rich_destination)? {
+                    crate::DeliveryStatus::Command => {}
+                    crate::DeliveryStatus::End => {
+                        return Err(CommandError::input_invariant());
+                    }
+                    _ => unreachable!("ordinary raw delivery has no side event"),
+                }
+                CollectorDelivery::Rich(
+                    rich_destination
+                        .take()
+                        .expect("command delivery initializes destination"),
+                )
+            };
 
             // The expanded collector has completed a get_x-style delivery
-            // for each retained unexpandable token. Emit that boundary before
-            // storing the spelling, while expandable commands above remain
-            // represented by their own expansion transitions.
-            let command = destination
-                .as_ref()
-                .expect("command delivery initializes destination");
-            if expansion.is_expanded() {
-                self.observe_expanded_delivery(command);
-            }
-            let token = self.classify_collector_token(command, None);
+            // for each retained unexpandable token. Its packed spelling is
+            // classified directly; the unexpanded path retains the existing
+            // rich scanner boundary.
+            let token = match &delivered {
+                CollectorDelivery::Hot(command) => self.classify_collector_hot_token(command, None),
+                CollectorDelivery::Rich(command) => self.classify_collector_token(command, None),
+            };
             let spelling = token.word();
 
             // TeX82 §342 has already replaced a delivered `\cr`/`\span`/tab
@@ -1736,8 +1762,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             // changes only the live current command to a space. That space is
             // recovery state, not input: §477 resumes with the inserted brace
             // and must not append the temporary current-command value.
-            if command.is_outer_recovery_space() {
-                clear_command_destination(&mut destination);
+            if delivered.is_outer_recovery_space() {
                 continue;
             }
             if let Some(PendingParameter {
@@ -1750,7 +1775,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // once -- `##` is one parameter token in the body, not two.
                 if token.spelling_is_parameter() {
                     self.push_replacement_token(collector, spelling)?;
-                    clear_command_destination(&mut destination);
                     continue;
                 }
                 if let Some(number) = parameter_number(token.spelling().semantic_token())
@@ -1766,15 +1790,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                             tokens: vec![self.observed_token(converted)],
                         }),
                     );
-                    clear_command_destination(&mut destination);
                     continue;
                 }
                 // §479's text is already rendered by
                 // `report_macro_parameter_diagnostic` below.
-                let delivered = destination
-                    .take()
-                    .expect("parameter recovery consumes the delivered command");
-                self.back_input(delivered)?;
+                delivered.back_input(self)?;
                 self.report_macro_parameter_diagnostic(
                     MacroParameterDiagnostic::IllegalReplacementNumber { target },
                 )?;
@@ -1791,7 +1811,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                         target,
                     })
                     .map_err(|()| CommandError::input_invariant())?;
-                clear_command_destination(&mut destination);
                 continue;
             }
             if collector
@@ -1802,7 +1821,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 {
                     self.command.token_collector_path_counters.state_updates += 1;
                 }
-                clear_command_destination(&mut destination);
                 return Ok(());
             }
             #[cfg(test)]
@@ -1810,7 +1828,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 self.command.token_collector_path_counters.state_updates += 1;
             }
             self.push_replacement_token(collector, spelling)?;
-            clear_command_destination(&mut destination);
         }
     }
 
@@ -1906,24 +1923,28 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn append_direct_the_toks(
         &mut self,
         collector: &mut TokenCollector<G>,
-        target: &mut Option<crate::CurrentCommand<G>>,
+        target: &mut Option<HotCommand<G>>,
     ) -> Result<bool, CommandError> {
         if target.is_none()
-            && self.request_expanded_token(target)? != crate::DeliveryStatus::Command
+            && self.request_expanded_hot_token(target)? != crate::DeliveryStatus::Command
         {
             return Err(CommandError::input_invariant());
         }
-        let retained_target = target.as_ref().expect("target was installed");
-        let scan = self.scan_the_internal_value_retained(retained_target);
+        // The scalar scanner consumes the target's effective meaning and is
+        // therefore a genuine outward scanner boundary. Keep the `\the`
+        // opener and all ordinary collector tokens compact; materialize only
+        // this one target at the existing boundary.
+        let target = target.take().expect("target was installed");
+        let target = target.materialize();
+        let scan = self.scan_the_internal_value_retained(&target);
         let value = match scan {
             crate::RetainedScalarScan::Complete(value) => value,
             crate::RetainedScalarScan::Failed(error) => return Err(error),
         };
         let Some(value) = value else {
-            self.back_input(target.take().expect("target was installed"))?;
+            self.back_input(target)?;
             return Ok(false);
         };
-        target.take();
         // Built only for an observed episode: an unobserved one leaves this
         // empty, which `Vec::new` does without allocating.
         let mut observed = Vec::new();

@@ -59,6 +59,42 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
         }
     }
+
+    /// Delivers one raw command into the compact slot used by a synchronous
+    /// expanded collector. This is the same `get_next` boundary as
+    /// [`Self::get_next_into`], including replay completion and alignment
+    /// delimiter handling, but keeps ordinary deliveries in `HotCommand`.
+    /// Alignment v-template admission is an actual scanner boundary, so its
+    /// existing rich entry remains the one exceptional materialization here.
+    pub(crate) fn get_next_hot_into(
+        &mut self,
+        destination: &mut Option<HotCommand<G>>,
+    ) -> Result<super::DeliveryStatus, CommandError> {
+        loop {
+            match self.raw_next_hot(destination)? {
+                super::DeliveryStatus::ReplayCompleted(_) => continue,
+                super::DeliveryStatus::Command => {
+                    let delimiter = destination.as_ref().is_some_and(|command| {
+                        matches!(
+                            command.alignment_adjustment(),
+                            super::AlignmentDeliveryAdjustment::Delimiter(_)
+                        )
+                    });
+                    if delimiter {
+                        let command = destination
+                            .take()
+                            .ok_or_else(CommandError::input_invariant)?
+                            .materialize();
+                        self.begin_scalar_alignment_v_template(&command)?;
+                        continue;
+                    }
+                    return Ok(super::DeliveryStatus::Command);
+                }
+                super::DeliveryStatus::End => return Ok(super::DeliveryStatus::End),
+                _ => unreachable!("compact raw delivery has no character or expanded event"),
+            }
+        }
+    }
     /// Delivers one raw command or an executor-owned stored-episode
     /// completion. This is the raw counterpart of
     /// [`Self::get_x_token_with_replay_completion`].
