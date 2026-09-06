@@ -38,11 +38,12 @@ pub(crate) fn append_character_with_fuel<G>(
     )
 }
 
-/// Result of admitting one borrowed source-character prefix.
+/// Result of admitting one borrowed source-character suffix.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct CharacterRunAppend {
     pub(crate) count: u32,
     pub(crate) continue_run: bool,
+    pub(crate) fallback: Option<tex_command::CharacterRunFallback>,
 }
 
 #[inline(always)]
@@ -57,6 +58,7 @@ fn classify_character_run_candidate<G>(
     pending_script: &mut Option<tex_fonts::Script>,
     continue_run: &mut bool,
     space_factor: &mut i32,
+    fallback: &mut Option<tex_command::CharacterRunFallback>,
 ) -> Option<(char, OriginId, Option<tex_fonts::Script>, tex_fonts::Script)> {
     if !*continue_run {
         return None;
@@ -64,9 +66,18 @@ fn classify_character_run_candidate<G>(
     let byte = *run.bytes().get(index)?;
     if !byte.is_ascii() {
         *continue_run = false;
+        *fallback = Some(tex_command::CharacterRunFallback::LexicalBoundary);
         return None;
     }
     let ch = char::from(byte);
+    if !matches!(
+        stores.catcode(ch),
+        tex_state::token::Catcode::Letter | tex_state::token::Catcode::Other
+    ) {
+        *continue_run = false;
+        *fallback = Some(tex_command::CharacterRunFallback::LexicalBoundary);
+        return None;
+    }
     let script = tex_fonts::character_script(ch);
     if index != 0
         && font_is_ltr_shaping
@@ -84,6 +95,7 @@ fn classify_character_run_candidate<G>(
     let has_metrics = stores.font_character_metrics(font, ch).is_some();
     if !has_metrics && !is_false_boundary {
         *continue_run = false;
+        *fallback = Some(tex_command::CharacterRunFallback::MissingMetric);
         return None;
     }
     if is_false_boundary && !has_metrics {
@@ -104,12 +116,11 @@ fn classify_character_run_candidate<G>(
     Some((ch, origin, script_option, script))
 }
 
-/// Preflights and appends one borrowed ordinary source run.
+/// Appends one borrowed source suffix while classifying each candidate once.
 ///
-/// Font and pending-run compatibility are read once for the prefix.  The
-/// source bytes remain borrowed throughout admission; only the existing
-/// `PendingHRun` vector receives semantic characters. The processor charges
-/// fuel once for the admitted prefix after this callback returns.
+/// The source bytes remain borrowed throughout admission; only the existing
+/// `PendingHRun` vector receives accepted semantic characters. The processor
+/// charges fuel once for the accepted prefix after this callback returns.
 pub(crate) fn append_character_run_with_fuel<G>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
@@ -135,11 +146,13 @@ pub(crate) fn append_character_run_with_fuel<G>(
             .pending_hchars()
             .map(|pending| pending.script)
     };
+    let mut fallback = None;
     if fuel.remaining() == 0 {
         fuel.charge().map_err(ExecError::Command)?;
         return Ok(CharacterRunAppend {
             count: 0,
             continue_run: false,
+            fallback,
         });
     }
     let mut space_factor = nest.current_list().space_factor();
@@ -154,11 +167,13 @@ pub(crate) fn append_character_run_with_fuel<G>(
         &mut pending_script,
         &mut continue_run,
         &mut space_factor,
+        &mut fallback,
     );
     let Some((first, first_origin, mut first_script_option, first_script)) = first else {
         return Ok(CharacterRunAppend {
             count: 0,
             continue_run: false,
+            fallback,
         });
     };
     let pending_incompatible = nest.current_list().pending_hchars().is_some_and(|pending| {
@@ -189,6 +204,7 @@ pub(crate) fn append_character_run_with_fuel<G>(
         return Ok(CharacterRunAppend {
             count: 0,
             continue_run: false,
+            fallback,
         });
     }
     let mut first = Some((first, first_origin, first_script_option));
@@ -208,6 +224,7 @@ pub(crate) fn append_character_run_with_fuel<G>(
                     &mut pending_script,
                     &mut continue_run,
                     &mut space_factor,
+                    &mut fallback,
                 )
                 .map(|(ch, origin, script_option, _)| (ch, origin, script_option))
             }
@@ -224,6 +241,7 @@ pub(crate) fn append_character_run_with_fuel<G>(
             && accepted == capacity
             && capacity == run.bytes().len()
             && !run.fuel_limited(),
+        fallback,
     })
 }
 

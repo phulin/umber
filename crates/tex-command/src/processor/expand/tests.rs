@@ -5,8 +5,8 @@ use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
 use crate::{
-    CommandDeliveryBoundary, CommandHostCapabilities, CommandObservation, CommandObserver,
-    CommandProfile, CommandState, InputTransition, RecoveryKind,
+    CommandDeliveryBoundary, CommandDialect, CommandHostCapabilities, CommandObservation,
+    CommandObserver, CommandProfile, CommandState, InputTransition, RecoveryKind,
 };
 
 #[derive(Default)]
@@ -28,7 +28,7 @@ struct RecordingCharacterConsumer {
 impl<G> crate::MainCharacterConsumer<G> for RecordingCharacterConsumer {
     fn admit<'state, 'admission, 'fuel, 'effects, 'run>(
         &mut self,
-        _state: &'state mut tex_state::CommandContext<'admission, G>,
+        state: &'state mut tex_state::CommandContext<'admission, G>,
         _fuel: &'fuel mut crate::CommandFuel,
         _diagnostic_effects: &'effects mut tex_state::diagnostic::DiagnosticEffects,
         input: crate::MainCharacterInput<'run>,
@@ -39,6 +39,18 @@ impl<G> crate::MainCharacterConsumer<G> for RecordingCharacterConsumer {
                     return crate::CharacterRunAdmission::scalar_fallback();
                 }
                 for (index, &byte) in run.bytes().iter().enumerate() {
+                    if !byte.is_ascii()
+                        || !matches!(
+                            state.catcode(char::from(byte)),
+                            Catcode::Letter | Catcode::Other
+                        )
+                    {
+                        return crate::CharacterRunAdmission::with_fallback(
+                            u32::try_from(index).expect("test source run fits u32"),
+                            false,
+                            crate::CharacterRunFallback::LexicalBoundary,
+                        );
+                    }
                     self.characters.push(char::from(byte));
                     self.origins.push(run.origin(index));
                 }
@@ -3333,6 +3345,203 @@ fn main_loop_source_step_settles_zero_prefix_without_reopening_source() {
         drop(processor);
         assert_eq!(fuel.burned(), 2);
         assert!(destination.is_none());
+    });
+}
+
+#[test]
+fn main_loop_source_step_sends_utf8_boundary_to_scalar_tokenizer() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command =
+            CommandState::new(CommandProfile::unicode_extended(CommandDialect::Tex82));
+        let source = command
+            .register_source(crate::SourceRegistration::new(
+                crate::RegisteredSourceKind::Generated,
+                "Aλ".as_bytes(),
+            ))
+            .expect("source registration");
+        command
+            .open_registered_source(source)
+            .expect("source opening");
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::new(3).expect("source character-run fuel");
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+
+        assert_eq!(
+            processor
+                .get_next()
+                .expect("source line acquisition")
+                .expect("first source token")
+                .spelling()
+                .semantic_token(),
+            Token::Char {
+                ch: 'A',
+                cat: Catcode::Letter,
+            }
+        );
+        let mut destination = None;
+        let mut consumer = RecordingCharacterConsumer::default();
+        assert_eq!(
+            processor
+                .main_loop_source_step_into(&mut destination, &mut consumer)
+                .expect("UTF-8 scalar boundary"),
+            crate::DeliveryStatus::CharacterRunBoundary
+        );
+        assert!(consumer.characters.is_empty());
+        assert_eq!(
+            destination
+                .as_ref()
+                .expect("decoded scalar command")
+                .spelling()
+                .semantic_token(),
+            Token::Char {
+                ch: 'λ',
+                cat: Catcode::Other,
+            }
+        );
+    });
+}
+
+#[test]
+fn main_loop_source_step_sends_superscript_boundary_to_scalar_tokenizer() {
+    crate::test_harness::with_universe(|universe| {
+        universe
+            .assign_code(
+                tex_state::env::CodeTableKind::Catcode,
+                '^',
+                i64::from(Catcode::Superscript as u8),
+                AssignmentScope::Global,
+            )
+            .expect("superscript catcode");
+        let mut command = CommandState::default();
+        let source = command
+            .register_source(crate::SourceRegistration::new(
+                crate::RegisteredSourceKind::Generated,
+                &b"A^^41"[..],
+            ))
+            .expect("source registration");
+        command
+            .open_registered_source(source)
+            .expect("source opening");
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::new(5).expect("source character-run fuel");
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+
+        assert_eq!(
+            processor
+                .get_next()
+                .expect("source line acquisition")
+                .expect("first source token")
+                .spelling()
+                .semantic_token(),
+            Token::Char {
+                ch: 'A',
+                cat: Catcode::Letter,
+            }
+        );
+        let mut destination = None;
+        let mut consumer = RecordingCharacterConsumer::default();
+        assert_eq!(
+            processor
+                .main_loop_source_step_into(&mut destination, &mut consumer)
+                .expect("superscript scalar boundary"),
+            crate::DeliveryStatus::CharacterRunBoundary
+        );
+        assert!(consumer.characters.is_empty());
+        assert_eq!(
+            destination
+                .as_ref()
+                .expect("reduced scalar command")
+                .spelling()
+                .semantic_token(),
+            Token::Char {
+                ch: 'A',
+                cat: Catcode::Letter,
+            }
+        );
+    });
+}
+
+#[test]
+fn main_loop_source_step_uses_live_catcode_at_run_boundary() {
+    crate::test_harness::with_universe(|universe| {
+        universe
+            .assign_code(
+                tex_state::env::CodeTableKind::Catcode,
+                'b',
+                i64::from(Catcode::Space as u8),
+                AssignmentScope::Global,
+            )
+            .expect("space catcode");
+        let mut command = CommandState::default();
+        let source = command
+            .register_source(crate::SourceRegistration::new(
+                crate::RegisteredSourceKind::Generated,
+                &b"Ab"[..],
+            ))
+            .expect("source registration");
+        command
+            .open_registered_source(source)
+            .expect("source opening");
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::new(2).expect("source character-run fuel");
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+
+        assert_eq!(
+            processor
+                .get_next()
+                .expect("source line acquisition")
+                .expect("first source token")
+                .spelling()
+                .semantic_token(),
+            Token::Char {
+                ch: 'A',
+                cat: Catcode::Letter,
+            }
+        );
+        let mut destination = None;
+        let mut consumer = RecordingCharacterConsumer::default();
+        assert_eq!(
+            processor
+                .main_loop_source_step_into(&mut destination, &mut consumer)
+                .expect("catcode scalar boundary"),
+            crate::DeliveryStatus::CharacterRunBoundary
+        );
+        assert!(consumer.characters.is_empty());
+        assert_eq!(
+            destination
+                .as_ref()
+                .expect("space-catcode command")
+                .spelling()
+                .semantic_token(),
+            Token::Char {
+                ch: ' ',
+                cat: Catcode::Space,
+            }
+        );
     });
 }
 

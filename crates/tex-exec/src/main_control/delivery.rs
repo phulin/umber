@@ -47,14 +47,42 @@ impl<G> tex_command::MainCharacterConsumer<G> for MainSourceAdmission<'_> {
                 match result {
                     Ok(admitted) => {
                         *self.borrowed_applied |= admitted.count != 0;
-                        *self.continues = admitted.continue_run;
+                        // A lexical tail still belongs to §1038's main-loop
+                        // label: the next scalar delivery may be a
+                        // `char_given`/`char_num` command that must not gain a
+                        // trace merely because the borrowed prefix stopped.
+                        // Missing metrics, in contrast, leave the loop for
+                        // the existing scalar fallback.
+                        *self.continues = admitted.continue_run
+                            || (admitted.count != 0
+                                && matches!(
+                                    admitted.fallback,
+                                    Some(tex_command::CharacterRunFallback::LexicalBoundary)
+                                ));
                         if admitted.count == 0 {
-                            tex_command::CharacterRunAdmission::scalar_fallback()
+                            match admitted.fallback {
+                                Some(tex_command::CharacterRunFallback::LexicalBoundary) => {
+                                    tex_command::CharacterRunAdmission::tokenizer_fallback()
+                                }
+                                Some(tex_command::CharacterRunFallback::MissingMetric) => {
+                                    tex_command::CharacterRunAdmission::scalar_fallback()
+                                }
+                                None => tex_command::CharacterRunAdmission::new(0, false),
+                            }
                         } else {
-                            tex_command::CharacterRunAdmission::new(
-                                admitted.count,
-                                admitted.continue_run,
-                            )
+                            match admitted.fallback {
+                                Some(fallback) => {
+                                    tex_command::CharacterRunAdmission::with_fallback(
+                                        admitted.count,
+                                        admitted.continue_run,
+                                        fallback,
+                                    )
+                                }
+                                None => tex_command::CharacterRunAdmission::new(
+                                    admitted.count,
+                                    admitted.continue_run,
+                                ),
+                            }
                         }
                     }
                     Err(error) => {

@@ -136,9 +136,9 @@ pub use observation::{
 pub use processor::{
     AlignmentCellDelimiter, AlignmentCellTemplates, AlignmentDelivery, AlignmentDeliveryEvent,
     AlignmentIdentity, AlignmentLifecycleError, AlignmentLookahead, AlignmentPreamble,
-    AlignmentRequest, AlignmentRequestResult, CharacterRunAdmission, CommandDeliveryCursor,
-    CommandProcessor, DeliveryStatus, FinishedAlignmentCell, MainCharacterConsumer,
-    MainCharacterInput, PreparedAlignmentCellTemplates, PrintCommand,
+    AlignmentRequest, AlignmentRequestResult, CharacterRunAdmission, CharacterRunFallback,
+    CommandDeliveryCursor, CommandProcessor, DeliveryStatus, FinishedAlignmentCell,
+    MainCharacterConsumer, MainCharacterInput, PreparedAlignmentCellTemplates, PrintCommand,
     append_character_command_text, append_command_token_text, append_print_cmd_chr_text,
     append_print_esc_text, character_command_text, command_token_text, print_cmd_chr_text,
     print_esc_text,

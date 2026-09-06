@@ -91,20 +91,31 @@ pub enum DeliveryStatus {
     AlignmentClosingBrace,
 }
 
-/// Admission result for one borrowed ordinary source-character prefix.
+/// Why a borrowed source suffix stopped before its end.
+///
+/// A lexical boundary belongs to the scalar tokenizer (which handles UTF-8,
+/// superscript reduction, and non-ordinary catcodes). A missing metric is the
+/// existing scalar character fallback after lexical acceptance.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CharacterRunFallback {
+    LexicalBoundary,
+    MissingMetric,
+}
+
+/// Admission result for one borrowed source-character prefix.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CharacterRunAdmission {
     count: u32,
     continue_run: bool,
-    scalar_fallback: bool,
+    fallback: Option<CharacterRunFallback>,
 }
 
 /// One input event presented to main-control character admission.
 ///
-/// The source-step owner presents a borrowed physical prefix as one event and
+/// The source-step owner presents a borrowed physical suffix as one event and
 /// presents exceptional scalar input as individual events. Keeping both in a
 /// single callback means the processor owns one source transaction while the
-/// executor's direct hmode admission remains the only ordinary-prefix path.
+/// executor's direct hmode admission remains the only ordinary-run path.
 #[derive(Debug)]
 pub enum MainCharacterInput<'run> {
     Borrowed(BorrowedSourceCharacterRun<'run>),
@@ -117,7 +128,7 @@ pub enum MainCharacterInput<'run> {
 /// Main-control admission for one source-step event.
 ///
 /// Implementations are monomorphized into the command loop. The ordinary
-/// source path invokes [`Self::admit`] once for a borrowed prefix; scalar
+/// source path invokes [`Self::admit`] once for a borrowed suffix; scalar
 /// fallback invokes it only at the exceptional character boundary.
 pub trait MainCharacterConsumer<G> {
     fn admit<'state, 'admission, 'fuel, 'effects, 'run>(
@@ -137,7 +148,21 @@ impl CharacterRunAdmission {
         Self {
             count,
             continue_run,
-            scalar_fallback: false,
+            fallback: None,
+        }
+    }
+
+    /// Builds an admission that stopped at a lexical or metric boundary.
+    #[must_use]
+    pub const fn with_fallback(
+        count: u32,
+        continue_run: bool,
+        fallback: CharacterRunFallback,
+    ) -> Self {
+        Self {
+            count,
+            continue_run,
+            fallback: Some(fallback),
         }
     }
 
@@ -147,11 +172,13 @@ impl CharacterRunAdmission {
     /// character boundaries.
     #[must_use]
     pub const fn scalar_fallback() -> Self {
-        Self {
-            count: 0,
-            continue_run: false,
-            scalar_fallback: true,
-        }
+        Self::with_fallback(0, false, CharacterRunFallback::MissingMetric)
+    }
+
+    /// Requests the canonical scalar tokenizer for a lexical boundary.
+    #[must_use]
+    pub const fn tokenizer_fallback() -> Self {
+        Self::with_fallback(0, false, CharacterRunFallback::LexicalBoundary)
     }
 
     #[must_use]
@@ -166,7 +193,12 @@ impl CharacterRunAdmission {
 
     #[must_use]
     pub(crate) const fn needs_scalar_fallback(self) -> bool {
-        self.scalar_fallback
+        matches!(self.fallback, Some(CharacterRunFallback::MissingMetric))
+    }
+
+    #[must_use]
+    pub(crate) const fn needs_tokenizer_fallback(self) -> bool {
+        matches!(self.fallback, Some(CharacterRunFallback::LexicalBoundary))
     }
 }
 

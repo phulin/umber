@@ -2598,9 +2598,9 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     /// Performs one source-character step for `main_character_run`.
     ///
-    /// An eligible physical line lends its ordinary prefix to `admit` first;
-    /// if that admission cannot accept a character, the same selected source
-    /// row falls through to the scalar tokenizer without reopening a
+    /// An eligible physical line lends its retained suffix to `admit` first;
+    /// the executor stops at the first lexical or metric boundary. A lexical
+    /// first byte falls through to the scalar tokenizer without reopening a
     /// processor or selecting a second top row. Stored source rows and every
     /// cold/source boundary remain on the scalar transition below.
     #[cold]
@@ -2630,9 +2630,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
 
         if let Some(mut run) = top
-            .borrow_character_run(|ch| {
-                matches!(state.catcode(ch), Catcode::Letter | Catcode::Other)
-            })
+            .borrow_character_run()
             .map_err(|()| CommandError::input_invariant())?
         {
             let available = usize::try_from(fuel.remaining()).unwrap_or(usize::MAX);
@@ -2654,17 +2652,10 @@ impl<G> CommandProcessor<'_, '_, G> {
             if count > run_len {
                 return Err(CommandError::input_invariant());
             }
-            if count == 0 && !admission.needs_scalar_fallback() {
-                // A consumer failure is represented by its surrounding
-                // operation error slot. Do not run scalar admission after it:
-                // the source cursor and hmode state must remain owned by this
-                // same source step until that failure settles.
-                return Ok(Some(0));
-            }
-            if count == 0 {
-                // The borrowed probe already identified the first ordinary
-                // byte. Admit that boundary directly instead of reopening
-                // the source tokenizer on the same row.
+            if count == 0 && admission.needs_scalar_fallback() {
+                // A lexically accepted byte with missing metrics retains the
+                // existing direct scalar fallback. The borrowed path never
+                // reaches this branch for a non-ASCII or non-ordinary byte.
                 let byte = *run
                     .bytes()
                     .first()
@@ -2700,23 +2691,32 @@ impl<G> CommandProcessor<'_, '_, G> {
                 fuel.record_raw_run(false, crate::fuel::RawDeliveryKind::Source, 1);
                 return Ok(Some(1));
             }
-            let count = u32::try_from(count).map_err(|_| CommandError::input_invariant())?;
-            fuel.charge_run(count)?;
-            top.commit_character_run(usize::try_from(count).expect("u32 fits usize"))
-                .map_err(|()| CommandError::input_invariant())?;
-            let line = top
-                .slot
-                .cursor
-                .line
-                .as_ref()
-                .expect("a committed source run retains its line");
-            command_state.last_diagnostic_location = Some(SourceLocation::new(
-                line.physical.source,
-                line.cursor.byte_cursor.saturating_sub(1),
-            ));
-            #[cfg(feature = "profiling")]
-            fuel.record_raw_run(false, crate::fuel::RawDeliveryKind::Source, count);
-            return Ok(Some(count));
+            if count == 0 && !admission.needs_tokenizer_fallback() {
+                // A consumer failure is represented by its surrounding
+                // operation error slot. Do not run scalar admission after it:
+                // the source cursor and hmode state must remain owned by this
+                // same source step until that failure settles.
+                return Ok(Some(0));
+            }
+            if count != 0 {
+                let count = u32::try_from(count).map_err(|_| CommandError::input_invariant())?;
+                fuel.charge_run(count)?;
+                top.commit_character_run(usize::try_from(count).expect("u32 fits usize"))
+                    .map_err(|()| CommandError::input_invariant())?;
+                let line = top
+                    .slot
+                    .cursor
+                    .line
+                    .as_ref()
+                    .expect("a committed source run retains its line");
+                command_state.last_diagnostic_location = Some(SourceLocation::new(
+                    line.physical.source,
+                    line.cursor.byte_cursor.saturating_sub(1),
+                ));
+                #[cfg(feature = "profiling")]
+                fuel.record_raw_run(false, crate::fuel::RawDeliveryKind::Source, count);
+                return Ok(Some(count));
+            }
         }
 
         let run = top

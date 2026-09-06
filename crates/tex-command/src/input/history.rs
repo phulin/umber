@@ -167,7 +167,7 @@ pub(crate) enum ResidentSourceCharacterRun<E> {
     Failed { count: u32, error: E },
 }
 
-/// A borrowed ordinary prefix of the currently loaded source line.
+/// A borrowed retained suffix of the currently loaded source line.
 ///
 /// The line backing and source-map capability remain owned by the resident
 /// source slot.  This value is only a short-lived admission contract: the
@@ -183,7 +183,7 @@ pub struct BorrowedSourceCharacterRun<'a> {
 }
 
 impl BorrowedSourceCharacterRun<'_> {
-    /// The borrowed physical bytes eligible for ordinary character admission.
+    /// The borrowed physical bytes presented to ordinary character admission.
     #[must_use]
     pub fn bytes(&self) -> &[u8] {
         self.bytes
@@ -229,32 +229,21 @@ impl BorrowedSourceCharacterRun<'_> {
     }
 }
 
-#[inline(always)]
-fn ordinary_ascii_prefix(bytes: &[u8], ordinary_catcode: &mut impl FnMut(char) -> bool) -> usize {
-    for (offset, &byte) in bytes.iter().enumerate() {
-        if !byte.is_ascii() || !ordinary_catcode(char::from(byte)) {
-            return offset;
-        }
-    }
-    bytes.len()
-}
-
 impl<G> ResidentSourceTop<'_, G> {
     #[inline(always)]
     pub(crate) fn force_eof(&self, requested: bool) -> bool {
         requested && self.slot.name_class == super::SourceNameClass::File
     }
 
-    /// Borrows the maximal ASCII letter/other prefix from the loaded line.
+    /// Borrows the retained suffix of the currently loaded source line.
     ///
-    /// The caller supplies the already-admitted live catcode query. Keeping
-    /// that query beside the source walk avoids constructing a fixed table for
-    /// every attempted run, while non-ASCII bytes and every non-ordinary
-    /// catcode still remain at the exact first scalar boundary.
+    /// Character admission owns the live catcode and font checks. Keeping the
+    /// source operation to one backing slice leaves non-ASCII bytes and every
+    /// non-ordinary catcode at the exact first scalar boundary, where the
+    /// canonical tokenizer can handle them.
     #[inline(always)]
     pub(crate) fn borrow_character_run<'a>(
         &'a mut self,
-        mut ordinary_catcode: impl FnMut(char) -> bool,
     ) -> Result<Option<BorrowedSourceCharacterRun<'a>>, ()> {
         let Some(line) = self.slot.cursor.line.as_ref() else {
             return Ok(None);
@@ -275,13 +264,9 @@ impl<G> ResidentSourceTop<'_, G> {
         if capability.is_none() {
             return Ok(None);
         }
-        let count = ordinary_ascii_prefix(bytes, &mut ordinary_catcode);
-        if count == 0 {
-            return Ok(None);
-        }
         record_source_lex_slot_borrow();
         Ok(Some(BorrowedSourceCharacterRun {
-            bytes: &bytes[..count],
+            bytes,
             source: line.physical.source,
             byte_start: start,
             capability,
