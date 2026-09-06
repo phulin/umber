@@ -10,7 +10,7 @@ use crate::input::{
     ResidentSourceCharacterRun, ResidentSourceTop, ResidentTokenStorage, SourceLocation,
     SourceNameClass, TokenBehavior,
 };
-use crate::{CommandError, CommandReplayDelivery, CurrentCommand};
+use crate::{CommandError, CommandReplayDelivery, CurrentCommand, FatalError};
 
 use super::end_input::{RetirementHandoff, SourceExhaustionStatus};
 use super::expand_render::format_pdf_date;
@@ -25,6 +25,13 @@ use crate::observation::{
 
 /// TeX82 §345's invalid source-character report.
 const INVALID_SOURCE_CHARACTER_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0345;
+/// Maximum synchronous call depth for an expanded token request.
+///
+/// Macro replacement chains are iterative, but scanner-owned nested expansion
+/// (notably conditional operands) is an ordinary Rust call.  Keep that path
+/// below the host stack's implementation-dependent limit and report the same
+/// TeX capacity diagnostic used by other bounded expansion scanners.
+const SYNCHRONOUS_EXPANSION_DEPTH_LIMIT: u32 = 320;
 
 enum ResidentColdOutcome {
     Retry,
@@ -1103,6 +1110,15 @@ impl<G> CommandProcessor<'_, '_, G> {
                 CommandError::input_invariant(),
             );
         };
+        if active_depth > SYNCHRONOUS_EXPANSION_DEPTH_LIMIT {
+            let fatal = FatalError::overflow(
+                "expansion depth",
+                i32::try_from(SYNCHRONOUS_EXPANSION_DEPTH_LIMIT)
+                    .expect("synchronous expansion limit fits i32"),
+            );
+            self.observe(CommandObservation::Diagnostic(fatal.record()));
+            return self.fail_hot_expanded_delivery(destination, depth, CommandError::Fatal(fatal));
+        }
         self.command.transient.active_expansion_depth = active_depth;
         let mut command = destination.take();
         let mut reader = ResidentFrameReader::new();
