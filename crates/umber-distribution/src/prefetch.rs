@@ -837,8 +837,14 @@ struct ReplayMisses {
 
 #[derive(Clone, Debug, Default)]
 struct PrefetchAccounting {
+    /// Optional semantic keys reserved in the current automatic phase.
     semantic_keys: BTreeSet<String>,
+    /// Required semantic keys remain known across phases and never consume
+    /// optional reservations.
     demanded_keys: BTreeSet<String>,
+    /// Payload identities are retained across phases so aliases do not charge
+    /// the same bytes repeatedly. The per-phase byte totals below are reset
+    /// only when a genuinely new engine demand starts a phase.
     payloads: BTreeSet<(String, String, u64)>,
     total_bytes: u64,
     class_bytes: [u64; 5],
@@ -863,7 +869,6 @@ pub struct PrefetchPolicy {
     admitted: BTreeSet<String>,
     scanned: BTreeSet<String>,
     scanned_runtime_bytes: u64,
-    speculative_scheduled: usize,
     replay: BTreeMap<(PrefetchRegionKey, String), ReplayMisses>,
     replay_regions: BTreeMap<PrefetchRegionKey, u32>,
     replay_region_requests: BTreeMap<PrefetchRegionKey, BTreeSet<String>>,
@@ -871,6 +876,11 @@ pub struct PrefetchPolicy {
     /// already been attempted. Optional rediscovery in this run cannot
     /// requeue them; a required demand may still enqueue the same key.
     attempted: BTreeSet<String>,
+    attempted_priorities: BTreeMap<String, u64>,
+    /// Optional requests declined by the current phase remain here so a
+    /// closure drain cannot immediately retry the same budget-exhausted work.
+    /// They are returned to the queue when `begin_phase` starts a new phase.
+    deferred: BTreeMap<String, (PrefetchRequest, u64)>,
     accounting: PrefetchAccounting,
     last_discarded_work: u64,
     metrics: PrefetchPolicyMetrics,
@@ -890,11 +900,12 @@ impl PrefetchPolicy {
             admitted: BTreeSet::new(),
             scanned: BTreeSet::new(),
             scanned_runtime_bytes: 0,
-            speculative_scheduled: 0,
             replay: BTreeMap::new(),
             replay_regions: BTreeMap::new(),
             replay_region_requests: BTreeMap::new(),
             attempted: BTreeSet::new(),
+            attempted_priorities: BTreeMap::new(),
+            deferred: BTreeMap::new(),
             accounting: PrefetchAccounting::default(),
             last_discarded_work: 0,
             metrics: PrefetchPolicyMetrics::default(),
@@ -925,6 +936,22 @@ impl PrefetchPolicy {
         self.metrics
     }
 
+    /// Starts one automatic prefetch phase. Optional reservations are shared
+    /// by the initial batch and every admission-driven closure wave in this
+    /// phase. Queue insertion is intentionally not charged here; deferred
+    /// optional requests become eligible again only at this boundary.
+    pub fn begin_phase(&mut self) {
+        self.accounting.semantic_keys.clear();
+        self.accounting.total_bytes = 0;
+        self.accounting.class_bytes = [0; 5];
+        let deferred = std::mem::take(&mut self.deferred);
+        for (identity, (request, priority)) in deferred {
+            self.attempted.remove(&identity);
+            self.attempted_priorities.remove(&identity);
+            let _ = self.enqueue_with_priority(request, priority);
+        }
+    }
+
     /// Reports whether a semantic candidate has already been accounted for by
     /// this policy.  Hosts use this only for opt-in diagnostics; it does not
     /// participate in selection or admission.
@@ -936,6 +963,7 @@ impl PrefetchPolicy {
             || self.accounting.demanded_keys.contains(&identity)
             || self.queued.contains_key(&identity)
             || self.attempted.contains(&identity)
+            || self.deferred.contains_key(&identity)
     }
 
     /// Reports whether a typed file key's payload has crossed the planner's
@@ -965,12 +993,12 @@ impl PrefetchPolicy {
                     .saturating_sub(self.scanned_runtime_bytes)
     }
 
-    /// Selects one host batch against the policy's cumulative per-run
-    /// reservation ledger. Required payloads are always returned and never
-    /// consume speculative byte or file ceilings. Optional reservations are
-    /// charged before acquisition; a failed optional fetch keeps its charge
-    /// for the rest of this run, which is conservative and prevents retry
-    /// cycles from exceeding the declared budget.
+    /// Selects one host batch against the current phase reservation ledger.
+    /// Required payloads are always returned and never consume speculative
+    /// byte or file ceilings. Optional reservations are charged before
+    /// acquisition; a failed optional fetch keeps its charge for this phase,
+    /// which prevents retry cycles and closure waves from exceeding the
+    /// declared budget.
     pub fn select_prefetch_group(
         &mut self,
         required: impl IntoIterator<Item = PrefetchCandidate>,
@@ -1002,6 +1030,7 @@ impl PrefetchPolicy {
             if !seen.insert(identity.clone())
                 || self.accounting.demanded_keys.contains(&identity)
                 || self.accounting.semantic_keys.contains(&identity)
+                || self.admitted.contains(&identity)
             {
                 continue;
             }
@@ -1043,16 +1072,16 @@ impl PrefetchPolicy {
         output
     }
 
-    /// Enqueues one canonical request.  Required requests are never rejected
-    /// because a speculative budget is full; hosts still enforce their normal
-    /// demanded-resource limits separately.
+    /// Enqueues one canonical request. Required requests are never rejected by
+    /// optional phase accounting. Optional requests may remain queued beyond
+    /// the current phase reservation; selection owns the actual cap.
     pub fn enqueue(&mut self, request: PrefetchRequest) -> bool {
         self.enqueue_with_priority(request, 0)
     }
 
     /// Enqueues one request ahead of lower-priority speculative work. Larger
     /// discarded-work deltas receive larger priorities; equal priorities keep
-    /// FIFO order. Required requests still bypass the speculative cap.
+    /// FIFO order. Queue insertion does not reserve phase file capacity.
     pub fn enqueue_with_priority(&mut self, request: PrefetchRequest, priority: u64) -> bool {
         let identity = request.identity();
         if request.key.is_empty()
@@ -1060,6 +1089,10 @@ impl PrefetchPolicy {
             || (!request.required && self.attempted.contains(&identity))
         {
             return false;
+        }
+        if request.required && self.deferred.remove(&identity).is_some() {
+            self.attempted.remove(&identity);
+            self.attempted_priorities.remove(&identity);
         }
         if self.queued.contains_key(&identity) {
             let previous = self
@@ -1081,10 +1114,6 @@ impl PrefetchPolicy {
                 return false;
             }
             if promoted {
-                // The speculative reservation represented this one queued
-                // file. Once a demanded request takes it over, release that
-                // reservation so another optional request may use the cap.
-                self.speculative_scheduled = self.speculative_scheduled.saturating_sub(1);
                 self.depths.insert(identity.clone(), request.depth());
                 self.classes.insert(identity.clone(), request.class);
             }
@@ -1105,14 +1134,8 @@ impl PrefetchPolicy {
             self.queue.insert(insertion, queued);
             return true;
         }
-        if !request.required && self.speculative_scheduled >= self.budget.max_files {
-            return false;
-        }
         let key = identity;
         let depth = request.depth();
-        if !request.required {
-            self.speculative_scheduled = self.speculative_scheduled.saturating_add(1);
-        }
         self.depths.insert(key.clone(), depth);
         self.classes.insert(key.clone(), request.class);
         self.queued.insert(key, depth);
@@ -1137,40 +1160,120 @@ impl PrefetchPolicy {
     /// batch.  Prior-run and explicit format closure requests are enqueued by
     /// the host through [`Self::enqueue`] before calling this method.
     pub fn enqueue_literal_hints(&mut self, source: &str) -> usize {
+        self.enqueue_literal_hints_with_priority(source, 0)
+    }
+
+    /// Enqueues literal source hints at a high-confidence priority. They are
+    /// intentionally ahead of authenticated metadata peers discovered after
+    /// a payload is admitted.
+    pub fn enqueue_literal_hints_with_priority(&mut self, source: &str, priority: u64) -> usize {
         let mut count = 0;
         for hint in extract_literal_hints(source, LiteralHintLimits::default()) {
             let Some(request) = literal_hint_request(&hint, "literal", false, true, 0) else {
                 continue;
             };
-            if self.enqueue(request) {
+            if self.enqueue_with_priority(request, priority) {
                 count += 1;
             }
         }
         count
     }
 
-    /// Drains a finite queue in source/history order.  The caller may use a
+    /// Drains a finite queue in source/history order. The caller may use a
     /// smaller host batch limit, but must eventually acknowledge an empty
     /// response so false-positive startup hints cannot create a retry loop.
     pub fn drain(&mut self, limit: usize) -> Vec<PrefetchRequest> {
         let mut output = Vec::new();
         let limit = limit.min(self.budget.max_files.max(1));
         while output.len() < limit {
-            let Some(request) = self.queue.pop_front() else {
+            let Some(request) = self.pop_front_request() else {
                 break;
             };
-            let identity = request.identity();
-            self.queued.remove(&identity);
-            self.queue_priorities.remove(&identity);
-            self.attempted.insert(identity);
             output.push(request);
         }
         output
     }
 
+    /// Drains one confidence wave. Positive-priority seeds and closure
+    /// children are emitted before any broad metadata peers at priority zero;
+    /// once no positive work remains, the next call drains the broad queue.
+    /// This keeps a large peer frontier from consuming the phase reservation
+    /// before admitted high-confidence children can be discovered.
+    pub fn drain_prefetch_wave(&mut self, limit: usize) -> Vec<PrefetchRequest> {
+        let limit = limit.min(self.budget.max_files.max(1));
+        let positive = self
+            .queue
+            .front()
+            .and_then(|request| self.queue_priorities.get(&request.identity()))
+            .copied()
+            .is_some_and(|priority| priority > 0);
+        if !positive {
+            return self.drain(limit);
+        }
+        let mut output = Vec::new();
+        while output.len() < limit {
+            let Some(request) = self.queue.front() else {
+                break;
+            };
+            let priority = self
+                .queue_priorities
+                .get(&request.identity())
+                .copied()
+                .unwrap_or_default();
+            if priority == 0 {
+                break;
+            }
+            output.push(self.pop_front_request().expect("queue front exists"));
+        }
+        output
+    }
+
+    fn pop_front_request(&mut self) -> Option<PrefetchRequest> {
+        let request = self.queue.pop_front()?;
+        let identity = request.identity();
+        self.queued.remove(&identity);
+        let priority = self.queue_priorities.remove(&identity).unwrap_or_default();
+        self.attempted_priorities.insert(identity.clone(), priority);
+        self.attempted.insert(identity);
+        Some(request)
+    }
+
+    /// Defers an optional request rejected by phase selection. It remains
+    /// visible to policy ownership and is released only when a new automatic
+    /// phase begins, so a closure drain cannot spin on the same unselected
+    /// request.
+    pub fn defer(&mut self, request: PrefetchRequest) -> bool {
+        if request.required {
+            return false;
+        }
+        let identity = request.identity();
+        if self.admitted.contains(&identity) {
+            return false;
+        }
+        if let Some(index) = self
+            .queue
+            .iter()
+            .position(|queued| queued.identity() == identity)
+        {
+            self.queue.remove(index);
+            self.queued.remove(&identity);
+            self.queue_priorities.remove(&identity);
+        }
+        let priority = self
+            .attempted_priorities
+            .get(&identity)
+            .copied()
+            .unwrap_or_default();
+        self.attempted.insert(identity.clone());
+        self.attempted_priorities.insert(identity.clone(), priority);
+        self.deferred
+            .insert(identity, (request, priority))
+            .is_none()
+    }
+
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.queue.is_empty()
+        self.queue.is_empty() && self.deferred.is_empty()
     }
 
     /// Marks a verified payload only after the host has admitted it to its
@@ -1240,6 +1343,8 @@ impl PrefetchPolicy {
             self.queued.remove(&identity);
             self.queue_priorities.remove(&identity);
         }
+        self.deferred.remove(&identity);
+        self.attempted_priorities.remove(&identity);
         self.metrics.admitted_files = self.metrics.admitted_files.saturating_add(1);
         let parent_depth = self.depths.get(&identity).copied().unwrap_or_default();
         for dependency in dependencies {
@@ -1251,7 +1356,10 @@ impl PrefetchPolicy {
             {
                 known.push(dependency.clone());
             }
-            self.enqueue(dependency);
+            // Authenticated metadata is a broad peer source. Literal children
+            // discovered below receive a higher priority and are therefore
+            // admitted before remaining metadata peers.
+            self.enqueue_with_priority(dependency, 0);
         }
         let class = self.classes.get(&identity).copied().unwrap_or(class);
         if class != PrefetchClass::SmallRuntime || !self.scanned.insert(identity) {
@@ -1300,7 +1408,9 @@ impl PrefetchPolicy {
             ) else {
                 continue;
             };
-            if self.enqueue(request) {
+            // Runtime literals are high-confidence closure children and must
+            // precede broad metadata peers already waiting in the queue.
+            if self.enqueue_with_priority(request, 2) {
                 self.metrics.followup_hints = self.metrics.followup_hints.saturating_add(1);
             }
         }

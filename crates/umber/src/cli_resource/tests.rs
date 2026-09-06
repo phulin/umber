@@ -1862,7 +1862,7 @@ fn mutable_local_precedence_records_project_negative_without_reusing_it() {
 }
 
 #[test]
-fn inline_dependency_payload_crosses_native_engine_admission() {
+fn inline_dependency_metadata_waits_for_native_engine_admission() {
     let directory = TempDir::new().expect("distribution tempdir");
     let distribution = directory.path().join("distribution");
     let required = br"\input{child.tex}";
@@ -1937,7 +1937,14 @@ fn inline_dependency_payload_crosses_native_engine_admission() {
         resolved
             .prefetch_requests
             .iter()
-            .any(|request| { request.key().name() == "dependency.tex" })
+            .any(|request| request.key().name() == "required.tex")
+    );
+    assert!(
+        !resolved
+            .prefetch_requests
+            .iter()
+            .any(|request| request.key().name() == "dependency.tex"),
+        "metadata companions wait for admission of their parent seed"
     );
     session
         .session
@@ -1961,7 +1968,7 @@ fn inline_dependency_payload_crosses_native_engine_admission() {
     session
         .session
         .provide_resources(resolved.responses.clone())
-        .expect("admit required and inline dependency");
+        .expect("admit required seed");
     session
         .distribution
         .note_engine_admitted(&mut session.host_telemetry.resolver, &resolved);
@@ -1976,13 +1983,19 @@ fn inline_dependency_payload_crosses_native_engine_admission() {
             dependencies,
         );
     }
-    let closure = session.prefetch.drain_followups();
-    assert!(closure.iter().any(
+    let high_confidence = session.prefetch.drain_followups();
+    assert!(high_confidence.iter().any(
         |request| matches!(request, ResourceRequest::File(file) if file.key().name() == "child.tex")
     ));
-    let dependency_key =
-        crate::FileRequestKey::new(FileKind::TexInput, "dependency.tex").expect("dependency key");
-    assert!(session.session.workspace().get(&dependency_key).is_some());
+    assert!(!high_confidence.iter().any(|request| matches!(
+        request,
+        ResourceRequest::File(file) if file.key().name() == "dependency.tex"
+    )));
+    let broad_metadata = session.prefetch.drain_followups();
+    assert!(broad_metadata.iter().any(|request| matches!(
+        request,
+        ResourceRequest::File(file) if file.key().name() == "dependency.tex"
+    )));
     assert!(
         !session
             .distribution
@@ -2278,7 +2291,7 @@ fn loaded_format_replay_retains_admitted_input_bindings() {
 }
 
 #[test]
-fn format_closure_is_loaded_only_as_each_input_is_requested() {
+fn format_closure_prefetches_followups_after_engine_admission() {
     for (engine, closure_len) in [(EngineMode::Latex, 57), (EngineMode::PdfLatex, 60)] {
         let directory = TempDir::new().expect("distribution tempdir");
         let distribution = directory.path().join("distribution");
@@ -2386,7 +2399,10 @@ fn format_closure_is_loaded_only_as_each_input_is_requested() {
             .expect("provide closure head");
 
         session.compile(&cancellation).expect("complete chain");
-        assert_eq!(session.session.attempts(), closure_len + 2);
+        assert!(
+            session.session.attempts() < closure_len + 2,
+            "admitted closure follow-ups should reduce engine retries"
+        );
     }
 }
 

@@ -750,6 +750,14 @@ impl<'owner> NativeCompileSession<'owner> {
                     });
                 }
                 CompileAttemptResult::NeedResources(mut batch) => {
+                    // A nonempty engine demand starts a fresh optional phase.
+                    // The startup-only preflight round already owns the first
+                    // phase; closure waves and provider calls below remain in
+                    // that same reservation until this branch sees a new
+                    // actual demand.
+                    if !batch.required.is_empty() || !batch.probes.is_empty() {
+                        self.prefetch.begin_phase();
+                    }
                     // A source/context reset may have queued fresh literal
                     // seeds after the one-shot engine startup list was used.
                     // Merge them at the same preflight seam so they are
@@ -2206,6 +2214,16 @@ impl DistributionResolver {
                     );
                 }
             }
+            for request in &batch.prefetch_hints {
+                let ResourceRequest::File(request) = request else {
+                    continue;
+                };
+                if semantic_file_key(request.key())
+                    .is_none_or(|key| !selected_keys.contains(&key.identity()))
+                {
+                    planner.defer_prefetch(&ResourceRequest::File(request.clone()));
+                }
+            }
             return Ok(ResolvedDistributionBatch {
                 admitted_files: admitted_files_for(
                     &responses,
@@ -2375,9 +2393,10 @@ impl DistributionResolver {
                 Err(_) => {}
             }
         }
-        // Retain the authenticated dependency metadata for later replay
-        // escalation.  This map is scheduling evidence only; it never makes
-        // a request engine-readable without a later payload admission.
+        // Retain authenticated dependency metadata beside the selected
+        // payload. This map is scheduling evidence only; it never makes a
+        // request engine-readable and is handed to the planner only after
+        // `provide_resources` commits that payload to the engine VFS.
         for (manifest_key, entry) in required.iter().chain(&hints) {
             let parent_requests = original_files
                 .get(manifest_key)
@@ -2411,72 +2430,6 @@ impl DistributionResolver {
             }
         }
 
-        // Inline TLPDB-derived dependencies are already authenticated by the
-        // packed shard.  Reuse their metadata directly; do not fetch an
-        // arbitrary locality shard just to discover package peers.
-        let dependency_sources = if batch.prefetch_hints.is_empty() {
-            Vec::new()
-        } else {
-            required
-                .values()
-                .chain(hints.values())
-                .flat_map(|entry| entry.dependencies.iter())
-                .cloned()
-                .collect::<Vec<_>>()
-        };
-        let mut dependency_keys = BTreeSet::new();
-        for dependency in dependency_sources {
-            if required.contains_key(&dependency.key) || dependency_keys.contains(&dependency.key) {
-                continue;
-            }
-            let request = match DistributionFileRequestKey::from_manifest_key(&dependency.key)
-                .map_err(|_| ())
-                .and_then(|key| distribution_request(key).map_err(|_| ()))
-            {
-                Ok(ResourceRequest::File(request)) => request,
-                Ok(ResourceRequest::Font(_) | ResourceRequest::PkFont(_)) | Err(_) => continue,
-            };
-            if hints.contains_key(&dependency.key) {
-                // An explicit hint already owns the response path.  It still
-                // remains a prefetch candidate, but is authorized by the
-                // engine's ordinary hint batch.
-                dependency_keys.insert(dependency.key.clone());
-                continue;
-            }
-            let started = Instant::now();
-            telemetry.local_lookups = telemetry.local_lookups.saturating_add(1);
-            let resolved = local.resolve_prefetch(&request)?;
-            telemetry.local_lookup_time = telemetry
-                .local_lookup_time
-                .saturating_add(started.elapsed());
-            if let Some(file) = resolved {
-                telemetry.local_hits = telemetry.local_hits.saturating_add(1);
-                local_prefetch.push((request.clone(), file));
-                dependency_keys.insert(dependency.key.clone());
-            } else {
-                hints.insert(
-                    dependency.key.clone(),
-                    SelectedDistributionRecord {
-                        virtual_path: dependency.virtual_path.clone(),
-                        object: dependency.object.clone(),
-                        dependencies: Vec::new(),
-                    },
-                );
-                original_hints
-                    .entry(dependency.key.clone())
-                    .or_default()
-                    .push(request);
-                if let Some(request) = original_hints
-                    .get(&dependency.key)
-                    .and_then(|requests| requests.last())
-                {
-                    planner.note_catalog_result(request, true);
-                }
-                dependency_keys.insert(dependency.key.clone());
-                telemetry.package_group_candidates =
-                    telemetry.package_group_candidates.saturating_add(1);
-            }
-        }
         for (manifest_key, requests) in &original_files {
             if required.contains_key(manifest_key) {
                 for request in requests {
@@ -2591,6 +2544,23 @@ impl DistributionResolver {
                     object: entry.object.clone(),
                     max_bytes: limits.one_file_bytes as u64,
                 });
+            }
+        }
+        for request in &batch.prefetch_hints {
+            let ResourceRequest::File(request) = request else {
+                continue;
+            };
+            let Some(distribution_key) = distribution_file_key(request)? else {
+                planner.defer_prefetch(&ResourceRequest::File(request.clone()));
+                continue;
+            };
+            if required.contains_key(&distribution_key.manifest_key().to_string()) {
+                continue;
+            }
+            let selected = semantic_file_key(request.key())
+                .is_some_and(|key| selected_semantic_keys.contains(&key.identity()));
+            if !selected {
+                planner.defer_prefetch(&ResourceRequest::File(request.clone()));
             }
         }
         let mut fetch_requests = required_fetches.clone();

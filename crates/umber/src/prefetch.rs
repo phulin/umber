@@ -179,13 +179,20 @@ impl PrefetchPlanner {
         self.metrics
     }
 
+    /// Starts the one optional reservation phase owned by the native compile
+    /// session. The phase spans its initial batch and all admission-driven
+    /// closure waves; only a new actual engine demand should call this.
+    pub fn begin_phase(&mut self) {
+        self.policy.begin_phase();
+    }
+
     /// Combines prior accepted lookups and literal source hints.  Requests are
     /// deduplicated by typed key and remain in stable source/history order.
     pub fn startup_hints(&mut self, source: &str) -> Vec<ResourceRequest> {
         self.enqueue_startup_requests(source);
         let requests = self
             .policy
-            .drain(self.budget.max_files)
+            .drain_prefetch_wave(self.budget.max_files)
             .into_iter()
             .filter_map(|request| resource_request(&request))
             .filter(|request| self.seen_startup.insert(request_identity(request)))
@@ -227,11 +234,11 @@ impl PrefetchPlanner {
             .collect::<Vec<_>>();
         for request in prior_requests {
             if let Some(policy_request) = policy_request(&request, "accepted", false) {
-                self.policy.enqueue(policy_request);
+                self.policy.enqueue_with_priority(policy_request, 3);
             }
         }
         let queued_before = self.policy.metrics().queued_requests;
-        self.policy.enqueue_literal_hints(source);
+        self.policy.enqueue_literal_hints_with_priority(source, 2);
         self.metrics.literal_hints = self.metrics.literal_hints.saturating_add(
             self.policy
                 .metrics()
@@ -310,7 +317,7 @@ impl PrefetchPlanner {
     pub fn drain_followups(&mut self) -> Vec<ResourceRequest> {
         let requests = self
             .policy
-            .drain(self.budget.max_files)
+            .drain_prefetch_wave(self.budget.max_files)
             .into_iter()
             .filter_map(|request| resource_request(&request))
             .collect::<Vec<_>>();
@@ -320,6 +327,16 @@ impl PrefetchPlanner {
             }
         }
         requests
+    }
+
+    /// Keeps an optional hint pending when the current phase cannot reserve
+    /// it. It is released at the next phase boundary and is never reported as
+    /// a semantic unavailable binding.
+    pub fn defer_prefetch(&mut self, request: &ResourceRequest) {
+        let Some(policy_request) = policy_request(request, "deferred", false) else {
+            return;
+        };
+        self.policy.defer(policy_request);
     }
 
     /// Records whether a planner candidate was present in the authenticated
@@ -403,7 +420,7 @@ impl PrefetchPlanner {
     }
 
     pub fn enqueue_escalation(&mut self, requests: impl IntoIterator<Item = FileRequest>) {
-        self.enqueue_escalation_with_priority(requests, 0);
+        self.enqueue_escalation_with_priority(requests, 4);
     }
 
     pub fn enqueue_escalation_with_priority(

@@ -109,6 +109,47 @@ fn planner_admission_queues_authenticated_dependency_hints() {
 }
 
 #[test]
+fn planner_drains_admitted_literals_before_metadata_peers() {
+    let mut planner = planner();
+    let root = FileRequest::new(
+        FileRequestKey::new(FileKind::TexInput, "root.sty").expect("key"),
+        "root.sty",
+    );
+    let dependency = FileRequest::new(
+        FileRequestKey::new(FileKind::TexInput, "companion.sty").expect("key"),
+        "companion.sty",
+    );
+    planner.admit_file_with_metadata(
+        &root,
+        "/texlive/root.sty",
+        br#"\input{literal-child.tex}"#,
+        [dependency],
+    );
+    let first = planner.drain_followups();
+    assert_eq!(
+        first
+            .iter()
+            .map(|request| match request {
+                ResourceRequest::File(file) => file.key().name(),
+                ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => "font",
+            })
+            .collect::<Vec<_>>(),
+        ["literal-child.tex"]
+    );
+    let second = planner.drain_followups();
+    assert_eq!(
+        second
+            .iter()
+            .map(|request| match request {
+                ResourceRequest::File(file) => file.key().name(),
+                ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => "font",
+            })
+            .collect::<Vec<_>>(),
+        ["companion.sty"]
+    );
+}
+
+#[test]
 fn planner_resets_replay_and_admission_state_for_new_context() {
     let mut planner = planner();
     let root = FileRequest::new(

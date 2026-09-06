@@ -360,6 +360,30 @@ fn admitted_typed_runtime_closure_normalizes_package_and_input_children() {
 }
 
 #[test]
+fn admitted_literal_children_precede_metadata_peers() {
+    let mut policy = PrefetchPolicy::new(PrefetchBudget::default());
+    let metadata = PrefetchRequest::new("tex:metadata.sty", "metadata.sty", "metadata", false);
+    assert!(policy.enqueue_with_priority(metadata, 0));
+    policy.admitted("tex:root.sty", br#"\input{literal-child.tex}"#);
+    let requests = policy.drain_prefetch_wave(64);
+    assert_eq!(
+        requests
+            .iter()
+            .map(|request| request.key.as_str())
+            .collect::<Vec<_>>(),
+        ["tex:literal-child.tex"]
+    );
+    assert_eq!(
+        policy
+            .drain_prefetch_wave(64)
+            .iter()
+            .map(|request| request.key.as_str())
+            .collect::<Vec<_>>(),
+        ["tex:metadata.sty"]
+    );
+}
+
+#[test]
 fn admitted_runtime_scan_budget_is_cumulative() {
     let source = br#"\input{child.tex}"#;
     let mut policy = PrefetchPolicy::new(PrefetchBudget {
@@ -423,7 +447,7 @@ fn admitted_dependency_metadata_expands_replay_tiers_without_cycles() {
 }
 
 #[test]
-fn demanded_queue_items_survive_speculative_file_cap() {
+fn queue_insertion_does_not_consume_optional_file_capacity() {
     let mut policy = PrefetchPolicy::new(PrefetchBudget {
         max_files: 0,
         ..PrefetchBudget::default()
@@ -434,13 +458,35 @@ fn demanded_queue_items_survive_speculative_file_cap() {
         "required",
         true,
     )));
-    assert!(!policy.enqueue(PrefetchRequest::new(
+    assert!(policy.enqueue(PrefetchRequest::new(
         "tex:hint.sty",
         "hint.sty",
         "literal",
         false,
     )));
     assert_eq!(policy.drain(64).len(), 1);
+    assert_eq!(policy.drain(64).len(), 1);
+}
+
+#[test]
+fn deferred_optional_requests_wait_for_the_next_phase() {
+    let mut policy = PrefetchPolicy::new(PrefetchBudget {
+        max_files: 0,
+        ..PrefetchBudget::default()
+    });
+    let request = PrefetchRequest::new("tex:deferred.sty", "deferred.sty", "literal", false);
+    assert!(policy.enqueue(request.clone()));
+    let drained_batch = policy.drain(1);
+    let [drained] = drained_batch.as_slice() else {
+        panic!("expected one drained request");
+    };
+    assert!(policy.defer(drained.clone()));
+    assert!(
+        policy.drain(1).is_empty(),
+        "deferred work is not immediately drainable"
+    );
+    policy.begin_phase();
+    assert_eq!(policy.drain(1), [request]);
 }
 
 #[test]
@@ -517,7 +563,7 @@ fn semantic_kinds_do_not_alias_when_transport_key_is_shared() {
 }
 
 #[test]
-fn selection_budget_is_cumulative_and_reserves_unique_payloads() {
+fn selection_budget_spans_waves_and_renews_for_a_new_phase() {
     let candidate = |name: &str, object: &str, bytes: u64| PrefetchCandidate {
         key: format!("tex:{name}"),
         object: ObjectEntry {
@@ -557,6 +603,10 @@ fn selection_budget_is_cumulative_and_reserves_unique_payloads() {
             .hints
             .is_empty()
     );
+    policy.begin_phase();
+    let renewed = policy.select_prefetch_group([], [candidate("three.sty", "three", 1)]);
+    assert_eq!(renewed.hints.len(), 1);
+    assert_eq!(renewed.prefetch_bytes, 1);
 }
 
 #[test]
