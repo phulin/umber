@@ -194,11 +194,12 @@ reaching either loop is already a character or a packed stable
 control-sequence identity.
 
 The loop is destination-directed. Its caller provides the one final
-`Option<CurrentCommand<G>>` slot for that active request. The entry converts an
-already-supplied `x_token` or command into one `HotToken` plus
-`CommandWord<G>`, or initializes that compact pair for raw delivery. It keeps
-that owner through its complete ordinary loop and materializes the rich return
-value only at a semantic boundary. Each concrete
+`Option<CurrentCommand<G>>` slot for that active request. A compact entry may
+receive an already-supplied hot command, but immediately takes it into one
+loop-local `Option<HotCommand<G>>` and keeps that owner through its complete
+ordinary loop. Raw delivery initializes the same compact pair from the input
+frame. The rich return value is materialized and published back to the caller
+only at a semantic boundary, exactly once for a command-bearing status. Each concrete
 source arm retains the separate lexer transition. The delivery loop selects a
 non-source resident frame's lifetime-specific storage once and keeps its one
 authoritative cursor through read, increment, parameter
@@ -218,10 +219,10 @@ the reusable destination through at most one dense meaning lookup. EOF, line acq
 replay completion, diagnostics, and invariant failure alone construct a cold
 resident status; focused counters keep intermediate status relays at zero.
 Raw and expanded entries select branches of the same delivery loop. Their
-ordinary command branches materialize the result directly in the caller's
-return slot, without an eager `CommandError`, error slot, zero-sized failure
-relay, or general internal status carrier. Only cold failure and resident-
-cold-transition helpers construct a rich error. A genuine resource barrier
+ordinary command branches publish the loop-local result directly at the
+caller boundary, without an eager `CommandError`, error slot, zero-sized
+failure relay, or general internal status carrier. Only cold failure and
+resident-cold-transition helpers construct a rich error. A genuine resource barrier
 unwinds the expanded entry into a cold owned `ResourceNeed`; it does not move a
 prior command into a typed expansion-suspension slot. The host later restores
 an eligible full checkpoint and enters the same ordinary delivery loop. The
