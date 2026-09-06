@@ -989,62 +989,6 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// classification, and expansion dispatch in one synchronous operation.
     /// Raw delivery has a separate loop because its command must be returned
     /// before TeX can decide whether to expand it.
-    #[inline(never)]
-    fn admit_expanded_hot_command(
-        &mut self,
-        reader: &mut ResidentFrameReader,
-        command: &mut Option<HotCommand<G>>,
-    ) -> Result<Option<DeliveryStatus>, CommandError> {
-        if matches!(reader.selection, ResidentFrameSelection::None) {
-            reader.refresh(self.command);
-        }
-        self.charge_command_action()?;
-        let literal_catcode = 'fetch: loop {
-            let selected = self.read_selected_resident_word(*reader)?;
-            match selected {
-                ResidentWordRead::Word {
-                    word,
-                    origin,
-                    identity,
-                    position,
-                    active_source,
-                    suppress_expandable,
-                    #[cfg(test)]
-                    storage_kind,
-                    #[cfg(feature = "profiling")]
-                    raw_kind,
-                } => {
-                    break 'fetch self.write_hot_word(
-                        word,
-                        origin,
-                        identity,
-                        position,
-                        active_source,
-                        suppress_expandable,
-                        #[cfg(test)]
-                        storage_kind,
-                        #[cfg(feature = "profiling")]
-                        raw_kind,
-                        command,
-                    );
-                }
-                selected => match self.transition_resident_word(selected, command)? {
-                    ResidentColdOutcome::Retry => reader.refresh(self.command),
-                    ResidentColdOutcome::Finished(status) => return Ok(Some(status)),
-                    ResidentColdOutcome::Synthetic { literal_catcode } => {
-                        reader.invalidate();
-                        break 'fetch literal_catcode;
-                    }
-                },
-            }
-        };
-        let command = command
-            .as_mut()
-            .expect("resident admission initializes the hot command");
-        self.settle_hot_delivery(command, literal_catcode)?;
-        Ok(None)
-    }
-
     fn expanded_next_hot(
         &mut self,
         destination: &mut Option<HotCommand<G>>,
@@ -1069,12 +1013,73 @@ impl<G> CommandProcessor<'_, '_, G> {
                     destination.is_none(),
                     "the caller-owned hot command must be empty before a resident fetch"
                 );
-                match self.admit_expanded_hot_command(&mut reader, &mut command) {
-                    Ok(Some(status)) => break 'delivery status,
-                    Ok(None) => {}
-                    Err(failure) => {
-                        return self.fail_hot_expanded_delivery(destination, depth, failure);
+                if matches!(reader.selection, ResidentFrameSelection::None) {
+                    reader.refresh(self.command);
+                }
+                if let Err(failure) = self.charge_command_action() {
+                    return self.fail_hot_expanded_delivery(destination, depth, failure);
+                }
+                let literal_catcode = 'fetch: loop {
+                    let selected = match self.read_selected_resident_word(reader) {
+                        Ok(selected) => selected,
+                        Err(failure) => {
+                            return self.fail_hot_expanded_delivery(destination, depth, failure);
+                        }
+                    };
+                    match selected {
+                        ResidentWordRead::Word {
+                            word,
+                            origin,
+                            identity,
+                            position,
+                            active_source,
+                            suppress_expandable,
+                            #[cfg(test)]
+                            storage_kind,
+                            #[cfg(feature = "profiling")]
+                            raw_kind,
+                        } => {
+                            break 'fetch self.write_hot_word(
+                                word,
+                                origin,
+                                identity,
+                                position,
+                                active_source,
+                                suppress_expandable,
+                                #[cfg(test)]
+                                storage_kind,
+                                #[cfg(feature = "profiling")]
+                                raw_kind,
+                                &mut command,
+                            );
+                        }
+                        selected => {
+                            let cold = match self.transition_resident_word(selected, &mut command) {
+                                Ok(cold) => cold,
+                                Err(failure) => {
+                                    return self.fail_hot_expanded_delivery(
+                                        destination,
+                                        depth,
+                                        failure,
+                                    );
+                                }
+                            };
+                            match cold {
+                                ResidentColdOutcome::Retry => reader.refresh(self.command),
+                                ResidentColdOutcome::Finished(status) => break 'delivery status,
+                                ResidentColdOutcome::Synthetic { literal_catcode } => {
+                                    reader.invalidate();
+                                    break 'fetch literal_catcode;
+                                }
+                            }
+                        }
                     }
+                };
+                let command_ref = command
+                    .as_mut()
+                    .expect("resident delivery initializes the hot command");
+                if let Err(failure) = self.settle_hot_delivery(command_ref, literal_catcode) {
+                    return self.fail_hot_expanded_delivery(destination, depth, failure);
                 }
             }
 
