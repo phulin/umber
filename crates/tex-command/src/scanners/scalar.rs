@@ -13,6 +13,7 @@ use tex_state::token::{Catcode, OriginId, Token};
 
 use tex_state::{BoxDimension, PenaltyArrayKind, PrepareMagDiagnostic};
 
+use crate::command::HotCommand;
 use crate::observation::canonical_names::glue_order_name;
 use crate::scanners::RestrictedIntegerClass;
 use crate::{
@@ -778,9 +779,27 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     pub fn scan_integer_retained(&mut self) -> RetainedScalarScan<ScannedScalar<i32>> {
-        let mut call = ScalarCallFrame::default();
-        let status = self.scan_integer(&mut call);
-        self.detach_scalar_call(&mut call, status)
+        match self.scan_integer_with_resource_continuation() {
+            Ok(value) => RetainedScalarScan::Complete(value),
+            Err(error) => self.finish_retained_integer_error(error),
+        }
+    }
+
+    /// Scans the integer value needed by the recursive conditional lane. The
+    /// scalar-only result keeps the full retained result out of the caller
+    /// while preserving the same resource-failure cleanup as the public
+    /// retained entry.
+    #[inline(always)]
+    pub(crate) fn scan_integer_value_for_condition(&mut self) -> Result<i32, CommandError> {
+        match self.scan_integer_with_resource_continuation() {
+            Ok(value) => Ok(value.value),
+            Err(error) => {
+                if error.is_resource_suspension() {
+                    let _ = self.command.scratch.unwind_resource_failure();
+                }
+                Err(error)
+            }
+        }
     }
 
     pub fn scan_dimension_retained(&mut self) -> RetainedScalarScan<ScannedScalar<Scaled>> {
@@ -938,15 +957,18 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.publish_retained_scalar_frame(frame, result, ScalarScanValue::FileName)
     }
 
-    fn detach_scalar_call<T>(
+    /// Preserves the ordinary scalar error cleanup for the compact retained
+    /// integer entry without allocating its success-path call frame.
+    #[cold]
+    #[inline(never)]
+    fn finish_retained_integer_error(
         &mut self,
-        call: &mut ScalarCallFrame<T>,
-        status: ScalarCallStatus,
-    ) -> RetainedScalarScan<T> {
-        match status {
-            ScalarCallStatus::Complete => RetainedScalarScan::Complete(call.take_complete()),
-            ScalarCallStatus::Failed => RetainedScalarScan::Failed(call.take_error()),
+        error: CommandError,
+    ) -> RetainedScalarScan<ScannedScalar<i32>> {
+        if error.is_resource_suspension() {
+            let _ = self.command.scratch.unwind_resource_failure();
         }
+        RetainedScalarScan::Failed(error)
     }
 
     fn scalar_scan_status(&self, status: ScalarCallStatus) -> ScalarScanStatus {
@@ -1250,8 +1272,8 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<ScannedScalar<i32>, CommandError> {
         let (mut negative, mut provenance) = (false, OriginId::UNKNOWN);
         let first = loop {
-            let mut command = None;
-            let delivery = match self.request_expanded_token(&mut command) {
+            let mut command: Option<HotCommand<G>> = None;
+            let delivery = match self.request_expanded_hot_token(&mut command) {
                 Ok(delivery) => delivery,
                 Err(error) => return Err(error),
             };
@@ -1273,13 +1295,29 @@ impl<G> CommandProcessor<'_, '_, G> {
             if provenance == OriginId::UNKNOWN {
                 provenance = command.origin();
             }
-            match scalar_meaning(command.meaning()) {
-                Meaning::CharToken { ch: ' ', .. } | Meaning::CharToken { ch: '+', .. } => {}
-                Meaning::CharToken { ch: '-', .. } => negative = !negative,
+            match command.command_word().static_meaning() {
+                Some(Meaning::CharToken { ch: ' ', .. })
+                | Some(Meaning::CharToken { ch: '+', .. }) => {}
+                Some(Meaning::CharToken { ch: '-', .. }) => negative = !negative,
                 _ => break command,
             }
         };
-        Ok(self.complete_integer(first, negative, provenance)?.0)
+        self.finish_integer_hot(first, negative, provenance)
+    }
+
+    /// Materializes the terminal integer token only after recursive operand
+    /// expansion has returned. The waiting scanner frame therefore retains
+    /// only the compact token plus its sign and provenance.
+    #[inline(never)]
+    fn finish_integer_hot(
+        &mut self,
+        first: HotCommand<G>,
+        negative: bool,
+        provenance: OriginId,
+    ) -> Result<ScannedScalar<i32>, CommandError> {
+        Ok(self
+            .complete_integer(first.materialize(), negative, provenance)?
+            .0)
     }
 
     /// TeX82 §440's `scan_int` body, from the token its
@@ -1292,6 +1330,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// for an internal quantity and for §442's alphabetic character code.
     /// §448 needs it because a decimal fraction may follow only a decimal
     /// constant.
+    #[inline(never)]
     fn complete_integer(
         &mut self,
         first: CurrentCommand<G>,
@@ -3057,6 +3096,15 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         command: CurrentCommand<G>,
     ) -> Result<bool, CommandError> {
+        // TeX's `back_error` puts an inaccessible `frozen_relax` in
+        // `cur_tok` while backing the offending conditional delimiter below
+        // it.  Our recovery input level delivers that sentinel through the
+        // same scanner boundary, so it is already the terminator the caller
+        // must consume; backing it would expose a spurious `relax` after the
+        // conditional has finished.
+        if command.spelling().semantic_token().is_frozen_relax() {
+            return Ok(false);
+        }
         if matches!(
             scalar_meaning(command.meaning()),
             Meaning::CharToken {

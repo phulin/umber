@@ -6,7 +6,7 @@
 
 use tex_state::env::banks::IntParam;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, ResolvedMeaning};
-use tex_state::token::{OriginId, TracedTokenWord};
+use tex_state::token::{OriginId, Token, TracedTokenWord};
 
 use crate::command::HotCommand;
 use crate::input::{PackedTokenSpanHandle, ReplayTrace, RetirementBehavior, TokenBehavior};
@@ -509,11 +509,22 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// The expanded delivery loop has already performed the only meaning
     /// lookup, so this path does not manufacture a rich opener merely to
     /// recover its opcode.
+    #[inline(always)]
     pub(crate) fn expand_conditional_primitive(
         &mut self,
         kind: ConditionalKind,
         inverted: bool,
     ) -> Result<(), CommandError> {
+        let condition = self.install_conditional(kind, inverted)?;
+        self.expand_conditional_body(condition, kind, inverted)
+    }
+
+    #[inline(never)]
+    fn install_conditional(
+        &mut self,
+        kind: ConditionalKind,
+        inverted: bool,
+    ) -> Result<ConditionId, CommandError> {
         let source_line = u32::try_from(self.command.input.current_file_line_number()).unwrap_or(0);
         let condition = self
             .command
@@ -527,78 +538,136 @@ impl<G> CommandProcessor<'_, '_, G> {
             .ok_or(CommandError::input_invariant())?;
         self.trace_conditional_enter(&frame);
         self.observe_condition("push", &frame, None);
+        Ok(condition)
+    }
 
+    /// Keeps the conditional entry frame limited to the state that TeX's
+    /// recursive `conditional` call actually owns.  The operand families are
+    /// dispatched through small out-of-line helpers so the large diagnostic,
+    /// string, and typed-scanner temporaries of unrelated conditionals are not
+    /// reserved in every waiting `\ifnum` frame.
+    #[inline(always)]
+    fn expand_conditional_body(
+        &mut self,
+        condition: ConditionId,
+        kind: ConditionalKind,
+        inverted: bool,
+    ) -> Result<(), CommandError> {
+        if kind == ConditionalKind::IfCase {
+            return self.expand_ifcase_body(condition);
+        }
         let result = match kind {
-            ConditionalKind::IfCase => {
-                let selected = self.scan_integer_retained().into_result()?.value;
-                return self.complete_ifcase(condition, selected);
-            }
-            ConditionalKind::IfOdd => self.scan_integer_retained().into_result()?.value & 1 != 0,
+            ConditionalKind::IfOdd => self.evaluate_ifodd_operand(),
             ConditionalKind::IfNum | ConditionalKind::IfPdfAbsNum => {
-                let absolute = kind == ConditionalKind::IfPdfAbsNum;
-                let left = self.scan_integer_retained().into_result()?.value;
-                let relation = self.scan_if_relation(kind.canonical_name())?;
-                let right = self.scan_integer_retained().into_result()?.value;
-                let left = i64::from(left);
-                let right = i64::from(right);
-                relation.compare(
-                    if absolute { left.abs() } else { left },
-                    if absolute { right.abs() } else { right },
-                )
+                self.evaluate_ifnum_operand(kind)
+            }
+            _ => self.evaluate_conditional_result(kind),
+        }?;
+        self.complete_boolean(condition, result ^ inverted)
+    }
+
+    #[inline(never)]
+    fn expand_ifcase_body(&mut self, condition: ConditionId) -> Result<(), CommandError> {
+        let selected = self.scan_integer_retained().into_result()?.value;
+        self.complete_ifcase(condition, selected)
+    }
+
+    #[inline(never)]
+    fn evaluate_conditional_result(&mut self, kind: ConditionalKind) -> Result<bool, CommandError> {
+        match kind {
+            ConditionalKind::IfOdd => self.evaluate_ifodd_operand(),
+            ConditionalKind::IfNum | ConditionalKind::IfPdfAbsNum => {
+                self.evaluate_ifnum_operand(kind)
             }
             ConditionalKind::IfDim | ConditionalKind::IfPdfAbsDim => {
-                let absolute = kind == ConditionalKind::IfPdfAbsDim;
-                let left = self.scan_dimension_retained().into_result()?.value.raw() as i64;
-                let relation = self.scan_if_relation(kind.canonical_name())?;
-                let right = self.scan_dimension_retained().into_result()?.value.raw() as i64;
-                relation.compare(
-                    if absolute { left.abs() } else { left },
-                    if absolute { right.abs() } else { right },
-                )
+                self.evaluate_ifdim_operand(kind)
             }
             ConditionalKind::IfVoid | ConditionalKind::IfHBox | ConditionalKind::IfVBox => {
-                let index = self.scan_profile_register_index_retained().into_result()?;
-                let box_kind = self.state.box_kind(index);
-                match kind {
-                    ConditionalKind::IfVoid => box_kind.is_none(),
-                    ConditionalKind::IfHBox => {
-                        box_kind == Some(tex_state::CommandBoxKind::Horizontal)
-                    }
-                    ConditionalKind::IfVBox => {
-                        box_kind == Some(tex_state::CommandBoxKind::Vertical)
-                    }
-                    _ => unreachable!(),
-                }
+                self.evaluate_ifbox_operand(kind)
             }
-            ConditionalKind::IfEof => {
-                let scanned = self
-                    .scan_restricted_integer_retained(RestrictedIntegerClass::FourBit)
-                    .into_result()?;
-                if scanned.recovered {
-                    self.record_bad_number();
-                }
-                self.state
-                    .read_stream_at_eof(tex_state::world::StreamSlot::new(scanned.value as u8))
-            }
-            ConditionalKind::IfFontChar => {
-                let font = self.scan_font_selector_retained().into_result()?;
-                let character = self
-                    .scan_restricted_integer_retained(RestrictedIntegerClass::CharacterCode)
-                    .into_result()?
-                    .value;
-                u8::try_from(character)
-                    .ok()
-                    .is_some_and(|code| self.state.font_char_metrics(font, code).is_some())
-            }
-            ConditionalKind::IfCsName => {
-                let name = self.scan_csname_characters(String::new())?;
-                self.state
-                    .known_control_sequence(&name)
-                    .is_some_and(|symbol| self.state.meaning(symbol) != Meaning::Undefined)
-            }
-            _ => self.evaluate_boolean(kind)?,
-        };
-        self.complete_boolean(condition, result ^ inverted)
+            ConditionalKind::IfEof => self.evaluate_ifeof_operand(),
+            ConditionalKind::IfFontChar => self.evaluate_iffontchar_operand(),
+            ConditionalKind::IfCsName => self.evaluate_ifcsname_operand(),
+            ConditionalKind::IfCase => unreachable!("ifcase is completed by its caller"),
+            _ => self.evaluate_boolean(kind),
+        }
+    }
+
+    #[inline(always)]
+    fn evaluate_ifodd_operand(&mut self) -> Result<bool, CommandError> {
+        Ok(self.scan_integer_value_for_condition()? & 1 != 0)
+    }
+
+    #[inline(always)]
+    fn evaluate_ifnum_operand(&mut self, kind: ConditionalKind) -> Result<bool, CommandError> {
+        let absolute = kind == ConditionalKind::IfPdfAbsNum;
+        let left = self.scan_integer_value_for_condition()?;
+        let relation = self.scan_if_relation_hot(kind.canonical_name())?;
+        let right = self.scan_integer_value_for_condition()?;
+        let left = i64::from(left);
+        let right = i64::from(right);
+        Ok(relation.compare(
+            if absolute { left.abs() } else { left },
+            if absolute { right.abs() } else { right },
+        ))
+    }
+
+    #[inline(never)]
+    fn evaluate_ifdim_operand(&mut self, kind: ConditionalKind) -> Result<bool, CommandError> {
+        let absolute = kind == ConditionalKind::IfPdfAbsDim;
+        let left = self.scan_dimension_retained().into_result()?.value.raw() as i64;
+        let relation = self.scan_if_relation(kind.canonical_name())?;
+        let right = self.scan_dimension_retained().into_result()?.value.raw() as i64;
+        Ok(relation.compare(
+            if absolute { left.abs() } else { left },
+            if absolute { right.abs() } else { right },
+        ))
+    }
+
+    #[inline(never)]
+    fn evaluate_ifbox_operand(&mut self, kind: ConditionalKind) -> Result<bool, CommandError> {
+        let index = self.scan_profile_register_index_retained().into_result()?;
+        let box_kind = self.state.box_kind(index);
+        Ok(match kind {
+            ConditionalKind::IfVoid => box_kind.is_none(),
+            ConditionalKind::IfHBox => box_kind == Some(tex_state::CommandBoxKind::Horizontal),
+            ConditionalKind::IfVBox => box_kind == Some(tex_state::CommandBoxKind::Vertical),
+            _ => unreachable!("caller restricts ifbox kind"),
+        })
+    }
+
+    #[inline(never)]
+    fn evaluate_ifeof_operand(&mut self) -> Result<bool, CommandError> {
+        let scanned = self
+            .scan_restricted_integer_retained(RestrictedIntegerClass::FourBit)
+            .into_result()?;
+        if scanned.recovered {
+            self.record_bad_number();
+        }
+        Ok(self
+            .state
+            .read_stream_at_eof(tex_state::world::StreamSlot::new(scanned.value as u8)))
+    }
+
+    #[inline(never)]
+    fn evaluate_iffontchar_operand(&mut self) -> Result<bool, CommandError> {
+        let font = self.scan_font_selector_retained().into_result()?;
+        let character = self
+            .scan_restricted_integer_retained(RestrictedIntegerClass::CharacterCode)
+            .into_result()?
+            .value;
+        Ok(u8::try_from(character)
+            .ok()
+            .is_some_and(|code| self.state.font_char_metrics(font, code).is_some()))
+    }
+
+    #[inline(never)]
+    fn evaluate_ifcsname_operand(&mut self) -> Result<bool, CommandError> {
+        let name = self.scan_csname_characters(String::new())?;
+        Ok(self
+            .state
+            .known_control_sequence(&name)
+            .is_some_and(|symbol| self.state.meaning(symbol) != Meaning::Undefined))
     }
 
     /// e-TeX's compact `\\unless` path. The operand is a raw token, so it is
@@ -650,6 +719,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.expand_conditional_primitive(kind, true)
     }
 
+    #[inline(never)]
     fn complete_boolean(
         &mut self,
         condition: ConditionId,
@@ -1037,6 +1107,46 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
     }
 
+    /// Compact counterpart of [`Self::scan_if_relation`] for the recursive
+    /// integer lane. Relation characters need only their static meaning; the
+    /// rich command is formed solely when TeX must report and back up a
+    /// missing relation token.
+    #[inline(never)]
+    fn scan_if_relation_hot(&mut self, conditional: &str) -> Result<IfRelation, CommandError> {
+        let mut relation: Option<HotCommand<G>> = None;
+        if self.request_expanded_hot_token(&mut relation)? != crate::DeliveryStatus::Command {
+            return Err(CommandError::input_invariant());
+        }
+        let relation = relation.expect("command status initializes hot destination");
+        match relation.command_word().static_meaning() {
+            Some(Meaning::CharToken { ch: '<', .. }) => Ok(IfRelation::Less),
+            Some(Meaning::CharToken { ch: '=', .. }) => Ok(IfRelation::Equal),
+            Some(Meaning::CharToken { ch: '>', .. }) => Ok(IfRelation::Greater),
+            _ => self.back_missing_relation_hot(relation, conditional),
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn back_missing_relation_hot(
+        &mut self,
+        relation: HotCommand<G>,
+        conditional: &str,
+    ) -> Result<IfRelation, CommandError> {
+        let relation = relation.materialize();
+        // §503's `print_cmd_chr(if_test,this_if)` names the conditional whose
+        // relation is missing, so the message ends in the escaped primitive.
+        let name = crate::processor::expand_render::print_esc_text(self.state, conditional);
+        let message = format!("Missing = inserted for {name}");
+        self.back_error_reporting(
+            relation,
+            MISSING_RELATION_DIAGNOSTIC,
+            message,
+            &["I was expecting to see `<', `=', or `>'. Didn't."],
+        )?;
+        Ok(IfRelation::Equal)
+    }
+
     fn record_bad_number(&mut self) {
         observe!(
             self,
@@ -1282,10 +1392,11 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// TeX inserts its inaccessible frozen `\\relax` when a delimiter is
     /// encountered before the current conditional has consumed its operands.
     fn recover_incomplete_if(&mut self) -> Result<(), CommandError> {
-        let relax = self
-            .state
-            .primitive_token("relax")
-            .ok_or(CommandError::input_invariant())?;
+        // `frozen_relax` is TeX's inaccessible recovery token, not the
+        // ordinary registered `relax` control sequence.  Keeping this
+        // sentinel distinct lets the scanner consume the temporary current
+        // token without backing it into the caller's input.
+        let relax = Token::frozen_relax();
         let level = self.command.push_token_level(
             PackedTokenSpanHandle::transient([TracedTokenWord::pack(relax, OriginId::UNKNOWN)]),
             TokenBehavior::Recovery,

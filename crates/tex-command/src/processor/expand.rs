@@ -342,7 +342,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// small cursor instruction shared by scalar delivery and the main-loop
     /// character path; source rows and all exhaustion transitions stay in the
     /// cold reader below.
-    #[inline(always)]
+    #[inline(never)]
     fn read_selected_resident_word(
         &mut self,
         reader: ResidentFrameReader,
@@ -646,7 +646,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    #[inline(always)]
+    #[inline(never)]
     fn write_hot_word(
         &mut self,
         word: TokenWord,
@@ -739,7 +739,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         resolution.literal_catcode()
     }
 
-    #[inline(always)]
+    #[inline(never)]
     fn write_resident_word(
         &mut self,
         selected: ResidentWordRead<G>,
@@ -775,7 +775,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         ))
     }
 
-    #[inline(always)]
+    #[inline(never)]
     fn settle_hot_delivery(
         &mut self,
         command: &mut HotCommand<G>,
@@ -989,6 +989,62 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// classification, and expansion dispatch in one synchronous operation.
     /// Raw delivery has a separate loop because its command must be returned
     /// before TeX can decide whether to expand it.
+    #[inline(never)]
+    fn admit_expanded_hot_command(
+        &mut self,
+        reader: &mut ResidentFrameReader,
+        command: &mut Option<HotCommand<G>>,
+    ) -> Result<Option<DeliveryStatus>, CommandError> {
+        if matches!(reader.selection, ResidentFrameSelection::None) {
+            reader.refresh(self.command);
+        }
+        self.charge_command_action()?;
+        let literal_catcode = 'fetch: loop {
+            let selected = self.read_selected_resident_word(*reader)?;
+            match selected {
+                ResidentWordRead::Word {
+                    word,
+                    origin,
+                    identity,
+                    position,
+                    active_source,
+                    suppress_expandable,
+                    #[cfg(test)]
+                    storage_kind,
+                    #[cfg(feature = "profiling")]
+                    raw_kind,
+                } => {
+                    break 'fetch self.write_hot_word(
+                        word,
+                        origin,
+                        identity,
+                        position,
+                        active_source,
+                        suppress_expandable,
+                        #[cfg(test)]
+                        storage_kind,
+                        #[cfg(feature = "profiling")]
+                        raw_kind,
+                        command,
+                    );
+                }
+                selected => match self.transition_resident_word(selected, command)? {
+                    ResidentColdOutcome::Retry => reader.refresh(self.command),
+                    ResidentColdOutcome::Finished(status) => return Ok(Some(status)),
+                    ResidentColdOutcome::Synthetic { literal_catcode } => {
+                        reader.invalidate();
+                        break 'fetch literal_catcode;
+                    }
+                },
+            }
+        };
+        let command = command
+            .as_mut()
+            .expect("resident admission initializes the hot command");
+        self.settle_hot_delivery(command, literal_catcode)?;
+        Ok(None)
+    }
+
     fn expanded_next_hot(
         &mut self,
         destination: &mut Option<HotCommand<G>>,
@@ -1013,87 +1069,32 @@ impl<G> CommandProcessor<'_, '_, G> {
                     destination.is_none(),
                     "the caller-owned hot command must be empty before a resident fetch"
                 );
-                if matches!(reader.selection, ResidentFrameSelection::None) {
-                    reader.refresh(self.command);
-                }
-                if let Err(failure) = self.charge_command_action() {
-                    return self.fail_hot_expanded_delivery(destination, depth, failure);
-                }
-                let literal_catcode = 'fetch: loop {
-                    let selected = match self.read_selected_resident_word(reader) {
-                        Ok(selected) => selected,
-                        Err(failure) => {
-                            return self.fail_hot_expanded_delivery(destination, depth, failure);
-                        }
-                    };
-                    match selected {
-                        ResidentWordRead::Word {
-                            word,
-                            origin,
-                            identity,
-                            position,
-                            active_source,
-                            suppress_expandable,
-                            #[cfg(test)]
-                            storage_kind,
-                            #[cfg(feature = "profiling")]
-                            raw_kind,
-                        } => {
-                            break 'fetch self.write_hot_word(
-                                word,
-                                origin,
-                                identity,
-                                position,
-                                active_source,
-                                suppress_expandable,
-                                #[cfg(test)]
-                                storage_kind,
-                                #[cfg(feature = "profiling")]
-                                raw_kind,
-                                &mut command,
-                            );
-                        }
-                        selected => {
-                            let cold = match self.transition_resident_word(selected, &mut command) {
-                                Ok(cold) => cold,
-                                Err(failure) => {
-                                    return self.fail_hot_expanded_delivery(
-                                        destination,
-                                        depth,
-                                        failure,
-                                    );
-                                }
-                            };
-                            match cold {
-                                ResidentColdOutcome::Retry => reader.refresh(self.command),
-                                ResidentColdOutcome::Finished(status) => break 'delivery status,
-                                ResidentColdOutcome::Synthetic { literal_catcode } => {
-                                    reader.invalidate();
-                                    break 'fetch literal_catcode;
-                                }
-                            }
-                        }
+                match self.admit_expanded_hot_command(&mut reader, &mut command) {
+                    Ok(Some(status)) => break 'delivery status,
+                    Ok(None) => {}
+                    Err(failure) => {
+                        return self.fail_hot_expanded_delivery(destination, depth, failure);
                     }
-                };
-                let command_ref = command
-                    .as_mut()
-                    .expect("resident delivery initializes the hot command");
-                if let Err(failure) = self.settle_hot_delivery(command_ref, literal_catcode) {
-                    return self.fail_hot_expanded_delivery(destination, depth, failure);
                 }
             }
 
-            let hot_command = command
-                .as_mut()
-                .expect("resident delivery initializes the hot command");
-            let action = initial_action
-                .take()
-                .unwrap_or_else(|| classify_hot_command(hot_command));
+            let action = initial_action.take().unwrap_or_else(|| {
+                let hot_command = command
+                    .as_ref()
+                    .expect("resident delivery initializes the hot command");
+                classify_hot_command(hot_command)
+            });
             match action {
                 ExpandedCommandAction::Return => {
+                    let hot_command = command
+                        .as_ref()
+                        .expect("resident delivery initializes the hot command");
                     break self.finish_expanded_command(hot_command, delivery_expanded);
                 }
                 ExpandedCommandAction::EndTemplate => {
+                    let hot_command = command
+                        .as_mut()
+                        .expect("resident delivery initializes the hot command");
                     if matches!(
                         hot_command.alignment_adjustment(),
                         crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
@@ -1105,41 +1106,37 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 ExpandedCommandAction::Expand(ExpansionDispatch::Macro) => {
                     delivery_expanded = true;
-                    #[cfg(feature = "profiling")]
-                    {
-                        tex_state::measurement::record_hot_core_macro_expansion();
-                        if self.write_expansion_depth != 0 {
-                            self.record_write_expansion();
-                        }
+                    if let Err(failure) = self.expand_hot_definition_action(
+                        &mut command,
+                        &mut reader,
+                        ExpansionDispatch::Macro,
+                    ) {
+                        return self.fail_hot_expanded_delivery(destination, depth, failure);
                     }
-                    let result = self.macro_call_hot(hot_command).map(|_| ());
-                    if let Err(failure) = result {
-                        match failure {
-                            CommandError::ParagraphInMacroArgument
-                            | CommandError::OuterInMacroArgument => {}
-                            failure => {
-                                return self.fail_hot_expanded_delivery(
-                                    destination,
-                                    depth,
-                                    failure,
-                                );
-                            }
-                        }
-                    }
-                    command.take();
-                    reader.invalidate();
                 }
                 ExpandedCommandAction::Expand(ExpansionDispatch::Undefined) => {
                     delivery_expanded = true;
-                    if let Err(failure) = self.expand_undefined_hot(hot_command, true) {
+                    if let Err(failure) = self.expand_hot_definition_action(
+                        &mut command,
+                        &mut reader,
+                        ExpansionDispatch::Undefined,
+                    ) {
                         return self.fail_hot_expanded_delivery(destination, depth, failure);
                     }
-                    command.take();
                 }
                 ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(primitive)) => {
                     delivery_expanded = true;
-                    if let Err(failure) = self.expand_compact_occupied(hot_command, primitive, true)
+                    let hot_command = command
+                        .as_mut()
+                        .expect("resident delivery initializes the hot command");
+                    let result = if let Some(kind) =
+                        crate::conditionals::ConditionalKind::from_primitive(primitive)
                     {
+                        self.expand_conditional_occupied(hot_command, primitive, kind, true)
+                    } else {
+                        self.expand_compact_occupied(hot_command, primitive, true)
+                    };
+                    if let Err(failure) = result {
                         return self.fail_hot_expanded_delivery(destination, depth, failure);
                     }
                     command.take();
@@ -1161,6 +1158,50 @@ impl<G> CommandProcessor<'_, '_, G> {
             *destination = command.take();
         }
         Ok(status)
+    }
+
+    /// Keeps macro-definition and undefined-control-sequence handling out of
+    /// the ordinary conditional recursion frame. These branches share the
+    /// command ownership cleanup but are not part of the scalar hot path, so
+    /// their error storage lives in this out-of-line helper.
+    #[inline(never)]
+    fn expand_hot_definition_action(
+        &mut self,
+        command: &mut Option<HotCommand<G>>,
+        reader: &mut ResidentFrameReader,
+        action: ExpansionDispatch,
+    ) -> Result<(), CommandError> {
+        let hot_command = command
+            .as_mut()
+            .expect("definition expansion requires an admitted hot command");
+        match action {
+            ExpansionDispatch::Macro => {
+                #[cfg(feature = "profiling")]
+                {
+                    tex_state::measurement::record_hot_core_macro_expansion();
+                    if self.write_expansion_depth != 0 {
+                        self.record_write_expansion();
+                    }
+                }
+                if let Err(failure) = self.macro_call_hot(hot_command).map(|_| ()) {
+                    match failure {
+                        CommandError::ParagraphInMacroArgument
+                        | CommandError::OuterInMacroArgument => {}
+                        failure => return Err(failure),
+                    }
+                }
+                command.take();
+                reader.invalidate();
+            }
+            ExpansionDispatch::Undefined => {
+                self.expand_undefined_hot(hot_command, true)?;
+                command.take();
+            }
+            ExpansionDispatch::Primitive(_) => {
+                return Err(CommandError::input_invariant());
+            }
+        }
+        Ok(())
     }
 
     /// Completes a source or synthetic `endv` command after the main-loop
@@ -3080,6 +3121,42 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// boundary genuinely needs one (for example `\pdfprimitive`'s operand
     /// query or an error recovery report).
     #[inline(never)]
+    fn expand_conditional_occupied(
+        &mut self,
+        command: &HotCommand<G>,
+        _primitive: ExpandablePrimitive,
+        kind: crate::conditionals::ConditionalKind,
+        report_trace: bool,
+    ) -> Result<(), CommandError> {
+        #[cfg(feature = "profiling")]
+        {
+            tex_state::measurement::record_hot_core_expandable_opcode(
+                usize::try_from(_primitive.operand())
+                    .expect("expandable primitive operand fits usize"),
+            );
+            if self.write_expansion_depth != 0 {
+                self.record_write_expansion();
+            }
+        }
+        if report_trace && self.command.delivery_mode.tracing() {
+            self.print_hot_command_trace(command);
+        }
+        let result = self.expand_conditional_primitive(kind, false);
+        if result
+            .as_ref()
+            .is_err_and(CommandError::is_resource_suspension)
+        {
+            let error = result.expect_err("matched resource need");
+            self.command
+                .scratch
+                .unwind_resource_failure()
+                .map_err(crate::scan_toks::scratch_command_error)?;
+            return Err(error);
+        }
+        result
+    }
+
+    #[inline(never)]
     fn expand_compact_occupied(
         &mut self,
         command: &mut HotCommand<G>,
@@ -3107,145 +3184,20 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
 
         let origin = command.origin();
-        let result = (|| {
+        let result =
             if let Some(kind) = crate::conditionals::ConditionalKind::from_primitive(primitive) {
-                return self.expand_conditional_primitive(kind, false);
-            }
-            match primitive {
-                ExpandablePrimitive::Unless => self.expand_unless_compact(),
-                primitive @ (ExpandablePrimitive::Else
-                | ExpandablePrimitive::Or
-                | ExpandablePrimitive::Fi) => {
-                    self.expand_conditional_delimiter_hot(command, primitive)
-                }
-                ExpandablePrimitive::EndTemplate => self.insert_frozen_endv(),
-                ExpandablePrimitive::NoExpand => self.expand_noexpand(),
-                ExpandablePrimitive::ExpandAfter => self.expand_expandafter(),
-                ExpandablePrimitive::CsName => self.expand_csname(origin),
-                ExpandablePrimitive::String => self.expand_string(origin),
-                ExpandablePrimitive::Meaning => self.expand_meaning(origin),
-                ExpandablePrimitive::Number => self.expand_number_compact(origin, false),
-                ExpandablePrimitive::RomanNumeral => self.expand_number_compact(origin, true),
-                ExpandablePrimitive::The => {
-                    let mut target = None;
-                    match self.request_expanded_token(&mut target)? {
-                        DeliveryStatus::Command => {}
-                        _ => return Err(CommandError::input_invariant()),
+                self.expand_conditional_primitive(kind, false)
+            } else {
+                match primitive {
+                    ExpandablePrimitive::Unless => self.expand_unless_compact(),
+                    primitive @ (ExpandablePrimitive::Else
+                    | ExpandablePrimitive::Or
+                    | ExpandablePrimitive::Fi) => {
+                        self.expand_conditional_delimiter_hot(command, primitive)
                     }
-                    let target = target.take().ok_or(CommandError::input_invariant())?;
-                    let scanned = self.scan_internal_value_or_zero_from_target(&target)?;
-                    self.expand_the_value(origin, scanned.value)
+                    _ => self.expand_compact_occupied_nonconditional(command, primitive, origin),
                 }
-                ExpandablePrimitive::Unexpanded => self.expand_unexpanded(),
-                ExpandablePrimitive::Expanded => self.expand_expanded(),
-                ExpandablePrimitive::Detokenize => self.expand_detokenize(origin),
-                ExpandablePrimitive::Scantokens => self.expand_scantokens(),
-                ExpandablePrimitive::FontName => self.expand_fontname(origin),
-                ExpandablePrimitive::PdfFontName => self.expand_pdf_font_name(origin),
-                ExpandablePrimitive::PdfFontObjectNumber => {
-                    self.expand_pdf_font_object_number(origin)
-                }
-                ExpandablePrimitive::PdfFontSize => self.expand_pdf_font_size(origin),
-                ExpandablePrimitive::LeftMarginKern | ExpandablePrimitive::RightMarginKern => {
-                    self.expand_margin_kern(origin, primitive)
-                }
-                ExpandablePrimitive::Input => self.expand_input_hot(command),
-                ExpandablePrimitive::EndInput => self.expand_endinput(),
-                ExpandablePrimitive::JobName => {
-                    self.state.unsupported_host_capability();
-                    let job_name = self.host.job_name().to_owned();
-                    self.push_rendered_text(&job_name, origin);
-                    Ok(())
-                }
-                ExpandablePrimitive::ETeXRevision => {
-                    self.push_rendered_text(".6", origin);
-                    Ok(())
-                }
-                ExpandablePrimitive::PdfTeXRevision => {
-                    self.push_rendered_text("27", origin);
-                    Ok(())
-                }
-                ExpandablePrimitive::PdfTeXBanner => {
-                    self.push_rendered_text(
-                        "This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) kpathsea version 6.4.2",
-                        origin,
-                    );
-                    Ok(())
-                }
-                ExpandablePrimitive::PdfUniformDeviate => self.expand_pdf_uniform_deviate(origin),
-                ExpandablePrimitive::PdfNormalDeviate => {
-                    let value = self.state.pdf_normal_deviate();
-                    self.push_rendered_text(&value.to_string(), origin);
-                    Ok(())
-                }
-                ExpandablePrimitive::CreationDate => {
-                    let clock = self.state.job_clock();
-                    self.push_rendered_text(&format_pdf_date(clock, 0), origin);
-                    Ok(())
-                }
-                ExpandablePrimitive::ShellEscape => {
-                    let status = self
-                        .state
-                        .internal_integer(tex_state::meaning::InternalInteger::PdfShellEscape)
-                        .expect("the shell-escape status is an integer enquiry");
-                    self.push_rendered_text(&status.to_string(), origin);
-                    Ok(())
-                }
-                ExpandablePrimitive::StringCompare => self.expand_string_compare(origin),
-                ExpandablePrimitive::PdfEscapeString => self.expand_pdf_escape_string(origin),
-                ExpandablePrimitive::PdfEscapeHex => self.expand_pdf_escape_hex(origin),
-                ExpandablePrimitive::PdfUnescapeHex => self.expand_pdf_unescape_hex(origin),
-                ExpandablePrimitive::PdfColorStackInit => self.expand_pdf_color_stack_init(origin),
-                ExpandablePrimitive::PdfMatch => self.expand_pdf_match(origin),
-                ExpandablePrimitive::PdfLastMatch => self.expand_pdf_last_match(origin),
-                ExpandablePrimitive::PdfFileDump => self.expand_pdf_file_dump(origin),
-                ExpandablePrimitive::FileSize => self.expand_pdf_file_size(origin),
-                ExpandablePrimitive::PdfFileModificationDate => {
-                    self.expand_pdf_file_modification_date(origin)
-                }
-                ExpandablePrimitive::PdfMdFiveSum => self.expand_pdf_md_five_sum(origin),
-                ExpandablePrimitive::PdfInsertHeight => self.expand_pdf_insert_height(origin),
-                ExpandablePrimitive::PdfXImageBBox => self.expand_pdf_ximage_bbox(origin),
-                ExpandablePrimitive::PdfXFormName => self.expand_pdf_xform_name(origin),
-                ExpandablePrimitive::PdfPageRef => self.expand_pdf_page_ref(origin),
-                ExpandablePrimitive::PdfPrimitive => {
-                    let mut destination = None;
-                    match self.get_next_into(&mut destination)? {
-                        DeliveryStatus::End => return Err(CommandError::input_invariant()),
-                        DeliveryStatus::Command => {}
-                        _ => unreachable!("ordinary raw delivery returns only commands"),
-                    }
-                    let target = destination
-                        .take()
-                        .expect("command status initializes destination");
-                    let Some(symbol) = target.control_sequence() else {
-                        return Ok(());
-                    };
-                    let name = self.state.resolve(symbol);
-                    let Some(frozen) = self.state.primitive_token(name) else {
-                        return Ok(());
-                    };
-                    self.back_input_token(TracedTokenWord::pack(frozen, target.origin()))
-                }
-                ExpandablePrimitive::TopMark
-                | ExpandablePrimitive::FirstMark
-                | ExpandablePrimitive::BotMark
-                | ExpandablePrimitive::SplitFirstMark
-                | ExpandablePrimitive::SplitBotMark => self.expand_mark(primitive),
-                ExpandablePrimitive::TopMarks
-                | ExpandablePrimitive::FirstMarks
-                | ExpandablePrimitive::BotMarks
-                | ExpandablePrimitive::SplitFirstMarks
-                | ExpandablePrimitive::SplitBotMarks => self.expand_mark_class(primitive),
-                ExpandablePrimitive::ETeXVersion
-                | ExpandablePrimitive::IfPdfPrimitive
-                | ExpandablePrimitive::PdfEscapeName => {
-                    Err(CommandError::UnsupportedExpandablePrimitive(primitive))
-                }
-                ExpandablePrimitive::EndCsName => Err(CommandError::input_invariant()),
-                _ => Err(CommandError::UnsupportedExpandablePrimitive(primitive)),
-            }
-        })();
+            };
         if result
             .as_ref()
             .is_err_and(CommandError::is_resource_suspension)
@@ -3258,6 +3210,150 @@ impl<G> CommandProcessor<'_, '_, G> {
             return Err(error);
         }
         result
+    }
+
+    /// Dispatches the non-conditional expandable families.  Conditional
+    /// operands are the one deeply recursive ordinary path, so keeping this
+    /// large closed match out of [`Self::expand_compact_occupied`] avoids
+    /// reserving its diagnostic and conversion temporaries in every waiting
+    /// conditional frame.
+    #[inline(never)]
+    fn expand_compact_occupied_nonconditional(
+        &mut self,
+        command: &mut HotCommand<G>,
+        primitive: ExpandablePrimitive,
+        origin: OriginId,
+    ) -> Result<(), CommandError> {
+        match primitive {
+            ExpandablePrimitive::EndTemplate => self.insert_frozen_endv(),
+            ExpandablePrimitive::NoExpand => self.expand_noexpand(),
+            ExpandablePrimitive::ExpandAfter => self.expand_expandafter(),
+            ExpandablePrimitive::CsName => self.expand_csname(origin),
+            ExpandablePrimitive::String => self.expand_string(origin),
+            ExpandablePrimitive::Meaning => self.expand_meaning(origin),
+            ExpandablePrimitive::Number => self.expand_number_compact(origin, false),
+            ExpandablePrimitive::RomanNumeral => self.expand_number_compact(origin, true),
+            ExpandablePrimitive::The => {
+                let mut target = None;
+                match self.request_expanded_token(&mut target)? {
+                    DeliveryStatus::Command => {}
+                    _ => return Err(CommandError::input_invariant()),
+                }
+                let target = target.take().ok_or(CommandError::input_invariant())?;
+                let scanned = self.scan_internal_value_or_zero_from_target(&target)?;
+                self.expand_the_value(origin, scanned.value)
+            }
+            ExpandablePrimitive::Unexpanded => self.expand_unexpanded(),
+            ExpandablePrimitive::Expanded => self.expand_expanded(),
+            ExpandablePrimitive::Detokenize => self.expand_detokenize(origin),
+            ExpandablePrimitive::Scantokens => self.expand_scantokens(),
+            ExpandablePrimitive::FontName => self.expand_fontname(origin),
+            ExpandablePrimitive::PdfFontName => self.expand_pdf_font_name(origin),
+            ExpandablePrimitive::PdfFontObjectNumber => self.expand_pdf_font_object_number(origin),
+            ExpandablePrimitive::PdfFontSize => self.expand_pdf_font_size(origin),
+            ExpandablePrimitive::LeftMarginKern | ExpandablePrimitive::RightMarginKern => {
+                self.expand_margin_kern(origin, primitive)
+            }
+            ExpandablePrimitive::Input => self.expand_input_hot(command),
+            ExpandablePrimitive::EndInput => self.expand_endinput(),
+            ExpandablePrimitive::JobName => {
+                self.state.unsupported_host_capability();
+                let job_name = self.host.job_name().to_owned();
+                self.push_rendered_text(&job_name, origin);
+                Ok(())
+            }
+            ExpandablePrimitive::ETeXRevision => {
+                self.push_rendered_text(".6", origin);
+                Ok(())
+            }
+            ExpandablePrimitive::PdfTeXRevision => {
+                self.push_rendered_text("27", origin);
+                Ok(())
+            }
+            ExpandablePrimitive::PdfTeXBanner => {
+                self.push_rendered_text(
+                    "This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) kpathsea version 6.4.2",
+                    origin,
+                );
+                Ok(())
+            }
+            ExpandablePrimitive::PdfUniformDeviate => self.expand_pdf_uniform_deviate(origin),
+            ExpandablePrimitive::PdfNormalDeviate => {
+                let value = self.state.pdf_normal_deviate();
+                self.push_rendered_text(&value.to_string(), origin);
+                Ok(())
+            }
+            ExpandablePrimitive::CreationDate => {
+                let clock = self.state.job_clock();
+                self.push_rendered_text(&format_pdf_date(clock, 0), origin);
+                Ok(())
+            }
+            ExpandablePrimitive::ShellEscape => {
+                let status = self
+                    .state
+                    .internal_integer(tex_state::meaning::InternalInteger::PdfShellEscape)
+                    .expect("the shell-escape status is an integer enquiry");
+                self.push_rendered_text(&status.to_string(), origin);
+                Ok(())
+            }
+            ExpandablePrimitive::StringCompare => self.expand_string_compare(origin),
+            ExpandablePrimitive::PdfEscapeString => self.expand_pdf_escape_string(origin),
+            ExpandablePrimitive::PdfEscapeHex => self.expand_pdf_escape_hex(origin),
+            ExpandablePrimitive::PdfUnescapeHex => self.expand_pdf_unescape_hex(origin),
+            ExpandablePrimitive::PdfColorStackInit => self.expand_pdf_color_stack_init(origin),
+            ExpandablePrimitive::PdfMatch => self.expand_pdf_match(origin),
+            ExpandablePrimitive::PdfLastMatch => self.expand_pdf_last_match(origin),
+            ExpandablePrimitive::PdfFileDump => self.expand_pdf_file_dump(origin),
+            ExpandablePrimitive::FileSize => self.expand_pdf_file_size(origin),
+            ExpandablePrimitive::PdfFileModificationDate => {
+                self.expand_pdf_file_modification_date(origin)
+            }
+            ExpandablePrimitive::PdfMdFiveSum => self.expand_pdf_md_five_sum(origin),
+            ExpandablePrimitive::PdfInsertHeight => self.expand_pdf_insert_height(origin),
+            ExpandablePrimitive::PdfXImageBBox => self.expand_pdf_ximage_bbox(origin),
+            ExpandablePrimitive::PdfXFormName => self.expand_pdf_xform_name(origin),
+            ExpandablePrimitive::PdfPageRef => self.expand_pdf_page_ref(origin),
+            ExpandablePrimitive::PdfPrimitive => {
+                let mut destination = None;
+                match self.get_next_into(&mut destination)? {
+                    DeliveryStatus::End => return Err(CommandError::input_invariant()),
+                    DeliveryStatus::Command => {}
+                    _ => unreachable!("ordinary raw delivery returns only commands"),
+                }
+                let target = destination
+                    .take()
+                    .expect("command status initializes destination");
+                let Some(symbol) = target.control_sequence() else {
+                    return Ok(());
+                };
+                let name = self.state.resolve(symbol);
+                let Some(frozen) = self.state.primitive_token(name) else {
+                    return Ok(());
+                };
+                self.back_input_token(TracedTokenWord::pack(frozen, target.origin()))
+            }
+            ExpandablePrimitive::TopMark
+            | ExpandablePrimitive::FirstMark
+            | ExpandablePrimitive::BotMark
+            | ExpandablePrimitive::SplitFirstMark
+            | ExpandablePrimitive::SplitBotMark => self.expand_mark(primitive),
+            ExpandablePrimitive::TopMarks
+            | ExpandablePrimitive::FirstMarks
+            | ExpandablePrimitive::BotMarks
+            | ExpandablePrimitive::SplitFirstMarks
+            | ExpandablePrimitive::SplitBotMarks => self.expand_mark_class(primitive),
+            ExpandablePrimitive::ETeXVersion
+            | ExpandablePrimitive::IfPdfPrimitive
+            | ExpandablePrimitive::PdfEscapeName => {
+                Err(CommandError::UnsupportedExpandablePrimitive(primitive))
+            }
+            ExpandablePrimitive::EndCsName => Err(CommandError::input_invariant()),
+            ExpandablePrimitive::Unless
+            | ExpandablePrimitive::Else
+            | ExpandablePrimitive::Or
+            | ExpandablePrimitive::Fi => Err(CommandError::input_invariant()),
+            _ => Err(CommandError::UnsupportedExpandablePrimitive(primitive)),
+        }
     }
 
     /// Handles the one expandable branch that is not represented by an
