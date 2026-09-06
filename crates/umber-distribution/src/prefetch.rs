@@ -776,11 +776,24 @@ impl PrefetchPolicy {
         self.admitted.contains(&request_key.identity())
     }
 
-    /// Reports whether a typed file key's runtime payload has been scanned for
-    /// bounded lexical follow-up hints.  This is host telemetry only.
+    /// Reports whether this admission would enter the bounded runtime scan.
+    /// Hosts use this only to label an opt-in diagnostic; the admission path
+    /// itself remains unchanged.
     #[must_use]
-    pub fn file_key_was_scanned(&self, request_key: &PrefetchFileKey) -> bool {
-        self.scanned.contains(&request_key.identity())
+    pub fn runtime_scan_is_allowed(
+        &self,
+        request_key: &PrefetchFileKey,
+        byte_count: usize,
+    ) -> bool {
+        let identity = request_key.identity();
+        let byte_count = byte_count as u64;
+        !self.scanned.contains(&identity)
+            && byte_count <= self.budget.max_runtime_scan_bytes
+            && byte_count
+                <= self
+                    .budget
+                    .max_runtime_scan_bytes
+                    .saturating_sub(self.scanned_runtime_bytes)
     }
 
     /// Selects one host batch against the policy's cumulative per-run
@@ -1072,7 +1085,7 @@ impl PrefetchPolicy {
             self.enqueue(dependency);
         }
         let class = self.classes.get(&identity).copied().unwrap_or(class);
-        if class != PrefetchClass::SmallRuntime || self.scanned.contains(&identity) {
+        if class != PrefetchClass::SmallRuntime || !self.scanned.insert(identity) {
             return;
         }
         let byte_count = bytes.len() as u64;
@@ -1085,11 +1098,6 @@ impl PrefetchPolicy {
         {
             return;
         }
-        // Mark a runtime file only after it passes the bounded scan budget so
-        // the host diagnostic can distinguish admitted text from text whose
-        // lexical follow-up scan was skipped. Admission itself remains the
-        // deduplication boundary above.
-        self.scanned.insert(identity);
         self.scanned_runtime_bytes = self.scanned_runtime_bytes.saturating_add(byte_count);
         self.metrics.scanned_runtime_bytes = self
             .metrics

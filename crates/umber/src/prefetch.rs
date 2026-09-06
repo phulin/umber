@@ -279,6 +279,10 @@ impl PrefetchPlanner {
         let was_admitted = diagnostic_key
             .as_ref()
             .is_some_and(|key| self.policy.file_key_is_admitted(key));
+        let runtime_scan_allowed = diagnostic_key.as_ref().is_some_and(|key| {
+            class == PrefetchClass::SmallRuntime
+                && self.policy.runtime_scan_is_allowed(key, bytes.len())
+        });
         let Some(parent) =
             policy_request(&ResourceRequest::File(request.clone()), "admission", false)
         else {
@@ -292,7 +296,7 @@ impl PrefetchPlanner {
             } else {
                 self.note_diagnostic(&key, PrefetchDiagnosticDisposition::ContentAdmitted);
                 if class == PrefetchClass::SmallRuntime {
-                    let disposition = if self.policy.file_key_was_scanned(&key) {
+                    let disposition = if runtime_scan_allowed {
                         PrefetchDiagnosticDisposition::RuntimeTextScanned
                     } else {
                         PrefetchDiagnosticDisposition::RuntimeTextScanSkipped
