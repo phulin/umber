@@ -8222,6 +8222,29 @@ fn committed_token_scanner_attempt_is_discarded_before_named_checkpoint() {
 }
 
 #[test]
+fn diagnostic_expand_step_preserves_undefined_for_the_diagnostic_host() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(&mut control, br"\undefined");
+        match control
+            .diagnostic_expand_step(stores)
+            .expect("diagnostic expansion observes the undefined command")
+        {
+            DiagnosticStepResult::Progress(DiagnosticStep::Token { meaning, .. }) => {
+                assert_eq!(
+                    meaning,
+                    Meaning::Undefined,
+                    "the diagnostic host receives the undefined command instead of recovering"
+                );
+            }
+            other => {
+                panic!("diagnostic expansion must return the undefined token, got {other:?}")
+            }
+        }
+    });
+}
+
+#[test]
 fn diagnostic_assignment_discards_font_need_before_checkpoint_capture() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);
