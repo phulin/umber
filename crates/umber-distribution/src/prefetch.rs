@@ -572,7 +572,10 @@ impl PrefetchClass {
         if matches!(extension.as_str(), "png" | "jpg" | "jpeg" | "eps" | "svg") {
             return Self::Image;
         }
-        if matches!(extension.as_str(), "tex" | "sty" | "cls" | "def" | "ltx") {
+        if matches!(
+            extension.as_str(),
+            "tex" | "sty" | "cls" | "def" | "ltx" | "fd"
+        ) {
             return Self::SmallRuntime;
         }
         if matches!(extension.as_str(), "pdf" | "ps" | "dvi") {

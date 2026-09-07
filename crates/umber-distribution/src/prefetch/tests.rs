@@ -237,6 +237,78 @@ fn font_metric_prefetch_requests_use_tfm_identity_and_font_budget_class() {
 }
 
 #[test]
+fn admitted_font_definition_scans_typed_metrics_with_bounded_closure() {
+    let source = br#"
+\DeclareFontShape{OT1}{ptm}{m}{n}{<-> ptmr7t}
+\DeclareFontShape{OT1}{ptm}{b}{n}{<-> ptmb7t}
+\DeclareFontShape{OT1}{ptm}{m}{it}{<-> ptmri7t}
+\DeclareFontShape{OT1}{ptm}{b}{it}{<-> ptmbi7t}
+"#;
+    let definition_key =
+        PrefetchFileKey::new("tex", "tex", "ot1ptm.fd").expect("typed font definition key");
+    let definition = PrefetchRequest::for_file_key(
+        definition_key,
+        "tex:ot1ptm.fd",
+        "ot1ptm.fd",
+        "literal",
+        false,
+    );
+    assert_eq!(definition.class, PrefetchClass::SmallRuntime);
+    assert_eq!(
+        PrefetchClass::for_key("tex:OT1PTM.FD"),
+        PrefetchClass::SmallRuntime
+    );
+    assert_eq!(
+        PrefetchClass::for_key("tex:ptmr7t.tfm"),
+        PrefetchClass::Other
+    );
+    assert_eq!(
+        PrefetchClass::for_key("tex:ptmr7t.pfb"),
+        PrefetchClass::Other
+    );
+
+    let mut policy = PrefetchPolicy::new(PrefetchBudget {
+        max_followup_depth: 1,
+        max_followup_hints: 4,
+        max_runtime_scan_bytes: source.len() as u64,
+        ..PrefetchBudget::default()
+    });
+    assert!(policy.enqueue(definition.clone()));
+    let drained = policy.drain(1);
+    assert_eq!(drained.len(), 1);
+    assert_eq!(drained[0], definition);
+
+    // Use the normal request class derived from the transport key. This is
+    // the same admission path used by native and WASM hosts; no runtime class
+    // override is supplied here.
+    policy.admitted_request_with_metadata(&definition, source, std::iter::empty());
+    assert_eq!(policy.metrics().scanned_runtime_bytes, source.len() as u64);
+    assert_eq!(policy.metrics().followup_hints, 4);
+
+    let metrics = policy.drain(8);
+    let expected_names = ["ptmr7t.tfm", "ptmb7t.tfm", "ptmri7t.tfm", "ptmbi7t.tfm"];
+    assert_eq!(
+        metrics
+            .iter()
+            .map(|request| request.key.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "tfm:ptmr7t.tfm",
+            "tfm:ptmb7t.tfm",
+            "tfm:ptmri7t.tfm",
+            "tfm:ptmbi7t.tfm",
+        ]
+    );
+    assert!(metrics.iter().zip(expected_names).all(|(request, name)| {
+        request.class == PrefetchClass::Font
+            && request.depth() == 1
+            && request.file_key
+                == Some(PrefetchFileKey::new("tex", "tfm", name).expect("typed TFM key"))
+    }));
+    assert!(policy.drain(8).is_empty());
+}
+
+#[test]
 fn group_selection_keeps_required_and_separate_class_budgets() {
     let entry = |key: &str, bytes: u64| PrefetchCandidate {
         key: key.to_owned(),

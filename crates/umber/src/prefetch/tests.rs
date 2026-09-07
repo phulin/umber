@@ -90,6 +90,71 @@ fn planner_scans_only_after_admission_and_keeps_spelling() {
 }
 
 #[test]
+fn planner_scans_admitted_font_definition_for_typed_metrics() {
+    let mut planner = planner_with_budget(PrefetchBudget {
+        max_followup_depth: 1,
+        max_followup_hints: 4,
+        ..PrefetchBudget::default()
+    });
+    let definition = FileRequest::new(
+        FileRequestKey::new(FileKind::TexInput, "ot1ptm.fd").expect("key"),
+        "ot1ptm.fd",
+    );
+    planner.enqueue_escalation([definition.clone()]);
+    assert_eq!(
+        planner.drain_followups(),
+        vec![ResourceRequest::File(definition.clone())]
+    );
+
+    planner.admit_file(
+        &definition,
+        br#"
+\DeclareFontShape{OT1}{ptm}{m}{n}{<-> ptmr7t}
+\DeclareFontShape{OT1}{ptm}{b}{n}{<-> ptmb7t}
+\DeclareFontShape{OT1}{ptm}{m}{it}{<-> ptmri7t}
+\DeclareFontShape{OT1}{ptm}{b}{it}{<-> ptmbi7t}
+"#,
+    );
+    let metrics = planner.drain_followups();
+    assert_eq!(
+        metrics
+            .iter()
+            .map(|request| match request {
+                ResourceRequest::File(file) => (file.key().kind(), file.key().name()),
+                ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => {
+                    (FileKind::TexInput, "")
+                }
+            })
+            .collect::<Vec<_>>(),
+        vec![
+            (FileKind::Tfm, "ptmr7t.tfm"),
+            (FileKind::Tfm, "ptmb7t.tfm"),
+            (FileKind::Tfm, "ptmri7t.tfm"),
+            (FileKind::Tfm, "ptmbi7t.tfm"),
+        ]
+    );
+    for request in &metrics {
+        let ResourceRequest::File(file) = request else {
+            panic!("expected typed TFM file request");
+        };
+        let key = prefetch_file_key(file.key()).expect("typed TFM key");
+        assert_eq!(
+            policy_request(request, "test", false)
+                .expect("policy TFM request")
+                .class,
+            PrefetchClass::Font
+        );
+        assert_eq!(
+            planner
+                .discovery_context
+                .get(&key)
+                .map(|context| context.depth),
+            Some(1)
+        );
+    }
+}
+
+#[test]
 fn planner_admission_queues_authenticated_dependency_hints() {
     let mut planner = planner();
     let root = FileRequest::new(
