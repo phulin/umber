@@ -1,10 +1,14 @@
 use super::*;
 
 fn planner() -> PrefetchPlanner {
+    planner_with_budget(PrefetchBudget::default())
+}
+
+fn planner_with_budget(budget: PrefetchBudget) -> PrefetchPlanner {
     PrefetchPlanner::new(
         PrefetchIdentity::new("pdftex", "latex", "dvi", "root", PREFETCH_POLICY_VERSION)
             .expect("identity"),
-        PrefetchBudget::default(),
+        budget,
     )
 }
 
@@ -146,6 +150,166 @@ fn planner_drains_admitted_literals_before_metadata_peers() {
             })
             .collect::<Vec<_>>(),
         ["companion.sty"]
+    );
+}
+
+#[test]
+fn native_prefetch_conversion_preserves_literal_depth() {
+    let mut planner = planner_with_budget(PrefetchBudget {
+        max_followup_depth: 2,
+        ..PrefetchBudget::default()
+    });
+    let root = FileRequest::new(
+        FileRequestKey::new(FileKind::TexInput, "root.sty").expect("root key"),
+        "root.sty",
+    );
+    planner.enqueue_escalation([root.clone()]);
+    let drained_root = planner.drain_followups();
+    let [ResourceRequest::File(root_request)] = drained_root.as_slice() else {
+        panic!("expected native root request");
+    };
+    assert_eq!(root_request.key(), root.key());
+    planner.admit_file(&root, br#"\input{literal-child.tex}"#);
+    let drained_child = planner.drain_followups();
+    let [ResourceRequest::File(child)] = drained_child.as_slice() else {
+        panic!("expected native literal child request");
+    };
+    let key = prefetch_file_key(child.key()).expect("typed child key");
+    let context = planner
+        .discovery_context
+        .get(&key)
+        .copied()
+        .expect("child context retained across conversion");
+    assert_eq!(context.origin, PrefetchOrigin::RuntimeLiteral);
+    assert_eq!(context.depth, 1);
+    let grandchild = FileRequest::new(
+        FileRequestKey::new(FileKind::TexInput, "literal-grandchild.tex").expect("grandchild key"),
+        "literal-grandchild.tex",
+    );
+    planner.admit_file(&child, br#"\input{literal-grandchild.tex}"#);
+    assert_eq!(
+        planner.drain_followups(),
+        vec![ResourceRequest::File(grandchild.clone())]
+    );
+    let grandchild_key = prefetch_file_key(grandchild.key()).expect("typed grandchild key");
+    assert_eq!(
+        planner
+            .discovery_context
+            .get(&grandchild_key)
+            .expect("grandchild context retained across conversion")
+            .depth,
+        2
+    );
+}
+
+#[test]
+fn native_metadata_child_is_a_leaf_at_admission() {
+    let mut planner = planner();
+    let root = FileRequest::new(
+        FileRequestKey::new(FileKind::TexInput, "root.sty").expect("root key"),
+        "root.sty",
+    );
+    let child = FileRequest::new(
+        FileRequestKey::new(FileKind::TexInput, "metadata-child.sty").expect("child key"),
+        "metadata-child.sty",
+    );
+    let grandchild = FileRequest::new(
+        FileRequestKey::new(FileKind::TexInput, "metadata-grandchild.sty").expect("grandchild key"),
+        "metadata-grandchild.sty",
+    );
+    planner.admit_file_with_metadata(&root, "/tex/root.sty", b"root", [child.clone()]);
+    assert_eq!(
+        planner.drain_followups(),
+        vec![ResourceRequest::File(child.clone())]
+    );
+    planner.admit_file_with_metadata(
+        &child,
+        "/tex/metadata-child.sty",
+        b"child",
+        [grandchild.clone()],
+    );
+    assert!(
+        planner.drain_followups().is_empty(),
+        "metadata child must not enqueue catalogue peers"
+    );
+}
+
+#[test]
+fn native_deferred_metadata_child_remains_a_leaf_after_phase_renewal() {
+    let mut planner = planner();
+    let root = FileRequest::new(
+        FileRequestKey::new(FileKind::TexInput, "root.sty").expect("root key"),
+        "root.sty",
+    );
+    let child = FileRequest::new(
+        FileRequestKey::new(FileKind::TexInput, "deferred-metadata.sty").expect("child key"),
+        "deferred-metadata.sty",
+    );
+    let grandchild = FileRequest::new(
+        FileRequestKey::new(FileKind::TexInput, "deferred-grandchild.sty").expect("grandchild key"),
+        "deferred-grandchild.sty",
+    );
+    planner.admit_file_with_metadata(&root, "/tex/root.sty", b"root", [child.clone()]);
+    let drained_batch = planner.drain_followups();
+    let [ResourceRequest::File(drained)] = drained_batch.as_slice() else {
+        panic!("expected metadata child");
+    };
+    planner.defer_prefetch(&ResourceRequest::File(drained.clone()));
+    planner.begin_phase();
+    assert_eq!(
+        planner.drain_followups(),
+        vec![ResourceRequest::File(child.clone())]
+    );
+    planner.admit_file_with_metadata(&child, "/tex/deferred-metadata.sty", b"child", [grandchild]);
+    assert!(planner.drain_followups().is_empty());
+    for _ in 0..4 {
+        planner.begin_phase();
+        assert!(
+            planner.drain_followups().is_empty(),
+            "new phases must not replay transitive metadata peers"
+        );
+    }
+}
+
+#[test]
+fn native_actual_demand_promotes_a_guessed_metadata_parent_to_root() {
+    let mut planner = planner();
+    let root = FileRequest::new(
+        FileRequestKey::new(FileKind::TexInput, "root.sty").expect("root key"),
+        "root.sty",
+    );
+    let child = FileRequest::new(
+        FileRequestKey::new(FileKind::TexInput, "promoted-child.sty").expect("child key"),
+        "promoted-child.sty",
+    );
+    let grandchild = FileRequest::new(
+        FileRequestKey::new(FileKind::TexInput, "promoted-grandchild.sty").expect("grandchild key"),
+        "promoted-grandchild.sty",
+    );
+    planner.admit_file_with_metadata(&root, "/tex/root.sty", b"root", [child.clone()]);
+    assert_eq!(
+        planner.drain_followups(),
+        vec![ResourceRequest::File(child.clone())]
+    );
+    planner.note_actual_demand(&ResourceRequest::File(child.clone()));
+    let key = prefetch_file_key(child.key()).expect("typed child key");
+    assert_eq!(
+        planner
+            .discovery_context
+            .get(&key)
+            .expect("promoted context")
+            .origin,
+        PrefetchOrigin::ActualDemand
+    );
+    planner.admit_file_with_metadata(
+        &child,
+        "/tex/promoted-child.sty",
+        b"child",
+        [grandchild.clone()],
+    );
+    assert_eq!(
+        planner.drain_followups(),
+        vec![ResourceRequest::File(grandchild)]
     );
 }
 

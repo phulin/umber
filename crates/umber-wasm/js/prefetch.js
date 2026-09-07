@@ -28,6 +28,7 @@ function rustRequestInput(request, required = false) {
 			Number.isSafeInteger(request.depth) && request.depth >= 0
 				? request.depth
 				: 0,
+		...(typeof request.origin === "string" ? { origin: request.origin } : {}),
 	};
 }
 
@@ -49,6 +50,7 @@ function rustRequestOutput(request) {
 		originalName: request.originalSpelling ?? request.name,
 		searchContext: request.searchContext ?? "literal",
 		depth: request.depth ?? 0,
+		...(typeof request.origin === "string" ? { origin: request.origin } : {}),
 	};
 }
 

@@ -450,6 +450,58 @@ pub enum PrefetchClass {
     Other,
 }
 
+/// Provenance of a predictive request.
+///
+/// This is scheduling metadata, not a resolver or resource identity.  In
+/// particular, an authenticated metadata dependency is deliberately distinct
+/// from a source/literal or actual-demand root: metadata parents are leaves for
+/// further metadata traversal.  Keeping this typed avoids making traversal
+/// policy depend on the diagnostic/search-context spelling carried alongside a
+/// request.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum PrefetchOrigin {
+    /// A legacy transport-only request with no stronger provenance.
+    Unknown,
+    /// A request seeded directly from the source or an explicit host seed.
+    Source,
+    Explicit,
+    /// A request replayed from the prior accepted lookup manifest.
+    PriorObserved,
+    /// A literal source hint discovered from an admitted runtime file.
+    Literal,
+    RuntimeLiteral,
+    /// An authenticated catalogue dependency. Metadata parents are leaves.
+    Metadata,
+    /// A resource actually demanded or probed by the engine.
+    ActualDemand,
+    /// A bounded replay escalation of already-observed closure evidence.
+    ReplayEscalation,
+}
+
+impl PrefetchOrigin {
+    #[must_use]
+    pub const fn is_metadata_leaf(self) -> bool {
+        matches!(self, Self::Metadata)
+    }
+
+    /// Stronger actual origins win when one semantic key is rediscovered by
+    /// multiple sources. This order is intentionally independent of queue
+    /// priority: priority controls scheduling, while origin controls graph
+    /// traversal and root promotion.
+    #[must_use]
+    pub const fn strength(self) -> u8 {
+        match self {
+            Self::Unknown => 0,
+            Self::Metadata => 1,
+            Self::RuntimeLiteral => 2,
+            Self::Literal => 3,
+            Self::PriorObserved => 4,
+            Self::Source | Self::Explicit | Self::ReplayEscalation => 5,
+            Self::ActualDemand => 6,
+        }
+    }
+}
+
 /// Complete semantic identity carried by the prefetch policy.
 ///
 /// Distribution catalogue keys are intentionally many-to-one for several
@@ -670,6 +722,7 @@ pub struct PrefetchRequest {
     pub search_context: String,
     pub class: PrefetchClass,
     pub required: bool,
+    origin: PrefetchOrigin,
     depth: usize,
 }
 
@@ -692,6 +745,7 @@ impl PrefetchRequest {
             original_spelling: original_spelling.into(),
             search_context: search_context.into(),
             required,
+            origin: PrefetchOrigin::Unknown,
             depth: 0,
         }
     }
@@ -714,6 +768,7 @@ impl PrefetchRequest {
             original_spelling: original_spelling.into(),
             search_context: search_context.into(),
             required,
+            origin: PrefetchOrigin::Unknown,
             depth: 0,
         }
     }
@@ -732,6 +787,11 @@ impl PrefetchRequest {
     }
 
     #[must_use]
+    pub const fn origin(&self) -> PrefetchOrigin {
+        self.origin
+    }
+
+    #[must_use]
     pub fn with_class(mut self, class: PrefetchClass) -> Self {
         self.class = class;
         self
@@ -742,6 +802,26 @@ impl PrefetchRequest {
         self.depth = depth;
         self
     }
+
+    #[must_use]
+    pub fn with_origin(mut self, origin: PrefetchOrigin) -> Self {
+        self.origin = origin;
+        self
+    }
+
+    fn merge_discovery_context(mut self, other: &Self) -> Self {
+        match other.origin.strength().cmp(&self.origin.strength()) {
+            std::cmp::Ordering::Greater => {
+                self.origin = other.origin;
+                self.depth = other.depth;
+            }
+            std::cmp::Ordering::Equal => {
+                self.depth = self.depth.min(other.depth);
+            }
+            std::cmp::Ordering::Less => {}
+        }
+        self
+    }
 }
 
 fn literal_hint_request(
@@ -750,6 +830,7 @@ fn literal_hint_request(
     required: bool,
     typed: bool,
     depth: usize,
+    origin: PrefetchOrigin,
 ) -> Option<PrefetchRequest> {
     let name = hint.normalized_name();
     let file_kind = hint.kind.file_kind();
@@ -785,7 +866,12 @@ fn literal_hint_request(
             required,
         )
     };
-    Some(request.with_class(class).with_depth(depth))
+    Some(
+        request
+            .with_class(class)
+            .with_depth(depth)
+            .with_origin(origin),
+    )
 }
 
 /// Stable region identity supplied by a retained checkpoint owner.
@@ -973,6 +1059,34 @@ impl PrefetchPolicy {
         self.admitted.contains(&request_key.identity())
     }
 
+    /// Replaces the retained lexical depth for a request whose typed host has
+    /// just promoted it to an actual demand. This is intentionally a narrow
+    /// host seam: the planner owns the origin decision, while the policy keeps
+    /// the depth used by its admission scanner.
+    pub fn set_request_depth(&mut self, request: &PrefetchRequest, depth: usize) {
+        self.depths.insert(request.identity(), depth);
+    }
+
+    /// Reports whether a request is still deferred after an optional phase
+    /// declined it. Hosts use this to retire failed in-flight context without
+    /// dropping context that must survive the next phase renewal.
+    #[must_use]
+    pub fn request_is_deferred(&self, request: &PrefetchRequest) -> bool {
+        self.deferred.contains_key(&request.identity())
+    }
+
+    /// Reports whether a request remains owned by the queue/in-flight ledger.
+    /// This lets an adapter discard planner-only context when a speculative
+    /// response fails without retaining an unbounded history map.
+    #[must_use]
+    pub fn request_is_tracked(&self, request: &PrefetchRequest) -> bool {
+        let identity = request.identity();
+        self.admitted.contains(&identity)
+            || self.queued.contains_key(&identity)
+            || self.attempted.contains(&identity)
+            || self.deferred.contains_key(&identity)
+    }
+
     /// Reports whether this admission would enter the bounded runtime scan.
     /// Hosts use this only to label an opt-in diagnostic; the admission path
     /// itself remains unchanged.
@@ -1109,15 +1223,25 @@ impl PrefetchPolicy {
             };
             let queued = self.queue.remove(index).expect("queue index exists");
             let promoted = request.required && !queued.required;
-            if !promoted && priority <= previous {
-                self.queue.insert(index, queued);
+            let queued_origin = queued.origin();
+            let queued_depth = queued.depth();
+            let replacement = if promoted {
+                request
+            } else {
+                queued.merge_discovery_context(&request)
+            };
+            let context_changed =
+                replacement.origin() != queued_origin || replacement.depth() != queued_depth;
+            if !promoted && priority <= previous && !context_changed {
+                self.queue.insert(index, replacement);
                 return false;
             }
             if promoted {
-                self.depths.insert(identity.clone(), request.depth());
-                self.classes.insert(identity.clone(), request.class);
+                self.depths.insert(identity.clone(), replacement.depth());
+                self.classes.insert(identity.clone(), replacement.class);
+            } else if context_changed {
+                self.depths.insert(identity.clone(), replacement.depth());
             }
-            let queued = if promoted { request } else { queued };
             let priority = priority.max(previous);
             self.queue_priorities.insert(identity.clone(), priority);
             let insertion = self
@@ -1131,7 +1255,7 @@ impl PrefetchPolicy {
                         < priority
                 })
                 .unwrap_or(self.queue.len());
-            self.queue.insert(insertion, queued);
+            self.queue.insert(insertion, replacement);
             return true;
         }
         let key = identity;
@@ -1169,7 +1293,9 @@ impl PrefetchPolicy {
     pub fn enqueue_literal_hints_with_priority(&mut self, source: &str, priority: u64) -> usize {
         let mut count = 0;
         for hint in extract_literal_hints(source, LiteralHintLimits::default()) {
-            let Some(request) = literal_hint_request(&hint, "literal", false, true, 0) else {
+            let Some(request) =
+                literal_hint_request(&hint, "literal", false, true, 0, PrefetchOrigin::Literal)
+            else {
                 continue;
             };
             if self.enqueue_with_priority(request, priority) {
@@ -1347,19 +1473,24 @@ impl PrefetchPolicy {
         self.attempted_priorities.remove(&identity);
         self.metrics.admitted_files = self.metrics.admitted_files.saturating_add(1);
         let parent_depth = self.depths.get(&identity).copied().unwrap_or_default();
-        for dependency in dependencies {
-            let dependency = dependency.with_depth(parent_depth.saturating_add(1));
-            let known = self.dependencies.entry(identity.clone()).or_default();
-            if !known
-                .iter()
-                .any(|known| known.identity() == dependency.identity())
-            {
-                known.push(dependency.clone());
+        if !request.origin().is_metadata_leaf() {
+            for dependency in dependencies {
+                let dependency = dependency
+                    .with_depth(parent_depth.saturating_add(1))
+                    .with_origin(PrefetchOrigin::Metadata);
+                let known = self.dependencies.entry(identity.clone()).or_default();
+                if !known
+                    .iter()
+                    .any(|known| known.identity() == dependency.identity())
+                {
+                    known.push(dependency.clone());
+                }
+                // Authenticated metadata is a broad peer source. Literal
+                // children discovered below receive a higher priority and are
+                // therefore admitted before remaining metadata peers. A
+                // metadata-derived parent is a leaf for this traversal.
+                self.enqueue_with_priority(dependency, 0);
             }
-            // Authenticated metadata is a broad peer source. Literal children
-            // discovered below receive a higher priority and are therefore
-            // admitted before remaining metadata peers.
-            self.enqueue_with_priority(dependency, 0);
         }
         let class = self.classes.get(&identity).copied().unwrap_or(class);
         if class != PrefetchClass::SmallRuntime || !self.scanned.insert(identity) {
@@ -1405,6 +1536,7 @@ impl PrefetchPolicy {
                 false,
                 typed_parent,
                 parent_depth.saturating_add(1),
+                PrefetchOrigin::RuntimeLiteral,
             ) else {
                 continue;
             };
@@ -1417,9 +1549,8 @@ impl PrefetchPolicy {
     }
 
     /// Returns the bounded, authenticated dependency closure for replay
-    /// escalation.  Runtime-text depth is reset at this boundary because the
-    /// requests are known package companions rather than fresh lexical child
-    /// hints; the tier itself remains capped by the shared policy.
+    /// escalation. Discovery origin and lexical depth remain attached to each
+    /// request; replay priority does not re-root a guessed metadata child.
     #[must_use]
     pub fn dependency_closure(&self, request_key: &str, tier: u8) -> Vec<PrefetchRequest> {
         self.dependency_closure_for_identity(format!("transport:{request_key}"), tier)
@@ -1444,7 +1575,7 @@ impl PrefetchPolicy {
                 for dependency in self.dependencies.get(&parent).into_iter().flatten() {
                     let identity = dependency.identity();
                     if seen.insert(identity.clone()) {
-                        output.push(dependency.clone().with_depth(0));
+                        output.push(dependency.clone());
                         next.push(identity);
                     }
                 }

@@ -1,16 +1,16 @@
 //! Shared predictive resource policy used by native and browser adapters.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use umber_distribution::{
     FileKind as DistributionFileKind, FileRequestKey as DistributionFileRequestKey, LookupManifest,
     LookupOutcome, LookupRecord, LookupRole, NegativeScope, PrefetchBudget, PrefetchClass,
-    PrefetchEscalation, PrefetchFileKey, PrefetchIdentity, PrefetchPolicy, PrefetchRegionKey,
-    Readiness, ResolvedIdentity,
+    PrefetchEscalation, PrefetchFileKey, PrefetchIdentity, PrefetchOrigin, PrefetchPolicy,
+    PrefetchRegionKey, Readiness, ResolvedIdentity,
 };
 use umber_hash::{AHash64, HashDomain};
 
-use crate::{FileKind, FileRequest, FileRequestKey, ResourceRequest};
+use crate::{FileKind, FileRequest, FileRequestKey, ResolvedFile, ResourceRequest};
 
 #[cfg(test)]
 mod tests;
@@ -61,6 +61,30 @@ struct PrefetchDiagnostics {
     dropped: u64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DiscoveryContext {
+    origin: PrefetchOrigin,
+    depth: usize,
+}
+
+impl DiscoveryContext {
+    const ROOT: Self = Self {
+        origin: PrefetchOrigin::Source,
+        depth: 0,
+    };
+
+    fn merge(self, other: Self) -> Self {
+        match other.origin.strength().cmp(&self.origin.strength()) {
+            std::cmp::Ordering::Greater => other,
+            std::cmp::Ordering::Less => self,
+            std::cmp::Ordering::Equal => Self {
+                origin: self.origin,
+                depth: self.depth.min(other.depth),
+            },
+        }
+    }
+}
+
 /// Host-neutral predictor.  It never reads bytes or performs I/O; adapters
 /// feed it accepted lookup outcomes and use its startup set to schedule host
 /// acquisition before the first engine attempt.
@@ -72,6 +96,10 @@ pub struct PrefetchPlanner {
     prior: Option<LookupManifest>,
     seen_startup: BTreeSet<String>,
     policy: PrefetchPolicy,
+    /// Context for semantic keys currently selected, deferred, or awaiting
+    /// admission. ResourceRequest intentionally stays a small public value;
+    /// this map bridges the native drain/resolver/VFS boundary instead.
+    discovery_context: BTreeMap<PrefetchFileKey, DiscoveryContext>,
     metrics: PrefetchMetrics,
     diagnostics: Option<PrefetchDiagnostics>,
 }
@@ -85,6 +113,7 @@ impl PrefetchPlanner {
             budget,
             seen_startup: BTreeSet::new(),
             policy: PrefetchPolicy::new(budget),
+            discovery_context: BTreeMap::new(),
             metrics: PrefetchMetrics::default(),
             diagnostics: None,
         }
@@ -190,11 +219,20 @@ impl PrefetchPlanner {
     /// deduplicated by typed key and remain in stable source/history order.
     pub fn startup_hints(&mut self, source: &str) -> Vec<ResourceRequest> {
         self.enqueue_startup_requests(source);
-        let requests = self
+        let drained = self
             .policy
             .drain_prefetch_wave(self.budget.max_files)
             .into_iter()
-            .filter_map(|request| resource_request(&request))
+            .collect::<Vec<_>>();
+        let requests = drained
+            .into_iter()
+            .filter_map(|request| {
+                self.remember_policy_request(&request);
+                resource_request(&request)
+            })
+            .collect::<Vec<_>>();
+        let requests = requests
+            .into_iter()
             .filter(|request| self.seen_startup.insert(request_identity(request)))
             .collect::<Vec<_>>();
         if self.diagnostics.is_some() {
@@ -212,6 +250,7 @@ impl PrefetchPlanner {
         self.accepted = LookupManifest::new(self.identity.clone());
         self.seen_startup.clear();
         self.policy = PrefetchPolicy::new(self.budget);
+        self.discovery_context.clear();
         if let Some(diagnostics) = self.diagnostics.as_mut() {
             diagnostics.emitted = 0;
             diagnostics.dropped = 0;
@@ -234,7 +273,10 @@ impl PrefetchPlanner {
             .collect::<Vec<_>>();
         for request in prior_requests {
             if let Some(policy_request) = policy_request(&request, "accepted", false) {
-                self.policy.enqueue_with_priority(policy_request, 3);
+                self.policy.enqueue_with_priority(
+                    policy_request.with_origin(PrefetchOrigin::PriorObserved),
+                    3,
+                );
             }
         }
         let queued_before = self.policy.metrics().queued_requests;
@@ -245,6 +287,97 @@ impl PrefetchPlanner {
                 .queued_requests
                 .saturating_sub(queued_before),
         );
+    }
+
+    /// Promotes an engine-demanded/probed file to a real root. A previous
+    /// metadata guess may have carried a nonzero depth and leaf provenance;
+    /// the actual request is authoritative and starts its own closure.
+    pub fn note_actual_demand(&mut self, request: &ResourceRequest) {
+        let ResourceRequest::File(request) = request else {
+            return;
+        };
+        let Some(key) = prefetch_file_key(request.key()) else {
+            return;
+        };
+        let context = DiscoveryContext {
+            origin: PrefetchOrigin::ActualDemand,
+            depth: 0,
+        };
+        self.remember_context(key.clone(), context);
+        if let Some(policy_request) =
+            policy_request(&ResourceRequest::File(request.clone()), "demand", true)
+        {
+            self.policy.set_request_depth(&policy_request, 0);
+        }
+    }
+
+    /// Drops planner-only context after a speculative response failed or was
+    /// authoritatively absent. Deferred candidates retain their context for a
+    /// later phase; admitted candidates are consumed by `admit_file`.
+    pub fn retire_prefetch_context(&mut self, request: &ResourceRequest) {
+        let ResourceRequest::File(request) = request else {
+            return;
+        };
+        let Some(key) = prefetch_file_key(request.key()) else {
+            return;
+        };
+        let Some(policy_request) =
+            policy_request(&ResourceRequest::File(request.clone()), "retire", false)
+        else {
+            self.discovery_context.remove(&key);
+            return;
+        };
+        if !self.policy.request_is_deferred(&policy_request) {
+            self.discovery_context.remove(&key);
+        }
+    }
+
+    /// Retires every request that did not produce an admitted file, while
+    /// preserving optional candidates rejected by the current phase budget
+    /// (which `defer_prefetch` records in the policy).
+    pub fn retire_unadmitted_prefetch(
+        &mut self,
+        requests: &[ResourceRequest],
+        admitted: &[(FileRequest, ResolvedFile)],
+    ) {
+        let admitted = admitted
+            .iter()
+            .map(|(request, _)| request.key().clone())
+            .collect::<BTreeSet<_>>();
+        for request in requests {
+            if let ResourceRequest::File(file) = request
+                && !admitted.contains(file.key())
+            {
+                self.retire_prefetch_context(request);
+            }
+        }
+    }
+
+    fn remember_policy_request(&mut self, request: &umber_distribution::PrefetchRequest) {
+        let Some(key) = request.file_key.clone() else {
+            return;
+        };
+        self.remember_context(
+            key,
+            DiscoveryContext {
+                origin: request.origin(),
+                depth: request.depth(),
+            },
+        );
+    }
+
+    fn remember_context(&mut self, key: PrefetchFileKey, context: DiscoveryContext) {
+        self.discovery_context
+            .entry(key)
+            .and_modify(|existing| *existing = existing.merge(context))
+            .or_insert(context);
+    }
+
+    fn context_for(&self, key: &PrefetchFileKey) -> DiscoveryContext {
+        self.discovery_context
+            .get(key)
+            .copied()
+            .unwrap_or(DiscoveryContext::ROOT)
     }
 
     /// Feeds the policy only after the caller has successfully admitted the
@@ -266,13 +399,6 @@ impl PrefetchPlanner {
         else {
             return;
         };
-        let dependencies = dependencies.into_iter().filter_map(|dependency| {
-            policy_request(
-                &ResourceRequest::File(dependency),
-                "distribution-dependency",
-                false,
-            )
-        });
         let class = if request.key().kind() == FileKind::Image {
             PrefetchClass::Image
         } else {
@@ -290,13 +416,53 @@ impl PrefetchPlanner {
             class == PrefetchClass::SmallRuntime
                 && self.policy.runtime_scan_is_allowed(key, bytes.len())
         });
+        let Some(file_key) = prefetch_file_key(request.key()) else {
+            return;
+        };
+        let context = self.context_for(&file_key);
         let Some(parent) =
             policy_request(&ResourceRequest::File(request.clone()), "admission", false)
+                .map(|parent| parent.with_origin(context.origin).with_depth(context.depth))
         else {
             return;
         };
+        self.policy.set_request_depth(&parent, context.depth);
+        let dependencies = if context.origin.is_metadata_leaf() {
+            Vec::new()
+        } else {
+            dependencies
+                .into_iter()
+                .filter_map(|dependency| {
+                    let resource = ResourceRequest::File(dependency);
+                    let dependency_key = match &resource {
+                        ResourceRequest::File(request) => prefetch_file_key(request.key()),
+                        ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => None,
+                    }?;
+                    let dependency = policy_request(&resource, "distribution-dependency", false)?
+                        .with_origin(PrefetchOrigin::Metadata)
+                        .with_depth(context.depth.saturating_add(1));
+                    self.remember_context(
+                        dependency_key,
+                        DiscoveryContext {
+                            origin: PrefetchOrigin::Metadata,
+                            depth: context.depth.saturating_add(1),
+                        },
+                    );
+                    Some(dependency)
+                })
+                .collect::<Vec<_>>()
+        };
         self.policy
-            .admitted_request_with_class(&parent, class, bytes, dependencies);
+            .admitted_request_with_class(&parent, class, bytes, dependencies.clone());
+        self.discovery_context.remove(&file_key);
+        for dependency in dependencies {
+            if let Some(key) = dependency.file_key.as_ref()
+                && (self.policy.file_key_is_admitted(key)
+                    || !self.policy.request_is_tracked(&dependency))
+            {
+                self.discovery_context.remove(key);
+            }
+        }
         if let Some(key) = diagnostic_key {
             if was_admitted {
                 self.note_diagnostic(&key, PrefetchDiagnosticDisposition::AlreadyResident);
@@ -319,7 +485,10 @@ impl PrefetchPlanner {
             .policy
             .drain_prefetch_wave(self.budget.max_files)
             .into_iter()
-            .filter_map(|request| resource_request(&request))
+            .filter_map(|request| {
+                self.remember_policy_request(&request);
+                resource_request(&request)
+            })
             .collect::<Vec<_>>();
         if self.diagnostics.is_some() {
             for request in &requests {
@@ -333,10 +502,23 @@ impl PrefetchPlanner {
     /// it. It is released at the next phase boundary and is never reported as
     /// a semantic unavailable binding.
     pub fn defer_prefetch(&mut self, request: &ResourceRequest) {
-        let Some(policy_request) = policy_request(request, "deferred", false) else {
+        let Some(file_key) = (match request {
+            ResourceRequest::File(request) => prefetch_file_key(request.key()),
+            ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => None,
+        }) else {
             return;
         };
-        self.policy.defer(policy_request);
+        let context = self.context_for(&file_key);
+        let Some(policy_request) = policy_request(request, "deferred", false).map(|request| {
+            request
+                .with_origin(context.origin)
+                .with_depth(context.depth)
+        }) else {
+            return;
+        };
+        if !self.policy.defer(policy_request) {
+            self.discovery_context.remove(&file_key);
+        }
     }
 
     /// Records whether a planner candidate was present in the authenticated
@@ -420,7 +602,7 @@ impl PrefetchPlanner {
     }
 
     pub fn enqueue_escalation(&mut self, requests: impl IntoIterator<Item = FileRequest>) {
-        self.enqueue_escalation_with_priority(requests, 4);
+        self.enqueue_escalation_with_origin(requests, 4, PrefetchOrigin::Explicit);
     }
 
     pub fn enqueue_escalation_with_priority(
@@ -428,15 +610,47 @@ impl PrefetchPlanner {
         requests: impl IntoIterator<Item = FileRequest>,
         priority: u64,
     ) {
+        self.enqueue_escalation_with_origin(requests, priority, PrefetchOrigin::ReplayEscalation);
+    }
+
+    fn enqueue_escalation_with_origin(
+        &mut self,
+        requests: impl IntoIterator<Item = FileRequest>,
+        priority: u64,
+        fallback_origin: PrefetchOrigin,
+    ) {
         for request in requests {
             let resource = ResourceRequest::File(request);
+            let Some(file_key) = (match &resource {
+                ResourceRequest::File(request) => prefetch_file_key(request.key()),
+                ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => None,
+            }) else {
+                continue;
+            };
+            let context =
+                self.discovery_context
+                    .get(&file_key)
+                    .copied()
+                    .unwrap_or(DiscoveryContext {
+                        origin: fallback_origin,
+                        depth: 0,
+                    });
             if let Some(policy_request) = policy_request(&resource, "replay-escalation", false) {
+                let policy_request = policy_request
+                    .with_origin(context.origin)
+                    .with_depth(context.depth);
+                self.policy
+                    .set_request_depth(&policy_request, context.depth);
                 self.policy.enqueue_with_priority(policy_request, priority);
             }
         }
     }
 
-    pub fn escalation_dependencies(&self, request: &FileRequestKey, tier: u8) -> Vec<FileRequest> {
+    pub fn escalation_dependencies(
+        &mut self,
+        request: &FileRequestKey,
+        tier: u8,
+    ) -> Vec<FileRequest> {
         let Some(file_key) = prefetch_file_key(request) else {
             return Vec::new();
         };
@@ -444,7 +658,10 @@ impl PrefetchPlanner {
             .dependency_closure_for_file_key(&file_key, tier)
             .into_iter()
             .filter_map(|request| match resource_request(&request) {
-                Some(ResourceRequest::File(request)) => Some(request),
+                Some(ResourceRequest::File(file)) => {
+                    self.remember_policy_request(&request);
+                    Some(file)
+                }
                 Some(ResourceRequest::Font(_) | ResourceRequest::PkFont(_)) | None => None,
             })
             .collect()

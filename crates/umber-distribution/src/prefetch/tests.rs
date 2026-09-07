@@ -216,7 +216,7 @@ fn font_metric_hints_honor_comments_group_bounds_and_literal_limits() {
 fn font_metric_prefetch_requests_use_tfm_identity_and_font_budget_class() {
     let source = r#"
 \DeclareFontShape{OT1}{ptm}{m}{n}{<-> ptmr7t}
-\DeclareFontShape{OT1}{ptm}{b}{n}{<-> s*[1.04]ptmb7t.tfm}
+\DeclareFontShape{OT1}{ptm}{b}{n}{<-> s*[1.04]ptmr7t.tfm}
 "#;
     let mut policy = PrefetchPolicy::new(PrefetchBudget {
         max_files: 1,
@@ -384,6 +384,58 @@ fn admitted_literal_children_precede_metadata_peers() {
 }
 
 #[test]
+fn metadata_origin_is_a_leaf_for_catalogue_peer_traversal() {
+    let parent_key = PrefetchFileKey::new("tex", "tex", "metadata-parent.sty").expect("parent key");
+    let parent = PrefetchRequest::for_file_key(
+        parent_key,
+        "tex:metadata-parent.sty",
+        "metadata-parent.sty",
+        "metadata",
+        false,
+    )
+    .with_origin(PrefetchOrigin::Metadata)
+    .with_depth(1);
+    let peer = PrefetchRequest::new(
+        "tex:metadata-peer.sty",
+        "metadata-peer.sty",
+        "metadata",
+        false,
+    );
+    let mut policy = PrefetchPolicy::new(PrefetchBudget::default());
+    assert!(policy.enqueue(parent.clone()));
+    assert_eq!(policy.drain(1), [parent.clone()]);
+    policy.admitted_request_with_class(&parent, PrefetchClass::SmallRuntime, b"metadata", [peer]);
+    assert!(policy.drain(64).is_empty());
+}
+
+#[test]
+fn duplicate_request_keeps_strongest_discovery_origin() {
+    let key = PrefetchFileKey::new("tex", "tex", "shared.sty").expect("file key");
+    let metadata = PrefetchRequest::for_file_key(
+        key.clone(),
+        "tex:shared.sty",
+        "shared.sty",
+        "metadata",
+        false,
+    )
+    .with_origin(PrefetchOrigin::Metadata)
+    .with_depth(3);
+    let literal =
+        PrefetchRequest::for_file_key(key, "tex:shared.sty", "shared.sty", "literal", false)
+            .with_origin(PrefetchOrigin::Literal)
+            .with_depth(0);
+    let mut policy = PrefetchPolicy::new(PrefetchBudget::default());
+    assert!(policy.enqueue_with_priority(metadata, 0));
+    assert!(policy.enqueue_with_priority(literal, 2));
+    let drained = policy.drain(1);
+    let [request] = drained.as_slice() else {
+        panic!("expected one deduplicated request");
+    };
+    assert_eq!(request.origin(), PrefetchOrigin::Literal);
+    assert_eq!(request.depth(), 0);
+}
+
+#[test]
 fn admitted_runtime_scan_budget_is_cumulative() {
     let source = br#"\input{child.tex}"#;
     let mut policy = PrefetchPolicy::new(PrefetchBudget {
@@ -443,7 +495,13 @@ fn admitted_dependency_metadata_expands_replay_tiers_without_cycles() {
             .collect::<Vec<_>>(),
         ["tex:child.sty", "tex:grandchild.sty"]
     );
-    assert!(closure.iter().all(|request| request.depth() == 0));
+    assert_eq!(
+        closure
+            .iter()
+            .map(PrefetchRequest::depth)
+            .collect::<Vec<_>>(),
+        [1, 2]
+    );
 }
 
 #[test]

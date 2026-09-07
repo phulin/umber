@@ -758,6 +758,16 @@ impl<'owner> NativeCompileSession<'owner> {
                     if !batch.required.is_empty() || !batch.probes.is_empty() {
                         self.prefetch.begin_phase();
                     }
+                    for request in batch.required.iter().chain(&batch.probes) {
+                        self.prefetch.note_actual_demand(request);
+                    }
+                    let actual_file_requests = batch
+                        .required
+                        .iter()
+                        .chain(&batch.probes)
+                        .filter(|request| matches!(request, ResourceRequest::File(_)))
+                        .cloned()
+                        .collect::<Vec<_>>();
                     // A source/context reset may have queued fresh literal
                     // seeds after the one-shot engine startup list was used.
                     // Merge them at the same preflight seam so they are
@@ -837,10 +847,22 @@ impl<'owner> NativeCompileSession<'owner> {
                     self.session
                         .authorize_prefetch_files(resolved.prefetch_requests.clone());
                     if let Err(error) = self.session.provide_resources(resolved.responses.clone()) {
+                        self.prefetch
+                            .retire_unadmitted_prefetch(&batch.prefetch_hints, &[]);
+                        self.prefetch
+                            .retire_unadmitted_prefetch(&actual_file_requests, &[]);
                         self.session.discard_suspended_candidate();
                         self.distribution.reset_lookup_manifest();
                         return Err(NativeRunError::Compile(error.to_string()));
                     }
+                    self.prefetch.retire_unadmitted_prefetch(
+                        &batch.prefetch_hints,
+                        &resolved.admitted_files,
+                    );
+                    self.prefetch.retire_unadmitted_prefetch(
+                        &actual_file_requests,
+                        &resolved.admitted_files,
+                    );
                     self.distribution
                         .note_engine_admitted(&mut self.host_telemetry.resolver, &resolved);
                     for (request, file) in &resolved.admitted_files {
@@ -881,7 +903,7 @@ impl<'owner> NativeCompileSession<'owner> {
                 &NeedResources {
                     required: Vec::new(),
                     probes: Vec::new(),
-                    prefetch_hints: hints,
+                    prefetch_hints: hints.clone(),
                 },
                 cancellation,
                 &mut self.host_telemetry.resolver,
@@ -898,6 +920,8 @@ impl<'owner> NativeCompileSession<'owner> {
             self.session
                 .provide_resources(resolved.responses.clone())
                 .map_err(|error| NativeRunError::Compile(error.to_string()))?;
+            self.prefetch
+                .retire_unadmitted_prefetch(&hints, &resolved.admitted_files);
             self.distribution
                 .note_engine_admitted(&mut self.host_telemetry.resolver, &resolved);
             for (request, file) in &resolved.admitted_files {

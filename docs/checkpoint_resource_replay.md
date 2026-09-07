@@ -211,6 +211,19 @@ files/16 MiB total, 8 MiB small-runtime, 2 MiB font and image, 512 KiB
 document, 256 KiB scanned runtime text, 32 follow-up hints, and one
 follow-up tier.
 
+The planner retains a typed discovery context `(origin, depth)` for each
+selected semantic `PrefetchFileKey` while it crosses the request, resolver,
+VFS-admission, and policy boundaries. Source, explicit, prior-observed, literal,
+and actual-demand requests are roots; literal children retain their scanner
+depth, and a child increments that depth exactly once. An authenticated metadata
+dependency is a leaf for further metadata-peer traversal. If its bytes are
+lexically scanned, the inherited depth and existing follow-up limit still
+apply, but metadata admission cannot re-root its catalogue peers. A later
+actual demand promotes the same key to a root. The context is merged by the
+strongest origin, carried through selection and phase deferral, and retired on
+admission or failed/absent speculative resolution; it is not a request payload,
+cache entry, or unbounded history.
+
 The byte, file, and class limits are one reservation owned by the current
 automatic prefetch phase. A phase begins for startup preflight and for each
 new actual engine `NeedResources` suspension. It remains live while its

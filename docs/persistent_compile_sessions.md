@@ -224,6 +224,17 @@ native local search has first refusal; and stale or ignored hints create no
 unavailable binding and do not count as retry progress. Validated format
 closures may still seed the same planner, but they do not create a second
 resolver or readiness path.
+The planner carries typed discovery context `(origin, depth)` beside each
+selected semantic `PrefetchFileKey` across request conversion, resolution, VFS
+admission, deferral, and phase renewal. Literal child depth is inherited and
+incremented once; source, explicit, prior-observed, literal, and actual-demand
+keys are roots. Metadata-derived candidates are leaves for metadata-peer
+traversal, so admitting one cannot recursively enqueue its catalogue siblings.
+Lexical scanning of such a file, when allowed, retains its inherited depth and the
+existing follow-up limit. A stronger actual origin promotes a previously
+guessed key, while duplicate aliases merge deterministically. Context is
+retired after admission or a failed/absent speculative response and is not
+stored as payload, cache state, or unbounded history.
 `ProjectWorkspace` also owns the session's layered user and resolved-resource
 storage plus its accepted generated layer. Each TeX attempt reads inputs and
 TFM files from one immutable transaction snapshot; the resolver passes selected

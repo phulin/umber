@@ -340,11 +340,20 @@ export class HttpManifestResolver {
 										...(() => {
 											const identity =
 												job.request ?? decodeKey(job.manifestKey);
+											const origin =
+												typeof identity.origin === "string"
+													? identity.origin
+													: job.requested
+														? "actual-demand"
+														: !job.hinted
+															? "metadata"
+															: undefined;
 											return {
 												domain:
 													identity.domain ?? resourceDomain(identity.kind),
 												kind: identity.kind,
 												name: identity.name,
+												...(origin === undefined ? {} : { origin }),
 											};
 										})(),
 										virtualPath: job.entry.virtualPath,
@@ -497,6 +506,9 @@ export class HttpManifestResolver {
 				kind: response.kind,
 				name: response.name,
 				originalName: response.name,
+				...(typeof response.origin === "string"
+					? { origin: response.origin }
+					: {}),
 			};
 			const identity = typedRequestIdentity(request);
 			if (this.prefetchState !== undefined)
@@ -729,7 +741,10 @@ export class HttpManifestResolver {
 			} catch {}
 		}
 		this.currentRun = { identity, manifest: new LookupManifest(identity) };
-		const priorRequests = prior?.resolvedRequests() ?? [];
+		const priorRequests = (prior?.resolvedRequests() ?? []).map((request) => ({
+			...request,
+			origin: "prior-observed",
+		}));
 		this.prefetchMetrics.startupPrefetchCandidates += priorRequests.length;
 		const maxHints = Number.isSafeInteger(context.limits?.resolvedFiles)
 			? Math.min(context.limits.resolvedFiles, MAX_RESOLVED_FILES)

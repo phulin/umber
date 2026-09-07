@@ -211,6 +211,8 @@ struct JsPrefetchRequest {
     class: Option<String>,
     required: bool,
     depth: usize,
+    #[serde(default)]
+    origin: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -228,6 +230,8 @@ struct JsPrefetchRequestOutput {
     class: String,
     required: bool,
     depth: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    origin: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -257,6 +261,35 @@ fn prefetch_class_name(class: umber_distribution::PrefetchClass) -> &'static str
     }
 }
 
+fn prefetch_origin(origin: &str) -> umber_distribution::PrefetchOrigin {
+    match origin {
+        "source" => umber_distribution::PrefetchOrigin::Source,
+        "explicit" => umber_distribution::PrefetchOrigin::Explicit,
+        "prior-observed" => umber_distribution::PrefetchOrigin::PriorObserved,
+        "literal" => umber_distribution::PrefetchOrigin::Literal,
+        "runtime-literal" => umber_distribution::PrefetchOrigin::RuntimeLiteral,
+        "metadata" => umber_distribution::PrefetchOrigin::Metadata,
+        "actual-demand" => umber_distribution::PrefetchOrigin::ActualDemand,
+        "replay-escalation" => umber_distribution::PrefetchOrigin::ReplayEscalation,
+        _ => umber_distribution::PrefetchOrigin::Unknown,
+    }
+}
+
+fn prefetch_origin_name(origin: umber_distribution::PrefetchOrigin) -> Option<String> {
+    let name = match origin {
+        umber_distribution::PrefetchOrigin::Unknown => return None,
+        umber_distribution::PrefetchOrigin::Source => "source",
+        umber_distribution::PrefetchOrigin::Explicit => "explicit",
+        umber_distribution::PrefetchOrigin::PriorObserved => "prior-observed",
+        umber_distribution::PrefetchOrigin::Literal => "literal",
+        umber_distribution::PrefetchOrigin::RuntimeLiteral => "runtime-literal",
+        umber_distribution::PrefetchOrigin::Metadata => "metadata",
+        umber_distribution::PrefetchOrigin::ActualDemand => "actual-demand",
+        umber_distribution::PrefetchOrigin::ReplayEscalation => "replay-escalation",
+    };
+    Some(name.to_owned())
+}
+
 fn prefetch_request(request: JsPrefetchRequest) -> umber_distribution::PrefetchRequest {
     let file_key = request
         .domain
@@ -270,7 +303,7 @@ fn prefetch_request(request: JsPrefetchRequest) -> umber_distribution::PrefetchR
         || umber_distribution::PrefetchClass::for_key(&request.key),
         prefetch_class,
     );
-    let output = file_key
+    file_key
         .map_or_else(
             || {
                 umber_distribution::PrefetchRequest::new(
@@ -291,12 +324,18 @@ fn prefetch_request(request: JsPrefetchRequest) -> umber_distribution::PrefetchR
             },
         )
         .with_class(class)
-        .with_depth(request.depth);
-    output
+        .with_depth(request.depth)
+        .with_origin(
+            request
+                .origin
+                .as_deref()
+                .map_or(umber_distribution::PrefetchOrigin::Unknown, prefetch_origin),
+        )
 }
 
 fn prefetch_request_value(request: umber_distribution::PrefetchRequest) -> JsPrefetchRequestOutput {
     let depth = request.depth();
+    let origin = prefetch_origin_name(request.origin());
     JsPrefetchRequestOutput {
         key: request.key,
         domain: request.file_key.as_ref().map(|key| key.domain.clone()),
@@ -310,6 +349,7 @@ fn prefetch_request_value(request: umber_distribution::PrefetchRequest) -> JsPre
         class: prefetch_class_name(request.class).to_owned(),
         required: request.required,
         depth,
+        origin,
     }
 }
 
