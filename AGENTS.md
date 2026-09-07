@@ -68,18 +68,18 @@ The project uses Beads (`bd`) for issue tracking and durable project memory.
 - Use `cargo run-dev -p umber -- <args>` for local CLI runs that should share
   optimized test artifacts.
 
-### Conformance Assets
+### Asset Provisioning
 
-Provision gitignored conformance assets after creating or allocating a linked
+Provision gitignored assets after creating or allocating a linked
 worktree:
 
 ```bash
 python3 scripts/provision.py worktree <worktree>
 ```
 
-The provisioner copies only the `tests/native-test-assets.lock` allowlist from
+The provisioner copies the `tests/native-test-assets.lock` allowlist from
 the primary checkout, verifies every SHA-256 on both sides, and leaves the
-copies ignored. Rust tests do not provision their own inputs. Do not manually
+copies ignored. Do not manually
 link or broadly copy `third_party/`.
 
 If the primary checkout lacks an asset, materialize the pinned TeX Live 2026
@@ -89,29 +89,9 @@ sources, oracle, fixtures, and format there once:
 python3 scripts/provision.py worktree .
 ```
 
-An environment that cannot host the oracles must opt out explicitly with
-`UMBER_CONFORMANCE_ORACLES=optional`. This downgrades missing byte-exact
-oracles to a notice rather than treating their absence as a pass.
-
-### Snapshot-Sensitive Work
-
-Corpus and format work that depends on snapshots must pass the explicit
-regenerated 2026-03-01 distribution, normally:
-
-```text
---distribution target/texlive-snapshot
-```
-
-It must also pass the authenticated `--distribution-ahash64` pin and must not
-rely on the hosted default manifest.
-
-The native cache is shared and content-addressed rather than
-snapshot-partitioned. Stop concurrent Umber runs before purging its `objects`
-or `manifests` namespaces, then warm only from the explicit pinned distribution
-and verify offline reuse.
-
 ### Writing Markdown
 
+After editing markdown, run `dprint fmt`
 `scripts/check.sh` runs dprint over every Markdown file. Its Markdown plugin
 rewrites content, so write Markdown in the form dprint already accepts.
 `dprint check` is authoritative; do not use ignore directives or plugin
