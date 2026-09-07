@@ -1,6 +1,5 @@
 //! Lightweight host-side inspection for external PDF page requests.
 
-use std::cmp::Ordering;
 use std::sync::Arc;
 
 use hayro_syntax::object::{
@@ -9,16 +8,17 @@ use hayro_syntax::object::{
 use hayro_syntax::page::Page;
 use hayro_syntax::reader::{Reader, ReaderExt};
 use hayro_syntax::{Pdf, PdfVersion};
-use tex_arith::Scaled;
+use tex_arith::{Scaled, parse_pdf_real};
 use tex_exec::PdfImagePageBox;
-use tex_out::pdf::PdfNumber;
 
 #[cfg(test)]
 mod tests;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct InspectedPdfPage {
-    pub(crate) page_box: [PdfNumber; 4],
+    /// Coordinates remain imported `f64` values until the resolver derives
+    /// and independently rounds the origin and extent.
+    pub(crate) page_box: [f64; 4],
     pub(crate) rotation: tex_state::PdfPageRotation,
     pub(crate) total_pages: u32,
     pub(crate) has_page_group: bool,
@@ -155,7 +155,7 @@ fn inherited_rect(
     page: &Page<'_>,
     key: &[u8],
     source_bytes: &[u8],
-) -> Result<Option<[PdfNumber; 4]>, String> {
+) -> Result<Option<[f64; 4]>, String> {
     let mut dictionary = page.raw().clone();
     loop {
         if let Some(rect) = dictionary.get::<Array<'_>>(key) {
@@ -171,7 +171,7 @@ fn inherited_rect(
     }
 }
 
-fn parse_page_box(array: &Array<'_>, source_bytes: &[u8]) -> Result<[PdfNumber; 4], String> {
+fn parse_page_box(array: &Array<'_>, source_bytes: &[u8]) -> Result<[f64; 4], String> {
     let values = raw_array_values(array.data())?;
     if values.len() != 4 {
         return Err("selected PDF page box must contain four numbers".to_owned());
@@ -193,140 +193,31 @@ fn parse_page_box(array: &Array<'_>, source_bytes: &[u8]) -> Result<[PdfNumber; 
     let [x0, y0, x1, y1] = numbers
         .try_into()
         .map_err(|_| "selected PDF page box must contain four numbers".to_owned())?;
-    let (left, right) = if compare_pdf_numbers(x0, x1)? == Ordering::Greater {
-        (x1, x0)
-    } else {
-        (x0, x1)
-    };
-    let (bottom, top) = if compare_pdf_numbers(y0, y1)? == Ordering::Greater {
-        (y1, y0)
-    } else {
-        (y0, y1)
-    };
+    let x0 = x0.clamp(-1e9, 1e9);
+    let x1 = x1.clamp(-1e9, 1e9);
+    let y0 = y0.clamp(-1e9, 1e9);
+    let y1 = y1.clamp(-1e9, 1e9);
+    let (left, right) = if x0 > x1 { (x1, x0) } else { (x0, x1) };
+    let (bottom, top) = if y0 > y1 { (y1, y0) } else { (y0, y1) };
     Ok([left, bottom, right, top])
 }
 
-fn parse_pdf_number(source: &[u8]) -> Result<PdfNumber, String> {
-    let source = trim_pdf_whitespace(source);
-    let mut index = 0;
-    let negative = match source.first().copied() {
-        Some(b'-') => {
-            index = 1;
-            true
-        }
-        Some(b'+') => {
-            index = 1;
-            false
-        }
-        _ => false,
-    };
-    let integer_start = index;
-    while source.get(index).is_some_and(u8::is_ascii_digit) {
-        index += 1;
-    }
-    let integer_end = index;
-    let mut fraction_start = index;
-    let mut fraction_end = index;
-    if source.get(index) == Some(&b'.') {
-        index += 1;
-        fraction_start = index;
-        while source.get(index).is_some_and(u8::is_ascii_digit) {
-            index += 1;
-        }
-        fraction_end = index;
-    }
-    if index != source.len() || (integer_start == integer_end && fraction_start == fraction_end) {
-        return Err("selected PDF page box contains an invalid number".to_owned());
-    }
-    let decimal_places = fraction_end - fraction_start;
-    if decimal_places > 9 {
-        return Err(format!(
-            "selected PDF page box number precision exceeds limit 9: {decimal_places}"
-        ));
-    }
-    let mut magnitude = 0_i128;
-    for digit in source[integer_start..integer_end]
-        .iter()
-        .chain(source[fraction_start..fraction_end].iter())
-    {
-        magnitude = magnitude
-            .checked_mul(10)
-            .and_then(|value| value.checked_add(i128::from(*digit - b'0')))
-            .ok_or_else(|| "selected PDF page box number is out of range".to_owned())?;
-    }
-    let coefficient = if negative {
-        magnitude
-            .checked_neg()
-            .ok_or_else(|| "selected PDF page box number is out of range".to_owned())?
-    } else {
-        magnitude
-    };
-    let coefficient = i64::try_from(coefficient)
-        .map_err(|_| "selected PDF page box number is out of range".to_owned())?;
-    PdfNumber::new(coefficient, decimal_places as u8).map_err(|error| error.to_string())
+fn parse_pdf_number(source: &[u8]) -> Result<f64, String> {
+    parse_pdf_real(source)
+        .map(|value| value.value())
+        .map_err(|_| "selected PDF page box contains an invalid number".to_owned())
 }
 
-fn compare_pdf_numbers(left: PdfNumber, right: PdfNumber) -> Result<Ordering, String> {
-    let decimal_places = left.decimal_places().max(right.decimal_places());
-    let left_scale = 10_i128
-        .checked_pow(u32::from(decimal_places - left.decimal_places()))
-        .ok_or_else(|| "selected PDF page box number is out of range".to_owned())?;
-    let right_scale = 10_i128
-        .checked_pow(u32::from(decimal_places - right.decimal_places()))
-        .ok_or_else(|| "selected PDF page box number is out of range".to_owned())?;
-    let left = i128::from(left.coefficient())
-        .checked_mul(left_scale)
-        .ok_or_else(|| "selected PDF page box number is out of range".to_owned())?;
-    let right = i128::from(right.coefficient())
-        .checked_mul(right_scale)
-        .ok_or_else(|| "selected PDF page box number is out of range".to_owned())?;
-    Ok(left.cmp(&right))
-}
-
-pub(crate) fn pdf_number_to_scaled(number: PdfNumber) -> Result<Scaled, String> {
-    let scale = 10_i128
-        .checked_pow(u32::from(number.decimal_places()))
-        .ok_or_else(|| "selected PDF page box number is out of range".to_owned())?;
-    let numerator = i128::from(number.coefficient())
-        .checked_mul(7_227)
-        .and_then(|value| value.checked_mul(65_536))
-        .ok_or_else(|| "selected PDF page box number is out of range".to_owned())?;
-    let denominator = scale
-        .checked_mul(7_200)
-        .ok_or_else(|| "selected PDF page box number is out of range".to_owned())?;
-    let rounded = round_divide_away_from_zero(numerator, denominator)?;
-    let raw = i32::try_from(rounded)
-        .map_err(|_| "selected PDF page box number is out of range".to_owned())?;
-    Ok(Scaled::from_raw(raw))
-}
-
-fn round_divide_away_from_zero(numerator: i128, denominator: i128) -> Result<i128, String> {
-    if denominator <= 0 {
-        return Err("selected PDF page box number has an invalid denominator".to_owned());
+/// Converts one already-normalized PDF big-point value using pdfTeX's
+/// `writeimg.c::bp2int` rounding operation.
+pub(crate) fn pdf_bp_to_scaled(value: f64) -> Result<Scaled, String> {
+    let rounded = (value * (6_578_176.0 / 100.0)).round();
+    if !rounded.is_finite() || rounded < f64::from(i32::MIN) || rounded > f64::from(i32::MAX) {
+        return Err("selected PDF page box number is out of range".to_owned());
     }
-    let half = denominator / 2;
-    let adjusted = if numerator >= 0 {
-        numerator
-            .checked_add(half)
-            .ok_or_else(|| "selected PDF page box number is out of range".to_owned())?
-    } else {
-        numerator
-            .checked_sub(half)
-            .ok_or_else(|| "selected PDF page box number is out of range".to_owned())?
-    };
-    Ok(adjusted / denominator)
-}
-
-fn trim_pdf_whitespace(source: &[u8]) -> &[u8] {
-    let start = source
-        .iter()
-        .position(|byte| !matches!(*byte, b'\0' | b'\t' | b'\n' | b'\x0c' | b'\r' | b' '))
-        .unwrap_or(source.len());
-    let end = source
-        .iter()
-        .rposition(|byte| !matches!(*byte, b'\0' | b'\t' | b'\n' | b'\x0c' | b'\r' | b' '))
-        .map_or(start, |index| index + 1);
-    &source[start..end]
+    Scaled::from_raw(rounded as i32)
+        .check_dimension()
+        .map_err(|_| "selected PDF page box number is out of range".to_owned())
 }
 
 fn raw_array_values<'a>(data: &'a [u8]) -> Result<Vec<&'a [u8]>, String> {

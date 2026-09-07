@@ -83,6 +83,132 @@ impl Scaled {
     }
 }
 
+/// Parses one complete PDF number token using xpdf's incremental `double`
+/// accumulation order.
+///
+/// The PDF input paths need to retain more lexical precision than the
+/// detached `PdfNumber` output model allows. This parser is intentionally
+/// independent of that model: it borrows the source bytes, performs no
+/// allocation, and accepts the PDF grammar's optional sign, integer and
+/// fractional digit forms. Exponents, non-finite spellings, and trailing
+/// bytes are rejected. A syntactically valid magnitude may overflow to an
+/// infinity; callers apply the canonical input-specific clamp or range check
+/// after parsing.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PdfRealParseError {
+    /// The bytes do not contain one complete PDF number token.
+    InvalidSyntax,
+}
+
+impl fmt::Display for PdfRealParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidSyntax => f.write_str("invalid PDF number syntax"),
+        }
+    }
+}
+
+impl std::error::Error for PdfRealParseError {}
+
+/// Imported PDF numeric value and the lossless integer form when the token is
+/// an integer that fits the detached number model.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PdfReal {
+    value: f64,
+    exact_integer: Option<i64>,
+}
+
+impl PdfReal {
+    /// Returns the floating value accumulated from the source token.
+    #[must_use]
+    pub const fn value(self) -> f64 {
+        self.value
+    }
+
+    /// Returns the exact integer spelling when it fits in `i64`.
+    #[must_use]
+    pub const fn exact_integer(self) -> Option<i64> {
+        self.exact_integer
+    }
+}
+
+/// Parses one complete PDF number token into its imported floating value.
+///
+/// The integer and fractional loops intentionally mirror xpdf's
+/// `Lexer::getObj`: digits are accumulated in a `f64` one at a time instead
+/// of using Rust's correctly-rounded string parser. This preserves the
+/// rounding transitions used by the pinned PDF input implementation while
+/// leaving token validation strict at the caller boundary.
+pub fn parse_pdf_real(source: &[u8]) -> Result<PdfReal, PdfRealParseError> {
+    let source = trim_pdf_whitespace(source);
+    let mut index = 0;
+    let negative = match source.first().copied() {
+        Some(b'-') => {
+            index = 1;
+            true
+        }
+        Some(b'+') => {
+            index = 1;
+            false
+        }
+        _ => false,
+    };
+
+    let mut value = 0.0;
+    let mut exact_magnitude = Some(0_u64);
+    let mut saw_digit = false;
+    while source.get(index).is_some_and(u8::is_ascii_digit) {
+        saw_digit = true;
+        value = value * 10.0 + f64::from(source[index] - b'0');
+        exact_magnitude = exact_magnitude
+            .and_then(|magnitude| magnitude.checked_mul(10))
+            .and_then(|magnitude| magnitude.checked_add(u64::from(source[index] - b'0')));
+        index += 1;
+    }
+    if source.get(index) == Some(&b'.') {
+        index += 1;
+        exact_magnitude = None;
+        let mut scale = 0.1;
+        while source.get(index).is_some_and(u8::is_ascii_digit) {
+            saw_digit = true;
+            value += scale * f64::from(source[index] - b'0');
+            scale *= 0.1;
+            index += 1;
+        }
+    }
+    if !saw_digit || index != source.len() {
+        return Err(PdfRealParseError::InvalidSyntax);
+    }
+    let value = if negative { -value } else { value };
+    let exact_integer = exact_magnitude.and_then(|magnitude| {
+        if negative {
+            if magnitude == 1_u64 << 63 {
+                Some(i64::MIN)
+            } else {
+                i64::try_from(magnitude).ok()?.checked_neg()
+            }
+        } else {
+            i64::try_from(magnitude).ok()
+        }
+    });
+    Ok(PdfReal {
+        value,
+        exact_integer,
+    })
+}
+
+fn trim_pdf_whitespace(source: &[u8]) -> &[u8] {
+    let start = source
+        .iter()
+        .position(|byte| !matches!(*byte, b'\0' | b'\t' | b'\n' | b'\x0c' | b'\r' | b' '))
+        .unwrap_or(source.len());
+    let end = source
+        .iter()
+        .rposition(|byte| !matches!(*byte, b'\0' | b'\t' | b'\n' | b'\x0c' | b'\r' | b' '))
+        .map_or(start, |index| index + 1);
+    &source[start..end]
+}
+
 /// A widened scaled-point accumulator for transient bookkeeping quantities.
 ///
 /// TeX stores dimensions in 32 bits, but implementations often materialize

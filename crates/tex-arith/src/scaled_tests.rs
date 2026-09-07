@@ -1,11 +1,71 @@
 use crate::{
     ArithmeticError, DimensionError, FontSizeSpec, GLUE_SET_RATIO_SCALE, GlueSetRatio,
     GlueSetRatioError, PhysicalUnit, Scaled, TfmConversionError, WideScaled, XOverN, XnOverD,
-    font_units_to_scaled, half, mult_and_add, nx_plus_y, print_scaled, round_decimal_fraction,
-    saturating_add, saturating_mul, saturating_sub, scale_true_dimension_parts,
-    scaled_from_decimal_parts, text_accent_delta, tfm_design_size_from_fix_word,
-    tfm_fix_word_to_scaled, tfm_font_size, tfm_slant_fix_word_to_scaled_ratio, x_over_n, xn_over_d,
+    font_units_to_scaled, half, mult_and_add, nx_plus_y, parse_pdf_real, print_scaled,
+    round_decimal_fraction, saturating_add, saturating_mul, saturating_sub,
+    scale_true_dimension_parts, scaled_from_decimal_parts, text_accent_delta,
+    tfm_design_size_from_fix_word, tfm_fix_word_to_scaled, tfm_font_size,
+    tfm_slant_fix_word_to_scaled_ratio, x_over_n, xn_over_d,
 };
+
+#[test]
+fn imported_pdf_real_accumulates_decimal_digits_and_preserves_integer_endpoints() {
+    let parsed = parse_pdf_real(b" 855.9531003736\n").expect("valid imported PDF real");
+    assert!((parsed.value() - 855.9531003736).abs() < 1e-12);
+    assert_eq!(parsed.exact_integer(), None);
+    assert_eq!(
+        parse_pdf_real(b"9223372036854775807")
+            .expect("valid integer")
+            .exact_integer(),
+        Some(i64::MAX)
+    );
+    assert_eq!(
+        parse_pdf_real(b"-9223372036854775808")
+            .expect("valid integer")
+            .exact_integer(),
+        Some(i64::MIN)
+    );
+    assert_eq!(
+        parse_pdf_real(b"-0")
+            .expect("valid negative zero")
+            .value()
+            .to_bits(),
+        (-0.0_f64).to_bits()
+    );
+}
+
+#[test]
+fn imported_pdf_real_requires_strict_complete_pdf_number_syntax() {
+    for source in [
+        b"".as_slice(),
+        b"+",
+        b"-",
+        b".",
+        b"1e-3",
+        b"NaN",
+        b"Inf",
+        b"1.2junk",
+        b"--1",
+    ] {
+        assert!(
+            parse_pdf_real(source).is_err(),
+            "invalid spelling {source:?}"
+        );
+    }
+    assert!(parse_pdf_real(b".125").is_ok());
+    assert!(parse_pdf_real(b"1.").is_ok());
+}
+
+#[test]
+fn imported_pdf_real_allows_valid_magnitudes_to_overflow_for_canonical_clamps() {
+    let positive_source = b"1".repeat(400);
+    let mut negative_source = b"-".to_vec();
+    negative_source.extend_from_slice(&positive_source);
+    let positive = parse_pdf_real(&positive_source).expect("valid huge real");
+    let negative = parse_pdf_real(&negative_source).expect("valid huge real");
+    assert!(positive.value().is_infinite() && positive.value().is_sign_positive());
+    assert!(negative.value().is_infinite() && negative.value().is_sign_negative());
+}
 
 #[test]
 fn scaled_add_sub_neg_and_checked_variants() {

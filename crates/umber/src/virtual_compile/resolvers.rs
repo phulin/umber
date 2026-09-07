@@ -387,15 +387,41 @@ fn parse_pdf_image(
         request.page_box,
     )?;
     let coordinates = inspected.page_box;
+    let (x_origin, x_extent) = if coordinates[2] > coordinates[0] {
+        (coordinates[0], coordinates[2] - coordinates[0])
+    } else {
+        (coordinates[2], coordinates[0] - coordinates[2])
+    };
+    let (y_origin, y_extent) = if coordinates[3] > coordinates[1] {
+        (coordinates[1], coordinates[3] - coordinates[1])
+    } else {
+        (coordinates[3], coordinates[1] - coordinates[3])
+    };
+    let left = crate::pdf_import::pdf_bp_to_scaled(x_origin)
+        .map_err(|error| format!("invalid PDF page box: {error}"))?;
+    let bottom = crate::pdf_import::pdf_bp_to_scaled(y_origin)
+        .map_err(|error| format!("invalid PDF page box: {error}"))?;
+    let width = crate::pdf_import::pdf_bp_to_scaled(x_extent)
+        .map_err(|error| format!("invalid PDF page box: {error}"))?;
+    let height = crate::pdf_import::pdf_bp_to_scaled(y_extent)
+        .map_err(|error| format!("invalid PDF page box: {error}"))?;
+    let right = left
+        .checked_add(width)
+        .and_then(|value| value.check_dimension().ok())
+        .ok_or_else(|| {
+            "invalid PDF page box: selected PDF page box number is out of range".to_owned()
+        })?;
+    let top = bottom
+        .checked_add(height)
+        .and_then(|value| value.check_dimension().ok())
+        .ok_or_else(|| {
+            "invalid PDF page box: selected PDF page box number is out of range".to_owned()
+        })?;
     let page_box = PdfPageBox {
-        left: crate::pdf_import::pdf_number_to_scaled(coordinates[0])
-            .map_err(|error| format!("invalid PDF page box: {error}"))?,
-        bottom: crate::pdf_import::pdf_number_to_scaled(coordinates[1])
-            .map_err(|error| format!("invalid PDF page box: {error}"))?,
-        right: crate::pdf_import::pdf_number_to_scaled(coordinates[2])
-            .map_err(|error| format!("invalid PDF page box: {error}"))?,
-        top: crate::pdf_import::pdf_number_to_scaled(coordinates[3])
-            .map_err(|error| format!("invalid PDF page box: {error}"))?,
+        left,
+        bottom,
+        right,
+        top,
     };
     let rotation = inspected.rotation;
     let box_width = page_box.right - page_box.left;
@@ -1153,5 +1179,71 @@ mod tests {
         assert_eq!(rotation, tex_state::PdfPageRotation::Clockwise90);
         assert_eq!(source.natural_width, page_box.top - page_box.bottom);
         assert_eq!(source.natural_height, page_box.right - page_box.left);
+    }
+
+    #[test]
+    fn pdf_page_box_rounds_origin_and_extent_independently() {
+        let mut document = ValidPdfFixture::new("1.5").expect("create decimal PDF");
+        document
+            .add_dictionary(
+                1,
+                FixtureDictionary::new()
+                    .entry("Type", name("Catalog"))
+                    .entry("Pages", reference(2)),
+            )
+            .expect("catalog");
+        document
+            .add_dictionary(
+                2,
+                FixtureDictionary::new()
+                    .entry("Type", name("Pages"))
+                    .entry("Kids", array([reference(3)]))
+                    .entry("Count", b"1"),
+            )
+            .expect("page tree");
+        document
+            .add_dictionary(
+                3,
+                FixtureDictionary::new()
+                    .entry("Type", name("Page"))
+                    .entry("Parent", reference(2))
+                    .entry("MediaBox", b"[0.00001 0 0.00002 1]")
+                    .entry("Resources", b"<<>>")
+                    .entry("Contents", reference(4)),
+            )
+            .expect("page");
+        document
+            .add_stream(4, FixtureDictionary::new(), b"")
+            .expect("contents");
+        document
+            .set_trailer_entry("Root", reference(1))
+            .expect("root");
+        let bytes = document.finish().expect("serialize decimal PDF");
+
+        let mut world = World::default();
+        world
+            .set_memory_file("decimal.pdf", bytes)
+            .expect("seed decimal PDF");
+        let content = world.read_file("decimal.pdf").expect("read decimal PDF");
+        let source = parse_pdf_image(
+            &content,
+            &PdfImageRequest {
+                name: "decimal.pdf".to_owned(),
+                page: tex_exec::PdfImagePageSelection::Number(1),
+                color_space_object: 0,
+                page_box: PdfImagePageBox::Media,
+                resolution: 0,
+            },
+        )
+        .expect("parse decimal PDF");
+        let PdfExternalImageMetadata::PdfPage { page_box, .. } = source.metadata else {
+            panic!("expected PDF-page metadata");
+        };
+        // Both source endpoints round to one scaled point if rounded
+        // independently. The canonical image width is the separately rounded
+        // extent, also one point, so the reconstructed right endpoint is two.
+        assert_eq!(page_box.left.raw(), 1);
+        assert_eq!(page_box.right.raw(), 2);
+        assert_eq!(source.natural_width.raw(), 2 - 1);
     }
 }

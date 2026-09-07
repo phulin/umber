@@ -9,6 +9,7 @@ use hayro_syntax::Pdf;
 use hayro_syntax::object::{Array, Dict, FromBytes, MaybeRef, Object, ObjectIdentifier, Stream};
 use hayro_syntax::page::{Page, Resources};
 use hayro_syntax::reader::{Reader, ReaderExt};
+use tex_arith::parse_pdf_real;
 
 #[cfg(test)]
 mod tests;
@@ -443,63 +444,9 @@ fn raw_array_values<'a>(data: &'a [u8]) -> Result<Vec<&'a [u8]>, String> {
 }
 
 fn number_value(source: &[u8]) -> Result<PdfValue, String> {
-    let source = trim_pdf_whitespace(source);
-    let mut index = 0;
-    let negative = match source.first().copied() {
-        Some(b'-') => {
-            index = 1;
-            true
-        }
-        Some(b'+') => {
-            index = 1;
-            false
-        }
-        _ => false,
-    };
-    let integer_start = index;
-    while source.get(index).is_some_and(u8::is_ascii_digit) {
-        index += 1;
-    }
-    let integer_end = index;
-    let mut fraction_start = index;
-    let mut fraction_end = index;
-    if source.get(index) == Some(&b'.') {
-        index += 1;
-        fraction_start = index;
-        while source.get(index).is_some_and(u8::is_ascii_digit) {
-            index += 1;
-        }
-        fraction_end = index;
-    }
-    if index != source.len() || (integer_start == integer_end && fraction_start == fraction_end) {
-        return Err("page resource contains an invalid number".to_owned());
-    }
-    let decimal_places = fraction_end - fraction_start;
-    if decimal_places > 9 {
-        return Err(format!(
-            "page resource number precision exceeds limit 9: {decimal_places}"
-        ));
-    }
-    let mut magnitude = 0_i128;
-    for digit in source[integer_start..integer_end]
-        .iter()
-        .chain(source[fraction_start..fraction_end].iter())
-    {
-        magnitude = magnitude
-            .checked_mul(10)
-            .and_then(|value| value.checked_add(i128::from(*digit - b'0')))
-            .ok_or_else(|| "page resource number is out of range".to_owned())?;
-    }
-    let coefficient = if negative {
-        magnitude
-            .checked_neg()
-            .ok_or_else(|| "page resource number is out of range".to_owned())?
-    } else {
-        magnitude
-    };
-    let coefficient = i64::try_from(coefficient)
-        .map_err(|_| "page resource number is out of range".to_owned())?;
-    canonical_imported_number(coefficient, decimal_places as u8).map(PdfValue::Number)
+    let value = parse_pdf_real(source)
+        .map_err(|_| "page resource contains an invalid number".to_owned())?;
+    canonical_imported_number(value.value(), value.exact_integer()).map(PdfValue::Number)
 }
 
 /// Applies pdfTeX 1.40.29's `pdftoepdf.cc::convertNumToPDF` policy (lines
@@ -511,37 +458,65 @@ fn number_value(source: &[u8]) -> Result<PdfValue, String> {
 /// decimal places, the same operation is exact integer division: the divisor
 /// is the number of discarded decimal units and its half is the epsilon. A
 /// zero quotient also covers pdfTeX's strict `fabs(n) < epsilon` check, while
-/// an exact half rounds away from zero. Inputs with at most six decimal places
-/// are already on the output grid and need no arithmetic.
-fn canonical_imported_number(coefficient: i64, decimal_places: u8) -> Result<PdfNumber, String> {
-    if decimal_places <= 6 {
-        return PdfNumber::new(coefficient, decimal_places).map_err(|error| error.to_string());
+/// an exact half rounds away from zero. The conversion consumes the imported
+/// `f64` directly; it never first quantizes into the detached nine-place
+/// `PdfNumber` representation.
+fn canonical_imported_number(value: f64, exact_integer: Option<i64>) -> Result<PdfNumber, String> {
+    const PRECISION: f64 = 1_000_000.0;
+    const EPSILON: f64 = 0.5e-6;
+    // `i64::MAX as f64` rounds up to 2^63, so use the exact representable
+    // magnitude boundary and handle the negative endpoint separately.
+    const I64_MAGNITUDE_LIMIT: f64 = 9_223_372_036_854_775_808.0;
+
+    if let Some(integer) = exact_integer {
+        return PdfNumber::new(integer, 0).map_err(|error| error.to_string());
+    }
+    if !value.is_finite() {
+        return Err("page resource number is out of range".to_owned());
+    }
+    if value.abs() < EPSILON {
+        return PdfNumber::new(0, 0).map_err(|error| error.to_string());
     }
 
-    let discarded_places = u32::from(decimal_places - 6);
-    let divisor = 10_i128.pow(discarded_places);
-    let magnitude = i128::from(coefficient.unsigned_abs());
-    let rounded = (magnitude + divisor / 2) / divisor;
-    let coefficient = if coefficient < 0 {
-        rounded
-            .checked_neg()
-            .ok_or_else(|| "page resource number is out of range".to_owned())?
-    } else {
-        rounded
-    };
-    let coefficient = i64::try_from(coefficient)
-        .map_err(|_| "page resource number is out of range".to_owned())?;
-    PdfNumber::new(coefficient, 6).map_err(|error| error.to_string())
-}
+    // An integral value is already on the output grid. Keep this path in
+    // integer precision where possible so legacy integer-valued resources
+    // retain the full PdfNumber range (including i64's endpoints).
+    if value.fract() == 0.0 {
+        if value.is_sign_negative() {
+            if value < -I64_MAGNITUDE_LIMIT {
+                return Err("page resource number is out of range".to_owned());
+            }
+            if value == -I64_MAGNITUDE_LIMIT {
+                return PdfNumber::new(i64::MIN, 0).map_err(|error| error.to_string());
+            }
+        } else if value >= I64_MAGNITUDE_LIMIT {
+            return Err("page resource number is out of range".to_owned());
+        }
+        return PdfNumber::new(value as i64, 0).map_err(|error| error.to_string());
+    }
 
-fn trim_pdf_whitespace(source: &[u8]) -> &[u8] {
-    let start = source
-        .iter()
-        .position(|byte| !matches!(*byte, b'\0' | b'\t' | b'\n' | b'\x0c' | b'\r' | b' '))
-        .unwrap_or(source.len());
-    let end = source
-        .iter()
-        .rposition(|byte| !matches!(*byte, b'\0' | b'\t' | b'\n' | b'\x0c' | b'\r' | b' '))
-        .map_or(start, |index| index + 1);
-    &source[start..end]
+    let negative = value < 0.0;
+    let mut magnitude = if negative { -value } else { value };
+    magnitude += EPSILON;
+    let integer = magnitude.floor();
+    let fractional = ((magnitude - integer) * PRECISION).floor();
+    let coefficient = integer * PRECISION + fractional;
+    if !coefficient.is_finite()
+        || coefficient > I64_MAGNITUDE_LIMIT
+        || (!negative && coefficient == I64_MAGNITUDE_LIMIT)
+    {
+        return Err("page resource number is out of range".to_owned());
+    }
+    let coefficient = if negative {
+        if coefficient == I64_MAGNITUDE_LIMIT {
+            i64::MIN
+        } else {
+            (coefficient as i64)
+                .checked_neg()
+                .ok_or_else(|| "page resource number is out of range".to_owned())?
+        }
+    } else {
+        coefficient as i64
+    };
+    PdfNumber::new(coefficient, 6).map_err(|error| error.to_string())
 }

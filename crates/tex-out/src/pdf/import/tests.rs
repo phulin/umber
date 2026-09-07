@@ -49,11 +49,21 @@ fn imported_real_rounding_matches_pdftex_epsilon_boundaries() {
 }
 
 #[test]
-fn imported_number_range_and_precision_are_rejected() {
+fn imported_number_range_and_invalid_syntax_are_rejected() {
     assert!(number_value(b"9223372036854775808").is_err());
     assert!(number_value(b"-9223372036854775809").is_err());
-    assert!(number_value(b"0.1234567890").is_err());
+    assert_eq!(
+        number_value(b"0.1234567890"),
+        Ok(PdfValue::Number(number(123457, 6)))
+    );
     assert!(number_value(b"1e-3").is_err());
+}
+
+#[test]
+fn imported_numbers_reject_nonfinite_and_trailing_tokens() {
+    for source in [b"NaN".as_slice(), b"Inf", b"-Inf", b"1e-3", b"1.2junk"] {
+        assert!(number_value(source).is_err(), "invalid spelling {source:?}");
+    }
 }
 
 #[test]

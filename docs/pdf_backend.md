@@ -427,6 +427,22 @@ model before serialization. The lightweight input parser is `hayro-syntax`;
 the test-only observation boundary is specified separately in
 [Lightweight PDF test architecture](pdf_test_architecture.md).
 
+Imported PDF numbers have an input representation separate from `PdfNumber`,
+whose nine-place bound remains an output-model invariant. The shared arithmetic
+scanner accepts only a complete PDF number token (an optional sign, digits with
+an optional decimal point, and at least one digit), and accumulates its
+integer and fractional parts in a stack-only `f64` loop matching xpdf's
+`Lexer::getObj` path. It does not admit exponents, non-finite spellings, or
+trailing bytes. Page-box coordinates follow xpdf's `Page::readBox`: each
+value is clamped to `[-1e9, 1e9]` before endpoint ordering. At image admission,
+pdfTeX's `pdftoepdf.cc::read_pdf_info` origin and positive extent are computed
+in floating point and `writeimg.c::bp2int` rounds each independently with
+`one_hundred_bp / 100.0`; checked scaled conversion and addition preserve the
+destination range without wrapping. Copied resource numbers use the same
+scanner, then the existing `convertNumToPDF` six-place quantization seam, so a
+long valid input fraction is never first quantized to the nine-place output
+model.
+
 The source payload remains the admitted `tex_content::SharedBytes` owner from
 VFS or World through image inspection, host capability replay, `PdfState`,
 checkpoint and candidate settlement, terminal completion and finalization
