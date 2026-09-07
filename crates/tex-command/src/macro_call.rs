@@ -181,7 +181,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .state
             .admit_macro_definition(definition)
             .ok_or_else(CommandError::input_invariant)?;
-        let (activation, pattern, body) = match admitted {
+        let (activation, pattern, parameter_len, body) = match admitted {
             tex_state::AdmittedMacroDefinition::SimpleMacro { pattern, body } => {
                 let activation = self.classify_macro_activation(true, body.is_none());
                 if activation == MacroActivationClass::Simple {
@@ -197,15 +197,17 @@ impl<G> CommandProcessor<'_, '_, G> {
                             .2
                     }
                 };
-                (activation, pattern, body)
+                let parameter_len = body.parameter_len();
+                (activation, pattern, parameter_len, body)
             }
             tex_state::AdmittedMacroDefinition::MatchingMacro {
                 pattern,
-                parameter_len: _,
+                parameter_len,
                 body,
             } => (
                 self.classify_macro_activation(false, body.is_empty()),
                 pattern,
+                parameter_len,
                 body,
             ),
         };
@@ -214,7 +216,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             macro_name,
             call_origin: call_site,
             definition,
-            parameter_len: body.parameter_len(),
+            parameter_len,
             pattern,
             body,
         };
@@ -225,13 +227,14 @@ impl<G> CommandProcessor<'_, '_, G> {
         // macro therefore feeds its replacement directly, without a transient
         // `matching` scanner episode. Literal leading tokens still need the
         // matcher even when there are no numbered parameters.
-        let needs_matching = plan.pattern.leading_end(plan.parameter_len) != 0
-            || plan.pattern.parameter_count() != 0;
+        let parameter_count = plan.pattern.parameter_count();
+        let leading_end = plan.pattern.leading_end(plan.parameter_len);
+        let needs_matching = leading_end != 0 || parameter_count != 0;
         // Only numbered parameters need the reusable argument lane. A macro
         // whose parameter text is solely a compulsory literal prefix matches
         // directly from its immutable definition metadata and creates no
         // MacroMatch, ArgumentSet, writer, or captured-word block.
-        let matching = (plan.pattern.parameter_count() != 0)
+        let matching = (parameter_count != 0)
             .then(|| self.command.scratch.begin_macro_match())
             .transpose()
             .map_err(|_| CommandError::input_invariant())?;
@@ -316,7 +319,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         // Those retirements must precede this body's input push. The pending
         // frame stays canonical if an older active frame retires beneath it.
         self.conserve_input_stack_for_descendant()?;
-        let arguments = if plan.pattern.parameter_count() == 0 {
+        let arguments = if parameter_count == 0 {
             if let Some(matching) = matching {
                 self.command
                     .scratch
@@ -334,7 +337,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         };
         let macro_name = plan.macro_name;
         let call_origin = plan.call_origin;
-        let parameter_count = plan.pattern.parameter_count();
         let body = plan.body;
         let _level = self.push_macro_activation(macro_name, body, call_origin, arguments);
         observe!(
@@ -441,8 +443,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         plan: &MacroPlan<G>,
     ) -> Result<(), CommandError> {
         let paragraph_token = self.state.symbol("par").map(Token::Cs).map(TokenWord::pack);
+        let parameter_count = plan.pattern.parameter_count();
+        let leading_end = plan.pattern.leading_end(plan.parameter_len);
         let mut delivery = None;
-        for index in 0..plan.pattern.leading_end(plan.parameter_len) {
+        for index in 0..leading_end {
             let expected = plan.parameter_word(index)?;
             if self.get_macro_match_token(&mut delivery)? != crate::DeliveryStatus::Command {
                 return Err(CommandError::MacroPrefixMismatch);
@@ -464,16 +468,14 @@ impl<G> CommandProcessor<'_, '_, G> {
         // of the replacement, so only the replayed copy may contribute to
         // `align_state`. With no numbered parameters the brace lives in the
         // compulsory leading pattern rather than an argument delimiter.
-        if plan.pattern.parameter_count() == 0
-            && plan.pattern.leading_end(plan.parameter_len) != 0
-            && is_begin_group(
-                plan.parameter_word(plan.pattern.leading_end(plan.parameter_len) - 1)?,
-            )
+        if parameter_count == 0
+            && leading_end != 0
+            && is_begin_group(plan.parameter_word(leading_end - 1)?)
         {
             self.undo_delimiter_begin_group_delivery();
         }
 
-        for parameter in 0..plan.pattern.parameter_count() {
+        for parameter in 0..parameter_count {
             let matching = matching.ok_or_else(CommandError::input_invariant)?;
             let (start, end) = plan.pattern.delimiter_bounds(parameter, plan.parameter_len);
             let delimiter = MacroDelimiter {
