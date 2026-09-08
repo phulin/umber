@@ -463,6 +463,15 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.finish_hot_delivery(destination, &mut hot_destination, result)
     }
 
+    fn expanded_next_with_preserved_undefined(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        let mut hot_destination = destination.take().map(HotCommand::from_current);
+        let result = self.expanded_next_hot_preserving_undefined(&mut hot_destination);
+        self.finish_hot_delivery(destination, &mut hot_destination, result)
+    }
+
     fn finish_hot_delivery(
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
@@ -499,6 +508,23 @@ impl<G> CommandProcessor<'_, '_, G> {
         destination: &mut Option<HotCommand<G>>,
         initial_action: Option<ExpandedCommandAction>,
     ) -> Result<DeliveryStatus, CommandError> {
+        self.expanded_next_hot_with_mode::<false>(destination, initial_action)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn expanded_next_hot_preserving_undefined(
+        &mut self,
+        destination: &mut Option<HotCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        self.expanded_next_hot_with_mode::<true>(destination, None)
+    }
+
+    fn expanded_next_hot_with_mode<const PRESERVE_UNDEFINED: bool>(
+        &mut self,
+        destination: &mut Option<HotCommand<G>>,
+        initial_action: Option<ExpandedCommandAction>,
+    ) -> Result<DeliveryStatus, CommandError> {
         let depth = self.command.transient.active_expansion_depth;
         let Some(active_depth) = depth.checked_add(1) else {
             return self.fail_hot_expanded_delivery(
@@ -509,9 +535,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         };
         self.command.transient.active_expansion_depth = active_depth;
         let result = if self.is_observed() {
-            self.expanded_delivery_loop::<true>(destination, initial_action)
+            self.expanded_delivery_loop::<true, PRESERVE_UNDEFINED>(destination, initial_action)
         } else {
-            self.expanded_delivery_loop::<false>(destination, initial_action)
+            self.expanded_delivery_loop::<false, PRESERVE_UNDEFINED>(destination, initial_action)
         };
         debug_assert_eq!(self.command.transient.active_expansion_depth, active_depth);
         self.command.transient.active_expansion_depth = depth;
@@ -906,7 +932,13 @@ impl<G> CommandProcessor<'_, '_, G> {
             if stop {
                 return Ok(DeliveryStatus::Command);
             }
-            match self.expanded_next(destination)? {
+            let result = match mode {
+                ExpandedUntilMode::Protected => self.expanded_next(destination),
+                ExpandedUntilMode::PreserveUndefined => {
+                    self.expanded_next_with_preserved_undefined(destination)
+                }
+            }?;
+            match result {
                 status @ (DeliveryStatus::End | DeliveryStatus::ReplayCompleted(_)) => {
                     return Ok(status);
                 }

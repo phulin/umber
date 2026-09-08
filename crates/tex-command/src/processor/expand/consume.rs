@@ -1,7 +1,8 @@
 //! Consumer-side interpretation of the shared input reader.
 
 use super::{
-    ExpandedCommandAction, ReadSite, ResidentColdOutcome, ResidentWord, classify_hot_command,
+    ExpandedCommandAction, ExpansionDispatch, ReadSite, ResidentColdOutcome, ResidentWord,
+    classify_hot_command,
 };
 use crate::command::HotCommand;
 use crate::{CommandError, CommandProcessor, DeliveryStatus};
@@ -164,7 +165,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// The ordinary expansion consumer owns one read/interpret back edge.
     /// A supplied command is a distinct entry boundary, never an optional-slot
     /// choice repeated for each newly read word.
-    pub(super) fn expanded_delivery_loop<const OBSERVED: bool>(
+    pub(super) fn expanded_delivery_loop<const OBSERVED: bool, const PRESERVE_UNDEFINED: bool>(
         &mut self,
         destination: &mut Option<HotCommand<G>>,
         initial_action: Option<ExpandedCommandAction>,
@@ -218,6 +219,17 @@ impl<G> CommandProcessor<'_, '_, G> {
                 command
             };
             let action = classify_hot_command(&command);
+            if PRESERVE_UNDEFINED
+                && matches!(
+                    action,
+                    ExpandedCommandAction::Expand(ExpansionDispatch::Undefined)
+                )
+            {
+                let status =
+                    self.finish_terminal_expansion::<OBSERVED>(&mut command, action, expanded);
+                *destination = Some(command);
+                return Ok(status);
+            }
             if let ExpandedCommandAction::Expand(dispatch) = action {
                 self.execute_expansion_action(&mut command, dispatch)?;
                 expanded = true;
