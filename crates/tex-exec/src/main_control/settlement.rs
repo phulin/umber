@@ -552,6 +552,27 @@ impl<G> MainControl<G> {
             let mut stores = stores.command_context().expect("live generation");
             error.freeze_diagnostic_origin(&mut stores, self.command.diagnostic_input_context(8))
         };
+        // pdftex.web §32b's `pdf_error` calls TeX82 §93 `succumb`; §53's
+        // shipout traversal can report that fatal after BoxEndGroup has
+        // already popped the enclosing operation's pre-existing group. The
+        // same state cursor is also not a retry point for an invalid output
+        // artifact. Settle these output failures by commit after the nested
+        // shipout has rolled back its own speculative suffix.
+        if error.requires_terminal_settlement() {
+            if error.is_pdftex_output_fatal() {
+                Self::publish_pdf_fatal_error(stores, &error)?;
+            }
+            self.commit_direct_operation(stores, operation_mark, &mut diagnostic_effects);
+            self.record_direct_episode_commit(
+                stores,
+                operations,
+                crate::EpisodeCommitBoundary::Semantic(crate::SemanticEpisodeBarrier::Diagnostic),
+                initial_artifacts,
+                initial_boundaries,
+                initial_effect_pos,
+            );
+            return Err(error);
+        }
         let Some(fatal) = error.as_fatal() else {
             self.discard_direct_operation(stores, operation_mark);
             return Err(error);
@@ -734,7 +755,7 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         error: &ExecError,
     ) -> Result<(), ExecError> {
-        if error.is_pdftex_navigation_fatal() {
+        if error.is_pdftex_output_fatal() {
             crate::job::report_pdf_fatal_error(stores, &error.to_string());
             stores.publish_effect_prefix(stores.world().effect_pos())?;
         }

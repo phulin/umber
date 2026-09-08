@@ -401,14 +401,30 @@ impl ExecError {
         }
     }
 
-    /// Whether this is a navigation-family pdfTeX `pdf_error` which must
-    /// cross §93 `succumb` before the driver returns the same typed failure.
+    /// Whether this is a pdfTeX output-time `pdf_error` which must cross TeX82
+    /// §93's `succumb` before the driver returns the same typed failure.
     #[must_use]
-    pub fn is_pdftex_navigation_fatal(&self) -> bool {
+    pub(crate) fn is_pdftex_output_fatal(&self) -> bool {
         match self {
-            Self::PdfNavigation(_) => true,
-            Self::Captured { error, .. } => error.is_pdftex_navigation_fatal(),
+            Self::PdfNavigation(_) | Self::PdfDeferredNodeInDviMode(_) => true,
+            Self::Captured { error, .. } => error.is_pdftex_output_fatal(),
             _ => false,
+        }
+    }
+
+    /// Whether this output failure must settle the enclosing direct operation
+    /// by commit.  A box-closing operation can finish a pre-existing TeX group
+    /// before shipout reports its result; once that group has been popped, the
+    /// operation's state cursor cannot recreate the old save-stack boundary.
+    ///
+    /// `PdfExtensionInDviMode` is deliberately absent.  It is the preflight
+    /// diagnostic/retry boundary, so its operation must remain rollbackable.
+    #[must_use]
+    pub(crate) fn requires_terminal_settlement(&self) -> bool {
+        match self {
+            Self::InvalidShipoutArtifact(_) => true,
+            Self::Captured { error, .. } => error.requires_terminal_settlement(),
+            _ => self.is_pdftex_output_fatal(),
         }
     }
 }

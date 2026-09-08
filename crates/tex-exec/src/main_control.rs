@@ -4092,7 +4092,7 @@ impl<G> MainControl<G> {
                     Ok(step) => step,
                     Err(error) => {
                         if let Some(mark) = tracked_mark {
-                            if error.as_fatal().is_some() {
+                            if error.as_fatal().is_some() || error.requires_terminal_settlement() {
                                 stores.poison_dependency_region(
                                     TrackedRegionBarrier::FatalPartialCommit,
                                 );
@@ -4106,7 +4106,7 @@ impl<G> MainControl<G> {
                                 let _ = stores.abandon_dependency_region(mark);
                             }
                         }
-                        if error.as_fatal().is_none() {
+                        if error.as_fatal().is_none() && !error.requires_terminal_settlement() {
                             if matches!(
                                 command_episode.phase,
                                 Some(PreflightCommandPhase::ImmediatePdfRetry(_))
@@ -4287,7 +4287,7 @@ impl<G> MainControl<G> {
                 Ok(step) => step,
                 Err(error) => {
                     if let Some(mark) = tracked_mark {
-                        if error.as_fatal().is_some() {
+                        if error.as_fatal().is_some() || error.requires_terminal_settlement() {
                             stores
                                 .poison_dependency_region(TrackedRegionBarrier::FatalPartialCommit);
                             let result = stores

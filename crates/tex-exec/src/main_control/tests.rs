@@ -9705,10 +9705,14 @@ fn pdf_graphics_reject_dvi_before_operands_and_retry_in_source_order() {
             register_source(&mut control, source);
             let state_before = stores.journal_cursor().expect("state cursor");
 
+            let error = control
+                .step(stores)
+                .expect_err("DVI preflight rejects the extension");
             assert!(matches!(
-                control.step(stores),
-                Err(ExecError::PdfExtensionInDviMode(name)) if name == primitive
+                &error,
+                ExecError::PdfExtensionInDviMode(name) if *name == primitive
             ));
+            assert!(!error.requires_terminal_settlement());
             assert_eq!(stores.journal_cursor().expect("state cursor"), state_before);
             assert!(current_list_owner_vec(&control, stores).is_empty());
 
@@ -11212,7 +11216,7 @@ fn pdf_destination_scanner_failure_publishes_the_pdf_fatal_channels() {
         register_source(&mut control, br"\pdfdest num 0 fit");
 
         let error = control.step(stores).expect_err("zero destination is fatal");
-        assert!(error.is_pdftex_navigation_fatal());
+        assert!(error.is_pdftex_output_fatal());
         assert!(
             terminal_text(stores).contains("pdfTeX error (ext1): num identifier must be positive")
         );
