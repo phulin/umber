@@ -1,6 +1,73 @@
 use super::*;
 
 #[test]
+fn retained_input_record_hint_reuses_exact_backing_and_refreshes_after_rollback() {
+    let mut world = World::memory();
+    let path = Path::new("asset.bin");
+    world
+        .set_memory_file(path, b"original".to_vec())
+        .expect("seeded input is available");
+    let checkpoint = world.snapshot();
+    let original = world.read_file(path).expect("input read succeeds");
+
+    let reused = world
+        .read_selected_input_record(
+            path,
+            Some(original.record()),
+            original.shared_bytes(),
+            original.modification_date(),
+            original.origin(),
+            &[],
+        )
+        .expect("retained input materializes")
+        .expect("external input remains available");
+    assert_eq!(reused.record(), original.record());
+    assert_eq!(world.input_records().len(), 1);
+
+    let changed = world
+        .read_selected_input_record(
+            path,
+            Some(original.record()),
+            SharedBytes::from_vec(b"changed".to_vec()),
+            original.modification_date(),
+            original.origin(),
+            &[],
+        )
+        .expect("changed retained input materializes")
+        .expect("changed external input remains available");
+    assert_ne!(changed.record(), original.record());
+    assert_eq!(world.input_records().len(), 2);
+
+    world.rollback(&checkpoint);
+    assert!(world.input_records().is_empty());
+    let rematerialized = world
+        .read_selected_input_record(
+            path,
+            Some(original.record()),
+            original.shared_bytes(),
+            original.modification_date(),
+            original.origin(),
+            &[],
+        )
+        .expect("stale hint rematerializes")
+        .expect("external input remains available");
+    assert_eq!(world.input_records().len(), 1);
+    let repeated = world
+        .read_selected_input_record(
+            path,
+            Some(rematerialized.record()),
+            original.shared_bytes(),
+            original.modification_date(),
+            original.origin(),
+            &[],
+        )
+        .expect("refreshed hint reuses")
+        .expect("external input remains available");
+    assert_eq!(repeated.record(), rematerialized.record());
+    assert_eq!(world.input_records().len(), 1);
+}
+
+#[test]
 fn print_nl_publication_uses_post_effect_selected_line_state() {
     let mut world = World::memory();
     world.publish_print_text(PrintSink::Terminal, "term", 79);

@@ -3218,6 +3218,48 @@ impl World {
         origin: InputOrigin,
         dependencies: &[InputDependency],
     ) -> Result<Option<FileContent>, WorldError> {
+        self.read_selected_input_file_inner(
+            path,
+            bytes,
+            modification_date,
+            origin,
+            dependencies,
+            None,
+        )
+    }
+
+    /// Materializes a retained value resource while reusing its live input
+    /// record when the non-authoritative hint still names the selected
+    /// immutable version. Ordinary input openings use
+    /// [`Self::read_selected_input_file`] and always record their own event.
+    pub(crate) fn read_selected_input_record(
+        &mut self,
+        path: &Path,
+        record_hint: Option<InputRecordId>,
+        bytes: SharedBytes,
+        modification_date: Option<FileModificationDate>,
+        origin: InputOrigin,
+        dependencies: &[InputDependency],
+    ) -> Result<Option<FileContent>, WorldError> {
+        self.read_selected_input_file_inner(
+            path,
+            bytes,
+            modification_date,
+            origin,
+            dependencies,
+            record_hint,
+        )
+    }
+
+    fn read_selected_input_file_inner(
+        &mut self,
+        path: &Path,
+        bytes: SharedBytes,
+        modification_date: Option<FileModificationDate>,
+        origin: InputOrigin,
+        dependencies: &[InputDependency],
+        record_hint: Option<InputRecordId>,
+    ) -> Result<Option<FileContent>, WorldError> {
         // Peek without allocating a record. The selected path is checked
         // before external fallback, while higher-precedence candidates are
         // still allowed to shadow it without leaving an unused read record.
@@ -3246,6 +3288,15 @@ impl World {
         }
         if matches!(origin, InputOrigin::SameRunGenerated) {
             return Ok(None);
+        }
+        if let Some(record) = record_hint
+            && let Some(content) = self.recorded_input_content(record)
+            && content.path() == path
+            && SharedBytes::ptr_eq(&content.shared_bytes(), &bytes)
+            && content.modification_date() == modification_date
+            && content.origin() == origin
+        {
+            return Ok(Some(content));
         }
         Ok(Some(self.register_input_content(
             path,

@@ -2525,9 +2525,15 @@ impl<G> MainControl<G> {
                         *resource = *active_resource;
                         return Ok(());
                     }
-                    Some(ResourceInstallOutcome::Unavailable)
-                    | Some(ResourceInstallOutcome::Declined)
-                    | None => {
+                    Some(ResourceInstallOutcome::Unavailable) => {
+                        // pdfTeX's image scan must consume an authoritative
+                        // absence so the apply phase can report the typed
+                        // unavailable-image diagnostic. Declined and an
+                        // absent provider answer remain retryable misses.
+                        *resource = PdfImageResource::Unavailable;
+                        return Ok(());
+                    }
+                    Some(ResourceInstallOutcome::Declined) | None => {
                         return Err(ExecError::MissingPdfImage {
                             request: host_request,
                         });

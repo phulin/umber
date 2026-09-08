@@ -48,6 +48,21 @@ pub trait InputReadState {
         dependencies: &[InputDependency],
     ) -> Result<Option<FileContent>, WorldError>;
 
+    /// Materializes a retained value resource using an optional
+    /// non-authoritative record hint. A live matching hint reuses the exact
+    /// immutable World read; a stale hint falls back to a fresh registration.
+    fn read_selected_input_record(
+        &mut self,
+        path: &Path,
+        _record_hint: Option<crate::InputRecordId>,
+        bytes: SharedBytes,
+        modification_date: Option<FileModificationDate>,
+        origin: InputOrigin,
+        dependencies: &[InputDependency],
+    ) -> Result<Option<FileContent>, WorldError> {
+        self.read_selected_input_file(path, bytes, modification_date, origin, dependencies)
+    }
+
     fn record_input_dependency(
         &mut self,
         path: &Path,
@@ -95,6 +110,25 @@ impl InputReadState for InputOpenContext<'_> {
     ) -> Result<Option<FileContent>, WorldError> {
         self.world
             .read_selected_input_file(path, bytes, modification_date, origin, dependencies)
+    }
+
+    fn read_selected_input_record(
+        &mut self,
+        path: &Path,
+        record_hint: Option<crate::InputRecordId>,
+        bytes: SharedBytes,
+        modification_date: Option<FileModificationDate>,
+        origin: InputOrigin,
+        dependencies: &[InputDependency],
+    ) -> Result<Option<FileContent>, WorldError> {
+        self.world.read_selected_input_record(
+            path,
+            record_hint,
+            bytes,
+            modification_date,
+            origin,
+            dependencies,
+        )
     }
 
     fn record_input_dependency(

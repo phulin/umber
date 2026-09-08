@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::Mutex;
 
 use crate::{FontLoadRequest, PdfImageRequest, SourceRegistration, SourceRole};
 use tex_state::InputReadState;
@@ -313,6 +314,7 @@ impl FileEnquiryRequest {
 pub struct FileEnquiryResource {
     source: SourceRegistration,
     modification_date: Option<tex_state::FileModificationDate>,
+    record_hint: Arc<Mutex<Option<tex_state::InputRecordId>>>,
 }
 
 impl FileEnquiryResource {
@@ -321,7 +323,9 @@ impl FileEnquiryResource {
         source: SourceRegistration,
         modification_date: Option<tex_state::FileModificationDate>,
     ) -> Self {
+        let record_hint = source.active_world_record();
         Self {
+            record_hint: Arc::new(Mutex::new(record_hint)),
             source,
             modification_date,
         }
@@ -344,6 +348,7 @@ impl FileEnquiryResource {
         Self {
             source: self.source.without_world_record(),
             modification_date: self.modification_date,
+            record_hint: Arc::clone(&self.record_hint),
         }
     }
 
@@ -352,13 +357,26 @@ impl FileEnquiryResource {
     /// The source helper gives current same-run output precedence and returns
     /// `None` for a generated-only selection whose output was rolled back.
     pub fn actual_use(&self, input: &mut dyn InputReadState) -> Result<Option<Self>, WorldError> {
-        let Some(source) = self.source.actual_use(input)? else {
+        let Some(source) = self.source.actual_use_retained(
+            input,
+            *self
+                .record_hint
+                .lock()
+                .expect("file enquiry record hint mutex is not poisoned"),
+        )?
+        else {
             return Ok(None);
         };
+        *self
+            .record_hint
+            .lock()
+            .expect("file enquiry record hint mutex is not poisoned") =
+            source.active_world_record();
         let modification_date = source.modification_date().or(self.modification_date);
         Ok(Some(Self {
             source,
             modification_date,
+            record_hint: Arc::clone(&self.record_hint),
         }))
     }
 
@@ -414,6 +432,7 @@ pub enum FontResource {
 pub struct RetainedFileContent {
     path: PathBuf,
     bytes: tex_state::SharedBytes,
+    record_hint: Arc<Mutex<Option<tex_state::InputRecordId>>>,
     modification_date: Option<FileModificationDate>,
     origin: InputOrigin,
 }
@@ -423,6 +442,7 @@ impl RetainedFileContent {
         Self {
             path: content.path().to_owned(),
             bytes: content.shared_bytes(),
+            record_hint: Arc::new(Mutex::new(Some(content.record()))),
             modification_date: content.modification_date(),
             origin: content.origin(),
         }
@@ -433,13 +453,24 @@ impl RetainedFileContent {
         input: &mut dyn InputReadState,
         dependencies: &[InputDependency],
     ) -> Result<Option<FileContent>, WorldError> {
-        input.read_selected_input_file(
+        let content = input.read_selected_input_record(
             &self.path,
+            *self
+                .record_hint
+                .lock()
+                .expect("retained file record hint mutex is not poisoned"),
             self.bytes.clone(),
             self.modification_date,
             self.origin,
             dependencies,
-        )
+        )?;
+        if let Some(content) = &content {
+            *self
+                .record_hint
+                .lock()
+                .expect("retained file record hint mutex is not poisoned") = Some(content.record());
+        }
+        Ok(content)
     }
 }
 

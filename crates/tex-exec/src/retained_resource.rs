@@ -234,6 +234,25 @@ impl InputReadState for RecordingInputReadState<'_> {
             .read_selected_input_file(path, bytes, modification_date, origin, dependencies)
     }
 
+    fn read_selected_input_record(
+        &mut self,
+        path: &Path,
+        record_hint: Option<tex_state::InputRecordId>,
+        bytes: SharedBytes,
+        modification_date: Option<FileModificationDate>,
+        origin: InputOrigin,
+        dependencies: &[InputDependency],
+    ) -> Result<Option<FileContent>, WorldError> {
+        self.input.read_selected_input_record(
+            path,
+            record_hint,
+            bytes,
+            modification_date,
+            origin,
+            dependencies,
+        )
+    }
+
     fn record_input_dependency(
         &mut self,
         path: &Path,

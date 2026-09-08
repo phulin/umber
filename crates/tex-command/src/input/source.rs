@@ -314,6 +314,38 @@ impl SourceRegistration {
         Ok(Some(active))
     }
 
+    /// Materializes a retained value selection through its narrow World
+    /// record hint. Input source openings continue to use [`Self::actual_use`]
+    /// so repeated `\input` events retain their canonical chronology.
+    pub(crate) fn actual_use_retained(
+        &self,
+        input: &mut dyn InputReadState,
+        record_hint: Option<InputRecordId>,
+    ) -> Result<Option<Self>, WorldError> {
+        let Some(path) = self.world_path.as_deref() else {
+            return Ok(Some(self.clone()));
+        };
+        let origin = self.world_origin.unwrap_or(InputOrigin::External);
+        let Some(content) = input.read_selected_input_record(
+            path,
+            record_hint,
+            self.bytes.clone(),
+            self.modification_date,
+            origin,
+            &self.input_dependencies,
+        )?
+        else {
+            return Ok(None);
+        };
+        let mut active = self.clone();
+        active.bytes = content.shared_bytes();
+        active.world_path = Some(Arc::from(content.path().to_owned().into_boxed_path()));
+        active.world_record = Some(content.record());
+        active.world_origin = Some(content.origin());
+        active.modification_date = content.modification_date();
+        Ok(Some(active))
+    }
+
     /// Returns dependency facts for the content selected by this actual use.
     ///
     /// Retained capability hits must not re-record the stale Present hash that

@@ -2841,7 +2841,7 @@ fn configured_journal_budget_fails_actionably() {
     })
     .expect("limited session");
     limited
-        .add_user_file("main.tex", b"\\count0=1\\end".to_vec())
+        .add_user_file("main.tex", b"\\count0=1\\indent\\par\\end".to_vec())
         .expect("source");
     assert!(matches!(
         limited.compile_attempt(),
