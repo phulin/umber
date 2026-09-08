@@ -1,5 +1,8 @@
 # Docs Guidance
 
+`command_delivery_kernel.md` specifies frame-owned reader access, the shared
+raw/expanded fetching kernel, observation specialization, and validation.
+
 Read the repository-level `AGENTS.md` before editing here. Documentation should describe the current fixture workflow: `cargo test --tests` exercises every host-testable workspace member against committed fixtures, its coverage is bound by `crates/test-support/tests/workspace_selection.rs`, expensive environment-specific checks remain explicit opt-in commands, and `scripts/regen-fixtures.sh` is the only supported live-reference regeneration entry point.
 
 When documenting tests or parity workflow, point fixture changes to `scripts/regen-fixtures.sh` modes rather than cargo-test environment variables or retired scripts.
