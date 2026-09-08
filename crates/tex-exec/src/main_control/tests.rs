@@ -11230,6 +11230,75 @@ fn pdf_destination_scanner_failure_publishes_the_pdf_fatal_channels() {
 }
 
 #[test]
+fn observed_pdf_fatal_error_publishes_its_committed_receipt() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        crate::test_harness::assign_int_param(
+            stores,
+            IntParam::PDF_OUTPUT,
+            1,
+            tex_state::AssignmentScope::Global,
+        )
+        .expect("integer parameter assignment");
+        let mut control = pdftex_destination_control(stores);
+        register_source(&mut control, br"\pdfdest num 0 fit");
+        let mut observations = ObservationRecorder::default();
+
+        let error = control
+            .advance_with_observer(stores, &mut observations)
+            .expect_err("zero destination is fatal");
+        assert!(error.is_pdftex_output_fatal());
+        assert!(
+            control.error_operation_committed(),
+            "committed terminal error: {error:?}; observations: {:?}",
+            observations.0
+        );
+        let terminations = observations
+            .0
+            .iter()
+            .filter(|observation| {
+                matches!(
+                    observation,
+                    CommandObservation::Effect(effect)
+                        if effect.kind == ObservationEffectKind::Terminate
+                )
+            })
+            .count();
+        assert_eq!(
+            terminations, 1,
+            "terminal receipt publication: {:?}",
+            observations.0
+        );
+    });
+}
+
+#[test]
+fn observed_pdf_dvi_preflight_error_discards_its_uncommitted_receipt() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = pdftex_destination_control(stores);
+        register_source(&mut control, br"\pdfdest name{retry} fit");
+        let mut observations = ObservationRecorder::default();
+
+        let error = control
+            .advance_with_observer(stores, &mut observations)
+            .expect_err("DVI destination preflight rejects the command");
+        assert!(
+            matches!(
+                &error,
+                ExecError::Captured { error, .. }
+                    if matches!(**error, ExecError::PdfExtensionInDviMode("pdfdest"))
+            ),
+            "unexpected DVI preflight error: {error:?}"
+        );
+        assert!(!control.error_operation_committed());
+        assert!(
+            observations.0.is_empty(),
+            "recoverable preflight suffix was published: {:?}",
+            observations.0
+        );
+    });
+}
+
+#[test]
 fn pdf_destination_grouping_and_checkpoint_restore_preserve_node_ownership() {
     // pdftex.web §1565 appends a whatsit, not an eqtb assignment: ordinary
     // grouping does not undo it, while an engine checkpoint restores both the

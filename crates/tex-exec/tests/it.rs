@@ -759,13 +759,28 @@ fn receipt_categories_are_append_bounded_consumed_and_closed_before_commit() {
         .expect("failed-operation authority boundary")
         .0;
     assert!(
-        failed
+        failed.contains("commit_direct_operation_after_error"),
+        "fatal settlement delegates receipt closure to the shared error seam"
+    );
+    assert!(
+        !failed.contains("self.commit_direct_operation("),
+        "fatal settlement cannot bypass the shared error seam"
+    );
+    let failed_settlement = settlement
+        .split_once("fn commit_direct_operation_after_error(")
+        .expect("shared failed-operation settlement")
+        .1
+        .split_once("\n    pub(super) fn finish_direct_failure(")
+        .expect("shared settlement boundary")
+        .0;
+    assert!(
+        failed_settlement
             .find("admit_observed_receipt")
-            .expect("fatal receipt")
-            < failed
+            .expect("failed receipt")
+            < failed_settlement
                 .find("commit_direct_operation")
-                .expect("fatal direct commit"),
-        "fatal receipt closes before its direct operation commits"
+                .expect("failed direct commit"),
+        "shared failed receipt closes before its direct operation commits"
     );
     assert!(control.contains("pending.consume_into(publish.then_some(observer))"));
 }

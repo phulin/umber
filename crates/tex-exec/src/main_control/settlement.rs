@@ -502,10 +502,27 @@ impl<G> MainControl<G> {
             // the rewindable engine roots; the command/scanner/cold frame is
             // discarded before any full-checkpoint restore can run.
             self.discard_direct_operation(stores, mark);
-        } else {
-            self.commit_direct_operation(stores, mark, diagnostic_effects);
+            return result;
         }
-        result
+        let Err(error) = result else {
+            self.commit_direct_operation(stores, mark, diagnostic_effects);
+            return result;
+        };
+        let error = {
+            let mut context = stores.command_context().expect("diagnostic admission");
+            error.freeze_diagnostic_origin(&mut context, self.command.diagnostic_input_context(8))
+        };
+        Self::publish_pdf_fatal_error(stores, &error)?;
+        if error.is_pdftex_output_fatal() {
+            self.observe_committed([CommandObservation::Effect(engine_termination_effect())]);
+        }
+        let evidence_error = self.commit_direct_operation_after_error(
+            stores,
+            mark,
+            diagnostic_effects,
+            OperationTermination::Failed,
+        );
+        evidence_error.map_or(Err(error), Err)
     }
 
     pub(super) fn discard_direct_operation(
@@ -532,6 +549,23 @@ impl<G> MainControl<G> {
         stores
             .truncate_page_nodes(mark.page)
             .expect("direct operation page cursor belongs to the live page arena");
+    }
+
+    /// Closes the observed receipt before committing a direct operation that
+    /// will return an error. The caller has already settled any terminal
+    /// diagnostic effects; this seam records the operation's committed status
+    /// without classifying the typed error for an outer observer.
+    pub(super) fn commit_direct_operation_after_error(
+        &mut self,
+        stores: &mut Universe<G>,
+        operation_mark: DirectOperationMark<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
+        termination: OperationTermination,
+    ) -> Option<ExecError> {
+        let evidence_error = self.admit_observed_receipt(stores, termination);
+        self.error_operation_committed = true;
+        self.commit_direct_operation(stores, operation_mark, diagnostic_effects);
+        evidence_error
     }
 
     pub(super) fn finish_direct_failure(
@@ -561,10 +595,14 @@ impl<G> MainControl<G> {
         if error.requires_terminal_settlement() {
             if error.is_pdftex_output_fatal() {
                 Self::publish_pdf_fatal_error(stores, &error)?;
+                self.observe_committed([CommandObservation::Effect(engine_termination_effect())]);
             }
-            let evidence_error = self.admit_observed_receipt(stores, OperationTermination::Failed);
-            self.error_operation_committed = true;
-            self.commit_direct_operation(stores, operation_mark, &mut diagnostic_effects);
+            let evidence_error = self.commit_direct_operation_after_error(
+                stores,
+                operation_mark,
+                &mut diagnostic_effects,
+                OperationTermination::Failed,
+            );
             self.record_direct_episode_commit(
                 stores,
                 operations,
@@ -618,10 +656,12 @@ impl<G> MainControl<G> {
         stores
             .world_mut()
             .publish_diagnostic_effects_preserving(&mut diagnostic_effects);
-        let evidence_error =
-            self.admit_observed_receipt(stores, OperationTermination::Fatal(fatal));
-        self.error_operation_committed = true;
-        self.commit_direct_operation(stores, operation_mark, &mut diagnostic_effects);
+        let evidence_error = self.commit_direct_operation_after_error(
+            stores,
+            operation_mark,
+            &mut diagnostic_effects,
+            OperationTermination::Fatal(fatal),
+        );
         self.record_direct_episode_commit(
             stores,
             operations,

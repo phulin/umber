@@ -3834,6 +3834,11 @@ impl<G> MainControl<G> {
                     self.finish_resource_preflight_failure(stores, error, &mut diagnostic_effects);
                 if let Err(error) = &result {
                     Self::publish_pdf_fatal_error(stores, error)?;
+                    if error.is_pdftex_output_fatal() {
+                        self.observe_committed([CommandObservation::Effect(
+                            engine_termination_effect(),
+                        )]);
+                    }
                 }
                 if matches!(result, Ok(StepResult::Suspended(_))) {
                     self.advance_telemetry.rollbacks += 1;
@@ -3847,6 +3852,15 @@ impl<G> MainControl<G> {
                 if matches!(result, Ok(StepResult::Suspended(_))) {
                     self.discard_direct_operation(stores, operation_mark);
                 } else {
+                    if result.is_err() {
+                        let evidence_error = self.commit_direct_operation_after_error(
+                            stores,
+                            operation_mark,
+                            &mut diagnostic_effects,
+                            OperationTermination::Failed,
+                        );
+                        return evidence_error.map_or(result, Err);
+                    }
                     self.commit_direct_operation(stores, operation_mark, &mut diagnostic_effects);
                 }
                 return result;
@@ -3938,14 +3952,30 @@ impl<G> MainControl<G> {
                             #[cfg(not(feature = "profiling"))]
                             self.episode_telemetry
                                 .record_rollback(crate::SemanticEpisodeBarrier::Resource);
+                            return result;
                         } else {
-                            self.commit_direct_operation(
+                            let Err(error) = result else {
+                                self.commit_direct_operation(
+                                    stores,
+                                    operation_mark,
+                                    &mut diagnostic_effects,
+                                );
+                                return result;
+                            };
+                            Self::publish_pdf_fatal_error(stores, &error)?;
+                            if error.is_pdftex_output_fatal() {
+                                self.observe_committed([CommandObservation::Effect(
+                                    engine_termination_effect(),
+                                )]);
+                            }
+                            let evidence_error = self.commit_direct_operation_after_error(
                                 stores,
                                 operation_mark,
                                 &mut diagnostic_effects,
+                                OperationTermination::Failed,
                             );
+                            return evidence_error.map_or(Err(error), Err);
                         }
-                        return result;
                     }
                     Err(TypedOperationError::Application(error)) => Err(error),
                     Ok(step) => Ok(step),
@@ -4236,47 +4266,54 @@ impl<G> MainControl<G> {
                         if let Some(mark) = tracked_mark {
                             let _ = stores.abandon_dependency_region(mark);
                         }
-                        let result = if command_episode.has_unavailable(&cold_operation) {
-                            self.finish_unavailable_prepared_resource_operation(
+                        if command_episode.has_unavailable(&cold_operation) {
+                            return self.finish_unavailable_prepared_resource_operation(
                                 stores,
                                 operation_mark,
                                 command_episode,
                                 cold_operation,
                                 barrier,
                                 &mut diagnostic_effects,
-                            )
-                        } else {
-                            let result = self.finish_resource_preflight_failure(
+                            );
+                        }
+                        let result = self.finish_resource_preflight_failure(
+                            stores,
+                            command_episode.take_error(),
+                            &mut diagnostic_effects,
+                        );
+                        if matches!(result, Ok(StepResult::Suspended(_))) {
+                            self.discard_direct_operation(stores, operation_mark);
+                            return result;
+                        }
+                        let Err(error) = result else {
+                            self.commit_direct_operation(
                                 stores,
-                                command_episode.take_error(),
+                                operation_mark,
                                 &mut diagnostic_effects,
                             );
-                            if matches!(result, Ok(StepResult::Suspended(_))) {
-                                self.discard_direct_operation(stores, operation_mark);
-                            } else {
-                                self.commit_direct_operation(
-                                    stores,
-                                    operation_mark,
-                                    &mut diagnostic_effects,
-                                );
-                            }
-                            result
+                            return result;
                         };
-                        return match result {
-                            Err(error) => {
-                                let error = {
-                                    let mut context =
-                                        stores.command_context().expect("diagnostic admission");
-                                    error.freeze_diagnostic_origin(
-                                        &mut context,
-                                        self.command.diagnostic_input_context(8),
-                                    )
-                                };
-                                Self::publish_pdf_fatal_error(stores, &error)?;
-                                Err(error)
-                            }
-                            result => result,
+                        let error = {
+                            let mut context =
+                                stores.command_context().expect("diagnostic admission");
+                            error.freeze_diagnostic_origin(
+                                &mut context,
+                                self.command.diagnostic_input_context(8),
+                            )
                         };
+                        Self::publish_pdf_fatal_error(stores, &error)?;
+                        if error.is_pdftex_output_fatal() {
+                            self.observe_committed([CommandObservation::Effect(
+                                engine_termination_effect(),
+                            )]);
+                        }
+                        let evidence_error = self.commit_direct_operation_after_error(
+                            stores,
+                            operation_mark,
+                            &mut diagnostic_effects,
+                            OperationTermination::Failed,
+                        );
+                        return evidence_error.map_or(Err(error), Err);
                     }
                     Err(TypedOperationError::Application(error)) => Err(error),
                     Ok(step) => Ok(step),
@@ -6973,7 +7010,8 @@ impl<G> MainControl<G> {
                     .map_or(OperationTermination::Failed, OperationTermination::Fatal),
             }
         };
-        let publish = matches!(stepped, Ok(StepResult::Progress(_)));
+        let publish = matches!(stepped, Ok(StepResult::Progress(_)))
+            || (stepped.is_err() && self.error_operation_committed());
         let consumed = pending.consume_into(publish.then_some(observer));
         debug_assert!(consumed.records <= MAX_EXECUTION_RECEIPT_RECORDS);
         debug_assert_eq!(consumed.termination, expected_termination);
