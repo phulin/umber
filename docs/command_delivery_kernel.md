@@ -20,6 +20,27 @@ unwind. No raw pointer or independent cursor is introduced to evade those
 boundaries. Ordinary reads retain the physical macro, argument, and replay
 cursors already installed in the frame.
 
+## Recoverable command preflight
+
+Some canonical command checks happen before operand scanning and return a
+recoverable error when the current engine mode is unsuitable. PDFTeX's
+`check_pdfoutput` and the link-mode check are such boundaries (pdftex.web
+§§1535, 1542, 1544, 1548--1552, 1561, 1563, 1601--1607). The cold scanner
+backs up the delivered command before returning that error. The operation mark
+can then roll back TeX state, mode, node, and attempt changes while the input
+stack retains the backed-up command and the source cursor still precedes its
+operands. ErrorStop may change `\pdfoutput` or the mode, and the next step
+re-enters the complete command through ordinary delivery.
+
+This is command recovery, separate from host-resource replay. It does not
+retain a scanner, expansion frame, or direct-operation mark across a resource
+boundary. `\immediate` PDF lookahead has two command deliveries: the command
+scanner backs up the looked-ahead PDF primitive, then main control backs up
+the outer `\immediate` in the same order required by TeX82 §326. The saved
+backup path accepts the outer delivery after nested lookahead has invalidated
+its freshness stamp; ordinary `back_input` continues to reject arbitrary stale
+deliveries.
+
 ## Consumer-directed delivery
 
 Reading and semantic consumption share one input kernel. Source, replacement,

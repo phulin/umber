@@ -589,6 +589,12 @@ pub(in crate::main_control) fn scan<G>(
                     UnexpandablePrimitive::PdfRefXImage => "pdfrefximage",
                     _ => unreachable!(),
                 };
+                // pdftex.web §§1551--1552 report this before scanning any
+                // image operand. Retain the exact command on input so the
+                // ErrorStop retry can re-enter the complete command.
+                processor
+                    .back_input(command.take_current())
+                    .map_err(command_error)?;
                 return Err(ExecError::PdfExtensionInDviMode(name));
             }
             if primitive == UnexpandablePrimitive::PdfRefXImage {
@@ -668,6 +674,9 @@ pub(in crate::main_control) fn scan<G>(
             // `reserveobjnum`, `useobjnum`, the integer, stream/attr/file
             // options, body scan, or allocation.
             if processor.int_param(IntParam::PDF_OUTPUT) <= 0 {
+                processor
+                    .back_input(command.take_current())
+                    .map_err(command_error)?;
                 return Err(ExecError::PdfExtensionInDviMode("pdfobj"));
             }
             complete_cold_scan!(
@@ -684,6 +693,9 @@ pub(in crate::main_control) fn scan<G>(
             // pdftex.web §1544 calls `check_pdfoutput` before `scan_int`,
             // object validation, whatsit allocation, or list mutation.
             if processor.int_param(IntParam::PDF_OUTPUT) <= 0 {
+                processor
+                    .back_input(command.take_current())
+                    .map_err(command_error)?;
                 return Err(ExecError::PdfExtensionInDviMode("pdfrefobj"));
             }
             complete_cold_scan!(
@@ -707,6 +719,9 @@ pub(in crate::main_control) fn scan<G>(
                     UnexpandablePrimitive::PdfRefXForm => "pdfrefxform",
                     _ => unreachable!(),
                 };
+                processor
+                    .back_input(command.take_current())
+                    .map_err(command_error)?;
                 return Err(ExecError::PdfExtensionInDviMode(name));
             }
             complete_cold_scan!(
@@ -763,6 +778,9 @@ pub(in crate::main_control) fn scan<G>(
                     UnexpandablePrimitive::PdfSavePos => unreachable!(),
                     _ => unreachable!(),
                 };
+                processor
+                    .back_input(command.take_current())
+                    .map_err(command_error)?;
                 return Err(ExecError::PdfExtensionInDviMode(name));
             }
             complete_cold_scan!(
@@ -809,6 +827,9 @@ pub(in crate::main_control) fn scan<G>(
                     UnexpandablePrimitive::PdfEndThread => "pdfendthread",
                     _ => unreachable!(),
                 };
+                processor
+                    .back_input(command.take_current())
+                    .map_err(command_error)?;
                 return Err(ExecError::PdfExtensionInDviMode(name));
             }
             // pdftex.web §1561 rejects both link boundary commands in
@@ -821,6 +842,9 @@ pub(in crate::main_control) fn scan<G>(
                 UnexpandablePrimitive::PdfStartLink | UnexpandablePrimitive::PdfEndLink
             ) && matches!(mode, Mode::Vertical | Mode::InternalVertical)
             {
+                processor
+                    .back_input(command.take_current())
+                    .map_err(command_error)?;
                 return Err(ExecError::PdfLinkInVerticalMode(match primitive {
                     UnexpandablePrimitive::PdfStartLink => "pdfstartlink",
                     UnexpandablePrimitive::PdfEndLink => "pdfendlink",
@@ -890,6 +914,9 @@ pub(in crate::main_control) fn scan<G>(
             if processor.int_param(IntParam::PDF_OUTPUT) <= 0
                 && let Some(name) = dvi_name
             {
+                processor
+                    .back_input(command.take_current())
+                    .map_err(command_error)?;
                 return Err(ExecError::PdfExtensionInDviMode(name));
             }
             let scanned = processor
@@ -1147,6 +1174,14 @@ pub(in crate::main_control) fn scan<G>(
             let extension = processor
                 .scan_immediate_extension(processor.int_param(IntParam::PDF_OUTPUT) > 0)
                 .map_err(command_error)?;
+            if matches!(extension, ImmediateExtension::PdfExtensionInDviMode(_)) {
+                // The inner PDF command is already backed up by the command
+                // scanner. Back up `\immediate` after it so the outer command
+                // is delivered first on the next retry.
+                processor
+                    .back_input_saved(command.take_current())
+                    .map_err(command_error)?;
+            }
             if processor.command_trace_count() != trace_count {
                 *shown_mode = None;
             }

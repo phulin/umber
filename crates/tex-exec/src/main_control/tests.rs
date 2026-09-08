@@ -10106,7 +10106,7 @@ fn immediate_pdf_object_rejects_dvi_after_lookahead_before_operand_scan() {
             let mut define_control = pdftex_object_control(define_stores);
             register_source(
                 &mut define_control,
-                br"\immediate\pdfobj useobjnum 41 stream attr{/Type /Metadata} file{retry.dat}",
+                br"\immediate\pdfobj useobjnum 41 stream attr{/Type /Metadata} file{retry.dat}\pdfobj reserveobjnum",
             );
             assert!(matches!(
                 define_control.step(define_stores),
@@ -10156,6 +10156,16 @@ fn immediate_pdf_object_rejects_dvi_after_lookahead_before_operand_scan() {
                 token_character_text(define_stores, data.data()),
                 "retry.dat"
             );
+            // The inner PDF command and its outer `\immediate` were restored
+            // as two backup levels. The next source command must therefore
+            // remain behind the complete retried pair and reserve object 2.
+            assert_eq!(
+                define_control
+                    .step(define_stores)
+                    .expect("following command remains after immediate retry"),
+                MainControlStep::Continue
+            );
+            assert!(admitted!(define_stores, |context| context.pdf_raw_object(2)).is_some());
         });
     });
 }

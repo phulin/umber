@@ -344,10 +344,15 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// restored by the ordinary `back_input` above and the saved first token
     /// by this one, so the pair is reread in its original order from two
     /// separate backup levels.
-    pub(crate) fn back_input_saved(
-        &mut self,
-        command: CurrentCommand<G>,
-    ) -> Result<(), CommandError> {
+    ///
+    /// Unlike [`Self::back_input`], this accepts a command whose freshness
+    /// stamp was superseded by a nested delivery. Callers must have retained
+    /// that command from the immediately preceding canonical delivery and use
+    /// this only for TeX82 §326's saved-token restoration; it is not a general
+    /// escape from ordinary stale-delivery validation. Main-control PDF
+    /// preflight uses it for the outer `\immediate` after its looked-ahead PDF
+    /// primitive has been backed up.
+    pub fn back_input_saved(&mut self, command: CurrentCommand<G>) -> Result<(), CommandError> {
         self.back_input_unchecked(command, BackupTreatment::Ordinary)
     }
     fn back_input_unchecked(

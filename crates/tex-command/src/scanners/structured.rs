@@ -3850,7 +3850,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 primitive @ (UnexpandablePrimitive::PdfObject
                 | UnexpandablePrimitive::PdfXForm
                 | UnexpandablePrimitive::PdfXImage),
-            )) => self.finish_immediate_pdf(primitive, pdf_output_enabled),
+            )) => self.finish_immediate_pdf(command, primitive, pdf_output_enabled),
             _ => {
                 self.back_input(command)?;
                 Ok(ImmediateExtension::Continue)
@@ -3898,10 +3898,16 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     fn finish_immediate_pdf(
         &mut self,
+        command: CurrentCommand<G>,
         primitive: UnexpandablePrimitive,
         pdf_output_enabled: bool,
     ) -> Result<ImmediateExtension, CommandError> {
         if !pdf_output_enabled {
+            // pdftex.web §1623 leaves the looked-ahead primitive current after
+            // `check_pdfoutput`. The executor also restores the outer
+            // `\immediate`, so preserving this inner delivery keeps the two
+            // commands in source order for a later PDF-mode retry.
+            self.back_input(command)?;
             return Ok(ImmediateExtension::PdfExtensionInDviMode(primitive));
         }
 
