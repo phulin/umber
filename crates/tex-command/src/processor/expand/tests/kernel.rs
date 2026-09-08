@@ -238,3 +238,52 @@ fn resumed_replacement_reads_the_live_meaning_after_backup() {
         );
     });
 }
+
+#[test]
+fn reused_raw_destination_is_cleared_at_eof_and_fuel_failure() {
+    for limit in [2, 3] {
+        crate::test_harness::with_universe(|universe| {
+            let mut command = CommandState::default();
+            crate::test_harness::push(&mut command, [letter('A'), letter('B')]);
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut fuel = crate::CommandFuelLedger::new(limit).expect("fuel");
+            let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut context = universe.command_context().expect("context");
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut effects,
+            );
+            let mut destination = None;
+            for expected in ['A', 'B'] {
+                assert_eq!(
+                    processor
+                        .raw_next_hot(&mut destination)
+                        .expect("raw command"),
+                    crate::DeliveryStatus::Command,
+                );
+                // Leave the previous command occupied for the next fetch.
+                assert_eq!(
+                    destination
+                        .as_ref()
+                        .expect("command")
+                        .spelling_word()
+                        .semantic_token(),
+                    letter(expected),
+                );
+            }
+            let result = processor.raw_next_hot(&mut destination);
+            if limit == 2 {
+                assert!(matches!(
+                    result,
+                    Err(crate::CommandError::FuelExhausted { .. })
+                ));
+            } else {
+                assert_eq!(result.expect("EOF"), crate::DeliveryStatus::End);
+            }
+            assert!(destination.is_none());
+        });
+    }
+}

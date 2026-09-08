@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 use super::ResidentStorageKind;
-use super::ResidentWordRead;
+use super::{ResidentWord, ResidentWordRead};
 use crate::CommandProcessor;
 use crate::input::{InputLevel, PackedInputFrame, ResidentTokenStorage};
 use tex_state::token::{OriginId, TokenWord};
@@ -335,9 +335,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 };
             }
         }
-        self.enter_resident_delivery();
-
-        ResidentWordRead::Word {
+        ResidentWordRead::Word(ResidentWord {
             word,
             origin,
             identity,
@@ -348,6 +346,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             storage_kind,
             #[cfg(feature = "profiling")]
             raw_kind,
-        }
+        })
     }
 }

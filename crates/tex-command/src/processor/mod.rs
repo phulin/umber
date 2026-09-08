@@ -405,9 +405,7 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     #[inline(always)]
     fn enter_resident_delivery(&mut self) {
-        if !matches!(self.delivery_authority, DeliveryAuthority::Resident) {
-            self.delivery_authority = DeliveryAuthority::Resident;
-        }
+        self.delivery_authority = DeliveryAuthority::Resident;
     }
 
     /// Advances the observation-only delivery sequence. Ordinary unobserved

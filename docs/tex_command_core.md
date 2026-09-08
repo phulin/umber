@@ -195,9 +195,10 @@ control-sequence identity.
 
 The loop is destination-directed. Its caller provides the one final
 `Option<CurrentCommand<G>>` slot for that active request. A compact entry may
-receive an already-supplied hot command, but immediately takes it into one
-loop-local `Option<HotCommand<G>>` and keeps that owner through its complete
-ordinary loop. Raw delivery initializes the same compact pair from the input
+receive an already-supplied hot command, but immediately admits one occupied
+loop-local `HotCommand<G>` and keeps that owner through its complete ordinary
+loop. Optional destinations are handled only at entry and publication; each
+fetch overwrites the same occupied command. Raw delivery initializes the same compact pair from the input
 frame. The rich return value is materialized and published back to the caller
 only at a semantic boundary, exactly once for a command-bearing status. Each concrete
 source arm retains the separate lexer transition. The delivery loop selects a
@@ -233,13 +234,13 @@ second raw representation.
 
 The frame-owned delivery loop also owns final suppression, fuel, and alignment
 settlement rather than returning through a second hot helper.
-Each synchronous raw, expanded, matcher, or main-character episode keeps an
-episode-local resident-frame selection (row index and concrete storage tag)
-until a cold input transition changes the visible top. The matcher calls that
-same read/admit authority into its caller-owned `HotCommand` slot and reads
-the settled spelling and command facts directly; it settles an alignment
-delimiter once before continuing, so delimiter matching does not create a
-rich `CurrentCommand`, a matcher wrapper, or a repeated top selection.
+Each scalar fetch borrows the currently exposed semantic frame directly; the
+frame owns its resumable physical cursor across nested input and rollback.
+There is no parallel cached row index, storage tag, or invalidation protocol.
+The matcher calls that same read/admit authority into its caller-owned
+`HotCommand` slot and reads the settled spelling and command facts directly;
+it settles an alignment delimiter once before continuing without constructing
+a rich `CurrentCommand` or matcher wrapper.
 Parameter substitution and ordinary token exhaustion mutate the input stack
 and immediately reselect its authoritative top. Cold source-line acquisition,
 source EOF, retained templates, and replay-completion publication alone leave
@@ -281,9 +282,9 @@ suspension retain one explicit coordinate because no resident predecessor can
 derive it. Observation sequencing remains separate from this proof.
 Stored-token and macro-argument delivery read only the position, identity,
 source, and behavior scalars they require; neither materializes or copies the
-whole packed frame before that advance. The warm loop neither matches a
-storage handle nor constructs a universal resident-top or storage-domain
-wrapper per word.
+whole packed frame before that advance. The warm loop dispatches on the
+frame's authoritative storage variant and retains only the loaded word and
+copy-small delivery facts after the borrow ends.
 The resident row's concrete variant is already the domain proof. Test builds
 retain counters for structural assertions, but an ordinary profiling build
 does not update a second per-domain census after making that required variant
@@ -2149,7 +2150,6 @@ Every ordinary token-list source is adapted once at level creation into a
 `PackedTokenSpanHandle` plus the packed frame's scalar offset. Macro admission
 instead borrows a `DefinitionView` synchronously, records its compact
 `DefinitionRef` in eqtb and admits one store-minted region-owned replacement cursor,
-then pushes the specialized body row. Resident selection yields that bare
 then pushes the specialized body row. Resident selection indexes the admitted
 current chunk, reads one packed word, and increments the logical and physical
 cursors; a physical crossing calls one cold next-chunk transition. Exact

@@ -149,7 +149,8 @@ collector (see `src/conditionals.rs`).
   adding production state or an alternate delivery path.
 - `src/processor/expand/tests/kernel.rs`: nested reader resumption, every
   bounded fuel cut under observed/unobserved delivery, observer attachment
-  between calls, and live meaning resolution after backup.
+  between calls, live meaning resolution after backup, and clearing a reused
+  raw destination at EOF and fuel failure.
 - `src/processor/expansion_depth.rs`: Web2C's shared primitive/expression
   depth capacity and unconditional restoration on Rust result unwinding.
   `src/processor/expand/tests/nesting.rs` covers the five nested operand
@@ -162,8 +163,11 @@ collector (see `src/conditionals.rs`).
   input transitions.
 - `src/processor/expand.rs`: canonical destination-directed command-delivery
   loop and static primitive dispatch. Raw and expanded consumers share one
-  fetch/settlement kernel; expanded entry consumes its initial classification
-  once before the steady cycle. Observation is specialized once per synchronous
+  fetch/settlement kernel borrowing one occupied `HotCommand`; optional output
+  slots are admitted and published only at entry and exit. Expanded entry
+  consumes its initial classification once before the steady cycle. Resident
+  resolution accepts a successfully loaded word directly; character admission
+  does not publish freshness for a command it never constructs. Observation is specialized once per synchronous
   delivery call, while scanner/alignment semantics remain live. Source delivery
   publishes its exceptional freshness coordinate before settlement. Its entry keeps one compact hot
   token/meaning pair across fetch, settlement, classification, macro expansion,
