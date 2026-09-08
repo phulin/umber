@@ -10,6 +10,113 @@ cargo run --release --manifest-path benchmarks/tex-command/Cargo.toml \
   --bin command_allocations
 ```
 
+For command-core wall time, use the feature-free timing package:
+
+```bash
+cargo run --release --manifest-path benchmarks/tex-command/timing/Cargo.toml \
+  -- --case=all --iterations=100000 --warmups=64 --observer=both
+```
+
+This is the release baseline. Its dependencies do not enable `profiling`, and
+it installs no custom allocator, counters, or allocation interposer. The
+optional profiling receipt uses the same fixtures and arguments:
+
+```bash
+cargo run --release --manifest-path benchmarks/tex-command/Cargo.toml \
+  --bin command_core_profile -- --case=all --iterations=100000 --warmups=64 \
+  --observer=both
+```
+
+Do not compare the profiling wrapper's elapsed time with the release tier. It
+enables the existing profiling feature and `HotCoreAllocator` only to append
+structural receipts such as macro-expansion counts and raw-delivery lanes.
+Use the release command for before/after timing.
+
+The matrix emits one metadata JSON line followed by one JSON line for every
+case, storage, delivery, and observer combination. `--case` accepts `all` or
+one of `plain`, `empty_macro`, `nonempty_macro`, `parameterized_empty`,
+`parameterized_identity`, `balanced_argument`, and
+`delimited_nested_argument`. `--observer` accepts `disabled`, `enabled`, or
+`both`; `--iterations` is the timed count and `--warmups` may be zero. The
+default matrix has 7 cases × 2 storage forms × 3 delivery policies × 2
+observer modes = 84 records.
+
+The fixture meanings are deliberately small and fixed. `plain` delivers one
+letter. `empty_macro` calls a no-parameter macro whose empty replacement is
+followed by `x`. `nonempty_macro` calls a no-parameter macro replacing itself
+with `z`. `parameterized_empty` consumes one braced `a` argument and then
+delivers `x`; `parameterized_identity` consumes one unbraced `a` and replays
+it. `balanced_argument` consumes `{a{b}}`; `delimited_nested_argument`
+consumes `{a{b}}|` before replacing the result with `z`. Braces are assigned
+their TeX begin/end-group catcodes in the synthetic universe. Raw cases use a
+one-control-sequence input per operation, while expanded cases use the full
+macro call; source and stored forms therefore have fresh, equivalent semantic
+streams for the selected delivery policy.
+
+Each record reports elapsed nanoseconds and nanoseconds per iteration, an
+independently expected semantic checksum and hash, and the known source-word,
+stored-word, selected-input-token, and replacement-body denominators. The
+`token_work` denominator is selected input tokens plus replacement-body tokens;
+`macro_calls` is reported separately. Argument and delimiter tokens remain
+separate fields so a change that preserves output while changing scanner work
+cannot pass by normalizing everything into one count. Totals are measured-count
+normalizations of the per-operation fields. Setup, the semantic preflight,
+warmups, and the end-of-input sentinel are outside the timed interval. The
+preflight checks the delivered token and control-sequence identity on a fresh
+input, and the sentinel rejects an unexpected suffix. The timed loop only
+accumulates cheap checksum and token-shape evidence, which is checked against
+the independent fixture expectation after timing.
+
+The existing command benchmarks remain available with these exact commands:
+
+```bash
+cargo run --release --manifest-path benchmarks/tex-command/Cargo.toml \
+  --bin command_allocations [-- --perturb]
+cargo run --release --manifest-path benchmarks/tex-command/Cargo.toml \
+  --bin packed_cutover_gate [-- --only=<row>]
+cargo run --release --manifest-path benchmarks/tex-command/Cargo.toml \
+  --bin command_checkpoint_gate
+cargo run --release --manifest-path benchmarks/tex-command/Cargo.toml \
+  --bin resident_macro_body_gate
+```
+
+`command_allocations` covers `single_token_backup`,
+`macro_argument_matching`, `scan_toks_absorption`, `keyword_scanning`,
+`dimension_scanning`, `alignment_preamble_scanning`,
+`two_token_off_save_recovery`, `rendered_token_installation`,
+`command_text_rendering`, `token_list_iteration`, `shift_case`,
+`macro_definition`, `read_token_collection`, `output_replay_expansion`,
+`inline_control_sequence_tokenization`, and
+`spilled_control_sequence_tokenization`, each in `unobserved` and
+`external_observer` configurations where supported. `--perturb` is the
+existing deliberate allocation sensitivity check.
+
+`packed_cutover_gate --only=<row>` selects one of
+`ordinary_source_delivery`, `packed_backup_and_replay`,
+`warmed_backup_push_pop`, `stored_token_replay`,
+`warmed_mixed_stored_cursor`, `warmed_long_macro_argument_cursor`,
+`known_name_lookup`, `primitive_resolution`,
+`source_known_creating_delivery`, `source_known_probe_delivery`,
+`source_new_creating_delivery`, `source_unknown_probe_delivery`,
+`stored_control_sequence_delivery`, `direct_command_delivery`,
+`macro_argument_matching`, `macro_argument_append`,
+`warmed_keyword_mismatch`, `destination_directed_warm_delivery`,
+`fused_raw_expanded_delivery`, `destination_owned_macro_expansion`,
+`mixed_macro_resident_pipeline`, `stationary_scan_toks_progress`, and
+`direct_definition_scanning`. These rows measure source decoding and lookup,
+packed and backed-up delivery, macro argument and body traversal, scanner
+progress, definition publication, and the direct command carrier. The
+`--mixed-stored-only` spelling remains an alias for its documented mixed
+stored-cursor row.
+
+`command_checkpoint_gate` measures warmed capture, clone, restore, fork,
+rollback, coalesced scalar and input-frame mutations, source-history reuse,
+cursor structure, and journal-prefix release. `resident_macro_body_gate`
+measures resident macro-body reads at one, 4,096, and 8,193 words, including
+chunk-boundary transitions and owner-retention receipts. These gates retain
+their existing deterministic allocation and structural checks; their elapsed
+times are diagnostic.
+
 `command_allocations` directly exercises single-token backup, macro argument
 matching, `scan_toks` absorption, keyword and dimension scanning, alignment
 preamble scanning, two-token `off_save` recovery, rendered-token installation,
