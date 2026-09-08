@@ -780,6 +780,12 @@ code cannot create a second lexer, expansion loop, or backup mechanism.
 `CommandState::snapshot` remains the transaction boundary for the resulting
 future input state.
 
+The compact `\number` and `\romannumeral` conversion lane passes any
+already-consumed non-digit token directly into the same leading-sign loop as
+TeX82 §440. It does not back that token up before re-entering integer
+scanning, so a sign remains one expanded delivery with one provenance and
+one observation.
+
 Nested scalar calls use the same statically selected destination contract and
 consume each completed value before returning to the caller. A resource miss
 unwinds all local scanner state and returns a cold owned `ResourceNeed`; the
@@ -952,7 +958,10 @@ the failed-keyword backup that begins subsequent main control. Replay only
 appends the resulting rule node; it neither reads a source token nor rebuilds
 rule provenance. This remains true inside alignment cells, where template
 delivery and rule scanning share the one command-owned input stream. `\vrule`
-in math mode (`mmode+vrule`) takes this same completed-spec path, since TeX82
+starts with TeX82 §463's default width and null height/depth, while `\hrule`
+starts with null width, default height, and zero depth; packing or alignment
+resolves those null running dimensions after scanning. In math mode,
+`\vrule` (`mmode+vrule`) takes this same completed-spec path, since TeX82
 §1056 treats it as an ordinary direct contribution. `\hrule` in math mode
 (`mmode+hrule`) never reaches `scan_rule_spec`: `tex-exec` recognizes the
 mode before scanning and calls `CommandProcessor::recover_missing_math_shift`
@@ -3924,6 +3933,9 @@ transaction before the resulting write payload. Thus §367 expansion traces,
 sequence stays rollback-safe. The expanded write bytes remain at the whatsit's
 exact list position, so §§1373--1374 open and close effects cannot commit
 around an absent write or materialize an empty numbered-stream artifact.
+Because `write_out` runs with TeX82's `mode=0`, command recovery records `no
+mode` for diagnostics in that episode without querying the enclosing executor;
+ordinary recovery keeps the executor's diagnostic mode fact.
 Deferred special and PDF-literal diagnostics retain their separate
 post-transaction command-owned publication path. TeX82 §1043 and pdfTeX's
 any-mode extensions append whatsits through the same current-list boundary.
