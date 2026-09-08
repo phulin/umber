@@ -1270,24 +1270,56 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn scan_integer_with_resource_continuation(
         &mut self,
     ) -> Result<ScannedScalar<i32>, CommandError> {
+        let mut command = None;
+        let delivery = self.request_expanded_hot_token(&mut command)?;
+        match delivery {
+            DeliveryStatus::Command => {}
+            DeliveryStatus::End => {
+                return Ok(ScannedScalar {
+                    value: 0,
+                    recovery: ScalarRecovery::InsertedZero,
+                    provenance: ScalarProvenance {
+                        primary: OriginId::UNKNOWN,
+                    },
+                });
+            }
+            _ => unreachable!("ordinary expanded delivery returns only commands"),
+        }
+        self.scan_integer_from_leading_hot(command.expect("command initializes destination"))
+    }
+
+    /// Continues TeX82 §440 after a caller has already consumed the first
+    /// token. The compact numeric conversion lane inspects that token for a
+    /// decimal digit, but a leading sign belongs to §440's sign loop and
+    /// must not be backed up before the full scanner resumes.
+    pub(crate) fn scan_integer_from_leading_hot(
+        &mut self,
+        first: HotCommand<G>,
+    ) -> Result<ScannedScalar<i32>, CommandError> {
         let (mut negative, mut provenance) = (false, OriginId::UNKNOWN);
+        let mut command = Some(first);
         let first = loop {
-            let mut command: Option<HotCommand<G>> = None;
-            let delivery = self.request_expanded_hot_token(&mut command)?;
-            let command = match delivery {
-                DeliveryStatus::Command => {
-                    command.expect("command delivery initializes destination")
+            let command = match command.take() {
+                Some(command) => command,
+                None => {
+                    let mut destination = None;
+                    let delivery = self.request_expanded_hot_token(&mut destination)?;
+                    match delivery {
+                        DeliveryStatus::Command => {
+                            destination.expect("command delivery initializes destination")
+                        }
+                        DeliveryStatus::End => {
+                            return Ok(ScannedScalar {
+                                value: 0,
+                                recovery: ScalarRecovery::InsertedZero,
+                                provenance: ScalarProvenance {
+                                    primary: provenance,
+                                },
+                            });
+                        }
+                        _ => unreachable!("ordinary expanded delivery returns only commands"),
+                    }
                 }
-                DeliveryStatus::End => {
-                    return Ok(ScannedScalar {
-                        value: 0,
-                        recovery: ScalarRecovery::InsertedZero,
-                        provenance: ScalarProvenance {
-                            primary: provenance,
-                        },
-                    });
-                }
-                _ => unreachable!("ordinary expanded delivery returns only commands"),
             };
             if provenance == OriginId::UNKNOWN {
                 provenance = command.origin();

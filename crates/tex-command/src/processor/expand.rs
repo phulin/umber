@@ -2334,8 +2334,14 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
         let first = first.take().ok_or(CommandError::input_invariant())?;
         let Some(digit) = hot_decimal_digit(&first) else {
-            self.back_input_hot(first)?;
-            return self.expand_number(origin, roman);
+            let scan = self.scan_integer_from_leading_hot(first)?;
+            let text = if roman {
+                super::expand_render::roman_numeral(scan.value)
+            } else {
+                scan.value.to_string()
+            };
+            self.push_rendered_text(&text, origin);
+            return Ok(());
         };
         let mut value = i32::from(digit);
         let mut overflowed = false;
