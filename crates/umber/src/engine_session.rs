@@ -470,75 +470,16 @@ impl<'a, G> EngineSession<'a, G> {
         &mut self,
         host: &mut dyn ResourceHost,
     ) -> Result<DiagnosticStep, SessionError> {
-        let mut declined: u8 = 0;
-        loop {
-            match self.control.diagnostic_expand_step(self.stores)? {
-                DiagnosticStepResult::Progress(step) => return Ok(step),
-                DiagnosticStepResult::Suspended(need) => {
-                    declined = if self.answer_diagnostic_need(host, &need)? {
-                        0
-                    } else {
-                        declined.saturating_add(1)
-                    };
-                    if declined >= self.no_progress_limit {
-                        return Err(SessionError::NoProgress {
-                            need,
-                            attempts: declined,
-                        });
-                    }
-                }
+        let mut resource_provider = ResourceHostProvider::new(host);
+        match self
+            .control
+            .diagnostic_expand_step_with_resource_provider(self.stores, &mut resource_provider)?
+        {
+            DiagnosticStepResult::Progress(step) => Ok(step),
+            DiagnosticStepResult::Suspended(need) => {
+                Err(SessionError::NoProgress { need, attempts: 1 })
             }
         }
-    }
-
-    /// The diagnostic expansion API predates the retained main-control
-    /// checkpoint protocol and has no checkpoint sink. Keep its existing
-    /// synchronous host boundary isolated from the production wait/fulfill
-    /// path; production execution uses [`Self::answer_need`].
-    fn answer_diagnostic_need(
-        &mut self,
-        host: &mut dyn ResourceHost,
-        need: &ResourceNeed,
-    ) -> Result<bool, SessionError> {
-        let (outcome, effects) = {
-            let mut world = ResourceWorld::new(self.stores);
-            let outcome = host.fulfill(&mut world, need);
-            let effects = world.take_replay_effects();
-            (outcome, effects)
-        };
-        if let ResourceOutcome::Failed(failure) = &outcome {
-            return Err(SessionError::ResourceFailure {
-                need: Box::new(need.clone()),
-                failure: failure.clone(),
-            });
-        }
-        if let ResourceOutcome::Fulfilled(fulfillment) = outcome {
-            self.output_ledger
-                .fulfill_with_effects(&mut self.control, need, fulfillment, &effects)
-                .map_err(|fulfillment| SessionError::UnexpectedFulfillment {
-                    need: Box::new(need.clone()),
-                    fulfillment,
-                })?;
-            return Ok(true);
-        }
-        if let Some(fulfillment) = self.same_run_output(need) {
-            self.output_ledger
-                .fulfill_with_effects(&mut self.control, need, fulfillment, &effects)
-                .map_err(|fulfillment| SessionError::UnexpectedFulfillment {
-                    need: Box::new(need.clone()),
-                    fulfillment,
-                })?;
-            return Ok(true);
-        }
-        if matches!(outcome, ResourceOutcome::Unavailable) {
-            self.output_ledger.mark_unavailable_with_effects(
-                &mut self.control,
-                need,
-                true,
-                &effects,
-            );
-        }
-        Ok(false)
     }
     #[must_use]
     pub fn new(stores: &'a mut Universe<G>, profile: CommandProfile) -> Self {
