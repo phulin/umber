@@ -209,6 +209,10 @@ pub(crate) fn construct(
         }
         let executable = worker_executable()?;
         let executable_path = format!("/proc/self/fd/{}", executable.as_raw_fd());
+        let worker_marker = match &launcher.route {
+            WorkerRoute::Production => PRODUCTION_WORKER_ARGUMENT,
+            WorkerRoute::Libtest(test_name) => *test_name,
+        };
         let mut auth_key = Zeroizing::new([0_u8; AUTH_KEY_BYTES]);
         getrandom::fill(&mut *auth_key)
             .map_err(|error| FormatFixtureError::WorkerSpawn(error.to_string()))?;
@@ -238,10 +242,6 @@ pub(crate) fn construct(
                 "missing worker stderr".into(),
             ));
         };
-        if let Err(error) = arm_resident_set_guard(&mut child, recipe.guards.resident_bytes) {
-            terminate(&mut child);
-            return Err(error);
-        }
         let writer_key = Zeroizing::new(*auth_key);
         let writer = std::thread::spawn(move || {
             stdin
@@ -256,6 +256,7 @@ pub(crate) fn construct(
             stderr,
             MAX_WORKER_STDOUT_BYTES,
             MAX_WORKER_STDERR_BYTES,
+            Some(worker_marker),
         );
         let writer_result = writer.join();
         let collected = match collected {
@@ -520,6 +521,7 @@ fn supervise_and_collect(
     stderr: ChildStderr,
     stdout_limit: usize,
     stderr_limit: usize,
+    worker_marker: Option<&str>,
 ) -> Result<CollectedWorkerOutput, FormatFixtureError> {
     let exit_event = match ProcessExitEvent::open(child) {
         Ok(exit_event) => exit_event,
@@ -573,26 +575,28 @@ fn supervise_and_collect(
                 terminate(child);
                 break Err(FormatFixtureError::WallTimeExceeded);
             }
-            SupervisionAction::CheckResidentSet => match worker_rss(child.id()) {
-                Ok(rss) if rss > guards.resident_bytes => {
-                    terminate(child);
-                    break Err(FormatFixtureError::ResidentSetExceeded);
-                }
-                Ok(_) => {}
-                Err(WorkerResidentSetError::ProcessVanished) => {
-                    if let Err(error) =
-                        reconcile_process_disappearance(&mut status, || child.try_wait())
-                    {
+            SupervisionAction::CheckResidentSet => {
+                match worker_rss_after_exec(child.id(), worker_marker) {
+                    Ok(Some(rss)) if rss > guards.resident_bytes => {
                         terminate(child);
-                        break Err(error);
+                        break Err(FormatFixtureError::ResidentSetExceeded);
                     }
-                    continue;
+                    Ok(Some(_)) | Ok(None) => {}
+                    Err(WorkerResidentSetError::ProcessVanished) => {
+                        if let Err(error) =
+                            reconcile_process_disappearance(&mut status, || child.try_wait())
+                        {
+                            terminate(child);
+                            break Err(error);
+                        }
+                        continue;
+                    }
+                    Err(WorkerResidentSetError::Unsupported) => {
+                        terminate(child);
+                        break Err(FormatFixtureError::ResidentSetUnsupported);
+                    }
                 }
-                Err(WorkerResidentSetError::Unsupported) => {
-                    terminate(child);
-                    break Err(FormatFixtureError::ResidentSetUnsupported);
-                }
-            },
+            }
             SupervisionAction::WaitForPipes => {}
         }
         let remaining = guards.wall_time.saturating_sub(started.elapsed());
@@ -631,18 +635,37 @@ fn worker_rss(pid: u32) -> Result<u64, WorkerResidentSetError> {
 }
 
 #[cfg(target_os = "linux")]
-fn arm_resident_set_guard(
-    child: &mut Child,
-    resident_bytes: u64,
-) -> Result<(), FormatFixtureError> {
-    match worker_rss(child.id()) {
-        Ok(rss) if rss > resident_bytes => Err(FormatFixtureError::ResidentSetExceeded),
-        Ok(_) => Ok(()),
-        Err(WorkerResidentSetError::ProcessVanished) => {
-            reconcile_process_disappearance(&mut None, || child.try_wait())
+#[allow(
+    clippy::disallowed_methods,
+    reason = "native format-worker host policy waits for the authenticated worker image after fork"
+)]
+fn worker_rss_after_exec(
+    pid: u32,
+    marker: Option<&str>,
+) -> Result<Option<u64>, WorkerResidentSetError> {
+    // A forked child still exposes the parent's argv until exec replaces its
+    // image.  The exact route marker is therefore the readiness boundary for
+    // an RSS sample; sampling before it would charge the parent to the worker.
+    if let Some(marker) = marker {
+        let cmdline = std::fs::read(format!("/proc/{pid}/cmdline")).map_err(|error| {
+            if error.kind() == ErrorKind::NotFound {
+                WorkerResidentSetError::ProcessVanished
+            } else {
+                WorkerResidentSetError::Unsupported
+            }
+        })?;
+        if !cmdline_has_argument(&cmdline, marker.as_bytes()) {
+            return Ok(None);
         }
-        Err(WorkerResidentSetError::Unsupported) => Err(FormatFixtureError::ResidentSetUnsupported),
     }
+    worker_rss(pid).map(Some)
+}
+
+#[cfg(target_os = "linux")]
+fn cmdline_has_argument(cmdline: &[u8], expected: &[u8]) -> bool {
+    cmdline
+        .split(|byte| *byte == 0)
+        .any(|argument| argument == expected)
 }
 
 #[cfg(target_os = "linux")]
@@ -1124,6 +1147,22 @@ mod tests {
             classify(&["__format-worker-unrelated", "trailing"]),
             ProductionWorkerInvocation::Unrelated
         );
+    }
+
+    #[test]
+    fn worker_rss_sampling_requires_an_exact_post_exec_argument() {
+        assert!(cmdline_has_argument(
+            b"/proc/self/fd/3\0__format-worker\0",
+            PRODUCTION_WORKER_ARGUMENT.as_bytes()
+        ));
+        assert!(!cmdline_has_argument(
+            b"/proc/self/fd/3\0__format-worker-extra\0",
+            PRODUCTION_WORKER_ARGUMENT.as_bytes()
+        ));
+        assert!(!cmdline_has_argument(
+            b"cargo-test\0--test-threads=1\0",
+            PRODUCTION_WORKER_ARGUMENT.as_bytes()
+        ));
     }
 
     #[test]
@@ -1689,7 +1728,15 @@ mod tests {
     ) -> Result<CollectedWorkerOutput, FormatFixtureError> {
         let stdout = child.stdout.take().expect("stdout");
         let stderr = child.stderr.take().expect("stderr");
-        supervise_and_collect(child, guards, stdout, stderr, stdout_limit, stderr_limit)
+        supervise_and_collect(
+            child,
+            guards,
+            stdout,
+            stderr,
+            stdout_limit,
+            stderr_limit,
+            None,
+        )
     }
 
     fn guards(wall_time: Duration, resident_bytes: u64) -> FormatGenerationGuards {
