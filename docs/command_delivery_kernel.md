@@ -88,14 +88,21 @@ It checks 1,024 genuinely nested scans and the default capacity boundary for
 all five operand families on a dedicated 256 MiB virtual native stack.
 This is separate from the routine tests of exact boundary accounting.
 
-## Further span admission
+## Resident character runs
+
+Main control borrows the exposed resident reader once and consumes ordinary
+characters inside its storage-specific loop. The existing scalar callback
+remains the admission boundary: each character advances input, charges fuel,
+and calls the consumer in that order. A consumer stop or fuel failure ends the
+borrow immediately. A non-character is loaded once and returns to canonical
+settlement; exhaustion and parameter substitution return to the semantic stack.
+Only that boundary word receives delivery coordinates. Raw consumers use the
+same reader with a statically selected single-word admission policy.
 
 Source-character and balanced-argument consumers already borrow spans. Further
-resident character admission should build on those owners, stopping at semantic,
-consumer, fuel, provenance, and storage boundaries. This is separate from
-removing the duplicate reader selection: scalar delivery must remain correct
-without span admission, and changing a callback protocol requires its own
-executor validation.
+batch admission can build on these owners, but is separate from retaining one
+reader selection across scalar callbacks. No consumer borrow survives a stack
+mutation, and no copied cursor needs reconciliation with its owning frame.
 
 ## Validation
 

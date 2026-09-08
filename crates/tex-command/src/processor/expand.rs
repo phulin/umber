@@ -652,7 +652,72 @@ impl<G> CommandProcessor<'_, '_, G> {
         let mut character_run_kind = None;
 
         loop {
-            let selected = self.read_resident_word();
+            let allows_characters = self.command.delivery_mode.allows_character_run();
+            #[cfg(feature = "profiling")]
+            let raw_kind = match self
+                .command
+                .roots
+                .input
+                .levels
+                .rows
+                .get(self.command.roots.input.levels.top.wrapping_sub(1))
+            {
+                Some(crate::input::InputLevel::Resident(row))
+                    if matches!(
+                        row.storage,
+                        crate::input::ResidentTokenStorage::MacroArgument(_)
+                    ) =>
+                {
+                    crate::fuel::RawDeliveryKind::MacroArgument
+                }
+                _ => crate::fuel::RawDeliveryKind::StoredToken,
+            };
+            let selected = Self::read_resident_run(self.command, |word, origin| {
+                use resident::ResidentAdmission;
+                let Token::Char {
+                    ch,
+                    cat: Catcode::Letter | Catcode::Other,
+                } = word.semantic_token()
+                else {
+                    return Ok(ResidentAdmission::Boundary);
+                };
+                if !allows_characters {
+                    return Ok(ResidentAdmission::Boundary);
+                }
+                self.fuel.charge()?;
+                consumed_characters = true;
+                #[cfg(feature = "profiling")]
+                {
+                    character_run_kind = Some(raw_kind);
+                    character_run_count = character_run_count.saturating_add(1);
+                }
+                let admission = consume.admit(
+                    self.state,
+                    self.fuel,
+                    self.diagnostic_effects,
+                    MainCharacterInput::Scalar { ch, origin },
+                );
+                Ok(if admission.continue_run() {
+                    ResidentAdmission::Continue
+                } else {
+                    ResidentAdmission::Stop
+                })
+            });
+            let selected = match selected {
+                Ok(std::ops::ControlFlow::Continue(selected)) => selected,
+                Ok(std::ops::ControlFlow::Break(())) => {
+                    self.invalidate_delivery_freshness();
+                    #[cfg(feature = "profiling")]
+                    if let Some(kind) = character_run_kind.take() {
+                        self.fuel.record_raw_run(false, kind, character_run_count);
+                    }
+                    return Ok(DeliveryStatus::CharacterRun);
+                }
+                Err(failure) => {
+                    self.invalidate_delivery_freshness();
+                    return Err(failure);
+                }
+            };
             if matches!(selected, ResidentWordRead::NoResident) {
                 if consumed_characters {
                     self.invalidate_delivery_freshness();
@@ -736,51 +801,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             let ResidentWordRead::Word(selected) = selected else {
                 unreachable!("input transitions were handled above")
             };
-            let character = match selected.word.semantic_token() {
-                Token::Char {
-                    ch,
-                    cat: Catcode::Letter | Catcode::Other,
-                } => Some(ch),
-                _ => None,
-            };
-            if let Some(ch) = character
-                && self.command.delivery_mode.allows_character_run()
-            {
-                let ResidentWord {
-                    origin,
-                    #[cfg(feature = "profiling")]
-                    raw_kind,
-                    ..
-                } = selected;
-                if let Err(failure) = self.fuel.charge() {
-                    self.invalidate_delivery_freshness();
-                    return Err(failure);
-                }
-                consumed_characters = true;
-                #[cfg(feature = "profiling")]
-                {
-                    character_run_kind = Some(raw_kind);
-                    character_run_count = character_run_count.saturating_add(1);
-                }
-                if consume
-                    .admit(
-                        self.state,
-                        self.fuel,
-                        self.diagnostic_effects,
-                        MainCharacterInput::Scalar { ch, origin },
-                    )
-                    .continue_run()
-                {
-                    continue;
-                }
-                self.invalidate_delivery_freshness();
-                #[cfg(feature = "profiling")]
-                if let Some(kind) = character_run_kind.take() {
-                    self.fuel.record_raw_run(false, kind, character_run_count);
-                }
-                return Ok(DeliveryStatus::CharacterRun);
-            }
-
             if let Err(failure) = self.fuel.charge() {
                 self.invalidate_delivery_freshness();
                 return Err(failure);

@@ -1,5 +1,6 @@
 mod kernel;
 mod nesting;
+mod resident_runs;
 
 use tex_state::env::AssignmentScope;
 use tex_state::env::banks::IntParam;
@@ -26,6 +27,7 @@ struct RecordingCharacterConsumer {
     characters: String,
     origins: Vec<OriginId>,
     fallback_borrowed: bool,
+    stop_after: Option<usize>,
 }
 
 impl<G> crate::MainCharacterConsumer<G> for RecordingCharacterConsumer {
@@ -65,7 +67,7 @@ impl<G> crate::MainCharacterConsumer<G> for RecordingCharacterConsumer {
             crate::MainCharacterInput::Scalar { ch, origin } => {
                 self.characters.push(ch);
                 self.origins.push(origin);
-                crate::CharacterRunAdmission::new(1, true)
+                crate::CharacterRunAdmission::new(1, self.stop_after != Some(self.characters.len()))
             }
         }
     }

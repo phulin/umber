@@ -147,7 +147,11 @@ collector (see `src/conditionals.rs`).
   depth capacity and unconditional restoration on Rust result unwinding.
   `src/processor/expand/tests/nesting.rs` covers the five nested operand
   families at exact capacity boundaries and an explicit native-stack scaling tier.
-- `src/processor/expand/resident.rs`: directly borrows the exposed semantic
+- `src/processor/expand/tests/resident_runs.rs`: consumer-stop resumption,
+  exact fuel-failure prefixes, and one reader selection per resident run.
+- `src/processor/expand/resident.rs`: runs scalar character admission inside one
+  storage selection, returning only boundary words to settlement. Raw delivery
+  uses the same reader with single-word admission. Directly borrows the exposed semantic
   input frame and advances its existing physical reader. Input frames own
   reader state across nesting and rollback; delivery has no parallel cached
   storage tag or reader invalidation protocol. Source-token delivery enters
