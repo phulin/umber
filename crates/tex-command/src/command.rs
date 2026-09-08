@@ -621,6 +621,9 @@ pub(crate) trait HotCommandDestination<G> {
     ) -> tex_state::token::PackedMeaningResolution;
 
     fn hot_command(&mut self) -> &mut HotCommand<G>;
+
+    /// Discards an outward slot only at a command-free input boundary.
+    fn clear(&mut self);
 }
 
 impl<G> HotCommandDestination<G> for HotCommand<G> {
@@ -655,6 +658,9 @@ impl<G> HotCommandDestination<G> for HotCommand<G> {
     fn hot_command(&mut self) -> &mut HotCommand<G> {
         self
     }
+
+    #[inline(always)]
+    fn clear(&mut self) {}
 }
 
 impl<G> HotCommandDestination<G> for Option<HotCommand<G>> {
@@ -704,6 +710,11 @@ impl<G> HotCommandDestination<G> for Option<HotCommand<G>> {
     fn hot_command(&mut self) -> &mut HotCommand<G> {
         self.as_mut()
             .expect("successful fetch initialized its destination")
+    }
+
+    #[inline(always)]
+    fn clear(&mut self) {
+        self.take();
     }
 }
 

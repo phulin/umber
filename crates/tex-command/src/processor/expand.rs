@@ -372,12 +372,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             self.fetch_hot::<false>(destination)
         };
         match result {
-            Ok(status) => {
-                if !matches!(status, DeliveryStatus::Command) {
-                    destination.take();
-                }
-                Ok(status)
-            }
+            Ok(status) => Ok(status),
             Err(failure) => self.fail_hot_expanded_delivery(
                 destination,
                 self.command.transient.active_expansion_depth,
@@ -403,6 +398,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             match self.transition_resident_word(selected, destination)? {
                 ResidentColdOutcome::Retry => {}
                 ResidentColdOutcome::Finished(status) => {
+                    destination.clear();
                     return Ok(status);
                 }
                 ResidentColdOutcome::Synthetic { literal_catcode } => break literal_catcode,
