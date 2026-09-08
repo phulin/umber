@@ -1,0 +1,11 @@
+[package]
+name = "tex-command-core-timing"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+tex-command = { path = "../../../crates/tex-command" }
+tex-state = { path = "../../../crates/tex-state" }
