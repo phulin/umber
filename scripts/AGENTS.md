@@ -80,6 +80,14 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `hooks/`: versioned git hooks installed by `install-hooks.sh` through
   `core.hooksPath`; `pre-commit` runs `check.sh`.
 - `run-umber-guarded.py`: canonical process-group watchdog for Umber and tests that execute Umber; enforces wall-time, aggregate-RSS, and optional progress-file ceilings, TERM-to-KILL escalation, reap, and survivor checks through sandbox-compatible native macOS and Linux process inspection.
+- `paired-measure.py`, `paired_measure.py`, and `paired_metrics.py`:
+  prebuilt-executable paired measurement runner, support library, and declared
+  JSON/JSONL inner-metric support; verify clean worktree/revision and binary
+  identities, run serialized AB/BA warm-up pairs, and publish JSONL timing and
+  semantic-validation receipts without invoking Cargo.
+- `test-paired-measure.py`: hermetic mock-executable contract tests for the
+  paired measurement runner's identity, failure, validation, and summary
+  behavior.
 - `check-and-test.sh`: routine combined gate; prebuilds the complete native test
   suite before clippy can start a second cold Cargo workload, then runs the
   tests under the shared 6 GiB process-group guard concurrently with
