@@ -411,6 +411,12 @@ coarse region lease until that row drains. A global `\let` of a local source is
 the exceptional one-time span copy into revision-global storage and reuses the
 source-region-owned promotion key.
 
+The processor episode owns Web2C's shared recursive expansion depth. Primitive
+expansion and expression evaluation increment that scalar for the duration of
+their synchronous call, restoring it on success or error. Iterative macro
+delivery and expression parentheses do not increment it. The scalar never enters
+a snapshot; a resource failure unwinds it before checkpoint replay.
+
 Raw and expanded command delivery uses the existing concrete destination
 loops. Public and outward scanner requests admit their caller-provided
 `Option<CurrentCommand<G>>` at the rich boundary; synchronous raw collectors

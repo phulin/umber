@@ -87,6 +87,7 @@ fn nested_readers(observed: bool, limit: u64) -> (String, u64, bool) {
                 Err(crate::CommandError::FuelExhausted { .. }) => {
                     assert!(destination.is_none());
                     assert_eq!(processor.command.transient.active_expansion_depth, 0);
+                    assert_eq!(processor.expansion_depth, 0);
                     break true;
                 }
                 Err(error) => panic!("unexpected delivery error: {error:?}"),

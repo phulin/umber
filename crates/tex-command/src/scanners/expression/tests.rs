@@ -12,6 +12,48 @@ fn other(ch: char) -> Token {
 }
 
 #[test]
+fn signs_before_parentheses_leave_the_invalid_factor_for_recovery() {
+    // etex.ch [53a]'s factor admission tests '(' before TeX82 §§440--445
+    // scans signs. The sign does not turn a parenthesis into a number.
+    crate::test_harness::with_universe(|universe| {
+        for signs in ["-", "+", "--"] {
+            let mut command = CommandState::new(CommandProfile::ETEX26);
+            crate::test_harness::push(
+                &mut command,
+                signs.chars().chain("(1+2)X".chars()).map(other),
+            );
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut fuel = crate::CommandFuelLedger::default();
+            let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut context = universe.command_context().expect("command context");
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut effects,
+            );
+            assert!(matches!(
+                processor
+                    .scan_expression_primitive(UnexpandablePrimitive::NumExpr)
+                    .expect("missing-number recovery"),
+                crate::InternalValue::Integer(0)
+            ));
+            assert_eq!(
+                processor
+                    .get_x_token()
+                    .expect("remaining factor")
+                    .expect("parenthesis")
+                    .spelling()
+                    .semantic_token(),
+                other('('),
+                "the invalid factor remains available after {signs}"
+            );
+        }
+    });
+}
+
+#[test]
 fn numexpr_honors_precedence_and_leaves_its_relax_terminator_consumed() {
     crate::test_harness::with_universe(|universe| {
         let numexpr = universe.intern("numexpr").expect("numexpr");

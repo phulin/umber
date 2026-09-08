@@ -1,4 +1,5 @@
 mod kernel;
+mod nesting;
 
 use tex_state::env::AssignmentScope;
 use tex_state::env::banks::IntParam;
@@ -605,45 +606,6 @@ fn expanded_unterminated_body_recovers_at_end_and_exposes_collected_text() {
 }
 
 #[test]
-fn deeply_nested_the_requests_use_the_control_lane() {
-    crate::test_harness::with_universe(|universe| {
-        let the = install_static(
-            universe,
-            "the",
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::The),
-        );
-        let toks = install_static(universe, "toks", Meaning::ToksRegister(0));
-        let relax = install_static(universe, "relax", Meaning::Relax);
-        for depth in [1_024, 10_240, 100_000] {
-            let mut input = Vec::with_capacity(depth * 2 + 1);
-            input.extend(std::iter::repeat_n(the, depth));
-            input.extend(std::iter::repeat_n(toks, depth));
-            input.push(relax);
-            let mut command = CommandState::default();
-            let _operation = command.begin_attempt_operation();
-            crate::test_harness::push(&mut command, input);
-            let mut capabilities = CommandHostCapabilities::default();
-            let mut fuel = crate::CommandFuelLedger::default();
-            let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
-            let mut context = universe.command_context().expect("command context");
-            let mut processor = crate::test_harness::processor(
-                &mut command,
-                &mut context,
-                &mut capabilities,
-                &mut fuel,
-                &mut diagnostic_effects,
-            );
-            let settled = processor
-                .get_x_token()
-                .expect("nested the delivery")
-                .expect("terminal command");
-            assert_eq!(settled.meaning(), Meaning::Relax);
-            drop(processor);
-        }
-    });
-}
-
-#[test]
 fn nested_number_conversions_return_through_the_shared_delivery_loop() {
     crate::test_harness::with_universe(|universe| {
         let number = install_static(
@@ -822,58 +784,6 @@ fn number_admits_direct_internal_values_and_composes_polarity() {
                 expected
             );
             assert!(command.take_semantic_diagnostics().is_empty());
-        }
-    });
-}
-
-#[test]
-fn nested_pdf_uniform_deviates_use_the_shared_integer_lane() {
-    crate::test_harness::with_universe(|universe| {
-        let uniform = install_static(
-            universe,
-            "pdfuniformdeviate",
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfUniformDeviate),
-        );
-        let relax = install_static(universe, "relax", Meaning::Relax);
-        for depth in [1_024, 10_240] {
-            let mut input = Vec::with_capacity(depth + 2);
-            input.extend(std::iter::repeat_n(uniform, depth));
-            input.push(Token::Char {
-                ch: '1',
-                cat: Catcode::Other,
-            });
-            input.push(relax);
-            let mut command = CommandState::default();
-            let _operation = command.begin_attempt_operation();
-            crate::test_harness::push(&mut command, input);
-            let mut capabilities = CommandHostCapabilities::default();
-            let mut fuel = crate::CommandFuelLedger::default();
-            let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
-            let mut context = universe.command_context().expect("command context");
-            let mut processor = crate::test_harness::processor(
-                &mut command,
-                &mut context,
-                &mut capabilities,
-                &mut fuel,
-                &mut diagnostic_effects,
-            );
-            let settled = processor
-                .get_x_token()
-                .expect("nested pdf uniform delivery")
-                .expect("terminal command");
-            assert!(matches!(
-                settled.meaning(),
-                tex_state::meaning::ResolvedMeaning::Static(Meaning::CharToken { ch: '0', .. })
-            ));
-            assert_eq!(
-                processor
-                    .get_x_token()
-                    .expect("terminal command after pdf uniform delivery")
-                    .expect("relax command")
-                    .meaning(),
-                Meaning::Relax
-            );
-            drop(processor);
         }
     });
 }
@@ -1226,80 +1136,6 @@ fn letter(ch: char) -> Token {
 }
 
 #[test]
-fn nested_the_register_indices_do_not_reenter_the_delivery_stack() {
-    crate::test_harness::with_universe(|universe| {
-        let the = install_static(
-            universe,
-            "the",
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::The),
-        );
-        let count = install_static(
-            universe,
-            "count",
-            Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::Count),
-        );
-        for depth in [1_024, 10_240, 100_000] {
-            let mut input = Vec::with_capacity(depth * 2 + 2);
-            for _ in 0..depth {
-                input.extend([the, count]);
-            }
-            input.extend([
-                Token::Char {
-                    ch: '0',
-                    cat: Catcode::Other,
-                },
-                Token::Char {
-                    ch: 'X',
-                    cat: Catcode::Letter,
-                },
-            ]);
-            let mut command = CommandState::default();
-            let _operation = command.begin_attempt_operation();
-            crate::test_harness::push(&mut command, input);
-            let output = collect_expanded_characters(universe, &mut command);
-            assert_eq!(output, "0X");
-        }
-    });
-}
-
-#[test]
-fn nested_the_integer_expressions_use_the_shared_control_lane() {
-    crate::test_harness::with_universe(|universe| {
-        let the = install_static(
-            universe,
-            "the",
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::The),
-        );
-        let numexpr = install_static(
-            universe,
-            "numexpr",
-            Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::NumExpr),
-        );
-        let relax = install_static(universe, "relax", Meaning::Relax);
-        for depth in [1_024, 10_240, 100_000] {
-            let mut input = Vec::with_capacity(depth * 3 + 2);
-            for _ in 0..depth {
-                input.extend([the, numexpr]);
-            }
-            input.push(Token::Char {
-                ch: '0',
-                cat: Catcode::Other,
-            });
-            input.extend(std::iter::repeat_n(relax, depth));
-            input.push(Token::Char {
-                ch: 'X',
-                cat: Catcode::Letter,
-            });
-            let mut command = CommandState::default();
-            let _operation = command.begin_attempt_operation();
-            crate::test_harness::push(&mut command, input);
-            let output = collect_expanded_characters(universe, &mut command);
-            assert_eq!(output, "0X");
-        }
-    });
-}
-
-#[test]
 fn the_direct_internal_meanings_use_the_hot_value_projection() {
     crate::test_harness::with_universe(|universe| {
         let the = install_static(
@@ -1456,69 +1292,9 @@ fn the_integer_and_dimension_expressions_accept_parenthesized_factors() {
         );
         assert_eq!(collect_expanded_characters(universe, &mut command), "3X");
 
-        for (input, expected) in [
-            (
-                vec![
-                    the,
-                    numexpr,
-                    other('-'),
-                    other('('),
-                    other('1'),
-                    other('+'),
-                    other('('),
-                    other('2'),
-                    other('*'),
-                    other('3'),
-                    other(')'),
-                    other(')'),
-                    relax,
-                    letter('X'),
-                ],
-                "-7X",
-            ),
-            (
-                vec![
-                    the,
-                    numexpr,
-                    other('1'),
-                    other('+'),
-                    other('-'),
-                    other('('),
-                    other('2'),
-                    other('*'),
-                    other('3'),
-                    other(')'),
-                    relax,
-                    letter('X'),
-                ],
-                "-5X",
-            ),
-            (
-                vec![
-                    the,
-                    numexpr,
-                    other('1'),
-                    other('+'),
-                    other('-'),
-                    other('-'),
-                    other('('),
-                    other('2'),
-                    other(')'),
-                    relax,
-                    letter('X'),
-                ],
-                "3X",
-            ),
-        ] {
-            let mut command = CommandState::default();
-            let _operation = command.begin_attempt_operation();
-            crate::test_harness::push(&mut command, input);
-            assert_eq!(
-                collect_expanded_characters(universe, &mut command),
-                expected
-            );
-        }
-
+        // etex.ch [53a], scan_expr checks for '(' before scan_int's
+        // sign scan. A signed subexpression must use subtraction, e.g.
+        // 0-(1+2), rather than the noncanonical -(1+2).
         let integer_prefix_input = [
             the,
             numexpr,
@@ -1899,55 +1675,6 @@ fn the_dimension_expression_lane_preserves_fixed_point_addition() {
             collect_expanded_characters(universe, &mut command),
             "3.0ptX"
         );
-    });
-}
-
-#[test]
-fn deeply_nested_the_dimension_expressions_stay_on_the_control_lane() {
-    crate::test_harness::with_universe(|universe| {
-        let the = install_static(
-            universe,
-            "the",
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::The),
-        );
-        let dimexpr = install_static(
-            universe,
-            "dimexpr",
-            Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::DimExpr),
-        );
-        let relax = install_static(universe, "relax", Meaning::Relax);
-        for depth in [1_024, 10_240, 100_000] {
-            let mut input = Vec::with_capacity(depth * 3 + 5);
-            for _ in 0..depth {
-                input.extend([the, dimexpr]);
-            }
-            input.extend([
-                Token::Char {
-                    ch: '0',
-                    cat: Catcode::Other,
-                },
-                Token::Char {
-                    ch: 'p',
-                    cat: Catcode::Other,
-                },
-                Token::Char {
-                    ch: 't',
-                    cat: Catcode::Other,
-                },
-            ]);
-            input.extend(std::iter::repeat_n(relax, depth));
-            input.push(Token::Char {
-                ch: 'X',
-                cat: Catcode::Letter,
-            });
-            let mut command = CommandState::default();
-            let _operation = command.begin_attempt_operation();
-            crate::test_harness::push(&mut command, input);
-            assert_eq!(
-                collect_expanded_characters(universe, &mut command),
-                "0.0ptX"
-            );
-        }
     });
 }
 

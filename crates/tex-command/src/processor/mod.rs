@@ -14,6 +14,7 @@ pub(crate) mod expand_pdf_string;
 pub(crate) mod expand_render;
 mod expand_replay;
 pub(crate) mod expand_structural;
+pub(crate) mod expansion_depth;
 mod next;
 pub(crate) use end_input::stored_input_reason;
 mod observe;
@@ -264,10 +265,9 @@ pub struct CommandProcessor<'episode, 'admission, G> {
     /// `\\par` terminates the failed match, but must not become a visible
     /// §394 `back_error` replay token.
     pub(crate) eof_recovered_while_matching: bool,
-    /// Web2C's process-local `expand_depth_count` contribution from nested
-    /// e-TeX expression primitives. Parentheses use `scan_expr`'s explicit
-    /// stack and do not enter this counter.
-    pub(crate) expression_depth: u32,
+    /// Web2C's shared `expand_depth_count` for primitive expansion and
+    /// expression evaluation. Raw delivery and parentheses do not enter it.
+    pub(crate) expansion_depth: u32,
     /// pdfTeX section 57's dynamically scoped control-sequence-name flag.
     pub(crate) is_in_csname: bool,
     /// Whether this bounded processor episode runs inside TeX82's active
@@ -715,7 +715,7 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
             outer_recovered_while_matching: false,
             outer_recovered_while_absorbing: false,
             eof_recovered_while_matching: false,
-            expression_depth: 0,
+            expansion_depth: 0,
             is_in_csname: false,
             output_routine_active: false,
             scanned_glue_identity: None,

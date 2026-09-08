@@ -582,8 +582,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                     if let Some(kind) =
                         crate::conditionals::ConditionalKind::from_primitive(primitive)
                     {
-                        self.trace_hot_conditional(&command);
-                        self.expand_conditional_occupied(primitive, kind)?;
+                        self.with_expansion_depth(|processor| {
+                            processor.trace_hot_conditional(&command);
+                            processor.expand_conditional_occupied(primitive, kind)
+                        })?;
                     } else {
                         self.expand_compact_occupied(&mut command, primitive, true)?;
                     }
@@ -1295,7 +1297,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                         self.record_write_expansion();
                     }
                 }
-                self.macro_call_hot(&mut command).map(|_| ())
+                self.with_expansion_depth(|processor| {
+                    processor.macro_call_hot(&mut command).map(|_| ())
+                })
             }
             ExpandedCommandAction::Expand(ExpansionDispatch::Undefined) => {
                 self.expand_undefined_hot(&command, report_trace)
@@ -1344,7 +1348,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                         self.record_write_expansion();
                     }
                 }
-                self.macro_call_hot(&mut command).map(|_| ())
+                self.with_expansion_depth(|processor| {
+                    processor.macro_call_hot(&mut command).map(|_| ())
+                })
             }
             ExpandedCommandAction::Expand(ExpansionDispatch::Undefined) => {
                 self.expand_undefined_hot(&command, report_trace)
@@ -2616,6 +2622,18 @@ impl<G> CommandProcessor<'_, '_, G> {
         primitive: ExpandablePrimitive,
         report_trace: bool,
     ) -> Result<(), CommandError> {
+        self.with_expansion_depth(|processor| {
+            processor.expand_compact_occupied_in(command, primitive, report_trace)
+        })
+    }
+
+    #[inline(never)]
+    fn expand_compact_occupied_in(
+        &mut self,
+        command: &mut HotCommand<G>,
+        primitive: ExpandablePrimitive,
+        report_trace: bool,
+    ) -> Result<(), CommandError> {
         #[cfg(feature = "profiling")]
         {
             tex_state::measurement::record_hot_core_expandable_opcode(
@@ -2815,6 +2833,17 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// continue case of the ordinary expanded loop.
     #[inline(always)]
     fn expand_undefined_hot(
+        &mut self,
+        command: &HotCommand<G>,
+        report_trace: bool,
+    ) -> Result<(), CommandError> {
+        self.with_expansion_depth(|processor| {
+            processor.expand_undefined_hot_in(command, report_trace)
+        })
+    }
+
+    #[inline(never)]
+    fn expand_undefined_hot_in(
         &mut self,
         command: &HotCommand<G>,
         report_trace: bool,

@@ -52,6 +52,29 @@ semantic checks. Literal brace accounting remains necessary even outside an
 alignment. TeX tracing, diagnostics, fuel, provenance required for recovery,
 and checkpoint journals are not optional observation.
 
+## Recursive expansion capacity
+
+Web2C's `tex.ch` change to TeX82 §366 and e-TeX's `etex.ch` [53a]
+share one `expand_depth_count`: primitive expansion and `scan_expr` each
+enter it, and return restores it. `get_x_token`, sequential macro calls,
+and expression parentheses do not themselves add depth. Use pdfTeX's
+default limit of 10,000, rejecting an entry that would reach that limit.
+Keep the counter in the borrowed processor episode, outside snapshots.
+All Rust error returns must restore it, including resource replay and fuel
+exhaustion. This corrects the previous expression-only counter.
+
+Native stack capacity is a separate platform constraint. As the Web2C manual
+documents, a small native stack can exhaust before the semantic limit.
+Routine tests exercise finite nesting and exact boundary accounting with an
+already-active parent depth; explicit scaling tests need a sufficient native
+stack and must expect a capacity error once the default limit is reached.
+
+Run the explicit full-capacity audit with
+`cargo test -q -p tex-command full_default_expansion_capacity_on_a_sufficient_native_stack -- --ignored --exact processor::expand::tests::nesting::full_default_expansion_capacity_on_a_sufficient_native_stack`.
+It checks 1,024 genuinely nested scans and the default capacity boundary for
+all five operand families on a dedicated 256 MiB virtual native stack.
+This is separate from the routine tests of exact boundary accounting.
+
 ## Further span admission
 
 Source-character and balanced-argument consumers already borrow spans. Further

@@ -9,11 +9,8 @@ use tex_state::token::Catcode;
 use super::scalar::InternalValue;
 use crate::observation::canonical_names::glue_order_name;
 use crate::processor::{CommandProcessor, DeliveryStatus};
-use crate::{
-    CommandError, CommandObservation, CurrentCommand, FatalError, ObservationValue, ScannerRecord,
-};
+use crate::{CommandError, CommandObservation, CurrentCommand, ObservationValue, ScannerRecord};
 
-const EXPRESSION_DEPTH_LIMIT: u32 = 10_000;
 const INTEGER_LIMIT: i64 = i32::MAX as i64;
 const DIMENSION_LIMIT: i64 = Scaled::MAX_DIMEN.raw() as i64;
 
@@ -224,21 +221,9 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<InternalValue, CommandError> {
         let kind = ExpressionKind::of_primitive(primitive)
             .expect("only e-TeX expression primitives reach scan_expr");
-        // Web2C's `expand_depth_count` increments once per expression
-        // primitive. Parentheses use the explicit stack below and do not.
-        self.expression_depth = self.expression_depth.saturating_add(1);
-        if self.expression_depth >= EXPRESSION_DEPTH_LIMIT {
-            let fatal = FatalError::overflow(
-                "expansion depth",
-                i32::try_from(EXPRESSION_DEPTH_LIMIT).expect("depth limit fits i32"),
-            );
-            self.observe(CommandObservation::Diagnostic(fatal.record()));
-            return Err(CommandError::Fatal(fatal));
-        }
-
         let mut call = crate::scanners::scalar::ScalarCallFrame::default();
-        let status = self.scan_expression(kind, &mut call);
-        self.expression_depth -= 1;
+        let status =
+            self.with_expansion_depth(|processor| Ok(processor.scan_expression(kind, &mut call)))?;
         let (mut value, overflow) = match status {
             crate::scanners::scalar::ScalarCallStatus::Complete => call.take_complete(),
             crate::scanners::scalar::ScalarCallStatus::Failed => {
