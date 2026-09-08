@@ -1902,6 +1902,21 @@ impl<G> MainControl<G> {
         Ok(())
     }
 
+    /// Restores a full aggregate checkpoint after a resource operation has
+    /// unwound, then clears all executor-owned scratch that belonged to the
+    /// discarded operation. The next call starts ordinary main control from
+    /// the restored command, mode, World, and output roots.
+    pub fn restore_resource_replay(
+        &mut self,
+        checkpoint: &crate::EngineCheckpoint<G>,
+        stores: &mut Universe<G>,
+        output: &mut crate::OutputLedger,
+    ) -> Result<(), crate::CheckpointRestoreError> {
+        self.restore_checkpoint_after_replay(checkpoint, stores, output)?;
+        self.reset_checkpoint_replay_runtime(checkpoint.boundary());
+        Ok(())
+    }
+
     fn restore_checkpoint_roots(
         &mut self,
         checkpoint: &crate::EngineCheckpoint<G>,

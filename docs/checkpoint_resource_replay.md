@@ -281,6 +281,20 @@ the host owns transport, cache, readiness, scheduling, and replay-anchor
 selection. This keeps external effects one-shot while retaining at most the
 prior accepted and current candidate engine lineages.
 
+The standalone `umber::EngineSession` exposes the same ownership through its
+public wait/fulfill protocol. A `NeedResource` result leaves the engine
+operation unwound and records only the cold request. `fulfill` validates that
+request and retains the typed answer and resolver effects; it does not mutate
+the invalidated command machine. The next `advance_until_waiting` borrows the
+latest valid full checkpoint from the caller's checkpoint sink, restores the
+aggregate roots and matching output prefix, installs the answer, and starts a
+fresh ordinary operation. A sink that does not retain a valid full checkpoint
+cannot drive a resource retry. When the synchronous provider has already
+declined a request, the session performs that same restore without calling the
+host again; the next fresh operation is the one that may ask the host again.
+No resource response, observer record, terminal effect, or generated output
+is published before the restored retry commits.
+
 ## Required comparison
 
 For the same admitted resource snapshot, fully preloaded and injected-miss

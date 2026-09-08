@@ -1026,6 +1026,14 @@ pub trait CheckpointSink<G> {
 
     fn checkpoint(&mut self, checkpoint: EngineCheckpoint<G>, universe: &Universe<G>);
 
+    /// Borrows the newest full checkpoint which this sink retained for a
+    /// host-owned resource replay. The default keeps sinks that intentionally
+    /// discard checkpoints compatible; a public wait/fulfill driver must
+    /// provide a live checkpoint here before retrying a resource need.
+    fn latest_replay_checkpoint(&self) -> Option<&EngineCheckpoint<G>> {
+        None
+    }
+
     /// Returns one pruning transaction after publication. The executor drains
     /// this hook synchronously while every mutable aggregate owner is still
     /// borrowed, so no release coordinate escapes its generation.
@@ -1038,6 +1046,10 @@ pub trait CheckpointSink<G> {
 impl<G> CheckpointSink<G> for Vec<EngineCheckpoint<G>> {
     fn checkpoint(&mut self, checkpoint: EngineCheckpoint<G>, _universe: &Universe<G>) {
         self.push(checkpoint);
+    }
+
+    fn latest_replay_checkpoint(&self) -> Option<&EngineCheckpoint<G>> {
+        self.last()
     }
 }
 

@@ -166,6 +166,50 @@ impl CommandObserver for ExpansionObserver {
     }
 }
 
+/// Buffers observations from one candidate attempt until its result is known.
+/// A resource miss rewinds to an earlier full checkpoint, so publishing the
+/// attempt's prefix before that decision would duplicate it when replay runs.
+struct TransactionalObserver<'a> {
+    observer: &'a mut dyn CommandObserver,
+    observations: Vec<CommandObservation>,
+}
+
+impl<'a> TransactionalObserver<'a> {
+    fn new(observer: &'a mut dyn CommandObserver) -> Self {
+        Self {
+            observer,
+            observations: Vec::new(),
+        }
+    }
+
+    fn commit_prefix(&mut self) {
+        let observer = &mut *self.observer;
+        for observation in self.observations.drain(..) {
+            observer.committed(observation);
+        }
+    }
+
+    fn commit(self) {
+        for observation in self.observations {
+            self.observer.committed(observation);
+        }
+    }
+
+    fn discard(&mut self) {
+        self.observations.clear();
+    }
+}
+
+impl CommandObserver for TransactionalObserver<'_> {
+    fn observes_geometry(&self) -> bool {
+        self.observer.observes_geometry()
+    }
+
+    fn committed(&mut self, observation: CommandObservation) {
+        self.observations.push(observation);
+    }
+}
+
 /// Explicit driver adapter for TeX82's startup `**` line and any §530
 /// replacement filename lines.
 ///
@@ -198,6 +242,63 @@ pub enum SessionState {
     Complete(Box<RunResult>),
 }
 
+/// Cold host state retained while a direct engine operation is unwound.
+///
+/// The engine never parks a scanner or caller continuation here. A fulfilled
+/// answer is installed only after the aggregate checkpoint has restored the
+/// discarded operation's roots.
+enum PendingResource {
+    Awaiting {
+        need: ResourceNeed,
+        answer: Option<Box<PendingResourceAnswer>>,
+    },
+    RetryWithoutAnswer {
+        need: ResourceNeed,
+    },
+}
+
+enum PendingResourceAnswer {
+    Fulfilled {
+        fulfillment: ResourceFulfillment,
+        effects: Vec<tex_exec::ResourceReplayEffect>,
+    },
+    Unavailable {
+        effects: Vec<tex_exec::ResourceReplayEffect>,
+    },
+}
+
+impl PendingResource {
+    fn need(&self) -> &ResourceNeed {
+        match self {
+            Self::Awaiting { need, .. } | Self::RetryWithoutAnswer { need } => need,
+        }
+    }
+
+    fn is_waiting_for_answer(&self) -> bool {
+        matches!(self, Self::Awaiting { answer: None, .. })
+    }
+}
+
+fn fulfillment_matches_need(need: &ResourceNeed, fulfillment: &ResourceFulfillment) -> bool {
+    match (need, fulfillment) {
+        (ResourceNeed::Input { name: expected, .. }, ResourceFulfillment::Input { name, .. }) => {
+            expected == name
+        }
+        (
+            ResourceNeed::InputProbe { request: expected },
+            ResourceFulfillment::InputProbe { request, .. },
+        ) => expected == request,
+        (ResourceNeed::Font { request: expected }, ResourceFulfillment::Font { request, .. }) => {
+            expected == request
+        }
+        (
+            ResourceNeed::PdfImage { request: expected },
+            ResourceFulfillment::PdfImage { request, .. },
+        ) => expected == request,
+        _ => false,
+    }
+}
+
 /// Failure of the retained host/session protocol.
 #[derive(Debug)]
 pub enum SessionError {
@@ -215,6 +316,10 @@ pub enum SessionError {
         need: Box<ResourceNeed>,
         failure: ResourceFailure,
     },
+    ReplayCheckpointUnavailable {
+        need: Box<ResourceNeed>,
+    },
+    CheckpointRestore(tex_exec::CheckpointRestoreError),
     NoProgress {
         need: ResourceNeed,
         attempts: u8,
@@ -246,6 +351,16 @@ impl fmt::Display for SessionError {
             Self::ResourceFailure { need, failure } => {
                 write!(formatter, "resource {need:?} failed: {failure}")
             }
+            Self::ReplayCheckpointUnavailable { need } => write!(
+                formatter,
+                "resource retry has no valid full checkpoint: {need:?}"
+            ),
+            Self::CheckpointRestore(error) => {
+                write!(
+                    formatter,
+                    "resource replay checkpoint restore failed: {error}"
+                )
+            }
             Self::NoProgress { need, attempts } => write!(
                 formatter,
                 "resource retry made no progress after {attempts} attempts: {need:?}"
@@ -267,6 +382,7 @@ impl std::error::Error for SessionError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::ResourceFailure { failure, .. } => Some(failure),
+            Self::CheckpointRestore(error) => Some(error),
             _ => None,
         }
     }
@@ -337,8 +453,14 @@ pub struct EngineSession<'a, G> {
     terminal_input_cursor: Option<tex_state::TerminalInputPosition>,
     no_progress_limit: u8,
     mode_transitions: Vec<tex_exec::Mode>,
+    /// Number of mode transitions represented by the newest retained replay
+    /// anchor. Discarded attempts can visit a different mode before a
+    /// resource miss; that transient suffix must not suppress or duplicate
+    /// transitions when the anchor is replayed.
+    replay_mode_transition_len: Option<usize>,
     output_ledger: tex_exec::OutputLedger,
     retry_materialization: Option<tex_state::MemoryMaterializationCheckpoint>,
+    pending_resource: Option<PendingResource>,
 }
 
 impl<'a, G> EngineSession<'a, G> {
@@ -353,7 +475,7 @@ impl<'a, G> EngineSession<'a, G> {
             match self.control.diagnostic_expand_step(self.stores)? {
                 DiagnosticStepResult::Progress(step) => return Ok(step),
                 DiagnosticStepResult::Suspended(need) => {
-                    declined = if self.answer_need(host, &need)? {
+                    declined = if self.answer_diagnostic_need(host, &need)? {
                         0
                     } else {
                         declined.saturating_add(1)
@@ -367,6 +489,56 @@ impl<'a, G> EngineSession<'a, G> {
                 }
             }
         }
+    }
+
+    /// The diagnostic expansion API predates the retained main-control
+    /// checkpoint protocol and has no checkpoint sink. Keep its existing
+    /// synchronous host boundary isolated from the production wait/fulfill
+    /// path; production execution uses [`Self::answer_need`].
+    fn answer_diagnostic_need(
+        &mut self,
+        host: &mut dyn ResourceHost,
+        need: &ResourceNeed,
+    ) -> Result<bool, SessionError> {
+        let (outcome, effects) = {
+            let mut world = ResourceWorld::new(self.stores);
+            let outcome = host.fulfill(&mut world, need);
+            let effects = world.take_replay_effects();
+            (outcome, effects)
+        };
+        if let ResourceOutcome::Failed(failure) = &outcome {
+            return Err(SessionError::ResourceFailure {
+                need: Box::new(need.clone()),
+                failure: failure.clone(),
+            });
+        }
+        if let ResourceOutcome::Fulfilled(fulfillment) = outcome {
+            self.output_ledger
+                .fulfill_with_effects(&mut self.control, need, fulfillment, &effects)
+                .map_err(|fulfillment| SessionError::UnexpectedFulfillment {
+                    need: Box::new(need.clone()),
+                    fulfillment,
+                })?;
+            return Ok(true);
+        }
+        if let Some(fulfillment) = self.same_run_output(need) {
+            self.output_ledger
+                .fulfill_with_effects(&mut self.control, need, fulfillment, &effects)
+                .map_err(|fulfillment| SessionError::UnexpectedFulfillment {
+                    need: Box::new(need.clone()),
+                    fulfillment,
+                })?;
+            return Ok(true);
+        }
+        if matches!(outcome, ResourceOutcome::Unavailable) {
+            self.output_ledger.mark_unavailable_with_effects(
+                &mut self.control,
+                need,
+                true,
+                &effects,
+            );
+        }
+        Ok(false)
     }
     #[must_use]
     pub fn new(stores: &'a mut Universe<G>, profile: CommandProfile) -> Self {
@@ -393,8 +565,10 @@ impl<'a, G> EngineSession<'a, G> {
             terminal_step: None,
             no_progress_limit: DEFAULT_NO_PROGRESS_LIMIT,
             mode_transitions: vec![tex_exec::Mode::Vertical],
+            replay_mode_transition_len: None,
             output_ledger: tex_exec::OutputLedger::default(),
             retry_materialization: None,
+            pending_resource: None,
         }
     }
 
@@ -426,8 +600,10 @@ impl<'a, G> EngineSession<'a, G> {
             terminal_step: None,
             no_progress_limit: DEFAULT_NO_PROGRESS_LIMIT,
             mode_transitions: vec![tex_exec::Mode::Vertical],
+            replay_mode_transition_len: None,
             output_ledger: tex_exec::OutputLedger::default(),
             retry_materialization: None,
+            pending_resource: None,
         }
     }
 
@@ -458,8 +634,10 @@ impl<'a, G> EngineSession<'a, G> {
             terminal_step: None,
             no_progress_limit: DEFAULT_NO_PROGRESS_LIMIT,
             mode_transitions: vec![tex_exec::Mode::Vertical],
+            replay_mode_transition_len: None,
             output_ledger: tex_exec::OutputLedger::default(),
             retry_materialization: None,
+            pending_resource: None,
         }
     }
 
@@ -751,6 +929,12 @@ impl<'a, G> EngineSession<'a, G> {
         checkpoints: &mut dyn CheckpointSink<G>,
     ) -> Result<SessionState, SessionError> {
         self.ensure_started(checkpoints)?;
+        if let Some(pending) = self.pending_resource.as_ref() {
+            if pending.is_waiting_for_answer() {
+                return Ok(SessionState::NeedResource(pending.need().clone()));
+            }
+            self.restore_pending_resource(checkpoints)?;
+        }
         let mut observer = None;
         let mut resource_provider = None;
         self.advance_inner(checkpoints, &mut observer, &mut resource_provider)
@@ -802,6 +986,9 @@ impl<'a, G> EngineSession<'a, G> {
             }
             self.output_ledger
                 .commit_job_start(&mut self.control, self.stores, checkpoints)?;
+            self.replay_mode_transition_len = checkpoints
+                .latest_replay_checkpoint()
+                .map(|_| self.mode_transitions.len());
         }
         Ok(())
     }
@@ -866,15 +1053,28 @@ impl<'a, G> EngineSession<'a, G> {
         observer: &mut dyn tex_command::CommandObserver,
     ) -> Result<SessionState, SessionError> {
         self.ensure_started(checkpoints)?;
-        let mut observer = Some(observer);
-        let mut resource_provider = None;
-        self.advance_inner(checkpoints, &mut observer, &mut resource_provider)
+        if let Some(pending) = self.pending_resource.as_ref() {
+            if pending.is_waiting_for_answer() {
+                return Ok(SessionState::NeedResource(pending.need().clone()));
+            }
+            self.restore_pending_resource(checkpoints)?;
+        }
+        let mut transactional_observer = TransactionalObserver::new(observer);
+        let result = {
+            let mut observer = Some(&mut transactional_observer);
+            let mut resource_provider = None;
+            self.advance_inner(checkpoints, &mut observer, &mut resource_provider)
+        };
+        if matches!(result, Ok(SessionState::Complete(_))) {
+            transactional_observer.commit();
+        }
+        result
     }
 
     fn advance_inner(
         &mut self,
         checkpoints: &mut dyn CheckpointSink<G>,
-        observer: &mut Option<&mut dyn tex_command::CommandObserver>,
+        observer: &mut Option<&mut TransactionalObserver<'_>>,
         resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<SessionState, SessionError> {
         if self.terminated {
@@ -915,17 +1115,42 @@ impl<'a, G> EngineSession<'a, G> {
             }
             match result {
                 CanonicalStepResult::ResourceNeed(need) => {
+                    if let Some(observer) = observer.as_deref_mut() {
+                        observer.discard();
+                    }
+                    debug_assert!(self.pending_resource.is_none());
+                    self.pending_resource = Some(PendingResource::Awaiting {
+                        need: need.clone(),
+                        answer: None,
+                    });
                     self.retry_materialization =
                         self.stores.world().memory_materialization_checkpoint();
                     return Ok(SessionState::NeedResource(need));
                 }
                 CanonicalStepResult::ResourceSuspended(need) => {
+                    if let Some(observer) = observer.as_deref_mut() {
+                        observer.discard();
+                    }
+                    debug_assert!(self.pending_resource.is_none());
+                    self.pending_resource =
+                        Some(PendingResource::RetryWithoutAnswer { need: need.clone() });
                     self.retry_materialization =
                         self.stores.world().memory_materialization_checkpoint();
                     return Ok(SessionState::NeedResource(need));
                 }
                 CanonicalStepResult::Progress(_) | CanonicalStepResult::Committed(_) => {
                     self.record_current_mode();
+                    if matches!(result, CanonicalStepResult::Committed(_)) {
+                        self.replay_mode_transition_len = checkpoints
+                            .latest_replay_checkpoint()
+                            .map(|_| self.mode_transitions.len());
+                        if let Some(observer) = observer.as_deref_mut() {
+                            // A committed checkpoint makes this prefix durable.
+                            // If a later operation in this call suspends, only
+                            // the suffix after that anchor will be replayed.
+                            observer.commit_prefix();
+                        }
+                    }
                     if checkpoints.stop_requested() {
                         return Err(SessionError::CooperativeStopRequested);
                     }
@@ -941,7 +1166,27 @@ impl<'a, G> EngineSession<'a, G> {
                     self.terminal_step = Some(step);
                     return self.finish();
                 }
-                CanonicalStepResult::Failed(error) => return Err(map_step_failure(error)),
+                CanonicalStepResult::Failed(error) => {
+                    if let Some(observer) = observer.as_deref_mut() {
+                        // Fatal settlement commits its diagnostic records before
+                        // returning through this boundary. Preserve those
+                        // records even if a later evidence/finalization error
+                        // turns the step into `Failed`; ordinary resource and
+                        // fuel failures still discard the unwound suffix.
+                        let settled_fatal = self.control.fatal_error().is_some()
+                            || matches!(
+                                &error,
+                                CanonicalStepFailure::Execution(error)
+                                    if error.as_fatal().is_some()
+                            );
+                        if settled_fatal {
+                            observer.commit_prefix();
+                        } else {
+                            observer.discard();
+                        }
+                    }
+                    return Err(map_step_failure(error));
+                }
             }
         }
     }
@@ -952,12 +1197,28 @@ impl<'a, G> EngineSession<'a, G> {
         need: &ResourceNeed,
         fulfillment: ResourceFulfillment,
     ) -> Result<(), SessionError> {
-        self.output_ledger
-            .fulfill(&mut self.control, need, fulfillment)
-            .map_err(|fulfillment| SessionError::UnexpectedFulfillment {
+        let Some(PendingResource::Awaiting {
+            need: pending_need,
+            answer,
+        }) = self.pending_resource.as_mut()
+        else {
+            return Err(SessionError::UnexpectedFulfillment {
                 need: Box::new(need.clone()),
-                fulfillment,
-            })
+                fulfillment: Box::new(fulfillment),
+            });
+        };
+        if pending_need != need || answer.is_some() || !fulfillment_matches_need(need, &fulfillment)
+        {
+            return Err(SessionError::UnexpectedFulfillment {
+                need: Box::new(need.clone()),
+                fulfillment: Box::new(fulfillment),
+            });
+        }
+        *answer = Some(Box::new(PendingResourceAnswer::Fulfilled {
+            fulfillment,
+            effects: Vec::new(),
+        }));
+        Ok(())
     }
 
     /// Runs the engine using host policy only for typed immutable
@@ -991,17 +1252,42 @@ impl<'a, G> EngineSession<'a, G> {
         checkpoints: &mut dyn CheckpointSink<G>,
         observer: &mut dyn tex_command::CommandObserver,
     ) -> Result<RunResult, SessionError> {
-        self.run_inner(host, checkpoints, Some(observer))
+        let mut transactional_observer = TransactionalObserver::new(observer);
+        let result = self.run_inner(host, checkpoints, Some(&mut transactional_observer));
+        if result.is_ok() {
+            transactional_observer.commit();
+        }
+        result
     }
 
     fn run_inner(
         &mut self,
         host: &mut dyn ResourceHost,
         checkpoints: &mut dyn CheckpointSink<G>,
-        mut observer: Option<&mut dyn tex_command::CommandObserver>,
+        mut observer: Option<&mut TransactionalObserver<'_>>,
     ) -> Result<RunResult, SessionError> {
         let mut declined: u8 = 0;
         self.ensure_started(checkpoints)?;
+        if let Some(pending) = self.pending_resource.as_ref() {
+            let need = pending.need().clone();
+            let progressed = if pending.is_waiting_for_answer() {
+                // A caller may switch from the public wait/fulfill driver to
+                // `run` while its cold request is still unanswered. Reuse
+                // that request slot; never drive the invalidated operation.
+                self.answer_need(host, checkpoints, &need)?
+            } else {
+                self.restore_pending_resource(checkpoints)?
+            };
+            if !progressed {
+                declined = 1;
+                if declined >= self.no_progress_limit {
+                    return Err(SessionError::NoProgress {
+                        need,
+                        attempts: declined,
+                    });
+                }
+            }
+        }
         loop {
             let state = {
                 let mut resource_provider = ResourceHostProvider::new(host);
@@ -1012,7 +1298,20 @@ impl<'a, G> EngineSession<'a, G> {
             match state {
                 SessionState::Complete(result) => return Ok(*result),
                 SessionState::NeedResource(need) => {
-                    declined = if self.answer_need(host, &need)? {
+                    let progressed = if matches!(
+                        self.pending_resource,
+                        Some(PendingResource::RetryWithoutAnswer { .. })
+                    ) {
+                        // ResourceHostProvider already called the host and
+                        // received a decline during the unwound operation.
+                        // Restore the full anchor before the next fresh
+                        // operation, and do not call the host a second time
+                        // for this same request.
+                        self.restore_pending_resource(checkpoints)?
+                    } else {
+                        self.answer_need(host, checkpoints, &need)?
+                    };
+                    declined = if progressed {
                         0
                     } else {
                         declined.saturating_add(1)
@@ -1031,6 +1330,7 @@ impl<'a, G> EngineSession<'a, G> {
     fn answer_need(
         &mut self,
         host: &mut dyn ResourceHost,
+        checkpoints: &mut dyn CheckpointSink<G>,
         need: &ResourceNeed,
     ) -> Result<bool, SessionError> {
         let (outcome, effects) = {
@@ -1045,33 +1345,136 @@ impl<'a, G> EngineSession<'a, G> {
                 failure: failure.clone(),
             });
         }
-        if let ResourceOutcome::Fulfilled(fulfillment) = outcome {
-            self.output_ledger
-                .fulfill_with_effects(&mut self.control, need, fulfillment, &effects)
-                .map_err(|fulfillment| SessionError::UnexpectedFulfillment {
-                    need: Box::new(need.clone()),
+        if let ResourceOutcome::Fulfilled(fulfillment) = &outcome
+            && !fulfillment_matches_need(need, fulfillment)
+        {
+            return Err(SessionError::UnexpectedFulfillment {
+                need: Box::new(need.clone()),
+                fulfillment: Box::new(fulfillment.clone()),
+            });
+        }
+        let answer = match outcome {
+            ResourceOutcome::Fulfilled(fulfillment) => {
+                Some(Box::new(PendingResourceAnswer::Fulfilled {
                     fulfillment,
-                })?;
-            return Ok(true);
+                    effects,
+                }))
+            }
+            ResourceOutcome::Unavailable => {
+                Some(Box::new(PendingResourceAnswer::Unavailable { effects }))
+            }
+            ResourceOutcome::Declined => None,
+            ResourceOutcome::Failed(_) => unreachable!("failed resource returned above"),
+        };
+        if let Some(pending) = self.pending_resource.as_mut() {
+            let PendingResource::Awaiting {
+                need: pending_need,
+                answer: pending_answer,
+            } = pending
+            else {
+                return Err(SessionError::Execution(
+                    tex_exec::ExecError::ResourceReplayRequired,
+                ));
+            };
+            if pending_need != need || pending_answer.is_some() {
+                return Err(SessionError::Execution(
+                    tex_exec::ExecError::ResourceReplayRequired,
+                ));
+            }
+            *pending_answer = answer;
+        } else {
+            self.pending_resource = Some(PendingResource::Awaiting {
+                need: need.clone(),
+                answer,
+            });
         }
-        if let Some(fulfillment) = self.same_run_output(need) {
-            self.output_ledger
-                .fulfill_with_effects(&mut self.control, need, fulfillment, &effects)
-                .map_err(|fulfillment| SessionError::UnexpectedFulfillment {
-                    need: Box::new(need.clone()),
-                    fulfillment,
-                })?;
-            return Ok(true);
+        self.restore_pending_resource(checkpoints)
+    }
+
+    /// Restores the latest full checkpoint for a cold resource retry and then
+    /// applies the staged answer, if any. The pending operation is consumed
+    /// only after aggregate restore has succeeded, so no invalidated command
+    /// state can be entered again.
+    fn restore_pending_resource(
+        &mut self,
+        checkpoints: &mut dyn CheckpointSink<G>,
+    ) -> Result<bool, SessionError> {
+        let pending = self
+            .pending_resource
+            .as_ref()
+            .ok_or_else(|| SessionError::Execution(tex_exec::ExecError::ResourceReplayRequired))?;
+        let need = pending.need().clone();
+        let checkpoint = checkpoints.latest_replay_checkpoint().ok_or_else(|| {
+            SessionError::ReplayCheckpointUnavailable {
+                need: Box::new(need.clone()),
+            }
+        })?;
+        self.control
+            .restore_resource_replay(checkpoint, self.stores, &mut self.output_ledger)
+            .map_err(SessionError::CheckpointRestore)?;
+        if let Some(transition_len) = self.replay_mode_transition_len {
+            self.mode_transitions.truncate(transition_len.max(1));
         }
-        if matches!(outcome, ResourceOutcome::Unavailable) {
-            self.output_ledger.mark_unavailable_with_effects(
-                &mut self.control,
-                need,
-                true,
-                &effects,
-            );
+
+        if let Some(materialization) = self.retry_materialization.take() {
+            let reconciled = self
+                .stores
+                .world_mut()
+                .reconcile_memory_retry_materialization(&materialization);
+            if !reconciled {
+                self.retry_materialization = Some(materialization);
+            }
         }
-        Ok(false)
+
+        let pending = self
+            .pending_resource
+            .take()
+            .expect("pending resource remains until its checkpoint restores");
+        let PendingResource::Awaiting { need, mut answer } = pending else {
+            return Ok(false);
+        };
+        if answer.is_none()
+            && let Some(fulfillment) = self.same_run_output(&need)
+        {
+            answer = Some(Box::new(PendingResourceAnswer::Fulfilled {
+                fulfillment,
+                effects: Vec::new(),
+            }));
+        }
+        match answer.map(|answer| *answer) {
+            Some(PendingResourceAnswer::Fulfilled {
+                fulfillment,
+                effects,
+            }) => {
+                self.output_ledger
+                    .fulfill_with_effects(&mut self.control, &need, fulfillment, &effects)
+                    .map_err(|fulfillment| SessionError::UnexpectedFulfillment {
+                        need: Box::new(need),
+                        fulfillment,
+                    })?;
+                Ok(true)
+            }
+            Some(PendingResourceAnswer::Unavailable { effects }) => {
+                if let Some(fulfillment) = self.same_run_output(&need) {
+                    self.output_ledger
+                        .fulfill_with_effects(&mut self.control, &need, fulfillment, &effects)
+                        .map_err(|fulfillment| SessionError::UnexpectedFulfillment {
+                            need: Box::new(need),
+                            fulfillment,
+                        })?;
+                    Ok(true)
+                } else {
+                    self.output_ledger.mark_unavailable_with_effects(
+                        &mut self.control,
+                        &need,
+                        true,
+                        &effects,
+                    );
+                    Ok(true)
+                }
+            }
+            None => Ok(false),
+        }
     }
 
     /// Resolves an exact input name from output already committed by this
@@ -1628,6 +2031,33 @@ mod tests {
         }
     }
 
+    struct DeclineThenInputHost {
+        calls: usize,
+    }
+
+    impl ResourceHost for DeclineThenInputHost {
+        fn fulfill(
+            &mut self,
+            _world: &mut ResourceWorld<'_>,
+            need: &ResourceNeed,
+        ) -> ResourceOutcome {
+            self.calls += 1;
+            if self.calls == 1 {
+                return ResourceOutcome::Declined;
+            }
+            match need {
+                ResourceNeed::Input { name, .. } if name == "child.tex" => {
+                    ResourceOutcome::Fulfilled(ResourceFulfillment::input(
+                        "child.tex",
+                        RegisteredSourceKind::Generated,
+                        Arc::from(&b"\\relax"[..]),
+                    ))
+                }
+                _ => ResourceOutcome::Declined,
+            }
+        }
+    }
+
     struct MissingThenReplacementHost {
         replacement: Option<&'static str>,
         calls: Vec<String>,
@@ -2133,20 +2563,26 @@ mod tests {
 
     #[test]
     fn resource_suspension_does_not_publish_or_latch_termination() {
-        with_prepared_session(br"\input child\end", |stores, root| {
+        with_prepared_session(br"\message{once}\input child\end", |stores, root| {
             let mut session = EngineSession::new(stores, CommandProfile::TEX82);
             session
                 .register_authored_job("job.tex", root)
                 .expect("root registers");
             let mut observations = ObservationRecorder::default();
+            let mut checkpoints = Vec::new();
 
             let need = match session
-                .advance_until_waiting_with_observer(&mut Vec::new(), &mut observations)
+                .advance_until_waiting_with_observer(&mut checkpoints, &mut observations)
                 .expect("missing child suspends")
             {
                 SessionState::NeedResource(need) => need,
                 SessionState::Complete(_) => panic!("missing child must suspend"),
             };
+            let fuel_after_wait = session.fuel_burned();
+            assert!(
+                observations.0.is_empty(),
+                "the unwound prefix is not published before resource completion"
+            );
             assert!(
                 !observations.0.iter().any(|observation| matches!(
                     observation,
@@ -2168,7 +2604,7 @@ mod tests {
                 .expect("child fulfillment matches");
             assert!(matches!(
                 session
-                    .advance_until_waiting_with_observer(&mut Vec::new(), &mut observations)
+                    .advance_until_waiting_with_observer(&mut checkpoints, &mut observations)
                     .expect("retry completes"),
                 SessionState::Complete(_)
             ));
@@ -2184,7 +2620,134 @@ mod tests {
                     .count(),
                 1
             );
+            assert_eq!(
+                observations
+                    .0
+                    .iter()
+                    .filter(|observation| matches!(
+                        observation,
+                        CommandObservation::Effect(effect)
+                            if effect.kind == tex_command::ObservationEffectKind::Message
+                    ))
+                    .count(),
+                1,
+                "replayed prefix message is committed exactly once"
+            );
+            assert!(
+                session.fuel_burned() >= fuel_after_wait,
+                "checkpoint replay cannot refund charged command work"
+            );
         });
+    }
+
+    #[test]
+    fn declined_resource_replay_discards_observations_before_retry() {
+        with_prepared_session(br"\message{once}\input child\end", |stores, root| {
+            let mut session = EngineSession::new(stores, CommandProfile::TEX82);
+            session
+                .register_authored_job("job.tex", root)
+                .expect("root registers");
+            let mut host = DeclineThenInputHost { calls: 0 };
+            let mut checkpoints = Vec::new();
+            let mut observations = ObservationRecorder::default();
+            session
+                .run_with_observer(&mut host, &mut checkpoints, &mut observations)
+                .expect("decline is retried and input then completes");
+
+            assert_eq!(
+                host.calls, 2,
+                "one decline and one fulfillment are attempted"
+            );
+            assert_eq!(
+                observations
+                    .0
+                    .iter()
+                    .filter(|observation| matches!(
+                        observation,
+                        CommandObservation::Effect(effect)
+                            if effect.kind == tex_command::ObservationEffectKind::Message
+                    ))
+                    .count(),
+                1,
+                "the declined attempt's observations are not replayed as duplicates"
+            );
+            assert_eq!(
+                observations
+                    .0
+                    .iter()
+                    .filter(|observation| matches!(
+                        observation,
+                        CommandObservation::Effect(effect)
+                            if effect.kind == tex_command::ObservationEffectKind::Terminate
+                    ))
+                    .count(),
+                1,
+                "successful replay owns the only terminal observation"
+            );
+        });
+    }
+
+    #[test]
+    fn declined_resource_replay_preserves_checkpoint_prefix_and_suffix_once() {
+        with_prepared_session(
+            br"\message{prefix}\count0=1 A\par\message{suffix}\input child\end",
+            |stores, root| {
+                let mut session = EngineSession::new(stores, CommandProfile::TEX82);
+                let mut context = session.stores.command_context().expect("admit font setup");
+                let font = context.intern_font(packed_episode_font());
+                context
+                    .assign_current_font(font, tex_state::AssignmentScope::Global)
+                    .expect("select packed-episode font");
+                drop(context);
+                session
+                    .register_authored_job("job.tex", root)
+                    .expect("root registers");
+                let mut host = DeclineThenInputHost { calls: 0 };
+                let mut checkpoints = Vec::new();
+                let mut observations = ObservationRecorder::default();
+                let run = session
+                    .run_with_observer(&mut host, &mut checkpoints, &mut observations)
+                    .expect("decline is replayed from paragraph checkpoint");
+
+                assert_eq!(
+                    host.calls, 2,
+                    "one decline and one fulfillment are attempted"
+                );
+                assert_eq!(
+                    run.mode_transitions,
+                    [
+                        tex_exec::Mode::Vertical,
+                        tex_exec::Mode::Horizontal,
+                        tex_exec::Mode::Vertical
+                    ],
+                    "discarded replay modes do not remain in the result"
+                );
+                assert_eq!(
+                    checkpoints
+                        .iter()
+                        .map(tex_exec::EngineCheckpoint::boundary)
+                        .collect::<Vec<_>>(),
+                    [EngineBoundary::JobStart, EngineBoundary::OuterParagraphEnd]
+                );
+                for (text, expected) in [(b"prefix" as &[u8], 1), (b"suffix", 1)] {
+                    assert_eq!(
+                        observations
+                            .0
+                            .iter()
+                            .filter(|observation| matches!(
+                                observation,
+                                CommandObservation::Effect(effect)
+                                    if effect.kind == tex_command::ObservationEffectKind::Message
+                                        && effect.value
+                                            == tex_command::ObservationValue::Bytes(text.to_vec())
+                            ))
+                            .count(),
+                        expected,
+                        "message {text:?} is observed exactly once"
+                    );
+                }
+            },
+        );
     }
 
     #[test]
@@ -2462,6 +3025,7 @@ mod tests {
                 error,
                 SessionError::NoProgress { attempts: 2, .. }
             ));
+            assert_eq!(host.calls, 2, "the no-progress bound counts provider calls");
             assert_eq!(
                 transcript_channels(session.stores()),
                 ("(job.tex".into(), String::new()),
@@ -2881,6 +3445,43 @@ mod tests {
                 )
                 .expect_err("mismatched input is rejected");
             assert!(matches!(error, SessionError::UnexpectedFulfillment { .. }));
+        });
+    }
+
+    #[test]
+    fn resource_retry_requires_a_retained_full_checkpoint() {
+        with_prepared_session(b"\\input child\\end", |stores, root| {
+            let mut session = EngineSession::new(stores, CommandProfile::TEX82);
+            session
+                .register_authored_job("job.tex", root)
+                .expect("root registers");
+            let mut checkpoints = crate::NoCheckpoints;
+            let need = match session
+                .advance_until_waiting(&mut checkpoints)
+                .expect("missing input suspends")
+            {
+                SessionState::NeedResource(need) => need,
+                SessionState::Complete(_) => panic!("missing input must suspend"),
+            };
+            session
+                .fulfill(
+                    &need,
+                    ResourceFulfillment::input(
+                        "child.tex",
+                        RegisteredSourceKind::Generated,
+                        Arc::from(&b"\\relax"[..]),
+                    ),
+                )
+                .expect("fulfillment matches");
+
+            let error = session
+                .advance_until_waiting(&mut checkpoints)
+                .expect_err("retry without a full anchor is typed failure");
+            assert!(matches!(
+                error,
+                SessionError::ReplayCheckpointUnavailable { need: pending }
+                    if *pending == need
+            ));
         });
     }
 
