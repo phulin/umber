@@ -465,7 +465,10 @@ pub struct EngineSession<'a, G> {
 
 impl<'a, G> EngineSession<'a, G> {
     /// Advances the retained command machine in analysis mode without
-    /// invoking ordinary typesetting main control.
+    /// invoking ordinary typesetting main control. Fulfilled and unavailable
+    /// resources stay within the admitted cold operation. A declined resource
+    /// has no replay anchor in this diagnostic API, so it returns one bounded
+    /// no-progress result without retrying the invalidated command state.
     pub fn diagnostic_expand_step(
         &mut self,
         host: &mut dyn ResourceHost,
@@ -473,7 +476,8 @@ impl<'a, G> EngineSession<'a, G> {
         let mut resource_provider = ResourceHostProvider::new(host);
         match self
             .control
-            .diagnostic_expand_step_with_resource_provider(self.stores, &mut resource_provider)?
+            .diagnostic_expand_step_with_resource_provider(self.stores, &mut resource_provider)
+            .map_err(|error| map_step_failure(CanonicalStepFailure::Execution(error)))?
         {
             DiagnosticStepResult::Progress(step) => Ok(step),
             DiagnosticStepResult::Suspended(need) => {
@@ -1964,6 +1968,89 @@ mod tests {
                 _ => ResourceOutcome::Declined,
             }
         }
+    }
+
+    struct DiagnosticFailingHost {
+        calls: usize,
+    }
+
+    impl ResourceHost for DiagnosticFailingHost {
+        fn fulfill(
+            &mut self,
+            _world: &mut ResourceWorld<'_>,
+            need: &ResourceNeed,
+        ) -> ResourceOutcome {
+            self.calls += 1;
+            assert!(matches!(need, ResourceNeed::Input { name, .. } if name == "child.tex"));
+            ResourceOutcome::Failed(ResourceFailure::message("diagnostic input failed"))
+        }
+    }
+
+    struct DiagnosticDecliningHost {
+        calls: usize,
+    }
+
+    impl ResourceHost for DiagnosticDecliningHost {
+        fn fulfill(
+            &mut self,
+            _world: &mut ResourceWorld<'_>,
+            need: &ResourceNeed,
+        ) -> ResourceOutcome {
+            self.calls += 1;
+            assert!(matches!(need, ResourceNeed::Input { name, .. } if name == "child.tex"));
+            ResourceOutcome::Declined
+        }
+    }
+
+    #[test]
+    fn diagnostic_failed_host_preserves_typed_resource_failure() {
+        with_prepared_session(br"\input child\end", |stores, root| {
+            let mut session = EngineSession::new(stores, CommandProfile::TEX82);
+            session
+                .register_authored_job("job.tex", root)
+                .expect("diagnostic root registers");
+            let mut host = DiagnosticFailingHost { calls: 0 };
+            let error = session
+                .diagnostic_expand_step(&mut host)
+                .expect_err("diagnostic host failure must surface");
+
+            assert!(matches!(
+                error,
+                SessionError::ResourceFailure {
+                    need,
+                    failure: ResourceFailure::Message(message),
+                } if matches!(need.as_ref(), ResourceNeed::Input { name, .. } if name == "child.tex")
+                    && message == "diagnostic input failed"
+            ));
+            assert_eq!(host.calls, 1, "failed diagnostic resources are not retried");
+        });
+    }
+
+    #[test]
+    fn diagnostic_declined_host_returns_bounded_error_without_retry() {
+        with_prepared_session(br"\input child\end", |stores, root| {
+            let mut session = EngineSession::new(stores, CommandProfile::TEX82);
+            session.set_no_progress_limit(8);
+            session
+                .register_authored_job("job.tex", root)
+                .expect("diagnostic root registers");
+            let mut host = DiagnosticDecliningHost { calls: 0 };
+            let error = session
+                .diagnostic_expand_step(&mut host)
+                .expect_err("declined diagnostic resource must be bounded");
+
+            assert!(matches!(
+                error,
+                SessionError::NoProgress {
+                    need: ResourceNeed::Input { name, .. },
+                    attempts: 1,
+                } if name == "child.tex"
+            ));
+            assert_eq!(
+                host.calls, 1,
+                "declined diagnostic resources are not retried"
+            );
+        });
     }
 
     struct DeclineThenInputHost {
