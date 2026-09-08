@@ -1168,18 +1168,12 @@ impl<'a, G> EngineSession<'a, G> {
                 }
                 CanonicalStepResult::Failed(error) => {
                     if let Some(observer) = observer.as_deref_mut() {
-                        // Fatal settlement commits its diagnostic records before
-                        // returning through this boundary. Preserve those
-                        // records even if a later evidence/finalization error
-                        // turns the step into `Failed`; ordinary resource and
-                        // fuel failures still discard the unwound suffix.
-                        let settled_fatal = self.control.fatal_error().is_some()
-                            || matches!(
-                                &error,
-                                CanonicalStepFailure::Execution(error)
-                                    if error.as_fatal().is_some()
-                            );
-                        if settled_fatal {
+                        // Main control owns the exact receipt/terminal
+                        // settlement decision. Preserve records only after it
+                        // has committed the operation; resource, fuel, and
+                        // other rollbackable failures discard the unwound
+                        // suffix without classifying the error here.
+                        if self.control.error_operation_committed() {
                             observer.commit_prefix();
                         } else {
                             observer.discard();
@@ -2319,6 +2313,33 @@ mod tests {
                     ))
                     .count(),
                 1
+            );
+        });
+    }
+
+    #[test]
+    fn observed_terminal_output_error_publishes_committed_receipt() {
+        with_fresh_stores(|stores| {
+            crate::prepare_pdftex_run_stores(stores);
+            let mut session = EngineSession::new(stores, CommandProfile::PDFTEX14029);
+            session
+                .register_authored_job(
+                    "thread-error.tex",
+                    Arc::from(&br"\pdfoutput=1\shipout\hbox{\pdfstartthread name{bad}}\end"[..]),
+                )
+                .expect("root registers");
+            let mut observations = ObservationRecorder::default();
+            let error = session
+                .run_with_observer(&mut WorldHost, &mut Vec::new(), &mut observations)
+                .expect_err("invalid thread traversal is a terminal output error");
+
+            assert!(matches!(
+                error,
+                SessionError::Execution(tex_exec::ExecError::PdfNavigation(_))
+            ));
+            assert!(
+                !observations.0.is_empty(),
+                "a committed terminal error still publishes its receipt"
             );
         });
     }
