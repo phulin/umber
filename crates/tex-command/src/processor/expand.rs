@@ -521,71 +521,29 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
     }
 
-    fn expanded_delivery_loop<const OBSERVED: bool>(
+    /// Primitive and supplied-command execution is separate from input reading.
+    /// Its recursive scanner frames need no resident word or meaning temporaries.
+    #[inline(never)]
+    fn execute_expansion_action(
         &mut self,
-        destination: &mut Option<HotCommand<G>>,
-        initial_action: Option<ExpandedCommandAction>,
-    ) -> Result<DeliveryStatus, CommandError> {
-        let mut delivery_expanded = false;
-        if destination.is_none() {
-            let status =
-                self.fetch_expansion_command::<OBSERVED>(destination, &mut delivery_expanded)?;
-            if !matches!(status, DeliveryStatus::Command) {
-                return Ok(status);
+        command: &mut HotCommand<G>,
+        action: ExpansionDispatch,
+    ) -> Result<(), CommandError> {
+        match action {
+            ExpansionDispatch::Macro | ExpansionDispatch::Undefined => {
+                self.expand_hot_definition_action(command, action)
             }
-        }
-        let mut command = destination.take().expect("expanded entry owns a command");
-        let mut action = initial_action.unwrap_or_else(|| classify_hot_command(&command));
-        loop {
-            match action {
-                ExpandedCommandAction::Return => {
-                    let status =
-                        self.finish_expanded_command::<OBSERVED>(&command, delivery_expanded);
-                    *destination = Some(command);
-                    return Ok(status);
-                }
-                ExpandedCommandAction::EndTemplate => {
-                    let status = if matches!(
-                        command.alignment_adjustment(),
-                        crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
-                    ) {
-                        DeliveryStatus::AlignmentEndTemplate
-                    } else {
-                        command.convert_end_template_to_endv(self.state.frozen_endv_token());
-                        self.finish_expanded_command::<OBSERVED>(&command, delivery_expanded)
-                    };
-                    *destination = Some(command);
-                    return Ok(status);
-                }
-                ExpandedCommandAction::Expand(ExpansionDispatch::Macro) => {
-                    self.expand_hot_definition_action(&mut command, ExpansionDispatch::Macro)?;
-                }
-                ExpandedCommandAction::Expand(ExpansionDispatch::Undefined) => {
-                    self.expand_hot_definition_action(&mut command, ExpansionDispatch::Undefined)?;
-                }
-                ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(primitive)) => {
-                    if let Some(kind) =
-                        crate::conditionals::ConditionalKind::from_primitive(primitive)
-                    {
-                        self.with_expansion_depth(|processor| {
-                            processor.trace_hot_conditional(&command);
-                            processor.expand_conditional_occupied(primitive, kind)
-                        })?;
-                    } else {
-                        self.expand_compact_occupied(&mut command, primitive, true)?;
-                    }
+            ExpansionDispatch::Primitive(primitive) => {
+                if let Some(kind) = crate::conditionals::ConditionalKind::from_primitive(primitive)
+                {
+                    self.with_expansion_depth(|processor| {
+                        processor.trace_hot_conditional(command);
+                        processor.expand_conditional_occupied(primitive, kind)
+                    })
+                } else {
+                    self.expand_compact_occupied(command, primitive, true)
                 }
             }
-            delivery_expanded = true;
-            let status =
-                self.fetch_expansion_command::<OBSERVED>(destination, &mut delivery_expanded)?;
-            if !matches!(status, DeliveryStatus::Command) {
-                return Ok(status);
-            }
-            command = destination
-                .take()
-                .expect("expansion consumer delivered a command");
-            action = classify_hot_command(&command);
         }
     }
 

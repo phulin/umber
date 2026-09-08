@@ -1,6 +1,8 @@
 //! Consumer-side interpretation of the shared input reader.
 
-use super::{ReadSite, ResidentColdOutcome, ResidentWord};
+use super::{
+    ExpandedCommandAction, ReadSite, ResidentColdOutcome, ResidentWord, classify_hot_command,
+};
 use crate::command::HotCommand;
 use crate::{CommandError, CommandProcessor, DeliveryStatus};
 use tex_state::interner::Symbol;
@@ -15,6 +17,7 @@ pub(super) struct TokenMeaning<G> {
 }
 
 impl<G> TokenMeaning<G> {
+    #[inline(always)]
     pub(super) fn empty() -> Self {
         Self {
             word: MeaningWord::Static(Meaning::Undefined.encode()),
@@ -22,6 +25,7 @@ impl<G> TokenMeaning<G> {
         }
     }
 
+    #[inline(always)]
     pub(super) fn is_outer(&self) -> bool {
         match &self.word {
             MeaningWord::Macro { flags, .. } => flags.contains(MeaningFlags::OUTER),
@@ -36,6 +40,7 @@ impl<G> TokenMeaning<G> {
         }
     }
 
+    #[inline(always)]
     fn install(&self, destination: &mut HotCommand<G>) {
         destination.write_control_sequence(self.control_sequence);
         match &self.word {
@@ -74,6 +79,7 @@ impl<G> PackedCommandTarget<G> for TokenMeaning<G> {
 impl ResidentWord {
     /// Materialize only when a consumer needs a full command. This operation
     /// is pure: diagnostic construction must not replace backup authority.
+    #[inline(always)]
     pub(super) fn materialize<G>(&self, meaning: &TokenMeaning<G>) -> HotCommand<G> {
         let line = match self.site {
             ReadSite::Source(line) => line,
@@ -155,54 +161,134 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
     }
 
-    /// Read and activate ordinary macros without a command record. The same
-    /// reader feeds raw callers and collectors; only this consumer expands.
-    pub(super) fn fetch_expansion_command<const OBSERVED: bool>(
+    /// The ordinary expansion consumer owns one read/interpret back edge.
+    /// A supplied command is a distinct entry boundary, never an optional-slot
+    /// choice repeated for each newly read word.
+    pub(super) fn expanded_delivery_loop<const OBSERVED: bool>(
         &mut self,
         destination: &mut Option<HotCommand<G>>,
-        expanded: &mut bool,
+        initial_action: Option<ExpandedCommandAction>,
     ) -> Result<DeliveryStatus, CommandError> {
-        loop {
-            let word = match self.read_raw_word(self.create_source_control_sequences)? {
-                ResidentColdOutcome::Word(word) => word,
-                ResidentColdOutcome::Finished(status) => {
-                    destination.take();
-                    return Ok(status);
-                }
-                ResidentColdOutcome::Retry => unreachable!("reader settles transitions"),
-            };
-            let (meaning, resolution) = self.resolve_read(&word);
-            self.record_consumed_read(&word, resolution.meaning_lookup());
-            if !OBSERVED
-                && !self
-                    .command
-                    .delivery_mode
-                    .requires_semantic_settlement(word.suppress_expandable, meaning.is_outer())
-                && let MeaningWord::Macro { flags, definition } = &meaning.word
+        let mut expanded = false;
+        if destination.is_some() {
+            if let Some(status) =
+                self.consume_supplied_command::<OBSERVED>(destination, initial_action)?
             {
-                let name = meaning
-                    .control_sequence
-                    .ok_or_else(CommandError::input_invariant)?;
-                self.invalidate_delivery_freshness();
-                self.record_macro_expansion();
-                match self.macro_call_parts(*flags, *definition, name, word.origin, |processor| {
-                    let call = word.materialize(&meaning);
-                    processor.report_macro_prefix_mismatch(&call);
-                }) {
-                    Ok(_)
-                    | Err(
-                        CommandError::ParagraphInMacroArgument | CommandError::OuterInMacroArgument,
-                    ) => {}
-                    Err(error) => return Err(error),
+                return Ok(status);
+            }
+            expanded = true;
+        }
+        loop {
+            let mut command = {
+                let word = match self.read_raw_word(self.create_source_control_sequences)? {
+                    ResidentColdOutcome::Word(word) => word,
+                    ResidentColdOutcome::Finished(status) => {
+                        destination.take();
+                        return Ok(status);
+                    }
+                    ResidentColdOutcome::Retry => unreachable!("reader settles transitions"),
+                };
+                let (meaning, resolution) = self.resolve_read(&word);
+                self.record_consumed_read(&word, resolution.meaning_lookup());
+                if !OBSERVED
+                    && !self
+                        .command
+                        .delivery_mode
+                        .requires_semantic_settlement(word.suppress_expandable, meaning.is_outer())
+                    && let MeaningWord::Macro { flags, definition } = &meaning.word
+                {
+                    let name = meaning
+                        .control_sequence
+                        .ok_or_else(CommandError::input_invariant)?;
+                    self.activate_read_macro(
+                        tex_state::token::TracedTokenWord::from_parts(word.word, word.origin),
+                        *flags,
+                        *definition,
+                        name,
+                    )?;
+                    expanded = true;
+                    continue;
                 }
-                *expanded = true;
+                let mut command = word.materialize(&meaning);
+                self.admit_materialized_read(&word, &command);
+                self.settle_hot_delivery_in::<OBSERVED>(
+                    &mut command,
+                    resolution.literal_catcode(),
+                )?;
+                command
+            };
+            let action = classify_hot_command(&command);
+            if let ExpandedCommandAction::Expand(dispatch) = action {
+                self.execute_expansion_action(&mut command, dispatch)?;
+                expanded = true;
                 continue;
             }
-            let mut command = word.materialize(&meaning);
-            self.admit_materialized_read(&word, &command);
-            self.settle_hot_delivery_in::<OBSERVED>(&mut command, resolution.literal_catcode())?;
+            let status = self.finish_terminal_expansion::<OBSERVED>(&mut command, action, expanded);
             *destination = Some(command);
-            return Ok(DeliveryStatus::Command);
+            return Ok(status);
         }
+    }
+
+    /// Matching's local storage belongs to macro activation, never to a
+    /// recursively suspended primitive-expansion frame. Only spelling and
+    /// invocation facts survive matching; diagnostics need no delivery geometry
+    /// or command record, even on prefix failure.
+    #[inline(never)]
+    fn activate_read_macro(
+        &mut self,
+        spelling: tex_state::token::TracedTokenWord,
+        flags: MeaningFlags,
+        definition: tex_state::DefinitionRef<G>,
+        name: Symbol,
+    ) -> Result<(), CommandError> {
+        self.invalidate_delivery_freshness();
+        self.record_macro_expansion();
+        match self.macro_call_parts(flags, definition, name, spelling.origin(), |processor| {
+            processor.report_unobserved_macro_prefix_mismatch(spelling, flags, definition, name);
+        }) {
+            Ok(_)
+            | Err(CommandError::ParagraphInMacroArgument | CommandError::OuterInMacroArgument) => {
+                Ok(())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Existing commands have already crossed a delivery boundary. Keep their
+    /// temporary owner out of the ordinary reader's recursive stack frame.
+    #[inline(never)]
+    fn consume_supplied_command<const OBSERVED: bool>(
+        &mut self,
+        destination: &mut Option<HotCommand<G>>,
+        action: Option<ExpandedCommandAction>,
+    ) -> Result<Option<DeliveryStatus>, CommandError> {
+        let mut command = destination.take().expect("supplied expansion command");
+        let action = action.unwrap_or_else(|| classify_hot_command(&command));
+        if let ExpandedCommandAction::Expand(dispatch) = action {
+            self.execute_expansion_action(&mut command, dispatch)?;
+            return Ok(None);
+        }
+        let status = self.finish_terminal_expansion::<OBSERVED>(&mut command, action, false);
+        *destination = Some(command);
+        Ok(Some(status))
+    }
+
+    #[inline(always)]
+    fn finish_terminal_expansion<const OBSERVED: bool>(
+        &mut self,
+        command: &mut HotCommand<G>,
+        action: ExpandedCommandAction,
+        expanded: bool,
+    ) -> DeliveryStatus {
+        if matches!(action, ExpandedCommandAction::EndTemplate) {
+            if matches!(
+                command.alignment_adjustment(),
+                crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
+            ) {
+                return DeliveryStatus::AlignmentEndTemplate;
+            }
+            command.convert_end_template_to_endv(self.state.frozen_endv_token());
+        }
+        self.finish_expanded_command::<OBSERVED>(command, expanded)
     }
 }

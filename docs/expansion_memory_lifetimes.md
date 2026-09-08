@@ -427,9 +427,11 @@ refreshes its physical cursor only at prefix or segment boundaries.
 The consumer selects representation lifetime. Ordinary expansion resolves once
 into the existing packed meaning and invokes macros with definition, flags,
 name, and origin. No command record is constructed for successful ordinary
-unobserved macro activation. A diagnostic callback retains the opener's read
-facts only across synchronous argument scanning and materializes it only on
-failure; that diagnostic construction cannot replace input backup authority.
+unobserved macro activation. A diagnostic callback retains only spelling and
+invocation facts across synchronous argument scanning. Prefix diagnostics
+construct their site directly, without retaining delivery geometry or creating
+a command. Matching's local storage lives in the activation call, outside
+suspended primitive-expansion frames.
 Unexpanded bodies append packed words through their existing local collector.
 Literal tokens need no meaning lookup; control sequences resolve for outer
 validity. Only illegal-parameter backup and exceptional settlement materialize

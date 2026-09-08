@@ -163,7 +163,9 @@ collector (see `src/conditionals.rs`).
   facts without constructing commands or publishing backup authority.
 - `src/processor/expand/consume.rs`: one dense meaning resolution, ordinary
   macro activation from invocation facts, and boundary-only materialization.
-  Diagnostic opener construction is lazy and cannot replace backup authority.
+  One read/interpret loop publishes terminal commands directly. Matching's local
+  storage lives in its activation call; prefix diagnostics consume spelling and
+  invocation facts without a command or delivery geometry.
 - `src/processor/expand/collect.rs`: unexpanded replacement-word consumer. It
   shares input and exceptional settlement, appends through the existing
   collector grammar, and constructs a command only for observation, semantic

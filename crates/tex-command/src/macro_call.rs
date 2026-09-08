@@ -372,21 +372,45 @@ impl<G> CommandProcessor<'_, '_, G> {
     #[inline(always)]
     #[cold]
     pub(crate) fn report_macro_prefix_mismatch(&mut self, call: &crate::command::HotCommand<G>) {
-        let context = self.command.output_open_context(self.state);
-        let site = Some(self.complete_diagnostic_site(self.capture_hot_diagnostic_site(call)));
-        self.command.semantic_diagnostics.push(
-            crate::CommandSemanticDiagnostic::MacroPrefixMismatch {
-                macro_name: call
-                    .control_sequence()
-                    .expect("macro diagnostic has a name"),
-                context,
-                site,
-            },
-        );
+        let site = self.capture_hot_diagnostic_site(call);
+        self.queue_macro_prefix_mismatch(call.control_sequence().expect("macro name"), site);
         if self.is_observed() {
             let observed_call = call.materialize();
             self.observe_command_diagnostic("macro_prefix_mismatch", &observed_call);
         }
+    }
+
+    #[cold]
+    pub(crate) fn report_unobserved_macro_prefix_mismatch(
+        &mut self,
+        spelling: TracedTokenWord,
+        flags: MeaningFlags,
+        definition: DefinitionRef<G>,
+        name: tex_state::interner::Symbol,
+    ) {
+        let site = self.capture_spelled_diagnostic_site(
+            crate::command::CommandIdentity::Ordinary,
+            spelling,
+            Some(name),
+            tex_state::meaning::ResolvedMeaning::Macro { flags, definition },
+        );
+        self.queue_macro_prefix_mismatch(name, site);
+    }
+
+    fn queue_macro_prefix_mismatch(
+        &mut self,
+        macro_name: tex_state::interner::Symbol,
+        site: tex_state::diagnostic::DiagnosticSite,
+    ) {
+        let context = self.command.output_open_context(self.state);
+        let site = Some(self.complete_diagnostic_site(site));
+        self.command.semantic_diagnostics.push(
+            crate::CommandSemanticDiagnostic::MacroPrefixMismatch {
+                macro_name,
+                context,
+                site,
+            },
+        );
     }
 
     fn classify_macro_activation(

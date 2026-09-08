@@ -68,16 +68,38 @@ impl<G> CommandProcessor<'_, '_, G> {
         &self,
         command: &crate::command::HotCommand<G>,
     ) -> tex_state::diagnostic::DiagnosticSite {
+        self.capture_spelled_diagnostic_site(
+            command.identity(),
+            command.spelling(),
+            command.control_sequence(),
+            command.resolved_meaning(),
+        )
+    }
+
+    /// Diagnostic identity depends on spelling and meaning, not delivery
+    /// geometry or backup authority. Macro activation can retain just these
+    /// invocation facts across matching and construct this site only on error.
+    pub(crate) fn capture_spelled_diagnostic_site(
+        &self,
+        identity: crate::command::CommandIdentity,
+        spelling: TracedTokenWord,
+        control_sequence: Option<tex_state::interner::Symbol>,
+        meaning: tex_state::meaning::ResolvedMeaning<G>,
+    ) -> tex_state::diagnostic::DiagnosticSite {
         let (name, operand) = crate::observation::canonical_delivery_identity_for_profile(
             self.command.profile(),
-            command.identity(),
-            command.resolved_meaning(),
+            identity,
+            meaning,
         );
         tex_state::diagnostic::DiagnosticSite {
-            origin: (command.origin() != tex_state::token::OriginId::UNKNOWN)
-                .then_some(command.origin()),
+            origin: (spelling.origin() != OriginId::UNKNOWN).then_some(spelling.origin()),
             observed_token: Some(neutral_diagnostic_token(
-                self.observed_hot_command_spelling(command),
+                super::next::observed_command_spelling_for(
+                    self.state,
+                    spelling,
+                    control_sequence,
+                    meaning,
+                ),
             )),
             command: Some(name),
             command_operand: operand,

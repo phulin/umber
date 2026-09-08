@@ -41,9 +41,10 @@ A full hot command is materialized when a caller actually needs command delivery
 or when observation, suppression, alignment, or outer recovery requires the
 existing settlement boundary. Materialization uses the already-resolved meaning;
 it must not repeat a dense lookup. Illegal definition parameters materialize
-only the rejected token needed by backup. Macro diagnostics materialize their
-opener only on failure. Necessary origin and delivery coordinates remain live
-across nested scanning and are captured before their input frame can retire.
+only the rejected token needed by backup. Macro matching retains only spelling
+and invocation facts; prefix diagnostics construct their site directly from
+those facts, without a command or delivery coordinates. Origin remains valid
+when the original input frame retires.
 
 Raw and expanded consumers use the same read, fuel, and input-transition
 implementation. Expansion chains stay iterative. EOF, replay completion, and

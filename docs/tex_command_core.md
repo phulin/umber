@@ -201,8 +201,11 @@ Expanded delivery resolves an interpreted token once into its canonical packed
 meaning and control-sequence identity. An ordinary unobserved macro passes only
 its definition, flags, name, and origin to activation and argument scanning.
 Successful activation constructs neither `HotCommand` nor `CurrentCommand`.
-The original read facts survive on the synchronous call stack only when a
-macro diagnostic could need its opener. Macro chains remain iterative.
+Only spelling and invocation facts survive synchronous argument matching;
+prefix diagnostics construct their site directly from those facts. Delivery
+geometry does not remain live merely for diagnostics. Macro chains remain
+iterative in one read/interpret loop. Matching's local storage belongs to its
+activation call, outside suspended primitive-expansion frames.
 
 A delivered command, primitive scanner boundary, observation, suppression,
 alignment, or outer recovery materializes `HotCommand` from those already

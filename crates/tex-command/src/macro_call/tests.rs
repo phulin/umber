@@ -2047,3 +2047,63 @@ fn mixed_one_64_and_4096_token_arguments_use_one_fused_settlement_without_copies
         assert_eq!(measured.aggregate_word_reads, 0);
     }
 }
+
+#[test]
+fn direct_macro_prefix_diagnostics_match_delivered_command_diagnostics() {
+    let run = |observed, source| {
+        crate::test_harness::with_universe(|universe| {
+            let call = install_macro(universe, "prefixowner", &[other('!'), Token::Param(1)]);
+            let mut command = CommandState::default();
+            if source {
+                let source = command
+                    .register_source(crate::SourceRegistration::new(
+                        crate::RegisteredSourceKind::Generated,
+                        &b"\\prefixowner?z%"[..],
+                    ))
+                    .expect("source");
+                command
+                    .open_registered_source(source)
+                    .expect("source opening");
+            } else {
+                crate::test_harness::push(&mut command, [call, other('?'), letter('z')]);
+            }
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut fuel = crate::CommandFuelLedger::default();
+            let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut observer = RecordingObserver::default();
+            let mut context = universe.command_context().expect("context");
+            let processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut effects,
+            );
+            let mut processor = if observed {
+                processor.with_observer(&mut observer)
+            } else {
+                processor
+            };
+            let before = crate::command::command_ownership_counters();
+            let delivered = processor
+                .get_x_token()
+                .expect("recover prefix mismatch")
+                .expect("terminal");
+            assert_eq!(delivered.spelling().semantic_token(), letter('z'));
+            let writes = crate::command::command_ownership_counters().resolved_writes
+                - before.resolved_writes;
+            if !observed {
+                assert_eq!(
+                    writes, 2,
+                    "only the mismatching argument and terminal need commands"
+                );
+            }
+            assert_eq!(processor.fuel.burned(), 3);
+            assert_eq!(processor.command.semantic_diagnostics.len(), 1);
+            processor.take_semantic_diagnostics()
+        })
+    };
+    for source in [false, true] {
+        assert_eq!(run(false, source), run(true, source));
+    }
+}

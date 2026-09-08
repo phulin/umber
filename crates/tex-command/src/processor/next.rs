@@ -367,7 +367,7 @@ impl<G> CommandProcessor<'_, '_, G> {
 /// merely to retain a cold diagnostic token, while ensuring both delivery
 /// forms apply the same frozen-sentinel rules.
 #[inline]
-fn observed_command_spelling_for<G>(
+pub(super) fn observed_command_spelling_for<G>(
     state: &tex_state::CommandContext<'_, G>,
     spelling: TracedTokenWord,
     control_sequence: Option<Symbol>,

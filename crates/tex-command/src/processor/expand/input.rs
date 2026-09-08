@@ -19,6 +19,7 @@ const INVALID_SOURCE_CHARACTER_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0345;
 impl<G> CommandProcessor<'_, '_, G> {
     /// Reads a token from the live source frame; only refill, EOF and recovery
     /// leave through the cold input-transition handler.
+    #[inline(always)]
     pub(super) fn advance_source_token(
         &mut self,
         resident_index: usize,
