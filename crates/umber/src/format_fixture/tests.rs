@@ -1,3 +1,5 @@
+use std::fs;
+use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier};
 use std::thread;
@@ -17,6 +19,43 @@ fn ensure_format(
     recipe: &FormatRecipe,
 ) -> Result<FormatFixture, FormatFixtureError> {
     super::ensure_format(cache, recipe, &crate::umber_format_worker_launcher())
+}
+
+const FRESH_LOADED_TEST_ENV: &str = "UMBER_FRESH_LOADED_TEST_PROCESS";
+const FRESH_LOADED_TEST_MARKER_ENV: &str = "UMBER_FRESH_LOADED_TEST_MARKER";
+
+// Loaded-job guards intentionally measure absolute process RSS. Run these
+// cases in a fresh libtest process so retained state from unrelated tests is
+// not charged to the current job while preserving that production contract.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "test subprocess marker proves the exact libtest target executed"
+)]
+pub(crate) fn run_in_fresh_loaded_test_process(test_name: &str) -> bool {
+    if std::env::var_os(FRESH_LOADED_TEST_ENV).is_some() {
+        let marker = std::env::var_os(FRESH_LOADED_TEST_MARKER_ENV)
+            .expect("fresh loaded test marker in child");
+        fs::write(marker, b"executed").expect("mark fresh loaded test execution");
+        return false;
+    }
+    let marker_root = TempDir::new().expect("fresh loaded test marker root");
+    let marker = marker_root.path().join("executed");
+    let executable = std::env::current_exe().expect("current test executable");
+    let status = Command::new(executable)
+        .args(["--exact", test_name, "--test-threads=1"])
+        .env(FRESH_LOADED_TEST_ENV, "1")
+        .env(FRESH_LOADED_TEST_MARKER_ENV, &marker)
+        .status()
+        .expect("spawn fresh loaded-format test process");
+    assert!(
+        status.success(),
+        "fresh loaded-format test {test_name} failed: {status}"
+    );
+    assert!(
+        marker.is_file(),
+        "fresh loaded-format test {test_name} executed zero tests"
+    );
+    true
 }
 
 #[derive(Default)]
@@ -462,6 +501,11 @@ fn concurrent_ensure_deduplicates_without_clobbering() {
 
 #[test]
 fn representative_command_semantic_case_runs_loaded() {
+    if run_in_fresh_loaded_test_process(
+        "format_fixture::tests::representative_command_semantic_case_runs_loaded",
+    ) {
+        return;
+    }
     let cache_root = TempDir::new().expect("cache");
     let fixture = ensure_format(
         &FormatCacheStore::new(cache_root.path()),
@@ -484,6 +528,11 @@ fn representative_command_semantic_case_runs_loaded() {
 
 #[test]
 fn recipe_hyphenation_capacity_reaches_the_loaded_usage_report() {
+    if run_in_fresh_loaded_test_process(
+        "format_fixture::tests::recipe_hyphenation_capacity_reaches_the_loaded_usage_report",
+    ) {
+        return;
+    }
     // TeX82 §§934/1308/1334 and Web2C `tex.ch` [51.1332]: the recipe's
     // process-selected `hyph_size` must reach INITEX, survive its real dump,
     // and remain the bound rendered by the loaded job.
@@ -544,6 +593,11 @@ fn recipe_hyphenation_capacity_reaches_the_loaded_usage_report() {
 
 #[test]
 fn loaded_driver_configuration_is_job_local() {
+    if run_in_fresh_loaded_test_process(
+        "format_fixture::tests::loaded_driver_configuration_is_job_local",
+    ) {
+        return;
+    }
     let cache_root = TempDir::new().expect("cache");
     let fixture = ensure_format(
         &FormatCacheStore::new(cache_root.path()),
@@ -672,6 +726,11 @@ fn detached_box_outline_walks_borrowed_page_ranges_in_recursive_order() {
 
 #[test]
 fn explicit_fresh_seam_matches_loaded_semantic_state() {
+    if run_in_fresh_loaded_test_process(
+        "format_fixture::tests::explicit_fresh_seam_matches_loaded_semantic_state",
+    ) {
+        return;
+    }
     let source = Arc::from(&b"\\count0=7\\advance\\count0 by 5\\end\n"[..]);
     let recipe = FormatRecipe::raw_tex82();
     let cache_root = TempDir::new().expect("cache");
@@ -694,6 +753,11 @@ fn explicit_fresh_seam_matches_loaded_semantic_state() {
 
 #[test]
 fn raw_etex_fresh_and_loaded_match_extension_state_and_observations() {
+    if run_in_fresh_loaded_test_process(
+        "format_fixture::tests::raw_etex_fresh_and_loaded_match_extension_state_and_observations",
+    ) {
+        return;
+    }
     // e-TeX manual §3.6 makes \tracingassigns extension-owned mutable state;
     // matching it and the canonical observations exercises both restored
     // unexpandable assignment and expandable \numexpr meanings.
@@ -721,6 +785,11 @@ fn raw_etex_fresh_and_loaded_match_extension_state_and_observations() {
 
 #[test]
 fn loaded_page_job_reports_exact_serialized_dvi_length() {
+    if run_in_fresh_loaded_test_process(
+        "format_fixture::tests::loaded_page_job_reports_exact_serialized_dvi_length",
+    ) {
+        return;
+    }
     let recipe = FormatRecipe::raw_tex82();
     let cache_root = TempDir::new().expect("cache");
     let fixture =
@@ -750,6 +819,11 @@ fn loaded_page_job_reports_exact_serialized_dvi_length() {
 
 #[test]
 fn loaded_no_page_job_reports_no_pages_without_dvi_serialization() {
+    if run_in_fresh_loaded_test_process(
+        "format_fixture::tests::loaded_no_page_job_reports_no_pages_without_dvi_serialization",
+    ) {
+        return;
+    }
     let recipe = FormatRecipe::raw_tex82();
     let cache_root = TempDir::new().expect("cache");
     let fixture =

@@ -1262,4 +1262,4 @@ impl From<tex_command::CommandFuelLimitError> for FormatFixtureError {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
