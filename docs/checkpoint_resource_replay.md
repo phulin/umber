@@ -150,6 +150,14 @@ closure-scoped `InputReadState` view of the live World. World effects recorded
 by that call are already present in the speculative candidate and are not
 applied a second time when the capability is installed.
 
+Installed input and font capabilities retain immutable selected bytes and
+their semantic metadata after the active World input record is stripped.
+They may share a non-authoritative `InputRecordId` cache hint so a repeated
+use can reuse a live record without another backing read. World validates that
+hint against the current timeline and exact selected bytes, refreshes it when
+the record is replaced, and registers a new record when it is stale. The hint
+is metadata only and cannot retain World state across a checkpoint or rollback.
+
 An unavailable answer continues the existing TeX diagnostic or optional-file
 path immediately. A failed answer propagates its original failure. A declined
 answer carries one call-scoped already-attempted marker to the outer driver;

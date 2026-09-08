@@ -83,7 +83,9 @@ pub(super) struct ColdExecutionEpisode<'operation, G> {
     pub(super) alignment_preamble: Option<PreparedAlignmentPreamble<G>>,
     /// Active font payload returned by the provider or materialized from a
     /// retained capability. It is scoped to this cold application only; the
-    /// capability owner keeps a record-free retained copy.
+    /// capability owner keeps a copy with active World records stripped. Any
+    /// retained input-record hint is cache metadata validated by World and
+    /// cannot retain World state.
     pub(super) font_resource: Option<tex_command::FontResource>,
     pub(super) output_start: OperationOutputStart,
 }

@@ -146,9 +146,11 @@ pub struct ResourceResolution {
 /// Result of settling a provider answer in the capability owner.
 ///
 /// A fulfilled result carries the original active payload for the cold
-/// consumer. The capability owner stores only its retained, record-free form;
-/// the active value is dropped after the current operation and never becomes
-/// a mailbox or parser continuation.
+/// consumer. The capability owner strips active World records before storing
+/// the retained form. File payloads may keep a shared, non-authoritative
+/// `InputRecordId` cache hint; World validates that hint against the current
+/// timeline and exact bytes before reuse, so the hint cannot retain World
+/// state or become a mailbox or parser continuation.
 #[derive(Debug)]
 pub enum ResourceInstallOutcome {
     Fulfilled(ResourceFulfillment),
@@ -342,7 +344,11 @@ impl FileEnquiryResource {
         &self.source
     }
 
-    /// Returns the record-free retained form of this enquiry resource.
+    /// Returns the retained form with its active World record stripped.
+    ///
+    /// The shared record hint is cache metadata only. Each use validates it
+    /// against the current World timeline and exact selected bytes, then
+    /// refreshes it or registers a new record when validation fails.
     #[must_use]
     pub(crate) fn without_world_record(&self) -> Self {
         Self {
@@ -426,7 +432,12 @@ pub enum FontResource {
     OpenType(tex_fonts::OpenTypeFont),
 }
 
-/// Record-free retained bytes for a host-selected font metrics file.
+/// Retained bytes for a host-selected font metrics file.
+///
+/// The active World record is stripped before retention. The shared record
+/// hint is non-authoritative cache metadata: actual use validates it against
+/// the current World timeline and exact bytes, so it cannot retain World
+/// state.
 #[derive(Clone, Debug)]
 #[doc(hidden)]
 pub struct RetainedFileContent {
@@ -474,7 +485,11 @@ impl RetainedFileContent {
     }
 }
 
-/// Record-free capability payload for one host-selected font answer.
+/// Retained capability payload for one host-selected font answer.
+///
+/// Nested file payloads have their active World records stripped. Any shared
+/// record hint is only validated cache metadata and cannot retain World state;
+/// a failed validation registers a current record before the answer is used.
 #[derive(Clone, Debug)]
 pub enum RetainedFontResource {
     Unavailable,
