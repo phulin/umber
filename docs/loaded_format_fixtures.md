@@ -117,6 +117,12 @@ Geometry remains captured and reported but advisory; command-v1, terminal,
 log, effects, status, and normalized DVI remain governed by each fixture's
 existing acceptance contract.
 
+The resident guard remains an absolute RSS limit for each measured process.
+Construction is checked after the worker has executed its image, so resident
+pages inherited during fork are not charged to the worker. RSS-constrained
+loaded-job tests run in a fresh libtest subprocess; the production loaded-job
+guard does not subtract a parent-process baseline.
+
 The job's provenance demand is applied only after authenticated format decode,
 before execution begins. Diagnostics-only batch jobs therefore retain no
 rendered-source artifact sidecar, while parity and telemetry jobs which inspect
