@@ -145,7 +145,15 @@ impl<G> CommandProcessor<'_, '_, G> {
             group_depth: u32::try_from(self.state.group_frames().len()).unwrap_or(u32::MAX),
             group_tail,
         });
-        site.mode = Some(self.host.diagnostic_mode_name());
+        // TeX82 §1370 temporarily sets `mode:=0` while `write_out` expands a
+        // deferred write. The enclosing executor mode is not the mode of the
+        // diagnostic, and consulting it would count a second host fact in
+        // addition to §418's one consuming-primitive query.
+        site.mode = if self.command.expanding_deferred_write() {
+            Some("no mode")
+        } else {
+            Some(self.host.diagnostic_mode_name())
+        };
         site.scanner_status =
             crate::observation::canonical_names::scanner_status_name(self.command.scanner.status());
         site
