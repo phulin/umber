@@ -19,6 +19,10 @@ Samply wrapper, prerequisites, counters, measurement controls, and capture
 analysis workflow. Historical measurements belong in Git history or Beads,
 not as chronological release receipts in `docs/`.
 
+`paired_measurement.md` documents the owner-maintained prebuilt-executable
+paired runner in `scripts/paired-measure.py`, its JSON/JSONL receipt contract,
+inner-metric scope, and release-versus-structural evidence lanes.
+
 `native_batch_kernel.md` records the independently audited direct mutable batch
 ceiling, the first production-owned canonical-tokenizer/output seam, its typed
 fallback boundary, and the staged single-engine migration that deletes each
