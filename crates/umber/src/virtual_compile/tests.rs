@@ -2739,14 +2739,18 @@ fn preloaded_and_partitioned_positive_negative_resources_are_exactly_equivalent(
     assert_eq!(preloaded_telemetry.execution.replayed_dispatches, 0);
     assert_eq!(partitioned_telemetry.execution.cold_starts, 1);
     assert_eq!(partitioned_telemetry.execution.suspensions, 3);
+    // Every partitioned response discards the cold attempt and restarts from
+    // its retained full checkpoint. The fixture therefore replays one
+    // dispatch per suspension and four delivered commands from the discarded
+    // prefixes; local continuation cannot report zero replay work here.
     assert_eq!(
         (
             partitioned_telemetry.execution.local_step_retries,
             partitioned_telemetry.execution.replayed_delivered_tokens,
             partitioned_telemetry.execution.replayed_dispatches,
         ),
-        (3, 0, 0),
-        "typed resource continuations retry locally without replaying deliveries"
+        (3, 4, 3),
+        "resource responses retry from full checkpoints with discarded delivery work"
     );
     assert_eq!(partitioned.attempts(), 4);
     assert!(

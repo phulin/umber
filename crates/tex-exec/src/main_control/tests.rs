@@ -7659,6 +7659,35 @@ fn preloaded_scalar_operation_fuel_abort_releases_parent_and_deepest_child() {
     });
 }
 
+const GENERATED_MAIN_AUX: &[u8] = br"\newlabel{sec:intro}{{1}{1}}
+";
+const GENERATED_MAIN_TOC: &[u8] = br"\contentsline{section}{Introduction}{1}
+";
+
+#[derive(Default)]
+struct GeneratedReferenceInputHost {
+    calls: usize,
+}
+
+impl ResourceHost for GeneratedReferenceInputHost {
+    fn fulfill(&mut self, _world: &mut ResourceWorld<'_>, need: &ResourceNeed) -> ResourceOutcome {
+        let ResourceNeed::Input { name, .. } = need else {
+            return ResourceOutcome::Declined;
+        };
+        let bytes = match name.as_str() {
+            "main.aux" => GENERATED_MAIN_AUX,
+            "main.toc" => GENERATED_MAIN_TOC,
+            _ => return ResourceOutcome::Declined,
+        };
+        self.calls += 1;
+        ResourceOutcome::Fulfilled(ResourceFulfillment::input(
+            name.clone(),
+            RegisteredSourceKind::Generated,
+            Arc::from(bytes),
+        ))
+    }
+}
+
 #[test]
 fn sequential_generated_reference_probes_preserve_the_macro_cursor() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
@@ -7669,18 +7698,8 @@ fn sequential_generated_reference_probes_preserve_the_macro_cursor() {
             include_bytes!("../../../../tests/corpus/stabilization/latex-references/source.tex"),
         );
         for (name, bytes) in [
-            (
-                "main.aux",
-                br"\newlabel{sec:intro}{{1}{1}}
-"
-                .as_slice(),
-            ),
-            (
-                "main.toc",
-                br"\contentsline{section}{Introduction}{1}
-"
-                .as_slice(),
-            ),
+            ("main.aux", GENERATED_MAIN_AUX),
+            ("main.toc", GENERATED_MAIN_TOC),
         ] {
             control.capabilities_mut().register_input_probe(
                 name,
@@ -7693,13 +7712,15 @@ fn sequential_generated_reference_probes_preserve_the_macro_cursor() {
                 ),
             );
         }
+        let mut host = GeneratedReferenceInputHost::default();
+        let mut provider = ResourceHostProvider::new(&mut host);
         let mut ledger = crate::OutputLedger::new();
         let mut checkpoints = Vec::new();
         let cancellation = crate::Cancellation::new();
         let mut terminal_step = None;
         for _ in 0..512 {
             let result = crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger)
-                .step(&mut checkpoints, &cancellation);
+                .step_with_resource_provider(&mut checkpoints, &cancellation, &mut provider);
             match result {
                 crate::CanonicalStepResult::ResourceNeed(need) => panic!(
                     "preloaded reference probe unexpectedly crossed a resource boundary: {need:?}"
@@ -7713,6 +7734,10 @@ fn sequential_generated_reference_probes_preserve_the_macro_cursor() {
                 other => panic!("unexpected reference step {other:?}"),
             }
         }
+        assert_eq!(
+            host.calls, 2,
+            "required reads use the host provider separately from probes"
+        );
         assert_eq!(control.pending_resource_site(), None);
         ledger
             .terminal_receipt(&control, stores, terminal_step.expect("terminal step"))
