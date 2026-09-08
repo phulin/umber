@@ -3347,11 +3347,13 @@ impl World {
     ) -> FileContent {
         self.detached.reserve_input(self.inputs.len() + 1);
         let record = self.allocate_input_record();
-        let content =
+        let mut content =
             FileContent::from_shared(record, path.to_owned(), bytes, modification_date, origin);
-        Arc::make_mut(&mut self.input_contents)
+        let canonical_bytes = Arc::make_mut(&mut self.input_contents)
             .entry(content.hash)
-            .or_insert_with(|| content.bytes.clone());
+            .or_insert_with(|| content.bytes.clone())
+            .clone();
+        content.bytes = canonical_bytes;
         Arc::make_mut(&mut self.inputs).push(InputRecord {
             path: Arc::from(content.path.clone().into_boxed_path()),
             hash: content.hash,

@@ -68,6 +68,56 @@ fn retained_input_record_hint_reuses_exact_backing_and_refreshes_after_rollback(
 }
 
 #[test]
+fn retained_input_record_hint_reuses_canonical_owner_for_equal_content() {
+    let mut world = World::memory();
+    let first_bytes = SharedBytes::from_vec(b"same".to_vec());
+    let second_bytes = SharedBytes::from_vec(b"same".to_vec());
+    assert!(!SharedBytes::ptr_eq(&first_bytes, &second_bytes));
+
+    let first = world
+        .read_selected_input_record(
+            Path::new("a.bin"),
+            None,
+            first_bytes,
+            None,
+            InputOrigin::External,
+            &[],
+        )
+        .expect("first input read succeeds")
+        .expect("external input remains available");
+    let second = world
+        .read_selected_input_record(
+            Path::new("b.bin"),
+            None,
+            second_bytes,
+            None,
+            InputOrigin::External,
+            &[],
+        )
+        .expect("second input read succeeds")
+        .expect("external input remains available");
+    assert!(SharedBytes::ptr_eq(
+        &first.shared_bytes(),
+        &second.shared_bytes()
+    ));
+    assert_eq!(world.input_records().len(), 2);
+
+    let repeated = world
+        .read_selected_input_record(
+            Path::new("b.bin"),
+            Some(second.record()),
+            second.shared_bytes(),
+            None,
+            InputOrigin::External,
+            &[],
+        )
+        .expect("retained input materializes")
+        .expect("external input remains available");
+    assert_eq!(repeated.record(), second.record());
+    assert_eq!(world.input_records().len(), 2);
+}
+
+#[test]
 fn print_nl_publication_uses_post_effect_selected_line_state() {
     let mut world = World::memory();
     world.publish_print_text(PrintSink::Terminal, "term", 79);
