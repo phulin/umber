@@ -210,7 +210,7 @@ fn margin_variation_uses_left_codes_only_for_expandable_ligature_edges() {
             },
         )
         .expect("font expansion configuration is valid");
-    for code in [b'A', b'.'] {
+    for code in *b"A." {
         state.set_pdf_font_code(PdfFontCode::Ef, font, code, 1000);
     }
     state.set_pdf_font_code(PdfFontCode::Lp, font, b'A', 500);

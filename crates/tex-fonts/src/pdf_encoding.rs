@@ -77,7 +77,7 @@ fn tokens(bytes: &[u8]) -> Vec<Vec<u8>> {
     for line in bytes.split(|byte| *byte == b'\n' || *byte == b'\r') {
         let line = line.split(|byte| *byte == b'%').next().unwrap_or_default();
         let mut start = None;
-        for (index, byte) in line.iter().copied().chain([b' ']).enumerate() {
+        for (index, byte) in line.iter().copied().chain(*b" ").enumerate() {
             if matches!(byte, b'[' | b']') {
                 if let Some(begin) = start.take() {
                     result.push(line[begin..index].to_vec());

@@ -4369,7 +4369,12 @@ fn validate_png_decoded_size(metadata: RasterMetadata) -> Result<(), PdfBuildErr
 }
 
 fn strip_png_16(samples: &[u8]) -> Vec<u8> {
-    samples.chunks_exact(2).map(|sample| sample[0]).collect()
+    samples
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|sample| sample[0])
+        .collect()
 }
 
 fn raster_color_components(color_space: PdfRasterColorSpaceInput) -> u8 {
@@ -4522,7 +4527,7 @@ fn apply_png_gamma(
             }
         }
         16 => {
-            for sample in samples.chunks_exact_mut(2) {
+            for sample in samples.as_chunks_mut::<2>().0 {
                 let value = u16::from_be_bytes([sample[0], sample[1]]);
                 let normalized = f64::from(value) / 65_535.0;
                 let corrected = (normalized.powf(exponent) * 65_535.0).round() as u16;

@@ -1273,10 +1273,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let (mut negative, mut provenance) = (false, OriginId::UNKNOWN);
         let first = loop {
             let mut command: Option<HotCommand<G>> = None;
-            let delivery = match self.request_expanded_hot_token(&mut command) {
-                Ok(delivery) => delivery,
-                Err(error) => return Err(error),
-            };
+            let delivery = self.request_expanded_hot_token(&mut command)?;
             let command = match delivery {
                 DeliveryStatus::Command => {
                     command.expect("command delivery initializes destination")
@@ -1516,10 +1513,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         // could split the quantity from its operand.
         let first = loop {
             let mut command = None;
-            let delivery = match self.request_expanded_token(&mut command) {
-                Ok(delivery) => delivery,
-                Err(error) => return Err(error),
-            };
+            let delivery = self.request_expanded_token(&mut command)?;
             let command = match delivery {
                 DeliveryStatus::Command => {
                     command.expect("command delivery initializes destination")
@@ -1914,10 +1908,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         // instead would drop its stretch and shrink.
         let first = loop {
             let mut command = None;
-            let delivery = match self.request_expanded_token(&mut command) {
-                Ok(delivery) => delivery,
-                Err(error) => return Err(error),
-            };
+            let delivery = self.request_expanded_token(&mut command)?;
             let command = match delivery {
                 DeliveryStatus::Command => {
                     command.expect("command delivery initializes destination")
@@ -2288,10 +2279,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let mut missing_site = None;
         loop {
             let mut command = None;
-            let delivery = match self.request_expanded_token(&mut command) {
-                Ok(delivery) => delivery,
-                Err(error) => return Err(error),
-            };
+            let delivery = self.request_expanded_token(&mut command)?;
             let command = match delivery {
                 DeliveryStatus::Command => {
                     command.expect("command delivery initializes destination")

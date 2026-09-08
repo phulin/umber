@@ -73,7 +73,9 @@ impl Hash for SemanticRecord<'_> {
                     .expect("published ligature source");
                 let count = source[0] as usize;
                 let orig: Vec<char> = source[2..]
-                    .chunks_exact(2)
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
                     .map(|pair| char::from_u32(pair[0]).expect("published ligature source char"))
                     .collect();
                 assert_eq!(orig.len(), count);

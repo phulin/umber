@@ -787,9 +787,7 @@ impl<'a> Vm<'a> {
         let ordering = match (&left, &right) {
             (VmValue::Integer(left), VmValue::Integer(right)) => Some(left.cmp(right)),
             (VmValue::String(left), VmValue::String(right)) => Some(left.cmp(right)),
-            _ if builtin == Builtin::Equals => {
-                Some(std::cmp::Ordering::Equal).filter(|_| left == right)
-            }
+            _ if builtin == Builtin::Equals => (left == right).then_some(std::cmp::Ordering::Equal),
             _ => None,
         };
         match ordering {

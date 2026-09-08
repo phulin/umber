@@ -746,7 +746,7 @@ impl<G> CommandTimeline<G> {
             mark.scalars,
             roots,
             |inverse, roots| inverse.swap(roots),
-            |inverse, _| drop(inverse),
+            |_, _| {},
         ) {
             return false;
         }

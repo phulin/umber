@@ -251,7 +251,7 @@ fn native_prefetch_conversion_preserves_literal_depth() {
         FileRequestKey::new(FileKind::TexInput, "literal-grandchild.tex").expect("grandchild key"),
         "literal-grandchild.tex",
     );
-    planner.admit_file(&child, br#"\input{literal-grandchild.tex}"#);
+    planner.admit_file(child, br#"\input{literal-grandchild.tex}"#);
     assert_eq!(
         planner.drain_followups(),
         vec![ResourceRequest::File(grandchild.clone())]

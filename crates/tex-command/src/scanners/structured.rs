@@ -2189,17 +2189,13 @@ impl<G> CommandProcessor<'_, '_, G> {
         mut progress: PdfActionScalarProgress,
     ) -> Result<(PendingPdfActionOwner, PdfActionSpec), CommandError> {
         use tex_state::PdfActionWindow;
-        let owner = Some(owner);
         loop {
             match progress.phase {
                 PdfActionScalarPhase::UserKeyword => {
                     let result = self.scan_keyword_retained("user");
                     if result.into_result()?.value {
                         let text = self.scan_pdf_action_owned_text()?;
-                        return Ok((
-                            owner.expect("successful PDF action retains its owner"),
-                            PdfActionSpec::User(text.tokens),
-                        ));
+                        return Ok((owner, PdfActionSpec::User(text.tokens)));
                     }
                     progress.phase = PdfActionScalarPhase::GotoKeyword;
                 }
@@ -2371,7 +2367,7 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     fn finish_pdf_action(
         &self,
-        owner: Option<PendingPdfActionOwner>,
+        owner: PendingPdfActionOwner,
         progress: PdfActionScalarProgress,
         window: tex_state::PdfActionWindow,
     ) -> Result<(PendingPdfActionOwner, PdfActionSpec), CommandError> {
@@ -2388,7 +2384,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             window,
         };
         Ok((
-            owner.expect("successful PDF action retains its owner"),
+            owner,
             if goto {
                 PdfActionSpec::GoTo(action)
             } else {
@@ -3386,10 +3382,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         let result = self.scan_file_name_retained();
         let file_name = result.into_result()?;
         let mut size_recovery = None;
-        let size = if {
-            let result = self.scan_keyword_retained("at");
-            result.into_result()?.value
-        } {
+        let has_at = self.scan_keyword_retained("at").into_result()?.value;
+        let size = if has_at {
             let result = self.scan_dimension_retained();
             let requested = result.into_result()?.value;
             // §1259's `if (s<=0)or(s>=@'1000000000)`.
@@ -3910,7 +3904,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         if !pdf_output_enabled {
             return Ok(ImmediateExtension::PdfExtensionInDviMode(primitive));
         }
-        let result = match primitive {
+
+        match primitive {
             UnexpandablePrimitive::PdfObject => self
                 .scan_pdf_object_request()
                 .map(ImmediateExtension::PdfObject),
@@ -3920,9 +3915,8 @@ impl<G> CommandProcessor<'_, '_, G> {
             UnexpandablePrimitive::PdfXImage => self
                 .scan_pdf_image_request()
                 .map(ImmediateExtension::PdfImage),
-            _ => return Err(CommandError::input_invariant()),
-        };
-        result
+            _ => Err(CommandError::input_invariant()),
+        }
     }
 
     fn finish_immediate_open_out(&mut self) -> Result<ImmediateExtension, CommandError> {

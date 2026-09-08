@@ -155,8 +155,10 @@ pub(crate) fn parse_glyph_to_unicode(glyph: &[u8], unicode: &[u8]) -> GlyphToUni
             return invalid(glyph, unicode);
         }
         compact
-            .chunks_exact(4)
-            .filter_map(parse_hex)
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter_map(|chunk| parse_hex(chunk))
             .collect::<Vec<_>>()
     } else {
         vec![match parse_hex(&compact) {

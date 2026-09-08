@@ -2503,14 +2503,12 @@ impl DistributionResolver {
                         .get(key)
                         .into_iter()
                         .flatten()
-                        .filter_map(move |request| {
-                            Some(umber_distribution::PrefetchCandidate {
-                                key: key.clone(),
-                                object: entry.object.clone(),
-                                class: prefetch_class_for_request(request, key),
-                                required: false,
-                                file_key: semantic_file_key(request.key()),
-                            })
+                        .map(move |request| umber_distribution::PrefetchCandidate {
+                            key: key.clone(),
+                            object: entry.object.clone(),
+                            class: prefetch_class_for_request(request, key),
+                            required: false,
+                            file_key: semantic_file_key(request.key()),
                         })
                 })
                 .collect::<Vec<_>>(),

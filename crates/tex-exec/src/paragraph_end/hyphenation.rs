@@ -2046,7 +2046,7 @@ mod tests {
 
     fn hyphenation_font<G>(stores: &mut CommandContext<'_, G>) -> tex_state::ids::FontId {
         let mut characters = vec![None; 256];
-        for code in [b'-', b'.', b'a', b'b', b'c', b'd'] {
+        for code in *b"-.abcd" {
             characters[usize::from(code)] = Some(tex_state::font::CharMetrics {
                 width: tex_state::scaled::Scaled::from_raw(tex_state::scaled::Scaled::UNITY / 2),
                 height: tex_state::scaled::Scaled::from_raw(0),

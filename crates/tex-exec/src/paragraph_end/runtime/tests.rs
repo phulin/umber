@@ -361,7 +361,7 @@ fn final_font_expansion_includes_the_preceding_margin_kern_width() {
     crate::test_harness::with_nonstop_plain_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         let mut characters = vec![None; 256];
-        for code in [b'A', b'.'] {
+        for code in *b"A." {
             characters[usize::from(code)] = Some(tex_fonts::CharMetrics {
                 width: Scaled::from_raw(1_000),
                 height: Scaled::from_raw(0),
@@ -393,7 +393,7 @@ fn final_font_expansion_includes_the_preceding_margin_kern_width() {
                 },
             )
             .expect("font expansion configuration is valid");
-        for code in [b'A', b'.'] {
+        for code in *b"A." {
             stores.set_pdf_font_code(PdfFontCode::Ef, font, code, 1_000);
         }
         stores.set_pdf_font_code(PdfFontCode::Rp, font, b'.', 100);

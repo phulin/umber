@@ -626,7 +626,7 @@ fn rule(width: i32) -> Node {
 
 fn microtype_font(name: &str, width: i32) -> LoadedFont {
     let mut characters = vec![None; 256];
-    for code in [b'A', b'B', b'C', b'D', b'-', b'.'] {
+    for code in *b"ABCD-." {
         characters[usize::from(code)] = Some(CharMetrics {
             width: sp(width),
             height: sp(0),
@@ -878,7 +878,7 @@ fn pdftex_hz_modes_have_the_exact_scoring_and_breakpoint_matrix() {
                 },
             )
             .expect("microtype font expansion configuration is valid");
-        for code in [b'A', b'B', b'C', b'D', b'-', b'.'] {
+        for code in *b"ABCD-." {
             universe.set_pdf_font_code(tex_state::PdfFontCode::Ef, font, code, 1000);
             universe.set_pdf_font_code(tex_state::PdfFontCode::Lp, font, code, 500);
             universe.set_pdf_font_code(tex_state::PdfFontCode::Rp, font, code, 500);

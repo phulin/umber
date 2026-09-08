@@ -1079,7 +1079,7 @@ impl NodeRecord<PageMaterialLane> {
                 }
                 let mut orig = Vec::with_capacity(count);
                 let mut origins = (!origins_empty).then(|| Vec::with_capacity(count));
-                for pair in source[2..].chunks_exact(2) {
+                for pair in source[2..].as_chunks::<2>().0 {
                     orig.push(char::from_u32(pair[0])?);
                     if let Some(origins) = &mut origins {
                         origins.push(OriginId::from_raw(pair[1]));

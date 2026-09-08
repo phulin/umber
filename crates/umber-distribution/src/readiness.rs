@@ -555,7 +555,9 @@ fn unescape(value: &str) -> Result<String, ManifestError> {
     }
     let bytes = value
         .as_bytes()
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| {
             let digit = |byte| match byte {
                 b'0'..=b'9' => Ok(byte - b'0'),

@@ -140,13 +140,10 @@ impl AHash64Hasher {
             self.mix(u64::from_le_bytes(self.tail));
             self.tail_len = 0;
         }
-        let mut chunks = bytes.chunks_exact(8);
-        for chunk in &mut chunks {
-            self.mix(u64::from_le_bytes(
-                chunk.try_into().expect("exact aHash64 word"),
-            ));
+        let (chunks, remainder) = bytes.as_chunks::<8>();
+        for &chunk in chunks {
+            self.mix(u64::from_le_bytes(chunk));
         }
-        let remainder = chunks.remainder();
         self.tail[..remainder.len()].copy_from_slice(remainder);
         self.tail_len = remainder.len();
     }

@@ -1137,13 +1137,9 @@ impl tex_exec::RetainedEngineOperation for CandidateRun<'_, '_> {
                 let (universe, _, _, control, _) = attached.parts::<CandidateRuntime>();
                 release.apply(control, universe);
             }
-            if !replayed_from_job_start && self.candidate.plan.restart_boundary.is_some() {
-                let root_anchor = self
-                    .candidate
-                    .plan
-                    .restart_boundary
-                    .expect("a rooted replay retains its selected boundary")
-                    .position;
+            if !replayed_from_job_start && let Some(boundary) = self.candidate.plan.restart_boundary
+            {
+                let root_anchor = boundary.position;
                 let bytes = Arc::from(source_file_bytes(
                     &self.candidate.plan.source,
                     self.candidate.root_source_is_byte_projection,

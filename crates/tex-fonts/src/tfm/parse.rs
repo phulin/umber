@@ -354,7 +354,9 @@ fn read_size(bytes: &[u8], offset: usize, field: &'static str) -> Result<u16, Pa
 
 fn parse_words(bytes: &[u8]) -> Vec<[u8; 4]> {
     bytes
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|chunk| [chunk[0], chunk[1], chunk[2], chunk[3]])
         .collect()
 }

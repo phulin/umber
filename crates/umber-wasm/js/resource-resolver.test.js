@@ -77,7 +77,10 @@ test("beginRun fingerprints the concrete provider order", async () => {
 	await new CompositeResourceResolver([second, first]).beginRun({
 		options: { engine: "tex82" },
 	});
-	assert.deepEqual(seen, ["0:project>1:distribution", "0:distribution>1:project"]);
+	assert.deepEqual(seen, [
+		"0:project>1:distribution",
+		"0:distribution>1:project",
+	]);
 });
 
 test("absence becomes authoritative only after every provider misses", async () => {

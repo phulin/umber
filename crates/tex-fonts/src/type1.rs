@@ -639,20 +639,17 @@ fn subset_charstrings_and_subrs(
     }
     let mut scanned_names = BTreeSet::new();
     let mut last_other_subr_3 = 3;
-    loop {
-        // pdfTeX marks `.notdef` before walking the requested glyph tree. This
-        // matters for the stateful OtherSubr 3 hint-replacement convention.
-        let Some(name) = (!scanned_names.contains(b".notdef".as_slice()))
-            .then(|| b".notdef".to_vec())
-            .or_else(|| {
-                selected_names
-                    .iter()
-                    .find(|name| !scanned_names.contains(*name))
-                    .cloned()
-            })
-        else {
-            break;
-        };
+    // pdfTeX marks `.notdef` before walking the requested glyph tree. This
+    // matters for the stateful OtherSubr 3 hint-replacement convention.
+    while let Some(name) = (!scanned_names.contains(b".notdef".as_slice()))
+        .then(|| b".notdef".to_vec())
+        .or_else(|| {
+            selected_names
+                .iter()
+                .find(|name| !scanned_names.contains(*name))
+                .cloned()
+        })
+    {
         scanned_names.insert(name.clone());
         if let (Some(subrs), Some((_, entry))) = (
             subrs.as_ref(),

@@ -190,14 +190,11 @@ impl VfsSnapshot {
         };
         let mut result = Vec::new();
 
-        loop {
-            let Some(path) = iterators
-                .iter_mut()
-                .filter_map(|iterator| iterator.peek().map(|(path, _)| (*path).clone()))
-                .min()
-            else {
-                break;
-            };
+        while let Some(path) = iterators
+            .iter_mut()
+            .filter_map(|iterator| iterator.peek().map(|(path, _)| (*path).clone()))
+            .min()
+        {
             for iterator in &mut iterators {
                 if iterator
                     .peek()

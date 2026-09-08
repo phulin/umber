@@ -413,7 +413,7 @@ fn admitted_typed_runtime_closure_normalizes_package_and_input_children() {
         PrefetchRequest::for_file_key(root_key, "tex:root.sty", "root.sty", "literal", false);
     let mut policy = PrefetchPolicy::new(PrefetchBudget::default());
     assert!(policy.enqueue(root.clone()));
-    assert_eq!(policy.drain(1), [root.clone()]);
+    assert_eq!(policy.drain(1).as_slice(), std::slice::from_ref(&root));
     policy.admitted_request_with_class(
         &root,
         PrefetchClass::SmallRuntime,
@@ -475,7 +475,7 @@ fn metadata_origin_is_a_leaf_for_catalogue_peer_traversal() {
     );
     let mut policy = PrefetchPolicy::new(PrefetchBudget::default());
     assert!(policy.enqueue(parent.clone()));
-    assert_eq!(policy.drain(1), [parent.clone()]);
+    assert_eq!(policy.drain(1).as_slice(), std::slice::from_ref(&parent));
     policy.admitted_request_with_class(&parent, PrefetchClass::SmallRuntime, b"metadata", [peer]);
     assert!(policy.drain(64).is_empty());
 }

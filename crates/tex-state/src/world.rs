@@ -4257,14 +4257,14 @@ impl World {
                 })
                 .unwrap_or((None, None, None));
             let pending = self.effects.len();
-            self.effects_mut().truncate(0);
-            Arc::make_mut(&mut self.effect_sequences).truncate(0);
-            Arc::make_mut(&mut self.effect_publications).truncate(0);
-            Arc::make_mut(&mut self.effect_publication_record_ordinals).truncate(0);
-            Arc::make_mut(&mut self.effect_domains).truncate(0);
-            Arc::make_mut(&mut self.effect_semantic_record_ordinals).truncate(0);
-            Arc::make_mut(&mut self.effect_placement_intra_orders).truncate(0);
-            Arc::make_mut(&mut self.stream_open_contexts).truncate(0);
+            self.effects_mut().clear();
+            Arc::make_mut(&mut self.effect_sequences).clear();
+            Arc::make_mut(&mut self.effect_publications).clear();
+            Arc::make_mut(&mut self.effect_publication_record_ordinals).clear();
+            Arc::make_mut(&mut self.effect_domains).clear();
+            Arc::make_mut(&mut self.effect_semantic_record_ordinals).clear();
+            Arc::make_mut(&mut self.effect_placement_intra_orders).clear();
+            Arc::make_mut(&mut self.stream_open_contexts).clear();
             debug_assert_eq!(pending, records.len().saturating_sub(committed));
             return Err(DetachedEffectPublicationError {
                 committed,

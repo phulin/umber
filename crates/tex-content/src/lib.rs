@@ -276,13 +276,10 @@ impl V2Hasher {
             self.tail_len = 0;
         }
 
-        let mut chunks = bytes.chunks_exact(8);
-        for chunk in &mut chunks {
-            self.mix_word(u64::from_le_bytes(
-                chunk.try_into().expect("exact content identity word"),
-            ));
+        let (chunks, remainder) = bytes.as_chunks::<8>();
+        for &chunk in chunks {
+            self.mix_word(u64::from_le_bytes(chunk));
         }
-        let remainder = chunks.remainder();
         self.tail[..remainder.len()].copy_from_slice(remainder);
         self.tail_len = remainder.len();
     }
@@ -355,7 +352,7 @@ fn hash_v1_parts(parts: &[&[u8]]) -> ContentIdentity {
     }
 
     let mut out = [0; 32];
-    for (chunk, word) in out.chunks_exact_mut(8).zip(words) {
+    for (chunk, word) in out.as_chunks_mut::<8>().0.iter_mut().zip(words) {
         chunk.copy_from_slice(&word.to_le_bytes());
     }
     ContentIdentity(out)
