@@ -2800,16 +2800,6 @@ impl<'store> VirtualCompileSession<'store> {
         }
     }
 
-    fn font_is_unavailable(&self, key: &FontRequestKey) -> bool {
-        self.non_file_admission
-            .is_unavailable(&NonFileResourceKey::Font(key.clone()))
-    }
-
-    fn pk_font_is_unavailable(&self, key: &PdfPkFontRequest) -> bool {
-        self.non_file_admission
-            .is_unavailable(&NonFileResourceKey::PkFont(key.clone()))
-    }
-
     fn unavailable_font_keys(&self) -> BTreeSet<FontRequestKey> {
         self.non_file_admission
             .unavailable_keys()

@@ -1043,7 +1043,7 @@ fn append_whatsit_effect<G>(
                 effects.push(PageEffect::CloseOut { stream: slot.raw() });
             }
         }
-        Whatsit::DeferredWrite { sink, tokens } if !suppress_deferred_streams => {
+        Whatsit::DeferredWrite { sink, tokens: _ } if !suppress_deferred_streams => {
             let expanded = (expansion.write_expander)(
                 stores,
                 diagnostic_effects,

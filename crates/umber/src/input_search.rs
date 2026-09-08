@@ -154,15 +154,6 @@ impl TexInputSearchPath {
         read_first_world_detailed(world, candidates)
     }
 
-    pub(crate) fn read_from_resource_world(
-        &self,
-        world: &mut crate::ResourceWorld<'_>,
-        name: &str,
-    ) -> Result<FileContent, String> {
-        self.read_from_resource_world_detailed(world, name)
-            .map_err(|error| error.to_string())
-    }
-
     pub(crate) fn read_from_resource_world_detailed(
         &self,
         world: &mut crate::ResourceWorld<'_>,
@@ -205,15 +196,6 @@ impl TexInputSearchPath {
             }
         }
         read_first_resource_detailed(world, candidates, InputDependencyAccess::AuthoritativeProbe)
-    }
-
-    pub(crate) fn read_exact_from_resource_world(
-        &self,
-        world: &mut crate::ResourceWorld<'_>,
-        name: &str,
-    ) -> Result<FileContent, String> {
-        self.read_exact_from_resource_world_detailed(world, name)
-            .map_err(|error| error.to_string())
     }
 
     pub(crate) fn read_exact_from_resource_world_detailed(
@@ -259,15 +241,6 @@ impl TexInputSearchPath {
             self.read(input, requested)
                 .map(|content| format!("{}\n", content.path().display())),
         )
-    }
-
-    pub(crate) fn read_restricted_pipe_from_resource_world(
-        &self,
-        world: &mut crate::ResourceWorld<'_>,
-        name: &str,
-    ) -> Option<Result<String, String>> {
-        self.read_restricted_pipe_from_resource_world_detailed(world, name)
-            .map(|result| result.map_err(|error| error.to_string()))
     }
 
     pub(crate) fn read_restricted_pipe_from_resource_world_detailed(
@@ -337,15 +310,6 @@ impl TexFontSearchPath {
         )
     }
 
-    pub(crate) fn read_from_resource_world(
-        &self,
-        world: &mut crate::ResourceWorld<'_>,
-        path: &Path,
-    ) -> Result<FileContent, String> {
-        self.read_from_resource_world_detailed(world, path)
-            .map_err(|error| error.to_string())
-    }
-
     pub(crate) fn read_from_resource_world_detailed(
         &self,
         world: &mut crate::ResourceWorld<'_>,
@@ -386,15 +350,6 @@ impl TexFontSearchPath {
     ) -> Result<FileContent, WorldSearchError> {
         let candidates = font_candidates(&self.user_area, &self.system_areas, path);
         read_first_world_detailed(world, candidates)
-    }
-
-    pub(crate) fn read_program_from_resource_world_detailed(
-        &self,
-        world: &mut crate::ResourceWorld<'_>,
-        path: &Path,
-    ) -> Result<FileContent, WorldSearchError> {
-        let candidates = font_candidates(&self.user_area, &self.system_areas, path);
-        read_first_resource_detailed(world, candidates, InputDependencyAccess::RequiredRead)
     }
 }
 

@@ -168,6 +168,7 @@ impl<G> CommandWord<G> {
     /// Keep that value projection separate from [`Self::character_token`],
     /// whose callers need to distinguish a literal token from a character
     /// value defined by a control sequence.
+    #[cfg(test)]
     pub(crate) fn character_value(self) -> Option<char> {
         if !matches!(self.code, CommandClass::Character) {
             return None;
@@ -736,13 +737,6 @@ impl<G> HotCommand<G> {
         self.command.resolved_meaning(self.font)
     }
 
-    /// Returns the opaque font identity carried by a compact font command.
-    /// Font commands are the one static command class whose operand is not
-    /// reconstructible from the packed runtime word.
-    pub(crate) const fn font_id(&self) -> Option<FontId> {
-        self.font
-    }
-
     pub(crate) const fn spelling_word(&self) -> TokenWord {
         self.token.word
     }
@@ -810,65 +804,6 @@ impl<G> HotCommand<G> {
     /// the caller to enter TeX82 §25's missing-`\endcsname` recovery.
     pub(crate) fn character_token(&self) -> Option<char> {
         self.command.character_token()
-    }
-
-    /// Returns the character value carried by either a literal token or a
-    /// `\chardef` command. Numeric, dimension, numeric-conditional, and PDF
-    /// hot scanners use this TeX82 §26 projection; they must not use the
-    /// literal-token-only `character_token` projection above.
-    pub(crate) fn character_value(&self) -> Option<char> {
-        self.command.character_value()
-    }
-
-    /// Returns the category attached to a compact character command.  Scalar
-    /// and conditional hot lanes use this projection without materializing a
-    /// `CurrentCommand` for each digit or relation token.
-    pub(crate) fn character_catcode(&self) -> Option<Catcode> {
-        self.command.character_catcode()
-    }
-
-    /// Returns the active character recovered by TeX82 §506 after `\noexpand`
-    /// has replaced its effective command with frozen `\relax`.
-    pub(crate) fn no_expand_active_character(&self) -> Option<char> {
-        if !self
-            .token
-            .site
-            .delivery_flags
-            .contains(CommandDeliveryFlags::NOEXPAND_FROZEN_RELAX)
-        {
-            return None;
-        }
-        match self.token.word.semantic_token() {
-            Token::Char {
-                ch,
-                cat: Catcode::Active,
-            } => Some(ch),
-            _ => None,
-        }
-    }
-
-    /// TeX82 part 28's character-code projection for an `\if` operand.
-    pub(crate) fn conditional_character_code(self) -> u32 {
-        if let Some(ch) = self.no_expand_active_character()
-            && (ch as u32) <= u32::from(u8::MAX)
-        {
-            return ch as u32;
-        }
-        match Meaning::from_runtime_word(self.command.operand.scalar_value()) {
-            Meaning::CharToken { ch, .. } if (ch as u32) <= u32::from(u8::MAX) => ch as u32,
-            _ => 256,
-        }
-    }
-
-    /// TeX82 part 28's category-code projection for an `\ifcat` operand.
-    pub(crate) fn conditional_category_code(self) -> Option<Catcode> {
-        if self.no_expand_active_character().is_some() {
-            return Some(Catcode::Active);
-        }
-        match Meaning::from_runtime_word(self.command.operand.scalar_value()) {
-            Meaning::CharToken { cat, .. } => Some(cat),
-            _ => None,
-        }
     }
 
     pub(crate) const fn control_sequence(&self) -> Option<Symbol> {
@@ -1117,26 +1052,6 @@ impl<G> CurrentCommand<G> {
             direct_source_line: 0,
             alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment::None,
             delivery_flags: CommandDeliveryFlags::default(),
-        }
-    }
-
-    /// Replaces the effective meaning while retaining the exact delivered
-    /// spelling and stamp. This is solely TeX82's one-delivery `\\noexpand`
-    /// treatment in `get_next` (TeX82 §25). `\endcsname` is represented as
-    /// an expandable primitive so the expansion loop can own its dedicated
-    /// boundary, but TeX82 §15 assigns `end_cs_name` a command code at or
-    /// below `max_command`; §25 therefore preserves it through `\noexpand`.
-    pub(crate) fn suppress_expandable(&mut self) {
-        if !matches!(self.identity, CommandIdentity::EndCsName)
-            && matches!(
-                self.meaning,
-                ResolvedMeaning::Static(Meaning::Undefined)
-                    | ResolvedMeaning::Macro { .. }
-                    | ResolvedMeaning::Static(Meaning::ExpandablePrimitive(_))
-            )
-        {
-            self.meaning = ResolvedMeaning::Static(Meaning::Relax);
-            self.identity = CommandIdentity::NoExpandFrozenRelax;
         }
     }
 
