@@ -15,6 +15,28 @@ use tex_command::{CommandObservation, CommandObserver};
 
 use super::*;
 
+const FRESH_LOADED_TEST_ENV: &str = "UMBER_PREPARED_FORMAT_FRESH_LOADED_TEST";
+
+// Loaded-job guards intentionally measure absolute process RSS. Run these
+// cases in a fresh libtest process so retained state from unrelated tests is
+// not charged to the current job while preserving that production contract.
+fn run_in_fresh_loaded_test_process(test_name: &str) -> bool {
+    if std::env::var_os(FRESH_LOADED_TEST_ENV).is_some() {
+        return false;
+    }
+    let executable = std::env::current_exe().expect("current test executable");
+    let status = Command::new(executable)
+        .args(["--exact", test_name, "--test-threads=1"])
+        .env(FRESH_LOADED_TEST_ENV, "1")
+        .status()
+        .expect("spawn fresh loaded-format test process");
+    assert!(
+        status.success(),
+        "fresh loaded-format test failed: {status}"
+    );
+    true
+}
+
 #[derive(Default)]
 struct Recorder(Vec<CommandObservation>);
 
@@ -260,6 +282,11 @@ fn provider_fails_closed_for_cache_profile_backend_and_guards() {
 
 #[test]
 fn every_loaded_job_has_fresh_clock_terminal_and_mutable_state() {
+    if run_in_fresh_loaded_test_process(
+        "prepared_format::tests::every_loaded_job_has_fresh_clock_terminal_and_mutable_state",
+    ) {
+        return;
+    }
     let cache = TempDir::new().expect("cache");
     let provider = provider(&cache);
     let fixture = provider
@@ -291,6 +318,11 @@ fn every_loaded_job_has_fresh_clock_terminal_and_mutable_state() {
 
 #[test]
 fn loaded_job_reopens_authenticated_resources_after_job_precedence() {
+    if run_in_fresh_loaded_test_process(
+        "prepared_format::tests::loaded_job_reopens_authenticated_resources_after_job_precedence",
+    ) {
+        return;
+    }
     let cache = TempDir::new().expect("cache");
     let provider = provider(&cache);
     let mut recipe = FormatRecipe::raw_tex82();
@@ -328,6 +360,11 @@ fn loaded_job_reopens_authenticated_resources_after_job_precedence() {
 
 #[test]
 fn loaded_job_applies_explicit_provenance_demand_after_format_restore() {
+    if run_in_fresh_loaded_test_process(
+        "prepared_format::tests::loaded_job_applies_explicit_provenance_demand_after_format_restore",
+    ) {
+        return;
+    }
     let cache = TempDir::new().expect("cache");
     let provider = provider(&cache);
     let mut recipe = FormatRecipe::raw_tex82();
