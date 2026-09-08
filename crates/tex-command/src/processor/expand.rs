@@ -366,16 +366,16 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<HotCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        let mut command = destination.take().unwrap_or_else(HotCommand::empty);
+        let command = destination.get_or_insert_with(HotCommand::empty);
         let result = if self.is_observed() {
-            self.fetch_hot::<true>(&mut command)
+            self.fetch_hot::<true>(command)
         } else {
-            self.fetch_hot::<false>(&mut command)
+            self.fetch_hot::<false>(command)
         };
         match result {
             Ok(status) => {
-                if matches!(status, DeliveryStatus::Command) {
-                    *destination = Some(command);
+                if !matches!(status, DeliveryStatus::Command) {
+                    destination.take();
                 }
                 Ok(status)
             }
