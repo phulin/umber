@@ -1284,7 +1284,9 @@ fn direct_definition_scanning() {
         }
         universe.intern("m").expect("definition target");
         {
-            let mut context = universe.command_context().expect("definition reserve context");
+            let mut context = universe
+                .command_context()
+                .expect("definition reserve context");
             context
                 .profile_reserve_definition_arena(
                     DEFINITIONS + WARMUPS,

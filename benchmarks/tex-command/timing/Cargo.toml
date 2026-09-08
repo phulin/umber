@@ -9,3 +9,7 @@ publish = false
 [dependencies]
 tex-command = { path = "../../../crates/tex-command" }
 tex-state = { path = "../../../crates/tex-state" }
+
+[[bin]]
+name = "command_consumer_timing"
+path = "src/consumer_main.rs"

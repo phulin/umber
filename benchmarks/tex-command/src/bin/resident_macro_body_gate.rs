@@ -78,9 +78,6 @@ fn run_in_universe<G>(universe: &mut Universe<G>, words: usize) {
     );
     println!(
         "resident_macro_body words={words} directory_prefix_chunks={DIRECTORY_PREFIX_CHUNKS} admission_chunk_lookups={} direct_chunk_slot_reads={} chunk_boundary_transitions={} region_owner_acquisitions={} extra_region_owner_acquisitions=0 definition_retains=0 whole_body_copies=0 allocations=0 requested_bytes=0 checksum={checksum}",
-        1,
-        words,
-        expected_transitions,
-        1,
+        1, words, expected_transitions, 1,
     );
 }

@@ -31,3 +31,7 @@ path = "src/bin/resident_macro_body_gate.rs"
 [[bin]]
 name = "command_core_profile"
 path = "src/bin/command_core_profile.rs"
+
+[[bin]]
+name = "command_consumer_profile"
+path = "src/bin/command_consumer_profile.rs"

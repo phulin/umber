@@ -3,6 +3,44 @@
 This standalone crate contains focused command-core benchmarks and is excluded
 from the root workspace correctness gate.
 
+## Consumer measurement runner
+
+The consumer runner measures eight synthetic rows: long text, macro-definition
+scanning, a parameterized macro chain, and a mixed text/macro/definition
+pipeline, each with source and stored-token input. It installs all catcodes and
+macro definitions in a fresh in-memory universe, so no TeX Live assets are
+needed. Both binaries use the same fixture and workload code:
+
+```bash
+cargo run --release --manifest-path benchmarks/tex-command/timing/Cargo.toml \
+  --bin command_consumer_timing -- --workload all --storage both \
+  --iterations 512 --warmups 2 --text-chars 4096 --body-words 8193
+cargo run --release --manifest-path benchmarks/tex-command/Cargo.toml \
+  --bin command_consumer_profile -- --workload all --storage both \
+  --iterations 512 --warmups 2 --text-chars 4096 --body-words 8193
+```
+
+The timing package has no profiling feature or custom allocator and is the
+wall-time tier. The profiling wrapper appends structural receipts and its
+elapsed values are diagnostic. `--workload` accepts `all`, `long_text`,
+`definition_body`, `parameterized_chain`, or `mixed_pipeline`; `--storage`
+accepts `source`, `stored`, or `both`. `--text-chars` and `--body-words` are
+honored by every workload that uses them and are printed in the metadata line.
+
+Setup, semantic preflight, warmups, and end-of-input validation are outside the
+timer. The measured loop reuses the warmed command cursor and semantic state;
+the short-lived processor borrow is renewed only to take an actual fuel
+snapshot before timing. Rows mark the timed checksum consumer explicitly with
+`"timed_evidence":"checksum_sink"`, so the reported elapsed time includes
+the checksum sink as part of consumer cost. Final definitions, independent
+fixture probes, semantic hashes, fuel, and profiling counters are checked
+after timing. Use `scripts/paired-measure.py` with the release binary for
+before/after measurements. The tracked
+`benchmarks/tex-command/consumer-manifest.json` gives each workload its own
+loop count, including a 100,000-operation chain and a 10,000-operation mixed
+row; compare the profiling lane separately when structural counters are
+needed.
+
 Run the allocation-count baseline with:
 
 ```bash

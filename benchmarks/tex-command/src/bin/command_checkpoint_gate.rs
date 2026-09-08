@@ -340,9 +340,7 @@ fn run_source_depth_fixture(depth: usize) -> SourceDepthCounts {
         let (_, allocations) = measure(|| command.profile_repeated_source_lex_mutations(4_096));
         let after = command.profile_timeline_counters();
 
-        let records = after
-            .logical_records
-            .saturating_sub(before.logical_records);
+        let records = after.logical_records.saturating_sub(before.logical_records);
         SourceDepthCounts {
             mutations: 4_096,
             allocations,

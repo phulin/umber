@@ -1,0 +1,226 @@
+{
+  "schema": 1,
+  "lane": "release-unobserved",
+  "profile": "release",
+  "features": [],
+  "instrumented": false,
+  "toolchain": {
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)"
+  },
+  "build": {
+    "command": "cargo build --release --manifest-path benchmarks/tex-command/timing/Cargo.toml --bin command_consumer_timing"
+  },
+  "environment": {
+    "LC_ALL": "C.UTF-8"
+  },
+  "workloads": [
+    {
+      "name": "consumer-long-text",
+      "args": [
+        "--workload",
+        "long_text",
+        "--storage",
+        "both",
+        "--iterations",
+        "2048",
+        "--warmups",
+        "8",
+        "--text-chars",
+        "4096",
+        "--body-words",
+        "8193"
+      ],
+      "files": [],
+      "semantic": {
+        "stream": "stdout",
+        "format": "jsonl",
+        "ignore_keys": [
+          "elapsed_ns",
+          "ns_per_iteration"
+        ]
+      },
+      "inner_metrics": [
+        {
+          "name": "elapsed_ns",
+          "path": [
+            "elapsed_ns"
+          ],
+          "key": [
+            "workload",
+            "storage"
+          ],
+          "unit": "ns"
+        },
+        {
+          "name": "ns_per_iteration",
+          "path": [
+            "ns_per_iteration"
+          ],
+          "key": [
+            "workload",
+            "storage"
+          ],
+          "unit": "ns/iteration"
+        }
+      ],
+      "outputs": [],
+      "expected_exit": 0
+    },
+    {
+      "name": "consumer-definition-body",
+      "args": [
+        "--workload",
+        "definition_body",
+        "--storage",
+        "both",
+        "--iterations",
+        "512",
+        "--warmups",
+        "8",
+        "--text-chars",
+        "4096",
+        "--body-words",
+        "8193"
+      ],
+      "files": [],
+      "semantic": {
+        "stream": "stdout",
+        "format": "jsonl",
+        "ignore_keys": [
+          "elapsed_ns",
+          "ns_per_iteration"
+        ]
+      },
+      "inner_metrics": [
+        {
+          "name": "elapsed_ns",
+          "path": [
+            "elapsed_ns"
+          ],
+          "key": [
+            "workload",
+            "storage"
+          ],
+          "unit": "ns"
+        },
+        {
+          "name": "ns_per_iteration",
+          "path": [
+            "ns_per_iteration"
+          ],
+          "key": [
+            "workload",
+            "storage"
+          ],
+          "unit": "ns/iteration"
+        }
+      ],
+      "outputs": [],
+      "expected_exit": 0
+    },
+    {
+      "name": "consumer-parameterized-chain",
+      "args": [
+        "--workload",
+        "parameterized_chain",
+        "--storage",
+        "both",
+        "--iterations",
+        "100000",
+        "--warmups",
+        "128",
+        "--text-chars",
+        "4096",
+        "--body-words",
+        "8193"
+      ],
+      "files": [],
+      "semantic": {
+        "stream": "stdout",
+        "format": "jsonl",
+        "ignore_keys": [
+          "elapsed_ns",
+          "ns_per_iteration"
+        ]
+      },
+      "inner_metrics": [
+        {
+          "name": "elapsed_ns",
+          "path": [
+            "elapsed_ns"
+          ],
+          "key": [
+            "workload",
+            "storage"
+          ],
+          "unit": "ns"
+        },
+        {
+          "name": "ns_per_iteration",
+          "path": [
+            "ns_per_iteration"
+          ],
+          "key": [
+            "workload",
+            "storage"
+          ],
+          "unit": "ns/iteration"
+        }
+      ],
+      "outputs": [],
+      "expected_exit": 0
+    },
+    {
+      "name": "consumer-mixed-pipeline",
+      "args": [
+        "--workload",
+        "mixed_pipeline",
+        "--storage",
+        "both",
+        "--iterations",
+        "10000",
+        "--warmups",
+        "128",
+        "--text-chars",
+        "256",
+        "--body-words",
+        "32"
+      ],
+      "files": [],
+      "semantic": {
+        "stream": "stdout",
+        "format": "jsonl",
+        "ignore_keys": [
+          "elapsed_ns",
+          "ns_per_iteration"
+        ]
+      },
+      "inner_metrics": [
+        {
+          "name": "elapsed_ns",
+          "path": [
+            "elapsed_ns"
+          ],
+          "key": [
+            "workload",
+            "storage"
+          ],
+          "unit": "ns"
+        },
+        {
+          "name": "ns_per_iteration",
+          "path": [
+            "ns_per_iteration"
+          ],
+          "key": [
+            "workload",
+            "storage"
+          ],
+          "unit": "ns/iteration"
+        }
+      ],
+      "outputs": [],
+      "expected_exit": 0
+    }
+  ]
+}
