@@ -562,6 +562,8 @@ impl<G> MainControl<G> {
             if error.is_pdftex_output_fatal() {
                 Self::publish_pdf_fatal_error(stores, &error)?;
             }
+            let evidence_error = self.admit_observed_receipt(stores, OperationTermination::Failed);
+            self.error_operation_committed = true;
             self.commit_direct_operation(stores, operation_mark, &mut diagnostic_effects);
             self.record_direct_episode_commit(
                 stores,
@@ -571,7 +573,7 @@ impl<G> MainControl<G> {
                 initial_boundaries,
                 initial_effect_pos,
             );
-            return Err(error);
+            return evidence_error.map_or(Err(error), Err);
         }
         let Some(fatal) = error.as_fatal() else {
             self.discard_direct_operation(stores, operation_mark);
@@ -618,6 +620,7 @@ impl<G> MainControl<G> {
             .publish_diagnostic_effects_preserving(&mut diagnostic_effects);
         let evidence_error =
             self.admit_observed_receipt(stores, OperationTermination::Fatal(fatal));
+        self.error_operation_committed = true;
         self.commit_direct_operation(stores, operation_mark, &mut diagnostic_effects);
         self.record_direct_episode_commit(
             stores,

@@ -394,6 +394,10 @@ pub struct MainControl<G> {
     /// Live-store boundaries used to close the typed receipt before the
     /// direct operation commits. Absent for ordinary execution.
     operation_receipt_start: Option<OperationReceiptStart>,
+    /// True when the most recent operation returned an error after committing
+    /// its direct-operation roots. Observed drivers use this narrow query to
+    /// publish the committed receipt even though the typed result is `Err`.
+    error_operation_committed: bool,
     completed_replay_episode: Option<tex_command::CommandReplayEpisode>,
     /// Detached DVI receipts whose artifact commits have survived an entire
     /// direct operation. This replay state is published only after its
@@ -1246,6 +1250,7 @@ impl<G> Default for MainControl<G> {
             page_output_observations: ObservationBuffer::default(),
             operation_observations: None,
             operation_receipt_start: None,
+            error_operation_committed: false,
             completed_replay_episode: None,
             prepared_dvi_pages: PreparedDviPages::default(),
             immediate_prints: Vec::new(),
@@ -1891,6 +1896,7 @@ impl<G> MainControl<G> {
         self.boxes = ReplayBoxes::default();
         self.paragraph_checkpoint_demand = None;
         self.paragraph_checkpoint_cut = false;
+        self.error_operation_committed = false;
         self.fatal = None;
         self.captured_fatal_origin = None;
         Ok(())
@@ -1906,6 +1912,7 @@ impl<G> MainControl<G> {
         self.boxes = ReplayBoxes::default();
         self.paragraph_checkpoint_demand = None;
         self.paragraph_checkpoint_cut = false;
+        self.error_operation_committed = false;
         self.fatal = None;
         self.captured_fatal_origin = None;
         Ok(())
@@ -1950,6 +1957,7 @@ impl<G> MainControl<G> {
         self.page_output_observations = ObservationBuffer::default();
         self.operation_observations = None;
         self.operation_receipt_start = None;
+        self.error_operation_committed = false;
         self.completed_replay_episode = None;
         self.prepared_dvi_pages = PreparedDviPages::default();
         self.immediate_prints.clear();
@@ -2891,6 +2899,14 @@ impl<G> MainControl<G> {
         self.pending_resource_site = None;
     }
 
+    /// Reports whether the most recent error returned after its direct
+    /// operation had committed. This is the observation driver's publication
+    /// decision; it does not classify or replace the typed error.
+    #[must_use]
+    pub const fn error_operation_committed(&self) -> bool {
+        self.error_operation_committed
+    }
+
     /// Consumes the one provider-decline sideband produced during the current
     /// step. The outer driver uses it to suspend without invoking its legacy
     /// host a second time.
@@ -3681,6 +3697,7 @@ impl<G> MainControl<G> {
         mut tracked_region: Option<&mut Option<Result<TrackedRegionRecord, DependencyRegionError>>>,
         mut resource_provider: Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<StepResult, ExecError> {
+        self.error_operation_committed = false;
         let initial_effect_pos = stores.world().effect_pos();
         let initial_artifacts = stores.world().artifact_commits().len();
         let initial_boundaries = 0;
