@@ -5,7 +5,7 @@ mod resident;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, ResolvedMeaning};
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
-use crate::command::{CommandClass, DeliveryStamp, HotCommand};
+use crate::command::{CommandClass, DeliveryStamp, HotCommand, HotCommandDestination};
 use crate::execution_scratch::ArgumentSetId;
 use crate::input::{
     InputLevel, InputLevelId, ResidentBoundary, ResidentSourceAdvance, ResidentSourceCharacterRun,
@@ -180,7 +180,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn write_resident_word(
         &mut self,
         selected: ResidentWord,
-        destination: &mut HotCommand<G>,
+        destination: &mut impl HotCommandDestination<G>,
     ) -> Option<Catcode> {
         let ResidentWord {
             word,
@@ -311,7 +311,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn transition_resident_word(
         &mut self,
         selected: ResidentWordRead<G>,
-        destination: &mut HotCommand<G>,
+        destination: &mut impl HotCommandDestination<G>,
     ) -> Result<ResidentColdOutcome, CommandError> {
         let transition = match selected {
             ResidentWordRead::NoResident => InputFrameTransition::Boundary(ResidentBoundary::Empty),
@@ -366,11 +366,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<HotCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        let command = destination.get_or_insert_with(HotCommand::empty);
         let result = if self.is_observed() {
-            self.fetch_hot::<true>(command)
+            self.fetch_hot::<true>(destination)
         } else {
-            self.fetch_hot::<false>(command)
+            self.fetch_hot::<false>(destination)
         };
         match result {
             Ok(status) => {
@@ -393,7 +392,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     #[inline(always)]
     fn fetch_hot<const OBSERVED: bool>(
         &mut self,
-        destination: &mut HotCommand<G>,
+        destination: &mut impl HotCommandDestination<G>,
     ) -> Result<DeliveryStatus, CommandError> {
         self.charge_command_action()?;
         let literal_catcode = loop {
@@ -409,7 +408,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 ResidentColdOutcome::Synthetic { literal_catcode } => break literal_catcode,
             }
         };
-        self.settle_hot_delivery_in::<OBSERVED>(destination, literal_catcode)?;
+        self.settle_hot_delivery_in::<OBSERVED>(destination.hot_command(), literal_catcode)?;
         Ok(DeliveryStatus::Command)
     }
 
@@ -1838,7 +1837,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn advance_source_token(
         &mut self,
         resident_index: usize,
-        command: &mut HotCommand<G>,
+        command: &mut impl HotCommandDestination<G>,
     ) -> Result<ResidentColdOutcome, CommandError> {
         let command_state = &mut *self.command;
         let state = &mut *self.state;
@@ -1928,7 +1927,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // Source bytes have no resident-token predecessor. Publish
                 // their exact pre-advance coordinate here, so stored delivery
                 // does not branch on the source role during settlement.
-                self.readmit_delivery_stamp(command.delivery_stamp());
+                self.readmit_delivery_stamp(command.hot_command().delivery_stamp());
                 Ok(ResidentColdOutcome::Synthetic {
                     literal_catcode: resolution.literal_catcode(),
                 })
@@ -2136,7 +2135,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn transition_input_frame(
         &mut self,
         transition: InputFrameTransition<G>,
-        command: &mut HotCommand<G>,
+        command: &mut impl HotCommandDestination<G>,
     ) -> Result<ResidentColdOutcome, CommandError> {
         self.invalidate_delivery_freshness();
         let cold = match transition {
@@ -2310,7 +2309,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             _resolution.meaning_lookup(),
                             crate::fuel::RawDeliveryKind::SyntheticEndV,
                         );
-                        self.readmit_delivery_stamp(command.delivery_stamp());
+                        self.readmit_delivery_stamp(command.hot_command().delivery_stamp());
                         Ok(ResidentColdOutcome::Synthetic {
                             literal_catcode: _resolution.literal_catcode(),
                         })

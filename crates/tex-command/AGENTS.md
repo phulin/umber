@@ -163,8 +163,9 @@ collector (see `src/conditionals.rs`).
   input transitions.
 - `src/processor/expand.rs`: canonical destination-directed command-delivery
   loop and static primitive dispatch. Raw and expanded consumers share one
-  fetch/settlement kernel borrowing one occupied `HotCommand`; optional output
-  slots are admitted and published only at entry and exit. Expanded entry
+  fetch/settlement kernel with static destination specialization: raw input
+  initializes an empty slot once, and expanded input overwrites an occupied
+  `HotCommand` without an optional-slot branch. Expanded entry
   consumes its initial classification once before the steady cycle. Resident
   resolution accepts a successfully loaded word directly; character admission
   does not publish freshness for a command it never constructs. Observation is specialized once per synchronous

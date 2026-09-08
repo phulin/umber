@@ -35,11 +35,13 @@ successor. Macro and primitive calls may mutate input or recursively scan;
 the next fetch therefore borrows the authoritative exposed frame anew.
 
 The raw fetching kernel is shared by raw and expanded consumers. Its internal
-writer borrows one initialized `HotCommand`; optional caller destinations are
-admitted and published only at delivery entry and exit. The expansion back edge
-overwrites that same command directly. Source reads and cold synthetic delivery
-use the same occupied writer, with final status deciding whether a command is
-published. No placeholder command may escape on EOF, replay completion, or error. Expansion
+writer specializes for the caller's actual storage: a raw request initializes
+an empty slot once, while the expansion back edge overwrites its occupied
+`HotCommand` without an optional-slot branch. Both use the same fetch and
+source-transition implementation through static destination dispatch. Raw
+initialization does not prefill a placeholder command before overwriting it.
+Final status decides whether a command is published; EOF, replay completion,
+and errors clear the outward destination. Expansion
 depth is restored on every return, including resource and fuel failure. An
 error clears the destination and invalidates freshness. Replay completion,
 alignment events, and synthetic commands retain their existing ordering.
