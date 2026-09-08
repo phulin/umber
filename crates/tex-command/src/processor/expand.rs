@@ -602,7 +602,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     #[inline(never)]
     fn finish_main_loop_synthetic(
         &mut self,
-        command: &mut HotCommand<G>,
+        command: &mut Option<HotCommand<G>>,
         literal_catcode: Option<Catcode>,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
@@ -610,7 +610,8 @@ impl<G> CommandProcessor<'_, '_, G> {
             self.invalidate_delivery_freshness();
             return Err(failure);
         }
-        if let Err(failure) = self.settle_hot_delivery(command, literal_catcode) {
+        let mut command = command.take().ok_or_else(CommandError::input_invariant)?;
+        if let Err(failure) = self.settle_hot_delivery(&mut command, literal_catcode) {
             self.invalidate_delivery_freshness();
             return Err(failure);
         }
@@ -623,7 +624,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn finish_main_cold_transition(
         &mut self,
         cold: ResidentColdOutcome,
-        command: &mut HotCommand<G>,
+        command: &mut Option<HotCommand<G>>,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<Option<DeliveryStatus>, CommandError> {
         match cold {
@@ -645,7 +646,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<DeliveryStatus, CommandError> {
         debug_assert!(destination.is_none());
         self.invalidate_delivery_freshness();
-        let mut command = HotCommand::empty();
+        let mut command = None;
 
         let mut consumed_characters = false;
         #[cfg(feature = "profiling")]
@@ -789,6 +790,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 self.fuel.record_raw_run(false, kind, character_run_count);
             }
             let literal_catcode = self.write_resident_word(selected, &mut command);
+            let mut command = command
+                .take()
+                .expect("boundary word initialized its command");
             if let Err(failure) = self.settle_hot_delivery(&mut command, literal_catcode) {
                 self.invalidate_delivery_freshness();
                 return Err(failure);
