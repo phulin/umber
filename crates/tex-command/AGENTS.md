@@ -76,14 +76,11 @@ collector (see `src/conditionals.rs`).
   the caller-owned output sink and settles already-admitted plain input runs
   once; a resource miss unwinds this cursor and the host replays from a full
   checkpoint rather than promoting scanner state into retained scratch.
-- Ordinary expansion has no parked-expansion owner. `get_x_token` and nested
-  scanner calls keep one compact hot token/meaning pair through macro chains,
-  materializing `CurrentCommand` only at a primitive scanner, diagnostic, or
-  observation boundary. Structural `expandafter`/`csname`, scalar and
-  conditional operands, `scan_toks`, and PDF string collectors use their
-  existing synchronous scanner grammars and Rust call-local state. A resource
-  miss unwinds those calls and the host replays an eligible full checkpoint;
-  no scanner, caller, active-control, or parent frame is serialized or retained.
+- Ordinary expansion has no parked-expansion owner. The shared reader exposes
+  token facts; unobserved macros activate from resolved invocation facts without
+  constructing a command. `HotCommand` and `CurrentCommand` are request-local
+  delivery/scanner/observation/recovery values. Resource misses unwind consumers
+  before host-owned full-checkpoint replay.
 - `src/host.rs`: borrow-scoped, nonserializable host-capability boundary.
   Long-lived immutable resources remain in `CommandHostCapabilities`; live
   executor mode, auxiliary, and effective-tail facts cross the synchronous
@@ -128,15 +125,10 @@ collector (see `src/conditionals.rs`).
   settlement, chunk reuse, and exact reverse-rollback/forward-redo tests.
 - `src/command.rs`: compact internal `HotToken { word, origin, site }`, fixed
   16-byte `CommandWord<G>`, and public opaque, ephemeral `CurrentCommand`.
-  Resident input writes packed spelling and meaning directly into the hot
-  pair. The dense resolver preserves a validated static meaning word or writes
-  the one macro/font owner without first decoding `ResolvedMeaning`; the
-  command class and primitive operand are directly branchable. The
-  frame-owned expanded loop retains only this pair through synchronous macro
-  chains and materializes `CurrentCommand` at execution/scanner,
-  backup, observation/diagnosis, and exceptional recovery boundaries. Resource
-  misses unwind the call tree for host-owned full-checkpoint replay rather than
-  retaining a retry command.
+  Command-sensitive boundaries materialize this pair from the reader's facts
+  and already-resolved meaning. Ordinary macro activation and unexpanded body
+  collection construct no command record; rich commands remain local to actual
+  execution/scanner, backup, observation, diagnosis, and recovery boundaries.
   Exact source geometry remains behind the spelling's
   packed origin and is materialized only by cold processor consumers; the hot
   value retains only source-role policy and direct-line facts. The executor then borrows the one caller-owned value through preflight and scanning,
@@ -161,25 +153,21 @@ collector (see `src/conditionals.rs`).
   storage tag or reader invalidation protocol. Source-token delivery enters
   the normal source reader; only refill, exhaustion, and recovery use cold
   input transitions.
-- `src/processor/expand.rs`: canonical destination-directed command-delivery
-  loop and static primitive dispatch. Raw and expanded consumers share one
-  fetch/settlement kernel with static destination specialization: raw input
-  initializes an empty slot once, and expanded input overwrites an occupied
-  `HotCommand` without an optional-slot branch. Expanded entry
-  consumes its initial classification once before the steady cycle. Resident
-  resolution accepts a successfully loaded word directly; character admission
-  does not publish freshness for a command it never constructs. Observation is specialized once per synchronous
-  delivery call, while scanner/alignment semantics remain live. Source delivery
-  publishes its exceptional freshness coordinate before settlement. Its entry keeps one compact hot
-  token/meaning pair across fetch, settlement, classification, macro expansion,
-  and return. Raw consumers return after settlement; expanded consumers classify
-  and dispatch in that same iterative loop. Macro chains never materialize a
-  rich command. Primitive scanners and diagnostics materialize one rich command
-  at their real semantic boundary, while ordinary `Result` unwinding hands
-  resource misses to host-owned full-checkpoint replay. There is no expansion
-  parent/active-control dispatcher, parked scanner, or same-executor resume API.
-  The main-control preflight entry raw-fetches into the caller's destination,
-  classifies once, and publishes an ordinary unexpandable result directly.
+- `src/processor/expand.rs`: consumer-directed delivery and static primitive
+  dispatch. Raw callers, expansion, collectors, and main-control text share one
+  input/fuel authority; observation specializes at synchronous entry. Final
+  delivery and exceptional settlement materialize commands at their semantic
+  boundary. Macro chains remain iterative; failure unwinds for host replay.
+- `src/processor/expand/input.rs`: source reads, borrowed source-character
+  admission, and cold line/retirement/recovery transitions. Reads return token
+  facts without constructing commands or publishing backup authority.
+- `src/processor/expand/consume.rs`: one dense meaning resolution, ordinary
+  macro activation from invocation facts, and boundary-only materialization.
+  Diagnostic opener construction is lazy and cannot replace backup authority.
+- `src/processor/expand/collect.rs`: unexpanded replacement-word consumer. It
+  shares input and exceptional settlement, appends through the existing
+  collector grammar, and constructs a command only for observation, semantic
+  exceptions, or illegal-parameter backup.
 - `src/processor/expand_structural.rs`, `src/processor/expand_input.rs`, and
   `src/processor/expand_convert.rs`: direct/static structural, source, and
   TeX/e-TeX conversion primitive families. They borrow the one processor and

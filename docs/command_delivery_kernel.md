@@ -20,31 +20,36 @@ unwind. No raw pointer or independent cursor is introduced to evade those
 boundaries. Ordinary reads retain the physical macro, argument, and replay
 cursors already installed in the frame.
 
-## Delivery and expansion
+## Consumer-directed delivery
 
-Raw fetching charges fuel before input work, retries input transitions under
-that same charge, resolves one token, and settles it. Source delivery is an
-ordinary fetch alternative; line acquisition, exhaustion, and recovery remain
-out-of-line transitions. Source positions continue to identify the token before
-advancement, so backup freshness and diagnostic source geometry remain exact.
+Reading and semantic consumption share one input kernel. Source, replacement,
+argument, and stored input expose a packed word and frame-local delivery facts;
+reading does not resolve a meaning or construct a command. Input transitions
+retry under the same fuel charge. Source and synthetic words use that same
+consumer boundary, while line acquisition, retirement, and recovery remain cold.
+The read facts are synchronous borrow-local values, never a second input owner.
 
-Expanded delivery separates its initial already-fetched command and optional
-classification from the repeating expansion cycle. The cycle owns an occupied
-compact command, dispatches its meaning, and then fetches and classifies its
-successor. Macro and primitive calls may mutate input or recursively scan;
-the next fetch therefore borrows the authoritative exposed frame anew.
+The consumer is selected at entry. Ordinary text is admitted directly by its
+character consumer. Unexpanded definition bodies append packed words to the
+existing collector while maintaining brace and parameter state. Control
+sequences still resolve live meanings for outer validity; literal characters
+need no meaning lookup. Expanded delivery resolves each interpreted meaning
+once. A macro supplies only its name, origin, flags, and definition to activation
+and argument scanning; successful ordinary activation constructs no command.
 
-The raw fetching kernel is shared by raw and expanded consumers. Its internal
-writer specializes for the caller's actual storage: a raw request initializes
-an empty slot once, while the expansion back edge overwrites its occupied
-`HotCommand` without an optional-slot branch. Both use the same fetch and
-source-transition implementation through static destination dispatch. Raw
-initialization does not prefill a placeholder command before overwriting it.
-Final status decides whether a command is published; EOF, replay completion,
-and errors clear the outward destination. Expansion
-depth is restored on every return, including resource and fuel failure. An
-error clears the destination and invalidates freshness. Replay completion,
-alignment events, and synthetic commands retain their existing ordering.
+A full hot command is materialized when a caller actually needs command delivery,
+or when observation, suppression, alignment, or outer recovery requires the
+existing settlement boundary. Materialization uses the already-resolved meaning;
+it must not repeat a dense lookup. Illegal definition parameters materialize
+only the rejected token needed by backup. Macro diagnostics materialize their
+opener only on failure. Necessary origin and delivery coordinates remain live
+across nested scanning and are captured before their input frame can retire.
+
+Raw and expanded consumers use the same read, fuel, and input-transition
+implementation. Expansion chains stay iterative. EOF, replay completion, and
+errors clear outward destinations; every recursive expansion depth is restored
+on error. No runtime consumer selector, boxed callback, parked continuation,
+parallel reader cache, or alternate recovery engine is introduced.
 
 ## Observation and settlement
 

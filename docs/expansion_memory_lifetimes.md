@@ -417,56 +417,36 @@ their synchronous call, restoring it on success or error. Iterative macro
 delivery and expression parentheses do not increment it. The scalar never enters
 a snapshot; a resource failure unwinds it before checkpoint replay.
 
-Raw and expanded command delivery uses the existing concrete destination
-loops. Public and outward scanner requests admit their caller-provided
-`Option<CurrentCommand<G>>` at the rich boundary; synchronous raw collectors
-instead pass one caller-owned `Option<HotCommand<G>>` and retain the same
-compact `HotToken { word, origin, site }` and fixed 16-byte `CommandWord<G>`
-across resident retries, classification, and synchronous macro expansion.
-Every concrete resident arm advances its existing storage-domain cursor and
-ends that borrow with only the packed word, origin, position, and source
-scalars. One branch-independent `HotCommand::write_resolved_delivery` call
-then writes that compact owner. The frame-owned processor loop keeps it and
-consumes the resolver's literal catcode for required brace handling. At
-settlement it reads suppression and outer-ness
-directly from that already-decoded hot command; the persistent
-`DeliveryMode` carries only scanner, observing, alignment, and tracing regime
-bits, so no token-local flag is written, cleared, or read back between
-deliveries. The same local facts drive the existing exceptional branch before
-the expansion-or-return decision. The input row passes its
-already-resident `TokenWord` to the dense meaning lookup, which writes the
-validated packed static meaning or one macro/font operand without first
-decoding `ResolvedMeaning`; warm resident
-delivery has no command/interception result handoff. Attempt-list storage is
-authenticated with its exact extent when the row is admitted, so a resident
-word read does not repeat the attempt key/row validation or recreate a list
-view. A successful safe storage read advances the common frame once without a
-second limit branch. Replay performs prefix and fixed-segment refresh only at
-those physical boundaries. A macro `Param` pushes its
-admitted argument and continues inside the resident loop. Only EOF, line,
-retirement, replay, diagnostic, checkpoint, or failure paths materialize a cold
-status; no semantic-token value or raw-command phase crosses into a result
-relay. Nested delivery has one loop-local compact pair. The expanded
-fetch/inspect entry takes any supplied hot value from the caller slot and keeps
-that local owner through synchronous expansion; raw delivery overwrites the
-same local owner for the next token. Only the final boundary publishes the
-local command back to the caller, exactly once for a command-bearing status.
-A conditional opener is traced while that local owner is borrowed, then
-consumed before recursive operand scanning; `ConditionStack` owns the
-conditional kind, source line, and inversion, so no opener command or
-provenance survives in the waiting scanner frame. It does not construct a
-rich `CurrentCommand` between macros or redispatch through `ResolvedMeaning`.
-The expanded loop keeps its one has-expanded bit on the stack, and a host
-replay recomputes it from restored input. Each concrete loop returns only its
-final compact status. Cold end, replay, and failure leave the caller slot
-empty; scanner, diagnostic, observation, backup, and primitive boundaries
-materialize a rich command only when their ordinary grammar needs those
-fields. The shared hot request keeps its alignment-end-template
-`CurrentCommand` construction in a cold helper, so normal scalar recursion
-does not retain that alternate branch's rich local. A resource error unwinds the call tree
-and clears local scanner/expression scratch; the host restores a full
-checkpoint and invokes the same loop again. Thus an ordinary successful token
-neither copies nor reconstructs an error or continuation envelope.
+Raw delivery, expansion, unexpanded collection, and main-control text share
+one semantic input reader. The exposed frame owns its physical cursor across
+nested input and rollback; the synchronous read carries only packed spelling,
+origin, and frame-local delivery facts. No reader cache or additional ownership
+enters command roots. Attempt extents are authenticated at admission, and replay
+refreshes its physical cursor only at prefix or segment boundaries.
+
+The consumer selects representation lifetime. Ordinary expansion resolves once
+into the existing packed meaning and invokes macros with definition, flags,
+name, and origin. No command record is constructed for successful ordinary
+unobserved macro activation. A diagnostic callback retains the opener's read
+facts only across synchronous argument scanning and materializes it only on
+failure; that diagnostic construction cannot replace input backup authority.
+Unexpanded bodies append packed words through their existing local collector.
+Literal tokens need no meaning lookup; control sequences resolve for outer
+validity. Only illegal-parameter backup and exceptional settlement materialize
+a command. Source text can lend its retained span to main control; resident
+text admits literal characters without commands.
+
+Actual command delivery, primitive scanners, observation, suppression,
+alignment, and outer recovery materialize the existing `HotCommand` from
+already-resolved facts. Public boundaries construct `CurrentCommand` into the
+caller's destination. Command-sensitive scanners and expanded token-list
+splicing retain their synchronous hot slots. `DeliveryMode` remains the sole
+persistent semantic-regime aggregate; token-local flags stay in local read facts.
+Conditional state owns its kind, source line, and inversion after opener
+consumption. The expanded consumer's has-expanded bit is call-local and is
+recomputed on replay. EOF, completion, and failure clear outward destinations;
+resource failure unwinds consumers and scanner scratch before host-owned
+full-checkpoint replay.
 The hot pair is neither global nor a mailbox and never survives independently
 of its request. A materialized `CurrentCommand` retains only its compact
 immediate-delivery coordinate and the `OriginId` already packed in its

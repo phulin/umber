@@ -156,8 +156,9 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// TeX.web's scalar `macro_call` path for compulsory parameter text,
     /// literal argument matching, and replacement activation.
     /// Executes a live macro command without cloning its structural origin.
-    /// The ordinary expansion loop owns the command for the complete call and
-    /// moves it into retry state only when a typed resource barrier is hit.
+    /// Explicit command callers retain their opener across synchronous matching.
+    /// Ordinary expansion enters with invocation facts; resource failure unwinds
+    /// either caller before host-owned checkpoint replay.
     pub(crate) fn macro_call(
         &mut self,
         call: &mut crate::CurrentCommand<G>,
@@ -177,6 +178,19 @@ impl<G> CommandProcessor<'_, '_, G> {
             .control_sequence()
             .ok_or(CommandError::input_invariant())?;
         let call_site = call.origin();
+        self.macro_call_parts(flags, definition, macro_name, call_site, |processor| {
+            processor.report_macro_prefix_mismatch(call);
+        })
+    }
+
+    pub(crate) fn macro_call_parts(
+        &mut self,
+        flags: MeaningFlags,
+        definition: tex_state::DefinitionRef<G>,
+        macro_name: tex_state::interner::Symbol,
+        call_site: OriginId,
+        report_prefix_mismatch: impl FnOnce(&mut Self),
+    ) -> Result<bool, CommandError> {
         let admitted = self
             .state
             .admit_macro_definition(definition)
@@ -271,18 +285,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // Capture §82's context while the mismatching input level is
                 // still live; in particular, §336's frozen `\par` retains its
                 // `<inserted text>` ownership until this report is complete.
-                let context = self.command.output_open_context(self.state);
-                let site =
-                    Some(self.complete_diagnostic_site(self.capture_hot_diagnostic_site(call)));
-                self.command.semantic_diagnostics.push(
-                    crate::CommandSemanticDiagnostic::MacroPrefixMismatch {
-                        macro_name: plan.macro_name,
-                        context,
-                        site,
-                    },
-                );
-                let observed_call = call.materialize();
-                self.observe_command_diagnostic("macro_prefix_mismatch", &observed_call);
+                report_prefix_mismatch(self);
                 if let Some(episode) = episode {
                     self.finish_scanner_episode(episode);
                 }
@@ -367,6 +370,25 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     #[inline(always)]
+    #[cold]
+    pub(crate) fn report_macro_prefix_mismatch(&mut self, call: &crate::command::HotCommand<G>) {
+        let context = self.command.output_open_context(self.state);
+        let site = Some(self.complete_diagnostic_site(self.capture_hot_diagnostic_site(call)));
+        self.command.semantic_diagnostics.push(
+            crate::CommandSemanticDiagnostic::MacroPrefixMismatch {
+                macro_name: call
+                    .control_sequence()
+                    .expect("macro diagnostic has a name"),
+                context,
+                site,
+            },
+        );
+        if self.is_observed() {
+            let observed_call = call.materialize();
+            self.observe_command_diagnostic("macro_prefix_mismatch", &observed_call);
+        }
+    }
+
     fn classify_macro_activation(
         &self,
         parameterless: bool,

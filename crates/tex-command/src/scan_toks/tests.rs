@@ -1010,3 +1010,147 @@ fn expanded_macro_definition_keeps_its_builder_across_nested_macro_retirement() 
         assert_eq!(definition.replacement_text(), [TokenWord::pack(expansion)]);
     });
 }
+
+#[test]
+fn ordinary_definition_body_constructs_no_per_token_command() {
+    for length in [1, 4096] {
+        crate::test_harness::with_universe(|universe| {
+            let symbol = universe.intern("retained_in_definition").expect("symbol");
+            let mut command = CommandState::default();
+            let _operation = command.begin_attempt_operation();
+            let body = [
+                token('a', Catcode::Letter),
+                Token::Cs(symbol.symbol()),
+                token('{', Catcode::BeginGroup),
+                token('}', Catcode::EndGroup),
+            ];
+            let input = std::iter::once(token('{', Catcode::BeginGroup))
+                .chain(body.into_iter().cycle().take(length))
+                .chain(std::iter::once(token('}', Catcode::EndGroup)));
+            crate::test_harness::push(&mut command, input);
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut fuel = crate::CommandFuelLedger::default();
+            let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut context = universe.command_context().expect("context");
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut effects,
+            );
+            let before = crate::command::command_ownership_counters();
+            let scanned = processor
+                .scan_toks_buffers(ScanToksMode::MacroDefinition {
+                    expanded: false,
+                    global: false,
+                })
+                .expect("definition");
+            let after = crate::command::command_ownership_counters();
+            let definition = processor
+                .state
+                .definition(scanned.definition().expect("definition"));
+            assert_eq!(definition.replacement_text().len(), length);
+            assert_eq!(
+                after.resolved_writes - before.resolved_writes,
+                1,
+                "only the opening delimiter uses command delivery, independent of body length"
+            );
+            assert_eq!(processor.fuel.burned(), length as u64 + 2);
+        });
+    }
+}
+
+#[test]
+fn direct_definition_collection_matches_observed_recovery_at_every_fuel_cut() {
+    struct Observer;
+    impl crate::CommandObserver for Observer {
+        fn committed(&mut self, _: crate::CommandObservation) {}
+    }
+    let run = |observed, limit| {
+        crate::test_harness::with_universe(|universe| {
+            let retained = universe.intern("retained").expect("symbol");
+            let mut command = CommandState::default();
+            let _operation = command.begin_attempt_operation();
+            crate::test_harness::push(
+                &mut command,
+                [
+                    token('#', Catcode::Parameter),
+                    token('1', Catcode::Other),
+                    token('{', Catcode::BeginGroup),
+                    token('{', Catcode::BeginGroup),
+                    Token::Cs(retained.symbol()),
+                    token('}', Catcode::EndGroup),
+                    token('#', Catcode::Parameter),
+                    token('1', Catcode::Other),
+                    token('#', Catcode::Parameter),
+                    token('#', Catcode::Parameter),
+                    token('#', Catcode::Parameter),
+                    token('2', Catcode::Other), // Illegal parameter: back up this token.
+                    token('}', Catcode::EndGroup),
+                ],
+            );
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut fuel = crate::CommandFuelLedger::new(limit).expect("fuel");
+            let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut observer = Observer;
+            let mut context = universe.command_context().expect("context");
+            let processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut effects,
+            );
+            let mut processor = if observed {
+                processor.with_observer(&mut observer)
+            } else {
+                processor
+            };
+            let result = processor.scan_toks_buffers(ScanToksMode::MacroDefinition {
+                expanded: false,
+                global: false,
+            });
+            let body = match result {
+                Ok(scanned) => Some(
+                    processor
+                        .state
+                        .definition(scanned.definition().expect("definition"))
+                        .replacement_text()
+                        .iter()
+                        .map(|word| word.semantic_token())
+                        .collect::<Vec<_>>(),
+                ),
+                Err(crate::CommandError::FuelExhausted { .. }) => None,
+                Err(error) => panic!("unexpected scan failure: {error:?}"),
+            };
+            assert!(matches!(
+                processor.command.scanner.status(),
+                crate::processor::status::ScannerStatus::Normal
+            ));
+            (
+                body,
+                processor.fuel.burned(),
+                processor.command.semantic_diagnostics.len(),
+                processor.command.roots.alignment.align_state,
+            )
+        })
+    };
+    let complete = run(false, 100);
+    assert!(complete.0.is_some());
+    assert_eq!(
+        complete.1, 14,
+        "illegal parameter is backed up and read again"
+    );
+    assert!(
+        complete
+            .0
+            .as_ref()
+            .expect("body")
+            .ends_with(&[token('#', Catcode::Parameter), token('2', Catcode::Other)])
+    );
+    assert_eq!(run(true, 100), complete);
+    for limit in 1..=complete.1 + 1 {
+        assert_eq!(run(false, limit), run(true, limit), "fuel {limit}");
+    }
+}

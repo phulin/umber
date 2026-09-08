@@ -2383,6 +2383,15 @@ fn one_hundred_macros_materialize_only_the_final_command() {
             1
         );
         assert_eq!(after.slot_initializations - before.slot_initializations, 0);
+        assert_eq!(
+            after.resolved_writes - before.resolved_writes,
+            1,
+            "ordinary macros never construct even the hot command record"
+        );
+        assert_eq!(
+            after.delivery_stamp_writes - before.delivery_stamp_writes,
+            1
+        );
     });
 }
 
@@ -2696,8 +2705,10 @@ fn one_and_4096_preflight_expansions_reuse_one_slot_with_exact_linear_work() {
     for (expansions, evidence) in [(1, one), (4_096, many)] {
         assert_eq!(evidence.slot_initializations, 0);
         assert_eq!(evidence.rich_materializations, 1);
-        assert_eq!(evidence.resolved_writes, expansions + 1);
-        assert_eq!(evidence.expanded_classifications, expansions + 1);
+        // Preflight materializes its initial command; subsequent ordinary
+        // macro activations consume only their meaning and invocation facts.
+        assert_eq!(evidence.resolved_writes, 2);
+        assert_eq!(evidence.expanded_classifications, 2);
         assert_eq!(evidence.command_clones, 0);
         assert_eq!(evidence.token_frame_steps, expansions + 1);
         assert_eq!(evidence.meaning_lookups, expansions);

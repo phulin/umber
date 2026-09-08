@@ -184,67 +184,42 @@ belong in Beads epic `umber2-johp`; this file is not a task checklist.
 
 ### 1.1 Typed command delivery
 
-Raw `get_next`/`get_token` and expanded `get_x_token`/`x_token` enter one
-concrete destination loop. Replay-aware, main-loop, protected,
-undefined-preserving, and alignment entries select their semantic branches
-before entering it; resident advancement is shared, and the raw-versus-expanded
-decision occurs after packed resolution has populated the hot command word.
-Control-sequence creation remains a source-tokenization fact: every token
-reaching either loop is already a character or a packed stable
-control-sequence identity.
+Raw delivery, expansion, unexpanded collection, and main-control text select
+their consumers at entry. They share the semantic input stack, physical readers,
+source tokenizer, fuel authority, and cold input transitions. Reading returns
+packed spelling, origin, and frame-local facts; it does not construct a command
+or resolve a meaning. Source control-sequence creation remains scoped to the
+scanner that requests it.
 
-The loop is destination-directed. Its caller provides the one final
-`Option<CurrentCommand<G>>` slot for that active request. A compact entry may
-receive an already-supplied hot command, but immediately admits one occupied
-loop-local `HotCommand<G>` and keeps that owner through its complete ordinary
-loop. Optional destinations are handled only at entry and publication; each
-fetch overwrites the same occupied command. Raw delivery initializes the same compact pair from the input
-frame. The rich return value is materialized and published back to the caller
-only at a semantic boundary, exactly once for a command-bearing status. Each concrete
-source arm retains the separate lexer transition. The delivery loop selects a
-non-source resident frame's lifetime-specific storage once and keeps its one
-authoritative cursor through read, increment, parameter
-interception, resolution, and expansion-or-return. Exhaustion leaves through a
-cold handler; there is no runtime call/result carrier or second storage
-dispatch. After that borrow ends, one branch-independent
-`HotCommand::write_resolved_delivery` call writes spelling, packed command,
-and delivery facts and returns only the scalar packed-resolution fact. The
-same frame-owned loop then applies one-delivery suppression and reuses the
-dense resolver's literal catcode for
-brace handling, and classifies an alignment delimiter only when an active cell
-can require it. That transition reads the semantic top index once, matches the
-authoritative input row directly, advances its resident cursor once, and
-handles a macro `Param` by pushing the admitted
-argument and continuing internally. An ordinary body or argument word writes
-the reusable destination through at most one dense meaning lookup. EOF, line acquisition, retirement,
-replay completion, diagnostics, and invariant failure alone construct a cold
-resident status; focused counters keep intermediate status relays at zero.
-Raw and expanded entries select branches of the same delivery loop. Their
-ordinary command branches publish the loop-local result directly at the
-caller boundary, without an eager `CommandError`, error slot, zero-sized
-failure relay, or general internal status carrier. Only cold failure and
-resident-cold-transition helpers construct a rich error. A genuine resource barrier
-unwinds the expanded entry into a cold owned `ResourceNeed`; it does not move a
-prior command into a typed expansion-suspension slot. The host later restores
-an eligible full checkpoint and enters the same ordinary delivery loop. The
-public boundary returns the compact final `DeliveryStatus`. Cold end,
-replay-completion, and failure exits clear the provisional slot. There is no
-process-global slot, mailbox, destination inference, nested-request reuse, or
-second raw representation.
+Input frames own resumable physical cursors across nesting and rollback. Each
+read borrows the exposed frame directly; there is no parallel reader cache,
+storage tag, or invalidation protocol. Parameter substitution and retirement end
+that borrow before mutating the stack. Cold line acquisition, EOF, retained
+templates, recovery, and replay completion use the same transition owner.
 
-The frame-owned delivery loop also owns final suppression, fuel, and alignment
-settlement rather than returning through a second hot helper.
-Each scalar fetch borrows the currently exposed semantic frame directly; the
-frame owns its resumable physical cursor across nested input and rollback.
-There is no parallel cached row index, storage tag, or invalidation protocol.
-The matcher calls that same read/admit authority into its caller-owned
-`HotCommand` slot and reads the settled spelling and command facts directly;
-it settles an alignment delimiter once before continuing without constructing
-a rich `CurrentCommand` or matcher wrapper.
-Parameter substitution and ordinary token exhaustion mutate the input stack
-and immediately reselect its authoritative top. Cold source-line acquisition,
-source EOF, retained templates, and replay-completion publication alone leave
-that compiled resident loop through an explicit transition.
+Expanded delivery resolves an interpreted token once into its canonical packed
+meaning and control-sequence identity. An ordinary unobserved macro passes only
+its definition, flags, name, and origin to activation and argument scanning.
+Successful activation constructs neither `HotCommand` nor `CurrentCommand`.
+The original read facts survive on the synchronous call stack only when a
+macro diagnostic could need its opener. Macro chains remain iterative.
+
+A delivered command, primitive scanner boundary, observation, suppression,
+alignment, or outer recovery materializes `HotCommand` from those already
+resolved facts. It never repeats a dense meaning lookup. Public delivery then
+materializes `CurrentCommand` once into the caller's final destination. Raw
+callers that request a command use the same reader and settlement authority.
+The matcher retains its existing hot destination for command-sensitive scanning.
+Main-control text instead consumes characters directly; eligible source text
+lends a retained span to the character consumer.
+
+Observation is specialized once per synchronous entry. Scanner, alignment,
+tracing, token-local suppression, and outer validity remain live semantic
+checks. Brace accounting, fuel, provenance, and checkpoint journaling remain
+mandatory even when no observer is attached. EOF, replay completion, and failure
+clear outward destinations. Resource failure unwinds ordinary local consumers;
+the host restores an eligible full checkpoint and re-enters delivery, with no
+parked scanner, continuation envelope, or second input owner.
 
 The structural collectors consume that same compact delivery. The
 `\csname`/`\ifcsname` name scan keeps one caller-owned `HotCommand` slot and
@@ -253,17 +228,16 @@ name characters append to the existing name builder without materializing a
 `CurrentCommand`. An `end_cs_name` command is recognized by its packed
 meaning, not by source spelling. Only missing-`\endcsname` recovery takes the
 hot value across the established rich `back_error` boundary. The `scan_toks`
-replacement collector uses the same hot slot for every retained token in both
-expanded and unexpanded (`get_token`) modes, appending its packed spelling and
-origin directly to the selected builder. Its `\the`, `\unexpanded`, and
-`\detokenize` branches retain their existing synchronous child-scan semantics;
-they do not introduce a second expansion loop or result envelope. Observation
-projects directly from the hot value; outer recovery, diagnostics, and genuine
-outward scanner boundaries are the only rich paths. A resource miss unwinds
-these ordinary collector calls and returns to host-owned full-checkpoint replay,
-with no collector continuation or per-token command reconstruction.
+replacement collector selects unexpanded word collection before its loop.
+Literal body tokens append directly with brace and parameter accounting;
+control sequences and active characters resolve once for outer validity.
+Only observation or exceptional settlement constructs a command. Illegal
+parameter recovery constructs just the rejected command needed by backup.
+Expanded collection retains its command-sensitive `\the`, `\unexpanded`, and
+`\detokenize` splice grammar. Both paths share the same replacement grammar
+and destination builder; resource failure unwinds their local state.
 
-The input side writes into that same final command value. The top input level
+The input side preserves the facts needed by a final command value. The top input level
 keeps its packed frame position, backing handle, source cursor, and rollback
 authority. A replay completion fence separately names the exact input level
 whose retirement owns publication; ordinary resident delivery never polls it.

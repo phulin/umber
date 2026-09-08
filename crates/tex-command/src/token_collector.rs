@@ -73,7 +73,7 @@ impl ClassifiedToken {
         }
     }
 
-    #[cfg(any(test, feature = "profiling"))]
+    #[inline(always)]
     pub(crate) fn from_word(word: TracedTokenWord, paragraph_token: Option<TokenWord>) -> Self {
         Self {
             word,

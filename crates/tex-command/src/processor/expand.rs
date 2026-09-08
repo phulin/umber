@@ -1,19 +1,18 @@
 //! Fused resident-input advancement and raw/expanded command delivery.
 
+mod collect;
+mod consume;
+mod input;
 mod resident;
 
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, ResolvedMeaning};
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
-use crate::command::{CommandClass, DeliveryStamp, HotCommand, HotCommandDestination};
+use crate::command::{CommandClass, DeliveryStamp, HotCommand};
 use crate::execution_scratch::ArgumentSetId;
-use crate::input::{
-    InputLevel, InputLevelId, ResidentBoundary, ResidentSourceAdvance, ResidentSourceCharacterRun,
-    ResidentSourceTop, SourceLocation, SourceNameClass,
-};
+use crate::input::{InputLevelId, ResidentBoundary};
 use crate::{CommandError, CommandReplayDelivery, CurrentCommand};
 
-use super::end_input::{RetirementHandoff, SourceExhaustionStatus};
 use super::expand_render::format_pdf_date;
 use super::{
     AlignmentLookahead, CommandProcessor, DeliveryStatus, MainCharacterConsumer, MainCharacterInput,
@@ -21,16 +20,12 @@ use super::{
 
 use crate::observation::{
     CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation, CommandProvenance,
-    InputReason, InputRecord, InputTransition,
 };
-
-/// TeX82 §345's invalid source-character report.
-const INVALID_SOURCE_CHARACTER_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0345;
 
 enum ResidentColdOutcome {
     Retry,
     Finished(DeliveryStatus),
-    Synthetic { literal_catcode: Option<Catcode> },
+    Word(ResidentWord),
 }
 
 #[derive(Clone, Copy)]
@@ -44,6 +39,8 @@ enum ResidentStorageKind {
     Stored,
     MacroBody,
     MacroArgument,
+    Source,
+    Synthetic,
 }
 enum InputFrameTransition<G> {
     Boundary(ResidentBoundary),
@@ -81,6 +78,7 @@ enum ResidentWordRead<G> {
 
 /// Successfully loaded token and its frame-local delivery facts. The writer
 /// accepts only this occupied read, so resolution has no input-status branch.
+#[derive(Clone, Copy)]
 struct ResidentWord {
     word: TokenWord,
     origin: OriginId,
@@ -88,10 +86,18 @@ struct ResidentWord {
     position: u64,
     active_source: Option<tex_state::packed_input::SourceContext>,
     suppress_expandable: bool,
+    site: ReadSite,
     #[cfg(test)]
     storage_kind: ResidentStorageKind,
     #[cfg(feature = "profiling")]
     raw_kind: crate::fuel::RawDeliveryKind,
+}
+
+#[derive(Clone, Copy)]
+enum ReadSite {
+    Resident,
+    Source(Option<u32>),
+    Synthetic,
 }
 
 fn static_meaning<G>(meaning: &ResolvedMeaning<G>) -> Option<Meaning> {
@@ -180,7 +186,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn write_resident_word(
         &mut self,
         selected: ResidentWord,
-        destination: &mut impl HotCommandDestination<G>,
+        destination: &mut Option<HotCommand<G>>,
     ) -> Option<Catcode> {
         let ResidentWord {
             word,
@@ -189,6 +195,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             position,
             active_source,
             suppress_expandable,
+            site,
             #[cfg(test)]
             storage_kind,
             #[cfg(feature = "profiling")]
@@ -229,16 +236,21 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .macro_argument_direct
                     .saturating_add(1);
             }
+            ResidentStorageKind::Source | ResidentStorageKind::Synthetic => {}
         }
-        self.enter_resident_delivery();
-        let resolution = destination.write_resolved_delivery(
+        let direct_source_line = match site {
+            ReadSite::Source(line) => line,
+            _ => None,
+        };
+        let resolution = HotCommand::write_delivery_into(
+            destination,
             word,
             origin,
             identity,
             position,
             active_source,
-            false,
-            None,
+            matches!(site, ReadSite::Source(_)),
+            direct_source_line,
             suppress_expandable,
             self.state,
         );
@@ -256,6 +268,15 @@ impl<G> CommandProcessor<'_, '_, G> {
             resolution.meaning_lookup(),
             raw_kind,
         );
+        match site {
+            ReadSite::Resident => self.enter_resident_delivery(),
+            _ => self.readmit_delivery_stamp(
+                destination
+                    .as_ref()
+                    .expect("initialized delivery")
+                    .delivery_stamp(),
+            ),
+        }
         resolution.literal_catcode()
     }
 
@@ -311,27 +332,24 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn transition_resident_word(
         &mut self,
         selected: ResidentWordRead<G>,
-        destination: &mut impl HotCommandDestination<G>,
+        create_control_sequences: bool,
     ) -> Result<ResidentColdOutcome, CommandError> {
         let transition = match selected {
             ResidentWordRead::NoResident => InputFrameTransition::Boundary(ResidentBoundary::Empty),
             ResidentWordRead::Source { resident_index } => {
                 self.invalidate_delivery_freshness();
-                return self.advance_source_token(resident_index, destination);
+                return self.advance_source_token(resident_index, create_control_sequences);
             }
             ResidentWordRead::Parameter {
                 slot,
                 arguments,
                 active_source,
             } => {
-                self.transition_input_frame(
-                    InputFrameTransition::Parameter {
-                        slot,
-                        arguments,
-                        active_source,
-                    },
-                    destination,
-                )?;
+                self.transition_input_frame(InputFrameTransition::Parameter {
+                    slot,
+                    arguments,
+                    active_source,
+                })?;
                 return Ok(ResidentColdOutcome::Retry);
             }
             ResidentWordRead::Exhausted {
@@ -345,7 +363,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 return Err(CommandError::input_invariant());
             }
         };
-        let outcome = self.transition_input_frame(transition, destination)?;
+        let outcome = self.transition_input_frame(transition)?;
         Ok(outcome)
     }
 
@@ -381,31 +399,47 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
     }
 
-    /// One raw fetch/settlement kernel, inlined into raw and expanded delivery.
+    /// Raw callers request a command from the shared reader and settlement authority.
     /// Input boundaries retry under the original charge. Every successful read
     /// borrows the currently exposed semantic frame, including after recovery.
     #[inline(always)]
     fn fetch_hot<const OBSERVED: bool>(
         &mut self,
-        destination: &mut impl HotCommandDestination<G>,
+        destination: &mut Option<HotCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
+        let literal_catcode = match self.read_raw_word(self.create_source_control_sequences)? {
+            ResidentColdOutcome::Word(word) => self.write_resident_word(word, destination),
+            ResidentColdOutcome::Finished(status) => {
+                destination.take();
+                return Ok(status);
+            }
+            ResidentColdOutcome::Retry => unreachable!("raw reading settles input transitions"),
+        };
+        self.settle_hot_delivery_in::<OBSERVED>(
+            destination.as_mut().expect("initialized delivery"),
+            literal_catcode,
+        )?;
+        Ok(DeliveryStatus::Command)
+    }
+
+    /// Reads one semantic raw token. All consumers share this charge and
+    /// retry boundary; reading alone never constructs or resolves a command.
+    #[inline(always)]
+    fn read_raw_word(
+        &mut self,
+        create_control_sequences: bool,
+    ) -> Result<ResidentColdOutcome, CommandError> {
         self.charge_command_action()?;
-        let literal_catcode = loop {
+        loop {
             let selected = self.read_resident_word();
             if let ResidentWordRead::Word(word) = selected {
-                break self.write_resident_word(word, destination);
+                return Ok(ResidentColdOutcome::Word(word));
             }
-            match self.transition_resident_word(selected, destination)? {
+            match self.transition_resident_word(selected, create_control_sequences)? {
                 ResidentColdOutcome::Retry => {}
-                ResidentColdOutcome::Finished(status) => {
-                    destination.clear();
-                    return Ok(status);
-                }
-                ResidentColdOutcome::Synthetic { literal_catcode } => break literal_catcode,
+                outcome => return Ok(outcome),
             }
-        };
-        self.settle_hot_delivery_in::<OBSERVED>(destination.hot_command(), literal_catcode)?;
-        Ok(DeliveryStatus::Command)
+        }
     }
 
     /// Delivers one expanded command through the compact loop and materializes
@@ -492,18 +526,16 @@ impl<G> CommandProcessor<'_, '_, G> {
         destination: &mut Option<HotCommand<G>>,
         initial_action: Option<ExpandedCommandAction>,
     ) -> Result<DeliveryStatus, CommandError> {
-        // Optional entry state ends here; every back edge overwrites this
-        // occupied command without transferring it through the caller's slot.
-        let supplied = destination.is_some();
-        let mut command = destination.take().unwrap_or_else(HotCommand::empty);
-        if !supplied {
-            let status = self.fetch_hot::<OBSERVED>(&mut command)?;
+        let mut delivery_expanded = false;
+        if destination.is_none() {
+            let status =
+                self.fetch_expansion_command::<OBSERVED>(destination, &mut delivery_expanded)?;
             if !matches!(status, DeliveryStatus::Command) {
                 return Ok(status);
             }
         }
+        let mut command = destination.take().expect("expanded entry owns a command");
         let mut action = initial_action.unwrap_or_else(|| classify_hot_command(&command));
-        let mut delivery_expanded = false;
         loop {
             match action {
                 ExpandedCommandAction::Return => {
@@ -545,10 +577,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
             }
             delivery_expanded = true;
-            let status = self.fetch_hot::<OBSERVED>(&mut command)?;
+            let status =
+                self.fetch_expansion_command::<OBSERVED>(destination, &mut delivery_expanded)?;
             if !matches!(status, DeliveryStatus::Command) {
                 return Ok(status);
             }
+            command = destination
+                .take()
+                .expect("expansion consumer delivered a command");
             action = classify_hot_command(&command);
         }
     }
@@ -565,13 +601,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<(), CommandError> {
         match action {
             ExpansionDispatch::Macro => {
-                #[cfg(feature = "profiling")]
-                {
-                    tex_state::measurement::record_hot_core_macro_expansion();
-                    if self.write_expansion_depth != 0 {
-                        self.record_write_expansion();
-                    }
-                }
+                self.record_macro_expansion();
                 if let Err(failure) = self.macro_call_hot(hot_command).map(|_| ()) {
                     match failure {
                         CommandError::ParagraphInMacroArgument
@@ -588,6 +618,17 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
         }
         Ok(())
+    }
+
+    #[inline(always)]
+    fn record_macro_expansion(&mut self) {
+        #[cfg(feature = "profiling")]
+        {
+            tex_state::measurement::record_hot_core_macro_expansion();
+            if self.write_expansion_depth != 0 {
+                self.record_write_expansion();
+            }
+        }
     }
 
     /// Completes a source or synthetic `endv` command after the main-loop
@@ -626,9 +667,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         match cold {
             ResidentColdOutcome::Retry => Ok(None),
             ResidentColdOutcome::Finished(status) => Ok(Some(status)),
-            ResidentColdOutcome::Synthetic { literal_catcode } => self
-                .finish_main_loop_synthetic(command, literal_catcode, destination)
-                .map(Some),
+            ResidentColdOutcome::Word(word) => {
+                let literal_catcode = self.write_resident_word(word, command);
+                self.finish_main_loop_synthetic(command, literal_catcode, destination)
+                    .map(Some)
+            }
         }
     }
 
@@ -661,8 +704,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                     }
                     return Ok(DeliveryStatus::CharacterRun);
                 }
-                let cold =
-                    self.transition_resident_word(ResidentWordRead::NoResident, &mut command)?;
+                let cold = self.transition_resident_word(
+                    ResidentWordRead::NoResident,
+                    self.create_source_control_sequences,
+                )?;
                 if let Some(status) =
                     self.finish_main_cold_transition(cold, &mut command, destination)?
                 {
@@ -701,7 +746,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 let cold = self.transition_resident_word(
                     ResidentWordRead::Source { resident_index },
-                    &mut command,
+                    self.create_source_control_sequences,
                 )?;
                 if let Some(status) =
                     self.finish_main_cold_transition(cold, &mut command, destination)?
@@ -720,7 +765,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                     }
                     return Ok(DeliveryStatus::CharacterRun);
                 }
-                let cold = self.transition_resident_word(selected, &mut command)?;
+                let cold =
+                    self.transition_resident_word(selected, self.create_source_control_sequences)?;
                 if let Some(status) =
                     self.finish_main_cold_transition(cold, &mut command, destination)?
                 {
@@ -1830,496 +1876,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.command.transient.active_expansion_depth = depth;
         self.invalidate_delivery_freshness();
         Err(failure)
-    }
-
-    /// Reads a token from the live source frame; only refill, EOF and recovery
-    /// leave through the cold input-transition handler.
-    fn advance_source_token(
-        &mut self,
-        resident_index: usize,
-        command: &mut impl HotCommandDestination<G>,
-    ) -> Result<ResidentColdOutcome, CommandError> {
-        let command_state = &mut *self.command;
-        let state = &mut *self.state;
-        let create_control_sequences = self.create_source_control_sequences;
-        let profile = command_state.roots.profile;
-        let force_eof_requested = command_state.roots.input.force_eof;
-        #[cfg(test)]
-        {
-            command_state
-                .roots
-                .input
-                .levels
-                .cursor_mutations
-                .source_branch_entries = command_state
-                .roots
-                .input
-                .levels
-                .cursor_mutations
-                .source_branch_entries
-                .saturating_add(1);
-        }
-        let InputLevel::Source(source) = &mut command_state.roots.input.levels.rows[resident_index]
-        else {
-            return Err(CommandError::input_invariant());
-        };
-        let slot = command_state
-            .roots
-            .input
-            .levels
-            .source_slots
-            .resident_value_mut(source.slot.0.slot);
-        let mut top = ResidentSourceTop { source, slot };
-        let force_eof = top.force_eof(force_eof_requested);
-        let identity = top.source.identity();
-        // The source cursor advances the physical-line pointer when it loads
-        // a line, so `next_physical_offset` names the following line rather
-        // than this token.  Stamp the token's actual pre-advance byte cursor
-        // instead; otherwise every token on one source line would share a
-        // coordinate and a backed-up stale copy could pass after a later
-        // direct delivery.
-        let position = top
-            .slot
-            .cursor
-            .line
-            .as_ref()
-            .map_or(top.slot.cursor.next_physical_offset, |line| {
-                line.cursor.byte_cursor
-            });
-        let active_source = top.source.frame.source_context();
-
-        match top
-            .advance(profile, force_eof, state, create_control_sequences)
-            .map_err(|()| CommandError::input_invariant())?
-        {
-            ResidentSourceAdvance::Delivered(word, origin, location) => {
-                let direct_source_line = top
-                    .slot
-                    .cursor
-                    .line
-                    .as_ref()
-                    .map(|line| u32::try_from(line.physical.number()).unwrap_or(u32::MAX));
-                command_state.last_diagnostic_location = Some(location);
-                #[cfg(test)]
-                {
-                    command_state.raw_delivery_path_counters.source_direct = command_state
-                        .raw_delivery_path_counters
-                        .source_direct
-                        .saturating_add(1);
-                }
-                let resolution = command.write_resolved_delivery(
-                    word,
-                    origin,
-                    identity.0,
-                    position,
-                    active_source,
-                    true,
-                    direct_source_line,
-                    false,
-                    state,
-                );
-                #[cfg(feature = "profiling")]
-                self.fuel.record_raw_delivery(
-                    command_state.delivery_mode.scanner_active(),
-                    resolution.meaning_lookup(),
-                    crate::fuel::RawDeliveryKind::Source,
-                );
-                // Source bytes have no resident-token predecessor. Publish
-                // their exact pre-advance coordinate here, so stored delivery
-                // does not branch on the source role during settlement.
-                self.readmit_delivery_stamp(command.hot_command().delivery_stamp());
-                Ok(ResidentColdOutcome::Synthetic {
-                    literal_catcode: resolution.literal_catcode(),
-                })
-            }
-            ResidentSourceAdvance::InvalidCharacter => self.transition_input_frame(
-                InputFrameTransition::Boundary(ResidentBoundary::InvalidCharacter),
-                command,
-            ),
-            ResidentSourceAdvance::NeedLine(identity) => self.transition_input_frame(
-                InputFrameTransition::Boundary(ResidentBoundary::NeedLine(identity)),
-                command,
-            ),
-            ResidentSourceAdvance::Exhausted(identity) => self.transition_input_frame(
-                InputFrameTransition::Boundary(ResidentBoundary::SourceExhausted(identity)),
-                command,
-            ),
-        }
-    }
-
-    /// Performs one source-character step for `main_character_run`.
-    ///
-    /// An eligible physical line lends its retained suffix to `admit` first;
-    /// the executor stops at the first lexical or metric boundary. A lexical
-    /// first byte falls through to the scalar tokenizer without reopening a
-    /// processor or selecting a second top row. Stored source rows and every
-    /// cold/source boundary remain on the scalar transition below.
-    #[cold]
-    #[inline(never)]
-    fn advance_source_character_step<C: MainCharacterConsumer<G>>(
-        &mut self,
-        resident_index: usize,
-        consume: &mut C,
-    ) -> Result<Option<u32>, CommandError> {
-        let command_state = &mut *self.command;
-        let state = &mut *self.state;
-        let fuel = &mut *self.fuel;
-        let diagnostic_effects = &mut *self.diagnostic_effects;
-        let InputLevel::Source(source) = &mut command_state.roots.input.levels.rows[resident_index]
-        else {
-            return Err(CommandError::input_invariant());
-        };
-        let slot = command_state
-            .roots
-            .input
-            .levels
-            .source_slots
-            .resident_value_mut(source.slot.0.slot);
-        let mut top = ResidentSourceTop { source, slot };
-        if !command_state.delivery_mode.allows_character_run() {
-            return Ok(None);
-        }
-
-        if let Some(mut run) = top
-            .borrow_character_run()
-            .map_err(|()| CommandError::input_invariant())?
-        {
-            let available = usize::try_from(fuel.remaining()).unwrap_or(usize::MAX);
-            if available == 0 {
-                return Err(fuel.charge().expect_err("zero remaining fuel is exhausted"));
-            }
-            if run.bytes().len() > available {
-                run = run.limit_to(available);
-            }
-            let run_len = run.bytes().len();
-            let admission = consume.admit(
-                state,
-                fuel,
-                diagnostic_effects,
-                MainCharacterInput::Borrowed(run),
-            );
-            let count =
-                usize::try_from(admission.count()).map_err(|_| CommandError::input_invariant())?;
-            if count > run_len {
-                return Err(CommandError::input_invariant());
-            }
-            if count == 0 && admission.needs_scalar_fallback() {
-                // A lexically accepted byte with missing metrics retains the
-                // existing direct scalar fallback. The borrowed path never
-                // reaches this branch for a non-ASCII or non-ordinary byte.
-                let byte = *run
-                    .bytes()
-                    .first()
-                    .ok_or_else(CommandError::input_invariant)?;
-                let ch = char::from(byte);
-                let origin = run.origin(0);
-                fuel.charge()?;
-                let scalar = consume.admit(
-                    state,
-                    fuel,
-                    diagnostic_effects,
-                    MainCharacterInput::Scalar { ch, origin },
-                );
-                if scalar.count() != 1 {
-                    // A scalar admission error is retained by the caller's
-                    // side-channel outcome. Do not move either source cursor
-                    // until the consumer has accepted this byte.
-                    return Ok(Some(0));
-                }
-                top.commit_character_run(1)
-                    .map_err(|()| CommandError::input_invariant())?;
-                let line = top
-                    .slot
-                    .cursor
-                    .line
-                    .as_ref()
-                    .expect("a scalar fallback retains its line");
-                command_state.last_diagnostic_location = Some(SourceLocation::new(
-                    line.physical.source,
-                    line.cursor.byte_cursor.saturating_sub(1),
-                ));
-                #[cfg(feature = "profiling")]
-                fuel.record_raw_run(false, crate::fuel::RawDeliveryKind::Source, 1);
-                return Ok(Some(1));
-            }
-            if count == 0 && !admission.needs_tokenizer_fallback() {
-                // A consumer failure is represented by its surrounding
-                // operation error slot. Do not run scalar admission after it:
-                // the source cursor and hmode state must remain owned by this
-                // same source step until that failure settles.
-                return Ok(Some(0));
-            }
-            if count != 0 {
-                let count = u32::try_from(count).map_err(|_| CommandError::input_invariant())?;
-                fuel.charge_run(count)?;
-                top.commit_character_run(usize::try_from(count).expect("u32 fits usize"))
-                    .map_err(|()| CommandError::input_invariant())?;
-                let line = top
-                    .slot
-                    .cursor
-                    .line
-                    .as_ref()
-                    .expect("a committed source run retains its line");
-                command_state.last_diagnostic_location = Some(SourceLocation::new(
-                    line.physical.source,
-                    line.cursor.byte_cursor.saturating_sub(1),
-                ));
-                #[cfg(feature = "profiling")]
-                fuel.record_raw_run(false, crate::fuel::RawDeliveryKind::Source, count);
-                return Ok(Some(count));
-            }
-        }
-
-        let run = top
-            .advance_character_run(state, |state, ch, origin| {
-                fuel.charge()?;
-                Ok(consume
-                    .admit(
-                        state,
-                        fuel,
-                        diagnostic_effects,
-                        MainCharacterInput::Scalar { ch, origin },
-                    )
-                    .continue_run())
-            })
-            .map_err(|()| CommandError::input_invariant())?;
-        match run {
-            ResidentSourceCharacterRun::Unavailable => Ok(None),
-            ResidentSourceCharacterRun::Consumed { count } => {
-                let line = top
-                    .slot
-                    .cursor
-                    .line
-                    .as_ref()
-                    .expect("a consumed source run retains its line");
-                command_state.last_diagnostic_location = Some(SourceLocation::new(
-                    line.physical.source,
-                    line.cursor.byte_cursor.saturating_sub(1),
-                ));
-                #[cfg(feature = "profiling")]
-                fuel.record_raw_run(false, crate::fuel::RawDeliveryKind::Source, count);
-                Ok(Some(count))
-            }
-            ResidentSourceCharacterRun::Failed { count, error } => {
-                if count != 0 {
-                    let line = top
-                        .slot
-                        .cursor
-                        .line
-                        .as_ref()
-                        .expect("a consumed source prefix retains its line");
-                    command_state.last_diagnostic_location = Some(SourceLocation::new(
-                        line.physical.source,
-                        line.cursor.byte_cursor.saturating_sub(1),
-                    ));
-                    #[cfg(feature = "profiling")]
-                    fuel.record_raw_run(false, crate::fuel::RawDeliveryKind::Source, count);
-                }
-                Err(error)
-            }
-        }
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn finish_resident_eof(&mut self) -> Result<ResidentColdOutcome, CommandError> {
-        match self.raw_end_restarts() {
-            Ok(true) => Ok(ResidentColdOutcome::Retry),
-            Ok(false) => Ok(ResidentColdOutcome::Finished(DeliveryStatus::End)),
-            Err(failure) => Err(failure),
-        }
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn transition_input_frame(
-        &mut self,
-        transition: InputFrameTransition<G>,
-        command: &mut impl HotCommandDestination<G>,
-    ) -> Result<ResidentColdOutcome, CommandError> {
-        self.invalidate_delivery_freshness();
-        let cold = match transition {
-            InputFrameTransition::Boundary(boundary) => boundary,
-            InputFrameTransition::ResidentExhausted {
-                resident_index,
-                identity,
-            } => {
-                let retirement = self
-                    .command
-                    .finish_resident_exhaustion(
-                        resident_index,
-                        identity,
-                        &mut self.observer,
-                        &mut self.immediate_write_retirement,
-                    )
-                    .map_err(|()| CommandError::input_invariant())?;
-                let Some(retirement) = retirement else {
-                    return Ok(ResidentColdOutcome::Retry);
-                };
-                retirement
-            }
-            InputFrameTransition::Parameter {
-                slot,
-                arguments,
-                active_source,
-            } => {
-                #[cfg(test)]
-                {
-                    self.command
-                        .raw_delivery_path_counters
-                        .out_parameter_interceptions = self
-                        .command
-                        .raw_delivery_path_counters
-                        .out_parameter_interceptions
-                        .saturating_add(1);
-                }
-                self.command
-                    .push_resident_parameter_cursor(
-                        slot,
-                        arguments,
-                        active_source,
-                        &mut self.observer,
-                    )
-                    .map_err(|()| CommandError::input_invariant())?;
-                return Ok(ResidentColdOutcome::Retry);
-            }
-        };
-        match cold {
-            ResidentBoundary::Empty => {
-                observe!(
-                    self,
-                    CommandObservation::Input(InputRecord {
-                        transition: InputTransition::Stop,
-                        reason: InputReason::Source,
-                        source_name: Some(SourceNameClass::Terminal),
-                        source: None,
-                        level: 0,
-                        position: 0,
-                    }),
-                );
-                self.finish_resident_eof()
-            }
-            ResidentBoundary::InvalidCharacter => {
-                self.report_recoverable(
-                    INVALID_SOURCE_CHARACTER_DIAGNOSTIC,
-                    "Text line contains an invalid character".into(),
-                    &[
-                        "A funny symbol that I can't read has just been input.",
-                        "Continue, and I'll forget that it ever happened.",
-                    ],
-                );
-                Ok(ResidentColdOutcome::Retry)
-            }
-            ResidentBoundary::NeedLine(identity) => {
-                let line = self.acquire_source_line(true)?;
-                if line.is_some() {
-                    Ok(ResidentColdOutcome::Retry)
-                } else if matches!(
-                    self.finish_exhausted_source(identity)?,
-                    SourceExhaustionStatus::End
-                ) {
-                    self.finish_resident_eof()
-                } else {
-                    Ok(ResidentColdOutcome::Retry)
-                }
-            }
-            ResidentBoundary::SourceExhausted(identity) => {
-                #[cfg(test)]
-                {
-                    self.command
-                        .raw_delivery_path_counters
-                        .cold_source_retirements = self
-                        .command
-                        .raw_delivery_path_counters
-                        .cold_source_retirements
-                        .saturating_add(1);
-                }
-                if matches!(
-                    self.finish_exhausted_source(identity)?,
-                    SourceExhaustionStatus::End
-                ) {
-                    self.finish_resident_eof()
-                } else {
-                    Ok(ResidentColdOutcome::Retry)
-                }
-            }
-            ResidentBoundary::TokenExhausted { identity, .. } => {
-                #[cfg(test)]
-                {
-                    self.command
-                        .raw_delivery_path_counters
-                        .exhaustion_status_relays = self
-                        .command
-                        .raw_delivery_path_counters
-                        .exhaustion_status_relays
-                        .saturating_add(1);
-                }
-                let Some((index, active_source)) =
-                    self.command
-                        .input
-                        .levels
-                        .last()
-                        .and_then(|level| match level {
-                            level
-                                if level
-                                    .stored_common()
-                                    .is_some_and(|cursor| cursor.identity() == identity) =>
-                            {
-                                level.stored_common().map(|cursor| {
-                                    (
-                                        u32::try_from(
-                                            level.stored_position().expect("stored row position"),
-                                        )
-                                        .expect("stored row position fits u32"),
-                                        cursor.frame.source_context(),
-                                    )
-                                })
-                            }
-                            _ => None,
-                        })
-                else {
-                    return Err(CommandError::input_invariant());
-                };
-                let handoff = self.retire_input_top(identity)?;
-                match handoff {
-                    RetirementHandoff::Stop => match self.raw_end_restarts() {
-                        Ok(true) => Ok(ResidentColdOutcome::Retry),
-                        Ok(false) => Ok(ResidentColdOutcome::Finished(DeliveryStatus::End)),
-                        Err(failure) => Err(failure),
-                    },
-                    RetirementHandoff::Continue => Ok(ResidentColdOutcome::Retry),
-                    RetirementHandoff::Completed(episode) => Ok(ResidentColdOutcome::Finished(
-                        DeliveryStatus::ReplayCompleted(episode),
-                    )),
-                    RetirementHandoff::EndV(level) => {
-                        let _resolution = command.write_resolved_delivery(
-                            TokenWord::pack(self.state.frozen_end_template_token()),
-                            OriginId::UNKNOWN,
-                            level.0,
-                            u64::from(index),
-                            active_source,
-                            false,
-                            None,
-                            false,
-                            self.state,
-                        );
-                        #[cfg(feature = "profiling")]
-                        self.fuel.record_raw_delivery(
-                            self.command.delivery_mode.scanner_active(),
-                            _resolution.meaning_lookup(),
-                            crate::fuel::RawDeliveryKind::SyntheticEndV,
-                        );
-                        self.readmit_delivery_stamp(command.hot_command().delivery_stamp());
-                        Ok(ResidentColdOutcome::Synthetic {
-                            literal_catcode: _resolution.literal_catcode(),
-                        })
-                    }
-                }
-            }
-            ResidentBoundary::ReplayCompleted(episode) => Ok(ResidentColdOutcome::Finished(
-                DeliveryStatus::ReplayCompleted(episode),
-            )),
-        }
     }
 }
 

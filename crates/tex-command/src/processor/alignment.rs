@@ -476,7 +476,21 @@ impl<G> AlignmentDeliveryState<G> {
         command: &mut crate::command::HotCommand<G>,
         literal_catcode: Option<Catcode>,
     ) -> bool {
-        let adjustment = match literal_catcode {
+        let adjustment = self.account_literal_catcode(timeline, literal_catcode);
+        if adjustment == AlignmentDeliveryAdjustment::None {
+            return false;
+        }
+        command.set_alignment_adjustment(adjustment);
+        true
+    }
+
+    #[inline(always)]
+    pub(crate) fn account_literal_catcode(
+        &mut self,
+        timeline: &mut crate::snapshot::CommandTimeline<G>,
+        literal_catcode: Option<Catcode>,
+    ) -> AlignmentDeliveryAdjustment {
+        match literal_catcode {
             Some(Catcode::BeginGroup) => {
                 timeline.record_delivery_align_state(self.align_state);
                 self.align_state += 1;
@@ -487,10 +501,8 @@ impl<G> AlignmentDeliveryState<G> {
                 self.align_state -= 1;
                 AlignmentDeliveryAdjustment::EndGroup
             }
-            _ => return false,
-        };
-        command.set_alignment_adjustment(adjustment);
-        true
+            _ => AlignmentDeliveryAdjustment::None,
+        }
     }
 
     /// Performs active-alignment delimiter interception in slow settlement.

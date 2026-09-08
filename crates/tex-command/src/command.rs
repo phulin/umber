@@ -602,34 +602,12 @@ impl<G> PackedCommandTarget<G> for HotCommand<G> {
     }
 }
 
-/// The output policy of the shared fetch kernel. Raw callers may supply an
-/// empty slot; expansion already owns a command. Static dispatch keeps the
-/// initialization choice out of the expansion back edge.
-pub(crate) trait HotCommandDestination<G> {
+impl<G> HotCommand<G> {
+    /// Initializes or overwrites a caller that explicitly requests raw command delivery.
+    #[inline(always)]
     #[allow(clippy::too_many_arguments)]
-    fn write_resolved_delivery(
-        &mut self,
-        word: TokenWord,
-        origin: OriginId,
-        input_level: u64,
-        position: u64,
-        active_source: Option<tex_state::packed_input::SourceContext>,
-        direct_source: bool,
-        direct_source_line: Option<u32>,
-        suppress_expandable: bool,
-        state: &CommandContext<'_, G>,
-    ) -> tex_state::token::PackedMeaningResolution;
-
-    fn hot_command(&mut self) -> &mut HotCommand<G>;
-
-    /// Discards an outward slot only at a command-free input boundary.
-    fn clear(&mut self);
-}
-
-impl<G> HotCommandDestination<G> for HotCommand<G> {
-    #[inline(always)]
-    fn write_resolved_delivery(
-        &mut self,
+    pub(crate) fn write_delivery_into(
+        destination: &mut Option<Self>,
         word: TokenWord,
         origin: OriginId,
         input_level: u64,
@@ -640,44 +618,7 @@ impl<G> HotCommandDestination<G> for HotCommand<G> {
         suppress_expandable: bool,
         state: &CommandContext<'_, G>,
     ) -> tex_state::token::PackedMeaningResolution {
-        HotCommand::write_resolved_delivery(
-            self,
-            word,
-            origin,
-            input_level,
-            position,
-            active_source,
-            direct_source,
-            direct_source_line,
-            suppress_expandable,
-            state,
-        )
-    }
-
-    #[inline(always)]
-    fn hot_command(&mut self) -> &mut HotCommand<G> {
-        self
-    }
-
-    #[inline(always)]
-    fn clear(&mut self) {}
-}
-
-impl<G> HotCommandDestination<G> for Option<HotCommand<G>> {
-    #[inline(always)]
-    fn write_resolved_delivery(
-        &mut self,
-        word: TokenWord,
-        origin: OriginId,
-        input_level: u64,
-        position: u64,
-        active_source: Option<tex_state::packed_input::SourceContext>,
-        direct_source: bool,
-        direct_source_line: Option<u32>,
-        suppress_expandable: bool,
-        state: &CommandContext<'_, G>,
-    ) -> tex_state::token::PackedMeaningResolution {
-        if let Some(command) = self {
+        if let Some(command) = destination {
             command.write_resolved_delivery(
                 word,
                 origin,
@@ -701,20 +642,9 @@ impl<G> HotCommandDestination<G> for Option<HotCommand<G>> {
                 suppress_expandable,
                 state,
             );
-            *self = Some(command);
+            *destination = Some(command);
             resolution
         }
-    }
-
-    #[inline(always)]
-    fn hot_command(&mut self) -> &mut HotCommand<G> {
-        self.as_mut()
-            .expect("successful fetch initialized its destination")
-    }
-
-    #[inline(always)]
-    fn clear(&mut self) {
-        self.take();
     }
 }
 
@@ -736,12 +666,38 @@ impl<G> HotCommand<G> {
         suppress_expandable: bool,
         state: &CommandContext<'_, G>,
     ) -> (Self, tex_state::token::PackedMeaningResolution) {
+        let mut command = Self::delivery_storage(
+            word,
+            origin,
+            input_level,
+            position,
+            active_source,
+            direct_source,
+            direct_source_line,
+            suppress_expandable,
+        );
+        let resolution = state.write_packed_token_command_into(word, &mut command);
+        (command, resolution)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[inline(always)]
+    pub(crate) fn delivery_storage(
+        word: TokenWord,
+        origin: OriginId,
+        input_level: u64,
+        position: u64,
+        active_source: Option<tex_state::packed_input::SourceContext>,
+        direct_source: bool,
+        direct_source_line: Option<u32>,
+        suppress_expandable: bool,
+    ) -> Self {
         #[cfg(any(test, feature = "profiling"))]
         update_command_ownership_counters(|counters| {
             counters.resolved_writes = counters.resolved_writes.saturating_add(1);
             counters.delivery_stamp_writes = counters.delivery_stamp_writes.saturating_add(1);
         });
-        let mut command = Self {
+        Self {
             token: HotToken {
                 word,
                 origin,
@@ -760,9 +716,7 @@ impl<G> HotCommand<G> {
             },
             command: CommandWord::from_static_word(Meaning::Undefined.encode()),
             font: None,
-        };
-        let resolution = state.write_packed_token_command_into(word, &mut command);
-        (command, resolution)
+        }
     }
 
     #[inline(always)]

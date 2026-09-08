@@ -295,14 +295,27 @@ fn raw_delivery_handlers_are_private_direct_call_siblings() {
     assert!(backup.contains("fn back_input_unchecked("));
     assert!(outer.contains("fn check_outer_validity_entry("));
     assert!(recovery.contains("fn recover_off_save("));
-    assert!(expansion.contains("self.retire_input_top(identity)"));
+    let reader =
+        fs::read_to_string(processor.join("expand/input.rs")).expect("shared input reader");
+    assert!(reader.contains("self.retire_input_top(identity)"));
     assert!(stack.contains("fn retire_resident_ordinary_input("));
     assert!(history.contains("fn finish_resident_exhaustion("));
     assert!(history.contains("fn settle_resident_retirement("));
     assert!(history.contains("fn pop_resident("));
     assert!(!stack.contains("RetiredInputLevel"));
     assert!(!history.contains("pop_resident_project"));
-    assert!(expansion.contains("command.write_resolved_delivery("));
+    assert!(expansion.contains("HotCommand::write_delivery_into("));
+    let source_reader = reader
+        .split("fn advance_source_token(")
+        .nth(1)
+        .expect("shared source reader")
+        .split("fn advance_source_character_step")
+        .next()
+        .expect("source reader body");
+    assert!(
+        !source_reader.contains("write_resolved_delivery"),
+        "source reads must not construct commands"
+    );
     assert!(!history.contains("self.retire_input_top("));
     assert_eq!(
         count_outer_validity_entry_calls(&expansion),

@@ -1626,18 +1626,15 @@ impl<G> CommandProcessor<'_, '_, G> {
         episode: &ScannerEpisode,
         collector: &mut TokenCollector<G>,
     ) -> Result<(), CommandError> {
-        // Both raw (`get_token`) and expanded (`get_next`) collection reuse
-        // one compact destination.  Their source-creation and expansion
-        // policies remain distinct, but an unexpanded token no longer crosses
-        // a rich `CurrentCommand` projection merely to append its spelling.
+        if !expansion.is_expanded() {
+            return self.collect_unexpanded_replacement(macro_parameters, collector);
+        }
+        // Expanded collection needs the special \the/\unexpanded splice
+        // grammar. Unexpanded bodies have already selected direct word collection.
         let mut destination = None;
 
         loop {
-            let status = if expansion.is_expanded() {
-                self.get_next_hot_into(&mut destination)?
-            } else {
-                self.get_token_hot_into(&mut destination)?
-            };
+            let status = self.get_next_hot_into(&mut destination)?;
             match status {
                 crate::DeliveryStatus::Command => {}
                 crate::DeliveryStatus::End => return Err(CommandError::input_invariant()),
@@ -1647,7 +1644,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             let command = destination
                 .as_ref()
                 .expect("compact command delivery initializes destination");
-            if expansion.is_expanded() && is_expandable_hot_command(command) {
+            if is_expandable_hot_command(command) {
                 let route = match command.command_word().expandable_primitive() {
                     Some(ExpandablePrimitive::The) => CollectorExpansionRoute::The,
                     Some(ExpandablePrimitive::Unexpanded) => CollectorExpansionRoute::Unexpanded,
@@ -1671,11 +1668,8 @@ impl<G> CommandProcessor<'_, '_, G> {
             let command = destination
                 .as_ref()
                 .expect("compact command delivery initializes destination");
-            if expansion.is_expanded() {
-                self.observe_expanded_hot_delivery(command);
-            }
+            self.observe_expanded_hot_delivery(command);
             let token = self.classify_collector_hot_token(command, None);
-            let spelling = token.word();
 
             // TeX82 §342 has already replaced a delivered `\cr`/`\span`/tab
             // delimiter by §789's ⟨v_j⟩ template inside `get_next`, so this
@@ -1694,75 +1688,86 @@ impl<G> CommandProcessor<'_, '_, G> {
             if command.is_outer_recovery_space() {
                 continue;
             }
-            if let Some(PendingParameter {
-                hash,
-                highest: highest_parameter,
-                target,
-            }) = collector.take_pending_parameter()
-            {
-                // §479: a second parameter character stores that character
-                // once -- `##` is one parameter token in the body, not two.
-                if token.spelling_is_parameter() {
-                    self.push_replacement_token(collector, spelling)?;
-                    continue;
-                }
-                if let Some(number) = parameter_number(token.spelling().semantic_token())
-                    && number <= highest_parameter
-                {
-                    let converted = TracedTokenWord::pack(Token::Param(number), spelling.origin());
-                    self.push_replacement_token(collector, converted)?;
-                    observe!(
-                        self,
-                        CommandObservation::TokenList(TokenListRecord {
-                            transition: "splice",
-                            purpose: "parameter_conversion",
-                            tokens: vec![self.observed_token(converted)],
-                        }),
-                    );
-                    continue;
-                }
-                // §479's text is already rendered by
-                // `report_macro_parameter_diagnostic` below.
-                self.back_input_hot(
-                    destination
-                        .take()
-                        .ok_or_else(CommandError::input_invariant)?,
-                )?;
-                self.report_macro_parameter_diagnostic(
-                    MacroParameterDiagnostic::IllegalReplacementNumber { target },
-                )?;
-                self.push_replacement_token(collector, hash)?;
-                continue;
-            }
-            if let Some((highest_parameter, target)) = macro_parameters
-                && token.spelling_is_parameter()
-            {
-                collector
-                    .set_pending_parameter(PendingParameter {
-                        hash: spelling,
-                        highest: highest_parameter,
-                        target,
-                    })
-                    .map_err(|()| CommandError::input_invariant())?;
-                continue;
-            }
-            if collector
-                .settle_balanced_brace(token)
-                .map_err(|()| CommandError::input_invariant())?
-            {
-                #[cfg(test)]
-                {
-                    self.command.token_collector_path_counters.state_updates += 1;
-                }
-                destination.take();
+            if self.accept_replacement_word(macro_parameters, collector, token, |processor| {
+                processor.back_input_hot(destination.take().expect("rejected collector token"))
+            })? {
                 return Ok(());
             }
+        }
+    }
+
+    pub(crate) fn accept_replacement_word(
+        &mut self,
+        macro_parameters: Option<(u8, Option<Symbol>)>,
+        collector: &mut TokenCollector<G>,
+        token: crate::token_collector::ClassifiedToken,
+        backup: impl FnOnce(&mut Self) -> Result<(), CommandError>,
+    ) -> Result<bool, CommandError> {
+        let spelling = token.word();
+        if let Some(PendingParameter {
+            hash,
+            highest: highest_parameter,
+            target,
+        }) = collector.take_pending_parameter()
+        {
+            // §479: a second parameter character stores that character
+            // once -- `##` is one parameter token in the body, not two.
+            if token.spelling_is_parameter() {
+                self.push_replacement_token(collector, spelling)?;
+                return Ok(false);
+            }
+            if let Some(number) = parameter_number(token.spelling().semantic_token())
+                && number <= highest_parameter
+            {
+                let converted = TracedTokenWord::pack(Token::Param(number), spelling.origin());
+                self.push_replacement_token(collector, converted)?;
+                observe!(
+                    self,
+                    CommandObservation::TokenList(TokenListRecord {
+                        transition: "splice",
+                        purpose: "parameter_conversion",
+                        tokens: vec![self.observed_token(converted)],
+                    }),
+                );
+                return Ok(false);
+            }
+            // §479's text is already rendered by
+            // `report_macro_parameter_diagnostic` below.
+            backup(self)?;
+            self.report_macro_parameter_diagnostic(
+                MacroParameterDiagnostic::IllegalReplacementNumber { target },
+            )?;
+            self.push_replacement_token(collector, hash)?;
+            return Ok(false);
+        }
+        if let Some((highest_parameter, target)) = macro_parameters
+            && token.spelling_is_parameter()
+        {
+            collector
+                .set_pending_parameter(PendingParameter {
+                    hash: spelling,
+                    highest: highest_parameter,
+                    target,
+                })
+                .map_err(|()| CommandError::input_invariant())?;
+            return Ok(false);
+        }
+        if collector
+            .settle_balanced_brace(token)
+            .map_err(|()| CommandError::input_invariant())?
+        {
             #[cfg(test)]
             {
                 self.command.token_collector_path_counters.state_updates += 1;
             }
-            self.push_replacement_token(collector, spelling)?;
+            return Ok(true);
         }
+        #[cfg(test)]
+        {
+            self.command.token_collector_path_counters.state_updates += 1;
+        }
+        self.push_replacement_token(collector, spelling)?;
+        Ok(false)
     }
 
     fn push_replacement_token(

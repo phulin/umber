@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 use super::ResidentStorageKind;
-use super::{ResidentWord, ResidentWordRead};
+use super::{ReadSite, ResidentWord, ResidentWordRead};
 use crate::CommandProcessor;
 use crate::input::{InputLevel, PackedInputFrame, ResidentTokenStorage};
 use tex_state::token::{OriginId, TokenWord};
@@ -289,6 +289,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .body_frame_advances
                     .saturating_add(1);
             }
+            ResidentStorageKind::Source | ResidentStorageKind::Synthetic => unreachable!(),
             ResidentStorageKind::MacroArgument => {
                 command_state.macro_kernel_counters.argument_words = command_state
                     .macro_kernel_counters
@@ -326,7 +327,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                             .body_parameter_pushes
                             .saturating_add(1);
                     }
-                    ResidentStorageKind::MacroArgument => {}
+                    ResidentStorageKind::MacroArgument
+                    | ResidentStorageKind::Source
+                    | ResidentStorageKind::Synthetic => {}
                 }
                 return ResidentWordRead::Parameter {
                     slot,
@@ -342,6 +345,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             position: u64::from(position),
             active_source,
             suppress_expandable,
+            site: ReadSite::Resident,
             #[cfg(test)]
             storage_kind,
             #[cfg(feature = "profiling")]
