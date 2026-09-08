@@ -4396,15 +4396,31 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// scanning stay in command control, including failed-keyword replay.
     pub fn scan_rule_spec(
         &mut self,
-        _primitive: UnexpandablePrimitive,
+        primitive: UnexpandablePrimitive,
     ) -> Result<ScannedRuleSpec, CommandError> {
         let default_rule = Scaled::from_raw(26_214);
-        let (mut width, mut height, mut depth, mut phase) = (
-            None,
-            Some(default_rule),
-            Some(Scaled::from_raw(0)),
-            RuleScalarPhase::WidthKeyword,
-        );
+        // TeX82 §463 starts every rule node with null dimensions, then gives
+        // `\vrule` only its default width and `\hrule` only its default
+        // height/depth. A null height/depth on a vertical rule is a running
+        // dimension resolved by alignment or packing; materializing the
+        // horizontal defaults here changes that geometry before those owners
+        // can apply their canonical values.
+        let (mut width, mut height, mut depth, mut phase) =
+            if matches!(primitive, UnexpandablePrimitive::VRule) {
+                (
+                    Some(default_rule),
+                    None,
+                    None,
+                    RuleScalarPhase::WidthKeyword,
+                )
+            } else {
+                (
+                    None,
+                    Some(default_rule),
+                    Some(Scaled::from_raw(0)),
+                    RuleScalarPhase::WidthKeyword,
+                )
+            };
         loop {
             match phase {
                 RuleScalarPhase::WidthKeyword => {
