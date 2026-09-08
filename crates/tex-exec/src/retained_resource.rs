@@ -14,6 +14,8 @@ use tex_state::{
 trait ResourceWorldBackend {
     fn with_input_read_state(&mut self, operation: &mut dyn FnMut(&mut dyn InputReadState));
     fn read_file(&mut self, path: &Path) -> Result<FileContent, WorldError>;
+    fn read_same_run_output_file(&mut self, path: &Path)
+    -> Result<Option<FileContent>, WorldError>;
     fn register_selected_file(
         &mut self,
         path: &Path,
@@ -28,6 +30,13 @@ impl<G> ResourceWorldBackend for Universe<G> {
 
     fn read_file(&mut self, path: &Path) -> Result<FileContent, WorldError> {
         self.world_mut().read_file(path)
+    }
+
+    fn read_same_run_output_file(
+        &mut self,
+        path: &Path,
+    ) -> Result<Option<FileContent>, WorldError> {
+        self.world_mut().read_same_run_output_file(path)
     }
 
     fn register_selected_file(
@@ -47,6 +56,13 @@ impl<G> ResourceWorldBackend for &mut Universe<G> {
 
     fn read_file(&mut self, path: &Path) -> Result<FileContent, WorldError> {
         self.world_mut().read_file(path)
+    }
+
+    fn read_same_run_output_file(
+        &mut self,
+        path: &Path,
+    ) -> Result<Option<FileContent>, WorldError> {
+        self.world_mut().read_same_run_output_file(path)
     }
 
     fn register_selected_file(
@@ -70,6 +86,13 @@ impl ResourceWorldBackend for InputReadStateBackend<'_> {
 
     fn read_file(&mut self, path: &Path) -> Result<FileContent, WorldError> {
         self.input.read_input_file(path)
+    }
+
+    fn read_same_run_output_file(
+        &mut self,
+        path: &Path,
+    ) -> Result<Option<FileContent>, WorldError> {
+        self.input.read_same_run_output_file(path)
     }
 
     fn register_selected_file(
@@ -139,6 +162,16 @@ impl<'a> ResourceWorld<'a> {
         self.backend.read_file(path.as_ref())
     }
 
+    /// Reads an exact output path produced by this run, preserving output
+    /// precedence without allowing a declined host search to read external
+    /// input accidentally.
+    pub fn read_same_run_output_file(
+        &mut self,
+        path: impl AsRef<Path>,
+    ) -> Result<Option<FileContent>, WorldError> {
+        self.backend.read_same_run_output_file(path.as_ref())
+    }
+
     pub fn register_selected_file(
         &mut self,
         path: impl AsRef<Path>,
@@ -172,6 +205,13 @@ impl InputReadState for RecordingInputReadState<'_> {
 
     fn read_pending_output_file(&mut self, path: &Path) -> Result<Option<FileContent>, WorldError> {
         self.input.read_pending_output_file(path)
+    }
+
+    fn read_same_run_output_file(
+        &mut self,
+        path: &Path,
+    ) -> Result<Option<FileContent>, WorldError> {
+        self.input.read_same_run_output_file(path)
     }
 
     fn read_supplied_input_file(
@@ -218,7 +258,9 @@ pub trait ResourceHost {
 /// Adapter used by ordinary candidate execution. It gives the legacy host
 /// resolver exactly one call through the command episode's narrow input view;
 /// all payloads and dependency facts are owned before returning to command
-/// processing.
+/// processing. A declined or unavailable required input still checks the
+/// exact same-run output namespace, whose precedence is owned by the engine
+/// World rather than the host search policy.
 pub struct ResourceHostProvider<'a> {
     host: &'a mut dyn ResourceHost,
 }
@@ -240,6 +282,26 @@ impl<G> ResourceProvider<G> for ResourceHostProvider<'_> {
         let outcome = state.with_input_read_state(|input| {
             let mut world = ResourceWorld::from_input_read_state(input);
             let outcome = self.host.fulfill(&mut world, need);
+            let outcome = if matches!(
+                (&outcome, need),
+                (
+                    ResourceOutcome::Unavailable | ResourceOutcome::Declined,
+                    ResourceNeed::Input { .. },
+                )
+            ) {
+                let ResourceNeed::Input { name, .. } = need else {
+                    unreachable!("same-run fallback only handles input needs")
+                };
+                match world.read_same_run_output_file(name) {
+                    Ok(Some(content)) => ResourceOutcome::Fulfilled(
+                        tex_command::ResourceFulfillment::world_input(name, content),
+                    ),
+                    Ok(None) => outcome,
+                    Err(error) => ResourceOutcome::Failed(error.into()),
+                }
+            } else {
+                outcome
+            };
             effects = world.take_replay_effects();
             outcome
         });

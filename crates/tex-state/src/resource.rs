@@ -14,6 +14,17 @@ pub trait InputReadState {
 
     fn read_pending_output_file(&mut self, path: &Path) -> Result<Option<FileContent>, WorldError>;
 
+    /// Reads an exact output path produced by the current run, without
+    /// consulting ordinary host inputs. Resource providers use this when
+    /// their search policy declines a name whose TeX output already has
+    /// canonical same-run precedence.
+    fn read_same_run_output_file(
+        &mut self,
+        _path: &Path,
+    ) -> Result<Option<FileContent>, WorldError> {
+        Ok(None)
+    }
+
     fn read_supplied_input_file(
         &mut self,
         path: &Path,
@@ -57,6 +68,13 @@ impl InputReadState for InputOpenContext<'_> {
 
     fn read_pending_output_file(&mut self, path: &Path) -> Result<Option<FileContent>, WorldError> {
         self.world.read_pending_output_file(path)
+    }
+
+    fn read_same_run_output_file(
+        &mut self,
+        path: &Path,
+    ) -> Result<Option<FileContent>, WorldError> {
+        self.world.read_same_run_output_file(path)
     }
 
     fn read_supplied_input_file(

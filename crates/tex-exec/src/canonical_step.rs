@@ -656,6 +656,32 @@ impl<'a, G> CanonicalStepRunner<'a, G> {
         }
     }
 
+    /// Provider-aware counterpart to [`Self::step_completing_fatal`]. Ready
+    /// and unavailable resources are resolved during the current cold call;
+    /// a fatal raised after that resolution still follows TeX82 §81's
+    /// complete-job cleanup path.
+    pub fn step_completing_fatal_with_resource_provider(
+        &mut self,
+        sink: &mut dyn CheckpointSink<G>,
+        cancellation: &Cancellation,
+        resource_provider: &mut dyn ResourceProvider<G>,
+    ) -> CanonicalStepResult {
+        let result = self.step_inner(sink, cancellation, None, Some(resource_provider));
+        match result {
+            CanonicalStepResult::Failed(CanonicalStepFailure::Execution(error)) => {
+                if let Some(fatal) = error.as_fatal() {
+                    let step = self.control.succumb(fatal);
+                    self.control.mark_ended();
+                    self.ledger.terminal_step = Some(step);
+                    CanonicalStepResult::Completed(step)
+                } else {
+                    CanonicalStepResult::Failed(CanonicalStepFailure::Execution(error))
+                }
+            }
+            result => result,
+        }
+    }
+
     pub fn step_with_observer(
         &mut self,
         sink: &mut dyn CheckpointSink<G>,

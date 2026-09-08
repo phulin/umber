@@ -11,12 +11,13 @@ use std::sync::Arc;
 
 use tex_command::{
     CommandDeliveryBoundary, CommandDialect, CommandObservation, CommandObserver, CommandProfile,
-    ObservedToken, RegisteredSourceKind, SourceRegistration, SourceRegistrationError,
+    ObservedToken, RegisteredSourceKind, ResourceProvider, SourceRegistration,
+    SourceRegistrationError,
 };
 use tex_exec::{
     CanonicalStepFailure, CanonicalStepResult, CanonicalStepRunner, CheckpointSink, DiagnosticStep,
     DiagnosticStepResult, MainControl, ResourceFailure, ResourceFulfillment, ResourceHost,
-    ResourceNeed, ResourceOutcome, ResourceWorld,
+    ResourceHostProvider, ResourceNeed, ResourceOutcome, ResourceWorld,
 };
 use tex_out::dvi::DviStreamWriter;
 use tex_state::print::{Printer, Selector};
@@ -26,6 +27,29 @@ use crate::{RunResult, TexRunStatus};
 
 fn map_step_failure(error: CanonicalStepFailure) -> SessionError {
     match error {
+        CanonicalStepFailure::Execution(tex_exec::ExecError::ResourceFailure { need, failure }) => {
+            SessionError::ResourceFailure {
+                need,
+                failure: *failure,
+            }
+        }
+        CanonicalStepFailure::Execution(tex_exec::ExecError::Captured {
+            error,
+            site,
+            frozen,
+        }) => match *error {
+            tex_exec::ExecError::ResourceFailure { need, failure } => {
+                SessionError::ResourceFailure {
+                    need,
+                    failure: *failure,
+                }
+            }
+            error => SessionError::Execution(tex_exec::ExecError::Captured {
+                error: Box::new(error),
+                site,
+                frozen,
+            }),
+        },
         CanonicalStepFailure::Execution(error) => SessionError::Execution(error),
         CanonicalStepFailure::Checkpoint(error) => SessionError::CommandSummary(error),
     }
@@ -727,7 +751,9 @@ impl<'a, G> EngineSession<'a, G> {
         checkpoints: &mut dyn CheckpointSink<G>,
     ) -> Result<SessionState, SessionError> {
         self.ensure_started(checkpoints)?;
-        self.advance_inner(checkpoints, None)
+        let mut observer = None;
+        let mut resource_provider = None;
+        self.advance_inner(checkpoints, &mut observer, &mut resource_provider)
     }
 
     fn ensure_started(
@@ -840,13 +866,16 @@ impl<'a, G> EngineSession<'a, G> {
         observer: &mut dyn tex_command::CommandObserver,
     ) -> Result<SessionState, SessionError> {
         self.ensure_started(checkpoints)?;
-        self.advance_inner(checkpoints, Some(observer))
+        let mut observer = Some(observer);
+        let mut resource_provider = None;
+        self.advance_inner(checkpoints, &mut observer, &mut resource_provider)
     }
 
     fn advance_inner(
         &mut self,
         checkpoints: &mut dyn CheckpointSink<G>,
-        mut observer: Option<&mut dyn tex_command::CommandObserver>,
+        observer: &mut Option<&mut dyn tex_command::CommandObserver>,
+        resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<SessionState, SessionError> {
         if self.terminated {
             return self.finish();
@@ -854,11 +883,26 @@ impl<'a, G> EngineSession<'a, G> {
         loop {
             let mut runner =
                 CanonicalStepRunner::new(&mut self.control, self.stores, &mut self.output_ledger);
-            let result = match observer.as_deref_mut() {
-                Some(observer) => {
+            let result = match (observer.as_deref_mut(), resource_provider.as_deref_mut()) {
+                (Some(observer), Some(resource_provider)) => runner
+                    .step_with_observer_and_resource_provider(
+                        checkpoints,
+                        &tex_exec::Cancellation::new(),
+                        observer,
+                        resource_provider,
+                    ),
+                (Some(observer), None) => {
                     runner.step_with_observer(checkpoints, &tex_exec::Cancellation::new(), observer)
                 }
-                None => runner.step_completing_fatal(checkpoints, &tex_exec::Cancellation::new()),
+                (None, Some(resource_provider)) => runner
+                    .step_completing_fatal_with_resource_provider(
+                        checkpoints,
+                        &tex_exec::Cancellation::new(),
+                        resource_provider,
+                    ),
+                (None, None) => {
+                    runner.step_completing_fatal(checkpoints, &tex_exec::Cancellation::new())
+                }
             };
             if let Some(checkpoint) = self.retry_materialization.take() {
                 let reconciled = self
@@ -957,12 +1001,13 @@ impl<'a, G> EngineSession<'a, G> {
         mut observer: Option<&mut dyn tex_command::CommandObserver>,
     ) -> Result<RunResult, SessionError> {
         let mut declined: u8 = 0;
+        self.ensure_started(checkpoints)?;
         loop {
-            let state = match observer.as_deref_mut() {
-                Some(observer) => {
-                    self.advance_until_waiting_with_observer(checkpoints, observer)?
-                }
-                None => self.advance_until_waiting(checkpoints)?,
+            let state = {
+                let mut resource_provider = ResourceHostProvider::new(host);
+                let mut resource_provider: Option<&mut dyn ResourceProvider<G>> =
+                    Some(&mut resource_provider);
+                self.advance_inner(checkpoints, &mut observer, &mut resource_provider)?
             };
             match state {
                 SessionState::Complete(result) => return Ok(*result),
