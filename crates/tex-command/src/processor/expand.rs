@@ -1,14 +1,15 @@
 //! Fused resident-input advancement and raw/expanded command delivery.
 
+mod resident;
+
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, ResolvedMeaning};
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
 use crate::command::{CommandClass, DeliveryStamp, HotCommand};
 use crate::execution_scratch::ArgumentSetId;
 use crate::input::{
-    InputLevel, InputLevelId, PackedInputFrame, ResidentBoundary, ResidentSourceAdvance,
-    ResidentSourceCharacterRun, ResidentSourceTop, ResidentTokenStorage, SourceLocation,
-    SourceNameClass,
+    InputLevel, InputLevelId, ResidentBoundary, ResidentSourceAdvance, ResidentSourceCharacterRun,
+    ResidentSourceTop, SourceLocation, SourceNameClass,
 };
 use crate::{CommandError, CommandReplayDelivery, CurrentCommand};
 
@@ -46,9 +47,6 @@ enum ResidentStorageKind {
 }
 enum InputFrameTransition<G> {
     Boundary(ResidentBoundary),
-    Source {
-        resident_index: usize,
-    },
     ResidentExhausted {
         resident_index: usize,
         identity: InputLevelId,
@@ -58,123 +56,6 @@ enum InputFrameTransition<G> {
         arguments: Option<ArgumentSetId<G>>,
         active_source: Option<tex_state::packed_input::SourceContext>,
     },
-}
-
-/// The lifetime-specific resident storage selected for the current top row.
-///
-/// The tag is an episode-local proof only. The row remains the sole owner of
-/// its storage, and the tag is refreshed whenever a cold transition changes
-/// the input top. Keeping this tiny selection beside the reader removes the
-/// top-row lookup from the ordinary per-word instruction without retaining a
-/// borrow across input-stack mutation.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ResidentStorageTag {
-    Replay,
-    Durable,
-    Attempt,
-    MacroBody,
-    MacroArgument,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ResidentFrameSelection {
-    None,
-    Source {
-        resident_index: usize,
-    },
-    Resident {
-        resident_index: usize,
-        storage: ResidentStorageTag,
-    },
-}
-
-/// Episode-local top-row selection for synchronous delivery.
-///
-/// A reader never outlives the processor call that owns it. Its index is
-/// refreshed only after parameter substitution, exhaustion, source refill, or
-/// another cold input transition, so ordinary sequential delivery advances
-/// one already-selected frame.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct ResidentFrameReader {
-    selection: ResidentFrameSelection,
-}
-
-impl ResidentFrameReader {
-    #[inline(always)]
-    const fn new() -> Self {
-        Self {
-            selection: ResidentFrameSelection::None,
-        }
-    }
-
-    #[inline(always)]
-    fn refresh<G>(&mut self, command: &mut crate::CommandState<G>) {
-        let selection = command.roots.input.levels.top.checked_sub(1).map_or(
-            ResidentFrameSelection::None,
-            |resident_index| match &command.roots.input.levels.rows[resident_index] {
-                InputLevel::Source(_) => ResidentFrameSelection::Source { resident_index },
-                InputLevel::Resident(row) => ResidentFrameSelection::Resident {
-                    resident_index,
-                    storage: match &row.storage {
-                        ResidentTokenStorage::Replay { .. } => ResidentStorageTag::Replay,
-                        ResidentTokenStorage::Durable(_) => ResidentStorageTag::Durable,
-                        ResidentTokenStorage::Attempt(_) => ResidentStorageTag::Attempt,
-                        ResidentTokenStorage::MacroBody(_) => ResidentStorageTag::MacroBody,
-                        ResidentTokenStorage::MacroArgument(_) => ResidentStorageTag::MacroArgument,
-                    },
-                },
-            },
-        );
-        #[cfg(test)]
-        if !matches!(selection, ResidentFrameSelection::None) {
-            command
-                .roots
-                .input
-                .levels
-                .cursor_mutations
-                .typed_top_accesses = command
-                .roots
-                .input
-                .levels
-                .cursor_mutations
-                .typed_top_accesses
-                .saturating_add(1);
-            command.raw_delivery_path_counters.resident_transitions = command
-                .raw_delivery_path_counters
-                .resident_transitions
-                .saturating_add(1);
-        }
-        self.selection = selection;
-    }
-
-    #[inline(always)]
-    const fn source_index(self) -> Option<usize> {
-        match self.selection {
-            ResidentFrameSelection::Source { resident_index } => Some(resident_index),
-            ResidentFrameSelection::None | ResidentFrameSelection::Resident { .. } => None,
-        }
-    }
-
-    #[inline(always)]
-    const fn resident_index(self) -> Option<usize> {
-        match self.selection {
-            ResidentFrameSelection::Resident { resident_index, .. } => Some(resident_index),
-            ResidentFrameSelection::None | ResidentFrameSelection::Source { .. } => None,
-        }
-    }
-
-    #[inline(always)]
-    const fn storage_tag(self) -> Option<ResidentStorageTag> {
-        match self.selection {
-            ResidentFrameSelection::Resident { storage, .. } => Some(storage),
-            ResidentFrameSelection::None | ResidentFrameSelection::Source { .. } => None,
-        }
-    }
-
-    #[inline(always)]
-    const fn invalidate(&mut self) {
-        self.selection = ResidentFrameSelection::None;
-    }
 }
 
 /// One packed word selected from a resident token row. The selection keeps
@@ -207,53 +88,6 @@ enum ResidentWordRead<G> {
         #[cfg(feature = "profiling")]
         raw_kind: crate::fuel::RawDeliveryKind,
     },
-}
-
-/// Reads one packed word from an already-selected resident storage domain.
-///
-/// Stack mutation, exhaustion, substitution, diagnostics, and recovery must
-/// remain outside this instruction body. The loader is specific to the
-/// selected lifetime domain and the packed frame remains the sole logical
-/// cursor shared by all of them.
-#[inline(always)]
-fn next_word_from_current_frame(
-    frame: &mut PackedInputFrame,
-    load: impl FnOnce(u32) -> Option<(TokenWord, OriginId)>,
-) -> Option<(TokenWord, OriginId, u32)> {
-    let position = frame.position();
-    if position >= frame.limit() {
-        return None;
-    }
-    let (word, origin) = load(position)?;
-    let consumed = frame.advance_resident();
-    debug_assert_eq!(consumed, position);
-    Some((word, origin, position))
-}
-
-/// Reads one word from an admitted macro replacement cursor.
-///
-/// The hot path checks the packed frame bound, loads the retained physical
-/// slot, advances the frame's sole logical position, and then advances the
-/// body's physical cache. A physical crossing is settled by its cold
-/// directory transition only after the frame confirms that replacement words
-/// remain.
-#[inline(always)]
-fn next_macro_body_word_from_current_frame<G>(
-    frame: &mut PackedInputFrame,
-    body: &mut crate::input::MacroBodyCursor<G>,
-) -> Option<(TokenWord, OriginId, u32)> {
-    let position = frame.position();
-    if position >= frame.limit() {
-        return None;
-    }
-    let word = body.body.load_current_word()?;
-    let consumed = frame.advance_resident();
-    debug_assert_eq!(consumed, position);
-    let boundary = body.body.advance_current_word();
-    if boundary && frame.position() < frame.limit() {
-        body.body.advance_chunk_cold(frame.position());
-    }
-    Some((word, OriginId::UNKNOWN, position))
 }
 
 fn static_meaning<G>(meaning: &ResolvedMeaning<G>) -> Option<Meaning> {
@@ -338,315 +172,6 @@ fn hot_is_space<G>(command: &HotCommand<G>) -> bool {
 }
 
 impl<G> CommandProcessor<'_, '_, G> {
-    /// Selects one word from the already-admitted resident row. This is the
-    /// small cursor instruction shared by scalar delivery and the main-loop
-    /// character path; source rows and all exhaustion transitions stay in the
-    /// cold reader below.
-    #[inline(always)]
-    fn read_selected_resident_word(
-        &mut self,
-        reader: ResidentFrameReader,
-    ) -> Result<ResidentWordRead<G>, CommandError> {
-        let command_state = &mut *self.command;
-        let Some(resident_index) = reader.resident_index() else {
-            return Ok(match reader.source_index() {
-                Some(resident_index) => ResidentWordRead::Source { resident_index },
-                None => ResidentWordRead::NoResident,
-            });
-        };
-
-        let InputLevel::Resident(row) = &mut command_state.roots.input.levels.rows[resident_index]
-        else {
-            return Err(CommandError::input_invariant());
-        };
-        let exhausted_identity = row.header.identity();
-        let identity = exhausted_identity.0;
-        let active_source = row.header.frame.source_context();
-        let suppress_expandable = row.header.frame.flags().contains(
-            tex_state::packed_input::InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE,
-        );
-        #[cfg(test)]
-        let storage_kind = match reader.storage_tag() {
-            Some(ResidentStorageTag::MacroBody) => ResidentStorageKind::MacroBody,
-            Some(ResidentStorageTag::MacroArgument) => ResidentStorageKind::MacroArgument,
-            Some(
-                ResidentStorageTag::Replay
-                | ResidentStorageTag::Durable
-                | ResidentStorageTag::Attempt,
-            )
-            | None => ResidentStorageKind::Stored,
-        };
-        #[cfg(feature = "profiling")]
-        let raw_kind = match reader.storage_tag() {
-            Some(ResidentStorageTag::MacroArgument) => crate::fuel::RawDeliveryKind::MacroArgument,
-            Some(
-                ResidentStorageTag::Replay
-                | ResidentStorageTag::Durable
-                | ResidentStorageTag::Attempt
-                | ResidentStorageTag::MacroBody,
-            )
-            | None => crate::fuel::RawDeliveryKind::StoredToken,
-        };
-
-        let current = match (
-            reader
-                .storage_tag()
-                .ok_or_else(CommandError::input_invariant)?,
-            &mut row.storage,
-        ) {
-            (ResidentStorageTag::Replay, ResidentTokenStorage::Replay { replay, cursor }) => {
-                #[cfg(test)]
-                {
-                    command_state
-                        .roots
-                        .input
-                        .levels
-                        .cursor_mutations
-                        .replay_domain_dispatches = command_state
-                        .roots
-                        .input
-                        .levels
-                        .cursor_mutations
-                        .replay_domain_dispatches
-                        .saturating_add(1);
-                    command_state.stored_token_advance_counters.span_selections = command_state
-                        .stored_token_advance_counters
-                        .span_selections
-                        .saturating_add(1);
-                    command_state
-                        .roots
-                        .input
-                        .levels
-                        .cursor_mutations
-                        .stored_token_branch_entries = command_state
-                        .roots
-                        .input
-                        .levels
-                        .cursor_mutations
-                        .stored_token_branch_entries
-                        .saturating_add(1);
-                }
-                next_word_from_current_frame(&mut row.header.frame, |_position| {
-                    command_state
-                        .roots
-                        .input
-                        .replay
-                        .advance_sequential(
-                            *replay,
-                            cursor,
-                            #[cfg(test)]
-                            &mut command_state
-                                .stored_token_advance_counters
-                                .replay_segment_inspections,
-                            #[cfg(test)]
-                            &mut command_state
-                                .stored_token_advance_counters
-                                .replay_run_transitions,
-                        )
-                        .map(|word| (word.token_word(), word.origin()))
-                })
-            }
-            (ResidentStorageTag::Attempt, ResidentTokenStorage::Attempt(list)) => {
-                #[cfg(test)]
-                {
-                    command_state
-                        .roots
-                        .input
-                        .levels
-                        .cursor_mutations
-                        .attempt_domain_dispatches = command_state
-                        .roots
-                        .input
-                        .levels
-                        .cursor_mutations
-                        .attempt_domain_dispatches
-                        .saturating_add(1);
-                    command_state
-                        .roots
-                        .input
-                        .levels
-                        .cursor_mutations
-                        .stored_token_branch_entries = command_state
-                        .roots
-                        .input
-                        .levels
-                        .cursor_mutations
-                        .stored_token_branch_entries
-                        .saturating_add(1);
-                }
-                next_word_from_current_frame(&mut row.header.frame, |position| {
-                    command_state
-                        .attempt
-                        .arena()
-                        .resident_token_word(list, position as usize)
-                        .map(|word| (word.token_word(), word.origin()))
-                })
-            }
-            (ResidentStorageTag::Durable, ResidentTokenStorage::Durable(list)) => {
-                #[cfg(test)]
-                {
-                    command_state
-                        .roots
-                        .input
-                        .levels
-                        .cursor_mutations
-                        .durable_domain_dispatches = command_state
-                        .roots
-                        .input
-                        .levels
-                        .cursor_mutations
-                        .durable_domain_dispatches
-                        .saturating_add(1);
-                    command_state
-                        .roots
-                        .input
-                        .levels
-                        .cursor_mutations
-                        .stored_token_branch_entries = command_state
-                        .roots
-                        .input
-                        .levels
-                        .cursor_mutations
-                        .stored_token_branch_entries
-                        .saturating_add(1);
-                }
-                next_word_from_current_frame(&mut row.header.frame, |position| {
-                    list.word_at(position as usize)
-                        .map(|word| (word, tex_state::token::OriginId::UNKNOWN))
-                })
-            }
-            (ResidentStorageTag::MacroBody, ResidentTokenStorage::MacroBody(body)) => {
-                #[cfg(test)]
-                {
-                    command_state
-                        .roots
-                        .input
-                        .levels
-                        .cursor_mutations
-                        .macro_body_domain_dispatches = command_state
-                        .roots
-                        .input
-                        .levels
-                        .cursor_mutations
-                        .macro_body_domain_dispatches
-                        .saturating_add(1);
-                }
-                next_macro_body_word_from_current_frame(&mut row.header.frame, body)
-            }
-            (ResidentStorageTag::MacroArgument, ResidentTokenStorage::MacroArgument(argument)) => {
-                #[cfg(test)]
-                {
-                    command_state
-                        .roots
-                        .input
-                        .levels
-                        .cursor_mutations
-                        .macro_argument_branch_entries = command_state
-                        .roots
-                        .input
-                        .levels
-                        .cursor_mutations
-                        .macro_argument_branch_entries
-                        .saturating_add(1);
-                }
-                next_word_from_current_frame(&mut row.header.frame, |position| {
-                    argument.advance_delivery(position, &command_state.scratch)
-                })
-            }
-            _ => return Err(CommandError::input_invariant()),
-        };
-
-        let Some((word, origin, position)) = current else {
-            return Ok(ResidentWordRead::Exhausted {
-                resident_index,
-                identity: exhausted_identity,
-            });
-        };
-
-        #[cfg(test)]
-        match storage_kind {
-            ResidentStorageKind::Stored => {
-                command_state.stored_token_advance_counters.packed_loads = command_state
-                    .stored_token_advance_counters
-                    .packed_loads
-                    .saturating_add(1);
-                command_state.stored_token_advance_counters.cursor_advances = command_state
-                    .stored_token_advance_counters
-                    .cursor_advances
-                    .saturating_add(1);
-            }
-            ResidentStorageKind::MacroBody => {
-                command_state.macro_kernel_counters.body_words = command_state
-                    .macro_kernel_counters
-                    .body_words
-                    .saturating_add(1);
-                command_state.macro_kernel_counters.body_frame_advances = command_state
-                    .macro_kernel_counters
-                    .body_frame_advances
-                    .saturating_add(1);
-            }
-            ResidentStorageKind::MacroArgument => {
-                command_state.macro_kernel_counters.argument_words = command_state
-                    .macro_kernel_counters
-                    .argument_words
-                    .saturating_add(1);
-                command_state.macro_kernel_counters.argument_cursor_advances = command_state
-                    .macro_kernel_counters
-                    .argument_cursor_advances
-                    .saturating_add(1);
-            }
-        }
-
-        let arguments = match &row.storage {
-            ResidentTokenStorage::MacroBody(body) => Some(body.arguments),
-            ResidentTokenStorage::MacroArgument(_) => None,
-            ResidentTokenStorage::Replay { .. }
-            | ResidentTokenStorage::Durable(_)
-            | ResidentTokenStorage::Attempt(_) => Some(None),
-        };
-        if let Some(arguments) = arguments
-            && let Some(slot) = word.out_parameter_slot()
-        {
-            #[cfg(test)]
-            match storage_kind {
-                ResidentStorageKind::Stored => {
-                    command_state
-                        .stored_token_advance_counters
-                        .parameter_interceptions = command_state
-                        .stored_token_advance_counters
-                        .parameter_interceptions
-                        .saturating_add(1);
-                }
-                ResidentStorageKind::MacroBody => {
-                    command_state.macro_kernel_counters.body_parameter_pushes = command_state
-                        .macro_kernel_counters
-                        .body_parameter_pushes
-                        .saturating_add(1);
-                }
-                ResidentStorageKind::MacroArgument => {}
-            }
-            return Ok(ResidentWordRead::Parameter {
-                slot,
-                arguments,
-                active_source,
-            });
-        }
-        self.enter_resident_delivery();
-
-        Ok(ResidentWordRead::Word {
-            word,
-            origin,
-            identity,
-            position: u64::from(position),
-            active_source,
-            suppress_expandable,
-            #[cfg(test)]
-            storage_kind,
-            #[cfg(feature = "profiling")]
-            raw_kind,
-        })
-    }
-
     #[allow(clippy::too_many_arguments)]
     #[inline(always)]
     fn write_hot_word(
@@ -783,6 +308,19 @@ impl<G> CommandProcessor<'_, '_, G> {
         command: &mut HotCommand<G>,
         literal_catcode: Option<Catcode>,
     ) -> Result<(), CommandError> {
+        if self.is_observed() {
+            self.settle_hot_delivery_in::<true>(command, literal_catcode)
+        } else {
+            self.settle_hot_delivery_in::<false>(command, literal_catcode)
+        }
+    }
+
+    #[inline(always)]
+    fn settle_hot_delivery_in<const OBSERVED: bool>(
+        &mut self,
+        command: &mut HotCommand<G>,
+        literal_catcode: Option<Catcode>,
+    ) -> Result<(), CommandError> {
         // These are token-local facts from the already-decoded compact
         // command. Keep them at the same point where the old token bits were
         // installed; exceptional settlement may rewrite the command.
@@ -794,16 +332,16 @@ impl<G> CommandProcessor<'_, '_, G> {
             command,
             literal_catcode,
         );
-        self.advance_delivery_sequence();
-        if command.is_direct_source_delivery() {
-            self.readmit_delivery_stamp(command.delivery_stamp());
+        if OBSERVED {
+            self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
         }
-        if self
-            .command
-            .delivery_mode
-            .requires_slow_settlement(suppresses_expandable_control_sequence, outer)
+        if OBSERVED
+            || self
+                .command
+                .delivery_mode
+                .requires_semantic_settlement(suppresses_expandable_control_sequence, outer)
         {
-            self.settle_exceptional_delivery(
+            self.settle_exceptional_delivery::<OBSERVED>(
                 command,
                 suppresses_expandable_control_sequence,
                 outer,
@@ -812,8 +350,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(())
     }
 
-    #[cold]
-    #[inline(never)]
+    #[inline(always)]
     fn transition_resident_word(
         &mut self,
         selected: ResidentWordRead<G>,
@@ -822,7 +359,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         let transition = match selected {
             ResidentWordRead::NoResident => InputFrameTransition::Boundary(ResidentBoundary::Empty),
             ResidentWordRead::Source { resident_index } => {
-                InputFrameTransition::Source { resident_index }
+                self.invalidate_delivery_freshness();
+                return self.advance_source_token(resident_index, destination);
             }
             ResidentWordRead::Parameter {
                 slot,
@@ -861,9 +399,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        let mut reader = ResidentFrameReader::new();
         let mut hot_destination = None;
-        let result = self.raw_next_hot_with_reader(&mut reader, &mut hot_destination);
+        let result = self.raw_next_hot(&mut hot_destination);
         self.finish_hot_delivery(destination, &mut hot_destination, result)
     }
 
@@ -872,64 +409,50 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<HotCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        let mut reader = ResidentFrameReader::new();
-        self.raw_next_hot_with_reader(&mut reader, destination)
+        let result = if self.is_observed() {
+            self.fetch_hot::<true>(destination)
+        } else {
+            self.fetch_hot::<false>(destination)
+        };
+        match result {
+            Ok(status) => Ok(status),
+            Err(failure) => self.fail_hot_expanded_delivery(
+                destination,
+                self.command.transient.active_expansion_depth,
+                failure,
+            ),
+        }
     }
 
+    /// One raw fetch/settlement kernel, inlined into raw and expanded delivery.
+    /// Input boundaries retry under the original charge. Every successful read
+    /// borrows the currently exposed semantic frame, including after recovery.
     #[inline(always)]
-    fn raw_next_hot_with_reader(
+    fn fetch_hot<const OBSERVED: bool>(
         &mut self,
-        reader: &mut ResidentFrameReader,
         destination: &mut Option<HotCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        if matches!(reader.selection, ResidentFrameSelection::None) {
-            reader.refresh(self.command);
-        }
-        let depth = self.command.transient.active_expansion_depth;
-        let mut command = destination.take();
-        if let Err(failure) = self.charge_command_action() {
-            return self.fail_hot_expanded_delivery(destination, depth, failure);
-        }
-        let literal_catcode = 'fetch: loop {
-            let selected = match self.read_selected_resident_word(*reader) {
-                Ok(selected) => selected,
-                Err(failure) => {
-                    return self.fail_hot_expanded_delivery(destination, depth, failure);
-                }
-            };
+        self.charge_command_action()?;
+        let literal_catcode = loop {
+            let selected = self.read_resident_word();
             if matches!(selected, ResidentWordRead::Word { .. }) {
-                break 'fetch self.write_resident_word(selected, &mut command)?;
+                break self.write_resident_word(selected, destination)?;
             }
-            let cold = match self.transition_resident_word(selected, &mut command) {
-                Ok(cold) => cold,
-                Err(failure) => {
-                    return self.fail_hot_expanded_delivery(destination, depth, failure);
-                }
-            };
-            match cold {
-                ResidentColdOutcome::Retry => reader.refresh(self.command),
+            match self.transition_resident_word(selected, destination)? {
+                ResidentColdOutcome::Retry => {}
                 ResidentColdOutcome::Finished(status) => {
-                    reader.invalidate();
                     destination.take();
                     return Ok(status);
                 }
-                ResidentColdOutcome::Synthetic { literal_catcode } => {
-                    reader.invalidate();
-                    break 'fetch literal_catcode;
-                }
+                ResidentColdOutcome::Synthetic { literal_catcode } => break literal_catcode,
             }
         };
-        let mut command = command
-            .take()
-            .expect("resident admission initializes the hot command");
-        let recovers_outer = self.command.delivery_mode.scanner_active() && command.is_outer();
-        if let Err(failure) = self.settle_hot_delivery(&mut command, literal_catcode) {
-            return self.fail_hot_expanded_delivery(destination, depth, failure);
-        }
-        if recovers_outer {
-            reader.invalidate();
-        }
-        *destination = Some(command);
+        self.settle_hot_delivery_in::<OBSERVED>(
+            destination
+                .as_mut()
+                .expect("raw fetch initializes the command"),
+            literal_catcode,
+        )?;
         Ok(DeliveryStatus::Command)
     }
 
@@ -982,15 +505,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
     }
 
-    /// The concrete TeX82 §380 `get_x_token` loop. Expansion remains in the
-    /// continuously occupied hot command; only scanner/diagnostic/resource
-    /// boundaries materialize or park it.
-    ///
-    /// This is the sole expanded delivery loop. It owns frame selection,
-    /// resident cursor advancement, packed meaning resolution, settlement,
-    /// classification, and expansion dispatch in one synchronous operation.
-    /// Raw delivery has a separate loop because its command must be returned
-    /// before TeX can decide whether to expand it.
+    /// TeX82 §380's synchronous expanded delivery. Observation is fixed for
+    /// this call, while scanner and alignment semantics remain live. This
+    /// wrapper owns depth and failure cleanup outside the expansion back edge.
     fn expanded_next_hot(
         &mut self,
         destination: &mut Option<HotCommand<G>>,
@@ -1005,179 +522,81 @@ impl<G> CommandProcessor<'_, '_, G> {
             );
         };
         self.command.transient.active_expansion_depth = active_depth;
-        let mut command = destination.take();
-        debug_assert!(
-            destination.is_none(),
-            "the caller-owned hot command is empty while the loop owns delivery"
-        );
-        let mut reader = ResidentFrameReader::new();
-        let mut delivery_expanded = false;
-        let mut initial_action = initial_action;
-        let status = 'delivery: loop {
-            if command.is_none() {
-                debug_assert!(
-                    command.is_none(),
-                    "the local hot command must be empty before a resident fetch"
-                );
-                if matches!(reader.selection, ResidentFrameSelection::None) {
-                    reader.refresh(self.command);
-                }
-                if let Err(failure) = self.charge_command_action() {
-                    return self.fail_hot_expanded_delivery(destination, depth, failure);
-                }
-                let literal_catcode = 'fetch: loop {
-                    let selected = match self.read_selected_resident_word(reader) {
-                        Ok(selected) => selected,
-                        Err(failure) => {
-                            return self.fail_hot_expanded_delivery(destination, depth, failure);
-                        }
-                    };
-                    match selected {
-                        ResidentWordRead::Word {
-                            word,
-                            origin,
-                            identity,
-                            position,
-                            active_source,
-                            suppress_expandable,
-                            #[cfg(test)]
-                            storage_kind,
-                            #[cfg(feature = "profiling")]
-                            raw_kind,
-                        } => {
-                            break 'fetch self.write_hot_word(
-                                word,
-                                origin,
-                                identity,
-                                position,
-                                active_source,
-                                suppress_expandable,
-                                #[cfg(test)]
-                                storage_kind,
-                                #[cfg(feature = "profiling")]
-                                raw_kind,
-                                &mut command,
-                            );
-                        }
-                        selected => {
-                            let cold = match self.transition_resident_word(selected, &mut command) {
-                                Ok(cold) => cold,
-                                Err(failure) => {
-                                    return self.fail_hot_expanded_delivery(
-                                        destination,
-                                        depth,
-                                        failure,
-                                    );
-                                }
-                            };
-                            match cold {
-                                ResidentColdOutcome::Retry => reader.refresh(self.command),
-                                ResidentColdOutcome::Finished(status) => break 'delivery status,
-                                ResidentColdOutcome::Synthetic { literal_catcode } => {
-                                    reader.invalidate();
-                                    break 'fetch literal_catcode;
-                                }
-                            }
-                        }
-                    }
-                };
-                let command_ref = command
-                    .as_mut()
-                    .expect("resident delivery initializes the hot command");
-                if let Err(failure) = self.settle_hot_delivery(command_ref, literal_catcode) {
-                    return self.fail_hot_expanded_delivery(destination, depth, failure);
-                }
-            }
+        let result = if self.is_observed() {
+            self.expanded_delivery_loop::<true>(destination, initial_action)
+        } else {
+            self.expanded_delivery_loop::<false>(destination, initial_action)
+        };
+        debug_assert_eq!(self.command.transient.active_expansion_depth, active_depth);
+        self.command.transient.active_expansion_depth = depth;
+        match result {
+            Ok(status) => Ok(status),
+            Err(failure) => self.fail_hot_expanded_delivery(destination, depth, failure),
+        }
+    }
 
-            let action = initial_action.take().unwrap_or_else(|| {
-                let hot_command = command
-                    .as_ref()
-                    .expect("resident delivery initializes the hot command");
-                classify_hot_command(hot_command)
-            });
+    fn expanded_delivery_loop<const OBSERVED: bool>(
+        &mut self,
+        destination: &mut Option<HotCommand<G>>,
+        initial_action: Option<ExpandedCommandAction>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        // Entry may already own a settled command and its classification.
+        // Neither choice participates in the steady fetch/expand back edge.
+        if destination.is_none() {
+            let status = self.fetch_hot::<OBSERVED>(destination)?;
+            if !matches!(status, DeliveryStatus::Command) {
+                return Ok(status);
+            }
+        }
+        let mut command = destination.take().expect("expanded entry owns a command");
+        let mut action = initial_action.unwrap_or_else(|| classify_hot_command(&command));
+        let mut delivery_expanded = false;
+        loop {
             match action {
                 ExpandedCommandAction::Return => {
-                    let hot_command = command
-                        .as_ref()
-                        .expect("resident delivery initializes the hot command");
-                    break self.finish_expanded_command(hot_command, delivery_expanded);
+                    let status =
+                        self.finish_expanded_command::<OBSERVED>(&command, delivery_expanded);
+                    *destination = Some(command);
+                    return Ok(status);
                 }
                 ExpandedCommandAction::EndTemplate => {
-                    let hot_command = command
-                        .as_mut()
-                        .expect("resident delivery initializes the hot command");
-                    if matches!(
-                        hot_command.alignment_adjustment(),
+                    let status = if matches!(
+                        command.alignment_adjustment(),
                         crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
                     ) {
-                        break DeliveryStatus::AlignmentEndTemplate;
-                    }
-                    hot_command.convert_end_template_to_endv(self.state.frozen_endv_token());
-                    break self.finish_expanded_command(hot_command, delivery_expanded);
+                        DeliveryStatus::AlignmentEndTemplate
+                    } else {
+                        command.convert_end_template_to_endv(self.state.frozen_endv_token());
+                        self.finish_expanded_command::<OBSERVED>(&command, delivery_expanded)
+                    };
+                    *destination = Some(command);
+                    return Ok(status);
                 }
                 ExpandedCommandAction::Expand(ExpansionDispatch::Macro) => {
-                    delivery_expanded = true;
-                    if let Err(failure) = self.expand_hot_definition_action(
-                        &mut command,
-                        &mut reader,
-                        ExpansionDispatch::Macro,
-                    ) {
-                        return self.fail_hot_expanded_delivery(destination, depth, failure);
-                    }
+                    self.expand_hot_definition_action(&mut command, ExpansionDispatch::Macro)?;
                 }
                 ExpandedCommandAction::Expand(ExpansionDispatch::Undefined) => {
-                    delivery_expanded = true;
-                    if let Err(failure) = self.expand_hot_definition_action(
-                        &mut command,
-                        &mut reader,
-                        ExpansionDispatch::Undefined,
-                    ) {
-                        return self.fail_hot_expanded_delivery(destination, depth, failure);
-                    }
+                    self.expand_hot_definition_action(&mut command, ExpansionDispatch::Undefined)?;
                 }
                 ExpandedCommandAction::Expand(ExpansionDispatch::Primitive(primitive)) => {
-                    delivery_expanded = true;
-                    let result = if let Some(kind) =
+                    if let Some(kind) =
                         crate::conditionals::ConditionalKind::from_primitive(primitive)
                     {
-                        let hot_command = command
-                            .as_ref()
-                            .expect("resident delivery initializes the hot command");
-                        self.trace_hot_conditional(hot_command);
-                        // The conditional stack owns the opener's semantic
-                        // identity. Consume the compact delivery before the
-                        // recursive operand scan so no command-sized local is
-                        // retained at each waiting level.
-                        command.take();
-                        self.expand_conditional_occupied(primitive, kind)
+                        self.trace_hot_conditional(&command);
+                        self.expand_conditional_occupied(primitive, kind)?;
                     } else {
-                        let hot_command = command
-                            .as_mut()
-                            .expect("resident delivery initializes the hot command");
-                        self.expand_compact_occupied(hot_command, primitive, true)
-                    };
-                    if let Err(failure) = result {
-                        return self.fail_hot_expanded_delivery(destination, depth, failure);
+                        self.expand_compact_occupied(&mut command, primitive, true)?;
                     }
-                    command.take();
-                    reader.invalidate();
                 }
             }
-        };
-        debug_assert_eq!(
-            self.command.transient.active_expansion_depth, active_depth,
-            "expanded delivery balances its depth"
-        );
-        self.command.transient.active_expansion_depth = depth;
-        if matches!(
-            status,
-            DeliveryStatus::End | DeliveryStatus::ReplayCompleted(_) | DeliveryStatus::CharacterRun
-        ) {
-            command.take();
-        } else {
-            *destination = command.take();
+            delivery_expanded = true;
+            let status = self.fetch_hot::<OBSERVED>(destination)?;
+            if !matches!(status, DeliveryStatus::Command) {
+                return Ok(status);
+            }
+            command = destination.take().expect("raw fetch owns a command");
+            action = classify_hot_command(&command);
         }
-        Ok(status)
     }
 
     /// Keeps macro-definition and undefined-control-sequence handling out of
@@ -1187,13 +606,9 @@ impl<G> CommandProcessor<'_, '_, G> {
     #[inline(never)]
     fn expand_hot_definition_action(
         &mut self,
-        command: &mut Option<HotCommand<G>>,
-        reader: &mut ResidentFrameReader,
+        hot_command: &mut HotCommand<G>,
         action: ExpansionDispatch,
     ) -> Result<(), CommandError> {
-        let hot_command = command
-            .as_mut()
-            .expect("definition expansion requires an admitted hot command");
         match action {
             ExpansionDispatch::Macro => {
                 #[cfg(feature = "profiling")]
@@ -1210,12 +625,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                         failure => return Err(failure),
                     }
                 }
-                command.take();
-                reader.invalidate();
             }
             ExpansionDispatch::Undefined => {
                 self.expand_undefined_hot(hot_command, true)?;
-                command.take();
             }
             ExpansionDispatch::Primitive(_) => {
                 return Err(CommandError::input_invariant());
@@ -1277,8 +689,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         debug_assert!(destination.is_none());
         self.invalidate_delivery_freshness();
         let mut command = None;
-        let mut reader = ResidentFrameReader::new();
-        reader.refresh(self.command);
+
         let mut consumed_characters = false;
         #[cfg(feature = "profiling")]
         let mut character_run_count = 0_u32;
@@ -1286,7 +697,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let mut character_run_kind = None;
 
         loop {
-            let selected = self.read_selected_resident_word(reader)?;
+            let selected = self.read_resident_word();
             if matches!(selected, ResidentWordRead::NoResident) {
                 if consumed_characters {
                     self.invalidate_delivery_freshness();
@@ -1303,7 +714,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 {
                     return Ok(status);
                 }
-                reader.refresh(self.command);
+
                 continue;
             }
 
@@ -1343,7 +754,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 {
                     return Ok(status);
                 }
-                reader.refresh(self.command);
+
                 continue;
             }
             if !matches!(selected, ResidentWordRead::Word { .. }) {
@@ -1361,7 +772,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 {
                     return Ok(status);
                 }
-                reader.refresh(self.command);
+
                 continue;
             }
             let is_character = matches!(
@@ -2469,9 +1880,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         Err(failure)
     }
 
-    #[cold]
-    #[inline(never)]
-    fn transition_source_input_frame(
+    /// Reads a token from the live source frame; only refill, EOF and recovery
+    /// leave through the cold input-transition handler.
+    fn advance_source_token(
         &mut self,
         resident_index: usize,
         command: &mut Option<HotCommand<G>>,
@@ -2576,6 +1987,15 @@ impl<G> CommandProcessor<'_, '_, G> {
                     command_state.delivery_mode.scanner_active(),
                     resolution.meaning_lookup(),
                     crate::fuel::RawDeliveryKind::Source,
+                );
+                // Source bytes have no resident-token predecessor. Publish
+                // their exact pre-advance coordinate here, so stored delivery
+                // does not branch on the source role during settlement.
+                self.readmit_delivery_stamp(
+                    command
+                        .as_ref()
+                        .expect("source delivery owns a command")
+                        .delivery_stamp(),
                 );
                 Ok(ResidentColdOutcome::Synthetic {
                     literal_catcode: resolution.literal_catcode(),
@@ -2789,9 +2209,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.invalidate_delivery_freshness();
         let cold = match transition {
             InputFrameTransition::Boundary(boundary) => boundary,
-            InputFrameTransition::Source { resident_index } => {
-                return self.transition_source_input_frame(resident_index, command);
-            }
             InputFrameTransition::ResidentExhausted {
                 resident_index,
                 identity,
@@ -3002,7 +2419,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// loops.
     #[cold]
     #[inline(never)]
-    fn settle_exceptional_delivery(
+    fn settle_exceptional_delivery<const OBSERVED: bool>(
         &mut self,
         command: &mut HotCommand<G>,
         suppresses_expandable_control_sequence: bool,
@@ -3024,7 +2441,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         {
             self.command.roots.alignment.classify_delimiter(command);
         }
-        if mode.observing() {
+        if OBSERVED {
             self.observe_resident_hot_command(command);
         }
         Ok(())
@@ -3033,14 +2450,14 @@ impl<G> CommandProcessor<'_, '_, G> {
 
 impl<G> CommandProcessor<'_, '_, G> {
     #[inline(always)]
-    fn finish_expanded_command(
+    fn finish_expanded_command<const OBSERVED: bool>(
         &mut self,
         command: &HotCommand<G>,
         delivery_expanded: bool,
     ) -> DeliveryStatus {
         #[cfg(feature = "profiling")]
         self.record_expanded_delivery();
-        if self.is_observed() {
+        if OBSERVED {
             self.observe_expanded_hot_delivery(command);
         }
         if self

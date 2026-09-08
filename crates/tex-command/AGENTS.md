@@ -147,8 +147,21 @@ collector (see `src/conditionals.rs`).
   one/4,096-round gate counts row accesses, row decodes, final macro-owner
   acquisitions, whole-meaning/command copies, and warmed allocations without
   adding production state or an alternate delivery path.
+- `src/processor/expand/tests/kernel.rs`: nested reader resumption, every
+  bounded fuel cut under observed/unobserved delivery, observer attachment
+  between calls, and live meaning resolution after backup.
+- `src/processor/expand/resident.rs`: directly borrows the exposed semantic
+  input frame and advances its existing physical reader. Input frames own
+  reader state across nesting and rollback; delivery has no parallel cached
+  storage tag or reader invalidation protocol. Source-token delivery enters
+  the normal source reader; only refill, exhaustion, and recovery use cold
+  input transitions.
 - `src/processor/expand.rs`: canonical destination-directed command-delivery
-  loop and static primitive dispatch. Its singular entry keeps one compact hot
+  loop and static primitive dispatch. Raw and expanded consumers share one
+  fetch/settlement kernel; expanded entry consumes its initial classification
+  once before the steady cycle. Observation is specialized once per synchronous
+  delivery call, while scanner/alignment semantics remain live. Source delivery
+  publishes its exceptional freshness coordinate before settlement. Its entry keeps one compact hot
   token/meaning pair across fetch, settlement, classification, macro expansion,
   and return. Raw consumers return after settlement; expanded consumers classify
   and dispatch in that same iterative loop. Macro chains never materialize a

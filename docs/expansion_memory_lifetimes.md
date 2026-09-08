@@ -32,6 +32,11 @@ The older `reachability_owned_values.md` described the deleted region/root
 registry. It is available only in Git history and is not an alternative live
 ownership model.
 
+The input frames themselves own all resumable reader state. Delivery borrows
+one exposed frame at a time without a second storage-selection cache. The
+borrow ends before nesting or retirement; the parent physical cursor remains
+in its semantic row. See [Command delivery kernel](command_delivery_kernel.md).
+
 ## Terms
 
 A **session** is one long-lived editor or batch-engine instance. A **revision

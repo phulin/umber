@@ -18,7 +18,6 @@ impl DeliveryMode {
     const ALIGNMENT: u8 = 1 << 2;
     const TRACING: u8 = 1 << 5;
     const EPISODE: u8 = Self::OBSERVING | Self::TRACING;
-    const SETTLEMENT: u8 = Self::OBSERVING | Self::ALIGNMENT;
 
     #[inline(always)]
     const fn set(&mut self, flag: u8, enabled: bool) {
@@ -57,9 +56,20 @@ impl DeliveryMode {
         suppresses_expandable_control_sequence: bool,
         outer: bool,
     ) -> bool {
-        self.0 & Self::SETTLEMENT != 0
+        self.observing()
+            || self.requires_semantic_settlement(suppresses_expandable_control_sequence, outer)
+    }
+
+    /// Semantic settlement only; observation is selected at delivery entry.
+    #[inline(always)]
+    pub(crate) const fn requires_semantic_settlement(
+        self,
+        suppresses_expandable_control_sequence: bool,
+        outer: bool,
+    ) -> bool {
+        self.alignment_active()
             || suppresses_expandable_control_sequence
-            || (outer && self.0 & Self::SCANNER != 0)
+            || (outer && self.scanner_active())
     }
 
     /// Returns whether persistent delivery state needs settlement after the

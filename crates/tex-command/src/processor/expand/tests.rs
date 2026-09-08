@@ -1,3 +1,5 @@
+mod kernel;
+
 use tex_state::env::AssignmentScope;
 use tex_state::env::banks::IntParam;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, MeaningWord};
