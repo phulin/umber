@@ -316,6 +316,13 @@ that path does not read `.env` and leaves credential storage to rclone. Both
 paths disable rclone's bucket-creation preflight: the release credential needs
 object read/write access, not account-level bucket creation authority.
 
+Staging and local publisher verification do not need R2 credentials. A remote
+publication needs either the three S3 values above or an existing authenticated
+`rclone` profile. The S3 endpoint is
+`https://<R2_S3_ACCOUNT_ID>.r2.cloudflarestorage.com`; the release destination
+is `umber-assets:texlive/texlive-20260301`, and the public verification origin
+is `https://assets.umber.ink/texlive/texlive-20260301`.
+
 Derive the release arguments from the completed staging directory and the
 publisher's `--file-ahash64` result, then run
 `scripts/publish-texlive-r2.sh --dry-run` first. Rerun without `--dry-run` for
@@ -337,6 +344,16 @@ Published prefixes are never overwritten, lifecycle-expired, or deleted while
 any released CLI version pins them. The bucket must therefore have no deletion
 lifecycle rule. Rollback means restoring the previous URL and digest, not
 mutating objects.
+
+After public verification succeeds, rotate the release pins in the same
+change: set `scripts/texlive.py`'s `DEFAULT_ROOT_AHASH64`, update the native
+CLI's default distribution hash alongside `DEFAULT_DISTRIBUTION_URL`, and
+replace `tests/latex-source.lock`'s `distribution_ahash64` after regenerating
+the format and clean-reference receipts that bind that lock. Browser
+deployments receive the same manifest URL and root aHash64 through their
+resolver options. The minimal full-runtime publication does not require
+rebuilding the separate HTML profile; a full browser release additionally
+publishes its schema-9 root and rotates that application pin.
 
 ## CLI user model
 
