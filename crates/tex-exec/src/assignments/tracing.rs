@@ -285,7 +285,7 @@ fn restoration_text<G>(
         // Per-font runtime cells are not eqtb locations and therefore are not
         // operands of e-TeX's `restore_trace(p, ...)` hook.
         (GroupRestorationCell::FontRuntime(_), _) => return None,
-        _ => unreachable!("state restoration receipt preserves cell/value kinds"),
+        _ => unreachable!("state restoration preserves cell/value kinds"),
     };
     Some((name, value, box_value))
 }

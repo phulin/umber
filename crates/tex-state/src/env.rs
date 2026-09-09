@@ -167,7 +167,7 @@ pub(crate) enum StateCell {
     FontRuntime(FontRuntimeCell),
 }
 
-/// One mutable cell named by an in-session group-restoration receipt.
+/// One mutable cell named by an in-session group-restoration diagnostic.
 ///
 /// This is a borrow-free coordinate, not a cold DTO: token, glue, node, and
 /// definition coordinates carried by the matching value remain valid only
@@ -202,7 +202,7 @@ pub enum GroupRestorationFontRuntimeCell {
     LigaturesDisabled(u32),
 }
 
-/// One exact saved or live state word in a group-restoration receipt.
+/// One exact saved or live state word in a group-restoration diagnostic.
 ///
 /// The value is owned and contains no borrow or coarse owner. Generation
 /// coordinates are deliberately retained because the executor consumes the

@@ -123,7 +123,7 @@ the next observation; transient scanner words and unfinished nodes compose
 against it without installing a root. A box-root replacement remains a
 conservative lazy rebuild because the projection owns no second node-lifetime
 registry. Aggregate rollback applies
-its Env restoration receipts while destination owners are still live and
+its Env restoration diagnostics while destination owners are still live and
 before rejected store suffixes are truncated, so non-box rollback is likewise
 O(delta); a restored box root takes the same conservative rebuild path as an
 ordinary box assignment. The projection is neither semantic state nor snapshot
@@ -211,7 +211,7 @@ store.
 
 Box slots live beside the copyable dense metadata as move-only durable
 owner-plus-root carriers. Their reversible journal moves owners through group,
-operation, and checkpoint lanes; cheap restoration receipts expose only copied
+operation, and checkpoint lanes; restoration diagnostics expose only copied
 metadata. The durable region owner, not a packed word or raw coordinate, is the
 lifetime authority.
 Destructive `\box`, `\unhbox`, `\unvbox`, and `\vsplit` updates preserve that
@@ -286,9 +286,9 @@ There is one semantic mutation boundary:
 
 Equal assignments therefore preserve local/global journal entries,
 coalescing, group ownership, and tracing while leaving semantic dependency
-stamps unchanged. Group exit consumes final-value receipts after global
+stamps unchanged. Group exit consumes final-value restorations after global
 compaction; retained and equal restorations do not advance stamps. Rollback
-also reports final restoration receipts, while the aggregate dependency
+also reports final restoration diagnostics, while the aggregate dependency
 snapshot restore remains responsible for restoring non-environment facts and
 monotonic changed-at ancestry. Code-table generations and other coarse
 aggregate keys keep their existing mutation paths.

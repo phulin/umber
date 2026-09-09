@@ -511,7 +511,7 @@ impl<G> CommandGroupPayload<G> {
 
 /// One synchronized state/command group close.
 ///
-/// The restoration receipt is consumed by the executor before it replays the
+/// The restoration diagnostics are consumed by the executor before it replays the
 /// returned `\aftergroup` tokens. Both values are owned and borrow-free, but
 /// remain admitted-generation-local and must not enter a cold summary.
 pub struct CommandGroupExit<G> {

@@ -2364,6 +2364,16 @@ fn tracingrestores_matches_etex_box_save_stack_oracle_cases() {
     // node owners live in the durable box store.
     let cases = [
         (
+            &br"\tracingrestores=1\tracingonline=1{\setbox0=\hbox{}{}\setbox300=\hbox{}}\end"[..],
+            "{restoring \\box300=void}\n{restoring \\box0=void}\n",
+            "{restoring \\box300=void}\n{restoring \\box0=void}\n",
+        ),
+        (
+            &br"\tracingrestores=1\tracingonline=1{\setbox300=\hbox{}{}\setbox0=\hbox{}}\end"[..],
+            "{restoring \\box0=void}\n{restoring \\box300=void}\n",
+            "{restoring \\box0=void}\n{restoring \\box300=void}\n",
+        ),
+        (
             &br"\catcode`\{=1 \catcode`\}=2 \tracingrestores=1\tracingonline=1{\count0=1\setbox0=\hbox{}\count1=2\setbox1=\hbox{}}\end"[..],
             concat!(
                 "{restoring \\box1=void}\n",
