@@ -143,6 +143,7 @@ fn normalize_text(
 
     text = normalize_source_lines(&text, origin == TextOrigin::AdaptedEtex26)?;
 
+    let text = join_wrapped_stack_usage(&text);
     let mut normalized = String::with_capacity(text.len());
     for line in text.split_inclusive('\n') {
         let replacement = normalize_line(line, channel);
@@ -232,6 +233,63 @@ fn replace_glue_set_rounding(line: &str) -> String {
     format!("{}<rounding>{}", &line[..value], &line[end..])
 }
 
+// Capacity values vary by engine and can wrap at TeX's max_print_line.
+// Join only a complete five-field capacity tuple; preserve every other byte.
+fn join_wrapped_stack_usage(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut lines = text.split_inclusive('\n').peekable();
+    while let Some(line) = lines.next() {
+        let Some((_, capacity)) = line.split_once(" stack positions out of ") else {
+            result.push_str(line);
+            continue;
+        };
+        let mut tuple = capacity.trim_end_matches('\n').to_owned();
+        let mut remaining = lines.clone();
+        let mut continuation_count = 0;
+        while !complete_stack_capacities(&tuple) {
+            let Some(next) = remaining.next() else { break };
+            let fragment = next.trim_end_matches('\n');
+            if fragment.is_empty()
+                || !fragment
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || b"inpbs,".contains(&byte))
+            {
+                break;
+            }
+            tuple.push_str(fragment);
+            continuation_count += 1;
+        }
+        if continuation_count > 0 && complete_stack_capacities(&tuple) {
+            result.push_str(line.trim_end_matches('\n'));
+            for _ in 0..continuation_count {
+                result.push_str(
+                    lines
+                        .next()
+                        .expect("validated continuation")
+                        .trim_end_matches('\n'),
+                );
+            }
+            result.push('\n');
+        } else {
+            result.push_str(line);
+        }
+    }
+    result
+}
+
+fn complete_stack_capacities(tuple: &str) -> bool {
+    let mut fields = tuple.split(',');
+    for suffix in ['i', 'n', 'p', 'b', 's'] {
+        let Some(digits) = fields.next().and_then(|field| field.strip_suffix(suffix)) else {
+            return false;
+        };
+        if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+            return false;
+        }
+    }
+    fields.next().is_none()
+}
+
 fn is_final_usage_statistic(line: &str) -> bool {
     let trimmed = line.trim_start();
     [
@@ -276,6 +334,7 @@ pub(super) fn normalize_loaded_log_engine_usage(bytes: &[u8]) -> Result<Vec<u8>,
     if text.contains('\r') {
         return Err("e-TRIP loaded log contains a bare carriage return".into());
     }
+    let text = join_wrapped_stack_usage(text);
     let mut normalized = String::with_capacity(text.len());
     for line in text.split_inclusive('\n') {
         if is_final_usage_statistic(line) {
@@ -529,6 +588,20 @@ mod tests {
             normalize_loaded_log_engine_usage(expected).expect("expected projection"),
             normalize_loaded_log_engine_usage(changed).expect("changed projection")
         );
+    }
+
+    #[test]
+    fn wrapped_stack_capacity_normalization_preserves_surrounding_output() {
+        let expected = b"before\n 10i,15n,8p,141b,78s stack positions out of 200i,40n,60p,500b,600s\n\nafter\n";
+        let actual = b"before\n 10i,15n,8p,141b,78s stack positions out of 10000i,1000n,20000p,200000b,\n200000s\n\nafter\n";
+        assert_eq!(
+            normalize_loaded_log_engine_usage(expected).expect("expected projection"),
+            normalize_loaded_log_engine_usage(actual).expect("actual projection")
+        );
+        let unrelated = "before\n stack positions out of 1i,2n,3p,4b,5s\n200000s\nafter\n";
+        assert_eq!(join_wrapped_stack_usage(unrelated), unrelated);
+        let malformed = " stack positions out of 1i,2n,3p,4b,\nnot a capacity\n";
+        assert_eq!(join_wrapped_stack_usage(malformed), malformed);
     }
 
     #[test]
