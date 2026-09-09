@@ -60,8 +60,9 @@ The final memory capacity and all surrounding text remain exact. The e-TRIP load
 terminal engine-usage lines (string, character, memory, control-sequence,
 font-table, hyphenation, and stack occupancy) to typed labels after the
 official e-TRIP artifact comparator has accepted the same surrounding log.
-Those values describe WEB versus Umber physical storage; the heading, order,
-fonts/pages, and every neighboring byte remain exact. It requires byte-identical final DVI
+Those values describe WEB versus Umber physical storage. The adapter also
+removes Web2C's optional `./` prefix from `etrip.out` file framing. The heading,
+order, fonts/pages, and all other neighboring bytes remain exact. It requires byte-identical final DVI
 against the gitignored, locally generated
 `tests/corpus/e2e/trip.expected.dvi` oracle after normalizing only the preamble
 comment. The two-phase format-image path also asserts through the format schema
