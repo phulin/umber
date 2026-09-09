@@ -349,9 +349,8 @@ impl<G> GroupRestorationEntry<G> {
 
 /// Ordered, borrow-free result of closing one TeX save level.
 ///
-/// This receipt is an admitted in-session handoff, not a serialization or
-/// cold-detachment boundary. Consumers must render it synchronously under the
-/// generation which produced it and before replaying its `\aftergroup` input.
+/// Consumers render these restorations synchronously within the producing
+/// generation, before replaying the group's `\aftergroup` input.
 #[derive(Debug, Eq, PartialEq)]
 pub struct GroupRestorations<G> {
     frame: GroupFrame,

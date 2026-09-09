@@ -214,9 +214,8 @@ pub(crate) struct DurableBoxOperation {
     position: usize,
     loan_position: usize,
     group_position: usize,
-    /// Number of durable saves already owned by the innermost group. TeX82
-    /// §283 rolls back the whole operation suffix, including saves made in
-    /// an existing group.
+    /// Existing saves survive operation rollback; only the newly created
+    /// suffix is retired, preserving TeX82 §283 group restoration.
     group_entry_position: usize,
 }
 
