@@ -2357,6 +2357,92 @@ fn tracingrestores_preserves_dense_and_sparse_register_unsave_order() {
 }
 
 #[test]
+fn tracingrestores_matches_etex_box_save_stack_oracle_cases() {
+    // TeX82 §283 restores the ordinary save stack top-down, while e-TeX
+    // [53a] restores extended registers through the first `restore_sa`
+    // marker. Box registers must retain that same ordering even though their
+    // node owners live in the durable box store.
+    let cases = [
+        (
+            &br"\catcode`\{=1 \catcode`\}=2 \tracingrestores=1\tracingonline=1{\count0=1\setbox0=\hbox{}\count1=2\setbox1=\hbox{}}\end"[..],
+            concat!(
+                "{restoring \\box1=void}\n",
+                "{restoring \\count1=0}\n",
+                "{restoring \\box0=void}\n",
+                "{restoring \\count0=0}\n",
+            ),
+            concat!(
+                "{restoring \\box1=void}\n",
+                "{restoring \\count1=0}\n",
+                "{restoring \\box0=void}\n",
+                "{restoring \\count0=0}\n",
+            ),
+        ),
+        (
+            &br"\catcode`\{=1 \catcode`\}=2 \tracingrestores=1\tracingonline=1{\count300=1\count0=1\setbox301=\hbox{}\count301=2\setbox0=\hbox{}}\end"[..],
+            concat!(
+                "{restoring \\box0=void}\n",
+                "{restoring \\count0=0}\n",
+                "{restoring \\count301=0}\n",
+                "{restoring \\box301=void}\n",
+                "{restoring \\count300=0}\n",
+            ),
+            concat!(
+                "{restoring \\box0=void}\n",
+                "{restoring \\count0=0}\n",
+                "{restoring \\count301=0}\n",
+                "{restoring \\box301=void}\n",
+                "{restoring \\count300=0}\n",
+            ),
+        ),
+        (
+            &br"\catcode`\{=1 \catcode`\}=2 \tracingrestores=1\tracingonline=1{\setbox300=\hbox{}\count0=1\count301=2}\end"[..],
+            concat!(
+                "{restoring \\count0=0}\n",
+                "{restoring \\count301=0}\n",
+                "{restoring \\box300=void}\n",
+            ),
+            concat!(
+                "{restoring \\count0=0}\n",
+                "{restoring \\count301=0}\n",
+                "{restoring \\box300=void}\n",
+            ),
+        ),
+        (
+            &br"\catcode`\{=1 \catcode`\}=2 {\tracingrestores=1\tracingonline=1\setbox25=\hbox{}\tracingassigns=1}\end"[..],
+            concat!(
+                "{restoring \\tracingassigns=0}\n",
+                "{restoring \\box25=void}\n",
+            ),
+            concat!(
+                "{restoring \\tracingassigns=0}\n",
+                "{restoring \\box25=void}\n",
+                "{restoring \\tracingonline=0}\n",
+            ),
+        ),
+    ];
+
+    for (source, expected_terminal, expected_log) in cases {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = etex_initex(stores);
+            register_source(&mut control, source);
+            run_to_end(&mut control, stores);
+            let terminal = restoration_trace_lines(&pending_sink_text(stores, true));
+            let log = restoration_trace_lines(&pending_sink_text(stores, false));
+            assert_eq!(terminal, expected_terminal);
+            assert_eq!(log, expected_log);
+        });
+    }
+}
+
+fn restoration_trace_lines(text: &str) -> String {
+    text.lines()
+        .filter(|line| line.starts_with("{restoring ") || line.starts_with("{retaining "))
+        .map(|line| format!("{line}\n"))
+        .collect()
+}
+
+#[test]
 fn tracingrestores_reports_code_table_restoration_and_retained_globals() {
     for (source, expected) in [
         (
