@@ -1300,11 +1300,14 @@ oracle to every linked worktree.
 
 The manual TeX82 and e-TeX observer scripts publish their reproducible
 diagnostic channels under `target/trip-observer-output/<trip|etrip>/`. They do
-not write the lock-verified conformance inputs under `target/trip-oracles/`, so
-running either observer repeatedly leaves a subsequent worktree provision
-verification unchanged. The observer ownership self-test proves this with a
-synthetic sealed input and two atomic generated publications; it does not add a
-second conformance verdict.
+not write the lock-verified conformance inputs under `target/trip-oracles/`.
+Primary provisioning owns the separate promotion step: it verifies the
+observer channels against `tests/native-test-assets.lock` and atomically copies
+only the locked channels into `target/trip-oracles/`. Running either observer
+manually therefore leaves a subsequent worktree provision verification
+unchanged. The observer ownership self-test proves this with a synthetic
+sealed input and two atomic generated publications; it does not add a second
+conformance verdict.
 
 ## External Document Corpus
 
@@ -1318,6 +1321,11 @@ banner normalization.
 `--sync-corpus` to fetch or verify those inputs under gitignored
 `third_party/corpus/`, then acquires the
 remaining local support files and generates all four end-to-end DVI oracles.
+For a primary checkout it also runs the TeX82 and e-TRIP observer workflows;
+those workflows write generated diagnostics under
+`target/trip-observer-output/`, after which provisioning verifies each locked
+SHA-256 and atomically promotes the required channels into
+`target/trip-oracles/` for linked-worktree copies.
 `fixturegen --reference-dvi` directly owns the manifest-bound reference
 staging, deterministic invocation, hash check, and atomic publication. The
 feature-enabled parity command delegates its live reference half to that same

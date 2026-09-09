@@ -28,6 +28,7 @@ ORACLE_BUILDERS = {
     "etex26": "build-etex26-oracle.sh",
     "pdftex14029": "build-pdftex14029-oracle.sh",
 }
+TRIP_OBSERVERS = ("test-tex82-trip-observer.sh", "test-etex26-trip-observer.sh")
 
 
 class ProvisionError(Exception):
@@ -159,6 +160,43 @@ def _download_trip_inputs(repo_root: Path, offline: bool) -> None:
             )
 
 
+def _primary_asset_environment(repo_root: Path, target_dir: Path) -> dict[str, str]:
+    """Return the environment with pinned source configuration for fixture generation."""
+    environment = os.environ.copy()
+    environment["CARGO_TARGET_DIR"] = str(target_dir)
+    # Keep reference TeX's configuration root paired with the exact source
+    # cache used by the canonical oracle builders.  Without this, an isolated
+    # fixture run can fall through to an ambient TeX installation (or fail to
+    # find texmf.cnf at all).
+    source_dir = repo_root / texlive.DEFAULT_SOURCE_CACHE / "src"
+    environment["TEXMFCNF"] = str(source_dir / "texk/kpathsea")
+    return environment
+
+
+def _promote_trip_oracles(repo_root: Path, target_dir: Path) -> None:
+    """Promote verified observer channels into the immutable test namespace."""
+    assets = read_native_asset_lock(repo_root)
+    trip_assets = [
+        (relative, expected)
+        for relative, expected in assets.items()
+        if relative.parts[:2] == ("target", "trip-oracles")
+    ]
+    if not trip_assets:
+        raise ProvisionError(
+            f"{repo_root / NATIVE_ASSET_LOCK}: no locked TRIP oracle assets"
+        )
+
+    verified: list[tuple[Path, Path, str]] = []
+    for relative, expected in trip_assets:
+        observer_relative = Path("target/trip-observer-output").joinpath(*relative.parts[2:])
+        source = _asset_destination(repo_root, observer_relative, target_dir)
+        destination = _asset_destination(repo_root, relative, target_dir)
+        _verify_native(source, expected, "generated TRIP observer asset")
+        verified.append((source, destination, expected))
+    for source, destination, expected in verified:
+        _copy_native(source, destination, expected)
+
+
 def _materialize_conformance(
     repo_root: Path,
     target_dir: Path,
@@ -215,8 +253,7 @@ def _generate_primary_assets(
 ) -> None:
     _materialize_conformance(repo_root, target_dir, offline, runtime_source)
     _download_trip_inputs(repo_root, offline)
-    environment = os.environ.copy()
-    environment["CARGO_TARGET_DIR"] = str(target_dir)
+    environment = _primary_asset_environment(repo_root, target_dir)
     _run(
         [
             "cargo",
@@ -243,6 +280,9 @@ def _generate_primary_assets(
             repo_root,
             environment,
         )
+    for observer in TRIP_OBSERVERS:
+        _run([str(repo_root / "scripts" / observer)], repo_root, environment)
+    _promote_trip_oracles(repo_root, target_dir)
 
 
 def provision_worktree(

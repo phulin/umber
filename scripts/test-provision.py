@@ -202,6 +202,54 @@ def main() -> None:
         )
         expect_error(lambda: provision._download_trip_inputs(root, False), "unsafe")
 
+        # Primary fixture generation must use the source tree selected by the
+        # pinned oracle builder for kpathsea configuration, regardless of any
+        # ambient TEXMFCNF value supplied by the caller.
+        primary_environment = provision._primary_asset_environment(
+            root, root / "target"
+        )
+        assert primary_environment["CARGO_TARGET_DIR"] == str(root / "target")
+        assert primary_environment["TEXMFCNF"] == str(
+            root / "third_party/texlive-source/src/texk/kpathsea"
+        )
+
+        observer_channels = ("command.jsonl", "geometry.jsonl", "terminal.txt", "log")
+        native_assets = []
+        for fixture in ("trip", "etrip"):
+            for phase in ("initex", "format-loaded"):
+                for channel in observer_channels:
+                    relative_name = (
+                        f"{phase}.log" if channel == "log" else f"{phase}-{channel}"
+                    )
+                    relative = f"target/trip-oracles/{fixture}/{relative_name}"
+                    payload = f"{fixture}/{relative_name}\n".encode()
+                    source = root / "target/trip-observer-output" / fixture / relative_name
+                    source.parent.mkdir(parents=True, exist_ok=True)
+                    source.write_bytes(payload)
+                    native_assets.append((relative, payload))
+        (tests / "native-test-assets.lock").write_text(
+            "".join(
+                f"{hashlib.sha256(payload).hexdigest()} {relative}\n"
+                for relative, payload in native_assets
+            ),
+            encoding="utf-8",
+        )
+        provision._promote_trip_oracles(root, root / "target")
+        for relative, payload in native_assets:
+            promoted = root / relative
+            assert promoted.read_bytes() == payload
+            assert promoted.stat().st_mode & 0o222 == 0
+        first_relative, first_payload = native_assets[0]
+        first_source = root / "target/trip-observer-output" / Path(first_relative).relative_to(
+            "target/trip-oracles"
+        )
+        first_source.write_bytes(b"wrong observer output\n")
+        expect_error(
+            lambda: provision._promote_trip_oracles(root, root / "target"),
+            "generated TRIP observer asset",
+        )
+        first_source.write_bytes(first_payload)
+
         source_payload = root / "source-payload"
         (source_payload / "texk/web2c").mkdir(parents=True)
         (source_payload / "configure").write_bytes(b"configure\n")

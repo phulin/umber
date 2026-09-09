@@ -568,7 +568,10 @@ python3 scripts/provision.py worktree .
 
 Setup builds `tools/fixturegen` and runs `--sync-corpus`, writing exact fetched support
 inputs and documents to gitignored `third_party/corpus/`, verifies the manifest
-SHA-256 values, and fails clearly on cached or fetched hash drift. Manifest
+SHA-256 values, and fails clearly on cached or fetched hash drift. In the primary
+checkout, it also runs the TeX82 and e-TRIP observer workflows and promotes only
+their SHA-256-verified channels from `target/trip-observer-output/` into the
+locked `target/trip-oracles/` namespace. Manifest
 entries use `key value` lines; repeated `url` fields are ordered locators, and
 each downloaded candidate must match the entry digest before acceptance.
 Support entries record provenance and licensing;
