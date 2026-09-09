@@ -206,7 +206,7 @@ pub enum GroupRestorationFontRuntimeCell {
 ///
 /// The value is owned and contains no borrow or coarse owner. Generation
 /// coordinates are deliberately retained because the executor consumes the
-/// receipt synchronously under the same [`crate::CommandContext`].
+/// value synchronously under the same [`crate::CommandContext`].
 pub enum GroupRestorationValue<G> {
     Meaning(ResolvedMeaning<G>),
     Integer(i32),
