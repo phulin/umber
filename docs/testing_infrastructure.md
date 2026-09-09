@@ -1254,6 +1254,23 @@ TRIP/e-TRIP file dependencies; it cannot select a directory. Rust tests only
 consume the resulting files and never mutate the checkout to set themselves
 up.
 
+When the hosted snapshot root pin is not yet published, primary setup can use
+the independently authenticated release-runtime tree:
+
+```bash
+python3 scripts/provision.py runtime-source \
+  --mirror https://ftp.math.utah.edu/pub/tex/historic/systems/texlive/2026/ \
+  --mirror https://mirrors.ibiblio.org/pub/mirrors/CTAN/systems/texlive/Images/
+python3 scripts/provision.py worktree . \
+  --runtime-source third_party/texlive-20260301-texmf
+```
+
+The explicit source path verifies the snapshot lock's selected runtime files
+before staging the conformance lock's exact SHA-256 records. The preceding
+`runtime-source` command authenticates the release archive, package database,
+and runtime source; this local path does not create a hosted distribution or
+require R2 credentials.
+
 `crates/umber/tests/it/e2e_conformance/assets.rs`'s `with_gate` remains the
 single gate choke point, so an absent oracle cannot be confused with a passing
 gate. Its failure points linked worktrees at `provision.py worktree`. When the

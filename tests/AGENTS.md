@@ -467,7 +467,21 @@ requires registering a fifth gate. See "End-to-End Conformance Gate Contract"
 in `docs/testing_infrastructure.md`. Run
 `python3 scripts/provision.py worktree .` in the primary checkout to acquire
 the pinned third-party inputs and generate all four oracles with the
-instrumented pdfTeX 1.40.29 build. The
+instrumented pdfTeX 1.40.29 build. If the hosted snapshot root pin is not yet
+published, provision the independently authenticated release runtime first,
+then pass its root explicitly to primary setup:
+
+```bash
+python3 scripts/provision.py runtime-source \
+  --mirror https://ftp.math.utah.edu/pub/tex/historic/systems/texlive/2026/ \
+  --mirror https://mirrors.ibiblio.org/pub/mirrors/CTAN/systems/texlive/Images/
+python3 scripts/provision.py worktree . \
+  --runtime-source third_party/texlive-20260301-texmf
+```
+
+The explicit source path verifies the snapshot lock's selected runtime files
+and then stages the conformance lock's exact SHA-256 records; it does not
+create a hosted distribution or require R2 credentials. The
 script delegates regeneration to `scripts/regen-fixtures.sh`; TRIP uses its
 two-phase pdfTeX workload and never copies `third_party/trip/trip.dvi`.
 e-TRIP reuses the pinned `trip.tfm` directly and requires exact DVI parity;

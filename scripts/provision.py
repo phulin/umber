@@ -159,15 +159,61 @@ def _download_trip_inputs(repo_root: Path, offline: bool) -> None:
             )
 
 
-def _materialize_conformance(repo_root: Path, target_dir: Path, offline: bool) -> None:
-    snapshot = target_dir / "texlive-snapshot"
+def _materialize_conformance(
+    repo_root: Path,
+    target_dir: Path,
+    offline: bool,
+    runtime_source: Path | None = None,
+) -> None:
     lock = repo_root / CONFORMANCE_TEXLIVE_LOCK
-    texlive.materialize_snapshot(snapshot, lock_paths=(lock,), offline=offline)
-    texlive.stage_runtime_sources(snapshot, lock, repo_root)
+    if runtime_source is None:
+        snapshot = target_dir / "texlive-snapshot"
+        texlive.materialize_snapshot(snapshot, lock_paths=(lock,), offline=offline)
+        texlive.stage_runtime_sources(snapshot, lock, repo_root)
+        return
+
+    if runtime_source.is_symlink():
+        raise ProvisionError(
+            "worktree --runtime-source must name a regular TeX Live runtime "
+            f"root, not a symlink: {runtime_source}"
+        )
+    runtime_root = runtime_source.resolve()
+    runtime_texmf = runtime_root / "texmf-dist"
+    if not runtime_root.is_dir() or not runtime_texmf.is_dir() or runtime_texmf.is_symlink():
+        raise ProvisionError(
+            "worktree --runtime-source must name a regular TeX Live runtime "
+            f"root containing texmf-dist: {runtime_root}"
+        )
+    try:
+        snapshot_lock = repo_root / SNAPSHOT_LOCK
+        distribution, _ = texlive.verify_runtime_tree(runtime_texmf, snapshot_lock)
+        expected_distribution = ""
+        for number, raw_line in enumerate(lock.read_text(encoding="utf-8").splitlines(), 1):
+            fields = raw_line.split()
+            if fields and fields[0] == "distribution" and len(fields) == 2:
+                if expected_distribution:
+                    raise ProvisionError(f"{lock}:{number}: duplicate distribution record")
+                expected_distribution = fields[1]
+        if not expected_distribution:
+            raise ProvisionError(f"{lock}: missing distribution record")
+        if distribution != expected_distribution:
+            raise ProvisionError(
+                f"runtime source distribution {distribution} differs from {lock}"
+            )
+        texlive.stage_runtime_sources(runtime_root, lock, repo_root)
+    except texlive.TexliveError as error:
+        raise ProvisionError(
+            f"explicit runtime source failed its pinned conformance checks: {error}"
+        ) from error
 
 
-def _generate_primary_assets(repo_root: Path, target_dir: Path, offline: bool) -> None:
-    _materialize_conformance(repo_root, target_dir, offline)
+def _generate_primary_assets(
+    repo_root: Path,
+    target_dir: Path,
+    offline: bool,
+    runtime_source: Path | None = None,
+) -> None:
+    _materialize_conformance(repo_root, target_dir, offline, runtime_source)
     _download_trip_inputs(repo_root, offline)
     environment = os.environ.copy()
     environment["CARGO_TARGET_DIR"] = str(target_dir)
@@ -200,7 +246,10 @@ def _generate_primary_assets(repo_root: Path, target_dir: Path, offline: bool) -
 
 
 def provision_worktree(
-    path: Path, target_dir: Path | None = None, offline: bool = False
+    path: Path,
+    target_dir: Path | None = None,
+    offline: bool = False,
+    runtime_source: Path | None = None,
 ) -> int:
     repo_root = texlive.repository_root(path)
     if target_dir is not None:
@@ -220,7 +269,12 @@ def provision_worktree(
         return 0
     primary = texlive.primary_checkout(repo_root)
     if primary == repo_root:
-        _generate_primary_assets(repo_root, target_dir or repo_root / "target", offline)
+        _generate_primary_assets(
+            repo_root,
+            target_dir or repo_root / "target",
+            offline,
+            runtime_source,
+        )
         for relative, expected in missing:
             _verify_native(
                 _asset_destination(repo_root, relative, target_dir),
@@ -506,6 +560,11 @@ def parse_args(arguments: list[str] | None = None) -> argparse.Namespace:
     worktree = commands.add_parser("worktree", help="provision primary or linked-worktree tests")
     worktree.add_argument("path", type=Path)
     worktree.add_argument("--target-dir", type=Path)
+    worktree.add_argument(
+        "--runtime-source",
+        type=Path,
+        help="explicit authenticated TeX Live runtime root containing texmf-dist",
+    )
     worktree.add_argument("--offline", action="store_true")
     materialize = commands.add_parser(
         "materialize", help="materialize a metadata-complete execution mirror"
@@ -558,7 +617,12 @@ def main(arguments: list[str] | None = None) -> int:
             f"sha256={identity['sha256']} bytes={identity['bytes']}"
         )
     elif args.command == "worktree":
-        copied = provision_worktree(args.path, args.target_dir, args.offline)
+        copied = provision_worktree(
+            args.path,
+            args.target_dir,
+            args.offline,
+            args.runtime_source,
+        )
         print(f"provision: PASS: {copied} asset(s) provisioned into {repo_root}")
     elif args.command == "materialize":
         result = texlive.materialize_snapshot(

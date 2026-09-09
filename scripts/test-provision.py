@@ -288,6 +288,56 @@ def main() -> None:
         assert (runtime_root / "texmf-dist/tex/locked.tex").read_bytes() == locked_runtime
         parsed = provision.parse_args(["runtime-source", "--mirror", base])
         assert parsed.command == "runtime-source" and parsed.mirror == [base]
+        parsed = provision.parse_args(
+            ["worktree", str(root), "--runtime-source", str(runtime_root)]
+        )
+        assert parsed.command == "worktree" and parsed.runtime_source == runtime_root
+
+        # Primary conformance setup must remain usable before the hosted
+        # schema-8 root has been published.  It may stage only from the
+        # authenticated runtime source, and must still enforce the selective
+        # conformance lock for every copied file.
+        conformance_lock = tests / "conformance-texlive.lock"
+        conformance_lock.write_text(
+            "distribution fixture-runtime\n"
+            f"source tex tex/locked.tex {len(locked_runtime)} "
+            f"{hashlib.sha256(locked_runtime).hexdigest()} third_party/locked.tex\n",
+            encoding="utf-8",
+        )
+        staged_conformance = root / "staged-conformance"
+        provision._materialize_conformance(
+            root, staged_conformance, False, runtime_source=runtime_root
+        )
+        assert (root / "third_party/locked.tex").read_bytes() == locked_runtime
+
+        (runtime_root / "texmf-dist/tex/locked.tex").write_bytes(b"corrupt\n")
+        expect_error(
+            lambda: provision._materialize_conformance(
+                root, staged_conformance, False, runtime_source=runtime_root
+            ),
+            "snapshot source",
+        )
+        (runtime_root / "texmf-dist/tex/locked.tex").write_bytes(locked_runtime)
+        runtime_tree_lock.write_text(
+            "distribution another-runtime\n"
+            "tree_ahash64 0123456789abcdef\n"
+            f"source tex/locked.tex {len(locked_runtime)} "
+            f"{hashlib.sha256(locked_runtime).hexdigest()}\n",
+            encoding="utf-8",
+        )
+        expect_error(
+            lambda: provision._materialize_conformance(
+                root, staged_conformance, False, runtime_source=runtime_root
+            ),
+            "differs from",
+        )
+        runtime_tree_lock.write_text(
+            "distribution fixture-runtime\n"
+            "tree_ahash64 0123456789abcdef\n"
+            f"source tex/locked.tex {len(locked_runtime)} "
+            f"{hashlib.sha256(locked_runtime).hexdigest()}\n",
+            encoding="utf-8",
+        )
 
         texmf_dist = root / "texmf-dist"
         (texmf_dist / "tex/latex-dev/base").mkdir(parents=True)
