@@ -15,8 +15,11 @@ publisher="${PUBLISHER:-$repo_root/tools/texlive-wasm-publish/target/release/tex
 transfers=8
 checkers=16
 retries=5
-expected_objects=152560
-expected_bytes=3520195192
+# These values are release-specific. Keep them unset until the staged bundle
+# has been built under the current shard policy; historical totals must never
+# silently authorize a new publication.
+expected_objects=""
+expected_bytes=""
 expected_manifest_ahash64=""
 successor_base=""
 successor_base_ahash64=""
@@ -44,9 +47,9 @@ options:
   --checkers N                  concurrent remote checks (default: 16)
   --retries N                   high-level retry attempts (default: 5)
   --dry-run                     validate and show rclone's transfer plan only
-  --expected-objects N          exact staged/remote object count
-  --expected-bytes N            exact staged/remote object bytes
-  --expected-manifest-ahash64 H  exact manifest digest
+  --expected-objects N          exact staged/remote object count (required)
+  --expected-bytes N            exact staged/remote object bytes (required)
+  --expected-manifest-ahash64 H  exact manifest digest (required)
   --successor-base PATH         authenticated root/shards reused by a sparse successor
   --successor-base-ahash64 H     exact immutable base root digest
   --manifest-name NAME          unique schema-8 root key for a sparse successor
@@ -149,6 +152,8 @@ fi
 positive_integer "$transfers" || fail "--transfers must be a positive integer"
 positive_integer "$checkers" || fail "--checkers must be a positive integer"
 positive_integer "$retries" || fail "--retries must be a positive integer"
+[[ -n "$expected_objects" ]] || fail "--expected-objects is required; derive it from the verified staging bundle"
+[[ -n "$expected_bytes" ]] || fail "--expected-bytes is required; derive it from the verified staging bundle"
 positive_integer "$expected_objects" || fail "--expected-objects must be a positive integer"
 positive_integer "$expected_bytes" || fail "--expected-bytes must be a positive integer"
 [[ "$expected_manifest_ahash64" =~ ^[0-9a-f]{16}$ ]] || fail "invalid expected manifest aHash64; the default is unpublished pending umber2-66p0.27"

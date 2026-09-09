@@ -300,10 +300,12 @@ builder. Do not introduce a custom Worker or multipart upload service for this
 path.
 
 The production command is `scripts/publish-texlive-r2.sh`. Its checked-in
-defaults pin the verified 8-bit-sharded `texlive-20260301` staging bundle,
-bucket `umber-assets`, public origin `https://assets.umber.ink`, 152,560
-objects, 3,520,195,192 object bytes, and `manifest-v3.json` aHash64
-`43a31da364e4607957a38da10dabff227657d607d1845d502204adfd5d002e4b`.
+defaults select the immutable `texlive/texlive-20260301` prefix, bucket
+`umber-assets`, and public origin `https://assets.umber.ink`. The exact object
+count, object bytes, and schema-8 root aHash64 are release outputs and must be
+passed explicitly after the staged bundle has been verified; the script keeps
+them unset so totals from the retired 8-bit or schema-3 publication cannot
+authorize a current 12-bit release. The root is published as `manifest-v8.json`.
 By default, the ignored repository `.env` must contain `R2_S3_ACCOUNT_ID`,
 `R2_S3_ACCESS_KEY_ID`, and `R2_S3_SECRET_ACCESS_KEY`; the latter two are the R2
 S3 access-key pair, not a Wrangler API token. The script parses only those
@@ -314,8 +316,10 @@ that path does not read `.env` and leaves credential storage to rclone. Both
 paths disable rclone's bucket-creation preflight: the release credential needs
 object read/write access, not account-level bucket creation authority.
 
-Run `scripts/publish-texlive-r2.sh --dry-run` first, then rerun without
-`--dry-run` for publication or after any interruption. The command uses
+Derive the release arguments from the completed staging directory and the
+publisher's `--file-ahash64` result, then run
+`scripts/publish-texlive-r2.sh --dry-run` first. Rerun without `--dry-run` for
+publication or after any interruption. The command uses
 `rclone copy`, never `sync`, so it does not delete older release prefixes or
 extra remote keys. It bounds transfers, checkers, and retries; refuses to
 overwrite a conflicting digest key; checks every staged object against the

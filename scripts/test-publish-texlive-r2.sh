@@ -120,6 +120,19 @@ common=(
   --publisher "$tmp_root/bin/publisher"
 )
 
+if "$repo_root/scripts/publish-texlive-r2.sh" \
+  --staging "$bundle" \
+  --snapshot texlive/test-snapshot \
+  --env-file "$env_file" \
+  --expected-manifest-ahash64 "$manifest_ahash64" \
+  --rclone "$tmp_root/bin/rclone" \
+  --curl "$tmp_root/bin/curl" \
+  --publisher "$tmp_root/bin/publisher" > "$tmp_root/missing-inventory-output" 2>&1; then
+  fail "missing inventory assertions unexpectedly succeeded"
+fi
+grep -q -- '--expected-objects is required' "$tmp_root/missing-inventory-output" || \
+  fail "missing object-count assertion was not diagnosed"
+
 dry_output="$tmp_root/dry-output"
 "$repo_root/scripts/publish-texlive-r2.sh" "${common[@]}" --dry-run > "$dry_output" 2>&1
 grep -q '^copy ' "$log" || fail "dry run did not plan an object copy"
