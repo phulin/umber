@@ -476,7 +476,7 @@ pub(crate) struct SaveJournal<G> {
     /// Reusable scratch for sparse-array records deferred to the restore
     /// marker during one group unwind.  It is journal-owned so repeated
     /// sparse groups reuse its capacity instead of allocating on every exit.
-    sparse_scratch: Vec<Mutation<G>>,
+    sparse_scratch: Vec<(usize, Mutation<G>)>,
     group_capacity_bytes: usize,
     checkpoint_capacity_bytes: usize,
     #[cfg(test)]
@@ -710,11 +710,11 @@ impl<G> SaveJournal<G> {
             .map_or((0, None), |group| (group.entries, group.sparse_start))
     }
 
-    pub(crate) fn take_sparse_scratch(&mut self) -> Vec<Mutation<G>> {
+    pub(crate) fn take_sparse_scratch(&mut self) -> Vec<(usize, Mutation<G>)> {
         std::mem::take(&mut self.sparse_scratch)
     }
 
-    pub(crate) fn return_sparse_scratch(&mut self, mut scratch: Vec<Mutation<G>>) {
+    pub(crate) fn return_sparse_scratch(&mut self, mut scratch: Vec<(usize, Mutation<G>)>) {
         scratch.clear();
         self.sparse_scratch = scratch;
         self.refresh_group_capacity_bytes();
@@ -1234,7 +1234,7 @@ impl<G> SaveJournal<G> {
             .saturating_add(
                 self.sparse_scratch
                     .capacity()
-                    .saturating_mul(core::mem::size_of::<Mutation<G>>()),
+                    .saturating_mul(core::mem::size_of::<(usize, Mutation<G>)>()),
             )
     }
 
@@ -1250,7 +1250,7 @@ impl<G> SaveJournal<G> {
             .saturating_add(
                 self.sparse_scratch
                     .capacity()
-                    .saturating_mul(core::mem::size_of::<Mutation<G>>()),
+                    .saturating_mul(core::mem::size_of::<(usize, Mutation<G>)>()),
             );
     }
 

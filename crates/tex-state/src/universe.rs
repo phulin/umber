@@ -2621,19 +2621,21 @@ impl<G> Universe<G> {
             .map(|root| self.page_region.nodes_mut().copy_page_root_to_durable(root))
             .transpose()
             .map_err(|_| NodePromotionError::Nodes(NodeArenaError::AllocationFailed))?;
-        let current_level = self
+        let state = self
             .core
             .as_ref()
             .ok_or(NodePromotionError::Values(PromotionError::Retired))?
-            .state()
-            .current_level();
+            .state();
+        let current_level = state.current_level();
+        let group_save_position = state.save_stack_order_position();
         self.durable_boxes
-            .assign(
+            .assign_with_group_position(
                 &mut self.page_region.nodes_mut(),
                 index,
                 durable,
                 scope,
                 current_level,
+                group_save_position,
             )
             .map_err(|_| NodePromotionError::Values(PromotionError::AllocationFailed))?;
         Ok(())
@@ -3451,26 +3453,16 @@ impl<G> Universe<G> {
     pub fn end_group(
         &mut self,
         kind: GroupKind,
-    ) -> Result<crate::GroupRestorationReceipt<G>, UniverseError> {
-        let mut receipt = {
-            let core = self.core.as_mut().ok_or(UniverseError::Retired)?;
-            let mut admitted = core.admit_mut()?;
-            let receipt = admitted.state().end_group(kind)?;
-            admitted.end_definition_group();
-            receipt
-        };
-        let trace = self
-            .core
-            .as_ref()
-            .ok_or(UniverseError::Retired)?
-            .state()
-            .group_restoration_trace_state()?;
-        let durable = self
-            .durable_boxes
-            .end_group(&mut self.page_region.nodes_mut(), receipt.frame().level())
-            .map_err(StateError::Bank)?;
-        receipt.append_durable(durable, trace);
-        Ok(receipt)
+    ) -> Result<crate::GroupRestorations<G>, UniverseError> {
+        let core = self.core.as_mut().ok_or(UniverseError::Retired)?;
+        let mut admitted = core.admit_mut()?;
+        let restored = admitted.state().end_group_with_boxes(
+            kind,
+            &mut self.durable_boxes,
+            &mut self.page_region.nodes_mut(),
+        )?;
+        admitted.end_definition_group();
+        Ok(restored)
     }
 
     /// Admits matching coarse owners once for a command episode.

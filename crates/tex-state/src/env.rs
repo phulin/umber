@@ -5,10 +5,11 @@ pub mod banks;
 mod durable_boxes;
 #[path = "env/meaning_bank.rs"]
 mod meaning_bank;
+mod restoration;
 pub use durable_boxes::DurableNodeMetadata;
 pub(crate) use durable_boxes::{
     AcceptedDurableBoxTail, DurableBoxCursor, DurableBoxOperation, DurableBoxState,
-    DurableFormState, DurableGroupRestoration,
+    DurableFormState,
 };
 mod font_runtime;
 #[path = "env/group.rs"]
@@ -170,7 +171,7 @@ pub(crate) enum StateCell {
 ///
 /// This is a borrow-free coordinate, not a cold DTO: token, glue, node, and
 /// definition coordinates carried by the matching value remain valid only
-/// under the admitted generation which produced the receipt.
+/// under the admitted generation which produced the restoration.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GroupRestorationCell {
     Meaning(Symbol),
@@ -190,7 +191,7 @@ pub enum GroupRestorationCell {
     FontRuntime(GroupRestorationFontRuntimeCell),
 }
 
-/// One mutable per-font cell named by a restoration receipt.
+/// One mutable per-font cell named by a restoration diagnostic.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GroupRestorationFontRuntimeCell {
     ParameterCount(u32),
@@ -352,12 +353,12 @@ impl<G> GroupRestorationEntry<G> {
 /// cold-detachment boundary. Consumers must render it synchronously under the
 /// generation which produced it and before replaying its `\aftergroup` input.
 #[derive(Debug, Eq, PartialEq)]
-pub struct GroupRestorationReceipt<G> {
+pub struct GroupRestorations<G> {
     frame: GroupFrame,
     entries: Vec<GroupRestorationEntry<G>>,
 }
 
-impl<G> GroupRestorationReceipt<G> {
+impl<G> GroupRestorations<G> {
     #[must_use]
     pub const fn frame(&self) -> GroupFrame {
         self.frame
@@ -366,24 +367,6 @@ impl<G> GroupRestorationReceipt<G> {
     #[must_use]
     pub fn entries(&self) -> &[GroupRestorationEntry<G>] {
         &self.entries
-    }
-
-    pub(crate) fn append_durable(
-        &mut self,
-        restorations: Vec<DurableGroupRestoration>,
-        trace: GroupRestorationTraceState,
-    ) {
-        self.entries.extend(
-            restorations
-                .into_iter()
-                .map(|restoration| GroupRestorationEntry {
-                    cell: GroupRestorationCell::BoxRegister(restoration.index),
-                    saved: GroupRestorationValue::NodeList(restoration.saved),
-                    live: GroupRestorationValue::NodeList(restoration.live),
-                    outcome: restoration.outcome,
-                    trace,
-                }),
-        );
     }
 }
 
@@ -1754,77 +1737,6 @@ impl<G> DenseState<G> {
         self.journal_mut().record_group_enter(frame);
         self.groups.push(frame);
         Ok(frame)
-    }
-
-    /// Performs TeX82 §283 restoration in exact save-stack order, including
-    /// e-TeX [53a]'s single sparse-array restore marker.
-    pub(crate) fn end_group(
-        &mut self,
-        expected: GroupKind,
-    ) -> Result<GroupRestorationReceipt<G>, StateError> {
-        let frame = *self
-            .groups
-            .last()
-            .ok_or(StateError::GroupMismatch(GroupMismatch::no_group(expected)))?;
-        if frame.kind() != expected {
-            return Err(StateError::GroupMismatch(GroupMismatch::new(
-                expected,
-                frame.kind(),
-            )));
-        }
-
-        let end = self.journal().len();
-        let restoration_count = self.journal().group_entry_count(frame);
-        let mut entries = Vec::new();
-        entries
-            .try_reserve_exact(restoration_count)
-            .map_err(|_| StateError::Bank(BankError::AllocationFailed))?;
-        let start = frame.journal_start as usize;
-        let sparse_marker = self.journal().group_sparse_start(frame);
-        let mut sparse = self.journal_mut().take_sparse_scratch();
-        sparse.clear();
-        // A single direct reverse walk is enough for both ordinary dense saves
-        // and e-TeX sparse saves.  Sparse records are deferred in a small
-        // caller-owned scratch vector so the dense records above the
-        // `restore_sa` boundary retain TeX's ordering without revisiting the
-        // journal range.
-        let replay = (|| -> Result<(), StateError> {
-            for index in (start..end).rev() {
-                let JournalEntry::Mutation(saved) = self.journal().entry(index) else {
-                    continue;
-                };
-                if saved.saved_at() == Some(frame.level) {
-                    if sparse_marker.is_some_and(|marker| {
-                        index >= marker && is_extended_register_cell(saved.cell())
-                    }) {
-                        sparse.push(saved);
-                    } else {
-                        self.restore_group_mutation(saved, &mut entries)?;
-                    }
-                }
-                // The first sparse save is TeX's `restore_sa` boundary.  Once the
-                // reverse walk reaches it, replay the deferred sparse chain before
-                // continuing into older dense saves (which may include
-                // `\tracingrestores` itself).
-                if sparse_marker == Some(index) {
-                    for saved in sparse.drain(..) {
-                        self.restore_group_mutation(saved, &mut entries)?;
-                    }
-                }
-            }
-            // A malformed/stale marker should not strand deferred records.  In
-            // valid state this is empty because the boundary flush above is part
-            // of the same direct reverse walk.
-            for saved in sparse.drain(..) {
-                self.restore_group_mutation(saved, &mut entries)?;
-            }
-            Ok(())
-        })();
-        self.journal_mut().return_sparse_scratch(sparse);
-        replay?;
-        self.groups.pop();
-        self.journal_mut().record_group_exit_with_records(frame);
-        Ok(GroupRestorationReceipt { frame, entries })
     }
 
     fn restore_group_mutation(

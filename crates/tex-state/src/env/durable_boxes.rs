@@ -72,6 +72,9 @@ struct DurableMutation {
     index: u16,
     alternate: Option<DurableOwnerId>,
     alternate_level: u32,
+    /// Position of this save in the shared TeX group-save order. Checkpoint
+    /// and operation inverses do not participate in group restoration.
+    group_save_position: u32,
 }
 
 /// Compact reference into the one durable-owner store. Cells and reversible
@@ -338,6 +341,90 @@ pub(crate) struct DurableGroupRestoration {
     pub(crate) saved: Option<DurableNodeMetadata>,
     pub(crate) live: Option<DurableNodeMetadata>,
     pub(crate) outcome: super::GroupRestorationOutcome,
+}
+
+/// TeX's active box saves during one synchronous unsave. The original
+/// mutation vector remains the only owner; two cursors visit its dense and
+/// sparse subsequences without copying or allocating intermediate records.
+pub(crate) struct BoxUnsave<'a, 'arena> {
+    state: &'a mut DurableBoxState,
+    arena: &'a mut PageMaterialArena<'arena>,
+    group: DurableGroup,
+    retained: Option<DurableGroup>,
+    dense: Option<usize>,
+    sparse: Option<usize>,
+}
+
+impl BoxUnsave<'_, '_> {
+    pub(crate) fn len(&self) -> usize {
+        self.group.entries.len()
+    }
+
+    fn key(&self, index: usize) -> u64 {
+        (u64::from(self.group.entries[index].group_save_position) << 32)
+            | u64::from(u32::try_from(index).expect("box saves fit u32"))
+    }
+
+    pub(crate) fn next_key(&self, sparse: bool) -> Option<u64> {
+        (if sparse { self.sparse } else { self.dense }).map(|index| self.key(index))
+    }
+
+    pub(crate) fn sparse_boundary(&self) -> Option<u64> {
+        self.group
+            .entries
+            .iter()
+            .position(|entry| entry.index > 255)
+            .map(|index| self.key(index))
+    }
+
+    pub(crate) fn restore(&mut self, sparse: bool) -> Result<DurableGroupRestoration, BankError> {
+        let index =
+            if sparse { self.sparse } else { self.dense }.expect("selected box save exists");
+        let mutation = &mut self.group.entries[index];
+        let saved = mutation
+            .alternate
+            .map(|owner| DurableNodeMetadata::from_closure(self.state.owners.owner(owner)));
+        let outcome = if self.state.cell_mut(mutation.index).level == LEVEL_ONE {
+            DurableBoxState::retire_value(
+                &mut self.state.owners,
+                self.arena,
+                mutation.alternate.take(),
+            );
+            super::GroupRestorationOutcome::Retained
+        } else {
+            self.state.install_mutation(
+                self.arena,
+                mutation.index,
+                mutation.alternate.take(),
+                mutation.alternate_level,
+                None,
+                0,
+            )?;
+            super::GroupRestorationOutcome::Restored
+        };
+        let restored = DurableGroupRestoration {
+            index: mutation.index,
+            saved,
+            live: self.state.metadata(mutation.index),
+            outcome,
+        };
+        let next = self.group.entries[..index]
+            .iter()
+            .rposition(|entry| (entry.index > 255) == sparse);
+        if sparse {
+            self.sparse = next;
+        } else {
+            self.dense = next;
+        }
+        Ok(restored)
+    }
+
+    pub(crate) fn finish(mut self) {
+        debug_assert!(self.dense.is_none() && self.sparse.is_none());
+        if let Some(retained) = self.retained.take() {
+            self.state.retained_groups.push(retained);
+        }
+    }
 }
 
 pub(crate) struct DurableBoxState {
@@ -856,6 +943,7 @@ impl DurableBoxState {
                 index: mutation.index,
                 alternate: Self::copy_value(owners, arena, mutation.alternate)?,
                 alternate_level: mutation.alternate_level,
+                group_save_position: mutation.group_save_position,
             });
         }
         Ok(DurableGroup {
@@ -874,6 +962,7 @@ impl DurableBoxState {
         value: Option<DurableOwnerId>,
         level: u32,
         saved_at: Option<u32>,
+        group_save_position: u32,
     ) -> Result<(), BankError> {
         let before = {
             let cell = self.cell_mut(index);
@@ -919,6 +1008,7 @@ impl DurableBoxState {
                 index,
                 alternate,
                 alternate_level: before.1,
+                group_save_position: 0,
             });
             self.checkpoint_stamps.insert(index, self.checkpoint_epoch);
         }
@@ -940,6 +1030,7 @@ impl DurableBoxState {
                     index,
                     alternate,
                     alternate_level: before.1,
+                    group_save_position,
                 });
         }
         if operation_needed {
@@ -947,11 +1038,13 @@ impl DurableBoxState {
                 index,
                 alternate: owner.take().expect("operation owner"),
                 alternate_level: before.1,
+                group_save_position: 0,
             });
         }
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn assign(
         &mut self,
         arena: &mut PageMaterialArena,
@@ -959,6 +1052,18 @@ impl DurableBoxState {
         value: Option<DurableNodeClosure>,
         scope: super::AssignmentScope,
         current_level: u32,
+    ) -> Result<(), BankError> {
+        self.assign_with_group_position(arena, index, value, scope, current_level, 0)
+    }
+
+    pub(crate) fn assign_with_group_position(
+        &mut self,
+        arena: &mut PageMaterialArena,
+        index: u16,
+        value: Option<DurableNodeClosure>,
+        scope: super::AssignmentScope,
+        current_level: u32,
+        group_save_position: u32,
     ) -> Result<(), BankError> {
         let value = value.map(|owner| self.owners.insert(owner));
         let before_level = self.cell(index).map_or(LEVEL_ONE, |cell| cell.level);
@@ -970,7 +1075,7 @@ impl DurableBoxState {
             && current_level != LEVEL_ONE
             && before_level != current_level)
             .then_some(current_level);
-        self.install_mutation(arena, index, value, level, saved_at)
+        self.install_mutation(arena, index, value, level, saved_at, group_save_position)
     }
 
     pub(crate) fn replace(
@@ -981,7 +1086,7 @@ impl DurableBoxState {
     ) -> Result<(), BankError> {
         let value = value.map(|owner| self.owners.insert(owner));
         let level = self.cell(index).map_or(LEVEL_ONE, |cell| cell.level);
-        self.install_mutation(arena, index, value, level, None)
+        self.install_mutation(arena, index, value, level, None, 0)
     }
 
     fn can_take_unique(&self, index: u16) -> bool {
@@ -1027,6 +1132,7 @@ impl DurableBoxState {
                     index,
                     alternate: Some(owner),
                     alternate_level: level,
+                    group_save_position: 0,
                 });
                 self.transfer_loans.push(DurableBoxTransferLoan {
                     mutation_position,
@@ -1074,53 +1180,45 @@ impl DurableBoxState {
         });
     }
 
-    pub(crate) fn end_group(
-        &mut self,
-        arena: &mut PageMaterialArena,
+    pub(crate) fn begin_unsave<'a, 'arena>(
+        &'a mut self,
+        arena: &'a mut PageMaterialArena<'arena>,
         level: u32,
-    ) -> Result<Vec<DurableGroupRestoration>, BankError> {
+    ) -> Result<BoxUnsave<'a, 'arena>, BankError> {
         let group = self.groups.pop().expect("durable group exists");
         assert_eq!(group.level, level);
         let retained = group
             .checkpoint_pinned
             .then(|| Self::copy_group(&mut self.owners, arena, &group))
             .transpose()?;
-        let mut restorations = Vec::with_capacity(group.entries.len());
-        for mut mutation in group.entries.into_iter().rev() {
-            let saved = mutation
-                .alternate
-                .map(|owner| DurableNodeMetadata::from_closure(self.owners.owner(owner)));
-            if self.cell_mut(mutation.index).level == LEVEL_ONE {
-                let live = self.metadata(mutation.index);
-                restorations.push(DurableGroupRestoration {
-                    index: mutation.index,
-                    saved,
-                    live,
-                    outcome: super::GroupRestorationOutcome::Retained,
-                });
-                Self::retire_value(&mut self.owners, arena, mutation.alternate);
-            } else {
-                let restored = mutation.alternate.take();
-                self.install_mutation(
-                    arena,
-                    mutation.index,
-                    restored,
-                    mutation.alternate_level,
-                    None,
-                )?;
-                let live = self.metadata(mutation.index);
-                restorations.push(DurableGroupRestoration {
-                    index: mutation.index,
-                    saved,
-                    live,
-                    outcome: super::GroupRestorationOutcome::Restored,
-                });
-            }
+        let dense = group.entries.iter().rposition(|entry| entry.index <= 255);
+        let sparse = group.entries.iter().rposition(|entry| entry.index > 255);
+        Ok(BoxUnsave {
+            state: self,
+            arena,
+            group,
+            retained,
+            dense,
+            sparse,
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn end_group(
+        &mut self,
+        arena: &mut PageMaterialArena,
+        level: u32,
+    ) -> Result<Vec<DurableGroupRestoration>, BankError> {
+        let mut unsave = self.begin_unsave(arena, level)?;
+        let mut restored = Vec::new();
+        while unsave.dense.is_some() {
+            restored.push(unsave.restore(false)?);
         }
-        if let Some(retained) = retained {
-            self.retained_groups.push(retained);
+        while unsave.sparse.is_some() {
+            restored.push(unsave.restore(true)?);
         }
-        Ok(restorations)
+        unsave.finish();
+        Ok(restored)
     }
 
     pub(crate) fn checkpoint_cursor(&mut self) -> DurableBoxCursor {

@@ -670,7 +670,7 @@ fn later_global_assignment_suppresses_every_applicable_restore() {
 }
 
 #[test]
-fn restoration_receipts_preserve_nested_reverse_order_and_exact_font_outcomes() {
+fn restorations_preserve_nested_reverse_order_and_exact_font_outcomes() {
     let mut state = state();
     let outer_font = FontId::testing_new(7);
     let inner_font = FontId::testing_new(8);

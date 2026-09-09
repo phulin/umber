@@ -29,7 +29,10 @@ use crate::{
 };
 
 const IDENTITY_DOMAIN: &[u8] = b"umber.loaded-format-fixture.v2\0";
-// Version 18 carries Web2C's configured `hyph_size`; version 17 carries TeX82
+// Version 20 carries TeX82 §283 restoration order and §§362/370 file
+// framing order; version 19 carries TeX82 §§379 and 443–444's frozen-relax recovery
+// terminator semantics; version 18 carries Web2C's configured `hyph_size`;
+// version 17 carries TeX82
 // §§259/356/372 hash occupancy; version 10 carries §§125--130
 // allocator-coordinate extents; version 16 carries e-TeX change
 // 17.11's pre-eqtb enhancement reset; version 15 carries tex.web §241's
@@ -45,7 +48,7 @@ const IDENTITY_DOMAIN: &[u8] = b"umber.loaded-format-fixture.v2\0";
 // change. Persistent entries contain both the format image and the evidence
 // produced by that exact construction episode; accepting an entry from an
 // older producer would bypass the current engine entirely.
-const PRODUCER_CONTRACT_VERSION: u32 = 18;
+const PRODUCER_CONTRACT_VERSION: u32 = 20;
 // Version 2 carries the producing source identity on geometry observations.
 const COMMAND_OBSERVATION_SCHEMA_VERSION: u32 = 2;
 

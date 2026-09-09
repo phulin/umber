@@ -32,8 +32,8 @@ use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
 use tex_state::token_show::TokenDisplayState;
 use tex_state::{
-    CommandContext, GroupRestorationCell, GroupRestorationOutcome, GroupRestorationReceipt,
-    GroupRestorationValue, PenaltyArrayKind, TokenListId,
+    CommandContext, GroupRestorationCell, GroupRestorationOutcome, GroupRestorationValue,
+    GroupRestorations, PenaltyArrayKind, TokenListId,
 };
 
 use super::primitives::{dimen_param_name, glue_param_name, int_param_name, tok_param_name};
@@ -126,9 +126,9 @@ fn restoration_control_sequence_text<G>(
 pub(crate) fn trace_group_restorations<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
-    receipt: &GroupRestorationReceipt<G>,
+    restorations: &GroupRestorations<G>,
 ) {
-    for entry in receipt.entries() {
+    for entry in restorations.entries() {
         let trace = entry.trace_state();
         if trace.tracing_restores() <= 0 {
             continue;

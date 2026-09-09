@@ -515,13 +515,13 @@ impl<G> CommandGroupPayload<G> {
 /// returned `\aftergroup` tokens. Both values are owned and borrow-free, but
 /// remain admitted-generation-local and must not enter a cold summary.
 pub struct CommandGroupExit<G> {
-    restorations: tex_state::GroupRestorationReceipt<G>,
+    restorations: tex_state::GroupRestorations<G>,
     aftergroup: Vec<TracedTokenWord>,
 }
 
 impl<G> CommandGroupExit<G> {
     #[must_use]
-    pub fn restorations(&self) -> &tex_state::GroupRestorationReceipt<G> {
+    pub fn restorations(&self) -> &tex_state::GroupRestorations<G> {
         &self.restorations
     }
 

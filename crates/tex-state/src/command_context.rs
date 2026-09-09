@@ -1642,8 +1642,16 @@ impl<'a, G> CommandContext<'a, G> {
             .transpose()
             .map_err(|_| crate::NodePromotionError::Nodes(NodeArenaError::AllocationFailed))?;
         let current_level = self.admitted.state_ref().current_level();
+        let group_save_position = self.admitted.state_ref().save_stack_order_position();
         self.durable_boxes
-            .assign(&mut self.page_nodes, index, durable, scope, current_level)
+            .assign_with_group_position(
+                &mut self.page_nodes,
+                index,
+                durable,
+                scope,
+                current_level,
+                group_save_position,
+            )
             .map_err(|_| crate::NodePromotionError::Values(crate::PromotionError::AllocationFailed))
     }
 
@@ -1683,8 +1691,16 @@ impl<'a, G> CommandContext<'a, G> {
             }
         };
         let current_level = self.admitted.state_ref().current_level();
+        let group_save_position = self.admitted.state_ref().save_stack_order_position();
         self.durable_boxes
-            .assign(&mut self.page_nodes, index, durable, scope, current_level)
+            .assign_with_group_position(
+                &mut self.page_nodes,
+                index,
+                durable,
+                scope,
+                current_level,
+                group_save_position,
+            )
             .map_err(|_| crate::NodePromotionError::Values(crate::PromotionError::AllocationFailed))
     }
 
@@ -1981,27 +1997,26 @@ impl<'a, G> CommandContext<'a, G> {
     pub fn end_group(
         &mut self,
         kind: crate::GroupKind,
-    ) -> Result<crate::GroupRestorationReceipt<G>, StateError> {
-        let mut receipt = self.admitted.state().end_group(kind)?;
+    ) -> Result<crate::GroupRestorations<G>, StateError> {
+        let restored = self.admitted.state().end_group_with_boxes(
+            kind,
+            self.durable_boxes,
+            &mut self.page_nodes,
+        )?;
         self.admitted.end_definition_group();
-        let trace = self.admitted.state_ref().group_restoration_trace_state()?;
-        let durable = self
-            .durable_boxes
-            .end_group(&mut self.page_nodes, receipt.frame().level())?;
-        receipt.append_durable(durable, trace);
         // Closing a save level replays an ordered environment-journal suffix.
         // That timeline mutation cannot be validated from the individual live
         // post-images alone, so an in-flight memo episode must fail closed.
         self.resident
             .dependencies
             .poison(TrackedRegionBarrier::EnvironmentTimelineChange);
-        Ok(receipt)
+        Ok(restored)
     }
 
     /// Opens §245's diagnostic channel with the print controls captured after
     /// one ordered §283 restoration decision.
     ///
-    /// The restoration receipt itself owns no printer or World borrow. The
+    /// Restoration diagnostics own no printer or World borrow. The
     /// executor consumes it synchronously and opens this short-lived channel
     /// only while publishing the matching detached entry.
     pub fn begin_group_restoration_diagnostic<'effects>(

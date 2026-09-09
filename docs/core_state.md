@@ -351,6 +351,16 @@ alignment template delivery and `tex-exec` owns execution-group entry and exit.
 The group-exit boundary also carries the journal walk's ordered old-value
 restore/retain records so `Universe` can render TeX82 §283
 `\tracingrestores` through §245's shared diagnostic selector.
+Scalar values and move-only durable boxes retain separate storage journals,
+but each saved box records its position relative to the scalar save stream.
+One group-exit walk restores both in TeX82 §283 order. Extended registers from
+both stores form one e-TeX `restore_sa` chain at the earliest sparse save,
+including when a box creates that boundary. Two cursors traverse the original
+box mutation vector without copying it; groups without saved boxes retain the
+scalar-only path. Each diagnostic captures the live trace controls at its
+restoration, with no later merge or reconstruction pass. Checkpoints preserve
+the box's save coordinate alongside its move-only owner history; no second
+value owner is introduced.
 An alignment-token accounting error must therefore be repaired before group
 exit, not by redirecting an `Env` restore to a different control sequence.
 

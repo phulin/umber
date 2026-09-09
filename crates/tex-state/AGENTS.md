@@ -99,6 +99,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/env/durable_boxes.rs` and `src/env/durable_boxes/tests.rs`: move-only
   durable node-closure register owners, exact group/operation/checkpoint
   owner swaps, bounded history-preservation copies, and lifecycle tests.
+- `src/env/restoration.rs`: one scalar/box unsave walk in dense save-stack
+  and shared e-TeX sparse-chain order, with live trace controls captured at
+  each restoration and no copying of the box mutation vector.
 - `src/env/font_runtime.rs`: Direct-index generation-owned mutable per-font
   dimensions, character settings, PDF code tables, and ligature state.
 - `src/engine_state.rs`: Read-only execution mode and state projection consumed by expansion-time enquiries.

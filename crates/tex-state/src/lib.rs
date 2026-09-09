@@ -213,8 +213,8 @@ pub use env::{
     AssignmentScope, CodeTableKind, DurableNodeMetadata, FreshParameterBank, FreshParameterDefault,
     FreshParameterInstallError, FreshParameterInstallation, FreshParameterProfile,
     GroupRestorationCell, GroupRestorationEntry, GroupRestorationFontRuntimeCell,
-    GroupRestorationOutcome, GroupRestorationReceipt, GroupRestorationTraceState,
-    GroupRestorationValue, StateError,
+    GroupRestorationOutcome, GroupRestorationTraceState, GroupRestorationValue, GroupRestorations,
+    StateError,
 };
 pub use font::PdfFontCode;
 pub use generation::GenerationBrand;
