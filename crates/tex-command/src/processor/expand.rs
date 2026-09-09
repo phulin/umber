@@ -5,7 +5,7 @@ mod consume;
 mod input;
 mod resident;
 
-use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, ResolvedMeaning};
+use tex_state::meaning::{ExpandablePrimitive, Meaning, ResolvedMeaning};
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
 use crate::command::{CommandClass, DeliveryStamp, HotCommand};
@@ -28,11 +28,6 @@ enum ResidentColdOutcome {
     Word(ResidentWord),
 }
 
-#[derive(Clone, Copy)]
-enum ExpandedUntilMode {
-    Protected,
-    PreserveUndefined,
-}
 #[cfg(test)]
 #[derive(Clone, Copy)]
 enum ResidentStorageKind {
@@ -508,7 +503,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         destination: &mut Option<HotCommand<G>>,
         initial_action: Option<ExpandedCommandAction>,
     ) -> Result<DeliveryStatus, CommandError> {
-        self.expanded_next_hot_with_mode::<false>(destination, initial_action)
+        self.expanded_next_hot_with_mode::<false, false>(destination, initial_action)
     }
 
     #[cold]
@@ -517,10 +512,25 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<HotCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        self.expanded_next_hot_with_mode::<true>(destination, None)
+        self.expanded_next_hot_with_mode::<true, false>(destination, None)
     }
 
-    fn expanded_next_hot_with_mode<const PRESERVE_UNDEFINED: bool>(
+    /// Delivers e-TeX's `get_x_or_protected`: each raw fetch is expanded only
+    /// when it is neither unexpandable nor a protected macro.  The protected
+    /// terminal remains a raw delivery for the caller to back up, so the
+    /// ordinary `get_x_token` expanded observation is never emitted for it.
+    #[cold]
+    #[inline(never)]
+    fn expanded_next_protected(
+        &mut self,
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        let mut hot_destination = destination.take().map(HotCommand::from_current);
+        let result = self.expanded_next_hot_with_mode::<false, true>(&mut hot_destination, None);
+        self.finish_hot_delivery(destination, &mut hot_destination, result)
+    }
+
+    fn expanded_next_hot_with_mode<const PRESERVE_UNDEFINED: bool, const STOP_PROTECTED: bool>(
         &mut self,
         destination: &mut Option<HotCommand<G>>,
         initial_action: Option<ExpandedCommandAction>,
@@ -535,9 +545,15 @@ impl<G> CommandProcessor<'_, '_, G> {
         };
         self.command.transient.active_expansion_depth = active_depth;
         let result = if self.is_observed() {
-            self.expanded_delivery_loop::<true, PRESERVE_UNDEFINED>(destination, initial_action)
+            self.expanded_delivery_loop::<true, PRESERVE_UNDEFINED, STOP_PROTECTED>(
+                destination,
+                initial_action,
+            )
         } else {
-            self.expanded_delivery_loop::<false, PRESERVE_UNDEFINED>(destination, initial_action)
+            self.expanded_delivery_loop::<false, PRESERVE_UNDEFINED, STOP_PROTECTED>(
+                destination,
+                initial_action,
+            )
         };
         debug_assert_eq!(self.command.transient.active_expansion_depth, active_depth);
         self.command.transient.active_expansion_depth = depth;
@@ -879,15 +895,14 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        self.expanded_until(destination, ExpandedUntilMode::Protected)
+        self.expanded_next_protected(destination)
     }
 
     #[cold]
     #[inline(never)]
-    fn expanded_until(
+    fn expanded_until_undefined(
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
-        mode: ExpandedUntilMode,
     ) -> Result<DeliveryStatus, CommandError> {
         loop {
             let status = if destination.is_some() {
@@ -916,28 +931,14 @@ impl<G> CommandProcessor<'_, '_, G> {
             let command = destination
                 .as_ref()
                 .ok_or_else(CommandError::input_invariant)?;
-            let stop = match mode {
-                ExpandedUntilMode::Protected => {
-                    matches!(
-                        command.meaning_ref(),
-                        ResolvedMeaning::Macro { flags, .. }
-                            if flags.contains(MeaningFlags::PROTECTED)
-                    ) || !is_expandable_command(command)
-                }
-                ExpandedUntilMode::PreserveUndefined => matches!(
-                    command.meaning_ref(),
-                    ResolvedMeaning::Static(Meaning::Undefined)
-                ),
-            };
+            let stop = matches!(
+                command.meaning_ref(),
+                ResolvedMeaning::Static(Meaning::Undefined)
+            );
             if stop {
                 return Ok(DeliveryStatus::Command);
             }
-            let result = match mode {
-                ExpandedUntilMode::Protected => self.expanded_next(destination),
-                ExpandedUntilMode::PreserveUndefined => {
-                    self.expanded_next_with_preserved_undefined(destination)
-                }
-            }?;
+            let result = self.expanded_next_with_preserved_undefined(destination)?;
             match result {
                 status @ (DeliveryStatus::End | DeliveryStatus::ReplayCompleted(_)) => {
                     return Ok(status);
@@ -968,7 +969,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<CurrentCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        self.expanded_until(destination, ExpandedUntilMode::PreserveUndefined)
+        self.expanded_until_undefined(destination)
     }
 
     fn x_token_next_with_action(

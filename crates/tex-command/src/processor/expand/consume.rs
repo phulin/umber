@@ -165,12 +165,23 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// The ordinary expansion consumer owns one read/interpret back edge.
     /// A supplied command is a distinct entry boundary, never an optional-slot
     /// choice repeated for each newly read word.
-    pub(super) fn expanded_delivery_loop<const OBSERVED: bool, const PRESERVE_UNDEFINED: bool>(
+    pub(super) fn expanded_delivery_loop<
+        const OBSERVED: bool,
+        const PRESERVE_UNDEFINED: bool,
+        const STOP_PROTECTED: bool,
+    >(
         &mut self,
         destination: &mut Option<HotCommand<G>>,
         initial_action: Option<ExpandedCommandAction>,
     ) -> Result<DeliveryStatus, CommandError> {
         let mut expanded = false;
+        if STOP_PROTECTED
+            && destination.as_ref().is_some_and(|command| {
+                Self::protected_terminal(command, classify_hot_command(command))
+            })
+        {
+            return Ok(DeliveryStatus::Command);
+        }
         if destination.is_some() {
             if let Some(status) =
                 self.consume_supplied_command::<OBSERVED>(destination, initial_action)?
@@ -197,6 +208,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .delivery_mode
                         .requires_semantic_settlement(word.suppress_expandable, meaning.is_outer())
                     && let MeaningWord::Macro { flags, definition } = &meaning.word
+                    && !(STOP_PROTECTED && flags.contains(MeaningFlags::PROTECTED))
                 {
                     let name = meaning
                         .control_sequence
@@ -219,6 +231,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                 command
             };
             let action = classify_hot_command(&command);
+            if STOP_PROTECTED && Self::protected_terminal(&command, action) {
+                *destination = Some(command);
+                return Ok(DeliveryStatus::Command);
+            }
             if PRESERVE_UNDEFINED
                 && matches!(
                     action,
@@ -239,6 +255,22 @@ impl<G> CommandProcessor<'_, '_, G> {
             *destination = Some(command);
             return Ok(status);
         }
+    }
+
+    /// e-TeX's `get_x_or_protected` procedure stops on the first
+    /// unexpandable command or protected macro after every expansion restart.
+    /// The command has already crossed its raw boundary; returning it here
+    /// deliberately skips TeX82's terminal expanded observation.
+    #[inline(always)]
+    fn protected_terminal(command: &HotCommand<G>, action: ExpandedCommandAction) -> bool {
+        matches!(action, ExpandedCommandAction::Return)
+            || matches!(
+                action,
+                ExpandedCommandAction::Expand(ExpansionDispatch::Macro)
+            ) && command
+                .command_word()
+                .flags()
+                .contains(MeaningFlags::PROTECTED)
     }
 
     /// Matching's local storage belongs to macro activation, never to a
