@@ -154,7 +154,8 @@ configure_tools() {
   if [[ ! -f "${web_build_dir}/Makefile" ]]; then
     make -C "$build_dir"
   fi
-  make -C "$web_build_dir" tie tangle web2c/web2c
+  make -C "$web_build_dir" tie tangle
+  make -C "$web_build_dir/web2c" web2c
 }
 
 upstream_changes=(
