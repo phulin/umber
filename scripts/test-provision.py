@@ -483,6 +483,14 @@ def main() -> None:
             "bytes": len(b"reference format\n"),
             "sha256": hashlib.sha256(b"reference format\n").hexdigest(),
         }
+        assert receipt["engine"]["sha256"] == hashlib.sha256(
+            fake_pdftex.read_bytes()
+        ).hexdigest()
+        assert receipt["source"]["distribution"] == "fixture-runtime"
+        assert receipt["source"]["distributionAhash64"] == "0123456789abcdef"
+        assert receipt["source"]["lockSha256"] == hashlib.sha256(
+            format_lock.read_bytes()
+        ).hexdigest()
         assert (
             reference_target / "pdftex14029-reference-format/pdflatex.fmt"
         ).read_bytes() == b"reference format\n"
