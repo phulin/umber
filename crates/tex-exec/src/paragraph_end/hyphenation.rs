@@ -1616,7 +1616,21 @@ impl<'output, 'word, 'projection, 'vectors>
             *self.output_len,
             self.projection.missing_hyphens,
         ) else {
-            return Ok(tex_state::node_arena::PageListId::empty());
+            // TeX82 §914 still reconstitutes hu[l..i] when new_character
+            // cannot supply the hyphen. Only the inserted hyphen is absent.
+            return if through_glyph {
+                reconstitute_branch(
+                    stores,
+                    diagnostic_effects,
+                    &source,
+                    true,
+                    LigatureRightBoundary::Font,
+                    fuel,
+                    tfm_work,
+                )
+            } else {
+                Ok(tex_state::node_arena::PageListId::empty())
+            };
         };
         let fallback = PendingHRunChar::new(previous.font, ch, OriginId::UNKNOWN);
         source.push(PendingHChar {
@@ -2315,95 +2329,97 @@ mod tests {
         // TeX82 §§913--915: pre_break starts at the current segment's `l`,
         // not at hu[1]. With bc -> x and ab-cd, the already linked `a`
         // must not be repeated inside the discretionary's b- branch.
-        crate::test_harness::with_nonstop_plain_universe(|universe| {
-            let mut stores = universe.command_context().expect("test state is admitted");
-            let mut characters = vec![None; 256];
-            for code in *b"-abcdx" {
-                characters[usize::from(code)] = Some(tex_state::font::CharMetrics {
-                    width: Scaled::from_raw(Scaled::UNITY),
-                    height: Scaled::from_raw(0),
-                    depth: Scaled::from_raw(0),
-                    italic_correction: Scaled::from_raw(0),
-                    tag: tex_state::font::CharTag::None,
-                });
-            }
-            characters[usize::from(b'b')]
-                .as_mut()
-                .expect("b exists")
-                .tag = tex_state::font::CharTag::LigKern {
-                program_index: 0,
-                start_index: 0,
-            };
-            let program = vec![tex_fonts::LigKernInstruction {
-                skip_byte: 128,
-                next_char: b'c',
-                command: Some(tex_fonts::LigKernCommand::Ligature(
-                    tex_fonts::LigatureCommand {
-                        replacement: b'x',
-                        delete_current: true,
-                        delete_next: true,
-                        pass_over: 0,
+        for (hyphen, expected_pre) in [(b'-', "b-"), (b'?', "b")] {
+            crate::test_harness::with_nonstop_plain_universe(|universe| {
+                let mut stores = universe.command_context().expect("test state is admitted");
+                let mut characters = vec![None; 256];
+                for code in *b"-abcdx" {
+                    characters[usize::from(code)] = Some(tex_state::font::CharMetrics {
+                        width: Scaled::from_raw(Scaled::UNITY),
+                        height: Scaled::from_raw(0),
+                        depth: Scaled::from_raw(0),
+                        italic_correction: Scaled::from_raw(0),
+                        tag: tex_state::font::CharTag::None,
+                    });
+                }
+                characters[usize::from(b'b')]
+                    .as_mut()
+                    .expect("b exists")
+                    .tag = tex_state::font::CharTag::LigKern {
+                    program_index: 0,
+                    start_index: 0,
+                };
+                let program = vec![tex_fonts::LigKernInstruction {
+                    skip_byte: 128,
+                    next_char: b'c',
+                    command: Some(tex_fonts::LigKernCommand::Ligature(
+                        tex_fonts::LigatureCommand {
+                            replacement: b'x',
+                            delete_current: true,
+                            delete_next: true,
+                            pass_over: 0,
+                        },
+                    )),
+                }];
+                let size = Scaled::from_raw(10 * Scaled::UNITY);
+                let font = stores.intern_font(tex_state::font::LoadedFont::new(
+                    "segment-test",
+                    "segment-test.tfm",
+                    tex_fonts::font_content_hash(b"segment-test"),
+                    0,
+                    size,
+                    size,
+                    vec![Scaled::from_raw(0); 7],
+                    tex_state::font::FontMetrics::new(characters, program, None, None, Vec::new()),
+                ));
+                stores.set_font_hyphen_char(font, i32::from(hyphen));
+                stores.add_hyphenation_exception_for_language(
+                    0,
+                    ExceptionSpec {
+                        word: "abcd".into(),
+                        positions: vec![2],
                     },
-                )),
-            }];
-            let size = Scaled::from_raw(10 * Scaled::UNITY);
-            let font = stores.intern_font(tex_state::font::LoadedFont::new(
-                "segment-test",
-                "segment-test.tfm",
-                tex_fonts::font_content_hash(b"segment-test"),
-                0,
-                size,
-                size,
-                vec![Scaled::from_raw(0); 7],
-                tex_state::font::FontMetrics::new(characters, program, None, None, Vec::new()),
-            ));
-            stores.set_font_hyphen_char(font, i32::from(b'-'));
-            stores.add_hyphenation_exception_for_language(
-                0,
-                ExceptionSpec {
-                    word: "abcd".into(),
-                    positions: vec![2],
-                },
-            );
-            for parameter in [IntParam::LEFT_HYPHEN_MIN, IntParam::RIGHT_HYPHEN_MIN] {
-                stores
-                    .assign_int_param(parameter, 1, tex_state::AssignmentScope::Global)
-                    .expect("hyphen minimum");
-            }
-            let source = hyphenation_source(&mut stores, font);
-            let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
-            let mut scratch = crate::mode::HorizontalModeScratch::default();
-            let mut fuel = tex_command::CommandFuelLedger::new(10_000).expect("bounded fuel");
-            let result = hyphenated_hlist_with_fuel(
-                &mut stores,
-                &mut effects,
-                source,
-                &mut scratch,
-                fuel.fuel_mut(),
-            )
-            .expect("ligature reconstitution");
-            for list in [result.semantic, result.physical] {
-                let nodes = stores.page_nodes(list).expect("hyphenated list");
-                let branches: Vec<_> = nodes
-                    .iter()
-                    .filter_map(|node| match node {
-                        tex_state::NodeView::Disc { pre, .. } => Some(pre),
-                        _ => None,
-                    })
-                    .collect();
-                assert_eq!(branches.len(), 1);
-                let pre: String = stores
-                    .page_nodes(branches[0])
-                    .expect("pre-break branch")
-                    .iter()
-                    .filter_map(|node| match node {
-                        tex_state::NodeView::Char { ch, .. } => Some(ch),
-                        _ => None,
-                    })
-                    .collect();
-                assert_eq!(pre, "b-");
-            }
-        });
+                );
+                for parameter in [IntParam::LEFT_HYPHEN_MIN, IntParam::RIGHT_HYPHEN_MIN] {
+                    stores
+                        .assign_int_param(parameter, 1, tex_state::AssignmentScope::Global)
+                        .expect("hyphen minimum");
+                }
+                let source = hyphenation_source(&mut stores, font);
+                let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+                let mut scratch = crate::mode::HorizontalModeScratch::default();
+                let mut fuel = tex_command::CommandFuelLedger::new(10_000).expect("bounded fuel");
+                let result = hyphenated_hlist_with_fuel(
+                    &mut stores,
+                    &mut effects,
+                    source,
+                    &mut scratch,
+                    fuel.fuel_mut(),
+                )
+                .expect("ligature reconstitution");
+                for list in [result.semantic, result.physical] {
+                    let nodes = stores.page_nodes(list).expect("hyphenated list");
+                    let branches: Vec<_> = nodes
+                        .iter()
+                        .filter_map(|node| match node {
+                            tex_state::NodeView::Disc { pre, .. } => Some(pre),
+                            _ => None,
+                        })
+                        .collect();
+                    assert_eq!(branches.len(), 1);
+                    let pre: String = stores
+                        .page_nodes(branches[0])
+                        .expect("pre-break branch")
+                        .iter()
+                        .filter_map(|node| match node {
+                            tex_state::NodeView::Char { ch, .. } => Some(ch),
+                            _ => None,
+                        })
+                        .collect();
+                    assert_eq!(pre, expected_pre);
+                }
+            });
+        }
     }
 
     #[test]

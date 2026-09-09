@@ -1514,8 +1514,8 @@ impl LigatureWorkList {
     }
 
     /// Counts physical nodes through the first synchronized source boundary.
-    /// A kern immediately following the boundary is part of TeX's retained
-    /// physical span, matching `nodes_through_character_boundary`.
+    /// TeX82 §§915–917 stop once the major and minor source positions agree.
+    /// Include boundary kerns, but not the next glyph beyond that boundary.
     pub(crate) fn physical_nodes_through_boundary(
         &self,
         current: usize,
@@ -1534,16 +1534,16 @@ impl LigatureWorkList {
             match self.nodes[next].cell.as_ref() {
                 Some(LigatureWorkCell::Glyph(glyph)) => {
                     position = position.saturating_add(glyph.provenance.len);
-                    count += 1;
                     if position > boundary {
                         break;
                     }
+                    count += 1;
                 }
                 Some(LigatureWorkCell::Kern { .. }) => {
-                    count += 1;
                     if position > boundary {
                         break;
                     }
+                    count += 1;
                 }
                 Some(LigatureWorkCell::Boundary(_)) | None => {}
             }

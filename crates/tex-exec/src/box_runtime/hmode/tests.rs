@@ -144,3 +144,32 @@ fn direct_tfm_failure_rolls_back_output_and_clears_reusable_work() {
         assert_eq!(nest.current_list().nodes(&stores).len(), 1);
     });
 }
+
+#[test]
+fn physical_replacement_span_stops_before_next_glyph_but_keeps_boundary_kern() {
+    crate::test_harness::with_nonstop_plain_universe(|universe| {
+        let stores = universe.command_context().expect("test state");
+        let mut work = LigatureWorkList::default();
+        for ch in ['a', 'b', 'c'] {
+            let provenance = work.append_source(ch, tex_state::token::OriginId::UNKNOWN);
+            let glyph = super::LigatureGlyphCell::new(
+                &stores,
+                tex_state::font::NULL_FONT,
+                ch,
+                provenance,
+                false,
+                false,
+                false,
+            );
+            work.push_back(LigatureWorkCell::Glyph(glyph));
+            work.push_back(LigatureWorkCell::Kern {
+                amount: tex_state::scaled::Scaled::from_raw(1),
+                kind: super::KernKind::Font,
+            });
+        }
+        let first = work.head.expect("first glyph");
+        assert_eq!(work.physical_nodes_through_boundary(first, 0, 1, 1), 2);
+        assert_eq!(work.physical_nodes_through_boundary(first, 0, 1, 2), 4);
+        assert_eq!(work.physical_nodes_through_boundary(first, 0, 1, 3), 6);
+    });
+}
