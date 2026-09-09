@@ -3,7 +3,8 @@
 //! The report intentionally contains identities and a small semantic context,
 //! never copied transcripts, logs, DVI files, or full event streams.
 //! Complete TeX82 §638 shipout allocator-accounting records are parsed and
-//! retained as advisory evidence; every other transcript/log byte still gates.
+//! retained as advisory evidence. Final allocated-word totals are normalized;
+//! the configured capacity and surrounding transcript/log bytes still gate.
 
 use std::fmt::Write as _;
 use std::fs;
@@ -67,7 +68,7 @@ pub struct TripTriageVerdict {
     pub gating_mismatch: bool,
     /// The identity-separated geometry projection differed.
     pub advisory_geometry_mismatch: bool,
-    /// TeX82 §638 allocator-accounting records differed after typed removal.
+    /// TeX82 allocator-accounting records differed after typed projection.
     pub advisory_memory_usage_mismatch: bool,
 }
 
@@ -196,9 +197,8 @@ fn first_gating_divergence(
     optional_byte_divergence("normalized_dvi", expected_dvi, actual_dvi)
 }
 
-/// A text channel with only complete TeX82 §638 shipout accounting records
-/// removed. These values expose the reference allocator's variable/dynamic
-/// node occupancy and free-memory gap; they are not engine semantics.
+/// Allocator-dependent shipout counts and final allocated-word totals are
+/// normalized; all surrounding text and the configured capacity stay exact.
 struct TextComparison {
     expected: Vec<u8>,
     actual: Vec<u8>,
@@ -254,11 +254,22 @@ fn split_memory_usage_records(bytes: &[u8]) -> (Vec<u8>, Vec<[u32; 5]>) {
     for line in bytes.split_inclusive(|byte| *byte == b'\n') {
         if let Some(record) = parse_memory_usage_record(line) {
             records.push(record);
+        } else if let Some((_, capacity)) = parse_usage_row(line, b" words of memory out of ") {
+            normalized.extend_from_slice(b" <allocator words> words of memory out of ");
+            normalized.extend_from_slice(capacity);
         } else {
             normalized.extend_from_slice(line);
         }
     }
     (normalized, records)
+}
+
+fn parse_usage_row<'a>(line: &'a [u8], separator: &[u8]) -> Option<(u32, &'a [u8])> {
+    let mut rest = line.strip_prefix(b" ")?;
+    let used = parse_memory_usage_value(&mut rest, separator)?;
+    let capacity = rest;
+    parse_memory_usage_value(&mut rest, b"\n")?;
+    rest.is_empty().then_some((used, capacity))
 }
 
 fn parse_memory_usage_record(line: &[u8]) -> Option<[u32; 5]> {
@@ -438,7 +449,7 @@ fn report_text(
         ("geometry.policy", "advisory-non-gating".to_string()),
         (
             "memory_usage.policy",
-            "tex82-section-638-allocator-accounting-advisory-non-gating".to_string(),
+            "tex82-sections-638-1334-allocator-accounting-advisory-non-gating".to_string(),
         ),
         (
             "expected_source.name",
@@ -1041,6 +1052,31 @@ mod tests {
             let report = fs::read_to_string(verdict.expect("gating report")).expect("report");
             assert!(report.contains("earliest.channel: transcript"), "{report}");
         }
+    }
+
+    #[test]
+    fn final_allocator_extent_is_advisory_but_capacity_and_surrounding_text_are_exact() {
+        let heading = "Here is how much of TeX's memory you used:\n 44 strings out of 13626\n 261 string characters out of 15296\n";
+        let expected = format!("{heading} 3556 words of memory out of 250000\nnext statistic\n");
+        let actual = format!("{heading} 1380 words of memory out of 250000\nnext statistic\n");
+        let comparison = TextComparison::new(expected.as_bytes(), actual.as_bytes());
+        assert_eq!(comparison.expected, comparison.actual);
+        for changed in [
+            actual.replace("250000", "250001"),
+            actual.replace("next statistic", "different statistic"),
+            actual.replace(" 44 strings", " 45 strings"),
+            actual.replace(" 1380 words", " words"),
+            actual.replace(" 1380 words", " -1 words"),
+            actual.replace(" 1380 words", " 2147483648 words"),
+            actual.replace(" 1380 words of memory out of 250000\n", ""),
+        ] {
+            let comparison = TextComparison::new(expected.as_bytes(), changed.as_bytes());
+            assert_ne!(comparison.expected, comparison.actual, "{changed}");
+        }
+        let arbitrary = b"before\n arbitrary words of memory out of 250000\nafter\n";
+        let (preserved, records) = split_memory_usage_records(arbitrary);
+        assert_eq!(preserved, arbitrary);
+        assert!(records.is_empty());
     }
 
     #[test]

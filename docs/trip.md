@@ -54,12 +54,9 @@ still requires exact construction command streams, deterministic
 schema-valid publication, runtime-state exclusion, registry reconstruction,
 and successful reload. Geometry differences remain visible and countable in a
 non-gating report. The loaded job resumes exact semantic, terminal, log,
-status, effects, and normalized-DVI comparison. The sole typed text exception
-is TeX82 §638's complete `Memory usage before: ...` shipout record: its
-variable-node, dynamic-node, and free-memory counts expose the reference
-allocator rather than document semantics, so the comparator retains and
-reports those records as advisory while comparing all surrounding text in
-exact order. The e-TRIP loaded-log gate additionally projects the seven
+status, effects, and normalized-DVI comparison. The comparator normalizes TeX82 §638 shipout memory counts and §1334's
+final allocated-word total, which depend on allocator layout and history.
+The final memory capacity and all surrounding text remain exact. The e-TRIP loaded-log gate additionally projects the seven
 terminal engine-usage lines (string, character, memory, control-sequence,
 font-table, hyphenation, and stack occupancy) to typed labels after the
 official e-TRIP artifact comparator has accepted the same surrounding log.
