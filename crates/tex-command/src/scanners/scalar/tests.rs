@@ -92,6 +92,49 @@ fn integer_scanner_preserves_signs_and_backs_up_the_nonspace_terminator() {
 }
 
 #[test]
+fn integer_scanner_preserves_the_frozen_conditional_recovery_terminator() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = CommandState::default();
+        crate::test_harness::push(
+            &mut command,
+            [other('4'), other('2'), Token::frozen_relax(), other('X')],
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+        let mut scalar = ScalarScanFrame::default();
+        assert_eq!(
+            processor.scan_integer_into(&mut scalar),
+            ScalarScanStatus::Complete
+        );
+        assert_eq!(scalar.take_integer().value, 42);
+        // TeX82 §§379 and 444: the inserted sentinel is still the next
+        // command after scanning the integer; only a spacer is absorbed.
+        for expected in [Token::frozen_relax(), other('X')] {
+            let mut next = None;
+            assert_eq!(
+                processor.get_x_token_into(&mut next).expect("next token"),
+                DeliveryStatus::Command
+            );
+            assert_eq!(
+                next.expect("terminator delivery initializes destination")
+                    .spelling()
+                    .semantic_token(),
+                expected
+            );
+        }
+    });
+}
+
+#[test]
 fn optional_equals_consumes_spaces_but_leaves_the_following_operand() {
     crate::test_harness::with_universe(|universe| {
         let mut command = CommandState::default();

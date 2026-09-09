@@ -89,6 +89,19 @@ fn collect_expanded_characters<G>(
     universe: &mut tex_state::Universe<G>,
     command: &mut CommandState<G>,
 ) -> String {
+    collect_expanded_meanings(universe, command)
+        .into_iter()
+        .map(|meaning| match meaning {
+            Meaning::CharToken { ch, .. } => ch,
+            other => panic!("expected expanded character, found {other:?}"),
+        })
+        .collect()
+}
+
+fn collect_expanded_meanings<G>(
+    universe: &mut tex_state::Universe<G>,
+    command: &mut CommandState<G>,
+) -> Vec<Meaning> {
     let mut capabilities = CommandHostCapabilities::default();
     let mut fuel = crate::CommandFuelLedger::default();
     let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
@@ -100,13 +113,13 @@ fn collect_expanded_characters<G>(
         &mut fuel,
         &mut diagnostic_effects,
     );
-    let mut output = String::new();
+    let mut output = Vec::new();
     while let Some(command) = processor.get_x_token().expect("expanded delivery") {
         match command.meaning() {
-            tex_state::meaning::ResolvedMeaning::Static(Meaning::CharToken { ch, .. }) => {
-                output.push(ch);
+            tex_state::meaning::ResolvedMeaning::Static(meaning) => {
+                output.push(meaning);
             }
-            other => panic!("expected expanded character, found {other:?}"),
+            other => panic!("expected unexpandable meaning, found {other:?}"),
         }
     }
     output
@@ -868,7 +881,17 @@ fn ifnum_register_operands_use_the_shared_index_lane() {
                 },
             ],
         );
-        assert_eq!(collect_expanded_characters(universe, &mut command), "X");
+        // TeX82 §§379, 443–444 leave the recovery relax in the true branch.
+        assert_eq!(
+            collect_expanded_meanings(universe, &mut command),
+            [
+                Meaning::Relax,
+                Meaning::CharToken {
+                    ch: 'X',
+                    cat: Catcode::Letter
+                }
+            ]
+        );
     });
 }
 
@@ -924,7 +947,17 @@ fn ifdim_register_operands_use_the_shared_index_lane() {
                 },
             ],
         );
-        assert_eq!(collect_expanded_characters(universe, &mut command), "X");
+        // TeX82 §§379, 443–444 leave the recovery relax in the true branch.
+        assert_eq!(
+            collect_expanded_meanings(universe, &mut command),
+            [
+                Meaning::Relax,
+                Meaning::CharToken {
+                    ch: 'X',
+                    cat: Catcode::Letter
+                }
+            ]
+        );
     });
 }
 
@@ -1041,16 +1074,32 @@ fn ifodd_exact_parent_matrix_covers_nested_scalar_children() {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Fi),
         );
         let relax = install_static(universe, "relax", Meaning::Relax);
+        let x = Meaning::CharToken {
+            ch: 'X',
+            cat: Catcode::Letter,
+        };
+        // TeX82 §§379 and 444 preserve the inserted relax in the true
+        // number-conversion case. False branches skip it, including §446's
+        // outer missing-number recovery in the nested conditional case.
         let cases = [
-            vec![ifodd, the, count, other('0'), relax, fi, letter('X')],
-            vec![ifodd, number, other('1'), fi, letter('X')],
-            vec![ifodd, ifodd, other('1'), fi, other('1'), fi, letter('X')],
+            (
+                vec![ifodd, the, count, other('0'), relax, fi, letter('X')],
+                vec![x],
+            ),
+            (
+                vec![ifodd, number, other('1'), fi, letter('X')],
+                vec![Meaning::Relax, x],
+            ),
+            (
+                vec![ifodd, ifodd, other('1'), fi, other('1'), fi, letter('X')],
+                vec![x],
+            ),
         ];
-        for input in cases {
+        for (input, expected) in cases {
             let mut command = CommandState::default();
             let _operation = command.begin_attempt_operation();
             crate::test_harness::push(&mut command, input);
-            assert_eq!(collect_expanded_characters(universe, &mut command), "X");
+            assert_eq!(collect_expanded_meanings(universe, &mut command), expected);
             assert!(command.scratch.is_quiescent());
         }
     });
@@ -1108,16 +1157,29 @@ fn low_fuel_nested_if_controls_balance_their_inline_frames() {
             &mut fuel,
             &mut diagnostic_effects,
         );
-        let mut output = String::new();
+        let mut output = Vec::new();
         while let Some(command) = processor.get_x_token().expect("low-fuel delivery") {
             match command.meaning() {
-                tex_state::meaning::ResolvedMeaning::Static(Meaning::CharToken { ch, .. }) => {
-                    output.push(ch);
+                tex_state::meaning::ResolvedMeaning::Static(meaning) => {
+                    output.push(meaning);
                 }
                 other => panic!("expected expanded character, found {other:?}"),
             }
         }
-        assert_eq!(output, "AX");
+        assert_eq!(
+            output,
+            [
+                Meaning::CharToken {
+                    ch: 'A',
+                    cat: Catcode::Letter
+                },
+                Meaning::Relax,
+                Meaning::CharToken {
+                    ch: 'X',
+                    cat: Catcode::Letter
+                },
+            ]
+        );
         assert!(processor.fuel.burned() <= 128);
         assert!(processor.command.scratch.is_quiescent());
     });

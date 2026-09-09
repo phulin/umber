@@ -3116,15 +3116,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         command: CurrentCommand<G>,
     ) -> Result<bool, CommandError> {
-        // TeX's `back_error` puts an inaccessible `frozen_relax` in
-        // `cur_tok` while backing the offending conditional delimiter below
-        // it.  Our recovery input level delivers that sentinel through the
-        // same scanner boundary, so it is already the terminator the caller
-        // must consume; backing it would expose a spurious `relax` after the
-        // conditional has finished.
-        if command.spelling().semantic_token().is_frozen_relax() {
-            return Ok(false);
-        }
+        // §379's inserted frozen_relax remains a non-space command. The
+        // numeric scanner must back it up before conditional evaluation
+        // resumes, just as it does for an ordinary explicit \relax.
         if matches!(
             scalar_meaning(command.meaning()),
             Meaning::CharToken {
