@@ -310,6 +310,28 @@ def main() -> None:
         )
         assert (root / "third_party/locked.tex").read_bytes() == locked_runtime
 
+        # A valid runtime snapshot does not make an incorrect conformance
+        # expectation acceptable: the final staging copy must enforce its own
+        # lock as well.
+        conformance_lock.write_text(
+            "distribution fixture-runtime\n"
+            f"source tex tex/locked.tex {len(locked_runtime)} "
+            f"{hashlib.sha256(b'wrong expectation').hexdigest()} third_party/locked.tex\n",
+            encoding="utf-8",
+        )
+        expect_error(
+            lambda: provision._materialize_conformance(
+                root, staged_conformance, False, runtime_source=runtime_root
+            ),
+            "materialized TeX Live source",
+        )
+        conformance_lock.write_text(
+            "distribution fixture-runtime\n"
+            f"source tex tex/locked.tex {len(locked_runtime)} "
+            f"{hashlib.sha256(locked_runtime).hexdigest()} third_party/locked.tex\n",
+            encoding="utf-8",
+        )
+
         (runtime_root / "texmf-dist/tex/locked.tex").write_bytes(b"corrupt\n")
         expect_error(
             lambda: provision._materialize_conformance(
