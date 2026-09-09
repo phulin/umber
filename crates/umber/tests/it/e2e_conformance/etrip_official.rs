@@ -326,15 +326,21 @@ fn final_usage_label(line: &str) -> String {
     line.to_owned()
 }
 
-/// Projects only e-TRIP's terminal engine-usage block across physical storage
-/// implementations. Every surrounding loaded-log byte remains exact.
-pub(super) fn normalize_loaded_log_engine_usage(bytes: &[u8]) -> Result<Vec<u8>, String> {
+/// Projects the two loaded-log details owned by the e-TRIP adapter: the
+/// terminal engine-usage block and the one same-run output path whose Web2C
+/// display includes `./`. Every other loaded-log byte remains exact.
+pub(super) fn normalize_loaded_log(bytes: &[u8]) -> Result<Vec<u8>, String> {
     let text =
         std::str::from_utf8(bytes).map_err(|_| "e-TRIP loaded log is not UTF-8".to_owned())?;
     if text.contains('\r') {
         return Err("e-TRIP loaded log contains a bare carriage return".into());
     }
     let text = join_wrapped_stack_usage(text);
+    // The pinned Web2C run reports a same-run `\input\jobname.out` with the
+    // current-directory prefix, while the memory World keeps the equivalent
+    // output path relative. This is a display spelling bridge for the one
+    // e-TRIP output file; output bytes and every other path remain exact.
+    let text = normalize_etrip_output_path(&text);
     let mut normalized = String::with_capacity(text.len());
     for line in text.split_inclusive('\n') {
         if is_final_usage_statistic(line) {
@@ -344,6 +350,28 @@ pub(super) fn normalize_loaded_log_engine_usage(bytes: &[u8]) -> Result<Vec<u8>,
         }
     }
     Ok(normalized.into_bytes())
+}
+
+fn normalize_etrip_output_path(text: &str) -> String {
+    const PREFIX: &str = "(./etrip.out";
+    const REPLACEMENT: &str = "(etrip.out";
+    let mut normalized = String::with_capacity(text.len());
+    let mut cursor = 0;
+    while let Some(relative) = text[cursor..].find(PREFIX) {
+        let start = cursor + relative;
+        let end = start + PREFIX.len();
+        let boundary = text.as_bytes().get(end).copied();
+        if matches!(boundary, Some(b')' | b' ' | b'\n')) {
+            normalized.push_str(&text[cursor..start]);
+            normalized.push_str(REPLACEMENT);
+            cursor = end;
+        } else {
+            normalized.push_str(&text[cursor..start + 1]);
+            cursor = start + 1;
+        }
+    }
+    normalized.push_str(&text[cursor..]);
+    normalized
 }
 
 fn normalize_etex_version_diagnostics(mut text: String) -> Result<String, String> {
@@ -580,13 +608,13 @@ mod tests {
         let expected = b"before\n 18 strings out of 13506\n 2286 words of font info for 3 fonts, out of 20000 for 75\nafter\n";
         let actual = b"before\n 4 strings out of 13973\n 60 words of font info for 3 fonts, out of 20000 for 75\nafter\n";
         assert_eq!(
-            normalize_loaded_log_engine_usage(expected).expect("expected projection"),
-            normalize_loaded_log_engine_usage(actual).expect("actual projection")
+            normalize_loaded_log(expected).expect("expected projection"),
+            normalize_loaded_log(actual).expect("actual projection")
         );
         let changed = b"before changed\n 4 strings out of 13973\n 60 words of font info for 3 fonts, out of 20000 for 75\nafter\n";
         assert_ne!(
-            normalize_loaded_log_engine_usage(expected).expect("expected projection"),
-            normalize_loaded_log_engine_usage(changed).expect("changed projection")
+            normalize_loaded_log(expected).expect("expected projection"),
+            normalize_loaded_log(changed).expect("changed projection")
         );
     }
 
@@ -595,13 +623,28 @@ mod tests {
         let expected = b"before\n 10i,15n,8p,141b,78s stack positions out of 200i,40n,60p,500b,600s\n\nafter\n";
         let actual = b"before\n 10i,15n,8p,141b,78s stack positions out of 10000i,1000n,20000p,200000b,\n200000s\n\nafter\n";
         assert_eq!(
-            normalize_loaded_log_engine_usage(expected).expect("expected projection"),
-            normalize_loaded_log_engine_usage(actual).expect("actual projection")
+            normalize_loaded_log(expected).expect("expected projection"),
+            normalize_loaded_log(actual).expect("actual projection")
         );
         let unrelated = "before\n stack positions out of 1i,2n,3p,4b,5s\n200000s\nafter\n";
         assert_eq!(join_wrapped_stack_usage(unrelated), unrelated);
         let malformed = " stack positions out of 1i,2n,3p,4b,\nnot a capacity\n";
         assert_eq!(join_wrapped_stack_usage(malformed), malformed);
+    }
+
+    #[test]
+    fn loaded_log_path_normalization_is_limited_to_etrip_output() {
+        let expected = b"before\n(./etrip.out)\n(./other.out)\ncontext (./etrip.out\nafter\n";
+        let actual = b"before\n(etrip.out)\n(./other.out)\ncontext (etrip.out\nafter\n";
+        assert_eq!(
+            normalize_loaded_log(expected).expect("expected projection"),
+            normalize_loaded_log(actual).expect("actual projection")
+        );
+        let changed = b"before\n(./etrip.outx)\n(./other.out)\ncontext (etrip.out\nafter\n";
+        assert_ne!(
+            normalize_loaded_log(expected).expect("expected projection"),
+            normalize_loaded_log(changed).expect("changed projection")
+        );
     }
 
     #[test]

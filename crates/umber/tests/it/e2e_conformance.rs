@@ -1610,12 +1610,11 @@ fn compare_trip_phase(
     let actual_log_projection;
     let (expected_log, actual_log) = match log_contract {
         PhaseLogContract::Exact => (expected_log, actual_log),
-        PhaseLogContract::EtripRepresentationNeutralEngineUsage => {
-            expected_log_projection =
-                etrip_official::normalize_loaded_log_engine_usage(expected_log)
-                    .expect("normalize e-TRIP oracle engine usage");
-            actual_log_projection = etrip_official::normalize_loaded_log_engine_usage(actual_log)
-                .expect("normalize e-TRIP actual engine usage");
+        PhaseLogContract::EtripLoadedLogProjection => {
+            expected_log_projection = etrip_official::normalize_loaded_log(expected_log)
+                .expect("normalize e-TRIP oracle loaded log");
+            actual_log_projection = etrip_official::normalize_loaded_log(actual_log)
+                .expect("normalize e-TRIP actual loaded log");
             (&expected_log_projection[..], &actual_log_projection[..])
         }
     };
@@ -1676,9 +1675,10 @@ struct PhaseComparison<'a> {
 enum PhaseLogContract {
     Exact,
     /// e-TRIP's final storage counters describe WEB memory/string/font-table
-    /// representations, not TeX-visible semantics. The official artifact
-    /// comparator applies this same narrow projection.
-    EtripRepresentationNeutralEngineUsage,
+    /// representations, and its same-run output framing has a host path
+    /// spelling difference. The official artifact comparator applies this
+    /// same narrow loaded-log projection.
+    EtripLoadedLogProjection,
 }
 
 impl PhaseParityContract {
@@ -2122,7 +2122,7 @@ fn run_two_phase_fixture(
             dvi_pair: Some((&expected_dvi, &actual_dvi)),
             contract: PhaseParityContract::OutputProducing,
             log_contract: if profile == TripEngineProfile::ETex {
-                PhaseLogContract::EtripRepresentationNeutralEngineUsage
+                PhaseLogContract::EtripLoadedLogProjection
             } else {
                 PhaseLogContract::Exact
             },
