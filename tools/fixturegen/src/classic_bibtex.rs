@@ -443,7 +443,7 @@ fn run_umber(case: &GeneratedCase) -> Result<Output> {
                     files.provision(ResolvedFile {
                         request: request.key().clone(),
                         virtual_path: format!("/texlive/differential/{}", request.key().name()),
-                        bytes,
+                        bytes: bytes.into(),
                         expected_digest: None,
                     })?;
                 }

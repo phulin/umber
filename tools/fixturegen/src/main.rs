@@ -22,7 +22,9 @@ use tex_command::{
 };
 use tex_state::env::banks::IntParam;
 use tex_state::token::Catcode;
-use tex_state::{Universe, World};
+use tex_state::{
+    AssignmentScope, CodeTableKind, EngineCapacityProfile, GenerationBrand, Universe, World,
+};
 
 const TEXT_AREAS: &[&str] = &[
     "lexer",
@@ -439,89 +441,94 @@ fn strip_case_suffixes(case: &str) -> String {
     name.to_owned()
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn historical_tex_exec_observations_have_no_fixturegen_mutator() {
-        let area = super::regenerate_area("tex_exec").expect_err("area must be validation-only");
-        assert!(area.to_string().contains("unknown fixturegen area"));
-
-        let case = super::regenerate_case("tex_exec", "after")
-            .expect_err("case must be validation-only");
-        assert!(case.to_string().contains("unknown fixturegen area"));
-    }
-}
-
 fn lex_catcode_mutation_fixture() -> String {
-    let (mut lexer, mut stores) = lexer_fixture("catcode_mutation");
-    let mut actual = String::new();
+    with_lexer_fixture("catcode_mutation", |lexer, stores| {
+        let mut actual = String::new();
 
-    push_next_token(&mut actual, &mut lexer, &mut stores);
-    stores.set_catcode('@', Catcode::Letter);
-    push_remaining_tokens(&mut actual, &mut lexer, &mut stores);
+        push_next_token(&mut actual, lexer, stores);
+        set_catcode(stores, '@', Catcode::Letter);
+        push_remaining_tokens(&mut actual, lexer, stores);
 
-    actual
+        actual
+    })
 }
 
 fn lex_endlinechar_mutation_fixture() -> String {
-    let (mut lexer, mut stores) = lexer_fixture("endlinechar_mutation");
-    stores.set_int_param(IntParam::END_LINE_CHAR, b'!' as i32);
-    let mut actual = String::new();
+    with_lexer_fixture("endlinechar_mutation", |lexer, stores| {
+        set_int_param(stores, IntParam::END_LINE_CHAR, b'!' as i32);
+        let mut actual = String::new();
 
-    push_next_token(&mut actual, &mut lexer, &mut stores);
-    push_next_token(&mut actual, &mut lexer, &mut stores);
-    stores.set_int_param(IntParam::END_LINE_CHAR, b'?' as i32);
-    push_next_token(&mut actual, &mut lexer, &mut stores);
-    push_next_token(&mut actual, &mut lexer, &mut stores);
-    stores.set_int_param(IntParam::END_LINE_CHAR, -1);
-    push_remaining_tokens(&mut actual, &mut lexer, &mut stores);
+        push_next_token(&mut actual, lexer, stores);
+        push_next_token(&mut actual, lexer, stores);
+        set_int_param(stores, IntParam::END_LINE_CHAR, b'?' as i32);
+        push_next_token(&mut actual, lexer, stores);
+        push_next_token(&mut actual, lexer, stores);
+        set_int_param(stores, IntParam::END_LINE_CHAR, -1);
+        push_remaining_tokens(&mut actual, lexer, stores);
 
-    actual
+        actual
+    })
 }
 
 fn lex_ignored_character_fixture() -> String {
-    let (mut lexer, mut stores) = lexer_fixture("ignored_character");
-    stores.set_catcode('!', Catcode::Ignored);
-    let mut actual = String::new();
+    with_lexer_fixture("ignored_character", |lexer, stores| {
+        set_catcode(stores, '!', Catcode::Ignored);
+        let mut actual = String::new();
 
-    push_remaining_tokens(&mut actual, &mut lexer, &mut stores);
+        push_remaining_tokens(&mut actual, lexer, stores);
 
-    actual
+        actual
+    })
 }
 
 fn lex_invalid_character_fixture() -> String {
-    let (mut state, mut stores) = lexer_fixture("invalid_character");
-    stores.set_catcode('?', Catcode::Invalid);
-    let mut actual = String::new();
+    with_lexer_fixture("invalid_character", |state, stores| {
+        set_catcode(stores, '?', Catcode::Invalid);
+        let mut actual = String::new();
 
-    loop {
-        match next_source_step(&mut state, &stores) {
-            SourceTokenizationStep::Token(token) => push_token(&mut actual, token),
-            SourceTokenizationStep::InvalidCharacter(invalid) => {
-                let code = invalid
-                    .code()
-                    .to_byte()
-                    .expect("exact-byte invalid character");
-                actual.push_str(&format!(
-                    "error:input contains invalid TeX character U+{code:04X}\n"
-                ));
-                break;
+        loop {
+            match next_source_step(state, stores) {
+                SourceTokenizationStep::Token(token) => push_token(&mut actual, token),
+                SourceTokenizationStep::InvalidCharacter(invalid) => {
+                    let code = invalid
+                        .code()
+                        .to_byte()
+                        .expect("exact-byte invalid character");
+                    actual.push_str(&format!(
+                        "error:input contains invalid TeX character U+{code:04X}\n"
+                    ));
+                    break;
+                }
+                SourceTokenizationStep::End => break,
             }
-            SourceTokenizationStep::End => break,
         }
-    }
 
-    actual
+        actual
+    })
 }
 
-fn lexer_fixture(case: &str) -> (CommandState, Universe) {
+fn with_lexer_fixture(
+    case: &str,
+    use_fixture: impl for<'id> FnOnce(
+        &mut CommandState<GenerationBrand<'id>>,
+        &mut Universe<GenerationBrand<'id>>,
+    ) -> String,
+) -> String {
+    tex_state::with_universe_for_profile(EngineCapacityProfile::Texlive2026, |stores| {
+        *stores.world_mut() = World::real();
+        let mut state = lexer_fixture(case, stores);
+        use_fixture(&mut state, stores)
+    })
+    .expect("dynamic lexer fixture universe should initialize")
+}
+
+fn lexer_fixture<G>(case: &str, stores: &mut Universe<G>) -> CommandState<G> {
     let path = source_path("lexer_dynamic", case);
-    let mut stores = Universe::with_world(World::real());
     let content = stores
         .world_mut()
         .read_file(&path)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
-    stores.set_int_param(IntParam::END_LINE_CHAR, 13);
+    set_int_param(stores, IntParam::END_LINE_CHAR, 13);
     let mut state = CommandState::new(CommandProfile::exact(CommandDialect::Tex82));
     let source = state
         .register_source(SourceRegistration::world(content))
@@ -529,10 +536,31 @@ fn lexer_fixture(case: &str) -> (CommandState, Universe) {
     state
         .open_registered_source(source)
         .expect("dynamic lexer fixture source should open");
-    (state, stores)
+    state
 }
 
-fn push_remaining_tokens(actual: &mut String, state: &mut CommandState, stores: &mut Universe) {
+fn set_catcode<G>(stores: &mut Universe<G>, character: char, catcode: Catcode) {
+    stores
+        .assign_code(
+            CodeTableKind::Catcode,
+            character,
+            i64::from(catcode as u8),
+            AssignmentScope::Global,
+        )
+        .expect("dynamic lexer fixture catcode assignment");
+}
+
+fn set_int_param<G>(stores: &mut Universe<G>, parameter: IntParam, value: i32) {
+    stores
+        .assign_int_param(parameter, value, AssignmentScope::Global)
+        .expect("dynamic lexer fixture integer assignment");
+}
+
+fn push_remaining_tokens<G>(
+    actual: &mut String,
+    state: &mut CommandState<G>,
+    stores: &mut Universe<G>,
+) {
     loop {
         match next_source_step(state, stores) {
             SourceTokenizationStep::Token(token) => push_token(actual, token),
@@ -544,7 +572,7 @@ fn push_remaining_tokens(actual: &mut String, state: &mut CommandState, stores: 
     }
 }
 
-fn push_next_token(actual: &mut String, state: &mut CommandState, stores: &mut Universe) {
+fn push_next_token<G>(actual: &mut String, state: &mut CommandState<G>, stores: &mut Universe<G>) {
     match next_source_step(state, stores) {
         SourceTokenizationStep::Token(token) => push_token(actual, token),
         SourceTokenizationStep::InvalidCharacter(invalid) => {
@@ -554,7 +582,10 @@ fn push_next_token(actual: &mut String, state: &mut CommandState, stores: &mut U
     }
 }
 
-fn next_source_step(state: &mut CommandState, stores: &Universe) -> SourceTokenizationStep {
+fn next_source_step<G>(
+    state: &mut CommandState<G>,
+    stores: &Universe<G>,
+) -> SourceTokenizationStep {
     state.next_exact_source_step(
         stores.int_param(IntParam::END_LINE_CHAR),
         &mut CatcodeQueries(|code: CharacterCode| {
@@ -580,4 +611,17 @@ fn push_token(actual: &mut String, token: SourceToken) {
     };
     actual.push_str(&line);
     actual.push('\n');
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn historical_tex_exec_observations_have_no_fixturegen_mutator() {
+        let area = super::regenerate_area("tex_exec").expect_err("area must be validation-only");
+        assert!(area.to_string().contains("unknown fixturegen area"));
+
+        let case =
+            super::regenerate_case("tex_exec", "after").expect_err("case must be validation-only");
+        assert!(case.to_string().contains("unknown fixturegen area"));
+    }
 }

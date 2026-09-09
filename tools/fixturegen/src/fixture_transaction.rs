@@ -55,10 +55,11 @@ pub(crate) fn publish_case_inventory(
         .unwrap_or(&area)
         .to_string_lossy()
         .into_owned();
-    let authorities = destination
-        .exists()
-        .then(|| vec![destination.to_owned()])
-        .unwrap_or_default();
+    let authorities = if destination.exists() {
+        vec![destination.to_owned()]
+    } else {
+        Vec::new()
+    };
     let plan = CasePlan {
         cases: vec![ArtifactSpec {
             area,
@@ -68,10 +69,11 @@ pub(crate) fn publish_case_inventory(
             inventory,
             authorities,
             ownership_staged: None,
-            ownership_authorities: destination
-                .exists()
-                .then(|| vec![destination.to_owned()])
-                .unwrap_or_default(),
+            ownership_authorities: if destination.exists() {
+                vec![destination.to_owned()]
+            } else {
+                Vec::new()
+            },
         }],
     };
     let digest = plan.transaction_digest();
@@ -399,7 +401,7 @@ impl<'a> AtomicCaseTransaction<'a> {
                     root = Some(candidate);
                     break;
                 }
-                Err(error) if candidate.exists() => continue,
+                Err(_error) if candidate.exists() => continue,
                 Err(error) => return Err(error),
             }
         }
