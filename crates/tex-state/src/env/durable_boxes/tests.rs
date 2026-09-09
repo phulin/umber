@@ -157,6 +157,67 @@ fn operation_rollback_moves_the_original_owner_back_without_copying() {
 }
 
 #[test]
+fn operation_rollback_discards_existing_group_box_save_before_group_close() {
+    page_arena!(arena, pool, region, 64);
+    let mut state = DurableBoxState::new();
+    let original = owner(&mut arena, 29);
+    let original_id = original.region_id();
+    state
+        .assign(
+            &mut arena,
+            7,
+            Some(original),
+            super::super::AssignmentScope::Global,
+            LEVEL_ONE,
+        )
+        .expect("original assignment");
+
+    state.begin_group(2);
+    let operation = state.begin_operation();
+    let transient = owner(&mut arena, 31);
+    let transient_id = transient.region_id();
+    state
+        .assign(
+            &mut arena,
+            7,
+            Some(transient),
+            super::super::AssignmentScope::Local,
+            2,
+        )
+        .expect("operation-local assignment");
+    state.rollback_operation(&mut arena, operation);
+
+    assert_eq!(current_region(&state, 7), Some(original_id));
+    assert!(!arena.durable_region_is_live(transient_id));
+
+    // TeX82 §283 restores the surviving local save exactly once when the
+    // enclosing group closes; the rolled-back operation save is no longer a
+    // group record.
+    let replacement = owner(&mut arena, 37);
+    let replacement_id = replacement.region_id();
+    state
+        .assign(
+            &mut arena,
+            7,
+            Some(replacement),
+            super::super::AssignmentScope::Local,
+            2,
+        )
+        .expect("post-rollback local assignment");
+    let restorations = state.end_group(&mut arena, 2).expect("group restore");
+
+    assert_eq!(restorations.len(), 1);
+    assert_eq!(restorations[0].index, 7);
+    assert_eq!(
+        restorations[0].outcome,
+        super::super::GroupRestorationOutcome::Restored
+    );
+    assert_eq!(current_region(&state, 7), Some(original_id));
+    assert!(!arena.durable_region_is_live(replacement_id));
+    state.retire_all(&mut arena);
+}
+
+#[test]
 fn active_operation_take_uses_a_rollbackable_zero_copy_loan() {
     page_arena!(arena, pool, region, 64);
     let mut state = DurableBoxState::new();

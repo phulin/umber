@@ -214,6 +214,10 @@ pub(crate) struct DurableBoxOperation {
     position: usize,
     loan_position: usize,
     group_position: usize,
+    /// Number of durable saves already owned by the innermost group. TeX82
+    /// §283 rolls back the whole operation suffix, including saves made in
+    /// an existing group.
+    group_entry_position: usize,
 }
 
 struct DurableBoxTransferLoan {
@@ -1349,6 +1353,7 @@ impl DurableBoxState {
             position: self.operation_entries.len(),
             loan_position: self.transfer_loans.len(),
             group_position: self.groups.len(),
+            group_entry_position: self.groups.last().map_or(0, |group| group.entries.len()),
         };
         self.active_operations.push(operation.position);
         operation
@@ -1403,6 +1408,23 @@ impl DurableBoxState {
                 .pop()
                 .expect("operation-created group remains live");
             Self::retire_group(&mut self.owners, arena, group);
+        }
+        if operation.group_position != 0 {
+            let group = self
+                .groups
+                .last_mut()
+                .expect("operation's existing group remains live");
+            assert!(
+                operation.group_entry_position <= group.entries.len(),
+                "operation group save mark must remain within the live group"
+            );
+            while group.entries.len() > operation.group_entry_position {
+                let mutation = group
+                    .entries
+                    .pop()
+                    .expect("durable group save suffix is nonempty");
+                Self::retire_value(&mut self.owners, arena, mutation.alternate);
+            }
         }
         self.active_operations.pop();
     }
