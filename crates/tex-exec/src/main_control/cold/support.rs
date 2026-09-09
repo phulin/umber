@@ -1482,7 +1482,9 @@ impl<G> PendingDiagnostic<G> {
             Self::Command(tex_command::CommandSemanticDiagnostic::Trace { .. })
             | Self::Command(tex_command::CommandSemanticDiagnostic::PdfExpansionMessage {
                 ..
-            }) => None,
+            })
+            | Self::Command(tex_command::CommandSemanticDiagnostic::FileOpen { .. })
+            | Self::Command(tex_command::CommandSemanticDiagnostic::FileClose) => None,
             Self::Command(tex_command::CommandSemanticDiagnostic::UndefinedControlSequence {
                 ..
             }) => Some("undefined-control-sequence"),
@@ -1547,6 +1549,12 @@ pub(in crate::main_control) fn report_pending_diagnostics<G>(
             ) => {
                 let mut output = stores.printer();
                 output.print_nl(&text).print_ln();
+            }
+            PendingDiagnostic::Command(tex_command::CommandSemanticDiagnostic::FileOpen {
+                name,
+            }) => stores.print_file_open(&name),
+            PendingDiagnostic::Command(tex_command::CommandSemanticDiagnostic::FileClose) => {
+                stores.print_file_close();
             }
             PendingDiagnostic::Command(
                 tex_command::CommandSemanticDiagnostic::UndefinedControlSequence { context, site },

@@ -353,6 +353,10 @@ pub enum CommandSemanticDiagnostic {
     /// A non-interactive pdfTeX expansion diagnostic that must be rendered
     /// after the conversion's temporary string selector has been restored.
     PdfExpansionMessage { text: String },
+    /// TeX82 §537's file opening, ordered after an earlier expansion report.
+    FileOpen { name: String },
+    /// TeX82 §362's file closing, ordered after an earlier expansion report.
+    FileClose,
     /// TeX82 §370's undefined-control-sequence expansion error.
     ///
     /// §370 reports through §82, which renders `show_context` against the

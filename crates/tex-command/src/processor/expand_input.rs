@@ -53,7 +53,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             )
             .map_err(|_| CommandError::input_invariant())?;
         if let Some(name) = framing_name {
-            self.state.print_file_open(&name);
+            self.print_file_open(&name);
         }
         let source = self
             .command

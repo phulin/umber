@@ -1578,6 +1578,13 @@ which the executor claims after the processor episode. Resource resolution,
 dependency observation, and semantic barriers retain no parallel expansion
 ledger.
 
+File framing follows the same ordered diagnostic queue when a recoverable
+report is pending. TeX82 §§362/370 and e-TeX §24.362 report an error in
+`\everyeof` before printing the exhausted file's closing parenthesis. A later
+file opening or closing must therefore wait behind the report, just as a
+later command trace does. With no pending report, framing remains immediate;
+ordinary token delivery gains no additional work.
+
 Command fuel remains the independent monotonic session ledger shared by nested
 expansion. It is neither this delivery bit nor rollback state.
 

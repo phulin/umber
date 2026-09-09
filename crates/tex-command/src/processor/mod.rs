@@ -620,6 +620,16 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
         self.print_command_trace_text(command, conditional_suffix);
     }
 
+    pub(crate) fn print_file_open(&mut self, name: &str) {
+        if self.command.semantic_diagnostics.is_empty() {
+            self.state.print_file_open(name);
+        } else {
+            self.command
+                .semantic_diagnostics
+                .push(crate::CommandSemanticDiagnostic::FileOpen { name: name.into() });
+        }
+    }
+
     fn print_command_trace_text(&mut self, command: String, conditional_suffix: String) {
         let mode_prefix = self.command_trace_mode_prefix.take();
         let mut text = String::from("{");

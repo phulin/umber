@@ -3223,6 +3223,48 @@ fn etex_everyeof_assignment_is_visible_to_scantokens_during_edef() {
 }
 
 #[test]
+fn etex_everyeof_error_precedes_pseudo_file_close() {
+    // TeX82 §§370/82 report the error before §362 fetches past the
+    // e-TeX §24.362 everyeof list and closes its pseudo-file.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = etex_initex(stores);
+        register_source(
+            &mut control,
+            br"\tracingscantokens=1\everyeof={\undefined}\scantokens{}\end",
+        );
+        run_to_end(&mut control, stores);
+        let output = terminal_text(stores);
+        let error = output
+            .find("! Undefined control sequence.")
+            .expect("undefined error");
+        assert!(!output[..error].contains(')'), "{output}");
+        assert!(output[error..].lines().any(|line| line == ")"), "{output}");
+    });
+}
+
+#[test]
+fn expansion_error_precedes_following_pseudo_file_open() {
+    // TeX82 §§370/82 complete the report before the next expansion can
+    // reach e-TeX §53a's pseudo_start file framing.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = etex_initex(stores);
+        register_source(
+            &mut control,
+            br"\tracingscantokens=1\relax\undefined\scantokens{}\end",
+        );
+        run_to_end(&mut control, stores);
+        let output = terminal_text(stores);
+        let error = output
+            .find("! Undefined control sequence.")
+            .expect("undefined error");
+        let framing = output
+            .find("( ")
+            .unwrap_or_else(|| panic!("pseudo-file framing: {output}"));
+        assert!(error < framing, "{output}");
+    });
+}
+
+#[test]
 fn etex_scantokens_warns_for_box_group_before_following_conditional() {
     // e-TeX 2.6 [23.328]: each closer warns immediately before its own
     // `unsave`/conditional pop. The two lines of one scantokens source must

@@ -5699,7 +5699,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .open_registered_file_with_depths(source, open_depths)
                     .map_err(|_| CommandError::input_invariant())?;
                 if let Some(name) = framing_name {
-                    self.state.print_file_open(&name);
+                    self.print_file_open(&name);
                 }
                 self.prepare_started_input()?;
                 self.host.initialize_job_name(&attempted_name);

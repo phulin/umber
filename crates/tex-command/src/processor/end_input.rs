@@ -463,7 +463,13 @@ impl<G> CommandProcessor<'_, '_, G> {
         // `check_outer_validity` diagnostic. Render the call-local retirement
         // transition at that exact point; there is no cross-step effect state.
         if closes_file_frame {
-            self.state.print_file_close();
+            if self.command.semantic_diagnostics.is_empty() {
+                self.state.print_file_close();
+            } else {
+                self.command
+                    .semantic_diagnostics
+                    .push(crate::CommandSemanticDiagnostic::FileClose);
+            }
         }
         let completed = self.command.settle_input_retirement(
             retirement,
