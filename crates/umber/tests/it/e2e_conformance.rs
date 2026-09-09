@@ -515,7 +515,6 @@ fn canonical_source_identity_selects_startup_input_name_independently_of_staging
 }
 
 #[test]
-#[ignore = "manual compatibility/parity tier: not a cutover closure gate"]
 fn trip_and_etrip_recipes_select_typed_public_format_inputs() {
     let source = b"fixture source".to_vec();
     let tripos = b"tripos".to_vec();
@@ -567,7 +566,7 @@ fn trip_and_etrip_recipes_select_typed_public_format_inputs() {
         );
         assert_eq!(
             recipe.distribution_identity.as_slice(),
-            b"pinned-trip-public-format-boundary-v1"
+            b"pinned-trip-public-format-boundary-v2"
         );
         assert_eq!(
             recipe.clock,

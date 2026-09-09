@@ -273,6 +273,10 @@ const NATIVE_ASSET_LOCK: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../tests/native-test-assets.lock"
 ));
+const TEXLIVE_ASSET_LOCK: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../tests/conformance-texlive.lock"
+));
 
 /// Repository-relative path of [`GATE_CALL_SITES`], for failure messages.
 const GATE_CALL_SITES_PATH: &str = "crates/umber/tests/it/e2e_conformance.rs";
@@ -332,14 +336,35 @@ fn conformance_gate_registry_is_reachable() {
 }
 
 #[test]
-#[ignore = "manual compatibility/parity tier: not a cutover closure gate"]
 fn conformance_gate_assets_are_in_worktree_allowlist() {
-    let provisioned: BTreeSet<&str> = NATIVE_ASSET_LOCK
+    let mut provisioned = BTreeSet::new();
+    for line in NATIVE_ASSET_LOCK
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .filter_map(|line| line.split_whitespace().nth(1))
-        .collect();
+    {
+        let fields: Vec<_> = line.split_whitespace().collect();
+        assert_eq!(fields.len(), 2, "invalid native asset record: {line}");
+        if fields[0] == "include-texlive" {
+            assert_eq!(fields[1], "tests/conformance-texlive.lock");
+            for record in TEXLIVE_ASSET_LOCK.lines().map(str::trim) {
+                if record.is_empty() || record.starts_with('#') {
+                    continue;
+                }
+                let fields: Vec<_> = record.split_whitespace().collect();
+                match fields[0] {
+                    "distribution" => assert_eq!(fields.len(), 2),
+                    "source" => {
+                        assert_eq!(fields.len(), 6, "invalid TeX Live asset: {record}");
+                        assert!(provisioned.insert(fields[5]), "duplicate asset: {record}");
+                    }
+                    _ => panic!("unknown TeX Live asset record: {record}"),
+                }
+            }
+        } else {
+            assert!(provisioned.insert(fields[1]), "duplicate asset: {line}");
+        }
+    }
     for gate in GATES {
         let oracle = format!("{ORACLE_DIR}/{}.expected.dvi", gate.name);
         assert!(
