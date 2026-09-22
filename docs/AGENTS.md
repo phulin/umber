@@ -41,6 +41,10 @@ before adding a feature to any manifest.
 fixtures, corpora, and harnesses; update it when those implementation facts
 change.
 
+`repository_simplification_plan.md` records the September 2026 repository
+review and proposed code/test migration. Its seven test classes and execution
+lanes are proposals, not replacements for the current testing policy or gates.
+
 `tooling_surface_inventory.md` records the owner-approved disposition of
 reference/parity commands, one-time fixture migrations, benchmark and trace
 rows, prototypes, fuzz tiers, and their scripts for `umber2-vgjr.18`; absence
