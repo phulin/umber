@@ -143,6 +143,47 @@ async function checkRealBindings(base, root, rootAHash64) {
 	assert.throws(() => wrongSession.provideShard(first.index, wrongBytes));
 	const hints = bindings.prefetchLiteralHints("\\input probe.tex");
 	assert(hints.some((hint) => hint.name === "probe.tex"));
+	const catalogOnly = await HttpManifestResolver.create({
+		manifestUrl: `${base}/publication/manifest.json`,
+		manifestAHash64: rootAHash64,
+		catalog: { catalogCreateSession: bindings.catalogCreateSession },
+		maxFiles: 1,
+	});
+	assert.equal(catalogOnly.bindPrefetchPolicy({}), "unavailable-v1");
+	const unboundRun = await catalogOnly.beginRun({
+		source: "\\input hint.tex",
+		options: { engine: "tex82" },
+	});
+	assert.deepEqual(unboundRun.hints, []);
+	assert.deepEqual(catalogOnly.literalPrefetchHints("\\input hint.tex"), []);
+	const unboundResources = await catalogOnly.resolve(
+		[{ kind: "tex", name: "probe.tex" }],
+		{
+			signal: undefined,
+			prefetchHints: [{ kind: "tex", name: "hint.tex" }],
+			admitPrefetch: true,
+		},
+	);
+	assert.deepEqual(
+		unboundResources.map(({ name }) => name),
+		["probe.tex"],
+	);
+	catalogOnly.noteAdmitted(unboundResources);
+	assert.equal(catalogOnly.metrics.prefetchBytes, 0);
+	assert.equal(catalogOnly.metrics.packageGroupCandidates, 0);
+	assert(catalogOnly.metrics.demandBytes > 0);
+	assert.deepEqual(catalogOnly.takePrefetchHints(), []);
+	await catalogOnly.commitRun();
+	assert.equal(
+		catalogOnly.bindPrefetchPolicy(bindings),
+		bindings.prefetchPolicyVersion(),
+	);
+	const reboundRun = await catalogOnly.beginRun({
+		source: "\\input probe.tex",
+		options: { engine: "tex82" },
+	});
+	assert(reboundRun.hints.some((hint) => hint.name === "probe.tex"));
+	catalogOnly.discardRun();
 	const resolver = await HttpManifestResolver.create({
 		manifestUrl: `${base}/publication/manifest.json`,
 		manifestAHash64: rootAHash64,
