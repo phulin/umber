@@ -111,7 +111,24 @@ impl<G> MainControl<G> {
                     .expect("fresh terminal source must be openable");
                 ReplayStep::Continue
             }
-            crate::job::EndOfInputAction::Fatal(fatal) => self.succumb(fatal),
+            crate::job::EndOfInputAction::Fatal(fatal) => {
+                // TeX82 §§360, 93 reports the fatal error after the root has
+                // exhausted. Command delivery retains the final physical
+                // root byte as the diagnostic site, even though the source
+                // frame has retired; publish it before terminal outcome.
+                if let Some(location) = self.command.last_diagnostic_location() {
+                    self.observe_committed([CommandObservation::DiagnosticLifecycle(
+                        tex_command::DiagnosticLifecycleRecord::Report {
+                            class: tex_command::DiagnosticClass::Fatal,
+                            severity: "fatal",
+                            diagnostic: fatal.diagnostic(),
+                            arguments: fatal.record().arguments,
+                            location,
+                        },
+                    )]);
+                }
+                self.succumb(fatal)
+            }
         }
     }
 

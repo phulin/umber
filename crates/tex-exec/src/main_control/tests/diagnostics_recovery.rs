@@ -3,6 +3,59 @@
 use super::*;
 
 #[test]
+fn root_eof_emergency_report_is_complete_job_only() {
+    for (source, completion, expect_fatal_report) in [
+        (
+            br"\relax".as_slice(),
+            RootCompletionPolicy::StopAtRootEof,
+            false,
+        ),
+        (
+            br"\relax".as_slice(),
+            RootCompletionPolicy::RequireTeXEnd,
+            true,
+        ),
+        (
+            br"\end".as_slice(),
+            RootCompletionPolicy::RequireTeXEnd,
+            false,
+        ),
+    ] {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            stores.set_interaction_mode(tex_state::InteractionMode::Scroll);
+            let mut control = MainControl::tex82_initex(stores);
+            control.set_root_completion_policy(completion);
+            register_source(&mut control, source);
+            let mut observed = ObservationRecorder::default();
+            run_to_end_observed(&mut control, stores, &mut observed);
+            let reports: Vec<_> = observed
+                .0
+                .iter()
+                .filter_map(|observation| match observation {
+                    CommandObservation::DiagnosticLifecycle(
+                        tex_command::DiagnosticLifecycleRecord::Report {
+                            diagnostic,
+                            location,
+                            ..
+                        },
+                    ) => Some((*diagnostic, *location)),
+                    _ => None,
+                })
+                .collect();
+            if expect_fatal_report {
+                assert_eq!(reports.len(), 1);
+                assert_eq!(reports[0].0, "emergency-stop");
+                assert_eq!(reports[0].1.byte(), source.len() as u64 - 1);
+                assert!(control.fatal_error().is_some());
+            } else {
+                assert!(reports.is_empty(), "unexpected reports: {reports:?}");
+                assert_eq!(control.fatal_error(), None);
+            }
+        });
+    }
+}
+
+#[test]
 fn setbox_rejects_non_box_command_with_assignment_context_diagnostic() {
     // TeX82 §1084: genuine `scan_box` missing-box recovery backs the
     // rejected command for execution.
