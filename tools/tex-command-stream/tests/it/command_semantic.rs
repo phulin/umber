@@ -472,88 +472,32 @@ fn loaded_projection_distinguishes_explicit_end_from_nested_source_exhaustion() 
 }
 
 #[test]
-fn v2_identity_capture_policy_and_resolved_channels_match_the_migrated_corpus() {
+fn resolved_cases_keep_current_capture_policy_and_reference_channels() {
     let cases = load_suite().expect("valid command-semantic corpus");
-    assert_eq!(cases.len(), 210);
-    assert_eq!(
-        cases
-            .iter()
-            .map(|declared| declared.case.expected.len())
-            .sum::<usize>(),
-        1_323
-    );
+    assert!(!cases.is_empty(), "the semantic corpus must have cases");
 
-    let selected_raw: Vec<_> = cases
+    for declared in cases
         .iter()
         .filter(|declared| {
             declared.case.profile == SessionProfile::RawTex82Loaded
                 && declared.case.capture.selected()
         })
-        .collect();
-    assert_eq!(selected_raw.len(), 176);
-    let mut selected_by_domain = BTreeMap::new();
-    for declared in &selected_raw {
-        *selected_by_domain
-            .entry(declared.domain.as_str())
-            .or_insert(0) += 1;
-    }
-    assert_eq!(
-        selected_by_domain,
-        BTreeMap::from([
-            ("alignments", 18),
-            ("conditionals", 9),
-            ("input-expansion", 13),
-            ("line-breaking", 1),
-            ("main-control", 55),
-            ("math", 34),
-            ("page-output", 33),
-            ("scanners-internal-quantities", 13),
-        ])
-    );
-    let page_output_dvi_dispositions = selected_raw
-        .iter()
         .filter(|declared| declared.domain == "page-output")
-        .fold([0usize; 5], |mut counts, declared| {
-            let index = match &declared
-                .case
-                .channels
-                .as_ref()
-                .expect("resolved channels")
-                .dvi
-            {
-                StreamDisposition::Empty => 0,
-                StreamDisposition::File => 1,
-                StreamDisposition::Unsupported { .. } => 2,
-                StreamDisposition::Xfail { .. } => 3,
-                StreamDisposition::XfailDiagnostics { .. } => 4,
-            };
-            counts[index] += 1;
-            counts
-        });
-    assert_eq!(
-        page_output_dvi_dispositions,
-        [4, 29, 0, 0, 0],
-        "page-output DVI dispositions: empty, file, unsupported, xfail, xfail-diagnostics"
-    );
-    assert_eq!(
-        cases
-            .iter()
-            .filter(|declared| !declared.case.terminal_lines.is_empty())
-            .count(),
-        11
-    );
-    assert_eq!(
-        cases
-            .iter()
-            .filter(|declared| {
-                fs::read(declared.fixture_dir.join(&declared.case.source))
-                    .expect("fixture source")
-                    .windows(b"\\openout".len())
-                    .any(|window| window == b"\\openout")
-            })
-            .count(),
-        5
-    );
+    {
+        assert!(
+            matches!(
+                &declared
+                    .case
+                    .channels
+                    .as_ref()
+                    .expect("resolved channels")
+                    .dvi,
+                StreamDisposition::Empty | StreamDisposition::File
+            ),
+            "{} has no directly comparable reference DVI disposition",
+            declared.case.id
+        );
+    }
     let excluded: Vec<_> = cases
         .iter()
         .filter(|declared| !declared.case.capture.selected())

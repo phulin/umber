@@ -150,7 +150,7 @@ projection must itself name observable behavior; an internal hash or counter
 is not a semantic oracle. [Semantic Testing](semantic_testing.md) gives that
 assertion boundary.
 
-On combined production `e685e55d8`, explicitly selecting
+The historical second-wave run on production `e685e55d8`, explicitly selecting
 `cargo test -q -p tex-command-stream --test it command_semantic::declared_command_semantic_cases_match -- --exact --ignored --nocapture`
 reports `matched=128, executed-known-failure=0, unexpected-pass=0,
 other-failure=82, dormant=0, unselected=0` and exits `FAIL`. The exact 82
@@ -158,10 +158,11 @@ failing case identities match the pre-node run under the same criteria. Counts
 of Umber's own command events are diagnostics, not oracle assertions;
 projection and declared-channel mismatches still fail. The 49-case difference
 from the first-wave 79/131 count is a change of criterion, not improved engine
-conformance. `main-control/current-font-selection` now matches its independent
-projection and declared channels; `page-output/insertion-split-footnote` still
-has an artifact projection mismatch. The routine gate continues to report the
-210 manual cases as unselected.
+conformance. At that head, `main-control/current-font-selection` matched its
+independent projection and declared channels;
+`page-output/insertion-split-footnote` still had an artifact projection
+mismatch. The routine gate reports manual cases as unselected unless
+explicitly selected.
 
 The historical first-wave selected run, after the frozen null-font identity
 and split-insertion ownership repairs, used exact self-observed event counts.
