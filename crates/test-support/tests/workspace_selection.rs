@@ -304,14 +304,6 @@ fn current_format_schema_receipts_cover_every_release_surface() {
             format!("format_schema {schema}"),
         ),
         (
-            "crates/umber-wasm/assets/plain-format.json",
-            "umber2-66p0.27".to_owned(),
-        ),
-        (
-            "crates/umber-wasm/browser-tests/fixture.js",
-            "umber2-66p0.27".to_owned(),
-        ),
-        (
             "crates/umber-wasm/js/manifest-resolver.test.js",
             format!("formatSchema: {schema}"),
         ),
@@ -338,6 +330,21 @@ fn current_format_schema_receipts_cover_every_release_surface() {
             "{path} must receipt current format schema {schema} with {expected:?}"
         );
     }
+
+    // The browser fixture now uses a generated packed catalog. The packaged
+    // Plain-format metadata owns the separate publication availability claim.
+    let plain_metadata: Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join("crates/umber-wasm/assets/plain-format.json"))
+            .expect("read packaged Plain-format metadata"),
+    )
+    .expect("parse packaged Plain-format metadata");
+    assert_eq!(plain_metadata["schema"].as_u64(), Some(0));
+    assert!(
+        plain_metadata["unavailable"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("umber2-66p0.27")),
+        "schema-0 Plain format must name its republication blocker"
+    );
 
     let tracked = Command::new("git")
         .args(["ls-files", "-z"])
