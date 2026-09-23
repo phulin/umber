@@ -114,15 +114,18 @@ impl CapturedChannels {
             run.effect_artifacts.iter().cloned(),
         );
         let diagnostics = portable_diagnostic_channel(run);
-        let streams = run.complete_job_channel_streams.clone().unwrap_or_else(|| {
-            [
-                terminal.into_bytes(),
-                log.into_bytes(),
-                run.dvi.clone(),
-                effects,
-                diagnostics,
-            ]
-        });
+        let streams = run.complete_job_channels.as_ref().map_or_else(
+            || {
+                [
+                    terminal.into_bytes(),
+                    log.into_bytes(),
+                    run.dvi.clone(),
+                    effects,
+                    diagnostics,
+                ]
+            },
+            |complete| complete.streams.clone(),
+        );
         Self {
             events: run
                 .observations
@@ -134,9 +137,14 @@ impl CapturedChannels {
                     )
                 })
                 .count(),
-            status: run.fatal.map_or_else(
-                || "clean".to_owned(),
-                |fatal| format!("fatal:{}", fatal.label()),
+            status: run.complete_job_channels.as_ref().map_or_else(
+                || {
+                    run.fatal.map_or_else(
+                        || "clean".to_owned(),
+                        |fatal| format!("fatal:{}", fatal.label()),
+                    )
+                },
+                |complete| complete.status.clone(),
             ),
             streams,
         }

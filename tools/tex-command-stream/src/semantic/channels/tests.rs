@@ -56,7 +56,7 @@ fn run_with_printable_sink_writes(committed: bool) -> SemanticRun {
         },
         pending_effects: if committed { Vec::new() } else { writes },
         effect_artifacts: Vec::new(),
-        complete_job_channel_streams: None,
+        complete_job_channels: None,
     }
 }
 
@@ -75,6 +75,36 @@ fn channel_capture_preserves_terminal_log_and_shared_sink_routing() {
         assert_eq!(captured.stream(StreamChannel::Terminal), b"terminal|both|");
         assert_eq!(captured.stream(StreamChannel::Log), b"log-only|both|");
     }
+}
+
+#[test]
+fn complete_job_capture_owns_status_and_bytes_together() {
+    let mut run = run_with_printable_sink_writes(false);
+    run.complete_job_channels = Some(CapturedChannels {
+        events: 0,
+        status: "fatal:confusion(256 spans)".into(),
+        streams: [
+            b"complete terminal".to_vec(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        ],
+    });
+    let captured = CapturedChannels::capture(&run);
+    assert_eq!(captured.status, "fatal:confusion(256 spans)");
+    assert_eq!(
+        captured.stream(StreamChannel::Terminal),
+        b"complete terminal"
+    );
+
+    run.fatal = Some(tex_command::FatalError::confusion("fragment only"));
+    run.complete_job_channels
+        .as_mut()
+        .expect("complete job")
+        .status = "clean".into();
+    let captured = CapturedChannels::capture(&run);
+    assert_eq!(captured.status, "clean");
 }
 
 fn no_files(_: StreamChannel) -> Option<Vec<u8>> {

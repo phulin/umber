@@ -1050,7 +1050,7 @@ fn state_projection_emits_only_requested_final_counts() {
         log: Vec::new(),
         pending_effects: Vec::new(),
         effect_artifacts: Vec::new(),
-        complete_job_channel_streams: None,
+        complete_job_channels: None,
     };
     let projection = Projection {
         kind: ProjectionKind::State,
@@ -1088,7 +1088,7 @@ fn fatal_termination_precedes_every_projection_kinds_own_output() {
         log: Vec::new(),
         pending_effects: Vec::new(),
         effect_artifacts: Vec::new(),
-        complete_job_channel_streams: None,
+        complete_job_channels: None,
     };
     let projection = Projection {
         kind: ProjectionKind::State,

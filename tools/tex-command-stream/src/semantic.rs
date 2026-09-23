@@ -437,10 +437,9 @@ pub struct SemanticRun {
     pub pending_effects: Vec<tex_state::EffectRecord>,
     /// Numbered stream outputs materialized by a complete job.
     pub effect_artifacts: Vec<EffectArtifact>,
-    /// Complete-job bytes used only by the reference-derived stream-channel
-    /// contract. The other fields are the authored-fragment property
-    /// projection, which stops at root EOF without inventing `\end`.
-    pub complete_job_channel_streams: Option<[Vec<u8>; 5]>,
+    /// Complete-job status and bytes for the independent reference channel
+    /// contract. The other fields project the authored fragment at root EOF.
+    pub complete_job_channels: Option<CapturedChannels>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -1237,7 +1236,7 @@ pub fn execute_with_provider(
         provider,
         tex_exec::RootCompletionPolicy::RequireTeXEnd,
     )?;
-    let complete_job_channel_streams = CapturedChannels::capture(&complete).streams;
+    let complete_job_channels = CapturedChannels::capture(&complete);
     let mut fragment = execute_with_provider_completion(
         source,
         case,
@@ -1245,7 +1244,7 @@ pub fn execute_with_provider(
         tex_exec::RootCompletionPolicy::StopAtRootEof,
     )?;
     validate_completion_projection_pair(&fragment, &complete)?;
-    fragment.complete_job_channel_streams = Some(complete_job_channel_streams);
+    fragment.complete_job_channels = Some(complete_job_channels);
     Ok(fragment)
 }
 
@@ -1272,11 +1271,11 @@ fn execute_with_provider_completion(
 fn execute_fresh(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
     let complete =
         execute_fresh_with_completion(source, case, tex_exec::RootCompletionPolicy::RequireTeXEnd)?;
-    let complete_job_channel_streams = CapturedChannels::capture(&complete).streams;
+    let complete_job_channels = CapturedChannels::capture(&complete);
     let mut fragment =
         execute_fresh_with_completion(source, case, tex_exec::RootCompletionPolicy::StopAtRootEof)?;
     validate_completion_projection_pair(&fragment, &complete)?;
-    fragment.complete_job_channel_streams = Some(complete_job_channel_streams);
+    fragment.complete_job_channels = Some(complete_job_channels);
     Ok(fragment)
 }
 
@@ -1479,7 +1478,7 @@ fn execute_fresh_with_completion(
                         log,
                         pending_effects,
                         effect_artifacts,
-                        complete_job_channel_streams: None,
+                        complete_job_channels: None,
                     });
                 }
                 StepResult::Suspended(need) => {
@@ -1722,7 +1721,7 @@ fn execute_loaded_format(
         log,
         pending_effects,
         effect_artifacts,
-        complete_job_channel_streams: None,
+        complete_job_channels: None,
     })
 }
 
@@ -1836,24 +1835,47 @@ fn validate_completion_observations(
     fragment: &[CommandObservation],
     complete: &[CommandObservation],
 ) -> Result<(), String> {
-    let first_difference = fragment
-        .iter()
-        .zip(complete)
-        .position(|(fragment, complete)| fragment != complete);
-    if let Some(index) = first_difference {
-        let is_termination = |observation: &CommandObservation| {
-            matches!(
-                observation,
-                CommandObservation::Effect(effect)
-                    if effect.kind == tex_command::ObservationEffectKind::Terminate
+    let terminate = fragment.iter().position(|observation| {
+        matches!(
+            observation,
+            CommandObservation::Effect(effect)
+                if effect.kind == tex_command::ObservationEffectKind::Terminate
+        )
+    });
+    // The runner appends one final lifecycle outcome after the fragment has
+    // stopped. A complete TeX job may then continue through §360 and acquire
+    // a different outcome; only the observations before that final marker are
+    // evidence of identical command execution at the root-EOF boundary.
+    let final_outcome = fragment.len().checked_sub(1).filter(|&index| {
+        matches!(
+            fragment[index],
+            CommandObservation::DiagnosticLifecycle(
+                tex_command::DiagnosticLifecycleRecord::Outcome { .. }
             )
-        };
-        if !is_termination(&fragment[index]) {
+        )
+    });
+    if let Some(index) = terminate {
+        for (suffix_index, observation) in fragment.iter().enumerate().skip(index + 1) {
+            if Some(suffix_index) != final_outcome {
+                return Err(format!(
+                    "fragment has nonterminal observation after termination at index {suffix_index}: {observation:?}"
+                ));
+            }
+        }
+    }
+    let shared_len = terminate.or(final_outcome).unwrap_or(fragment.len());
+    for (index, observed) in fragment[..shared_len].iter().enumerate() {
+        if complete.get(index) != Some(observed) {
             return Err(format!(
-                "complete-job observations diverged before the fragment root-EOF boundary at index {index}: fragment={:?}, complete={:?}",
-                fragment[index], complete[index]
+                "complete-job observations diverged before the fragment root-EOF boundary at index {index}: fragment={observed:?}, complete={:?}",
+                complete.get(index)
             ));
         }
+    }
+    if shared_len < fragment.len() && complete.len() == shared_len {
+        return Err(format!(
+            "complete job ended before the fragment root-EOF boundary at index {shared_len}"
+        ));
     }
     Ok(())
 }
@@ -2335,9 +2357,9 @@ pub fn terminal_check_projection(run: &SemanticRun, projection: &Projection) -> 
     // Command observations still describe the root-EOF fragment, but a
     // terminal phrase may be printed by §1333 final cleanup after that
     // fragment boundary. STREAM_CHANNELS[0] is Terminal.
-    let terminal = run.complete_job_channel_streams.as_ref().map_or_else(
+    let terminal = run.complete_job_channels.as_ref().map_or_else(
         || captured_terminal_text(run),
-        |streams| String::from_utf8_lossy(&streams[0]).into_owned(),
+        |channels| String::from_utf8_lossy(&channels.streams[0]).into_owned(),
     );
     terminal_check_results(&terminal, &projection.terminal_checks)
 }

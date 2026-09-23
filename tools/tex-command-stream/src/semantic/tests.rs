@@ -24,7 +24,7 @@ fn empty_run() -> SemanticRun {
         log: Vec::new(),
         pending_effects: Vec::new(),
         effect_artifacts: Vec::new(),
-        complete_job_channel_streams: None,
+        complete_job_channels: None,
     }
 }
 
@@ -160,18 +160,23 @@ fn terminal_checks_use_complete_job_stream_and_detect_changed_result() {
             .expect("terminal phrase projection");
     let mut run = empty_run();
     run.terminal = b"fragment without the phrase".to_vec();
-    run.complete_job_channel_streams = Some([
-        b"root closed; final cleanup".to_vec(),
-        Vec::new(),
-        Vec::new(),
-        Vec::new(),
-        Vec::new(),
-    ]);
+    run.complete_job_channels = Some(super::CapturedChannels {
+        events: 0,
+        status: "clean".into(),
+        streams: [
+            b"root closed; final cleanup".to_vec(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        ],
+    });
     let expected = ["terminal-check:final cleanup=true".to_owned()];
     assert_eq!(project(&run, &projection), expected);
-    run.complete_job_channel_streams
+    run.complete_job_channels
         .as_mut()
-        .expect("complete terminal stream")[0] = b"root closed".to_vec();
+        .expect("complete terminal stream")
+        .streams[0] = b"root closed".to_vec();
     assert!(
         evaluate_expectation(
             &expected,
@@ -180,7 +185,7 @@ fn terminal_checks_use_complete_job_stream_and_detect_changed_result() {
         )
         .is_err()
     );
-    run.complete_job_channel_streams = None;
+    run.complete_job_channels = None;
     assert_eq!(
         project(&run, &projection),
         ["terminal-check:final cleanup=false"]
@@ -194,6 +199,15 @@ fn effect(kind: tex_command::ObservationEffectKind) -> tex_command::CommandObser
         value: tex_command::ObservationValue::None,
         source: None,
     })
+}
+
+fn outcome(
+    history: tex_state::print::ErrorHistory,
+    aborted: bool,
+) -> tex_command::CommandObservation {
+    tex_command::CommandObservation::DiagnosticLifecycle(
+        tex_command::DiagnosticLifecycleRecord::terminal(history, aborted),
+    )
 }
 
 #[test]
@@ -217,7 +231,87 @@ fn completion_pair_rejects_semantic_drift_before_fragment_termination() {
         .expect_err("early semantic drift must fail");
     assert!(error.contains("before the fragment root-EOF boundary at index 0"));
     assert!(error.contains("fragment=Effect("));
-    assert!(error.contains("complete=Effect("));
+    assert!(error.contains("complete=Some(Effect("));
+}
+
+#[test]
+fn completion_pair_allows_only_the_final_fragment_outcome_to_differ() {
+    let shared = effect(tex_command::ObservationEffectKind::Message);
+    let fragment = [
+        shared.clone(),
+        outcome(tex_state::print::ErrorHistory::Spotless, false),
+    ];
+    let complete = [
+        shared,
+        outcome(tex_state::print::ErrorHistory::FatalErrorStop, true),
+    ];
+    assert!(validate_completion_observations(&fragment, &complete).is_ok());
+}
+
+#[test]
+fn completion_pair_rejects_early_drift_even_with_a_final_outcome() {
+    let fragment = [
+        effect(tex_command::ObservationEffectKind::Message),
+        outcome(tex_state::print::ErrorHistory::Spotless, false),
+    ];
+    let complete = [
+        effect(tex_command::ObservationEffectKind::Input),
+        outcome(tex_state::print::ErrorHistory::Spotless, false),
+    ];
+    let error = validate_completion_observations(&fragment, &complete)
+        .expect_err("different commands before the terminal outcome must fail");
+    assert!(error.contains("at index 0"));
+
+    let fragment = [
+        outcome(tex_state::print::ErrorHistory::Spotless, false),
+        effect(tex_command::ObservationEffectKind::Message),
+        outcome(tex_state::print::ErrorHistory::Spotless, false),
+    ];
+    let complete = [
+        outcome(tex_state::print::ErrorHistory::FatalErrorStop, true),
+        effect(tex_command::ObservationEffectKind::Message),
+        outcome(tex_state::print::ErrorHistory::Spotless, false),
+    ];
+    let error = validate_completion_observations(&fragment, &complete)
+        .expect_err("an earlier diagnostic outcome is still shared execution");
+    assert!(error.contains("at index 0"));
+}
+
+#[test]
+fn completion_pair_rejects_a_complete_run_shorter_than_the_shared_prefix() {
+    let fragment = [
+        effect(tex_command::ObservationEffectKind::Message),
+        outcome(tex_state::print::ErrorHistory::Spotless, false),
+    ];
+    let error = validate_completion_observations(&fragment, &[])
+        .expect_err("a truncated complete run has no shared observation");
+    assert!(error.contains("at index 0"));
+    assert!(error.contains("complete=None"));
+}
+
+#[test]
+fn completion_pair_rejects_semantic_events_after_a_fragment_termination() {
+    let fragment = [
+        effect(tex_command::ObservationEffectKind::Terminate),
+        effect(tex_command::ObservationEffectKind::Message),
+        outcome(tex_state::print::ErrorHistory::Spotless, false),
+    ];
+    let complete = [
+        effect(tex_command::ObservationEffectKind::Input),
+        effect(tex_command::ObservationEffectKind::Message),
+        outcome(tex_state::print::ErrorHistory::Spotless, false),
+    ];
+    let error = validate_completion_observations(&fragment, &complete)
+        .expect_err("a command after fragment termination is not a terminal marker");
+    assert!(error.contains("nonterminal observation after termination at index 1"));
+}
+
+#[test]
+fn completion_pair_rejects_a_complete_run_with_no_terminal_continuation() {
+    let fragment = [outcome(tex_state::print::ErrorHistory::Spotless, false)];
+    let error = validate_completion_observations(&fragment, &[])
+        .expect_err("a complete job must reach its own terminal observation");
+    assert!(error.contains("complete job ended before the fragment root-EOF boundary"));
 }
 
 #[test]
