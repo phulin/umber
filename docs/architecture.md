@@ -469,18 +469,19 @@ ranges and scalar breakpoint evidence; `tex-exec` owns §245 diagnostic
 routing and §174 short-list rendering, so tracing adds no output effect to the
 typesetting boundary.
 
-Each paragraph is analyzed once into a `ParagraphTape`. The tape owns its
-paired semantic and TeX-physical `NodeSequence`, legal break sites with wide
-prefix metrics, trace-display spans, and compact materialization actions.
-Every tolerance and tracing pass consumes those saved sites instead of walking
-paragraph topology again. Post-line-break processing moves both channels with
-paired cursors: the semantic channel supplies boxes and output, while the
-physical channel preserves discretionary and ligature topology solely for
-diagnostics. Nested discretionary replacement metrics use an explicit cursor
+Each paragraph is analyzed once into a `ParagraphTape`. Production tapes retain
+the page-arena list coordinate, an optional distinct TeX-physical diagnostic
+coordinate, legal break sites with prefix metrics, lineage indexes, and compact
+materialization actions; node payload remains in the page arena. Every
+tolerance and tracing pass consumes those saved sites through borrowed views
+instead of walking paragraph topology again. Post-line-break processing
+consumes the coordinates into a page-material active builder, reuses unchanged
+source ranges, and creates only nodes whose semantics change. A distinct
+physical channel preserves discretionary and ligature topology for diagnostics
+when needed. Nested discretionary replacement metrics use an explicit cursor
 stack, and completed-page release walks the exact page-arena closure with an
-explicit stack. Analysis and teardown therefore remain
-stack-safe at TeX's deep-list limits, while storage is linear in paragraph
-nodes and legal break sites.
+explicit stack. Analysis and teardown remain stack-safe at TeX's deep-list
+limits, while tape scratch is linear in paragraph nodes and legal break sites.
 
 Packing and line breaking preserve TeX.web arithmetic exactly. Appendix G
 math conversion builds one detached native-node transaction; `FrozenHList`
