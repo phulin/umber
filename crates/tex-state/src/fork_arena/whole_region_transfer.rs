@@ -147,7 +147,6 @@ impl<T, Lane> ForkArena<T, Lane> {
             destination.index_chunk(pool, key, payload_start + offset);
         }
         destination.current_chunks_mut().payload.extend(payload);
-        destination.refresh_live_chunk_frontiers();
         self.counters.chunks_promoted = self
             .counters
             .chunks_promoted
@@ -192,7 +191,6 @@ impl<T, Lane> ForkArena<T, Lane> {
             return Err(ForkArenaError::InvalidRegion);
         }
         let detached = lane.split_off(local);
-        self.refresh_live_chunk_frontiers();
         Ok(detached)
     }
 

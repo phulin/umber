@@ -159,7 +159,7 @@ fn borrowed_paragraph_tape_materializes_from_immutable_source_and_overlays_par_f
 }
 
 #[test]
-fn composite_arena_paragraph_matches_slice_analysis_and_materialization() {
+fn owned_slice_and_composite_arena_paragraphs_agree() {
     let mut universe = TestState::new();
     let empty = universe.publish_page_nodes(&[]);
     let source = vec![
@@ -189,13 +189,22 @@ fn composite_arena_paragraph_matches_slice_analysis_and_materialization() {
         .map(|node| node.to_owned_with(std::convert::identity))
         .collect::<Vec<_>>();
     let line_params = params(18);
+    let owned_tape = ParagraphTape::analyze(
+        &universe,
+        tex_state::node_sequence::NodeSequence::mirrored(source.clone()),
+        &line_params,
+    );
     let slice_tape = ParagraphTape::analyze_borrowed(&universe, &source, &line_params);
     let arena_tape = ParagraphTape::analyze_arena(&universe, arena_view, &line_params);
 
+    assert_eq!(owned_tape.break_sites, slice_tape.break_sites);
+    assert_eq!(owned_tape.materialization, slice_tape.materialization);
     assert_eq!(arena_tape.break_sites, slice_tape.break_sites);
     assert_eq!(arena_tape.materialization, slice_tape.materialization);
+    let owned_plan = break_hyphenated_tape(&universe, &owned_tape, &line_params);
     let slice_plan = break_hyphenated_tape(&universe, &slice_tape, &line_params);
     let arena_plan = break_hyphenated_tape(&universe, &arena_tape, &line_params);
+    assert_eq!(owned_plan, slice_plan);
     assert_eq!(arena_plan, slice_plan);
 
     let post_params = PostLineBreakParams {
@@ -211,12 +220,16 @@ fn composite_arena_paragraph_matches_slice_analysis_and_materialization() {
         club_penalties: Vec::new(),
         shape: LineShape::natural(sp(18)),
     };
+    let mut owned_materializer =
+        LineMaterializer::new(owned_tape, owned_plan.breaks, post_params.clone());
     let mut slice_materializer =
         LineMaterializer::new(slice_tape, slice_plan.breaks, post_params.clone());
     let mut arena_materializer = LineMaterializer::new(arena_tape, arena_plan.breaks, post_params);
     loop {
         let slice_line = slice_materializer.materialize_next(&universe, Vec::new());
         let arena_line = arena_materializer.materialize_next(&universe, Vec::new());
+        let owned_line = owned_materializer.materialize_next(&universe, Vec::new());
+        assert_eq!(owned_line, slice_line);
         assert_eq!(arena_line, slice_line);
         if arena_line.is_none() {
             break;

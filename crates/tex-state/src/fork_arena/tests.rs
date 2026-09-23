@@ -696,6 +696,7 @@ fn unsealed_sequential_append_admits_only_at_packed_block_boundaries() {
 
 #[test]
 fn live_chunk_boundary_validation_work_is_constant_at_required_sizes() {
+    const ALLOCATION_OWNER: usize = 15;
     let mut observed = Vec::new();
     for chunks in [1_u32, 64, 4_096] {
         let mut pool = ChunkPool::<u32>::with_chunk_bytes(1);
@@ -709,8 +710,22 @@ fn live_chunk_boundary_validation_work_is_constant_at_required_sizes() {
         };
 
         let reads_before = pool.payload.arena_position_reads();
-        arena.seal_boundary(&mut pool).expect("sealed boundary");
+        let allocation_before = thread_measurement(ALLOCATION_OWNER);
+        {
+            let _scope = scope(ALLOCATION_OWNER);
+            arena.seal_boundary(&mut pool).expect("sealed boundary");
+        }
+        let allocation_after = thread_measurement(ALLOCATION_OWNER);
         let reads = pool.payload.arena_position_reads() - reads_before;
+        assert_eq!(
+            AllocationMeasurement {
+                calls: allocation_after.calls - allocation_before.calls,
+                requested_bytes: allocation_after.requested_bytes
+                    - allocation_before.requested_bytes,
+            },
+            AllocationMeasurement::default(),
+            "boundary admission must not allocate"
+        );
         observed.push(reads);
         eprintln!("LIVE_CHUNK_BOUNDARY_SCALE chunks={chunks} frontier_reads={reads}");
     }

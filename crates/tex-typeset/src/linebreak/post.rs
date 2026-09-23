@@ -36,7 +36,6 @@ pub struct LineMaterializer<'a> {
 #[allow(clippy::large_enum_variant)]
 enum ChannelNodes<'a> {
     Owned(std::vec::IntoIter<Node>),
-    Borrowed(core::slice::Iter<'a, Node>),
     Arena(core::iter::Peekable<tex_state::node_arena::NodeCursorIter<'a>>),
     #[cfg(test)]
     ArenaId {
@@ -92,19 +91,7 @@ impl<'a> LineMaterializer<'a> {
                         physical_breaks,
                     )
                 }
-                super::ParagraphSource::BorrowedMirrored(nodes) => {
-                    let semantic_lineages =
-                        tex_state::node_sequence::borrowed_mirrored_high_cell_lineages(nodes);
-                    let physical_lineages = semantic_lineages.clone();
-                    (
-                        ChannelNodes::Borrowed(nodes.iter()),
-                        ChannelNodes::Borrowed(nodes.iter()),
-                        semantic_lineages,
-                        physical_lineages,
-                        breaks.clone(),
-                    )
-                }
-                super::ParagraphSource::BorrowedArena(sequence) => {
+                super::ParagraphSource::Borrowed(sequence) => {
                     let semantic_lineages =
                         tex_state::node_sequence::borrowed_mirrored_high_cell_lineages_from(
                             sequence.iter(),
@@ -307,7 +294,6 @@ impl ChannelNodes<'_> {
     fn len(&self) -> usize {
         match self {
             Self::Owned(nodes) => nodes.len(),
-            Self::Borrowed(nodes) => nodes.len(),
             Self::Arena(nodes) => nodes.len(),
             #[cfg(test)]
             Self::ArenaId { remaining, .. } => *remaining,
@@ -317,7 +303,6 @@ impl ChannelNodes<'_> {
     fn next_owned<S: TypesetState>(&mut self, _state: &S) -> Option<Node> {
         match self {
             Self::Owned(nodes) => nodes.next(),
-            Self::Borrowed(nodes) => nodes.next().cloned(),
             Self::Arena(nodes) => nodes
                 .next()
                 .map(|node| node.to_owned_with(std::convert::identity)),
@@ -349,7 +334,6 @@ impl ChannelNodes<'_> {
     ) -> Option<tex_state::node_arena::NodeView<'state>> {
         match self {
             Self::Owned(nodes) => nodes.as_slice().first().map(Into::into),
-            Self::Borrowed(nodes) => nodes.as_slice().first().map(Into::into),
             Self::Arena(nodes) => nodes.peek().cloned(),
             #[cfg(test)]
             Self::ArenaId {

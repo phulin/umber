@@ -57,7 +57,6 @@ impl<T, Lane> ForkArena<T, Lane> {
             pool.payload.release_lineage(key, owner, self.lineage)?;
         }
         self.base_payload_chunks = mark.payload_chunks;
-        self.refresh_live_chunk_frontiers();
         Ok(payload_count)
     }
 
@@ -381,7 +380,6 @@ impl<T, Lane> ForkArena<T, Lane> {
             detached_prior,
             current: ChunkSet::default(),
         };
-        self.refresh_live_chunk_frontiers();
         Ok(())
     }
 
@@ -489,7 +487,6 @@ impl<T, Lane> ForkArena<T, Lane> {
         }
         prefix.payload.extend(detached_prior.payload);
         self.ownership = ForkOwnership::Accepted(prefix);
-        self.refresh_live_chunk_frontiers();
         Ok(())
     }
 
@@ -525,7 +522,6 @@ impl<T, Lane> ForkArena<T, Lane> {
             .saturating_add(pruned as u64);
         prefix.payload.extend(current.payload);
         self.ownership = ForkOwnership::Accepted(prefix);
-        self.refresh_live_chunk_frontiers();
         Ok(())
     }
 
@@ -569,7 +565,6 @@ impl<T, Lane> ForkArena<T, Lane> {
         let released = ChunkSet {
             payload: current.payload.split_off(payload_floor),
         };
-        self.refresh_live_chunk_frontiers();
         let count = self.release_set(pool, released)?;
         self.counters.rootless_suffix_chunks_released = self
             .counters

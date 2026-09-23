@@ -2422,18 +2422,6 @@ struct ChunkSet {
     payload: Vec<LogicalChunkId>,
 }
 
-/// Constant-size authentication for one arena lane's indexed live suffix.
-///
-/// `end` is the owner-relative position after the last live chunk. `tail` is
-/// absent when every position below `end` has already been released into the
-/// logical base. Module-private structural mutations update this record at
-/// the same point as the authoritative chunk vectors and pool indexes.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-struct LiveChunkFrontier {
-    end: usize,
-    tail: Option<LogicalChunkId>,
-}
-
 enum ForkOwnership {
     Accepted(ChunkSet),
     Forked {
@@ -2741,7 +2729,6 @@ pub struct ForkArena<T, Lane> {
     pool_owner: Option<u32>,
     ownership: ForkOwnership,
     base_payload_chunks: u32,
-    payload_frontier: LiveChunkFrontier,
     active_builder: bool,
     pending_batch: Option<PendingBatch>,
     next_batch_serial: u64,
@@ -2779,7 +2766,6 @@ impl<T, Lane> ForkArena<T, Lane> {
             pool_owner: None,
             ownership: ForkOwnership::Accepted(ChunkSet::default()),
             base_payload_chunks: 0,
-            payload_frontier: LiveChunkFrontier::default(),
             active_builder: false,
             pending_batch: None,
             next_batch_serial: 1,
@@ -2797,7 +2783,6 @@ impl<T, Lane> ForkArena<T, Lane> {
             pool_owner: None,
             ownership: ForkOwnership::Accepted(ChunkSet::default()),
             base_payload_chunks: 0,
-            payload_frontier: LiveChunkFrontier::default(),
             active_builder: false,
             pending_batch: None,
             next_batch_serial: 1,
@@ -2860,45 +2845,21 @@ impl<T, Lane> ForkArena<T, Lane> {
         }
     }
 
-    fn computed_live_chunk_frontier(&self) -> LiveChunkFrontier {
-        let end = self.live_payload_len();
-        let base = self.base_payload_chunks as usize;
-        let tail = (end != base).then(|| self.live_key_at(end - 1)).flatten();
-        LiveChunkFrontier { end, tail }
-    }
-
-    fn refresh_live_chunk_frontiers(&mut self) {
-        self.payload_frontier = self.computed_live_chunk_frontier();
-    }
-
-    /// Authenticates the complete live chunk suffix from its maintained tail.
+    /// Authenticates the live suffix from the authoritative chunk vectors.
     ///
     /// The ordered key vectors and pool indexes are mutated only by this
-    /// module. Verifying their constant-size end record plus the tail chunk's
+    /// module. Deriving the constant-time end and validating the tail chunk's
     /// incarnation, arena, lineage, and owner-relative position therefore
     /// admits the maintained prefix invariant without replaying every chunk.
     fn validate_live_chunks(&self, pool: &ChunkPool<T>) -> Result<(), ForkArenaError> {
         self.validate_pool(pool)?;
-        self.validate_live_chunk_frontier(pool, self.payload_frontier)
-    }
-
-    fn validate_live_chunk_frontier(
-        &self,
-        pool: &ChunkPool<T>,
-        frontier: LiveChunkFrontier,
-    ) -> Result<(), ForkArenaError> {
-        if frontier != self.computed_live_chunk_frontier() {
-            return Err(ForkArenaError::InvalidChunk);
+        let end = self.live_payload_len();
+        if end == self.base_payload_chunks as usize {
+            return Ok(());
         }
-        let Some(key) = frontier.tail else {
-            let base = self.base_payload_chunks as usize;
-            return (frontier.end == base)
-                .then_some(())
-                .ok_or(ForkArenaError::InvalidChunk);
-        };
-        let position = frontier
-            .end
-            .checked_sub(1)
+        let position = end - 1;
+        let key = self
+            .live_key_at(position)
             .ok_or(ForkArenaError::InvalidChunk)?;
         let actual = pool.payload.arena_position(key, self.owner, self.lineage);
         (actual == Some(position))
@@ -2993,20 +2954,18 @@ impl<T, Lane> ForkArena<T, Lane> {
             .sealed_prefix_chunks_shared
             .saturating_add(count);
         let counters = self.counters;
-        let mut shared = Self {
+        let shared = Self {
             owner: self.owner,
             lineage,
             pool_owner: self.pool_owner,
             ownership: ForkOwnership::Accepted(shared),
             base_payload_chunks: 0,
-            payload_frontier: LiveChunkFrontier::default(),
             active_builder: false,
             pending_batch: None,
             next_batch_serial: 1,
             counters,
             _types: PhantomData,
         };
-        shared.refresh_live_chunk_frontiers();
         Ok(shared)
     }
 
@@ -3029,7 +2988,6 @@ impl<T, Lane> ForkArena<T, Lane> {
             self.release_set(pool, set)
                 .expect("region retirement was completely preflighted");
         }
-        self.refresh_live_chunk_frontiers();
         Ok(())
     }
 
@@ -3268,7 +3226,6 @@ impl<T, Lane> ForkArena<T, Lane> {
                     self.counters.direct_blocks_allocated.saturating_add(1);
                 let position = self.live_payload_len() - 1;
                 self.index_chunk(pool, key, position);
-                self.refresh_live_chunk_frontiers();
                 key
             }
         };
@@ -3669,7 +3626,6 @@ impl<T, Lane> ForkArena<T, Lane> {
         } else if tail_used != 0 {
             return Err(ForkArenaError::InvalidOperationMark);
         }
-        self.refresh_live_chunk_frontiers();
         Ok(())
     }
 

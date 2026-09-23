@@ -271,7 +271,6 @@ impl<T, Lane> ForkArena<T, Lane> {
             .obsolete_chunks_pruned
             .saturating_add(released as u64);
         self.ownership = ForkOwnership::Accepted(successor);
-        self.refresh_live_chunk_frontiers();
         Ok(())
     }
 
@@ -313,7 +312,6 @@ impl<T, Lane> ForkArena<T, Lane> {
         for key in &payload {
             self.unindex_chunk(pool, *key);
         }
-        self.refresh_live_chunk_frontiers();
         Ok(DetachedBatch {
             arena: batch.arena,
             serial: batch.serial,
@@ -342,7 +340,6 @@ impl<T, Lane> ForkArena<T, Lane> {
             let current = self.current_chunks_mut();
             current.payload.extend(batch.payload);
         }
-        self.refresh_live_chunk_frontiers();
         self.pending_batch = None;
         Ok(())
     }
@@ -417,7 +414,6 @@ impl<T, Lane> ForkArena<T, Lane> {
             let current = destination.current_chunks_mut();
             current.payload.extend(batch.payload);
         }
-        destination.refresh_live_chunk_frontiers();
         self.counters.chunks_promoted = self
             .counters
             .chunks_promoted
@@ -524,7 +520,6 @@ impl<T, Lane> ForkArena<T, Lane> {
             let current = destination.current_chunks_mut();
             current.payload.extend(payload);
         }
-        destination.refresh_live_chunk_frontiers();
         self.counters.chunks_promoted = self
             .counters
             .chunks_promoted

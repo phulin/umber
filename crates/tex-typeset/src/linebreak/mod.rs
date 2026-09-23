@@ -202,8 +202,7 @@ pub struct ParagraphTape<'a> {
 #[derive(Clone, Debug, PartialEq)]
 enum ParagraphSource<'a> {
     Owned(NodeSequence),
-    BorrowedMirrored(&'a [Node]),
-    BorrowedArena(NodeCursor<'a>),
+    Borrowed(NodeCursor<'a>),
     ArenaId {
         semantic: PageNodeSequenceId,
         physical: PageNodeSequenceId,
@@ -346,13 +345,12 @@ impl<'a> ParagraphTape<'a> {
         nodes: &'a [Node],
         params: &LineBreakParams,
     ) -> Self {
-        let source = nodes;
         let nodes = NodeCursor::owned(nodes);
         let mut analyzer = LegalBreakpoints::new(state, nodes, params);
         let break_sites = analyzer.collect_direct();
         let materialization = analyzer.materialization;
         Self {
-            source: ParagraphSource::BorrowedMirrored(source),
+            source: ParagraphSource::Borrowed(nodes),
             break_sites,
             materialization,
             par_fill_override: None,
@@ -372,7 +370,7 @@ impl<'a> ParagraphTape<'a> {
         let break_sites = analyzer.collect_direct();
         let materialization = analyzer.materialization;
         Self {
-            source: ParagraphSource::BorrowedArena(sequence),
+            source: ParagraphSource::Borrowed(sequence),
             break_sites,
             materialization,
             par_fill_override: None,
@@ -383,8 +381,7 @@ impl<'a> ParagraphTape<'a> {
     pub fn nodes<'state, S: TypesetState>(&'state self, state: &'state S) -> NodeCursor<'state> {
         match &self.source {
             ParagraphSource::Owned(sequence) => NodeCursor::owned(sequence.semantic()),
-            ParagraphSource::BorrowedMirrored(nodes) => NodeCursor::owned(nodes),
-            ParagraphSource::BorrowedArena(sequence) => *sequence,
+            ParagraphSource::Borrowed(sequence) => *sequence,
             ParagraphSource::ArenaId { semantic, .. } => state
                 .page_node_sequence(*semantic)
                 .expect("paragraph sequence remains live while its tape is consumed"),
@@ -434,8 +431,7 @@ impl<'a> ParagraphTape<'a> {
     pub fn into_semantic_nodes<S: TypesetState>(self, state: &S) -> Vec<Node> {
         match self.source {
             ParagraphSource::Owned(sequence) => sequence.into_semantic(),
-            ParagraphSource::BorrowedMirrored(nodes) => nodes.to_vec(),
-            ParagraphSource::BorrowedArena(sequence) => {
+            ParagraphSource::Borrowed(sequence) => {
                 let mut nodes = Vec::with_capacity(sequence.len());
                 sequence.for_each(|node| {
                     nodes.push(node.to_owned_with(std::convert::identity));
