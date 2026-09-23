@@ -626,9 +626,8 @@ impl<T> ChunkStorage<T> {
         let slots_per_chunk = (chunk_bytes / slot_bytes).max(1);
         Self {
             layout,
-            // Reuse the workspace's canonical space allocator and coordinate
-            // vocabulary. Payload resolution remains in this transitional
-            // adapter until the NodeRecord table cutover.
+            // Share the workspace's coordinate vocabulary. Owner-local rows
+            // resolve each logical block to its fixed pool page.
             logical_space: AcceptedBlockTable::<u8>::new().space(),
             logical_rows: Vec::new(),
             logical_free: Vec::new(),
@@ -1940,12 +1939,8 @@ impl<T> Drop for ChunkStorage<T> {
     }
 }
 
-/// Storage-agnostic borrowed resolver selected by the semantic fork owner.
-///
-/// Both variants use the same transitional owned-Node adapter today. The
-/// compact cutover replaces only these constructors with
-/// `AcceptedBlockView<NodeRecord>` and `CandidateBlockView<NodeRecord>`; list
-/// coordinates, predecessors, and traversal code remain unchanged.
+/// Borrowed resolver for the accepted or candidate lineage of the same
+/// physical chunk storage. Neither view owns or mirrors node values.
 enum LogicalBlockView<'a, T> {
     Accepted(&'a ChunkStorage<T>),
     Candidate(&'a ChunkStorage<T>),
