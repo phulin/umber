@@ -157,6 +157,40 @@ The format construction succeeds; the loaded run exits 101 at
 `tex-command/src/scanners/scalar.rs` while looking up the null-font control
 sequence identity.
 
+The `current-font-selection` fixture's original `count:0=1` projection was an
+Umber-authored expectation, not a reference observation. TeX82's frozen
+`font_id_base+null_font` control sequence is distinct from the ordinary
+`\nullfont` token (pinned `tex.web` §§222, 415, 548, 552–553). The fixture's
+`\ifx` therefore leaves `\count0` at zero. To verify the state without
+altering the condition, insert an observer immediately before `\end` and run
+the pinned TeX Live 2026 TeX82 executable:
+
+```sh
+scripts/build-tex82-oracle.sh --offline
+python3 - <<'PY'
+from pathlib import Path
+p = Path("tests/corpus/command-semantic/main-control/current-font-selection/current-font-selection.tex")
+q = Path("target/current-font-oracle.tex")
+q.write_bytes(p.read_bytes().replace(b"\\end\n", b"\\showthe\\count0\n\\end\n"))
+PY
+(cd target && TEXMFCNF=../third_party/texlive-source/src/texk/kpathsea TEXINPUTS=.: tex82-oracle/bin/umber-tex82-oracle -ini current-font-oracle.tex)
+```
+
+The TeX82 terminal prints `> 0.` at the observer. Its source archive is pinned
+by `tests/tex82-oracle-manifest.txt`. After a single-case capture from the
+pinned instrumented pdfTeX oracle, the named fixture acceptance command
+(`command-semantic-channels --profile raw-tex82-loaded
+--accept-projection-change main-control/current-font-selection`) proposed
+Umber's `count:0=0` projection. The TeX82 probe above independently confirms
+that value. Only that reviewed projection was accepted: the original 120
+Umber-observed command events remain the manifest baseline, so the current
+104-event run still fails the selected manual test. The event count is an Umber
+observation snapshot, not an independently captured oracle event count.
+Named projection acceptance also regenerates that case's complete channel
+block; its proposed 104-event rewrite was reviewed and rejected. The fixture
+source, reference terminal and log bytes, and channel disposition were not
+changed.
+
 Routine tests read committed fixtures and provisioned local oracles without
 invoking reference TeX. Provision the primary checkout once with
 `python3 scripts/provision.py worktree .`; provision each linked checkout with

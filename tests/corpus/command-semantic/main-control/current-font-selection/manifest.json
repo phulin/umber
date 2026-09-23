@@ -3,7 +3,7 @@
     "events": 120
   },
   "expected": [
-    "count:0=1"
+    "count:0=0"
   ],
   "profile": "raw-tex82-loaded",
   "projection": {
