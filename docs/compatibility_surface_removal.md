@@ -78,25 +78,34 @@ committed TeX82 microfixture is source-located schema V3; the independently
 generated e-TeX 2.6 e-TRIP stream remains positionless schema V2. Neither is
 an old Umber image or a fallback for the other.
 
-At combined production `e685e55d8`, `scripts/check-and-test.sh` passed all
-seven native/quality stages with zero failures and no scope reductions. The
-manual selected compatibility corpus has the separate failing result below.
-Generated-browser and external-PDF gates are separate platform evidence and
-are not included in this native verdict. At the same production revision,
-`scripts/check-pdf-external.sh --ci` passed its real qpdf 12.3.2 structural
-matrix and all 15 reference/Umber PDF render and text pairs through the same
-available Poppler 25.08.0 tools. These versions are recorded provenance;
-semantic structure, paired pixels, and extracted text are the acceptance
-criteria.
+At final tree `a4cfc47dc`, `scripts/check-and-test.sh` passed all seven
+native/quality stages with zero failures and no scope reductions. Compared
+with production `e685e55d8`, only two browser test files changed under
+`crates/`, `tools/`, `scripts/`, and `benchmarks/`; the selected state, PDF, and
+manual-corpus results in this section therefore describe the same production
+source.
+
+The separate `scripts/check-wasm.sh` gate passed all nine stages on
+`a4cfc47dc`: wasm-check, Biome, Node unit tests, 40/40 Firefox wasm-bindgen
+tests, dense-prefix and dense-arena WASM checks, local Plain schema-12 format,
+optimized packed-catalog/Chromium browser worker flow, and npm package check.
+This proves the generated local package and selected browser flows; it does
+not assert publication of a hosted default distribution.
+
+At production `e685e55d8`, `scripts/check-pdf-external.sh --ci` passed its real
+qpdf 12.3.2 structural matrix and all 15 reference/Umber PDF render and text
+pairs through the same available Poppler 25.08.0 tools. These versions are
+recorded as provenance; semantic structure, paired pixels, and extracted text
+are the acceptance criteria.
 
 Selected state and feature gates at the same revision also passed: snapshot
 lifecycle and hot-path checks; locked `state_budgets` and shipout benchmark
 compilation; one-node and 4,096-node page destination move/copy allocation
 checks; one million PDF checkpoint capture/restore iterations on 1-byte and
 64-MiB payloads with zero hot-path allocations; the locked direct-linebreak
-check; and selected state testing, shadow, state-profiling, executor-profiling, and
-command-profiling suites. These establish the
-named bounds and selected feature coverage, not general performance parity.
+check; and selected state testing, shadow, state profiling, executor profiling,
+and command profiling suites. These establish the named bounds and selected
+feature coverage, not general performance parity.
 
 Removal is complete only when repository callers no longer use the old
 surface, active tests exercise the replacement contract rather than a retained
