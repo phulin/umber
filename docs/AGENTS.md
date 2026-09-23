@@ -47,8 +47,8 @@ first-failure locator. Keep diagnosis order in
 
 `repository_simplification_plan.md` records the September 2026 repository
 review and staged migration. Its seven test classes and execution lanes now
-describe the testing front door; later code and bibliography sections remain
-proposals until implemented.
+describe the testing front door. The artifact codec cleanup is implemented;
+other downstream and bibliography sections remain proposals until implemented.
 
 `tooling_surface_inventory.md` records the owner-approved disposition of
 reference/parity commands, one-time fixture migrations, benchmark and trace

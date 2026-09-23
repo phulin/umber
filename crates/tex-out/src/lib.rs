@@ -11,16 +11,17 @@
 //! All integers are little-endian. Lengths are `u32`. `Scaled` values are their
 //! raw `i32` scaled-point representation. Strings and byte arrays are encoded
 //! as a `u32` byte length followed by exact bytes. The stream begins with
-//! `b"UMPG"` followed by one version byte. Readers accept the explicitly
-//! supported append-only schema versions.
+//! `b"UMPG"` followed by version byte 24. Readers accept only version 24.
 //!
 //! ```text
 //! magic[4] version:u8
-//! job_mag:i32 job_banner
+//! job_mag:i32 job_banner h_offset:i32 v_offset:i32
+//! page_origin_x:i32 page_origin_y:i32 page_width:i32 page_height:i32
 //! fonts_len:u32 font*
 //! count0_to_count9:i32[10]
 //! root_node
 //! effects_len:u32 effect*
+//! math_events_len:u32 math_event*
 //! ```
 //!
 //! Font resources are serialized in caller-provided order and nodes refer to

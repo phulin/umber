@@ -12,7 +12,14 @@ Use this crate for stable, driver-facing artifact structures and serialization c
 
 - `AGENTS.md`: Crate-local guidance, boundaries, validation expectations, and this file map.
 - `Cargo.toml`: Crate manifest declaring shared arithmetic and content-identity dependencies.
-- `src/binary.rs`: Versioned compact binary writer/reader, nested list and token streaming encoders/decoders, and parse error types.
+- `src/binary.rs`: Version-24 artifact codec facade, limits, errors, and owned encode/decode entry points.
+- `src/binary/primitive.rs`: Bounded primitive byte I/O and the shared reader/writer state.
+- `src/binary/wire.rs`: Wire tags and enum/tag conversions shared by codec paths.
+- `src/binary/owned_encode.rs`: Owned artifact resource, effect, math-event, and node emission.
+- `src/binary/owned_decode.rs`: Version-24 resource, effect, and math-event parsing.
+- `src/binary/nodes.rs`: Iterative owned node parsing, skip traversal, and decode frames.
+- `src/binary/streaming_writer.rs`: Fresh-shipout root-child, nested-list, token, and discretionary emission.
+- `src/binary/streaming_scan.rs`: Borrowed root-child scanning and validation without an owned page tree.
 - `src/dvi.rs`: Slice-compatible and incremental output-sink DVI APIs, the private body compiler and file writer, one-page writer state, errors, and submodule wiring.
 - `src/bin/texout-dvitype.rs`: Small host-side DVI disassembly binary for parity triage, enabled by the opt-in `dvi-tools` feature.
 - `src/dvi/disasm.rs`: Bounded backpointer-graph validator and single-pass retained DVI command index/disassembler.

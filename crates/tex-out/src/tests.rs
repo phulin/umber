@@ -906,6 +906,34 @@ const PAGE_OUTPUT_FLOAT_GUARD_SOURCES: &[(&str, &str)] = &[
     ),
     ("crates/tex-out/src/model.rs", include_str!("model.rs")),
     ("crates/tex-out/src/binary.rs", include_str!("binary.rs")),
+    (
+        "crates/tex-out/src/binary/nodes.rs",
+        include_str!("binary/nodes.rs"),
+    ),
+    (
+        "crates/tex-out/src/binary/owned_decode.rs",
+        include_str!("binary/owned_decode.rs"),
+    ),
+    (
+        "crates/tex-out/src/binary/owned_encode.rs",
+        include_str!("binary/owned_encode.rs"),
+    ),
+    (
+        "crates/tex-out/src/binary/primitive.rs",
+        include_str!("binary/primitive.rs"),
+    ),
+    (
+        "crates/tex-out/src/binary/streaming_scan.rs",
+        include_str!("binary/streaming_scan.rs"),
+    ),
+    (
+        "crates/tex-out/src/binary/streaming_writer.rs",
+        include_str!("binary/streaming_writer.rs"),
+    ),
+    (
+        "crates/tex-out/src/binary/wire.rs",
+        include_str!("binary/wire.rs"),
+    ),
     ("crates/tex-out/src/dvi.rs", include_str!("dvi.rs")),
     (
         "crates/tex-out/src/dvi/movement.rs",

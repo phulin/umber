@@ -447,12 +447,12 @@ and an unavailable required resource need distinct transitions.
 
 ### 5. Simplify downstream families using the same method
 
-The artifact codec has a particularly concrete cleanup opportunity:
-[binary.rs](../crates/tex-out/src/binary.rs) accepts only version 24 at both
-its owned and streaming header boundaries, but retains branches for versions
-13 through 23. Its facade still describes append-only compatibility. Confirm
-all decoder entry points, preserve the current version-24 acceptance and
-older-version rejection behavior, and remove unreachable migration branches.
+At review time, the artifact codec had a concrete cleanup opportunity:
+[binary.rs](../crates/tex-out/src/binary.rs) accepted only version 24 at both
+its owned and streaming header boundaries, but retained branches for versions
+13 through 23. Its facade still described append-only compatibility. Confirm
+all decoder entry points, preserve the version-24 acceptance and older-version
+rejection behavior, and remove unreachable migration branches.
 If historical decoding is a required product promise, treat implementing it
 as separate compatibility work rather than silently broadening this cleanup.
 
@@ -461,6 +461,14 @@ sharing wire tags, headers, and limits. Keep owned-versus-streaming byte
 identity and malformed-input error tests. Versioned legacy type names such as
 `V10ArtifactBuilder` can be hidden behind the existing version-independent
 aliases without breaking external callers.
+
+The codec cleanup now keeps the exact version-24 header boundary in both
+decoders, with explicit rejection checks for every older version across all
+decode entry points. The facade retains the public versioned names and aliases;
+the implementation separates bounded primitive I/O, shared wire tags, owned
+encoding and decoding, iterative node traversal, streaming emission, and
+borrowed scanning. Extraction does not change the artifact representation or
+introduce historical decoding.
 
 Split oversized PDF lowering helpers within the existing boundaries:
 `finalization.rs` owns detached input, `finalize.rs` lowers it, `pdf.rs`
