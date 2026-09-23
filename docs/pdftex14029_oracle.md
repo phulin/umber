@@ -228,6 +228,20 @@ capture provenance receipt, not a new executable-version acceptance pin. The
 added files repair missing reference evidence; they do not imply that Umber's
 diagnostic lifecycle or execution now matches the reference.
 
+Complete-job status is captured with the complete-job channels. A later
+selected capture found 30 older manifests that had defaulted to `clean` even
+though the reference job ended in a fatal emergency stop. Twenty-seven
+source-located reports carry `End of file on the terminal!`; three carry
+`*** (job aborted, no legal \end found)`. These exact report arguments and
+`fatal_error_stop`/`aborted` outcomes determine the 30 status declarations;
+the raw process exit code does not. The same capture supplied 29 more
+`expected.diagnostics` files. For every selected case, the staged source and
+committed terminal bytes matched exactly, while the log and any DVI differed
+only in the established clock and preamble-comment fields. Ordinary
+recoverable errors retain a clean completion status when the reference
+actually completes. Neither these fixture corrections nor their new typed
+evidence resolve remaining Umber/reference differences.
+
 The loaded raw-TeX82 batch uses the blessed regeneration entry point with the
 typed capture policy embedded in each V2 case:
 

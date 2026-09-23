@@ -1,5 +1,7 @@
 {
-  "channels": {},
+  "channels": {
+    "status": "fatal:emergency-stop(End of file on the terminal!)"
+  },
   "expected": [
     "token-list:complete:macro_replacement:char:letter:65",
     "command:raw:cs:csname:cs_name:0",

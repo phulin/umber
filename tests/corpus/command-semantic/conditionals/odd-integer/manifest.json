@@ -1,5 +1,6 @@
 {
   "channels": {
+    "status": "fatal:emergency-stop(End of file on the terminal!)"
   },
   "expected": [
     "predicate:ifodd:integer=0:false",

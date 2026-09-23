@@ -30,6 +30,7 @@
     "scanner-status:skipping>normal"
   ],
   "channels": {
+    "status": "fatal:emergency-stop(End of file on the terminal!)",
     "terminal": {
       "kind": "file"
     },

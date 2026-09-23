@@ -35,6 +35,7 @@
     "input:stop:terminal"
   ],
   "channels": {
+    "status": "fatal:emergency-stop(End of file on the terminal!)"
   },
   "terminal_lines": [
     "R"

@@ -1,0 +1,3 @@
+{"schema":4,"manifest":"0000000000000000000000000000000000000000000000000000000000000000"}
+{"sequence":0,"semantic":{"event":"diagnostic_lifecycle","data":{"transition":"report","class":"fatal","severity":"fatal","diagnostic":"emergency-stop","arguments":[{"type":"name","value":"*** (job aborted, no legal \\end found)"}],"location":{"source":"etex-glue-component-enquiries.tex","line":17,"byte":3}}}}
+{"sequence":1,"semantic":{"event":"diagnostic_lifecycle","data":{"transition":"outcome","history":"fatal_error_stop","outcome":"aborted"}}}

@@ -1,5 +1,6 @@
 {
   "channels": {
+    "status": "fatal:emergency-stop(End of file on the terminal!)"
   },
   "expected": [
     "terminal-check:! Bad space factor (0).=true",

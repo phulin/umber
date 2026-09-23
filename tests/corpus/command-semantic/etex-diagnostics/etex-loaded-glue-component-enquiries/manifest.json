@@ -28,5 +28,6 @@
     "count:0=8191"
   ],
   "channels": {
+    "status": "fatal:emergency-stop(*** (job aborted, no legal \\end found))"
   }
 }
