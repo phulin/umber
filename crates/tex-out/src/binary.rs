@@ -10,18 +10,6 @@ use tex_arith::Scaled;
 
 const MAGIC: &[u8; 4] = b"UMPG";
 const VERSION: u8 = 24;
-const MATH_OUTPUT_VERSION: u8 = 23;
-const ADVANCED_FONT_INSTANCE_VERSION: u8 = 22;
-const FONT_LAYOUT_VERSION: u8 = 21;
-const PAGE_SIZE_VERSION: u8 = 20;
-const THREAD_VERSION: u8 = 19;
-const IMAGE_VERSION: u8 = 18;
-const ANNOTATION_VERSION: u8 = 17;
-const PRE_ANNOTATION_VERSION: u8 = 16;
-const PDF_ACCESSIBILITY_VERSION: u8 = 15;
-const FONT_CONSTRUCTION_VERSION: u8 = 14;
-const OPENTYPE_FONT_VERSION: u8 = 13;
-
 mod wire {
     pub mod node {
         pub const CHAR: u8 = 0;
@@ -324,33 +312,22 @@ pub(crate) fn from_bytes(
     let banner = reader.str()?;
     let h_offset = reader.scaled()?;
     let v_offset = reader.scaled()?;
-    let (page_origin_x, page_origin_y, page_width, page_height) = if version >= PAGE_SIZE_VERSION {
+    let (page_origin_x, page_origin_y, page_width, page_height) = {
         (
             reader.scaled()?,
             reader.scaled()?,
             reader.scaled()?,
             reader.scaled()?,
-        )
-    } else {
-        (
-            Scaled::from_raw(0),
-            Scaled::from_raw(0),
-            Scaled::from_raw(0),
-            Scaled::from_raw(0),
         )
     };
-    let fonts = reader.fonts(version)?;
+    let fonts = reader.fonts()?;
     let mut counts = [0; 10];
     for value in &mut counts {
         *value = reader.i32()?;
     }
     let root = reader.node()?;
-    let effects = reader.effects(version)?;
-    let math_events = if version >= MATH_OUTPUT_VERSION {
-        reader.math_events()?
-    } else {
-        Vec::new()
-    };
+    let effects = reader.effects()?;
+    let math_events = { reader.math_events()? };
     reader.finish()?;
     Ok(UnvalidatedPageArtifact {
         job: crate::JobInfo {
@@ -951,15 +928,11 @@ impl<'a> V10PageDecoder<'a> {
             });
         }
         let mut scan = Reader::new(bytes, limits);
-        let (version, job, fonts, counts) = scan.header()?;
+        let (job, fonts, counts) = scan.header()?;
         let root_start = scan.offset;
         scan.skip_node()?;
-        let effects = scan.effects(version)?;
-        let math_events = if version >= MATH_OUTPUT_VERSION {
-            scan.math_events()?
-        } else {
-            Vec::new()
-        };
+        let effects = scan.effects()?;
+        let math_events = { scan.math_events()? };
         scan.finish()?;
 
         let mut reader = Reader::new_at(bytes, limits, root_start);
@@ -2105,7 +2078,7 @@ impl Reader<'_> {
         }
     }
 
-    fn header(&mut self) -> Result<(u8, crate::JobInfo, Vec<FontResource>, [i32; 10]), ParseError> {
+    fn header(&mut self) -> Result<(crate::JobInfo, Vec<FontResource>, [i32; 10]), ParseError> {
         self.expect_magic()?;
         let version = self.u8()?;
         if version != VERSION {
@@ -2115,22 +2088,14 @@ impl Reader<'_> {
         let banner = self.str()?;
         let h_offset = self.scaled()?;
         let v_offset = self.scaled()?;
-        let (page_origin_x, page_origin_y, page_width, page_height) =
-            if version >= PAGE_SIZE_VERSION {
-                (
-                    self.scaled()?,
-                    self.scaled()?,
-                    self.scaled()?,
-                    self.scaled()?,
-                )
-            } else {
-                (
-                    Scaled::from_raw(0),
-                    Scaled::from_raw(0),
-                    Scaled::from_raw(0),
-                    Scaled::from_raw(0),
-                )
-            };
+        let (page_origin_x, page_origin_y, page_width, page_height) = {
+            (
+                self.scaled()?,
+                self.scaled()?,
+                self.scaled()?,
+                self.scaled()?,
+            )
+        };
         let job = crate::JobInfo {
             mag,
             banner,
@@ -2141,12 +2106,12 @@ impl Reader<'_> {
             page_width,
             page_height,
         };
-        let fonts = self.fonts(version)?;
+        let fonts = self.fonts()?;
         let mut counts = [0; 10];
         for value in &mut counts {
             *value = self.i32()?;
         }
-        Ok((version, job, fonts, counts))
+        Ok((job, fonts, counts))
     }
 
     fn expect_magic(&mut self) -> Result<(), ParseError> {
@@ -2284,16 +2249,8 @@ impl Reader<'_> {
         }
     }
 
-    fn fonts(&mut self, version: u8) -> Result<Vec<FontResource>, ParseError> {
-        let len = self.collection_len(if version >= FONT_LAYOUT_VERSION {
-            127
-        } else if version >= FONT_CONSTRUCTION_VERSION {
-            125
-        } else if version >= OPENTYPE_FONT_VERSION {
-            53
-        } else {
-            52
-        })?;
+    fn fonts(&mut self) -> Result<Vec<FontResource>, ParseError> {
+        let len = self.collection_len(127)?;
         let mut fonts = Vec::with_capacity(len);
         for _ in 0..len {
             let font_id = self.u32()?;
@@ -2302,7 +2259,7 @@ impl Reader<'_> {
             let tfm_checksum = self.u32()?;
             let design_size = self.scaled()?;
             let at_size = self.scaled()?;
-            let (layout_policy, mapping_fallback) = if version >= FONT_LAYOUT_VERSION {
+            let (layout_policy, mapping_fallback) = {
                 let policy = match self.u8()? {
                     1 => tex_fonts::FontLayoutPolicy::OpenTypePreferred,
                     2 => tex_fonts::FontLayoutPolicy::ClassicTfmExact,
@@ -2325,10 +2282,8 @@ impl Reader<'_> {
                     }
                 };
                 (policy, fallback)
-            } else {
-                (tex_fonts::FontLayoutPolicy::ClassicTfmExact, None)
             };
-            let opentype = if version >= OPENTYPE_FONT_VERSION {
+            let opentype = {
                 match self.u8()? {
                     0 => None,
                     1 => {
@@ -2350,112 +2305,100 @@ impl Reader<'_> {
                                 });
                             }
                         };
-                        let (face_index, variation, features, direction, script, language) =
-                            if version >= ADVANCED_FONT_INSTANCE_VERSION {
-                                let face_index = self.u32()?;
-                                let variation_kind = self.u8()?;
-                                let named_id = if variation_kind == 1 {
-                                    Some(self.u16()?)
-                                } else {
-                                    None
-                                };
-                                if variation_kind > 2 {
-                                    return Err(ParseError::InvalidTag {
-                                        kind: "variation instance",
-                                        tag: variation_kind,
-                                    });
-                                }
-                                let coordinate_count = self.collection_len(8)?;
-                                let mut coordinates = Vec::with_capacity(coordinate_count);
-                                for _ in 0..coordinate_count {
-                                    coordinates.push(tex_fonts::VariationCoordinate {
-                                        tag: tex_fonts::OpenTypeTag::new(self.opentype_tag()?),
-                                        value: self.i32()?,
-                                    });
-                                }
-                                let variation = match (variation_kind, named_id) {
-                                    (0, _) if coordinates.is_empty() => {
-                                        Ok(tex_fonts::VariationSelection::default())
-                                    }
-                                    (1, Some(name_id)) => {
-                                        tex_fonts::VariationSelection::resolved_named(
-                                            name_id,
-                                            coordinates,
-                                        )
-                                    }
-                                    (2, _) => tex_fonts::VariationSelection::new(coordinates),
-                                    _ => Err(tex_fonts::FontSelectionError::DuplicateVariationAxis),
-                                }
-                                .map_err(|_| {
-                                    ParseError::InvalidTag {
-                                        kind: "variation selection",
-                                        tag: variation_kind,
-                                    }
-                                })?;
-                                let feature_count = self.collection_len(8)?;
-                                let mut feature_settings = Vec::with_capacity(feature_count);
-                                for _ in 0..feature_count {
-                                    feature_settings.push(tex_fonts::FeatureSetting {
-                                        tag: tex_fonts::OpenTypeTag::new(self.opentype_tag()?),
-                                        value: self.u32()?,
-                                    });
-                                }
-                                let features = tex_fonts::FontFeaturePolicy::new(feature_settings)
-                                    .map_err(|_| ParseError::InvalidTag {
-                                        kind: "feature policy",
-                                        tag: 0,
-                                    })?;
-                                let direction = match self.u8()? {
-                                    1 => tex_fonts::WritingDirection::LeftToRight,
-                                    2 => tex_fonts::WritingDirection::RightToLeft,
-                                    tag => {
-                                        return Err(ParseError::InvalidTag {
-                                            kind: "writing direction",
-                                            tag,
-                                        });
-                                    }
-                                };
-                                let script = match self.u8()? {
-                                    0 => None,
-                                    1 => Some(tex_fonts::OpenTypeTag::new(self.opentype_tag()?)),
-                                    tag => {
-                                        return Err(ParseError::InvalidTag {
-                                            kind: "script",
-                                            tag,
-                                        });
-                                    }
-                                };
-                                let language = match self.u8()? {
-                                    0 => None,
-                                    1 => Some(tex_fonts::FontLanguage::new(self.str()?).map_err(
-                                        |_| ParseError::InvalidTag {
-                                            kind: "language",
-                                            tag: 0,
-                                        },
-                                    )?),
-                                    tag => {
-                                        return Err(ParseError::InvalidTag {
-                                            kind: "language",
-                                            tag,
-                                        });
-                                    }
-                                };
-                                (face_index, variation, features, direction, script, language)
+                        let (face_index, variation, features, direction, script, language) = {
+                            let face_index = self.u32()?;
+                            let variation_kind = self.u8()?;
+                            let named_id = if variation_kind == 1 {
+                                Some(self.u16()?)
                             } else {
-                                (
-                                    0,
-                                    tex_fonts::VariationSelection::default(),
-                                    tex_fonts::FontFeaturePolicy::default(),
-                                    tex_fonts::WritingDirection::LeftToRight,
-                                    None,
-                                    None,
-                                )
+                                None
                             };
+                            if variation_kind > 2 {
+                                return Err(ParseError::InvalidTag {
+                                    kind: "variation instance",
+                                    tag: variation_kind,
+                                });
+                            }
+                            let coordinate_count = self.collection_len(8)?;
+                            let mut coordinates = Vec::with_capacity(coordinate_count);
+                            for _ in 0..coordinate_count {
+                                coordinates.push(tex_fonts::VariationCoordinate {
+                                    tag: tex_fonts::OpenTypeTag::new(self.opentype_tag()?),
+                                    value: self.i32()?,
+                                });
+                            }
+                            let variation = match (variation_kind, named_id) {
+                                (0, _) if coordinates.is_empty() => {
+                                    Ok(tex_fonts::VariationSelection::default())
+                                }
+                                (1, Some(name_id)) => {
+                                    tex_fonts::VariationSelection::resolved_named(
+                                        name_id,
+                                        coordinates,
+                                    )
+                                }
+                                (2, _) => tex_fonts::VariationSelection::new(coordinates),
+                                _ => Err(tex_fonts::FontSelectionError::DuplicateVariationAxis),
+                            }
+                            .map_err(|_| ParseError::InvalidTag {
+                                kind: "variation selection",
+                                tag: variation_kind,
+                            })?;
+                            let feature_count = self.collection_len(8)?;
+                            let mut feature_settings = Vec::with_capacity(feature_count);
+                            for _ in 0..feature_count {
+                                feature_settings.push(tex_fonts::FeatureSetting {
+                                    tag: tex_fonts::OpenTypeTag::new(self.opentype_tag()?),
+                                    value: self.u32()?,
+                                });
+                            }
+                            let features = tex_fonts::FontFeaturePolicy::new(feature_settings)
+                                .map_err(|_| ParseError::InvalidTag {
+                                    kind: "feature policy",
+                                    tag: 0,
+                                })?;
+                            let direction = match self.u8()? {
+                                1 => tex_fonts::WritingDirection::LeftToRight,
+                                2 => tex_fonts::WritingDirection::RightToLeft,
+                                tag => {
+                                    return Err(ParseError::InvalidTag {
+                                        kind: "writing direction",
+                                        tag,
+                                    });
+                                }
+                            };
+                            let script = match self.u8()? {
+                                0 => None,
+                                1 => Some(tex_fonts::OpenTypeTag::new(self.opentype_tag()?)),
+                                tag => {
+                                    return Err(ParseError::InvalidTag {
+                                        kind: "script",
+                                        tag,
+                                    });
+                                }
+                            };
+                            let language = match self.u8()? {
+                                0 => None,
+                                1 => Some(tex_fonts::FontLanguage::new(self.str()?).map_err(
+                                    |_| ParseError::InvalidTag {
+                                        kind: "language",
+                                        tag: 0,
+                                    },
+                                )?),
+                                tag => {
+                                    return Err(ParseError::InvalidTag {
+                                        kind: "language",
+                                        tag,
+                                    });
+                                }
+                            };
+                            (face_index, variation, features, direction, script, language)
+                        };
                         let (
                             encoding_map_version,
                             encoding_map_identity,
                             fontdimen_synthesis_version,
-                        ) = if version >= FONT_LAYOUT_VERSION {
+                        ) = {
                             let map_version = self.optional_u8("encoding map version")?;
                             let map_identity = match self.u8()? {
                                 0 => None,
@@ -2469,8 +2412,6 @@ impl Reader<'_> {
                             };
                             let fontdimen = self.optional_u8("fontdimen synthesis version")?;
                             (map_version, map_identity, fontdimen)
-                        } else {
-                            (None, None, None)
                         };
                         Some(crate::OpenTypeFontResource {
                             program_identity,
@@ -2495,10 +2436,8 @@ impl Reader<'_> {
                         });
                     }
                 }
-            } else {
-                None
             };
-            let (semantic_identity, construction) = if version >= FONT_CONSTRUCTION_VERSION {
+            let (semantic_identity, construction) = {
                 let semantic_identity =
                     tex_fonts::FontSourceIdentity::from_bytes(self.ahash64_identity()?);
                 let tag = self.u8()?;
@@ -2544,11 +2483,6 @@ impl Reader<'_> {
                     }
                 };
                 (semantic_identity, construction)
-            } else {
-                (
-                    tex_fonts::FontSourceIdentity::from_bytes([0; 8]),
-                    FontResourceConstruction::Loaded,
-                )
             };
             fonts.push(FontResource {
                 font_id,
@@ -2579,7 +2513,7 @@ impl Reader<'_> {
             .map_err(|_| ParseError::UnexpectedEof)
     }
 
-    fn effects(&mut self, version: u8) -> Result<Vec<PageEffect>, ParseError> {
+    fn effects(&mut self) -> Result<Vec<PageEffect>, ParseError> {
         let len = self.collection_len(1)?;
         let mut effects = Vec::with_capacity(len);
         for _ in 0..len {
@@ -2598,7 +2532,7 @@ impl Reader<'_> {
                     class: self.str()?,
                     payload: self.bytes()?,
                 },
-                wire::effect::PDF_ACCESSIBILITY if version >= PDF_ACCESSIBILITY_VERSION => {
+                wire::effect::PDF_ACCESSIBILITY => {
                     PageEffect::PdfAccessibility(match self.u8()? {
                         0 => PdfAccessibilityEffect::InterwordSpaceOn,
                         1 => PdfAccessibilityEffect::InterwordSpaceOff,
@@ -2611,123 +2545,99 @@ impl Reader<'_> {
                         }
                     })
                 }
-                wire::effect::PDF_ANNOTATION if version >= ANNOTATION_VERSION => {
-                    PageEffect::PdfAnnotation(match self.u8()? {
-                        0 => PdfAnnotationEffect::Annotation {
-                            object: self.u32()?,
-                        },
-                        1 => PdfAnnotationEffect::LinkStart {
-                            object: self.u32()?,
-                        },
-                        2 => PdfAnnotationEffect::LinkEnd {
-                            object: self.u32()?,
-                        },
-                        3 => PdfAnnotationEffect::RunningLink(match self.u8()? {
-                            0 => false,
-                            1 => true,
-                            tag => {
-                                return Err(ParseError::InvalidTag {
-                                    kind: "PDF running-link boolean",
-                                    tag,
-                                });
-                            }
-                        }),
+                wire::effect::PDF_ANNOTATION => PageEffect::PdfAnnotation(match self.u8()? {
+                    0 => PdfAnnotationEffect::Annotation {
+                        object: self.u32()?,
+                    },
+                    1 => PdfAnnotationEffect::LinkStart {
+                        object: self.u32()?,
+                    },
+                    2 => PdfAnnotationEffect::LinkEnd {
+                        object: self.u32()?,
+                    },
+                    3 => PdfAnnotationEffect::RunningLink(match self.u8()? {
+                        0 => false,
+                        1 => true,
                         tag => {
                             return Err(ParseError::InvalidTag {
-                                kind: "PDF annotation effect",
+                                kind: "PDF running-link boolean",
                                 tag,
                             });
                         }
-                    })
-                }
-                wire::effect::PDF_LITERAL if version >= PRE_ANNOTATION_VERSION => {
-                    PageEffect::PdfLiteral {
-                        mode: match self.u8()? {
-                            0 => PdfLiteralMode::Origin,
-                            1 => PdfLiteralMode::Page,
-                            2 => PdfLiteralMode::Direct,
-                            tag => {
-                                return Err(ParseError::InvalidTag {
-                                    kind: "PDF literal mode",
-                                    tag,
-                                });
-                            }
-                        },
-                        payload: self.bytes()?,
+                    }),
+                    tag => {
+                        return Err(ParseError::InvalidTag {
+                            kind: "PDF annotation effect",
+                            tag,
+                        });
                     }
-                }
-                wire::effect::PDF_SET_MATRIX if version >= PRE_ANNOTATION_VERSION => {
-                    PageEffect::PdfSetMatrix {
-                        payload: self.bytes()?,
-                    }
-                }
-                wire::effect::PDF_SAVE if version >= PRE_ANNOTATION_VERSION => PageEffect::PdfSave,
-                wire::effect::PDF_RESTORE if version >= PRE_ANNOTATION_VERSION => {
-                    PageEffect::PdfRestore
-                }
-                wire::effect::PDF_COLOR_STACK if version >= PRE_ANNOTATION_VERSION => {
-                    PageEffect::PdfColorStack {
-                        mode: match self.u8()? {
-                            0 => PdfLiteralMode::Origin,
-                            1 => PdfLiteralMode::Page,
-                            2 => PdfLiteralMode::Direct,
-                            tag => {
-                                return Err(ParseError::InvalidTag {
-                                    kind: "PDF color stack mode",
-                                    tag,
-                                });
-                            }
-                        },
-                        page_start: match self.u8()? {
-                            0 => false,
-                            1 => true,
-                            tag => {
-                                return Err(ParseError::InvalidTag {
-                                    kind: "boolean",
-                                    tag,
-                                });
-                            }
-                        },
-                        payload: self.bytes()?,
-                    }
-                }
-                wire::effect::PDF_SAVE_POSITION if version >= PRE_ANNOTATION_VERSION => {
-                    PageEffect::PdfSavePosition
-                }
-                wire::effect::PDF_SNAP_STATE if version >= PRE_ANNOTATION_VERSION => {
-                    PageEffect::PdfSnapState {
-                        x: self.scaled()?,
-                        y: self.scaled()?,
-                    }
-                }
-                wire::effect::PDF_SNAP_REF_POINT if version >= PRE_ANNOTATION_VERSION => {
-                    PageEffect::PdfSnapRefPoint
-                }
-                wire::effect::PDF_SNAP_Y if version >= PRE_ANNOTATION_VERSION => {
-                    PageEffect::PdfSnapY {
-                        spec: self.glue_spec()?,
-                    }
-                }
-                wire::effect::PDF_SNAP_Y_COMP if version >= PRE_ANNOTATION_VERSION => {
-                    PageEffect::PdfSnapYComp { ratio: self.u16()? }
-                }
-                wire::effect::PDF_REF_XFORM if version >= PRE_ANNOTATION_VERSION => {
-                    PageEffect::PdfRefXForm {
-                        object: self.u32()?,
-                        width: self.scaled()?,
-                        height: self.scaled()?,
-                        depth: self.scaled()?,
-                    }
-                }
-                wire::effect::PDF_REF_XIMAGE if version >= IMAGE_VERSION => {
-                    PageEffect::PdfRefXImage {
-                        object: self.u32()?,
-                        width: self.scaled()?,
-                        height: self.scaled()?,
-                        depth: self.scaled()?,
-                    }
-                }
-                wire::effect::PDF_DESTINATION if version >= THREAD_VERSION => {
+                }),
+                wire::effect::PDF_LITERAL => PageEffect::PdfLiteral {
+                    mode: match self.u8()? {
+                        0 => PdfLiteralMode::Origin,
+                        1 => PdfLiteralMode::Page,
+                        2 => PdfLiteralMode::Direct,
+                        tag => {
+                            return Err(ParseError::InvalidTag {
+                                kind: "PDF literal mode",
+                                tag,
+                            });
+                        }
+                    },
+                    payload: self.bytes()?,
+                },
+                wire::effect::PDF_SET_MATRIX => PageEffect::PdfSetMatrix {
+                    payload: self.bytes()?,
+                },
+                wire::effect::PDF_SAVE => PageEffect::PdfSave,
+                wire::effect::PDF_RESTORE => PageEffect::PdfRestore,
+                wire::effect::PDF_COLOR_STACK => PageEffect::PdfColorStack {
+                    mode: match self.u8()? {
+                        0 => PdfLiteralMode::Origin,
+                        1 => PdfLiteralMode::Page,
+                        2 => PdfLiteralMode::Direct,
+                        tag => {
+                            return Err(ParseError::InvalidTag {
+                                kind: "PDF color stack mode",
+                                tag,
+                            });
+                        }
+                    },
+                    page_start: match self.u8()? {
+                        0 => false,
+                        1 => true,
+                        tag => {
+                            return Err(ParseError::InvalidTag {
+                                kind: "boolean",
+                                tag,
+                            });
+                        }
+                    },
+                    payload: self.bytes()?,
+                },
+                wire::effect::PDF_SAVE_POSITION => PageEffect::PdfSavePosition,
+                wire::effect::PDF_SNAP_STATE => PageEffect::PdfSnapState {
+                    x: self.scaled()?,
+                    y: self.scaled()?,
+                },
+                wire::effect::PDF_SNAP_REF_POINT => PageEffect::PdfSnapRefPoint,
+                wire::effect::PDF_SNAP_Y => PageEffect::PdfSnapY {
+                    spec: self.glue_spec()?,
+                },
+                wire::effect::PDF_SNAP_Y_COMP => PageEffect::PdfSnapYComp { ratio: self.u16()? },
+                wire::effect::PDF_REF_XFORM => PageEffect::PdfRefXForm {
+                    object: self.u32()?,
+                    width: self.scaled()?,
+                    height: self.scaled()?,
+                    depth: self.scaled()?,
+                },
+                wire::effect::PDF_REF_XIMAGE => PageEffect::PdfRefXImage {
+                    object: self.u32()?,
+                    width: self.scaled()?,
+                    height: self.scaled()?,
+                    depth: self.scaled()?,
+                },
+                wire::effect::PDF_DESTINATION => {
                     let object = self.u32()?;
                     let identifier = match self.u8()? {
                         0 => PdfDestinationIdentifier::Name(self.bytes()?),
@@ -2802,9 +2712,7 @@ impl Reader<'_> {
                         margin: self.scaled()?,
                     })
                 }
-                tag @ (wire::effect::PDF_THREAD | wire::effect::PDF_START_THREAD)
-                    if version >= THREAD_VERSION =>
-                {
+                tag @ (wire::effect::PDF_THREAD | wire::effect::PDF_START_THREAD) => {
                     let thread_object = self.u32()?;
                     let bead_object = self.u32()?;
                     let rectangle_object = self.u32()?;
@@ -2845,9 +2753,7 @@ impl Reader<'_> {
                         PageEffect::PdfStartThread(marker)
                     }
                 }
-                wire::effect::PDF_END_THREAD if version >= THREAD_VERSION => {
-                    PageEffect::PdfEndThread
-                }
+                wire::effect::PDF_END_THREAD => PageEffect::PdfEndThread,
                 tag => {
                     return Err(ParseError::InvalidTag {
                         kind: "effect",

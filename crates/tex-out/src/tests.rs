@@ -34,6 +34,25 @@ fn pre_ahash64_font_artifacts_are_rejected() {
 }
 
 #[test]
+fn every_decoder_rejects_all_older_artifact_versions() {
+    let mut bytes = sample_artifact().to_bytes().expect("artifact serializes");
+    let limits = ArtifactCodecLimits::default();
+    for version in 0..24 {
+        bytes[4] = version;
+        let expected = ParseError::UnsupportedVersion(version);
+        assert_eq!(PageArtifact::from_bytes(&bytes), Err(expected.clone()));
+        assert_eq!(
+            PageArtifact::from_bytes_with_limits(&bytes, limits),
+            Err(expected.clone())
+        );
+        assert!(matches!(
+            crate::binary::V10PageDecoder::new(&bytes, limits),
+            Err(error) if error == expected
+        ));
+    }
+}
+
+#[test]
 fn fixed_math_events_round_trip_and_enter_artifact_identity() {
     let mut artifact = sample_artifact();
     artifact.testing_mut().math_events = sample_math_events();
