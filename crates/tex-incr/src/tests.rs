@@ -1410,68 +1410,6 @@ fn prepared_transaction_blocks_newer_candidate_until_rejected() {
 }
 
 #[test]
-fn incremental_terminal_values_forbid_live_and_parallel_output_owners() {
-    fn declaration_fields<'a>(source: &'a str, declaration: &str) -> &'a str {
-        let start = source
-            .find(declaration)
-            .unwrap_or_else(|| panic!("declaration exists: {declaration}"));
-        let body = &source[start + declaration.len()..];
-        body.split_once("\n}").expect("field block closes").0
-    }
-
-    let source = include_str!("lib.rs");
-    for declaration in [
-        "pub struct AcceptedOutput {",
-        "pub struct RevisionTransaction<'store> {",
-        "struct CandidateCompletion {",
-        "pub struct RevisionCandidate<'store> {",
-        "pub struct Session<'store> {",
-    ] {
-        let fields = declaration_fields(source, declaration);
-        for forbidden in [
-            "Universe",
-            "World",
-            "PdfState",
-            "RevisionOutputPatch",
-            "GenerationSubstrate",
-            "effects: Vec",
-            "artifacts: Vec",
-            "dvi_pages: Vec",
-        ] {
-            assert!(
-                !fields.contains(forbidden),
-                "incremental DTO field leaked {forbidden} in {declaration}: {fields}"
-            );
-        }
-    }
-
-    for declaration in [
-        "pub struct RevisionTransaction<'store> {",
-        "pub struct RevisionCandidate<'store> {",
-    ] {
-        let fields = declaration_fields(source, declaration);
-        assert!(
-            !fields.contains("prior_generation"),
-            "current typestate retained the prior generation: {fields}"
-        );
-    }
-
-    let history_source = include_str!("history.rs");
-    let fields = declaration_fields(history_source, "pub struct BoundaryRecord {");
-    for forbidden in [
-        "RetainedEngineGeneration",
-        "RetainedCheckpointKey",
-        "GenerationOwner",
-        "Universe",
-    ] {
-        assert!(
-            !fields.contains(forbidden),
-            "detached history retained {forbidden}: {fields}"
-        );
-    }
-}
-
-#[test]
 fn registered_font_resource_survives_each_fresh_generation() {
     let source = "\\font\\tenrm=cmr10\\relax\\tenrm\\shipout\\hbox{A}\\end";
     let mut session = session(RevisionId::new(1), source);

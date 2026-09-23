@@ -2223,25 +2223,6 @@ fn shared_copy_operation_rollback_restores_the_exact_source_frontier() {
 }
 
 #[test]
-fn shared_copy_implementation_has_no_whole_list_payload_staging() {
-    let source = include_str!("../fork_arena.rs");
-    let start = source
-        .find("fn copy_shared_then_splice(")
-        .expect("shared-copy implementation remains present");
-    let end = source[start..]
-        .find("fn seal_direct_tail(")
-        .map(|offset| start + offset)
-        .expect("shared-copy implementation boundary remains present");
-    let implementation = &source[start..end];
-
-    assert!(!implementation.contains("Vec<"));
-    assert!(!implementation.contains("collect::<Vec"));
-    assert!(!implementation.contains(".cloned()"));
-    assert!(implementation.contains("copy_shared_then_splice_with_identity"));
-    assert!(implementation.contains("append_payload_clone_from_coordinate"));
-}
-
-#[test]
 fn rejected_candidate_truncates_detached_active_builder_output() {
     let mut pool = ChunkPool::<u32>::with_chunk_bytes(24);
     let mut arena = ForkArena::<u32, ActiveLane>::new();

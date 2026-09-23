@@ -309,6 +309,28 @@ create another permanently maintained ledger for the same property. Do not
 delete reference channels, whole-document cases, or manual tools merely
 because a smaller test shares their input.
 
+### Non-executor source-shape assertion dispositions
+
+The September 2026 test cleanup removed private spelling checks with these
+active owners:
+
+| Removed assertion                                                                              | Disposition and surviving evidence                                                                                                                                                                                                                                                                                                                                           |
+| ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tex-state` universe field names, obsolete command-state names, and `CommandContext` byte size | Retired representation and size constraints. `command_episode_admits_session_and_generation_once`, `runtime_checkpoint_fork_moves_the_checkpoint_bank_without_new_payload_owners`, and the page/scratch fork tests in `universe/tests.rs` exercise admission and lifetime behavior. The runtime-storage contract ledger excludes Rust type size as a compatibility contract. |
+| `tex-state` shared-copy function body and helper call names                                    | Replaced by existing `explicit_shared_copy_scaling_counts_each_node_once_at_required_sizes`: it checks one semantic clone per node, zero measured allocations after warmup, stable source values, and sizes through 4,096. The range and rollback tests cover cross-chunk copies and rejection.                                                                              |
+| `tex-incr` DTO field-name exclusions and prior-generation spelling                             | Retired private representation constraints. The active compile-fail tests in `tests/it.rs` reject cross-generation ids, escaping brands, an outlived reachability store, and a generation owner in detached history. Revision rejection and repeated cold-equivalence tests protect publication behavior.                                                                    |
+| `umber` runtime source paths and exact entry names                                             | Retired routing layout constraint. CLI, direct, format, virtual compile, editor, and incremental tests execute those routes; `tex_etex_pdftex_fresh_and_twice_loaded_format_matrix` checks fresh and loaded modes. The browser route remains owned by its separate WASM gate.                                                                                                |
+| `tex-command-stream` loaded-route function bodies and generic-provider call spelling           | Retired migration-only delegation constraint. The provider boundary is exercised by `every_loaded_job_has_fresh_clock_terminal_and_mutable_state`, independent cache reuse in `declared_command_semantic_cases_match` (explicit parity tier), and focused loaded command cases in `command_semantic.rs`.                                                                     |
+| `umber` retained pdfTeX fixture count of eight                                                 | Replaced with a nonempty runner assertion. `retained_pdftex_extension_fixtures_compare_oracle_projections` executes every catalogue-owned case, while `retained_pdftex_extension_properties_have_complete_unique_active_ownership` derives the complete case inventory from the closed fixture tiers and rejects missing or overlapping ownership.                           |
+
+The `workspace_selection` source audit stays: it checks whether production
+branches or library tests are silently disabled, which runtime behavior cannot
+prove, and its positive and negative fixtures verify rejection. Compiler privacy
+and the compile-fail tests above also stay because they prove that forbidden
+handles cannot be forged or moved across lifetime boundaries. These are narrow
+capability and test-activity policies, not requirements on private naming or
+file layout.
+
 ## Code simplification sequence
 
 The following sections propose responsibility changes within the existing

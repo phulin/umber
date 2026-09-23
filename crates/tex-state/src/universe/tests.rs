@@ -16,36 +16,6 @@ fn budget() -> InternerBudget {
     InternerBudget::new(32, 32, 1024).expect("budget")
 }
 
-#[test]
-fn command_context_remains_a_small_reference_only_episode_view() {
-    assert!(
-        std::mem::size_of::<crate::CommandContext<'_, ()>>() <= 128,
-        "command context grew beyond its bounded reference view: {} bytes",
-        std::mem::size_of::<crate::CommandContext<'_, ()>>()
-    );
-
-    let source = include_str!("../universe.rs");
-    assert!(!source.contains("ResidentCommandState"));
-    assert!(!source.contains("CommandVisibleState"));
-    let universe = source
-        .split_once("pub struct Universe<G> {")
-        .expect("Universe owner")
-        .1
-        .split_once("\n}")
-        .expect("Universe owner fields")
-        .0;
-    for owner in [
-        "command_session: CommandSessionState<G>",
-        "command_retained: RetainedCommandState<G>",
-        "durable_boxes: DurableBoxState",
-        "durable_forms: DurableFormState",
-        "shipout_scratch: ShipoutScratchArena<G>",
-        "page_region: PageRegionHistory",
-    ] {
-        assert!(universe.contains(owner), "missing lifetime owner {owner}");
-    }
-}
-
 fn test_font(name: &str) -> LoadedFont {
     LoadedFont::new(
         name,

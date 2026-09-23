@@ -6,58 +6,6 @@ use tex_state::meaning::{ExpandablePrimitive, Meaning};
 
 use super::*;
 
-#[test]
-fn every_supported_runtime_names_its_command_owned_engine_entry() {
-    let sources = [
-        (
-            "CLI",
-            include_str!("../main.rs"),
-            "cli_resource::run_for_finalization",
-        ),
-        (
-            "retained session",
-            include_str!("../engine_session.rs"),
-            "control: MainControl",
-        ),
-        (
-            "direct library",
-            include_str!("../lib.rs"),
-            "EngineSession::new",
-        ),
-        (
-            "loaded format",
-            include_str!("../format_fixture.rs"),
-            "EngineSession::new",
-        ),
-        (
-            "virtual compile",
-            include_str!("../virtual_compile.rs"),
-            "drive_with_resource_resolvers",
-        ),
-        (
-            "editor",
-            include_str!("../editor_session.rs"),
-            "VirtualCompileSession",
-        ),
-        (
-            "incremental",
-            include_str!("../../../tex-incr/src/lib.rs"),
-            "candidate_control(",
-        ),
-        (
-            "WASM",
-            include_str!("../../../umber-wasm/src/lib.rs"),
-            "VirtualCompileSession",
-        ),
-    ];
-    for (runtime, source, command_entry) in sources {
-        assert!(
-            source.contains(command_entry),
-            "{runtime} must enter through its command-owned engine boundary `{command_entry}`"
-        );
-    }
-}
-
 const CMR10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
 const CMSY10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmsy10.tfm");
 const CMEX10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmex10.tfm");
