@@ -54,10 +54,10 @@ first-failure locator. Keep diagnosis order in
 `canonical_divergence_workflow.md`.
 
 `repository_simplification_plan.md` records the September 2026 repository
-review and staged migration. Its seven test classes and execution lanes now
-describe the testing front door. The artifact codec cleanup, bounded node
-view pass, and PDF finalization split are implemented; other downstream and
-bibliography sections remain proposals until implemented.
+review, seven test classes and execution lanes, implemented nonbibliography
+passes, their acceptance evidence, and retained boundaries. The generic legacy
+node API and broader storage/paragraph redesign remain separately scoped;
+bibliography migration is deferred.
 
 `pdf_finalization_modules.md` records the implemented private PDF lowering
 boundaries, single object-allocation and publication authority, and the

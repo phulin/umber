@@ -1,8 +1,11 @@
 # Repository simplification and testing plan
 
-Status: staged migration. The testing documentation and gate contracts below
-describe the current repository; the production-owner and bibliography changes
-remain proposals until their code and evidence land.
+Status: the bounded nonbibliography review changes are implemented through the
+executor, state, session, scanner, codec, PDF, and browser owners. The native
+combined gate passed through the session retry fix; final integrated WASM
+verification is pending. The broader storage and
+paragraph-traversal proposals below retain their existing owners;
+bibliography migration is deferred.
 Review baseline: `11c7bf7cd8ec78b36337c3ee3a97e38d0dc099e9`.
 
 The objective is to preserve Umber's current behavior while making both the
@@ -14,16 +17,30 @@ current testing entry point, use [Testing Infrastructure](testing_infrastructure
 and [Testing Policy](testing_policy.md).
 
 The testing pass established the seven-class front door, executable
-script-suite inventory, and aggregate gate verdicts. The executor test split
-and source-shape pilot are implemented; the bounded discretionary extraction
-and the resource and root-source method grouping are recorded in
-[Main-Control Responsibility Boundaries](main_control_responsibilities.md).
-Browser/package coverage and artifact cleanup have separate implementation
-owners and must be judged against their final merged gates. Bibliography
-selection and status have not been changed by this pass; its migration is
-deferred. The later storage, scanner, output, and bibliography sections below
-remain design proposals. The session section records the implemented admission
-and publication seams while retaining its broader ownership guidance.
+script-suite inventory, and aggregate gate verdicts. Its test-family splits
+and private source-guard dispositions make implementation-only changes easier
+to review. The bounded implementation passes are recorded under their owners
+below. The native combined gate passed through the session retry fix. The
+shared resource vectors and final integrated WASM checks still need their own
+verification; earlier passes establish only their selected revisions and steps.
+
+### Implemented scope and retained boundaries
+
+| Owner                        | Current disposition                                                                                                                                                                                                                                                                                                             | Evidence to keep visible                                                                                                                                                                   |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Test selection and reporting | The script-suite inventory, seven behavior classes, combined verdict, and explicit optional-step verdicts are live. Executor, CLI, conformance, expansion, and line-breaking tests are grouped within their original targets. Private spelling guards were replaced with behavior, compile-fail, or narrow structural evidence. | `scripts/check-and-test.sh`, `scripts/check.sh`, `scripts/check-wasm.sh`, `test-support` workspace selection, and the assertion dispositions below.                                        |
+| Command and state            | Structured scanner families and their ownership are explicit. Unreachable detached-continuation code is removed. `MainControl`, `World`, `ForkArena`, and `CommandContext` methods are grouped by responsibility without adding a second state or checkpoint owner.                                                             | Existing command fixtures, scanner recovery and resource replay tests, state rollback tests, and [responsibility boundaries](state_responsibility_boundaries.md).                          |
+| Resources and sessions       | Mixed file/font/project admission is staged and rejected atomically. A private publication seam prepares output before accepting the revision and installs accepted output, workspace, and render state together. Valid nonconsecutive HTML revisions publish a full snapshot.                                                  | Virtual/project admission rejection tests, accepted-revision and render-update tests, then final merged session gates.                                                                     |
+| Nodes and output             | Borrowed node views and compact page reads are separated from the generic legacy `NodeArena<L>`. Artifact codec accepts only version 24 while preserving public aliases and owned/streaming byte identity. PDF lowering has private content, navigation, font, image, and numeric modules under one finalization authority.     | Node checkpoint/borrow tests; old-version rejection and codec identity; PDF semantic tests and the explicit qpdf/Poppler gate.                                                             |
+| Browser                      | Rust owns prefetch policy; generated packed-catalog and real package tests cover browser worker resource flow. Standalone catalog-only resolution disables speculation until bindings are installed.                                                                                                                            | Node transport tests, Firefox wasm-bindgen tests, allocator WASM steps, and Chromium package checks. Shipped Plain-format availability remains `BLOCKED` while metadata declares schema 0. |
+
+The public legacy node API, semantic and physical diagnostic node channels,
+page/form PDF policies, and browser-specific fetch/cache behavior serve distinct
+contracts. Their coexistence is not evidence of a duplicate production owner.
+The broader `World`/arena storage rewrite and `ParagraphTape` adapter audit
+need caller and measurement evidence before changing those boundaries. Classic
+BibTeX and Biber-compatible migration is separate work; this review does not
+claim its ignored upstream cases execute.
 
 ## Assessment
 
@@ -82,19 +99,19 @@ These boundaries are visible in [architecture.md](architecture.md),
 **The tests sometimes preserved source spelling instead of a contract.**
 At the review baseline, [executor integration tests](../crates/tex-exec/tests/it.rs)
 inspected method bodies, field names, constructor counts, and source slices.
-The executor dispositions below replace the remaining four such guards with
-behavioral or compiler-backed evidence. Harmless renames and extractions now
-leave those tests intact.
+The executor and non-executor dispositions below map the retired private guards
+to behavioral or compiler-backed evidence. Harmless renames and extractions
+no longer invalidate those tests.
 
-**A green result needs a clearer meaning.**
-[check-and-test.sh](../scripts/check-and-test.sh) waits for both tests and lint,
-but returns one status without a combined result summary. Its preflight also
-runs script tests that bare Cargo does not run. The
+**At the review baseline, a green result needed a clearer meaning.**
+[check-and-test.sh](../scripts/check-and-test.sh) now reports a combined
+`PASS`, `FAIL`, `BLOCKED`, or `PARTIAL` verdict for its native, quality, and
+script steps. Bare Cargo still selects only its own Rust tests. The
 [conformance asset helper](../crates/umber/tests/it/e2e_conformance/assets.rs)
 permits an explicit `UMBER_CONFORMANCE_ORACLES=optional` downgrade when assets
-are absent; Cargo can then succeed with reduced coverage. That exception must
-be visible in the final result, not only stderr. Preserve the default failure
-on missing required assets.
+are absent; Cargo can then succeed with reduced coverage. The combined runner
+reports that downgrade as `PARTIAL`. Missing required assets remain failures
+by default.
 
 **Test status has several incompatible meanings.** Executed strict semantic
 expected failures can detect an unexpected pass or a changed divergence.
@@ -140,21 +157,20 @@ were obsolete. Preserve the explicit dispositions in
 
 **Package selection does not prove target-specific test selection.**
 `tex-dense-prefix` and `tex-dense-arena` each have WASM-only test modules.
-The inspected `check-wasm.sh` invokes wasm-bindgen tests for `umber-wasm`;
-building its dependencies does not run those dependencies' unit tests.
-Give the allocator crates explicit WASM test steps and extend discovery to
-target-specific suites. The host default-member guard remains valuable but
-does not establish this separate coverage.
+Building them as dependencies does not run those unit tests. `check-wasm.sh`
+now has explicit `dense-prefix-wasm` and `dense-arena-wasm` steps alongside
+the `umber-wasm` Firefox step. The host default-member guard remains valuable
+for its separate native selection contract.
 
 **The review baseline browser distribution integration gate validated an unavailable
-placeholder.** [browser-tests/run.mjs](../crates/umber-wasm/browser-tests/run.mjs)
+placeholder.** At the baseline, [browser-tests/run.mjs](../crates/umber-wasm/browser-tests/run.mjs)
 asserted schema 0 and an `unavailable` marker, printed an unavailable message,
 and exited successfully. The separate `node-project.mjs` exercised generated
 WASM with a custom resolver, and Rust wasm-bindgen tests remained independent
-evidence. At that baseline, the aggregate package step could not establish
-actual browser distribution/catalog/worker integration. The replacement must
-report a blocked prerequisite or actual execution and prove a real package
-resource round trip.
+evidence. The replacement now builds a generated package and packed catalog,
+then runs resource, tampering, and worker checks in a real browser. The
+shipped Plain format remains unavailable at schema 0, and its separately
+selected `default-format` step reports `BLOCKED` instead of a pass.
 
 ## The test model
 
@@ -369,35 +385,27 @@ this test organization pass leaves them active.
 
 ## Code simplification sequence
 
-The following sections propose responsibility changes within the existing
-architecture. Preserving public interfaces and actually supported wire formats
-is a requirement; documented promises that conflict with implementation need
-an explicit disposition first. Compatibility adapters can remain at external
-boundaries; superseded internal owners should disappear when a migration lands.
-Intentional representations such as owned/streaming codecs and semantic/
-diagnostic node channels are not superseded owners merely because they coexist.
-The evidence work comes first. The remaining sections group work by owner;
-the delivery order below starts with bounded pilots before broad core changes.
+The following sections retain the review's diagnosis and describe the bounded
+changes that landed under each owner. Recommendations outside that pass remain
+explicitly scoped audits. Public interfaces and supported wire formats were
+preserved. Compatibility adapters can remain at external boundaries; a
+superseded internal owner should disappear when its replacement lands.
+Owned/streaming codecs and semantic/diagnostic node channels intentionally
+serve different consumers.
 
 ### 1. Make the evidence and current contract trustworthy
 
-Reconcile the architecture and testing entry documents with current source.
-Produce suite discovery and status summaries, aggregate combined-gate results,
-and classify the expensive/manual tools. Fix prerequisite declarations and
-distinguish oracle-contract validation from live oracle construction.
-
-Use the executor source-shape tests as the first pilot for replacing layout
-constraints with behavioral or capability evidence. This unlocks later
-refactors and provides a concrete test of whether the new organization helps.
+The testing entry documents now describe classes, commands, prerequisites, and
+verdicts. The script inventory classifies separately selected tools and
+distinguishes oracle-contract validation from live construction. The executor
+source-shape pilot replaced private spelling checks with behavioral and
+capability evidence; the disposition table above names the surviving tests.
 
 ### 2. Reduce executor coordination and scanner coupling
 
-The first mechanical extraction should be
-[structured scanners](../crates/tex-command/src/scanners/structured.rs): PDF
-actions/resources, box requests, math requests, and input scanning have
-distinct responsibilities but currently share one large file. Keep the
-existing reexports and scanner episode ownership. Follow with semantic
-deduplication only after the move passes its original fixtures.
+The baseline [structured scanner](../crates/tex-command/src/scanners/structured.rs)
+file mixed PDF actions/resources, box requests, math requests, and input
+scanning. The extraction kept its reexports and scanner episode ownership.
 
 The extraction now places those families under `scanners/structured/` while
 the existing `CommandProcessor` remains the sole scanning and recovery owner.
@@ -405,11 +413,11 @@ the existing `CommandProcessor` remains the sole scanning and recovery owner.
 module boundaries. The old fixture and source-boundary gates remain the
 acceptance evidence for this mechanical step.
 
-Keep one operation authority. Separate command delivery, scanned command
-payloads, semantic application, diagnostic rendering, and commit/rollback
-settlement by their existing ownership seams. A split is successful when a
-command family can be understood without reading all other families and when
-one transition still has one mutation/settlement owner.
+`MainControl` now groups discretionary processing, resource handling, and root
+source methods by command responsibility while keeping one operation and
+settlement authority. [Main-Control Responsibility Boundaries](main_control_responsibilities.md)
+records that extraction. A later semantic split still needs exact channel and
+rollback evidence; file movement alone does not authorize it.
 
 Preserve TeX token-consumption and error ordering. Scanning is observable:
 changing when a token is read can change recovery, expansion, grouping, and
@@ -436,18 +444,17 @@ caller and receive evidence for that boundary.
 
 ### 3. Separate state storage, semantic state, and host effects
 
-The highest-value ownership audit candidate is the legacy node adapter surface.
+The review identified the legacy node adapter surface as an ownership audit.
 [node_arena.rs](../crates/tex-state/src/node_arena.rs) explicitly allows dead
-code as retained compatibility substrate, while also defining the modern
-borrowed `NodeCursor`. [page_node_arena.rs](../crates/tex-state/src/page_node_arena.rs)
-offers both cold materializing views and compact cursors; `Universe` still
-maps some compact errors into the legacy error type. Establish callers for
-each surface, move modern views away from legacy ownership, migrate the
-remaining internal users, and delete the old owner and conversions together.
-Preserve public compatibility APIs unless separately approved for retirement.
-Do not assume a commented prototype is the production storage representation.
-The compatibility module still has production and public consumers; its
-comment and dead-code allowance are insufficient deletion evidence.
+code as retained compatibility substrate; [page_node_arena.rs](../crates/tex-state/src/page_node_arena.rs)
+offers cold materializing views and compact cursors. The generic public
+`NodeArena<L>` has no production constructors found outside its module; its
+own tests and public compatibility contract remain. The live `PageNodeArena`
+alias instead refers to `PageMaterialArena`, and the borrowed
+`NodeView`/`NodeCursor` projection is used by production page readers. The
+private borrowed projection and page membership path were separated as
+described below; no public API or legacy-error contract was retired. A later
+deletion requires an explicit public-compatibility decision.
 
 The bounded node-view pass keeps the public `NodeArena` and cold
 `list`/`span_list` APIs. It removes unused private page aliases and moves the
@@ -460,67 +467,79 @@ allocation during this check. Ligature source and variable-byte whatsit
 decoding still allocate; the membership check shares their cold decoder so
 malformed-record rejection follows the same rules.
 
-Decompose `world.rs` around resource/input records, effect publication,
-artifact/provenance values, and host services. Keep its transactional boundary
-explicit; do not turn every piece into a separately checkpointed service.
+`World` now groups input dependencies, effect publication, and checkpoint
+methods; `ForkArena` groups checkpoint, batch, and whole-region transfer
+methods; `CommandContext` groups PDF and page methods. These remain inherent
+methods on the same types, with unchanged storage and checkpoint owners.
+[State Responsibility Boundaries](state_responsibility_boundaries.md) names
+those owners. A storage redesign still requires evidence that it removes an
+independently updated record or conversion while preserving exact rollback;
+another wrapper around `tex-dense-prefix` or `tex-dense-arena` would not meet
+that criterion.
 
-Decompose `fork_arena.rs` around physical storage, logical coordinates, list
-topology, and ownership transfer. First audit the responsibilities already in
-`tex-dense-prefix` and `tex-dense-arena`; avoid inventing another arena
-abstraction over the same storage. Keep the isolated unsafe boundary small.
-The acceptance criterion is fewer independently updated ownership records,
-with the same accepted/candidate lifetime and exact rollback guarantees.
-
-[ParagraphTape](../crates/tex-typeset/src/linebreak/mod.rs) currently accepts
-owned, borrowed mirrored, borrowed arena, and arena-ID sources. Audit which
-are production inputs and which support tests or public compatibility. Prefer
-one production traversal/materialization path, retaining explicit adapters
-where callers require them, and only where lifetime and performance evidence
-show that the inputs can share it. These forms are not automatically duplicate
-storage. The semantic and physical diagnostic node
-channels carry different evidence and must remain distinct.
+[ParagraphTape](../crates/tex-typeset/src/linebreak/mod.rs) accepts owned,
+borrowed mirrored, borrowed arena, and arena-ID sources. `tex-exec` uses the
+arena-ID path in production; owned and borrowed adapters support the public
+typesetting API and parity tests. The arena-ID tape retains compact coordinates
+and scalar scratch so it does not keep the execution context borrowed. There
+is no demonstrated redundant owner to delete in this review. The semantic and
+physical diagnostic channels carry different evidence and remain distinct.
 
 ### 4. Clarify session and output ownership
 
-Mixed resource admission is implemented. `VirtualCompileSession` stages its
-workspace, font map, non-file admission state, and PK-font map in one rollback
-guard; registration into incremental input state occurs before the guard
-commits. `LatexProjectSession` separately stages project resources and commits
-them only after child TeX admission succeeds. Authorization and font policy
-remain explicit at their respective layers.
+At the review baseline, `VirtualCompileSession::provide_resources` manually
+staged and swapped the workspace, font map, non-file admission state, and
+PK-font map, then restored them after rejection. `LatexProjectSession`
+separately staged project resources. The implemented admission transaction
+stages mixed resources before publishing them to either layer. Registration
+into incremental input state occurs before its rollback guard commits. Tests
+reject invalid mixed batches, late child font admission, file-then-font retry,
+and incremental input registration without changing the accepted revision.
+Authorization and font policy remain with their respective layers.
 
-Session configuration, resource admission, execution candidates, accepted
-revisions, and output finalization remain in `VirtualCompileSession` because
-its public API coordinates their shared lifecycle. Private resource admission
-and publication methods isolate the two transaction boundaries. Further
-bundling is justified only when fields share an invariant.
+`VirtualCompileSession` still owns configuration, resources, candidates,
+accepted revisions, and output finalization because its public API coordinates
+their shared lifecycle. Private admission and publication methods isolate the
+two transaction boundaries. Repackaging unrelated fields would add another
+representation without clarifying authority.
 
-One candidate publication transaction now protects the accepted output and
+One candidate publication transaction now protects accepted output and the
 workspace through resource arrival, failure, cancellation, and patch rejection.
+The private seam prepares memory effects, auxiliary and rendered outputs,
+output limits, and the HTML update while the candidate and generated
+transaction are still private. It accepts generated files into a private
+workspace, computes their fingerprints, accepts the incremental revision,
+then installs accepted output, workspace, and render state together at the host
+session boundary. The incremental layer keeps its own candidate-validation
+error contract. Loaded format bytes remain available until the first revision
+is accepted, so a failed initial output preparation retries with the same
+format. A valid nonconsecutive HTML revision gets a full snapshot because a
+patch requires adjacent revision numbers. `EngineSession` retains bounded
+execution and resource resume; `tex-incr` retains candidate validation and
+revision acceptance. Neither owns the host-facing output bundle or HTML
+delivery state.
+`accepted_publication_is_atomic_across_render_gap_output_failure_and_retry`
+checks the revision-gap snapshot and a failed output budget: accepted output,
+generated files, render state, reusable inputs, and stabilization remain at the
+last accepted revision until a retry succeeds.
+`rejected_render_patch_keeps_accepted_revision_and_retries` exercises direct
+HTML planner rejection, and
+`loaded_format_survives_initial_publication_failure_and_retry` compares the
+retry with a fresh loaded-format run.
+
 `TexFixedPointSession` already delegates to `LatexProjectSession`; preserve
 that reuse. The editor's provisional/stable distinction and bibliography
 fixed-point passes represent different product behavior and should not be
 collapsed into one generic session state machine without proof of equivalence.
 
-The retained session publication seam prepares memory effects, auxiliary and
-rendered outputs, output limits, and the HTML update while the candidate and
-generated transaction are still private. It accepts generated files into a
-private workspace, computes generated-file fingerprints, accepts the
-incremental revision, and installs the accepted output, workspace, and render
-state together at the host session boundary. The incremental layer retains its
-own candidate acceptance validation and error contract. Loaded format bytes
-remain available until the first revision is accepted, so a failed initial
-output preparation can retry with the same format. An HTML update for a valid
-nonconsecutive revision is a full snapshot, since patches require adjacent
-revision numbers. `EngineSession` keeps its bounded execution and resource
-resume role; `tex-incr` keeps candidate validation and revision acceptance.
-Neither owns the host-facing output bundle or HTML delivery state.
-
-For native/browser resource loops, share a transition specification and
-cross-platform fixtures for attempt, need, admission, speculative drain, retry,
-and acceptance. Native filesystem policy and browser asynchronous fetch/cache
-policy should remain separate. An empty speculative response, cancellation,
-and an unavailable required resource need distinct transitions.
+One review recommendation remains open: native and browser resource loops have
+separate tests but no shared transition fixture for attempt, need, admission,
+speculative drain, retry, and acceptance. A bounded common vector could check
+their shared state transitions while leaving native filesystem policy and
+browser asynchronous fetch/cache policy separate. An empty speculative
+response, cancellation, and an unavailable required resource need distinct
+transitions. This fixture work is a separate test-harness follow-up, not a
+second resource-policy owner or evidence of an introduced regression.
 
 ### 5. Simplify downstream families using the same method
 
@@ -605,46 +624,28 @@ Disabling speculation can change performance and telemetry even when
 compilation output is unchanged. The exact behavior is recorded in
 [Browser Prefetch Policy Ownership](browser_prefetch_policy.md).
 
-Keep JSON/fake-binding resolver tests for transport and cache behavior. Add
-real packed-catalog batch admission, tampering/mispartition rejection, and
-one packaged worker resource round trip. Share normalization, typed identity,
-font-declaration, replay, and dependency vectors across policy boundaries
-rather than implementing another packed decoder in JavaScript.
+JSON/fake-binding resolver tests still cover transport and cache behavior.
+The generated package tests now exercise packed-catalog batch admission,
+tampering and mispartition rejection, and a worker resource round trip. Shared
+Rust policy supplies normalization, typed identity, font declarations, replay,
+and dependency vectors without another JavaScript packed decoder.
 
 ## Delivery and acceptance
 
-| Stage                          | Concrete deliverable                                                                                                       | Exit condition                                                                                                                       |
-| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| Establish baseline             | Current class/command index, missing-prerequisite and ignored-case inventory, representative behavior/performance captures | A reader can identify which command protects each supported surface and what a green result means.                                   |
-| Make refactoring safe          | Executor source-shape pilot and honest combined/subsystem result summaries                                                 | Selected harmless renames/extractions no longer break layout assertions; induced behavior and reporting failures are still caught.   |
-| Prove one simplification       | One bounded command family and one state/session ownership seam                                                            | Fewer independent owners/conversions, unchanged contractual outputs, relevant lifecycle failures covered, measured costs acceptable. |
-| Expand successful patterns     | Executor, storage, sessions, PDF, and bibliography work separated by owner                                                 | Each change deletes its internal predecessor and passes the applicable lanes; no second architecture accumulates.                    |
-| Stabilize the new organization | Reconciled docs, retired migration scaffolding, repeated baseline measurement                                              | Remaining exceptions are understandable and owned; the routine and subsystem commands give trustworthy scoped verdicts.              |
+| Review deliverable                          | Disposition                                                                                                                                                                                            | Acceptance evidence and limit                                                                                                                              |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Test selection and honest verdicts          | Implemented. The seven classes, inventory, required-asset behavior, and combined/subsystem verdicts have one documented entry point.                                                                   | `test-support` selection tests, gate-verdict and script-inventory tests, `scripts/check-and-test.sh`; a selected optional subset reports `PARTIAL`.        |
+| Refactoring-safe test organization          | Implemented. Executor and other large test families retain their original Cargo targets; retired private source checks have named replacement evidence.                                                | Original fixture/parity selections, executor receipt and host-fact tests, compile-fail capability checks, and the assertion tables above.                  |
+| Bounded production simplification           | Implemented. Scanner, command, state-method, node-view, resource-admission, session-publication, artifact codec, PDF lowering, and Rust prefetch changes keep one authority at each mutation boundary. | Focused native tests, codec byte/rejection tests, PDF structural/rendering checks, and real WASM/package tests; final merged verification remains pending. |
+| Broader storage and paragraph consolidation | Retained as a separate measured audit. Existing public adapters and distinct semantic/physical channels have identified consumers.                                                                     | Delete an owner or conversion only after caller, compatibility, rollback, and cost evidence; shorter files alone do not qualify.                           |
+| Shared native/browser transition fixture    | Open test-harness follow-up. Existing platform tests are separate; a common vector has not been added.                                                                                                 | Check attempt, need, admission, speculative drain, retry, and acceptance while preserving host-specific policy.                                            |
+| Bibliography migration                      | Deferred. Classic and Biber-compatible backends and their ignored upstream inventory keep their existing status.                                                                                       | A future scoped pass must distinguish executed matched cases, strict known failures, ignored declarations, and unsupported cases.                          |
 
-Start with the baseline and source-shape pilot. Do not simultaneously rewrite
-the scanner, arena, and incremental/session transaction: a failure would be
-too difficult to localize. Once the pilot is proven, work on independent
-owners can proceed concurrently; changes sharing a mutation boundary should
-remain serialized.
-
-The first reviewable changes should be:
-
-1. Make combined-gate, missing-oracle, and unavailable browser-integration
-   verdicts honest, inventory separately selected suites, and reconcile the
-   short testing entry documents. Preserve all existing selection until the
-   inventory establishes an explicit owner.
-2. Split the executor test file by behavior and replace a bounded cluster of
-   source-shape assertions. Keep fixture channels and catalogue links intact.
-3. Remove verified unreachable artifact-version branches, retaining byte
-   identity, old-version rejection, and existing public aliases. This is the
-   first small production simplification to validate the process.
-4. Extract mixed resource admission behind the existing session API, proving
-   failure atomicity at each stage. Then expand the ownership refactor into
-   executor/scanner and legacy-node work using the same evidence discipline.
-
-During those pilots, perform the legacy-node caller inventory and identify
-the exact internal owner/conversions that can be removed together. Do not
-defer that larger simplification indefinitely in favor of cosmetic file moves.
+The original first four pilots are complete: verdict and inventory work,
+executor test organization and source-guard replacement, version-24 codec
+cleanup, and mixed resource admission. Subsequent bounded scanner, command,
+state, PDF, session-publication, and browser passes use the same evidence rule.
+No migration changed committed reference fixtures to make its output pass.
 
 For each production refactor, preserve current CLI/API behavior, complete-job
 versus fragment semantics, diagnostics and effects, accepted/rejected revision
@@ -664,17 +665,36 @@ owners, or conversion layers simply to shorten those files.
 Measure progress by the number of independent owners and conversion paths
 removed, tests that survive an implementation-only change, time to identify
 the failing contract, and comparable build/runtime/retention costs. Reduced
-line count is useful supporting evidence, not the objective. No percentage
-code-deletion target is justified by this review.
+line count is supporting evidence; no percentage deletion target is justified.
 
 ## Review validation and limits
 
-The baseline was a source and test-design review, not a claim that the full current
-native, browser, corpus, or performance suites pass. Cargo metadata was
-inspected without a build. The existing `scripts/check-wasm.sh node-unit`
-step passed 105 tests with no skips; its verdict was `PARTIAL`, one of six
-steps selected. No reference fixtures were regenerated or production code
-changed for this review.
-The authoritative `scripts/check.sh` reported all four gates passed, including
-both clippy feature resolutions over 32 workspace members. The Markdown gate
-was rerun after subsequent documentation edits.
+At the review baseline (`11c7bf7cd`), the assessment was a source and
+test-design review, not a claim that the native, browser, corpus, or
+performance suites passed. Cargo metadata was inspected without a build.
+`scripts/check-wasm.sh node-unit` passed 105 tests with no skips and reported
+`PARTIAL` because it selected one of the then-six steps. No reference fixtures
+were regenerated or production code changed for that review. The baseline
+`scripts/check.sh` passed all four gates, including both clippy feature
+resolutions over 32 workspace members.
+
+Post-review component evidence has a different scope:
+
+| Command and selected behavior class                                                                                  | Recorded result                                                                                                                                                    | What it establishes                                                                                                                               |
+| -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scripts/check-and-test.sh` on the Rust-prefetch revision `94ed259e9`                                                | `PASS` for its selected native, quality, publication, asset, and gate-contract steps.                                                                              | Routine native correctness and tool integrity on that revision; it predates executor and session publication integration.                         |
+| `scripts/check-and-test.sh` on executor revision `60589ecf6`                                                         | `PASS` across its six aggregate stages.                                                                                                                            | Refactoring-safe executor evidence and routine native correctness through that revision; it predates session publication integration.             |
+| `scripts/check-and-test.sh` on session retry revision `908f31060`                                                    | `PASS` across all six aggregate stages; 126 virtual-session tests passed in the focused run.                                                                       | Routine native and quality evidence includes publication rollback, planner rejection, and loaded-format retry.                                    |
+| Focused `tex-out`, `tex-state`, `tex-command`, `tex-exec`, and `umber` tests on their implementation revisions       | Passed in their respective change gates.                                                                                                                           | Local rules, state/lifecycle, format/output, and reference-fixture contracts for those slices; a focused pass does not certify later integration. |
+| Firefox wasm-bindgen tests for `umber-wasm` and the two dense allocators; Node and generated Chromium package checks | Component runs passed: 36 Firefox binding tests, one `tex-dense-prefix` test, two `tex-dense-arena` tests, 106 Node tests, and the optimized browser package path. | Product/platform coverage includes real binding, packed catalog, and worker acquisition behavior; these runs predate the final combined revision. |
+| `scripts/check-wasm.sh default-format`                                                                               | `BLOCKED`: shipped Plain-format metadata still declares schema 0 unavailable.                                                                                      | This is an external asset availability result, separate from the generated local browser fixture and its passing package tests.                   |
+| `scripts/check-pdf-external.sh`                                                                                      | The component PDF matrix passed 15 qpdf/Poppler cases.                                                                                                             | Independent structural and rendering evidence for PDF lowering, in addition to Rust semantic and deterministic-byte tests.                        |
+
+After shared resource vectors land, run `cargo test -q --tests` and
+`scripts/check.sh` on that combined revision, or use
+`scripts/check-and-test.sh` for their aggregate gate. Run the applicable
+`scripts/check-wasm.sh` steps and the external PDF matrix when their
+prerequisites are available. Report each selected step's result;
+`default-format` remains blocked until a valid shipped Plain format exists.
+No result above claims that every optional corpus, performance, or live
+reference tier passed.
