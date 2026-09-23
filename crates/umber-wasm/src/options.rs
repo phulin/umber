@@ -1,5 +1,5 @@
 use bib_engine::{BibOptionsBuilder, BibliographyMode, OutputFormat, OutputRequest};
-use js_sys::Date;
+use js_sys::{Date, Reflect};
 use serde::de::DeserializeOwned;
 use umber::{
     BibliographyProjectOptions, EngineMode, FeatureSetting, FileContentId, FileKind, FileRequest,
@@ -15,10 +15,12 @@ use wasm_bindgen::JsValue;
 use crate::{js_error, wire};
 
 pub(crate) fn parse_options(value: &JsValue) -> Result<SessionOptions, JsValue> {
+    validate_session_option_keys(value, &[])?;
     session_options(from_js(value.clone())?)
 }
 
 pub(crate) fn parse_project_options(value: &JsValue) -> Result<LatexProjectOptions, JsValue> {
+    validate_session_option_keys(value, wire::PROJECT_OPTION_EXTRA_KEYS)?;
     let dto: wire::ProjectSessionOptionsDto = from_js(value.clone())?;
     let tex = session_options(dto.session)?;
     let bibliography = dto.bibliography;
@@ -103,6 +105,7 @@ pub(crate) fn parse_project_options(value: &JsValue) -> Result<LatexProjectOptio
 pub(crate) fn parse_editor_options(
     value: &JsValue,
 ) -> Result<umber::EditorSessionOptions, JsValue> {
+    validate_session_option_keys(value, wire::EDITOR_OPTION_EXTRA_KEYS)?;
     let dto: wire::EditorSessionOptionsDto = from_js(value.clone())?;
     Ok(umber::EditorSessionOptions {
         tex: session_options(dto.session)?,
@@ -180,6 +183,20 @@ fn session_options(dto: wire::SessionOptionsDto) -> Result<SessionOptions, JsVal
         Some(wire::FontMappingFallbackDto::Error) => umber::FontMappingFallbackPolicy::Error,
     };
     Ok(options)
+}
+
+fn validate_session_option_keys(value: &JsValue, extra: &[&str]) -> Result<(), JsValue> {
+    let keys =
+        Reflect::own_keys(value).map_err(|_| js_error("session options must be an object"))?;
+    for key in keys.iter() {
+        let name = key
+            .as_string()
+            .ok_or_else(|| js_error("session option names must be strings"))?;
+        if !wire::SESSION_OPTION_KEYS.contains(&name.as_str()) && !extra.contains(&name.as_str()) {
+            return Err(js_error(&format!("unknown session option: {name}")));
+        }
+    }
+    Ok(())
 }
 
 fn fixed_point_limits(

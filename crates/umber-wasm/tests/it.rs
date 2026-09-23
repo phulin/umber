@@ -240,7 +240,11 @@ fn wire_schema_is_explicit_and_option_numbers_are_javascript_safe() {
 
     let unknown = options("main.tex");
     set(&unknown, "futureSchemaOneField", &JsValue::from_bool(true));
-    CompilerSession::new(unknown.unchecked_ref()).expect("additive option field");
+    let error = match CompilerSession::new(unknown.unchecked_ref()) {
+        Ok(_) => panic!("unknown session option was accepted"),
+        Err(error) => error,
+    };
+    assert!(string_field(&error, "message").contains("unknown session option"));
 
     let unsafe_options = options("main.tex");
     let limits = Object::new();
@@ -643,7 +647,7 @@ fn typed_attempts_preserve_binary_inputs_and_clear_cached_allocations() {
         .add_user_file("main.tex", &bytes(b"\\input remote \\end"))
         .expect("add main source");
 
-    let missing = session.compile_attempt().expect("missing attempt");
+    let missing = session.advance().expect("missing attempt");
     assert_eq!(string_field(missing.as_ref(), "kind"), "need-resources");
     let files = Array::from(&field(missing.as_ref(), "required"));
     assert_eq!(files.length(), 1);
@@ -656,7 +660,7 @@ fn typed_attempts_preserve_binary_inputs_and_clear_cached_allocations() {
     let remote = b"%\0\n\\input second ";
     provide_file(&mut session, &request, "/texlive/tex/remote.tex", remote)
         .expect("provide binary remote input");
-    let second = session.compile_attempt().expect("second missing attempt");
+    let second = session.advance().expect("second missing attempt");
     assert_eq!(string_field(second.as_ref(), "kind"), "need-resources");
     let second_files = Array::from(&field(second.as_ref(), "required"));
     let second_request = second_files.get(0);
@@ -669,7 +673,7 @@ fn typed_attempts_preserve_binary_inputs_and_clear_cached_allocations() {
         second_bytes,
     )
     .expect("provide second binary input");
-    let complete = session.compile_attempt().expect("complete retry");
+    let complete = session.advance().expect("complete retry");
     assert_eq!(string_field(complete.as_ref(), "kind"), "complete");
     assert_eq!(
         session.cached_file_bytes().expect("cache bytes"),
@@ -689,7 +693,7 @@ fn complete_output_uses_strings_and_uint8arrays() {
     session
         .add_user_file("main.tex", &bytes(b"\\shipout\\hbox{}\\end"))
         .expect("add main source");
-    let complete = session.compile_attempt().expect("complete attempt");
+    let complete = session.advance().expect("complete attempt");
     assert_eq!(string_field(complete.as_ref(), "kind"), "complete");
     let output = field(complete.as_ref(), "output");
     assert!(field(&output, "terminal").as_string().is_some());
@@ -715,9 +719,7 @@ fn pdftex_engine_option_reports_the_pinned_identity() {
             &bytes(b"\\message{engine=\\the\\pdftexversion.\\pdftexrevision}\\end"),
         )
         .expect("add identity source");
-    let complete = session
-        .compile_attempt()
-        .expect("complete identity attempt");
+    let complete = session.advance().expect("complete identity attempt");
     assert_eq!(string_field(complete.as_ref(), "kind"), "complete");
     let terminal = field(&field(complete.as_ref(), "output"), "terminal")
         .as_string()
@@ -739,7 +741,7 @@ fn omitted_clock_uses_the_browser_local_date() {
             &bytes(b"\\message{clock=\\the\\time/\\the\\day/\\the\\month/\\the\\year}\\end"),
         )
         .expect("add clock source");
-    let complete = session.compile_attempt().expect("complete clock attempt");
+    let complete = session.advance().expect("complete clock attempt");
     let after = Date::new_0();
     let terminal = field(&field(complete.as_ref(), "output"), "terminal")
         .as_string()
@@ -773,7 +775,7 @@ fn explicit_clock_remains_a_deterministic_override() {
             ),
         )
         .expect("add clock source");
-    let complete = session.compile_attempt().expect("complete clock attempt");
+    let complete = session.advance().expect("complete clock attempt");
     let terminal = field(&field(complete.as_ref(), "output"), "terminal")
         .as_string()
         .expect("terminal text");
@@ -846,6 +848,24 @@ fn session_requires_explicit_outputs() {
 }
 
 #[wasm_bindgen_test]
+fn session_options_reject_unknown_fields() {
+    let value = options("main.tex");
+    set(&value, "unknownSetting", &JsValue::TRUE);
+    let error = CompilerSession::new(value.unchecked_ref::<JsSessionOptions>())
+        .err()
+        .expect("unknown input option must fail");
+    assert!(string_field(&error, "message").contains("unknown session option"));
+    let error = ProjectSession::new(value.unchecked_ref::<JsProjectSessionOptions>())
+        .err()
+        .expect("unknown project option must fail");
+    assert!(string_field(&error, "message").contains("unknown session option"));
+    let error = EditorSession::new(value.unchecked_ref::<JsEditorSessionOptions>())
+        .err()
+        .expect("unknown editor option must fail");
+    assert!(string_field(&error, "message").contains("unknown session option"));
+}
+
+#[wasm_bindgen_test]
 fn pdftex_return_value_reports_invalid_object_recovery() {
     let session_options = options("main.tex");
     set(&session_options, "engine", &JsValue::from_str("pdftex"));
@@ -859,9 +879,7 @@ fn pdftex_return_value_reports_invalid_object_recovery() {
             ),
         )
         .expect("add return-value source");
-    let complete = session
-        .compile_attempt()
-        .expect("complete return-value attempt");
+    let complete = session.advance().expect("complete return-value attempt");
     assert_eq!(string_field(complete.as_ref(), "kind"), "complete");
     let terminal = field(&field(complete.as_ref(), "output"), "terminal")
         .as_string()
@@ -894,7 +912,7 @@ fn pdftex_ximage_enquiries_survive_binary_resource_retry() {
         )
         .expect("add ximage source");
 
-    let missing = session.compile_attempt().expect("image request");
+    let missing = session.advance().expect("image request");
     assert_eq!(string_field(missing.as_ref(), "kind"), "need-resources");
     let required = Array::from(&field(missing.as_ref(), "required"));
     assert_eq!(required.length(), 1);
@@ -910,7 +928,7 @@ fn pdftex_ximage_enquiries_survive_binary_resource_retry() {
     png.extend_from_slice(&[8, 2, 0, 0, 0]);
     provide_file(&mut session, &request, "/texlive/figure.png", &png).expect("provide PNG");
 
-    let complete = session.compile_attempt().expect("complete retry");
+    let complete = session.advance().expect("complete retry");
     assert_eq!(
         string_field(complete.as_ref(), "kind"),
         "complete",
@@ -1131,7 +1149,7 @@ async fn generated_html_projects_exact_geometry_at_firefox_zoom_levels() {
 #[wasm_bindgen_test]
 fn errors_are_typed_and_invalid_boundary_values_throw() {
     let mut missing_main = session("main.tex");
-    let result = missing_main.compile_attempt().expect("error result");
+    let result = missing_main.advance().expect("error result");
     assert_eq!(string_field(result.as_ref(), "kind"), "error");
     assert!(
         string_field(&field(result.as_ref(), "diagnostic"), "message").contains("was not provided")
@@ -1407,9 +1425,7 @@ fn schema_twelve_formats_load_and_plain_asset_is_available() {
     plain_initialized
         .add_user_file("main.tex", &bytes(source))
         .expect("add Plain format input");
-    let plain_result = plain_initialized
-        .compile_attempt()
-        .expect("Plain format attempt");
+    let plain_result = plain_initialized.advance().expect("Plain format attempt");
     assert_eq!(string_field(plain_result.as_ref(), "kind"), "complete");
 
     let minimal_format = umber::with_engine_world(World::memory(), |initialized| {
@@ -1425,7 +1441,7 @@ fn schema_twelve_formats_load_and_plain_asset_is_available() {
         .add_user_file("main.tex", &bytes(source))
         .expect("add format-initialized input");
     let format_result = format_initialized
-        .compile_attempt()
+        .advance()
         .expect("format-initialized attempt");
     assert_eq!(string_field(format_result.as_ref(), "kind"), "complete");
 
@@ -1434,7 +1450,7 @@ fn schema_twelve_formats_load_and_plain_asset_is_available() {
         .add_user_file("main.tex", &bytes(source))
         .expect("add source-initialized input");
     let source_result = source_initialized
-        .compile_attempt()
+        .advance()
         .expect("source-initialized attempt");
     assert_eq!(string_field(source_result.as_ref(), "kind"), "complete");
     let formatted_dvi = Uint8Array::new(&field(&field(format_result.as_ref(), "output"), "dvi"));
@@ -1471,7 +1487,7 @@ fn tracked_plain_format_executes_frozen_nullfont_after_redefinition() {
             &bytes(br"\def\nullfont{\errmessage{ordinary-nullfont-was-expanded}}\the\font\end"),
         )
         .expect("add null-font selection source");
-    let result = session.compile_attempt().expect("loaded Plain attempt");
+    let result = session.advance().expect("loaded Plain attempt");
     assert_eq!(string_field(result.as_ref(), "kind"), "complete");
     let terminal = field(&field(result.as_ref(), "output"), "terminal")
         .as_string()
@@ -1522,7 +1538,7 @@ fn explicit_disposal_releases_session_and_rejects_later_calls() {
     assert!(!session.disposed());
     session.dispose();
     assert!(session.disposed());
-    assert!(session.compile_attempt().is_err());
+    assert!(session.advance().is_err());
     assert!(session.attempts().is_err());
 }
 
@@ -2098,7 +2114,7 @@ fn assert_format_error(format: &[u8], expected: &str) {
     session
         .add_user_file("main.tex", &bytes(b"\\end"))
         .expect("add main source");
-    let attempt = session.compile_attempt().expect("format error attempt");
+    let attempt = session.advance().expect("format error attempt");
     assert_eq!(string_field(attempt.as_ref(), "kind"), "error");
     let diagnostic = field(attempt.as_ref(), "diagnostic");
     assert!(

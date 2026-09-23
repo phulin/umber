@@ -2,8 +2,11 @@
 //!
 //! These types describe JavaScript data, not engine state.  Conversion to and
 //! from engine-owned types belongs in the binding adapters.  Serde's default
-//! unknown-field policy is intentional: schema 1 readers accept additive
-//! fields while required fields and discriminants remain strict.
+//! unknown-field policy is intentional for extensible result and resource
+//! DTOs: schema 1 readers accept additive fields while required fields and
+//! discriminants remain strict. Session option objects are different: the
+//! binding checks their complete field set before deserialization so removed
+//! input switches cannot be silently ignored.
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -435,6 +438,24 @@ pub struct SessionOptionsDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub font_mapping_fallback: Option<FontMappingFallbackDto>,
 }
+
+/// Input option names checked at the binding, including optional fields.
+/// The generated TypeScript declaration is checked against these sets in the
+/// wasm-bindgen suite, so a new DTO field cannot silently bypass validation.
+pub(crate) const SESSION_OPTION_KEYS: &[&str] = &[
+    "mainPath",
+    "jobName",
+    "format",
+    "formatPrefetchHints",
+    "engine",
+    "outputs",
+    "clock",
+    "limits",
+    "fontLayoutPolicy",
+    "fontMappingFallback",
+];
+pub(crate) const PROJECT_OPTION_EXTRA_KEYS: &[&str] = &["bibliography", "projectLimits"];
+pub(crate) const EDITOR_OPTION_EXTRA_KEYS: &[&str] = &["stabilizationLimits"];
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "kebab-case")]
@@ -1155,6 +1176,43 @@ mod option_bytes {
 #[cfg(all(test, target_arch = "wasm32"))]
 mod tests {
     use super::*;
+
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    fn binding_option_keys_match_all_generated_dto_fields() {
+        fn declaration_keys(schema: &str, name: &str) -> std::collections::BTreeSet<String> {
+            let prefix = format!("export type {name} = {{ ");
+            let declaration = schema
+                .lines()
+                .find_map(|line| line.strip_prefix(&prefix))
+                .expect("generated option declaration");
+            let fields = declaration
+                .strip_suffix(" };")
+                .expect("complete generated option declaration");
+            fields
+                .split(", ")
+                .filter_map(|field| field.split_once(':').map(|(name, _)| name))
+                .map(|name| name.trim_end_matches('?').to_owned())
+                .collect()
+        }
+
+        let schema = typescript_declarations();
+        let session = SESSION_OPTION_KEYS
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect();
+        assert_eq!(declaration_keys(&schema, "SessionOptions"), session);
+        for (name, extra) in [
+            ("ProjectSessionOptions", PROJECT_OPTION_EXTRA_KEYS),
+            ("EditorSessionOptions", EDITOR_OPTION_EXTRA_KEYS),
+        ] {
+            let expected: std::collections::BTreeSet<String> = SESSION_OPTION_KEYS
+                .iter()
+                .chain(extra.iter())
+                .map(|name| (*name).to_owned())
+                .collect();
+            assert_eq!(declaration_keys(&schema, name), expected);
+        }
+    }
 
     #[wasm_bindgen_test::wasm_bindgen_test]
     fn diagnostic_codes_and_optional_omission_are_stable() {

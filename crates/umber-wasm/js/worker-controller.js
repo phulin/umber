@@ -289,11 +289,6 @@ function prepareMessage(options, userFiles, resolver, wasmUrl) {
 		);
 	}
 	clonedOptions.limits = limits;
-	if (clonedOptions.html !== undefined) {
-		if (!clonedOptions.html || typeof clonedOptions.html !== "object") {
-			throw new WorkerCompileError("invalid-options", "html must be an object");
-		}
-	}
 	let resourceResponses;
 	if (resolver.resourceResponses !== undefined) {
 		if (!Array.isArray(resolver.resourceResponses)) {

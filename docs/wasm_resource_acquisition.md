@@ -36,7 +36,9 @@ The WASM `SessionOptions.outputs` array is the representation adapter for the
 same Rust-owned nonempty `OutputCapabilitySet` used by native and project
 sessions. JavaScript forwards that selection and never derives drivers from
 the engine name. The required `outputs` field rejects an omitted capability
-selection; no binding infers PDF from an engine name or DVI from omission.
+selection, and the binding rejects unknown session option keys; no binding
+infers PDF from an engine name or DVI from omission. Other schema-1 resource
+and result DTOs retain their additive-field policy.
 
 Workers accept optional application/private `resourceResponses` using the same
 complete typed request/response schema as the main-realm resolver. Unknown

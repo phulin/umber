@@ -393,7 +393,7 @@ test("preflights all worker input limits before copying or construction", async 
 			name: "one font resource",
 			options: {
 				mainPath: "main.tex",
-				html: {},
+				outputs: ["html"],
 				limits: { oneFileBytes: 1 },
 			},
 			files: new Map(),
@@ -443,7 +443,7 @@ test("worker copies typed font resources without detaching caller bytes", async 
 	const promise = compileInWorker(
 		{
 			mainPath: "main.tex",
-			html: {},
+			outputs: ["html"],
 		},
 		new Map(),
 		{
