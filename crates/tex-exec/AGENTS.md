@@ -49,6 +49,16 @@ Command operands are scanned by `tex-command` into typed request and result valu
   checkpoint sealing. Shipout contributes only output-ledger evidence. Its direct-operation mark
   moves only tex-command's opaque lifecycle edge; the authoritative ordinary
   attempt coordinate remains in `CommandState`.
+- `src/main_control/resources.rs`: typed host-resource resolution and
+  installation for fonts, input streams, and PDF images. It borrows the same
+  `MainControl` and `Universe` owners and preserves checkpoint-replay errors.
+- `src/main_control/root_source.rs`: immutable root-source registration,
+  editor rebind, startup framing, and root completion policy on the same
+  `MainControl` owner. See `docs/main_control_responsibilities.md`.
+- `src/main_control/discretionary.rs`: `\discretionary` group and part
+  lifecycle plus the `\-` shorthand. It mutates the existing mode and node
+  owners under the sole main-control episode; operand scanning remains in
+  `tex-command` and settlement remains in `settlement.rs`.
 - `src/main_control/executor_facts.rs`: the borrow-scoped live mode and
   effective-tail provider plus the stack-branded checked-save and delivery
   preparation. A scanner or conditional invokes only the exact fact method it
