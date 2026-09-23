@@ -38,10 +38,14 @@ selected revision and steps; they do not imply that every optional tier ran.
 The public legacy node API, semantic and physical diagnostic node channels,
 page/form PDF policies, and browser-specific fetch/cache behavior serve distinct
 contracts. Their coexistence is not evidence of a duplicate production owner.
-The broader `World`/arena storage rewrite and `ParagraphTape` adapter audit
-need caller and measurement evidence before changing those boundaries. Classic
-BibTeX and Biber-compatible migration is separate work; this review does not
-claim its ignored upstream cases execute.
+The caller-backed storage audit removed `ForkArena`'s synchronized live frontier
+and unified the borrowed `ParagraphTape` cursor path. It retained World live
+counts, publication columns and cursors, and the owned and arena-ID paragraph
+paths for the distinct API, lifetime, and diagnostic contracts recorded in
+[State Responsibility Boundaries](state_responsibility_boundaries.md). This is a
+resolved boundary under the current functionality contract, not an unexamined
+storage rewrite. Classic BibTeX and Biber-compatible migration is separate
+work; this review does not claim its ignored upstream cases execute.
 
 ## Assessment
 
@@ -472,20 +476,21 @@ malformed-record rejection follows the same rules.
 `World` now groups input dependencies, effect publication, and checkpoint
 methods; `ForkArena` groups checkpoint, batch, and whole-region transfer
 methods; `CommandContext` groups PDF and page methods. These remain inherent
-methods on the same types, with unchanged storage and checkpoint owners.
-[State Responsibility Boundaries](state_responsibility_boundaries.md) names
-those owners. A storage redesign still requires evidence that it removes an
-independently updated record or conversion while preserving exact rollback;
-another wrapper around `tex-dense-prefix` or `tex-dense-arena` would not meet
-that criterion.
+methods on the same types, with one checkpoint authority. The arena pass also
+removed its separately synchronized live frontier: the accepted chunk set now
+supplies the end and tail in constant time while the physical pool still owns
+payload. [State Responsibility Boundaries](state_responsibility_boundaries.md)
+records why the remaining World live counts, public borrowed columns, and
+publication cursors are distinct facts. Its snapshot scalars are rollback
+inverses, not another live owner. A wrapper around `tex-dense-prefix` or
+`tex-dense-arena` would not remove an owner or conversion.
 
-[ParagraphTape](../crates/tex-typeset/src/linebreak/mod.rs) accepts owned,
-borrowed mirrored, borrowed arena, and arena-ID sources. `tex-exec` uses the
-arena-ID path in production; owned and borrowed adapters support the public
-typesetting API and parity tests. The arena-ID tape retains compact coordinates
-and scalar scratch so it does not keep the execution context borrowed. There
-is no demonstrated redundant owner to delete in this review. The semantic and
-physical diagnostic channels carry different evidence and remain distinct.
+[ParagraphTape](../crates/tex-typeset/src/linebreak/mod.rs) now uses one
+`NodeCursor` source for borrowed slice and borrowed page-arena traversal.
+`tex-exec` uses the arena-ID path in production so it can release the execution
+context borrow before its retained range sink runs. The owned sequence serves
+the public typesetting API and detached semantic and physical projections.
+Those diagnostic channels carry different evidence and remain distinct.
 
 ### 4. Clarify session and output ownership
 
@@ -643,14 +648,14 @@ and dependency vectors without another JavaScript packed decoder.
 
 ## Delivery and acceptance
 
-| Review deliverable                          | Disposition                                                                                                                                                                                            | Acceptance evidence and limit                                                                                                                         |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Test selection and honest verdicts          | Implemented. The seven classes, script and selected-Rust inventories, required-asset behavior, and combined/subsystem verdicts have one documented entry point.                                        | `test-support` selection tests, gate-verdict and inventory tests, `scripts/check-and-test.sh`; a selected optional subset reports `PARTIAL`.          |
-| Refactoring-safe test organization          | Implemented. Executor and other large test families retain their original Cargo targets; retired private source checks have named replacement evidence.                                                | Original fixture/parity selections, executor receipt and host-fact tests, compile-fail capability checks, and the assertion tables above.             |
-| Bounded production simplification           | Implemented. Scanner, command, state-method, node-view, resource-admission, session-publication, artifact codec, PDF lowering, and Rust prefetch changes keep one authority at each mutation boundary. | Final combined native/quality, real WASM/package, and external PDF checks have the scoped results below.                                              |
-| Broader storage and paragraph consolidation | Retained as a separate measured audit. Existing public adapters and distinct semantic/physical channels have identified consumers.                                                                     | Delete an owner or conversion only after caller, compatibility, rollback, and cost evidence; shorter files alone do not qualify.                      |
-| Shared native/browser transition fixture    | Implemented as three ordered file-resource cases over the public native and generated WASM sessions.                                                                                                   | Both runners check request roles, positive/negative/empty outcomes, atomic rejection, and accepted observations; host-specific policy stays separate. |
-| Bibliography migration                      | Deferred. Classic and Biber-compatible backends and their ignored upstream inventory keep their existing status.                                                                                       | A future scoped pass must distinguish executed matched cases, strict known failures, ignored declarations, and unsupported cases.                     |
+| Review deliverable                          | Disposition                                                                                                                                                                                            | Acceptance evidence and limit                                                                                                                                              |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Test selection and honest verdicts          | Implemented. The seven classes, script and selected-Rust inventories, required-asset behavior, and combined/subsystem verdicts have one documented entry point.                                        | `test-support` selection tests, gate-verdict and inventory tests, `scripts/check-and-test.sh`; a selected optional subset reports `PARTIAL`.                               |
+| Refactoring-safe test organization          | Implemented. Executor and other large test families retain their original Cargo targets; retired private source checks have named replacement evidence.                                                | Original fixture/parity selections, executor receipt and host-fact tests, compile-fail capability checks, and the assertion tables above.                                  |
+| Bounded production simplification           | Implemented. Scanner, command, state-method, node-view, resource-admission, session-publication, artifact codec, PDF lowering, and Rust prefetch changes keep one authority at each mutation boundary. | Final combined native/quality, real WASM/package, and external PDF checks have the scoped results below.                                                                   |
+| Broader storage and paragraph consolidation | The audited `ForkArena` frontier and duplicate borrowed paragraph path were removed. World counts and publication columns remain for the documented API, history, and admission contracts.             | Arena and paragraph rollback/parity tests; [State Responsibility Boundaries](state_responsibility_boundaries.md) records why the remaining live World fields are retained. |
+| Shared native/browser transition fixture    | Implemented as three ordered file-resource cases over the public native and generated WASM sessions.                                                                                                   | Both runners check request roles, positive/negative/empty outcomes, atomic rejection, and accepted observations; host-specific policy stays separate.                      |
+| Bibliography migration                      | Deferred. Classic and Biber-compatible backends and their ignored upstream inventory keep their existing status.                                                                                       | A future scoped pass must distinguish executed matched cases, strict known failures, ignored declarations, and unsupported cases.                                          |
 
 The original first four pilots are complete: verdict and inventory work,
 executor test organization and source-guard replacement, version-24 codec

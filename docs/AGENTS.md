@@ -58,7 +58,8 @@ first-failure locator. Keep diagnosis order in
 `repository_simplification_plan.md` records the September 2026 repository
 review, seven test classes and execution lanes, implemented nonbibliography
 passes, their acceptance evidence, and retained boundaries. The generic legacy
-node API and broader storage/paragraph redesign remain separately scoped;
+node API remains separately scoped; the arena/paragraph reduction and World
+retention decision are recorded in `state_responsibility_boundaries.md`;
 bibliography migration is deferred.
 
 `pdf_finalization_modules.md` records the implemented private PDF lowering
@@ -66,8 +67,9 @@ boundaries, single object-allocation and publication authority, and the
 format-specific validation contract.
 
 `state_responsibility_boundaries.md` maps the `World`, `ForkArena`, and
-`CommandContext` method groups onto their unchanged storage and checkpoint
-owners for the state organization pass.
+`CommandContext` method groups and records the removed arena frontier,
+unified borrowed paragraph traversal, and retained World API and checkpoint
+boundaries.
 
 `tooling_surface_inventory.md` records the owner-approved disposition of
 reference/parity commands, one-time fixture migrations, benchmark and trace

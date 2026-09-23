@@ -37,8 +37,45 @@ coordinates so execution can release its command borrow before the retained
 range post-line sink runs. These are distinct lifetime and diagnostic
 contracts, not duplicate copies of the same production payload.
 
-`WorldSnapshot` remains the sole host-state rollback mark; its copied scalars
-are the inverse information for one live `World`, not another mutable owner.
+## World live state and checkpoint marks
+
+The World audit found no further live owner record that can be removed under
+the current public API and constant-time dependency-limit check. For example,
+`input_dependency_len` counts distinct paths across the accepted dependency
+parent and the live map. An accepted parent containing `a` with a live update
+to `a` has one distinct path; the same parent with a live insertion of `b`
+has two. Both live maps have length one. Deriving the count by merging maps at
+each new admission would repeatedly traverse and allocate for a set bounded
+at 8,192 paths. The stored count and its snapshot inverse preserve a bounded
+constant-time limit check through rollback and fork.
+
+The artifact hash, committed artifact, and publication columns are aligned,
+but each has a public borrowed-slice accessor. A combined record could not
+return those slices without keeping duplicate columns or changing that API.
+The hash also appears in `CommittedArtifact`, yet the separate hash slice is
+used as the ordered shipout notification and page cursor. Publication records
+can be linked to an effect after artifact commit, so they are not immutable
+projections of the artifact bytes. Effect sequence, domain, and ordinal columns
+similarly support public `Arc<Vec<_>>` access and separate installation or
+claim operations; merging them would change those contracts or recreate the
+columns on demand.
+
+Other apparent duplicates encode different history. The page-effect artifact
+cursor distinguishes live effects already embedded in a committed page from
+pending effects at the same ledger length. Closed output paths remain in the
+committed-path set after their write-stream slots are empty. Monotone identity
+counters survive publication and fork sequencing; the optional incremental
+reachable-state identity avoids rescanning effects, inputs, and scalars for a
+checkpoint root. These are live facts, not interchangeable representations.
+
+`WorldSnapshot` remains the sole host-state rollback mark. Its copied cursors,
+counters, and scalars are inverse information for one live `World`, not another
+mutable owner. Its effect position can be computed from base and length, but
+removing that one private copied scalar would not reduce a live owner or
+conversion path. The World-specific storage aspiration is therefore settled
+at this API and performance boundary, rather than deferred as an unexplored
+audit.
+
 The public `NodeArenaError` and generic `NodeArena<L>` compatibility API remain
 available. Modern page payload stays in `PageMaterialArena`, and command and
 `Universe` result signatures still expose that error vocabulary.
