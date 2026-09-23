@@ -1,0 +1,6 @@
+{"schema":4,"manifest":"0000000000000000000000000000000000000000000000000000000000000000"}
+{"sequence":0,"semantic":{"event":"diagnostic_lifecycle","data":{"transition":"report","class":"recoverable_error","severity":"error","diagnostic":"missing-number","arguments":[],"location":{"source":"spacefactor-assignment.tex","line":5,"byte":24}}}}
+{"sequence":1,"semantic":{"event":"diagnostic_lifecycle","data":{"transition":"report","class":"recoverable_error","severity":"error","diagnostic":"missing-number","arguments":[],"location":{"source":"spacefactor-assignment.tex","line":6,"byte":19}}}}
+{"sequence":2,"semantic":{"event":"diagnostic_lifecycle","data":{"transition":"report","class":"recoverable_error","severity":"error","diagnostic":"missing-number","arguments":[],"location":{"source":"spacefactor-assignment.tex","line":7,"byte":20}}}}
+{"sequence":3,"semantic":{"event":"diagnostic_lifecycle","data":{"transition":"report","class":"fatal","severity":"fatal","diagnostic":"emergency-stop","arguments":[{"type":"name","value":"End of file on the terminal!"}],"location":{"source":"spacefactor-assignment.tex","line":31,"byte":3}}}}
+{"sequence":4,"semantic":{"event":"diagnostic_lifecycle","data":{"transition":"outcome","history":"fatal_error_stop","outcome":"aborted"}}}

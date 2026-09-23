@@ -207,6 +207,27 @@ The first command captures pinned pdfTeX. The second performs a read-only,
 side-by-side comparison against Umber; use the existing one-case reviewed
 publication route only after inspecting that output.
 
+The same reference capture supplies typed diagnostic files for five older
+command-semantic cases whose terminal and log fixtures predated the schema-v4
+channel: `main-control/empty-token-register`,
+`scanners-internal-quantities/numeric-token-categories`,
+`scanners-internal-quantities/missing-number-error-context`,
+`main-control/spacefactor-assignment`, and `alignments/span-width-record`.
+Select them with repeated `--case` arguments to
+`scripts/run-minifixture-oracle.sh`; inspect each
+`target/minifixture-oracle/<domain>/<case>/pdftex14029-diagnostics.jsonl`
+before copying its bytes to `expected.diagnostics`. The reviewed capture used
+the already-built instrumented executable with SHA-256
+`1dfbe6017458d5375833eadf699d247eb28a5e192d4c87379592e863be5b2c0d`;
+its build record's three instrumentation-change digests matched the checked-in
+change files. Each stream had a schema-v4 header, source-located report records
+with valid line and byte positions, and a final outcome. Each staged source and
+existing terminal fixture matched byte-for-byte; the log and DVI differed
+only in their documented clock and preamble-comment fields. This digest is a
+capture provenance receipt, not a new executable-version acceptance pin. The
+added files repair missing reference evidence; they do not imply that Umber's
+diagnostic lifecycle or execution now matches the reference.
+
 The loaded raw-TeX82 batch uses the blessed regeneration entry point with the
 typed capture policy embedded in each V2 case:
 
