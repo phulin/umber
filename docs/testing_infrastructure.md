@@ -150,6 +150,36 @@ projection must itself name observable behavior; an internal hash or counter
 is not a semantic oracle. [Semantic Testing](semantic_testing.md) gives that
 assertion boundary.
 
+On the semantic-testing production candidate `c91995f9b`, explicitly
+selecting the same 210-case manual command below reports `matched=207,
+executed-known-failure=0, unexpected-pass=0, other-failure=3, dormant=0,
+unselected=0` and exits `FAIL`. The three failed cases have six channel
+discrepancies and no execution or focused-projection mismatch:
+`alignments/span-width-record` has a typed confusion-report source byte of 46
+where the reference says 43; `input-expansion/input-tokenization-lifecycle`
+differs in terminal and log bytes and lacks the reference source location on
+its typed emergency-stop report; and
+`scanners-internal-quantities/input-stream-four-bit-recovery` has terminal and
+log differences. These are exact output or diagnostic-location failures, not
+automatically page-typesetting defects. None is marked expected to make the
+manual suite green.
+
+On the same production candidate, `scripts/check-and-test.sh` passed all seven
+routine native and quality stages (`PASS 7`, `FAIL 0`, `BLOCKED 0`) without a
+gate reduction. The routine result does not execute or clear the manually
+selected command-semantic corpus; its 207/3 verdict above remains `FAIL`.
+
+The immediately preceding candidate `90c2f0fad`, with the same independent
+reference-channel and projection criteria, matched 178 and failed 32. The
+bounded root-EOF fatal-report repair at `c91995f9b` accounts for 29 newly
+matching cases under those unchanged criteria. Before that repair, selected
+reference captures had corrected 30 falsely clean complete-job statuses and
+added 34 source-located schema-v4 diagnostic files to older cases. Those
+fixture corrections make missing oracle evidence visible; they are not TeX
+execution improvements. The earlier 128/82 and 79/131 receipts below used
+different criteria and cannot be read as an engine-improvement series. The
+routine suite still leaves the manual 210-case corpus unselected.
+
 The historical second-wave run on production `e685e55d8`, explicitly selecting
 `cargo test -q -p tex-command-stream --test it command_semantic::declared_command_semantic_cases_match -- --exact --ignored --nocapture`
 reports `matched=128, executed-known-failure=0, unexpected-pass=0,
