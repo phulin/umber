@@ -185,6 +185,19 @@ fn artifact_identity_excludes_owned_render_presentation() {
 }
 
 #[test]
+fn artifact_verification_rejects_pre_domain_hashes() {
+    let bytes = b"abc";
+    let current = ContentHash::for_domain(ContentDomain::Artifact, bytes);
+    assert!(verify_artifact_identity(current, bytes, None).is_ok());
+    let pre_domain = ContentHash::new([
+        0x80, 0x71, 0x32, 0x00, 0x93, 0xde, 0x53, 0xea, 0xe8, 0x1f, 0x37, 0x1b, 0xa4, 0xa7, 0xe0,
+        0x11, 0x80, 0x5d, 0x89, 0xc6, 0x4f, 0xa3, 0xd0, 0xb0, 0x60, 0x14, 0xf1, 0x4a, 0x6c, 0x37,
+        0x0c, 0xe1,
+    ]);
+    assert!(verify_artifact_identity(pre_domain, bytes, None).is_err());
+}
+
+#[test]
 fn reachable_future_state_identity_excludes_committed_artifact_history() {
     let mut first = World::memory();
     first.enable_reachable_state_identity();

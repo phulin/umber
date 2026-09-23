@@ -139,7 +139,9 @@ and ToUnicode mappings; token lists and node graphs are embedded as validated
 handle-free semantic envelopes. It contains no store or environment data.
 Only the pdfTeX producer profile may retain nonempty or enabled PDF resource
 state, and its next-object coordinate is bounded by pdfTeX 1.40.29's fixed
-object-table limit. Destination names, color stacks, pages, and other
+object-table limit. The PDF resource section is written and read in its
+current state version 2; version-1 image rows are rejected rather than
+silently supplied with missing image attributes. Destination names, color stacks, pages, and other
 job-local PDF tables are excluded rather than assigned invented format
 coordinates.
 The schema-12 runtime requires

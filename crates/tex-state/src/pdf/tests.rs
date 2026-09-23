@@ -927,6 +927,21 @@ fn format_pdf_ledger_detaches_and_materializes_before_publication() {
             b"/Intent /RelativeColorimetric"
         );
 
+        let mut obsolete = bytes.clone();
+        obsolete[..4].copy_from_slice(&1_u32.to_le_bytes());
+        assert!(
+            PdfState::<()>::restore_format_bytes(
+                &obsolete,
+                crate::EngineCapacityProfile::Texlive2026
+                    .configuration()
+                    .pdf,
+                |_| unreachable!(),
+                |_, _| unreachable!(),
+            )
+            .is_err(),
+            "obsolete PDF state version must not be upgraded"
+        );
+
         assert!(
             PdfState::<()>::restore_format_bytes(
                 b"not a format",

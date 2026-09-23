@@ -4,10 +4,10 @@ Read the repository-level `AGENTS.md` before editing here. This crate owns the s
 
 ## File Map
 
-- `AGENTS.md`: Crate-local identity and compatibility guidance.
+- `AGENTS.md`: Crate-local identity guidance.
 - `Cargo.toml`: Dependency-free crate manifest.
-- `src/lib.rs`: Compact immutable byte ownership, versioned domain-separated
-  content identity implementation, and explicit legacy compatibility policy.
+- `src/lib.rs`: Compact immutable byte ownership and the current versioned,
+  domain-separated content identity implementation.
 
 ## Boundaries
 
@@ -15,4 +15,5 @@ Read the repository-level `AGENTS.md` before editing here. This crate owns the s
 - `SharedBytes` may adopt fresh vectors or existing shared slices without a
   payload copy, but exposes only immutable byte views and cheap owner clones.
 - Never change an existing domain/version preimage. Introduce a new version explicitly.
-- Legacy hashing exists only for compatible reads of previously committed objects; new domain-aware writes must not use it.
+- Artifact reads require the same current domain-separated identity as writes;
+  historical undomained and version-1 hashes are unsupported.

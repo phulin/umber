@@ -5644,7 +5644,7 @@ fn verify_artifact_identity(
     bytes: &[u8],
     path: Option<PathBuf>,
 ) -> Result<(), WorldError> {
-    if expected.matches_current_or_legacy(ContentDomain::Artifact, bytes) {
+    if expected == ContentHash::for_domain(ContentDomain::Artifact, bytes) {
         return Ok(());
     }
     let actual = ContentHash::for_domain(ContentDomain::Artifact, bytes);

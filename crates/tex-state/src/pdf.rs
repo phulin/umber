@@ -858,61 +858,6 @@ struct PdfFormatImage {
     mask_object: Option<u32>,
 }
 
-/// Schema-1 image rows lacked `\pdfximage` attributes. Keep the exact old
-/// bincode shape so already-authenticated generated formats remain loadable;
-/// their image list is ordinarily empty, and any retained legacy image has
-/// the only semantics that schema could represent: no attributes.
-#[derive(Deserialize)]
-struct PdfFormatStateV1 {
-    version: u32,
-    enabled: bool,
-    next_object: u32,
-    next_form_resource: u32,
-    raw_objects: Vec<PdfFormatRawObject>,
-    forms: Vec<PdfFormatForm>,
-    external_images: Vec<PdfFormatImageV1>,
-    glyph_to_unicode: Vec<PdfGlyphToUnicode>,
-}
-
-#[derive(Deserialize)]
-struct PdfFormatImageV1 {
-    id: u32,
-    identity: [u8; 32],
-    metadata: PdfExternalImageMetadata,
-    dimensions: PdfExternalImageDimensions,
-    color_space_object: i32,
-    bytes: Vec<u8>,
-    mask_object: Option<u32>,
-}
-
-impl From<PdfFormatStateV1> for PdfFormatState {
-    fn from(format: PdfFormatStateV1) -> Self {
-        Self {
-            version: 2,
-            enabled: format.enabled,
-            next_object: format.next_object,
-            next_form_resource: format.next_form_resource,
-            raw_objects: format.raw_objects,
-            forms: format.forms,
-            external_images: format
-                .external_images
-                .into_iter()
-                .map(|image| PdfFormatImage {
-                    id: image.id,
-                    identity: image.identity,
-                    metadata: image.metadata,
-                    dimensions: image.dimensions,
-                    color_space_object: image.color_space_object,
-                    attributes: Vec::new(),
-                    bytes: image.bytes,
-                    mask_object: image.mask_object,
-                })
-                .collect(),
-            glyph_to_unicode: format.glyph_to_unicode,
-        }
-    }
-}
-
 /// An append-only font-output mutation. The log makes snapshots cheap and
 /// ensures rollback discards the exact suffix produced after a checkpoint.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2794,11 +2739,8 @@ impl<G> PdfState<G> {
         import_tokens: impl FnMut(&[u8]) -> Result<PdfTokenParameter<G>, String>,
         import_nodes: impl FnMut(u32, &[u8]) -> Result<StateHashFragment, String>,
     ) -> Result<Self, String> {
-        let format = match bincode::deserialize::<PdfFormatStateV1>(bytes) {
-            Ok(legacy) if legacy.version == 1 => legacy.into(),
-            _ => bincode::deserialize::<PdfFormatState>(bytes)
-                .map_err(|error| format!("cannot decode PDF format resource state: {error}"))?,
-        };
+        let format = bincode::deserialize::<PdfFormatState>(bytes)
+            .map_err(|error| format!("cannot decode PDF format resource state: {error}"))?;
         Self::restore_format(format, capacities, import_tokens, import_nodes)
     }
 

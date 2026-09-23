@@ -336,7 +336,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
   durable form-list coordinates, allocation-free scalar checkpoint marks,
   exact inverse journals, one coarse image/form payload prefix plus private
   delta, committed-page ledger, and handle-free PDF format wire
-  capture/materialization hooks.
+  capture/materialization hooks accepting only the current PDF state version.
 - `src/pdf/completion.rs`: handle-free terminal projection of the checkpointed
   PDF ledger, including artifacts, resources, raw objects, actions, and final
   document state.
@@ -452,6 +452,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
   input/path cursors and scalar printer offsets, reusable detached-prior
   effect/input/artifact journals for candidate settlement, and
   field/key-specific allocation-independent dependency projections.
+  Stored artifacts are authenticated with the current artifact-domain content
+  hash; historical hash schemes are not accepted.
 - `src/world/input_dependencies.rs`: Input-dependency records and their
   rollback journal on the same `World` owner.
 - `src/world/effect_publication.rs`: Effect journal access, publication
