@@ -1391,18 +1391,14 @@ fn unavailable_file_response_crosses_the_wire_and_counts_as_progress() {
 }
 
 #[wasm_bindgen_test]
-fn schema_twelve_formats_load_and_legacy_plain_asset_is_explicitly_unavailable() {
+fn schema_twelve_formats_load_and_plain_asset_is_available() {
     assert_eq!(package_version(), env!("CARGO_PKG_VERSION"));
     const EXPECTED_FORMAT_SCHEMA: u32 = 12;
     assert_eq!(format_schema_version(), EXPECTED_FORMAT_SCHEMA);
-    let legacy_format = include_bytes!("../assets/plain.fmt");
+    let plain_format = include_bytes!("../assets/plain.fmt");
     assert_eq!(
-        u32::from_le_bytes(legacy_format[8..12].try_into().unwrap()),
-        11
-    );
-    assert!(
-        include_str!("../assets/plain-format.json").contains("umber2-66p0.27"),
-        "legacy packaged format must carry an explicit republication marker"
+        u32::from_le_bytes(plain_format[8..12].try_into().unwrap()),
+        EXPECTED_FORMAT_SCHEMA
     );
     assert!(
         include_str!("../assets/plain-source.lock")
@@ -1412,15 +1408,29 @@ fn schema_twelve_formats_load_and_legacy_plain_asset_is_explicitly_unavailable()
     let metadata: serde_json::Value =
         serde_json::from_str(include_str!("../assets/plain-format.json"))
             .expect("parse packaged Plain-format metadata");
-    assert_eq!(metadata["schema"].as_u64(), Some(0));
-    assert!(
-        metadata["unavailable"]
-            .as_str()
-            .is_some_and(|reason| reason.contains("umber2-66p0.27"))
+    assert_eq!(metadata["schema"].as_u64(), Some(3));
+    assert_eq!(metadata["name"].as_str(), Some("plain"));
+    assert_eq!(
+        metadata["formatSchema"].as_u64(),
+        Some(u64::from(EXPECTED_FORMAT_SCHEMA))
     );
-    assert_format_error(legacy_format, "unsupported Umber format version 11");
+    assert_eq!(metadata["bytes"].as_u64(), Some(plain_format.len() as u64));
+    let digest = metadata["ahash64"].as_str().expect("Plain format digest");
+    assert_eq!(
+        metadata["object"].as_str(),
+        Some(format!("ahash64-v1-{digest}").as_str())
+    );
 
     let source = b"\\shipout\\hbox{}\\end";
+    let mut plain_initialized = session_with_format("main.tex", plain_format);
+    plain_initialized
+        .add_user_file("main.tex", &bytes(source))
+        .expect("add Plain format input");
+    let plain_result = plain_initialized
+        .compile_attempt()
+        .expect("Plain format attempt");
+    assert_eq!(string_field(plain_result.as_ref(), "kind"), "complete");
+
     let minimal_format = umber::with_engine_world(World::memory(), |initialized| {
         prepare_run_stores(initialized);
         initialized

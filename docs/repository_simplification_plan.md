@@ -3,9 +3,10 @@
 Status: the bounded nonbibliography review changes are implemented through the
 executor, state, session, scanner, codec, PDF, and browser owners. The final
 native, quality, generated WASM/package, and external PDF checks ran with the
-scoped verdicts below. Shipped Plain-format availability is blocked by its
-unpublished asset. Broader storage and paragraph-traversal proposals retain
-their existing owners; bibliography migration is deferred.
+scoped verdicts below. The local Plain format has been regenerated for schema
+12; default browser distribution deployment remains unpublished. Broader
+storage and paragraph-traversal proposals retain their existing owners;
+bibliography migration is deferred.
 Review baseline: `11c7bf7cd8ec78b36337c3ee3a97e38d0dc099e9`.
 
 The objective is to preserve Umber's current behavior while making both the
@@ -26,13 +27,13 @@ selected revision and steps; they do not imply that every optional tier ran.
 
 ### Implemented scope and retained boundaries
 
-| Owner                        | Current disposition                                                                                                                                                                                                                                                                                                             | Evidence to keep visible                                                                                                                                                                   |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Test selection and reporting | The script-suite inventory, seven behavior classes, combined verdict, and explicit optional-step verdicts are live. Executor, CLI, conformance, expansion, and line-breaking tests are grouped within their original targets. Private spelling guards were replaced with behavior, compile-fail, or narrow structural evidence. | `scripts/check-and-test.sh`, `scripts/check.sh`, `scripts/check-wasm.sh`, `test-support` workspace selection, and the assertion dispositions below.                                        |
-| Command and state            | Structured scanner families and their ownership are explicit. Unreachable detached-continuation code is removed. `MainControl`, `World`, `ForkArena`, and `CommandContext` methods are grouped by responsibility without adding a second state or checkpoint owner.                                                             | Existing command fixtures, scanner recovery and resource replay tests, state rollback tests, and [responsibility boundaries](state_responsibility_boundaries.md).                          |
-| Resources and sessions       | Mixed file/font/project admission is staged and rejected atomically. A private publication seam prepares output before accepting the revision and installs accepted output, workspace, and render state together. Valid nonconsecutive HTML revisions publish a full snapshot.                                                  | Virtual/project admission rejection tests, accepted-revision and render-update tests, and three shared native/generated-WASM transition cases.                                             |
-| Nodes and output             | Borrowed node views and compact page reads are separated from the generic legacy `NodeArena<L>`. Artifact codec accepts only version 24 while preserving public aliases and owned/streaming byte identity. PDF lowering has private content, navigation, font, image, and numeric modules under one finalization authority.     | Node checkpoint/borrow tests; old-version rejection and codec identity; PDF semantic tests and the explicit qpdf/Poppler gate.                                                             |
-| Browser                      | Rust owns prefetch policy; generated packed-catalog and real package tests cover browser worker resource flow. Standalone catalog-only resolution disables speculation until bindings are installed.                                                                                                                            | Node transport tests, Firefox wasm-bindgen tests, allocator WASM steps, and Chromium package checks. Shipped Plain-format availability remains `BLOCKED` while metadata declares schema 0. |
+| Owner                        | Current disposition                                                                                                                                                                                                                                                                                                             | Evidence to keep visible                                                                                                                                                                                                |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Test selection and reporting | The script-suite inventory, seven behavior classes, combined verdict, and explicit optional-step verdicts are live. Executor, CLI, conformance, expansion, and line-breaking tests are grouped within their original targets. Private spelling guards were replaced with behavior, compile-fail, or narrow structural evidence. | `scripts/check-and-test.sh`, `scripts/check.sh`, `scripts/check-wasm.sh`, `test-support` workspace selection, and the assertion dispositions below.                                                                     |
+| Command and state            | Structured scanner families and their ownership are explicit. Unreachable detached-continuation code is removed. `MainControl`, `World`, `ForkArena`, and `CommandContext` methods are grouped by responsibility without adding a second state or checkpoint owner.                                                             | Existing command fixtures, scanner recovery and resource replay tests, state rollback tests, and [responsibility boundaries](state_responsibility_boundaries.md).                                                       |
+| Resources and sessions       | Mixed file/font/project admission is staged and rejected atomically. A private publication seam prepares output before accepting the revision and installs accepted output, workspace, and render state together. Valid nonconsecutive HTML revisions publish a full snapshot.                                                  | Virtual/project admission rejection tests, accepted-revision and render-update tests, and three shared native/generated-WASM transition cases.                                                                          |
+| Nodes and output             | Borrowed node views and compact page reads are separated from the generic legacy `NodeArena<L>`. Artifact codec accepts only version 24 while preserving public aliases and owned/streaming byte identity. PDF lowering has private content, navigation, font, image, and numeric modules under one finalization authority.     | Node checkpoint/borrow tests; old-version rejection and codec identity; PDF semantic tests and the explicit qpdf/Poppler gate.                                                                                          |
+| Browser                      | Rust owns prefetch policy; generated packed-catalog and real package tests cover browser worker resource flow. Standalone catalog-only resolution disables speculation until bindings are installed.                                                                                                                            | Node transport tests, Firefox wasm-bindgen tests, allocator WASM steps, and Chromium package checks. The local Plain image has schema-3 metadata for format schema 12; the default hosted manifest remains unpublished. |
 
 The public legacy node API, semantic and physical diagnostic node channels,
 page/form PDF policies, and browser-specific fetch/cache behavior serve distinct
@@ -169,8 +170,9 @@ and exited successfully. The separate `node-project.mjs` exercised generated
 WASM with a custom resolver, and Rust wasm-bindgen tests remained independent
 evidence. The replacement now builds a generated package and packed catalog,
 then runs resource, tampering, and worker checks in a real browser. The
-shipped Plain format remains unavailable at schema 0, and its separately
-selected `default-format` step reports `BLOCKED` instead of a pass.
+Plain format had schema-0 unavailable metadata at the integrated revision, and
+its separately selected `default-format` step reported `BLOCKED`. The local
+image now has schema-3 metadata for a schema-12 image.
 
 ## The test model
 
@@ -698,9 +700,9 @@ SHA-256 `0facb2543df068cf7de67d20a0d2f192b1d74237be70f1fa44cfe8ce454aa8f9`.
 This identifies the browser artifact used for the recorded package checks; it
 is a local verification artifact, not a published distribution.
 
-The sole blocked WASM step is shipped Plain-format availability. Its current
-metadata declares schema 0 unavailable; a valid schema-12 aHash format must be
-published before `default-format` can run. The generated local catalog/package
-fixture passed independently of that shipped asset. The receipt above does not
-claim that extended corpus, performance, live reference, or deferred
+At the recorded revision, the sole blocked WASM step was local Plain-format
+availability. The schema-12 image and schema-3 metadata are now regenerated
+locally; external publication of a default distribution is separate. The
+generated local catalog/package fixture passed independently of that asset.
+The receipt above does not claim that extended corpus, performance, live reference, or deferred
 bibliography tiers passed.

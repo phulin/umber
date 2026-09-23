@@ -146,10 +146,11 @@ Cargo, wasm-pack, Node, and headless Chrome or Chromium. It builds the package,
 uses the production publisher to generate small packed shards locally, and
 checks the generated WASM catalog, prefetch, and packaged worker resource flow
 in a real browser. The existing `node-unit` step retains fake-binding transport
-tests. `default-format` reports `BLOCKED` (exit 4) while the shipped Plain
-format metadata declares schema 0 unavailable; that availability result is
-separate from the local browser fixture's result. `npm-pack` checks the package
-inventory after package construction.
+tests. `default-format` checks the local Plain image against its schema-3
+metadata and format schema 12. The default hosted distribution remains
+unpublished, so the browser example needs an explicit migrated manifest URL
+and digest. This local availability result is separate from the browser
+fixture's result. `npm-pack` checks the package inventory after construction.
 
 The shared [resource-transition cases](../tests/resource-transition-cases.json)
 run in the native `umber` integration target and the generated WASM package's
@@ -165,7 +166,7 @@ is explained in [Resource Lifecycle](resource_lifecycle.md).
 At the September 2026 integrated revision `f22424e2d`, the combined native
 gate passed all six stages and its quality gate passed all four gates. All
 nine WASM steps ran: eight passed and `default-format` was `BLOCKED` because
-the shipped Plain-format metadata still declares schema 0 unavailable. The
+the Plain-format metadata declared schema 0 unavailable at that revision. The
 generated browser package passed independently; its three shared resource
 cases, catalog-only path, and full Rust prefetch path ran on the real package.
 The pinned external PDF gate passed 15 qpdf/Poppler cases. These are results

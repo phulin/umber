@@ -63,7 +63,8 @@ optional_check_step_requiring wasm-pack dense-prefix-wasm \
 optional_check_step_requiring wasm-pack dense-arena-wasm \
   wasm-pack test --node crates/tex-dense-arena
 optional_check_step_requiring node default-format \
-  node crates/umber-wasm/browser-tests/check-default-format.mjs crates/umber-wasm/assets/plain-format.json
+  node crates/umber-wasm/browser-tests/check-default-format.mjs \
+    crates/umber-wasm/assets/plain-format.json crates/umber-wasm/assets/plain.fmt
 # Both of these consume `target/umber-wasm-package`, which
 # `scripts/build-wasm-package.sh` builds with wasm-pack, so an absent wasm-pack
 # blocks them rather than failing them: nothing was measured either way, and

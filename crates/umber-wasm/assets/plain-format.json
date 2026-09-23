@@ -1,4 +1,13 @@
 {
-  "schema": 0,
-  "unavailable": "umber2-66p0.27 must regenerate the packaged Plain format at schema 12 with ahash64-v1 metadata"
+  "schema": 3,
+  "name": "plain",
+  "object": "ahash64-v1-c7cd257c5418c846",
+  "ahash64": "c7cd257c5418c846",
+  "bytes": 107334,
+  "engine": "umber",
+  "engineVersion": "0.1.0",
+  "formatSchema": 12,
+  "sourceDistribution": "texlive-2025",
+  "sourceManifestAhash64": "b036dad6ce279e29",
+  "sourceDateEpoch": 0
 }

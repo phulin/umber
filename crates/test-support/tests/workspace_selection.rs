@@ -331,20 +331,20 @@ fn current_format_schema_receipts_cover_every_release_surface() {
         );
     }
 
-    // The browser fixture now uses a generated packed catalog. The packaged
-    // Plain-format metadata owns the separate publication availability claim.
+    // The browser fixture uses a generated packed catalog. The local Plain
+    // image has its own metadata; deployment of a default catalog is separate.
     let plain_metadata: Value = serde_json::from_str(
         &std::fs::read_to_string(root.join("crates/umber-wasm/assets/plain-format.json"))
             .expect("read packaged Plain-format metadata"),
     )
     .expect("parse packaged Plain-format metadata");
-    assert_eq!(plain_metadata["schema"].as_u64(), Some(0));
-    assert!(
-        plain_metadata["unavailable"]
-            .as_str()
-            .is_some_and(|reason| reason.contains("umber2-66p0.27")),
-        "schema-0 Plain format must name its republication blocker"
+    assert_eq!(plain_metadata["schema"].as_u64(), Some(3));
+    assert_eq!(plain_metadata["name"].as_str(), Some("plain"));
+    assert_eq!(
+        plain_metadata["formatSchema"].as_u64(),
+        Some(u64::from(schema))
     );
+    assert!(plain_metadata["ahash64"].as_str().is_some());
 
     let tracked = Command::new("git")
         .args(["ls-files", "-z"])
@@ -421,17 +421,8 @@ fn current_format_schema_receipts_cover_every_release_surface() {
 
     let plain_format =
         std::fs::read(root.join("crates/umber-wasm/assets/plain.fmt")).expect("read Plain format");
-    if plain_format.get(8..12) != Some(schema.to_le_bytes().as_slice()) {
-        assert_eq!(
-            plain_format.get(8..12),
-            Some(11_u32.to_le_bytes().as_slice())
-        );
-        let metadata =
-            std::fs::read_to_string(root.join("crates/umber-wasm/assets/plain-format.json"))
-                .expect("read Plain format status");
-        assert!(
-            metadata.contains("umber2-66p0.27"),
-            "a stale Plain image is allowed only with the explicit republication marker"
-        );
-    }
+    assert_eq!(
+        plain_format.get(8..12),
+        Some(schema.to_le_bytes().as_slice())
+    );
 }

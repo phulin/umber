@@ -43,12 +43,12 @@ deleted-status contract.
 - `tests/virtual_font_acquisition.rs`: focused host-neutral WASM coverage for
   typed virtual-font resource retries and their recursive PDF resource closure.
 - `assets/plain-source.lock`: exact TeX Live 2025 Plain, hyphenation, and TFM source identities.
-- `assets/plain.fmt`: retained schema-11 regeneration input; it is not shipped.
-- `assets/plain-format.json`: explicit schema-12 republication status metadata.
+- `assets/plain.fmt`: locally reproducible schema-12 Plain image; it is not shipped in the npm package.
+- `assets/plain-format.json`: schema-3 metadata for the local schema-12 Plain image.
 - `assets/cmu-serif-500-roman.woff2` / `assets/CMU-OFL.txt`: repository-only
   conformance fixtures and license; the npm runtime inventory excludes both.
 - `js/`: authored ES modules and Node acceptance tests, including the unified resource facade and optional application-manifest file/font resolver.
-- `browser-tests/`: dependency-free local HTTP and headless-Chrome package integration fixture; `generate-fixture.mjs` supplies two tiny content-addressed TeX payloads to the production publisher, `run.mjs` tests generated packed shards, shared resource transition cases through the real WASM session and HTTP resolver with speculative policy unavailable, full Rust prefetch separately, and the shipped worker, while `check-default-format.mjs` reports the separately unpublished Plain-format asset.
+- `browser-tests/`: dependency-free local HTTP and headless-Chrome package integration fixture; `generate-fixture.mjs` supplies two tiny content-addressed TeX payloads to the production publisher, `run.mjs` tests generated packed shards, shared resource transition cases through the real WASM session and HTTP resolver with speculative policy unavailable, full Rust prefetch separately, and the shipped worker, while `check-default-format.mjs` checks local Plain-format metadata. The public default distribution remains unpublished.
 - `browser-tests/node-project.mjs`: packaged Node TeX-bibliography-TeX acceptance test.
 - `browser-tests/html-prototype.html`: two-engine line-baseline, shaping, negative-coordinate, rule, and fixed OpenType-math SVG projection prototype.
 - `examples/`: minimal Plain and LaTeX-DVI module-worker browser examples
