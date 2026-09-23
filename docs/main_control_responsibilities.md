@@ -34,7 +34,20 @@ and the cold `\lccode`, `\uccode`, `\sfcode`, `\mathcode`, and `\delcode`
 paths then share the value bounds and invalid-code zero recovery in
 `code_table.rs`. Their distinct committers remain responsible for scoped
 mutation, tracing, and ordered publication. The committed command-semantic
-`etex-def-code-profile` case checks delivery of all six commands; the TeX82
-`command-transitions-v1` fixture checks the command, terminal, log, and effect
-channels of the wider assignment sequence. Focused executor tests cover local
-recovery and later global writes without changing the reference fixtures.
+`etex-def-code-profile` case contains all six commands and committed terminal
+and log references. The TeX82 `command-transitions-v1` fixture pins a wider
+assignment sequence and its output channels. Focused executor tests cover
+invalid-value diagnostics, zero recovery, local restoration, and later global
+writes without changing reference fixtures.
+
+The selected exact-reference gate is
+`UMBER_COMMAND_SEMANTIC_CASE=etex-diagnostics/etex-def-code-profile cargo test -q -p tex-command-stream --test it command_semantic::declared_command_semantic_cases_match -- --exact --ignored --nocapture`.
+It fails on both sides of this refactor at the same pre-existing source-framing
+line: the reference terminal line 3 and log line 4 contain
+`(./etex-def-code-profile.tex )`, which the runner omits. The same fixture was
+executed before and after the change with `execute_with_provider`, and complete
+actual outputs compared byte for byte: projected commands (568 bytes), all
+observations (127,150 bytes), terminal (165 bytes), log (162 bytes), and event
+count/status (24 bytes) match; DVI, effects, and diagnostics are empty on both
+sides. This establishes refactor equivalence for the case, while the selected
+oracle gate remains failing.
