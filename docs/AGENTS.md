@@ -38,6 +38,12 @@ integrated nonbibliography comparison. Its machine-readable companion
 counter, and case-status evidence, including unavailable gates and measurement
 limits.
 
+`compatibility_surface_removal.md` defines the authorized breaking cleanup of
+obsolete Umber implementation and API surfaces, the current owners to which
+callers move, preserved TeX semantics and reference evidence, and the boundary
+against old-format imports or fallback implementations. Bibliography remains
+outside that pass.
+
 `native_batch_kernel.md` records the independently audited direct mutable batch
 ceiling, the first production-owned canonical-tokenizer/output seam, its typed
 fallback boundary, and the staged single-engine migration that deletes each
