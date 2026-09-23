@@ -9,22 +9,20 @@ use tex_fonts::{
     AcceptedFontContainers, FontLayoutPolicy, FontLimits, FontMappingFallbackPolicy, FontPurposes,
     FontRequest, FontRequestKey, OpenTypeFont, PdfPkFontRequest, ResolvedFont,
 };
-use tex_out::html::incremental::{
-    PatchLimits, PatchPlan, RenderDigest, RenderDocument, RenderLimits, RenderSessionId,
-    build_render_document, plan_patch,
-};
+use tex_out::html::incremental::{PatchPlan, RenderDigest, RenderDocument};
 use tex_out::html::{HtmlFontAsset, HtmlFontAssets, HtmlFontKey};
 use tex_state::{ContentHash, JobClock, Universe};
 
 use crate::{
     MemoryOutputCollectionError, MemoryRunOutput, install_latex_format_primitives,
-    install_pdflatex_format_primitives, install_pdftex_format_primitives,
-    memory_output::publish_auxiliary_outputs, prepare_etex_run_stores, prepare_latex_run_stores,
-    prepare_pdflatex_run_stores, prepare_pdftex_run_stores, prepare_run_stores,
+    install_pdflatex_format_primitives, install_pdftex_format_primitives, prepare_etex_run_stores,
+    prepare_latex_run_stores, prepare_pdflatex_run_stores, prepare_pdftex_run_stores,
+    prepare_run_stores,
 };
 
 mod path;
 mod pdf_resources;
+mod publication;
 mod resolvers;
 pub use pdf_resources::{CachedLocalTfm, CachedVirtualFont, PdfVirtualFontResources};
 pub(crate) use pdf_resources::{detached_pk_request, resolved_font_map_lines};
@@ -2668,176 +2666,9 @@ impl<'store> VirtualCompileSession<'store> {
         }
         .into_prepared()
         .map_err(|error| compile_error_from_session(&error, None))?;
-        let mut accepted_world = tex_state::World::memory();
-        accepted_world
-            .publish_detached_effect_records(execution.completion().effects())
-            .map_err(|error| CompileError::Output(format!("{error:?}")))?;
-        let terminal = accepted_world
-            .memory_terminal_output()
-            .ok_or_else(|| CompileError::Output("accepted output is not memory-backed".to_owned()))?
-            .to_vec();
-        let log = accepted_world
-            .memory_log_output()
-            .ok_or_else(|| CompileError::Output("accepted output is not memory-backed".to_owned()))?
-            .to_vec();
-        let files = publish_auxiliary_outputs(&accepted_world, &mut generated_transaction)
-            .map_err(map_memory_output)?;
-        let dvi = if !self.outputs.contains(OutputCapability::Dvi) || execution.pages().is_empty() {
-            Vec::new()
-        } else {
-            execution
-                .dvi_bytes()
-                .map_err(|error| CompileError::OutputCapability {
-                    capability: OutputCapability::Dvi,
-                    message: error.to_string(),
-                })?
-        };
-        let mut output = MemoryRunOutput {
-            outputs: self.outputs,
-            terminal,
-            log,
-            dvi,
-            html: None,
-            html_assets: Vec::new(),
-            files,
-        };
-        let existing = output
-            .terminal
-            .len()
-            .saturating_add(output.log.len())
-            .saturating_add(output.dvi.len())
-            .saturating_add(
-                output
-                    .files
-                    .iter()
-                    .map(|file| file.bytes.len())
-                    .sum::<usize>(),
-            );
-        let remaining = self.limits.output_bytes.saturating_sub(existing);
-        let mut next_render_document = None;
-        let html = if self.outputs.contains(OutputCapability::Html) {
-            let output_id = match &execution {
-                PreparedExecution::Initial { session, .. } => session.output_id(),
-                PreparedExecution::Transaction(_) => self
-                    .incremental
-                    .as_ref()
-                    .expect("a prepared patch has an accepted incremental session")
-                    .output_id(),
-            };
-            let font_responses = self.font_response_fingerprints();
-            let assets = SessionFontResolver {
-                resolved: &self.resources.resolved_fonts,
-                responses: &font_responses,
-            };
-            let html_options = tex_out::html::HtmlOptions {
-                asset_mode: self.html_asset_mode.clone(),
-                revision: execution.revision().raw(),
-                output_id,
-                max_html_bytes: remaining,
-                max_total_asset_bytes: remaining,
-                max_asset_bytes: remaining,
-                ..tex_out::html::HtmlOptions::default()
-            };
-            let pages = execution
-                .pages()
-                .iter()
-                .map(|page| tex_out::PageArtifact::from_bytes(page.artifact().bytes()))
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|error| CompileError::OutputCapability {
-                    capability: OutputCapability::Html,
-                    message: error.to_string(),
-                })?;
-            let render_document = build_render_document(
-                &pages,
-                &assets,
-                &html_options,
-                RenderSessionId::from_bytes(output_id.as_bytes()),
-                execution.revision().raw(),
-                self.accepted_render_document
-                    .as_ref()
-                    .map(|document| &document.revision),
-                RenderLimits {
-                    max_pages: html_options.max_pages,
-                    max_nodes: html_options.max_positioned_events,
-                    max_resources: 65_536,
-                    max_resource_bytes: remaining,
-                },
-            )
-            .map_err(|error| CompileError::OutputCapability {
-                capability: OutputCapability::Html,
-                message: error.to_string(),
-            })?;
-            let html = tex_out::html::write_render_document(&render_document, &html_options)
-                .map_err(|error| CompileError::OutputCapability {
-                    capability: OutputCapability::Html,
-                    message: error.to_string(),
-                })?;
-            next_render_document = Some(render_document);
-            Some(html)
-        } else {
-            None
-        };
-        if let Some(html) = html {
-            let attempted = existing.saturating_add(html.html.len()).saturating_add(
-                html.assets
-                    .iter()
-                    .map(|asset| asset.bytes.len())
-                    .sum::<usize>(),
-            );
-            check_limit("returned output bytes", attempted, self.limits.output_bytes)?;
-            output.html = Some(html.html);
-            output.html_assets = html
-                .assets
-                .into_iter()
-                .map(|asset| crate::MemoryOutputFile {
-                    path: asset.path.into(),
-                    bytes: asset.bytes,
-                })
-                .collect();
-        }
-        check_limit("returned output bytes", existing, self.limits.output_bytes)?;
+        let publication = self.prepare_publication(&execution, &mut generated_transaction)?;
         generated_transaction.accept().map_err(map_transaction)?;
-        let previous_generated = generated_fingerprint(&self.resources.workspace)?;
-        let next_generated = generated_fingerprint(&pending_workspace)?;
-        let reuse = execution.reuse();
-        let accepted_engine_output = match execution {
-            PreparedExecution::Initial { session, accepted } => {
-                self.incremental = Some(session);
-                accepted
-            }
-            PreparedExecution::Transaction(transaction) => Box::new(
-                self.incremental
-                    .as_mut()
-                    .expect("a prepared patch has an accepted incremental session")
-                    .accept_revision(*transaction)
-                    .map_err(|error| CompileError::Incremental(error.to_string()))?,
-            ),
-        };
-        self.accepted_engine_output = Some(accepted_engine_output);
-        self.resources.workspace = pending_workspace;
-        self.pending_patch = None;
-        self.last_reuse = Some(reuse);
-        self.last_stabilization_required = previous_generated != next_generated;
-        self.accepted_output = Some(output.clone());
-        if let Some(target) = next_render_document {
-            let update = if self.pending_render_update.is_some() {
-                // The consumer missed an acknowledgement. Coalesce to the
-                // newest accepted target through the explicit snapshot path.
-                RenderUpdate::Snapshot(target.clone())
-            } else if let Some(base) = &self.accepted_render_document {
-                let patch = plan_patch(&base.revision, &target.revision, PatchLimits::default())
-                    .map_err(|error| CompileError::OutputCapability {
-                        capability: OutputCapability::Html,
-                        message: error.to_string(),
-                    })?;
-                RenderUpdate::Patch(patch)
-            } else {
-                RenderUpdate::Snapshot(target.clone())
-            };
-            self.accepted_render_document = Some(target);
-            self.pending_render_update = Some(update);
-        }
-        Ok(CompileAttemptResult::Complete(output))
+        self.accept_publication(execution, pending_workspace, publication)
     }
 
     fn resource_is_bound(&self, key: &ResourceRequestKey) -> bool {

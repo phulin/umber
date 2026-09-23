@@ -21,8 +21,9 @@ and the resource and root-source method grouping are recorded in
 Browser/package coverage and artifact cleanup have separate implementation
 owners and must be judged against their final merged gates. Bibliography
 selection and status have not been changed by this pass; its migration is
-deferred. The later storage, session, scanner, output, and bibliography sections
-below are design proposals, not reports of completed implementation.
+deferred. The later storage, scanner, output, and bibliography sections below
+remain design proposals. The session section records the implemented admission
+and publication seams while retaining its broader ownership guidance.
 
 ## Assessment
 
@@ -481,26 +482,36 @@ channels carry different evidence and must remain distinct.
 
 ### 4. Clarify session and output ownership
 
-Start with mixed resource admission. `VirtualCompileSession::provide_resources`
-manually stages and swaps the workspace, font map, non-file admission state,
-and PK-font map, then restores them after rejection. `LatexProjectSession`
-separately stages project resources and forwards responses to its child.
-Extract one private admission transaction for the shared mechanics while
-leaving each layer's authorization and font policy explicit. Test rejection
-at every fallible phase, including child admission and incremental input
-registration, before claiming atomicity across all owners.
+Mixed resource admission is implemented. `VirtualCompileSession` stages its
+workspace, font map, non-file admission state, and PK-font map in one rollback
+guard; registration into incremental input state occurs before the guard
+commits. `LatexProjectSession` separately stages project resources and commits
+them only after child TeX admission succeeds. Authorization and font policy
+remain explicit at their respective layers.
 
-Separate session configuration, resource admission, execution candidates,
-accepted revisions, and output finalization. `VirtualCompileSession` currently
-holds all of these concerns. Bundle state only when the fields share a
-lifecycle and invariant; wrapping arbitrary fields in structs does not help.
+Session configuration, resource admission, execution candidates, accepted
+revisions, and output finalization remain in `VirtualCompileSession` because
+its public API coordinates their shared lifecycle. Private resource admission
+and publication methods isolate the two transaction boundaries. Further
+bundling is justified only when fields share an invariant.
 
-Keep one accepted/candidate publication transaction. Test resource arrival,
-failure, cancellation, and patch rejection before extracting ownership.
+One candidate publication transaction now protects the accepted output and
+workspace through resource arrival, failure, cancellation, and patch rejection.
 `TexFixedPointSession` already delegates to `LatexProjectSession`; preserve
 that reuse. The editor's provisional/stable distinction and bibliography
 fixed-point passes represent different product behavior and should not be
 collapsed into one generic session state machine without proof of equivalence.
+
+The retained session publication seam prepares memory effects, auxiliary and
+rendered outputs, output limits, and the HTML update while the candidate and
+generated transaction are still private. It accepts generated files into a
+private workspace, computes generated-file fingerprints, accepts the
+incremental revision, and installs the accepted output, workspace, and render
+state together. An HTML update for a valid
+nonconsecutive revision is a full snapshot, since patches require adjacent
+revision numbers. `EngineSession` keeps its bounded execution and resource
+resume role; `tex-incr` keeps candidate validation and revision acceptance.
+Neither owns the host-facing output bundle or HTML delivery state.
 
 For native/browser resource loops, share a transition specification and
 cross-platform fixtures for attempt, need, admission, speculative drain, retry,

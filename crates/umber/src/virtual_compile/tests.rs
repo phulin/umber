@@ -2032,6 +2032,101 @@ fn accepted_html_revisions_publish_snapshot_then_acknowledged_patch_and_resync()
 }
 
 #[test]
+fn accepted_publication_is_atomic_across_render_gap_output_failure_and_retry() {
+    let source = concat!(
+        "\\immediate\\openout1=result.aux ",
+        "\\immediate\\write1{one} ",
+        "\\immediate\\closeout1 ",
+        "\\shipout\\hbox{\\vrule width 1pt height 1pt}\\end"
+    );
+    let mut session = VirtualCompileSession::new(SessionOptions {
+        outputs: OutputCapabilitySet::HTML,
+        ..SessionOptions::default()
+    })
+    .expect("HTML session");
+    session
+        .add_user_file("main.tex", source.as_bytes().to_vec())
+        .expect("source");
+    let CompileAttemptResult::Complete(_) = session.compile_attempt() else {
+        panic!("initial revision should complete");
+    };
+    let first = session.render_update().expect("initial render target");
+    session
+        .acknowledge_render_update(first.target_revision(), first.target_digest())
+        .expect("initial acknowledgement");
+
+    let second_source = apply_text_replacement(&mut session, 3, source, "one", "two");
+    let second_attempt = session.compile_attempt();
+    let CompileAttemptResult::Complete(second_output) = second_attempt else {
+        panic!("valid nonconsecutive revision should complete: {second_attempt:?}");
+    };
+    assert_eq!(session.revision(), Some(RevisionId::new(3)));
+    assert!(session.reuse_metrics().is_some());
+    assert!(matches!(
+        session.render_update(),
+        Some(RenderUpdate::Snapshot(document)) if document.revision.revision == 3
+    ));
+    let output_path = VirtualPath::user("result.aux").expect("output path");
+    let accepted_snapshot = session.resources.workspace.snapshot();
+    let accepted_file = accepted_snapshot
+        .get(&output_path)
+        .expect("accepted snapshot")
+        .expect("accepted auxiliary file");
+    assert!(
+        accepted_file
+            .bytes()
+            .windows(3)
+            .any(|bytes| bytes == b"two")
+    );
+    let accepted_output = session.accepted_output.clone();
+    let accepted_render = session.render_resync();
+    let accepted_reuse = session.reuse_metrics();
+    let accepted_stabilization = session.stabilization_required();
+
+    let _third_source = apply_text_replacement(&mut session, 4, &second_source, "two", "three");
+    session.limits.output_bytes = 1;
+    let failed_attempt = session.compile_attempt();
+    assert!(
+        matches!(
+            failed_attempt,
+            CompileAttemptResult::Error(CompileError::OutputCapability {
+                capability: OutputCapability::Html,
+                ..
+            })
+        ),
+        "{failed_attempt:?}"
+    );
+    assert_eq!(session.revision(), Some(RevisionId::new(3)));
+    assert_eq!(session.accepted_output, accepted_output);
+    assert_eq!(session.render_resync(), accepted_render);
+    assert_eq!(session.reuse_metrics(), accepted_reuse);
+    assert_eq!(session.stabilization_required(), accepted_stabilization);
+    assert_eq!(
+        session.render_update().map(RenderUpdate::target_revision),
+        Some(3)
+    );
+    let still_accepted_snapshot = session.resources.workspace.snapshot();
+    let still_accepted = still_accepted_snapshot
+        .get(&output_path)
+        .expect("accepted snapshot")
+        .expect("accepted auxiliary file");
+    assert_eq!(still_accepted.bytes(), accepted_file.bytes());
+
+    session.limits.output_bytes = SessionLimits::default().output_bytes;
+    let _ = apply_text_replacement(&mut session, 4, &second_source, "two", "three");
+    let CompileAttemptResult::Complete(third_output) = session.compile_attempt() else {
+        panic!("retry should accept the new revision");
+    };
+    assert_eq!(session.revision(), Some(RevisionId::new(4)));
+    assert_eq!(session.accepted_output.as_ref(), Some(&third_output));
+    assert_ne!(third_output.files, second_output.files);
+    assert!(matches!(
+        session.render_update(),
+        Some(RenderUpdate::Snapshot(document)) if document.revision.revision == 4
+    ));
+}
+
+#[test]
 fn classic_html_font_names_bind_one_tfm_identity() {
     let key = FontRequestKey::new(
         "cmr10",
