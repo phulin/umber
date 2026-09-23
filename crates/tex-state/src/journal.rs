@@ -784,7 +784,7 @@ impl<G> SaveJournal<G> {
         self.save_serial
     }
 
-    #[cfg(all(test, not(feature = "profiling")))]
+    #[cfg(test)]
     pub(crate) const fn checkpoint_entry_count(&self) -> usize {
         self.checkpoint_entries
     }
