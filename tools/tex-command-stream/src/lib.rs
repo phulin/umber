@@ -14,7 +14,7 @@ use std::sync::Arc;
 use tex_command::{
     CommandProfile, FontResource, RegisteredSourceKind, SourceNameClass, SourceRegistration,
 };
-use tex_exec::{MainControl, MainControlStep};
+use tex_exec::{MainControl, MainControlStep, StepResult};
 use tex_oracle::{
     CommittedFixture, EngineDialect, Event, SchemaVersion, validate_tex82_command_trace_suite,
     validate_tex82_geometry_trace_fixture,
@@ -944,7 +944,7 @@ impl Startup {
                     });
                 }
                 let step = catch_panic(std::panic::AssertUnwindSafe(|| {
-                    control.step_with_observer(universe, &mut recorder)
+                    control.advance_with_observer(universe, &mut recorder)
                 }));
                 retain_after_first_divergence(
                     &mut recorder,
@@ -953,8 +953,20 @@ impl Startup {
                     &mut retained_events,
                 );
                 match step {
-                    Ok(Ok(MainControlStep::Continue)) => deliveries += 1,
-                    Ok(Ok(MainControlStep::End | MainControlStep::EndOfInput)) => break,
+                    Ok(Ok(StepResult::Progress(MainControlStep::Continue))) => deliveries += 1,
+                    Ok(Ok(StepResult::Progress(
+                        MainControlStep::End | MainControlStep::EndOfInput,
+                    ))) => break,
+                    Ok(Ok(StepResult::Suspended(need))) => {
+                        return Ok(ReplayOutput {
+                            verified_prefix,
+                            events: finish_retained_events(recorder, retained_events),
+                            failure: Some(ReplayFailure::Error(format!(
+                                "root source {} suspended after {deliveries} deliveries: {need:?}",
+                                self.root_name
+                            ))),
+                        });
+                    }
                     Ok(Err(error)) => {
                         return Ok(ReplayOutput {
                             verified_prefix,
@@ -1502,7 +1514,7 @@ mod tests {
         );
         assert!(
             matches!(&replay.failure, Some(ReplayFailure::Error(message))
-            if message.contains("missing token while scanning \\input"))
+            if message.contains("suspended after") && message.contains("child.tex"))
         );
     }
 

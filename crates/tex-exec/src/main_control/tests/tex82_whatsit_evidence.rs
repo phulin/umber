@@ -285,9 +285,9 @@ fn extension_dispatch_executes_every_selector_in_every_tex82_mode() {
             {
                 assert_eq!(
                     control
-                        .step_with_observer(universe, &mut recorder)
+                        .advance_with_observer(universe, &mut recorder)
                         .expect("mode matrix executes"),
-                    MainControlStep::Continue,
+                    StepResult::Progress(MainControlStep::Continue),
                     "{mode}: all extensions execute before input ends"
                 );
             }

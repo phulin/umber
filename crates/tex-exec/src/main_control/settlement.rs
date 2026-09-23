@@ -39,12 +39,6 @@ pub(super) struct DirectOperationMark<G> {
     pub(super) active_box_len: usize,
 }
 
-#[derive(Clone, Copy)]
-pub(super) enum OperationTransaction {
-    Advance,
-    Alignment,
-}
-
 impl<G> MainControl<G> {
     /// Promotes one operation-local recoverable report at its commit seam.
     ///

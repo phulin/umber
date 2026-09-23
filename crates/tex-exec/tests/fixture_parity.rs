@@ -3,7 +3,7 @@ use std::sync::Arc;
 mod support;
 
 use tex_command::{RegisteredSourceKind, SourceRegistration};
-use tex_exec::{MainControl, MainControlStep, RootCompletionPolicy};
+use tex_exec::{MainControl, MainControlStep, RootCompletionPolicy, StepResult};
 use tex_state::{EffectRecord, PrintSink, Universe};
 
 const MAX_MAIN_CONTROL_STEPS: usize = 2_048;
@@ -202,9 +202,9 @@ fn execute_with_policy_and_limits(
             .map_err(|error| format!("fixture source registration failed: {error:?}"))?;
 
         for step in 1..=step_limit {
-            match control.step(stores) {
-                Ok(MainControlStep::Continue) => {}
-                Ok(MainControlStep::End) => {
+            match control.advance(stores) {
+                Ok(StepResult::Progress(MainControlStep::Continue)) => {}
+                Ok(StepResult::Progress(MainControlStep::End)) => {
                     if let Some(fatal) = control.fatal_error() {
                         return Err(format!(
                             "fatal main-control termination after {step} steps and {}/{} fuel: {fatal:?}",
@@ -217,12 +217,17 @@ fn execute_with_policy_and_limits(
                         log: channel_text(stores, PrintSink::Log),
                     });
                 }
-                Ok(MainControlStep::EndOfInput) => {
+                Ok(StepResult::Progress(MainControlStep::EndOfInput)) => {
                     return Err(format!(
                         "physical input exhaustion after {step} steps (fatal={:?}, fuel={}/{})",
                         control.fatal_error(),
                         control.fuel_burned(),
                         control.fuel_limit()
+                    ));
+                }
+                Ok(StepResult::Suspended(need)) => {
+                    return Err(format!(
+                        "main-control step {step} unexpectedly suspended for {need:?}"
                     ));
                 }
                 Err(error) => {
@@ -268,10 +273,11 @@ fn fixture_runner_rejects_prefix_matches_and_noncompletion() {
     );
 
     let execution_error = execute_with_limits(br"\input missing\end", 64, 1_000)
-        .expect_err("a main-control error must not count as completion");
+        .expect_err("a typed input suspension must not count as completion");
     assert!(
-        execution_error.contains("main-control step") && execution_error.contains("MissingToken"),
-        "unexpected execution failure: {execution_error}"
+        execution_error.contains("unexpectedly suspended for Input")
+            && execution_error.contains("missing.tex"),
+        "unexpected suspension: {execution_error}"
     );
 }
 

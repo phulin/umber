@@ -154,7 +154,9 @@ fn with_run<R>(
             .command_mut()
             .open_registered_source(registered)
             .expect("source opens");
-        while let MainControlStep::Continue = control.step(universe).expect("program executes") {}
+        while let crate::StepResult::Progress(MainControlStep::Continue) =
+            control.advance(universe).expect("program executes")
+        {}
         test(&control, universe)
     })
 }
@@ -212,8 +214,8 @@ fn with_run_observed<R>(
             .open_registered_source(registered)
             .expect("source opens");
         let mut observations = Observations::default();
-        while let MainControlStep::Continue = control
-            .step_with_observer(universe, &mut observations)
+        while let crate::StepResult::Progress(MainControlStep::Continue) = control
+            .advance_with_observer(universe, &mut observations)
             .expect("program executes")
         {}
         test(&control, universe, observations)
@@ -244,8 +246,8 @@ fn with_run_until_count<R>(
             .expect("source opens");
         while count_register(universe, 0) != expected_count {
             assert_eq!(
-                control.step(universe).expect("program executes"),
-                MainControlStep::Continue,
+                control.advance(universe).expect("program executes"),
+                crate::StepResult::Progress(MainControlStep::Continue),
                 "source ended before its live-mode probe"
             );
         }

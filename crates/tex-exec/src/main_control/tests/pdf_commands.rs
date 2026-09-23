@@ -377,8 +377,8 @@ fn pdftex_font_actions_preserve_exact_dvi_mode_gate_and_tounicode_exceptions() {
             let mut control = pdftex_font_action_control(stores);
             register_source(&mut control, source);
             assert!(matches!(
-                control.step(stores),
-                Err(ExecError::PdfExtensionInDviMode(actual)) if actual == name
+                control.advance(stores),
+                Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode(actual) if actual == name)
             ));
         });
     }
@@ -440,11 +440,12 @@ fn pdf_graphics_reject_dvi_before_operands_and_retry_in_source_order() {
             let state_before = stores.journal_cursor().expect("state cursor");
 
             let error = control
-                .step(stores)
+                .advance(stores)
                 .expect_err("DVI preflight rejects the extension");
             assert!(matches!(
                 &error,
-                ExecError::PdfExtensionInDviMode(name) if *name == primitive
+                ExecError::Captured { error: inner, .. }
+                    if matches!(**inner, ExecError::PdfExtensionInDviMode(name) if name == primitive)
             ));
             assert!(!error.requires_terminal_settlement());
             assert_eq!(stores.journal_cursor().expect("state cursor"), state_before);
@@ -458,8 +459,8 @@ fn pdf_graphics_reject_dvi_before_operands_and_retry_in_source_order() {
             )
             .expect("integer parameter assignment");
             assert_eq!(
-                control.step(stores).expect("graphics command retries"),
-                MainControlStep::Continue
+                control.advance(stores).expect("graphics command retries"),
+                StepResult::Progress(MainControlStep::Continue)
             );
             let current_nodes = current_list_owner_vec(&control, stores);
             let [node] = current_nodes.as_slice() else {
@@ -473,8 +474,8 @@ fn pdf_graphics_reject_dvi_before_operands_and_retry_in_source_order() {
                     || matches!((expected, node), ("color", Node::Whatsit(Whatsit::PdfColorStack { id: 0, action: tex_state::PdfColorStackAction::Push(payload) })) if payload == b"0 g")
             );
             assert_eq!(
-                control.step(stores).expect("following command remains"),
-                MainControlStep::Continue
+                control.advance(stores).expect("following command remains"),
+                StepResult::Progress(MainControlStep::Continue)
             );
             assert!(matches!(
                 current_list_owner_vec(&control, stores).last(),
@@ -491,8 +492,8 @@ fn pdfsavepos_remains_available_in_dvi_mode() {
         let mut control = pdftex_graphics_control(stores);
         register_source(&mut control, br"\pdfsavepos");
         assert_eq!(
-            control.step(stores).expect("DVI save position"),
-            MainControlStep::Continue
+            control.advance(stores).expect("DVI save position"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert!(matches!(
             current_list_owner_vec(&control, stores).as_slice(),
@@ -528,7 +529,7 @@ fn pdf_color_stack_recovery_reports_help_and_preserves_action_order() {
             .expect("integer parameter assignment");
             let mut control = pdftex_graphics_control(stores);
             register_source(&mut control, source);
-            let _ = control.step(stores).expect("recoverable bad stack id");
+            let _ = control.advance(stores).expect("recoverable bad stack id");
             assert!(matches!(
                 current_list_owner_vec(&control, stores).as_slice(),
                 [Node::Whatsit(Whatsit::PdfColorStack { id: 0, .. })]
@@ -551,10 +552,12 @@ fn pdf_color_stack_recovery_reports_help_and_preserves_action_order() {
         .expect("integer parameter assignment");
         let mut control = pdftex_graphics_control(stores);
         register_source(&mut control, br"\pdfcolorstack0\pdfsave");
-        let _ = control.step(stores).expect("missing action is recoverable");
+        let _ = control
+            .advance(stores)
+            .expect("missing action is recoverable");
         assert!(current_list_owner_vec(&control, stores).is_empty());
         let _ = control
-            .step(stores)
+            .advance(stores)
             .expect("following command remains available");
         assert!(matches!(
             current_list_owner_vec(&control, stores).as_slice(),
@@ -576,8 +579,9 @@ fn pdf_object_rejects_dvi_before_every_option_operand_and_allocation() {
         let mut reserve_control = pdftex_object_control(reserve_stores);
         register_source(&mut reserve_control, br"\pdfobj reserveobjnum");
         assert!(matches!(
-            reserve_control.step(reserve_stores),
-            Err(ExecError::PdfExtensionInDviMode("pdfobj"))
+            reserve_control.advance(reserve_stores),
+            Err(ExecError::Captured { error, .. })
+                if matches!(*error, ExecError::PdfExtensionInDviMode("pdfobj"))
         ));
         assert!(admitted!(reserve_stores, |context| context.pdf_raw_object(1)).is_none());
         assert_eq!(
@@ -596,9 +600,9 @@ fn pdf_object_rejects_dvi_before_every_option_operand_and_allocation() {
         .expect("integer parameter assignment");
         assert_eq!(
             reserve_control
-                .step(reserve_stores)
+                .advance(reserve_stores)
                 .expect("reserveobjnum retry preserves the complete command"),
-            MainControlStep::Continue
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert_eq!(
             usize::from(admitted!(reserve_stores, |context| context.pdf_raw_object(1)).is_some()),
@@ -615,8 +619,8 @@ fn pdf_object_rejects_dvi_before_every_option_operand_and_allocation() {
             let mut ordinary_control = pdftex_object_control(ordinary_stores);
             register_source(&mut ordinary_control, br"\pdfobj{ordinary}");
             assert!(matches!(
-                ordinary_control.step(ordinary_stores),
-                Err(ExecError::PdfExtensionInDviMode("pdfobj"))
+                ordinary_control.advance(ordinary_stores),
+                Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode("pdfobj"))
             ));
             assert!(admitted!(ordinary_stores, |context| context.pdf_raw_object(1)).is_none());
 
@@ -629,9 +633,9 @@ fn pdf_object_rejects_dvi_before_every_option_operand_and_allocation() {
             .expect("integer parameter assignment");
             assert_eq!(
                 ordinary_control
-                    .step(ordinary_stores)
+                    .advance(ordinary_stores)
                     .expect("ordinary-object retry preserves its body"),
-                MainControlStep::Continue
+                StepResult::Progress(MainControlStep::Continue)
             );
             let ordinary = admitted!(ordinary_stores, |context| context.pdf_raw_object(1))
                 .expect("PDF object 1")
@@ -651,8 +655,8 @@ fn pdf_object_rejects_dvi_before_every_option_operand_and_allocation() {
                     br"\pdfobj useobjnum 37 stream attr{/Subtype /XML} file{payload}",
                 );
                 assert!(matches!(
-                    define_control.step(define_stores),
-                    Err(ExecError::PdfExtensionInDviMode("pdfobj"))
+                    define_control.advance(define_stores),
+                    Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode("pdfobj"))
                 ));
                 assert!(admitted!(define_stores, |context| context.pdf_raw_object(1)).is_none());
                 assert_eq!(
@@ -672,9 +676,9 @@ fn pdf_object_rejects_dvi_before_every_option_operand_and_allocation() {
                 .expect("integer parameter assignment");
                 assert_eq!(
                     define_control
-                        .step(define_stores)
+                        .advance(define_stores)
                         .expect("definition retry preserves every option and operand"),
-                    MainControlStep::Continue
+                    StepResult::Progress(MainControlStep::Continue)
                 );
                 assert_eq!(
                     admitted!(define_stores, |context| context
@@ -711,7 +715,7 @@ fn immediate_pdf_object_rejects_dvi_after_lookahead_before_operand_scan() {
         let mut reserve_control = pdftex_object_control(reserve_stores);
         register_source(&mut reserve_control, br"\immediate\pdfobj reserveobjnum");
         assert!(matches!(
-            reserve_control.step(reserve_stores),
+            reserve_control.advance(reserve_stores),
             Err(ExecError::PdfExtensionInDviMode("pdfobj"))
         ));
         assert!(admitted!(reserve_stores, |context| context.pdf_raw_object(1)).is_none());
@@ -724,7 +728,7 @@ fn immediate_pdf_object_rejects_dvi_after_lookahead_before_operand_scan() {
         )
         .expect("integer parameter assignment");
         assert!(matches!(
-            reserve_control.step(reserve_stores),
+            reserve_control.advance(reserve_stores),
             Err(ExecError::PdfImmediateReservedObject)
         ));
         assert!(admitted!(reserve_stores, |context| context.pdf_raw_object(1)).is_none());
@@ -736,7 +740,7 @@ fn immediate_pdf_object_rejects_dvi_after_lookahead_before_operand_scan() {
                 br"\immediate\pdfobj useobjnum 41 stream attr{/Type /Metadata} file{retry.dat}\pdfobj reserveobjnum",
             );
             assert!(matches!(
-                define_control.step(define_stores),
+                define_control.advance(define_stores),
                 Err(ExecError::PdfExtensionInDviMode("pdfobj"))
             ));
             assert!(admitted!(define_stores, |context| context.pdf_raw_object(1)).is_none());
@@ -756,9 +760,9 @@ fn immediate_pdf_object_rejects_dvi_after_lookahead_before_operand_scan() {
             .expect("integer parameter assignment");
             assert_eq!(
                 define_control
-                    .step(define_stores)
+                    .advance(define_stores)
                     .expect("immediate retry preserves every option and operand"),
-                MainControlStep::Continue
+                StepResult::Progress(MainControlStep::Continue)
             );
             assert_eq!(
                 admitted!(define_stores, |context| context
@@ -788,9 +792,9 @@ fn immediate_pdf_object_rejects_dvi_after_lookahead_before_operand_scan() {
             // remain behind the complete retried pair and reserve object 2.
             assert_eq!(
                 define_control
-                    .step(define_stores)
+                    .advance(define_stores)
                     .expect("following command remains after immediate retry"),
-                MainControlStep::Continue
+                StepResult::Progress(MainControlStep::Continue)
             );
             assert!(admitted!(define_stores, |context| context.pdf_raw_object(2)).is_some());
         });
@@ -811,8 +815,8 @@ fn pdf_reference_object_rejects_dvi_before_scan_validation_or_list_mutation() {
         let state_before = stores.journal_cursor().expect("state cursor");
 
         assert!(matches!(
-            control.step(stores),
-            Err(ExecError::PdfExtensionInDviMode("pdfrefobj"))
+            control.advance(stores),
+            Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode("pdfrefobj"))
         ));
         assert_eq!(stores.journal_cursor().expect("state cursor"), state_before);
         assert_eq!(
@@ -830,9 +834,9 @@ fn pdf_reference_object_rejects_dvi_before_scan_validation_or_list_mutation() {
         .expect("integer parameter assignment");
         assert_eq!(
             control
-                .step(stores)
+                .advance(stores)
                 .expect("PDF retry preserves the integer operand"),
-            MainControlStep::Continue
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert!(mode_vec(&control, stores).is_empty());
         assert!(matches!(
@@ -852,8 +856,8 @@ fn pdf_reference_object_dvi_error_precedes_invalid_object_validation() {
         let state_before = stores.journal_cursor().expect("state cursor");
 
         assert!(matches!(
-            control.step(stores),
-            Err(ExecError::PdfExtensionInDviMode("pdfrefobj"))
+            control.advance(stores),
+            Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode("pdfrefobj"))
         ));
         assert_eq!(stores.journal_cursor().expect("state cursor"), state_before);
         assert!(admitted!(stores, |context| context.pdf_raw_object(1)).is_none());
@@ -867,7 +871,7 @@ fn pdf_reference_object_dvi_error_precedes_invalid_object_validation() {
         )
         .expect("integer parameter assignment");
         assert!(matches!(
-            control.step(stores),
+            control.advance(stores),
             Err(ExecError::PdfReferencedObjectNotFound)
         ));
         assert!(admitted!(stores, |context| context.pdf_raw_object(1)).is_none());
@@ -890,8 +894,8 @@ fn pdf_form_family_rejects_dvi_before_operands_allocation_and_list_mutation() {
         let state_before = create_stores.journal_cursor().expect("state cursor");
 
         assert!(matches!(
-            create.step(create_stores),
-            Err(ExecError::PdfExtensionInDviMode("pdfxform"))
+            create.advance(create_stores),
+            Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode("pdfxform"))
         ));
         assert_eq!(
             create_stores.journal_cursor().expect("state cursor"),
@@ -917,9 +921,9 @@ fn pdf_form_family_rejects_dvi_before_operands_allocation_and_list_mutation() {
         let before_form = create_stores.page_region_counters();
         assert_eq!(
             create
-                .step(create_stores)
+                .advance(create_stores)
                 .expect("PDF retry preserves all form options and the register"),
-            MainControlStep::Continue
+            StepResult::Progress(MainControlStep::Continue)
         );
         let after_form = create_stores.page_region_counters();
         assert_eq!(
@@ -958,8 +962,8 @@ fn pdf_form_family_rejects_dvi_before_operands_allocation_and_list_mutation() {
             let state_before = reference_stores.journal_cursor().expect("state cursor");
 
             assert!(matches!(
-                reference.step(reference_stores),
-                Err(ExecError::PdfExtensionInDviMode("pdfrefxform"))
+                reference.advance(reference_stores),
+                Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode("pdfrefxform"))
             ));
             assert_eq!(
                 reference_stores.journal_cursor().expect("state cursor"),
@@ -976,9 +980,9 @@ fn pdf_form_family_rejects_dvi_before_operands_allocation_and_list_mutation() {
             .expect("integer parameter assignment");
             assert_eq!(
                 reference
-                    .step(reference_stores)
+                    .advance(reference_stores)
                     .expect("PDF retry preserves the reference operand in math mode"),
-                MainControlStep::Continue
+                StepResult::Progress(MainControlStep::Continue)
             );
             assert!(matches!(
                 mode_vec(&reference, reference_stores).as_slice(),
@@ -1001,7 +1005,7 @@ fn immediate_pdf_form_rejects_dvi_before_options_or_allocation() {
         let state_before = stores.journal_cursor().expect("state cursor");
 
         assert!(matches!(
-            control.step(stores),
+            control.advance(stores),
             Err(ExecError::PdfExtensionInDviMode("pdfxform"))
         ));
         assert_eq!(stores.journal_cursor().expect("state cursor"), state_before);
@@ -1017,9 +1021,9 @@ fn immediate_pdf_form_rejects_dvi_before_options_or_allocation() {
         .expect("integer parameter assignment");
         assert_eq!(
             control
-                .step(stores)
+                .advance(stores)
                 .expect("immediate PDF retry preserves every form operand"),
-            MainControlStep::Continue
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert!(stores.copy_box_to_page(9).is_none());
         let form =
@@ -1042,8 +1046,8 @@ fn pdf_form_dvi_error_precedes_invalid_register_void_box_and_missing_object() {
             .expect("state cursor");
 
         assert!(matches!(
-            invalid_register.step(invalid_register_stores),
-            Err(ExecError::PdfExtensionInDviMode("pdfxform"))
+            invalid_register.advance(invalid_register_stores),
+            Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode("pdfxform"))
         ));
         assert_eq!(
             invalid_register_stores
@@ -1062,7 +1066,7 @@ fn pdf_form_dvi_error_precedes_invalid_register_void_box_and_missing_object() {
         )
         .expect("integer parameter assignment");
         assert!(matches!(
-            invalid_register.step(invalid_register_stores),
+            invalid_register.advance(invalid_register_stores),
             Err(ExecError::PdfXFormVoidBox)
         ));
         assert!(admitted!(invalid_register_stores, |context| context.pdf_form(1)).is_none());
@@ -1071,8 +1075,8 @@ fn pdf_form_dvi_error_precedes_invalid_register_void_box_and_missing_object() {
             let mut void = pdftex_form_control(void_stores);
             register_source(&mut void, br"\pdfxform 12");
             assert!(matches!(
-                void.step(void_stores),
-                Err(ExecError::PdfExtensionInDviMode("pdfxform"))
+                void.advance(void_stores),
+                Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode("pdfxform"))
             ));
             crate::test_harness::assign_int_param(
                 void_stores,
@@ -1082,7 +1086,7 @@ fn pdf_form_dvi_error_precedes_invalid_register_void_box_and_missing_object() {
             )
             .expect("integer parameter assignment");
             assert!(matches!(
-                void.step(void_stores),
+                void.advance(void_stores),
                 Err(ExecError::PdfXFormVoidBox)
             ));
 
@@ -1094,8 +1098,8 @@ fn pdf_form_dvi_error_precedes_invalid_register_void_box_and_missing_object() {
                     .expect("test mode push");
                 register_source(&mut missing, br"\pdfrefxform 99");
                 assert!(matches!(
-                    missing.step(missing_stores),
-                    Err(ExecError::PdfExtensionInDviMode("pdfrefxform"))
+                    missing.advance(missing_stores),
+                    Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode("pdfrefxform"))
                 ));
                 assert!(mode_vec(&missing, missing_stores).is_empty());
                 crate::test_harness::assign_int_param(
@@ -1106,7 +1110,7 @@ fn pdf_form_dvi_error_precedes_invalid_register_void_box_and_missing_object() {
                 )
                 .expect("integer parameter assignment");
                 assert!(matches!(
-                    missing.step(missing_stores),
+                    missing.advance(missing_stores),
                     Err(ExecError::PdfReferencedObjectNotFound)
                 ));
                 assert!(mode_vec(&missing, missing_stores).is_empty());
@@ -1427,7 +1431,7 @@ fn pdf_annotation_family_rejects_dvi_before_allocation_or_operand_scan() {
         control.modes.push(Mode::Horizontal).expect("test mode push");
         register_source(&mut control, source);
         assert!(
-            matches!(control.step(stores), Err(ExecError::PdfExtensionInDviMode(name)) if name == primitive)
+            matches!(control.advance(stores), Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode(name) if name == primitive))
         );
         assert!(mode_vec(&control, stores).is_empty());
 
@@ -1446,9 +1450,9 @@ fn pdf_annotation_family_rejects_dvi_before_allocation_or_operand_scan() {
         .expect("integer parameter assignment");
         assert_eq!(
             control
-                .step(stores)
+                .advance(stores)
                 .expect("PDF retry preserves the complete command"),
-            MainControlStep::Continue
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert_eq!(mode_vec(&control, stores).len(), 1);
             });
@@ -1461,7 +1465,7 @@ fn pdf_annotation_family_rejects_dvi_before_allocation_or_operand_scan() {
             let mut control = pdftex_annotation_control(stores);
             register_source(&mut control, format!("\\{primitive}").as_bytes());
             assert!(
-                matches!(control.step(stores), Err(ExecError::PdfExtensionInDviMode(name)) if name == primitive)
+                matches!(control.advance(stores), Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode(name) if name == primitive))
             );
             assert!(mode_vec(&control, stores).is_empty());
         });
@@ -1489,11 +1493,12 @@ fn pdf_link_vertical_mode_rejects_before_operand_scan_without_mutation() {
         let state_before = stores.journal_cursor().expect("state cursor");
 
         let error = control
-            .step(stores)
+            .advance(stores)
             .expect_err("vertical link start is rejected before its operands");
         assert!(matches!(
-            error,
-            ExecError::PdfLinkInVerticalMode("pdfstartlink")
+            &error,
+            ExecError::Captured { error: inner, .. }
+                if matches!(**inner, ExecError::PdfLinkInVerticalMode("pdfstartlink"))
         ));
         assert_eq!(
             error.to_string(),
@@ -1506,13 +1511,12 @@ fn pdf_link_vertical_mode_rejects_before_operand_scan_without_mutation() {
             .modes
             .push(Mode::Horizontal)
             .expect("test mode push");
-        let action_error = control.step(stores);
+        let action_error = control.advance(stores);
         assert!(
             matches!(
-                action_error,
-                Err(ExecError::PdfNavigation(
-                    "pdfTeX error (ext1): action type missing"
-                ))
+                &action_error,
+                Err(ExecError::Captured { error, .. })
+                    if matches!(**error, ExecError::PdfNavigation("pdfTeX error (ext1): action type missing"))
             ),
             "unexpected action error: {action_error:?}"
         );
@@ -1548,8 +1552,8 @@ fn pdf_end_link_dvi_retry_preserves_the_open_link_and_command() {
             br"\pdfstartlink height 4pt user{/Subtype /Link}\pdfendlink",
         );
         assert_eq!(
-            control.step(stores).expect("start link"),
-            MainControlStep::Continue
+            control.advance(stores).expect("start link"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert_eq!(mode_vec(&control, stores).len(), 1);
 
@@ -1561,8 +1565,8 @@ fn pdf_end_link_dvi_retry_preserves_the_open_link_and_command() {
         )
         .expect("integer parameter assignment");
         assert!(matches!(
-            control.step(stores),
-            Err(ExecError::PdfExtensionInDviMode("pdfendlink"))
+            control.advance(stores),
+            Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode("pdfendlink"))
         ));
         assert_eq!(mode_vec(&control, stores).len(), 1);
 
@@ -1574,8 +1578,8 @@ fn pdf_end_link_dvi_retry_preserves_the_open_link_and_command() {
         )
         .expect("integer parameter assignment");
         assert_eq!(
-            control.step(stores).expect("end-link retry"),
-            MainControlStep::Continue
+            control.advance(stores).expect("end-link retry"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert!(matches!(
             mode_vec(&control, stores).as_slice(),
@@ -1604,7 +1608,7 @@ fn pdf_thread_family_rejects_dvi_before_operand_scan() {
             let mut control = pdftex_thread_control(stores);
             register_source(&mut control, source);
             assert!(
-                matches!(control.step(stores), Err(ExecError::PdfExtensionInDviMode(name)) if name == primitive)
+                matches!(control.advance(stores), Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode(name) if name == primitive))
             );
             assert!(current_list_owner_vec(&control, stores).is_empty());
             crate::test_harness::assign_int_param(
@@ -1615,8 +1619,10 @@ fn pdf_thread_family_rejects_dvi_before_operand_scan() {
             )
             .expect("integer parameter assignment");
             assert_eq!(
-                control.step(stores).expect("retry preserves every operand"),
-                MainControlStep::Continue
+                control
+                    .advance(stores)
+                    .expect("retry preserves every operand"),
+                StepResult::Progress(MainControlStep::Continue)
             );
             assert_eq!(current_list_owner_vec(&control, stores).len(), 1);
         });
@@ -1652,8 +1658,8 @@ fn pdf_destination_is_any_mode_ordered_typed_material() {
                 br"\pdfdest struct 9 name{target} fitr width 2pt height 3pt depth 4pt",
             );
             assert_eq!(
-                control.step(stores).expect("destination command"),
-                MainControlStep::Continue
+                control.advance(stores).expect("destination command"),
+                StepResult::Progress(MainControlStep::Continue)
             );
             let current_nodes = current_list_owner_vec(&control, stores);
             let [Node::Whatsit(Whatsit::PdfDestination(destination))] = current_nodes.as_slice()
@@ -1710,14 +1716,16 @@ fn pdf_destination_rejects_prefixes_and_dvi_before_operand_scan() {
         let mut control = pdftex_destination_control(stores);
         register_source(&mut control, br"\global\pdfdest name{prefixed} fit");
         assert_eq!(
-            control.step(stores).expect("prefix recovery"),
-            MainControlStep::Continue
+            control.advance(stores).expect("prefix recovery"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert!(current_list_owner_vec(&control, stores).is_empty());
         assert!(terminal_text(stores).contains("You can't use a prefix with"));
         assert_eq!(
-            control.step(stores).expect("replayed destination command"),
-            MainControlStep::Continue
+            control
+                .advance(stores)
+                .expect("replayed destination command"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert_eq!(current_list_owner_vec(&control, stores).len(), 1);
 
@@ -1728,8 +1736,8 @@ fn pdf_destination_rejects_prefixes_and_dvi_before_operand_scan() {
                 br"\pdfdest struct 7 name{retry} fitr width 5pt height 6pt depth 7pt",
             );
             assert!(matches!(
-                dvi.step(dvi_stores),
-                Err(ExecError::PdfExtensionInDviMode("pdfdest"))
+                dvi.advance(dvi_stores),
+                Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode("pdfdest"))
             ));
             assert!(current_list_owner_vec(&dvi, dvi_stores).is_empty());
             crate::test_harness::assign_int_param(
@@ -1740,9 +1748,9 @@ fn pdf_destination_rejects_prefixes_and_dvi_before_operand_scan() {
             )
             .expect("integer parameter assignment");
             assert_eq!(
-                dvi.step(dvi_stores)
+                dvi.advance(dvi_stores)
                     .expect("failed destination retries with every operand intact"),
-                MainControlStep::Continue
+                StepResult::Progress(MainControlStep::Continue)
             );
             let current_nodes = current_list_owner_vec(&dvi, dvi_stores);
             let [Node::Whatsit(Whatsit::PdfDestination(destination))] = current_nodes.as_slice()
@@ -1776,7 +1784,9 @@ fn pdf_destination_scanner_failure_publishes_the_pdf_fatal_channels() {
         let mut control = pdftex_destination_control(stores);
         register_source(&mut control, br"\pdfdest num 0 fit");
 
-        let error = control.step(stores).expect_err("zero destination is fatal");
+        let error = control
+            .advance(stores)
+            .expect_err("zero destination is fatal");
         assert!(error.is_pdftex_output_fatal());
         assert!(
             terminal_text(stores).contains("pdfTeX error (ext1): num identifier must be positive")
@@ -1880,8 +1890,8 @@ fn pdf_destination_grouping_and_checkpoint_restore_preserve_node_ownership() {
             .expect("destination state checkpoints");
         for label in ["open group", "destination", "close group"] {
             assert_eq!(
-                control.step(stores).expect(label),
-                MainControlStep::Continue
+                control.advance(stores).expect(label),
+                StepResult::Progress(MainControlStep::Continue)
             );
         }
         assert_eq!(
@@ -1908,8 +1918,8 @@ fn pdf_destination_grouping_and_checkpoint_restore_preserve_node_ownership() {
             "retried close group",
         ] {
             assert_eq!(
-                control.step(stores).expect(label),
-                MainControlStep::Continue
+                control.advance(stores).expect(label),
+                StepResult::Progress(MainControlStep::Continue)
             );
         }
         assert_eq!(stores.journal_cursor().expect("state cursor"), first_hash);
@@ -1951,8 +1961,8 @@ fn pdf_outline_is_immediate_any_mode_document_state() {
                 br"\pdfoutline attr{/C [1 0 0]} goto name{later} count -2 {(Title)}",
             );
             assert_eq!(
-                control.step(stores).expect("outline command"),
-                MainControlStep::Continue
+                control.advance(stores).expect("outline command"),
+                StepResult::Progress(MainControlStep::Continue)
             );
             assert!(
                 mode_vec(&control, stores).is_empty(),
@@ -1980,21 +1990,21 @@ fn pdf_outline_rejects_prefixes_and_dvi_before_operand_scan() {
         let mut control = pdftex_outline_control(stores);
         register_source(&mut control, br"\global\pdfoutline user{/S /URI}{Title}");
         assert_eq!(
-            control.step(stores).expect("prefix recovery"),
-            MainControlStep::Continue
+            control.advance(stores).expect("prefix recovery"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert!(terminal_text(stores).contains("You can't use a prefix with"));
         assert_eq!(
-            control.step(stores).expect("replayed outline"),
-            MainControlStep::Continue
+            control.advance(stores).expect("replayed outline"),
+            StepResult::Progress(MainControlStep::Continue)
         );
 
         crate::test_harness::with_nonstop_plain_universe(|dvi_stores| {
             let mut dvi = pdftex_outline_control(dvi_stores);
             register_source(&mut dvi, br"\pdfoutline user{/S /URI}{Title}");
             assert!(matches!(
-                dvi.step(dvi_stores),
-                Err(ExecError::PdfExtensionInDviMode("pdfoutline"))
+                dvi.advance(dvi_stores),
+                Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode("pdfoutline"))
             ));
             crate::test_harness::assign_int_param(
                 dvi_stores,
@@ -2004,9 +2014,9 @@ fn pdf_outline_rejects_prefixes_and_dvi_before_operand_scan() {
             )
             .expect("integer parameter assignment");
             assert_eq!(
-                dvi.step(dvi_stores)
+                dvi.advance(dvi_stores)
                     .expect("failed command retries with every operand intact"),
-                MainControlStep::Continue
+                StepResult::Progress(MainControlStep::Continue)
             );
         });
     });
@@ -2028,8 +2038,8 @@ fn pdf_outline_is_not_restored_by_ordinary_grouping() {
         );
         for label in ["open group", "outline", "close group"] {
             assert_eq!(
-                control.step(stores).expect(label),
-                MainControlStep::Continue
+                control.advance(stores).expect(label),
+                StepResult::Progress(MainControlStep::Continue)
             );
         }
         assert_eq!(
@@ -2061,16 +2071,16 @@ fn pdf_outline_checkpoint_restore_replays_identical_ledger_state() {
             )
             .expect("outline state checkpoints");
         assert_eq!(
-            control.step(stores).expect("outline command"),
-            MainControlStep::Continue
+            control.advance(stores).expect("outline command"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         let first_hash = stores.journal_cursor().expect("state cursor");
         control
             .restore_checkpoint(&checkpoint, stores)
             .expect("outline state restores");
         assert_eq!(
-            control.step(stores).expect("retried outline"),
-            MainControlStep::Continue
+            control.advance(stores).expect("retried outline"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert_eq!(stores.journal_cursor().expect("state cursor"), first_hash);
     });
@@ -2104,8 +2114,8 @@ fn pdf_snapping_is_any_mode_ordered_typed_material() {
             );
             for _ in 0..3 {
                 assert_eq!(
-                    control.step(stores).expect("snapping command"),
-                    MainControlStep::Continue
+                    control.advance(stores).expect("snapping command"),
+                    StepResult::Progress(MainControlStep::Continue)
                 );
             }
             let nodes = current_list_owner_vec(&control, stores);
@@ -2147,14 +2157,14 @@ fn pdf_snapping_rejects_prefixes_and_dvi_before_operand_scan() {
         let mut control = pdftex_snapping_control(stores);
         register_source(&mut control, br"\global\pdfsnaprefpoint");
         assert_eq!(
-            control.step(stores).expect("prefix recovery"),
-            MainControlStep::Continue
+            control.advance(stores).expect("prefix recovery"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert!(current_list_owner_vec(&control, stores).is_empty());
         assert!(terminal_text(stores).contains("You can't use a prefix with"));
         assert_eq!(
-            control.step(stores).expect("replayed snapping command"),
-            MainControlStep::Continue
+            control.advance(stores).expect("replayed snapping command"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert!(matches!(
             current_list_owner_vec(&control, stores).as_slice(),
@@ -2165,8 +2175,8 @@ fn pdf_snapping_rejects_prefixes_and_dvi_before_operand_scan() {
             let mut dvi = pdftex_snapping_control(dvi_stores);
             register_source(&mut dvi, br"\pdfsnapy 7pt");
             assert!(matches!(
-                dvi.step(dvi_stores),
-                Err(ExecError::PdfExtensionInDviMode("pdfsnapy"))
+                dvi.advance(dvi_stores),
+                Err(ExecError::Captured { error, .. }) if matches!(*error, ExecError::PdfExtensionInDviMode("pdfsnapy"))
             ));
             assert!(current_list_owner_vec(&dvi, dvi_stores).is_empty());
             crate::test_harness::assign_int_param(
@@ -2177,9 +2187,9 @@ fn pdf_snapping_rejects_prefixes_and_dvi_before_operand_scan() {
             )
             .expect("integer parameter assignment");
             assert_eq!(
-                dvi.step(dvi_stores)
+                dvi.advance(dvi_stores)
                     .expect("failed command retries with its operand intact"),
-                MainControlStep::Continue
+                StepResult::Progress(MainControlStep::Continue)
             );
             assert!(matches!(
                 current_list_owner_vec(&dvi, dvi_stores).as_slice(),
@@ -2201,7 +2211,7 @@ fn pdfsnapy_rejects_negative_width_after_consuming_the_complete_glue() {
         let mut control = pdftex_snapping_control(stores);
         register_source(&mut control, br"\pdfsnapy -1pt plus 2fil");
         assert!(matches!(
-            control.step(stores),
+            control.advance(stores),
             Err(ExecError::PdfNavigation(
                 "pdfTeX error (ext1): negative snap glue"
             ))
@@ -2232,31 +2242,31 @@ fn pdf_snapping_checkpoint_restore_retries_without_duplicate_nodes() {
             )
             .expect("snapping state checkpoints");
         assert_eq!(
-            control.step(stores).expect("reference point"),
-            MainControlStep::Continue
+            control.advance(stores).expect("reference point"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert_eq!(
-            control.step(stores).expect("snap glue"),
-            MainControlStep::Continue
+            control.advance(stores).expect("snap glue"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert_eq!(
-            control.step(stores).expect("snap compensation"),
-            MainControlStep::Continue
+            control.advance(stores).expect("snap compensation"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         control
             .restore_checkpoint(&checkpoint, stores)
             .expect("snapping state restores");
         assert_eq!(
-            control.step(stores).expect("retried reference point"),
-            MainControlStep::Continue
+            control.advance(stores).expect("retried reference point"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert_eq!(
-            control.step(stores).expect("retried snap glue"),
-            MainControlStep::Continue
+            control.advance(stores).expect("retried snap glue"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert_eq!(
-            control.step(stores).expect("retried snap compensation"),
-            MainControlStep::Continue
+            control.advance(stores).expect("retried snap compensation"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert!(matches!(
             current_list_owner_vec(&control, stores).as_slice(),
@@ -2282,8 +2292,8 @@ fn pdfsetrandomseed_is_an_ungrouped_signed_job_state_replacement() {
         assert_eq!(stores.world_mut().pdf_uniform_deviate(10), 7);
 
         assert_eq!(
-            control.step(stores).expect("end group"),
-            MainControlStep::Continue
+            control.advance(stores).expect("end group"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert_eq!(
             stores.world().pdf_random_seed(),
@@ -2305,14 +2315,16 @@ fn pdfsetrandomseed_uses_the_ordinary_integer_scanner_and_preserves_lookahead() 
         );
 
         assert_eq!(
-            control.step(stores).expect("bounded seed scan"),
-            MainControlStep::Continue
+            control.advance(stores).expect("bounded seed scan"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert_eq!(stores.world().pdf_random_seed(), i32::MAX);
 
         assert_eq!(
-            control.step(stores).expect("backed-up following command"),
-            MainControlStep::Continue
+            control
+                .advance(stores)
+                .expect("backed-up following command"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert_eq!(stores.world().pdf_random_seed(), 6);
     });
@@ -2330,8 +2342,8 @@ fn pdfsetrandomseed_rejects_assignment_prefixes_then_replays_the_command() {
         register_source(&mut control, br"\global\pdfsetrandomseed 9 ");
 
         assert_eq!(
-            control.step(stores).expect("reject prefix"),
-            MainControlStep::Continue
+            control.advance(stores).expect("reject prefix"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert_eq!(stores.world().pdf_random_seed(), 0);
         assert!(
@@ -2340,8 +2352,8 @@ fn pdfsetrandomseed_rejects_assignment_prefixes_then_replays_the_command() {
         );
 
         assert_eq!(
-            control.step(stores).expect("replayed seed command"),
-            MainControlStep::Continue
+            control.advance(stores).expect("replayed seed command"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert_eq!(stores.world().pdf_random_seed(), 9);
     });
@@ -2354,11 +2366,11 @@ fn pdfresettimer_is_no_operand_any_mode_ungrouped_job_state() {
         register_source(&mut control, br"{\pdfresettimer X}");
 
         assert_eq!(
-            control.step(stores).expect("begin group"),
-            MainControlStep::Continue
+            control.advance(stores).expect("begin group"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         for _ in 0..3 {
-            control.step(stores).expect("timer reset");
+            control.advance(stores).expect("timer reset");
             if stores.world().pdf_elapsed_time() == 0 {
                 break;
             }
@@ -2388,15 +2400,15 @@ fn pdfresettimer_rejects_assignment_prefixes_then_replays_the_command() {
         register_source(&mut control, br"\global\pdfresettimer ");
 
         assert_eq!(
-            control.step(stores).expect("reject prefix"),
-            MainControlStep::Continue
+            control.advance(stores).expect("reject prefix"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert_eq!(stores.world().pdf_elapsed_time(), 81_920);
         assert!(terminal_text(stores).contains("You can't use a prefix with"));
 
         assert_eq!(
-            control.step(stores).expect("replayed timer reset"),
-            MainControlStep::Continue
+            control.advance(stores).expect("replayed timer reset"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert_eq!(stores.world().pdf_elapsed_time(), 0);
     });
@@ -2489,14 +2501,14 @@ fn pdfinterwordspace_rejects_prefixes_and_dvi_mode_before_appending() {
         register_source(&mut control, br"\global\pdfinterwordspaceon");
 
         assert_eq!(
-            control.step(stores).expect("prefix recovery"),
-            MainControlStep::Continue
+            control.advance(stores).expect("prefix recovery"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert!(current_list_owner_vec(&control, stores).is_empty());
         assert!(terminal_text(stores).contains("You can't use a prefix with"));
         assert_eq!(
-            control.step(stores).expect("replayed extension"),
-            MainControlStep::Continue
+            control.advance(stores).expect("replayed extension"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert!(matches!(
             current_list_owner_vec(&control, stores).as_slice(),
@@ -2509,7 +2521,7 @@ fn pdfinterwordspace_rejects_prefixes_and_dvi_mode_before_appending() {
             let mut dvi_control = pdftex_interword_control(dvi_stores);
             register_source(&mut dvi_control, br"\pdffakespace");
             assert!(matches!(
-                dvi_control.step(dvi_stores),
+                dvi_control.advance(dvi_stores),
                 Err(ExecError::PdfExtensionInDviMode("pdffakespace"))
             ));
             assert!(current_list_owner_vec(&dvi_control, dvi_stores).is_empty());
@@ -2537,23 +2549,23 @@ fn pdfinterwordspace_checkpoint_restore_retries_without_duplicate_effects() {
             )
             .expect("quiescent toggle state checkpoints");
         assert_eq!(
-            control.step(stores).expect("first toggle"),
-            MainControlStep::Continue
+            control.advance(stores).expect("first toggle"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert_eq!(
-            control.step(stores).expect("second toggle"),
-            MainControlStep::Continue
+            control.advance(stores).expect("second toggle"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         control
             .restore_checkpoint(&checkpoint, stores)
             .expect("toggle state restores");
         assert_eq!(
-            control.step(stores).expect("first toggle retries"),
-            MainControlStep::Continue
+            control.advance(stores).expect("first toggle retries"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert_eq!(
-            control.step(stores).expect("second toggle retries"),
-            MainControlStep::Continue
+            control.advance(stores).expect("second toggle retries"),
+            StepResult::Progress(MainControlStep::Continue)
         );
 
         let controls: Vec<_> = current_list_owner_vec(&control, stores)
@@ -2654,14 +2666,14 @@ fn pdfrunninglink_rejects_prefixes_and_dvi_mode_before_appending() {
         register_source(&mut control, br"\global\pdfrunninglinkoff");
 
         assert_eq!(
-            control.step(stores).expect("prefix recovery"),
-            MainControlStep::Continue
+            control.advance(stores).expect("prefix recovery"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert!(current_list_owner_vec(&control, stores).is_empty());
         assert!(terminal_text(stores).contains("You can't use a prefix with"));
         assert_eq!(
-            control.step(stores).expect("replayed extension"),
-            MainControlStep::Continue
+            control.advance(stores).expect("replayed extension"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert!(matches!(
             current_list_owner_vec(&control, stores).as_slice(),
@@ -2672,7 +2684,7 @@ fn pdfrunninglink_rejects_prefixes_and_dvi_mode_before_appending() {
             let mut dvi_control = pdftex_interword_control(dvi_stores);
             register_source(&mut dvi_control, br"\pdfrunninglinkon");
             assert!(matches!(
-                dvi_control.step(dvi_stores),
+                dvi_control.advance(dvi_stores),
                 Err(ExecError::PdfExtensionInDviMode("pdfrunninglinkon"))
             ));
             assert!(current_list_owner_vec(&dvi_control, dvi_stores).is_empty());
@@ -2700,23 +2712,23 @@ fn pdfrunninglink_checkpoint_restore_retries_without_duplicate_whatsits() {
             )
             .expect("running-link toggle checkpoints");
         assert_eq!(
-            control.step(stores).expect("first toggle"),
-            MainControlStep::Continue
+            control.advance(stores).expect("first toggle"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert_eq!(
-            control.step(stores).expect("second toggle"),
-            MainControlStep::Continue
+            control.advance(stores).expect("second toggle"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         control
             .restore_checkpoint(&checkpoint, stores)
             .expect("running-link toggle restores");
         assert_eq!(
-            control.step(stores).expect("first toggle retries"),
-            MainControlStep::Continue
+            control.advance(stores).expect("first toggle retries"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert_eq!(
-            control.step(stores).expect("second toggle retries"),
-            MainControlStep::Continue
+            control.advance(stores).expect("second toggle retries"),
+            StepResult::Progress(MainControlStep::Continue)
         );
 
         let toggles = current_list_owner_vec(&control, stores)
@@ -2807,20 +2819,20 @@ fn pdfspacefont_rejects_prefixes_and_dvi_mode_before_scanning() {
         register_source(&mut control, br"\global\pdfspacefont{selected}");
 
         assert_eq!(
-            control.step(stores).expect("prefix recovery"),
-            MainControlStep::Continue
+            control.advance(stores).expect("prefix recovery"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert!(terminal_text(stores).contains("You can't use a prefix with"));
         assert_eq!(
-            control.step(stores).expect("replayed extension"),
-            MainControlStep::Continue
+            control.advance(stores).expect("replayed extension"),
+            StepResult::Progress(MainControlStep::Continue)
         );
 
         crate::test_harness::with_nonstop_plain_universe(|dvi_stores| {
             let mut dvi_control = pdftex_interword_control(dvi_stores);
             register_source(&mut dvi_control, br"\pdfspacefont{unscanned}");
             assert!(matches!(
-                dvi_control.step(dvi_stores),
+                dvi_control.advance(dvi_stores),
                 Err(ExecError::PdfExtensionInDviMode("pdfspacefont"))
             ));
         });
@@ -2840,8 +2852,8 @@ fn pdfspacefont_checkpoint_restore_retries_the_global_selection_atomically() {
         register_source(&mut control, br"\pdfspacefont{first}\pdfspacefont{second}");
 
         assert_eq!(
-            control.step(stores).expect("first selection"),
-            MainControlStep::Continue
+            control.advance(stores).expect("first selection"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         let checkpoint = control
             .capture_checkpoint(
@@ -2851,8 +2863,8 @@ fn pdfspacefont_checkpoint_restore_retries_the_global_selection_atomically() {
             )
             .expect("space-font state checkpoints");
         assert_eq!(
-            control.step(stores).expect("second selection"),
-            MainControlStep::Continue
+            control.advance(stores).expect("second selection"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         let selected = stores.journal_cursor().expect("selected state cursor");
 
@@ -2860,8 +2872,8 @@ fn pdfspacefont_checkpoint_restore_retries_the_global_selection_atomically() {
             .restore_checkpoint(&checkpoint, stores)
             .expect("space-font state restores");
         assert_eq!(
-            control.step(stores).expect("second selection retries"),
-            MainControlStep::Continue
+            control.advance(stores).expect("second selection retries"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert_eq!(
             stores.journal_cursor().expect("retried state cursor"),

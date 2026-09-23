@@ -2559,33 +2559,6 @@ impl<G> MainControl<G> {
         true
     }
 
-    /// Appends already-committed records to the operation's commit buffer.
-    /// They are published only when the whole operation commits.
-    /// Delivers one expanded command for an active alignment cell.
-    ///
-    /// In particular, the opaque end-template event is returned to the same
-    /// command processor episode that delivered it, so the processor alone
-    /// backs up the delimiter and installs the selected v-template.
-    pub fn alignment_step(
-        &mut self,
-        alignment: AlignmentIdentity,
-        stores: &mut Universe<G>,
-    ) -> Result<ReplayStep, ExecError> {
-        self.ensure_resource_replay_boundary()?;
-        match self.execute_operation(
-            stores,
-            OperationDelivery::Alignment(alignment),
-            OperationTransaction::Alignment,
-            1,
-            None,
-        )? {
-            StepResult::Progress(step) => Ok(step),
-            StepResult::Suspended(_) => Err(ExecError::MissingToken {
-                context: "alignment resource",
-            }),
-        }
-    }
-
     /// Applies the scanned steps `MainControl` owns itself instead of
     /// routing through [`apply_cold_operation`], and hands every other step back
     /// unchanged.
@@ -2845,7 +2818,6 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &mut Universe<G>,
         max_operations: usize,
-        mut initial_delivery: Option<OperationDelivery>,
         mut tracked_region: Option<&mut Option<Result<TrackedRegionRecord, DependencyRegionError>>>,
         mut resource_provider: Option<&mut dyn ResourceProvider<G>>,
     ) -> Result<StepResult, ExecError> {
@@ -2952,9 +2924,6 @@ impl<G> MainControl<G> {
                 // A retry reuses only its typed delivery/scanner owners. Live
                 // executor facts are sampled by the resumed processor if and
                 // when that scanner requests one.
-                PreflightReadiness::Ready
-            } else if let Some(delivery) = initial_delivery.take() {
-                host_preparation.fill_delivery(delivery);
                 PreflightReadiness::Ready
             } else {
                 let mut admitted_operation_mark = Some(operation_mark);
@@ -3580,8 +3549,6 @@ impl<G> MainControl<G> {
     fn execute_operation(
         &mut self,
         stores: &mut Universe<G>,
-        delivery: OperationDelivery,
-        transaction: OperationTransaction,
         max_operations: usize,
         tracked_region: Option<&mut Option<Result<TrackedRegionRecord, DependencyRegionError>>>,
     ) -> Result<StepResult, ExecError> {
@@ -3589,33 +3556,20 @@ impl<G> MainControl<G> {
         // produce job-start restart eligibility even if the caller skipped
         // the ordinary initial publication hook.
         self.job_start_eligibility = None;
-        let initial_delivery =
-            matches!(transaction, OperationTransaction::Alignment).then_some(delivery);
-        self.execute_direct_episode(
-            stores,
-            max_operations,
-            initial_delivery,
-            tracked_region,
-            None,
-        )
+        self.execute_direct_episode(stores, max_operations, tracked_region, None)
     }
 
     fn execute_operation_with_resource_provider(
         &mut self,
         stores: &mut Universe<G>,
-        delivery: OperationDelivery,
-        transaction: OperationTransaction,
         max_operations: usize,
         tracked_region: Option<&mut Option<Result<TrackedRegionRecord, DependencyRegionError>>>,
         resource_provider: &mut dyn ResourceProvider<G>,
     ) -> Result<StepResult, ExecError> {
         self.job_start_eligibility = None;
-        let initial_delivery =
-            matches!(transaction, OperationTransaction::Alignment).then_some(delivery);
         self.execute_direct_episode(
             stores,
             max_operations,
-            initial_delivery,
             tracked_region,
             Some(resource_provider),
         )
@@ -3644,13 +3598,7 @@ impl<G> MainControl<G> {
         if self.fatal.is_some() {
             return Ok(StepResult::Progress(MainControlStep::End));
         }
-        self.execute_operation(
-            stores,
-            OperationDelivery::Replay,
-            OperationTransaction::Advance,
-            1,
-            None,
-        )
+        self.execute_operation(stores, 1, None)
     }
 
     /// Provider-aware ordinary advance. A ready or unavailable resource is
@@ -3677,14 +3625,7 @@ impl<G> MainControl<G> {
         if self.fatal.is_some() {
             return Ok(StepResult::Progress(MainControlStep::End));
         }
-        self.execute_operation_with_resource_provider(
-            stores,
-            OperationDelivery::Replay,
-            OperationTransaction::Advance,
-            1,
-            None,
-            resource_provider,
-        )
+        self.execute_operation_with_resource_provider(stores, 1, None, resource_provider)
     }
 
     /// Advances one production driver chunk under a single bounded retry
@@ -3707,13 +3648,7 @@ impl<G> MainControl<G> {
         if self.fatal.is_some() {
             return Ok(StepResult::Progress(MainControlStep::End));
         }
-        self.execute_operation(
-            stores,
-            OperationDelivery::Replay,
-            OperationTransaction::Advance,
-            256,
-            None,
-        )
+        self.execute_operation(stores, 256, None)
     }
 
     /// Provider-aware production-sized episode advance.
@@ -3738,14 +3673,7 @@ impl<G> MainControl<G> {
         if self.fatal.is_some() {
             return Ok(StepResult::Progress(MainControlStep::End));
         }
-        self.execute_operation_with_resource_provider(
-            stores,
-            OperationDelivery::Replay,
-            OperationTransaction::Advance,
-            256,
-            None,
-            resource_provider,
-        )
+        self.execute_operation_with_resource_provider(stores, 256, None, resource_provider)
     }
 
     /// Attempts one ordinary main-control operation while collecting detached
@@ -3778,13 +3706,7 @@ impl<G> MainControl<G> {
             });
         }
         let mut region = None;
-        let step = self.execute_operation(
-            stores,
-            OperationDelivery::Replay,
-            OperationTransaction::Advance,
-            1,
-            Some(&mut region),
-        )?;
+        let step = self.execute_operation(stores, 1, Some(&mut region))?;
         Ok(TrackedStepResult { step, region })
     }
 
@@ -3816,8 +3738,6 @@ impl<G> MainControl<G> {
         let mut region = None;
         let step = self.execute_operation_with_resource_provider(
             stores,
-            OperationDelivery::Replay,
-            OperationTransaction::Advance,
             1,
             Some(&mut region),
             resource_provider,
@@ -4007,34 +3927,6 @@ impl<G> MainControl<G> {
                     self.command.diagnostic_input_context(8),
                 ))
             }
-        }
-    }
-
-    /// Delivers and executes one replay command through the command processor.
-    ///
-    /// Compatibility wrapper for callers which have not yet adopted typed
-    /// resource suspension. New production hosts should use [`Self::advance`].
-    pub fn step(&mut self, stores: &mut Universe<G>) -> Result<ReplayStep, ExecError> {
-        let result = self.advance(stores).map_err(|error| match error {
-            ExecError::Captured { error, .. } => *error,
-            error => error,
-        })?;
-        match result {
-            StepResult::Progress(step) => Ok(step),
-            StepResult::Suspended(ResourceNeed::Input { .. }) => {
-                Err(ExecError::MissingToken { context: "\\input" })
-            }
-            StepResult::Suspended(ResourceNeed::InputProbe { .. }) => {
-                Err(ExecError::MissingToken {
-                    context: "pdfTeX file enquiry",
-                })
-            }
-            StepResult::Suspended(ResourceNeed::Font { .. }) => Err(ExecError::MissingToken {
-                context: "\\font resource",
-            }),
-            StepResult::Suspended(ResourceNeed::PdfImage { .. }) => Err(ExecError::MissingToken {
-                context: "\\pdfximage resource",
-            }),
         }
     }
 
@@ -6037,32 +5929,6 @@ impl<G> MainControl<G> {
         scanned.map_err(command_error)
     }
 
-    /// Delivers and executes one replay command while forwarding committed
-    /// command-owned observations in their original order.
-    pub fn step_with_observer(
-        &mut self,
-        stores: &mut Universe<G>,
-        observer: &mut dyn CommandObserver,
-    ) -> Result<ReplayStep, ExecError> {
-        match self.advance_with_observer(stores, observer)? {
-            StepResult::Progress(step) => Ok(step),
-            StepResult::Suspended(ResourceNeed::Input { .. }) => {
-                Err(ExecError::MissingToken { context: "\\input" })
-            }
-            StepResult::Suspended(ResourceNeed::InputProbe { .. }) => {
-                Err(ExecError::MissingToken {
-                    context: "pdfTeX file enquiry",
-                })
-            }
-            StepResult::Suspended(ResourceNeed::Font { .. }) => Err(ExecError::MissingToken {
-                context: "\\font resource",
-            }),
-            StepResult::Suspended(ResourceNeed::PdfImage { .. }) => Err(ExecError::MissingToken {
-                context: "\\pdfximage resource",
-            }),
-        }
-    }
-
     /// Atomic observed variant of [`Self::advance`]. Observations are held
     /// until both command delivery and executor application have committed.
     pub fn advance_with_observer(
@@ -6120,19 +5986,11 @@ impl<G> MainControl<G> {
         let stepped = match resource_provider.as_mut() {
             Some(resource_provider) => self.execute_operation_with_resource_provider(
                 stores,
-                OperationDelivery::Replay,
-                OperationTransaction::Advance,
                 1,
                 None,
                 &mut **resource_provider,
             ),
-            None => self.execute_operation(
-                stores,
-                OperationDelivery::Replay,
-                OperationTransaction::Advance,
-                1,
-                None,
-            ),
+            None => self.execute_operation(stores, 1, None),
         };
         let mut pending = self.operation_observations.take().unwrap_or_default();
         self.operation_receipt_start.take();
@@ -6593,19 +6451,6 @@ impl<G> MainControl<G> {
                             innermost_group,
                             job_is_all_over,
                             self.modes.current_list().display_eq_no().is_some(),
-                            self.main_loop_active,
-                            &mut self.shown_mode,
-                            &mut diagnostics,
-                            frame,
-                            cold,
-                        )?,
-                        OperationDelivery::Alignment(alignment) => scan_alignment_delivery_step(
-                            &mut processor,
-                            alignment,
-                            &ReplayBoxes::default(),
-                            innermost_group,
-                            mode,
-                            job_is_all_over,
                             self.main_loop_active,
                             &mut self.shown_mode,
                             &mut diagnostics,
@@ -8866,12 +8711,12 @@ mod discretionary_hyphen_tests {
                 .expect("register canonical source");
 
             assert_eq!(
-                control.step(stores).expect("paragraph start"),
-                MainControlStep::Continue
+                control.advance(stores).expect("paragraph start"),
+                StepResult::Progress(MainControlStep::Continue)
             );
             assert_eq!(
-                control.step(stores).expect("explicit hyphen"),
-                MainControlStep::Continue
+                control.advance(stores).expect("explicit hyphen"),
+                StepResult::Progress(MainControlStep::Continue)
             );
             crate::test_harness::with_admitted(stores, |context| {
                 let current_list = control.modes.current_list();
@@ -8911,12 +8756,12 @@ mod discretionary_hyphen_tests {
                 .expect("register canonical source");
 
             assert_eq!(
-                control.step(stores).expect("paragraph start"),
-                MainControlStep::Continue
+                control.advance(stores).expect("paragraph start"),
+                StepResult::Progress(MainControlStep::Continue)
             );
             assert_eq!(
-                control.step(stores).expect("explicit hyphen"),
-                MainControlStep::Continue
+                control.advance(stores).expect("explicit hyphen"),
+                StepResult::Progress(MainControlStep::Continue)
             );
             crate::test_harness::with_admitted(stores, |context| {
                 let current_list = control.modes.current_list();
@@ -8945,8 +8790,8 @@ mod discretionary_hyphen_tests {
                     .to_vec(),
             ))
             .expect("register canonical source");
-            while let MainControlStep::Continue =
-                control.step(stores).expect("write source executes")
+            while let StepResult::Progress(MainControlStep::Continue) =
+                control.advance(stores).expect("write source executes")
             {}
             let log = String::from_utf8_lossy(
                 stores

@@ -475,9 +475,9 @@ fn final_cleanup_retires_inputs_reports_open_state_and_selects_end_or_dump() {
         loop {
             if matches!(
                 control
-                    .step_with_observer(stores, &mut observations)
+                    .advance_with_observer(stores, &mut observations)
                     .expect("final cleanup"),
-                MainControlStep::End | MainControlStep::EndOfInput
+                StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput)
             ) {
                 break;
             }
@@ -940,11 +940,12 @@ fn hyphenation_diagnostics_preserve_tex82_recovery_and_apply_order() {
         let mut observations = ObservationRecorder::default();
         loop {
             match control
-                .step_with_observer(stores, &mut observations)
+                .advance_with_observer(stores, &mut observations)
                 .expect("program executes")
             {
-                MainControlStep::End | MainControlStep::EndOfInput => break,
-                MainControlStep::Continue => {}
+                StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput) => break,
+                StepResult::Progress(MainControlStep::Continue) => {}
+                StepResult::Suspended(need) => panic!("unexpected resource suspension: {need:?}"),
             }
         }
 

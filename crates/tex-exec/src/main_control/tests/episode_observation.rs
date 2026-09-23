@@ -176,9 +176,9 @@ fn main_control_dispatch_matrix_consumes_each_command_once() {
             let mut observations = ObservationRecorder::default();
             assert_eq!(
                 control
-                    .step_with_observer(stores, &mut observations)
+                    .advance_with_observer(stores, &mut observations)
                     .expect("mode-independent assignment dispatches"),
-                MainControlStep::Continue,
+                StepResult::Progress(MainControlStep::Continue),
                 "mode {mode:?}"
             );
             assert_eq!(
@@ -208,9 +208,9 @@ fn main_control_dispatch_matrix_consumes_each_command_once() {
             observations.0.clear();
             assert_eq!(
                 control
-                    .step_with_observer(stores, &mut observations)
+                    .advance_with_observer(stores, &mut observations)
                     .expect("following command remains available"),
-                MainControlStep::Continue,
+                StepResult::Progress(MainControlStep::Continue),
                 "mode {mode:?}"
             );
             assert_eq!(

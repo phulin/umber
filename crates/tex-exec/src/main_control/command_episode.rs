@@ -11,13 +11,6 @@ pub(super) enum OperationDelivery {
     /// The caller-owned command episode contains the sole live command and
     /// its compact delivery coordinates.
     Command,
-    /// TeX82 §1038's main-loop lookahead delivered this command with bare
-    /// `get_next`; it must not acquire an expanded-delivery observation when
-    /// the scanner borrow resumes.
-    /// Expansion settled in the processor borrow that produced this command,
-    /// including its canonical expanded observation. This covers both raw
-    /// preflight and an in-place TeX82 `goto reswitch`/§1270 handoff.
-    Alignment(AlignmentIdentity),
     /// Ordinary application completed in the admitted command context.
     AppliedDirect,
     /// Ordinary preflight completed delivery and scanning in its admitted

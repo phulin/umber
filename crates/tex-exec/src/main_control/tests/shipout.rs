@@ -725,9 +725,9 @@ fn end_job_transition_census_covers_output_and_residual_paths() {
             let mut terminal = None;
             for step in 1..=128 {
                 let result = control
-                    .step_with_observer(stores, &mut observations)
+                    .advance_with_observer(stores, &mut observations)
                     .unwrap_or_else(|error| panic!("{name} step {step}: {error}"));
-                if matches!(result, MainControlStep::End | MainControlStep::EndOfInput) {
+                if matches!(result, StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput)) {
                     terminal = Some((step, result));
                     break;
                 }

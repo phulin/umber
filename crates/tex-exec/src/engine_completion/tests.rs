@@ -90,9 +90,9 @@ fn partial_execution_cannot_detach_or_latch_terminal_state() {
         assert_eq!(universe.world().committed_artifacts(), artifacts_before);
         assert_eq!(
             control
-                .step(universe)
+                .advance(universe)
                 .expect("rejection leaves execution live"),
-            MainControlStep::Continue
+            crate::StepResult::Progress(MainControlStep::Continue)
         );
     });
 }

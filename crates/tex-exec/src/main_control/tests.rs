@@ -280,17 +280,19 @@ const TEST_STEP_LIMIT: usize = 16_384;
 fn run_to_end<G>(control: &mut MainControl<G>, stores: &mut Universe<G>) {
     let mut finished = false;
     for _ in 0..TEST_STEP_LIMIT {
-        match control.step(stores).unwrap_or_else(|error| {
+        match control.advance(stores).unwrap_or_else(|error| {
             panic!(
                 "program executes: {error:?}; terminal={}",
                 terminal_text(stores)
             )
         }) {
-            MainControlStep::End | MainControlStep::EndOfInput => {
+            StepResult::Progress(MainControlStep::End)
+            | StepResult::Progress(MainControlStep::EndOfInput) => {
                 finished = true;
                 break;
             }
-            MainControlStep::Continue => {}
+            StepResult::Progress(MainControlStep::Continue) => {}
+            StepResult::Suspended(need) => panic!("unexpected resource suspension: {need:?}"),
         }
     }
     assert!(
@@ -387,13 +389,14 @@ fn step_until_alignment_snapshot<G>(
 ) -> AlignmentRuntimeSnapshot {
     for _ in 0..TEST_STEP_LIMIT {
         match control
-            .step_with_observer(stores, observations)
+            .advance_with_observer(stores, observations)
             .expect("program executes")
         {
-            MainControlStep::End | MainControlStep::EndOfInput => {
+            StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput) => {
                 panic!("input ended before the requested alignment state")
             }
-            MainControlStep::Continue => {}
+            StepResult::Progress(MainControlStep::Continue) => {}
+            StepResult::Suspended(need) => panic!("unexpected resource suspension: {need:?}"),
         }
         if let Some(snapshot) = active_alignment_runtime_snapshot(control)
             && accept(snapshot)
@@ -559,14 +562,15 @@ fn run_to_end_observed<G>(
     let mut finished = false;
     for _ in 0..TEST_STEP_LIMIT {
         match control
-            .step_with_observer(stores, observations)
+            .advance_with_observer(stores, observations)
             .expect("program executes")
         {
-            MainControlStep::End | MainControlStep::EndOfInput => {
+            StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput) => {
                 finished = true;
                 break;
             }
-            MainControlStep::Continue => {}
+            StepResult::Progress(MainControlStep::Continue) => {}
+            StepResult::Suspended(need) => panic!("unexpected resource suspension: {need:?}"),
         }
     }
     assert!(
@@ -1429,7 +1433,7 @@ fn pdftex_destination_control<G>(stores: &mut Universe<G>) -> MainControl<G> {
 
 fn step_until_pdf_seed<G>(control: &mut MainControl<G>, stores: &mut Universe<G>, expected: i32) {
     for _ in 0..4 {
-        control.step(stores).expect("random command");
+        control.advance(stores).expect("random command");
         if stores.world().pdf_random_seed() == expected {
             return;
         }

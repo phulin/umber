@@ -1,6 +1,6 @@
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
 use tex_command::{RegisteredSourceKind, SourceRegistration};
-use tex_exec::{MainControl, MainControlStep};
+use tex_exec::{MainControl, MainControlStep, StepResult};
 use tex_exec_benchmarks::prepare_plain_catcodes;
 use tex_state::glue::Order;
 use tex_state::interner::InternerBudget;
@@ -57,9 +57,10 @@ fn run_shipout(shape: Shape) {
         }
         let mut control = shipout_input(stores);
         loop {
-            match control.step(stores).expect("benchmark shipout succeeds") {
-                MainControlStep::End | MainControlStep::EndOfInput => break,
-                MainControlStep::Continue => {}
+            match control.advance(stores).expect("benchmark shipout succeeds") {
+                StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput) => break,
+                StepResult::Progress(MainControlStep::Continue) => {}
+                StepResult::Suspended(need) => panic!("unexpected resource suspension: {need:?}"),
             }
         }
         black_box(stores.world().artifact_commits().len());

@@ -191,8 +191,8 @@ fn etex_raw_font_character_enquiry_checkpoint_retry_is_atomic() {
         control.set_fuel_limit(1_000).expect("bounded fuel");
         register_source(&mut control, br"\nonstopmode \fontcharwd a\end");
         assert_eq!(
-            control.step(stores).expect("interaction mode executes"),
-            MainControlStep::Continue
+            control.advance(stores).expect("interaction mode executes"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         let checkpoint = control
             .capture_checkpoint(
@@ -203,8 +203,8 @@ fn etex_raw_font_character_enquiry_checkpoint_retry_is_atomic() {
             .expect("raw font enquiry checkpoints");
 
         assert_eq!(
-            control.step(stores).expect("raw font enquiry recovers"),
-            MainControlStep::Continue
+            control.advance(stores).expect("raw font enquiry recovers"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         let first_hash = stores.journal_cursor().expect("state cursor");
         let first_output = terminal_text(stores);
@@ -215,9 +215,9 @@ fn etex_raw_font_character_enquiry_checkpoint_retry_is_atomic() {
             .expect("raw font enquiry state restores");
         assert_eq!(
             control
-                .step(stores)
+                .advance(stores)
                 .expect("raw font enquiry retry recovers"),
-            MainControlStep::Continue
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert_eq!(stores.journal_cursor().expect("state cursor"), first_hash);
         assert_eq!(terminal_text(stores), first_output);
@@ -230,8 +230,8 @@ fn etex_parshape_enquiry_checkpoint_retry_is_atomic() {
         control.set_fuel_limit(1_000).expect("bounded fuel");
         register_source(&mut control, br"\nonstopmode \parshapelength1\end");
         assert_eq!(
-            control.step(stores).expect("interaction mode executes"),
-            MainControlStep::Continue
+            control.advance(stores).expect("interaction mode executes"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         let checkpoint = control
             .capture_checkpoint(
@@ -242,8 +242,10 @@ fn etex_parshape_enquiry_checkpoint_retry_is_atomic() {
             .expect("raw parshape enquiry checkpoints");
 
         assert_eq!(
-            control.step(stores).expect("raw parshape enquiry recovers"),
-            MainControlStep::Continue
+            control
+                .advance(stores)
+                .expect("raw parshape enquiry recovers"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         let first_hash = stores.journal_cursor().expect("state cursor");
         let first_output = terminal_text(stores);
@@ -254,9 +256,9 @@ fn etex_parshape_enquiry_checkpoint_retry_is_atomic() {
             .expect("raw parshape enquiry state restores");
         assert_eq!(
             control
-                .step(stores)
+                .advance(stores)
                 .expect("raw parshape enquiry retry recovers"),
-            MainControlStep::Continue
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert_eq!(stores.journal_cursor().expect("state cursor"), first_hash);
         assert_eq!(terminal_text(stores), first_output);
@@ -1220,8 +1222,8 @@ fn etex_penalty_array_assignment_restores_checkpoint_and_retries_atomically() {
             .expect("penalty array state checkpoints");
 
         assert_eq!(
-            control.step(stores).expect("first assignment"),
-            MainControlStep::Continue
+            control.advance(stores).expect("first assignment"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert_eq!(
             admitted!(stores, |context| context
@@ -1241,8 +1243,8 @@ fn etex_penalty_array_assignment_restores_checkpoint_and_retries_atomically() {
         assert_eq!(stores.count(0).expect("count register"), 0);
 
         assert_eq!(
-            control.step(stores).expect("retried assignment"),
-            MainControlStep::Continue
+            control.advance(stores).expect("retried assignment"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert_eq!(
             stores.journal_cursor().expect("state cursor"),
@@ -1254,8 +1256,8 @@ fn etex_penalty_array_assignment_restores_checkpoint_and_retries_atomically() {
             vec![7, 5]
         );
         assert_eq!(
-            control.step(stores).expect("following assignment"),
-            MainControlStep::Continue
+            control.advance(stores).expect("following assignment"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert_eq!(stores.count(0).expect("count register"), 23);
     });
@@ -1323,8 +1325,8 @@ fn hot_definition_checkpoint_restore_replays_one_atomic_mutation() {
             .expect("quiescent hot definition checkpoints");
 
         assert_eq!(
-            control.step(stores).expect("hot definition executes"),
-            MainControlStep::Continue
+            control.advance(stores).expect("hot definition executes"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert_eq!(macro_character_text(stores, "target"), "new");
         control
@@ -1338,8 +1340,8 @@ fn hot_definition_checkpoint_restore_replays_one_atomic_mutation() {
             ));
         });
         assert_eq!(
-            control.step(stores).expect("hot definition retries"),
-            MainControlStep::Continue
+            control.advance(stores).expect("hot definition retries"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert_eq!(macro_character_text(stores, "target"), "new");
     });
@@ -1390,9 +1392,9 @@ fn etex_showbox_invalid_register_checkpoint_retry_recovers_to_zero() {
 
         assert_eq!(
             control
-                .step(stores)
+                .advance(stores)
                 .expect("invalid showbox register recovers"),
-            MainControlStep::Continue
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert_eq!(
             stores.count(0).expect("count register"),
@@ -1412,9 +1414,9 @@ fn etex_showbox_invalid_register_checkpoint_retry_recovers_to_zero() {
             .expect("showbox state restores");
         assert_eq!(
             control
-                .step(stores)
+                .advance(stores)
                 .expect("invalid showbox register retries identically"),
-            MainControlStep::Continue
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert_eq!(stores.journal_cursor().expect("state cursor"), first_hash);
         assert_eq!(terminal_text(stores), first_output);
@@ -1451,8 +1453,8 @@ fn frozen_page_scalar_rejection_is_checkpoint_atomic() {
                 != 4
         {
             assert_eq!(
-                control.step(stores).expect("setup executes"),
-                MainControlStep::Continue
+                control.advance(stores).expect("setup executes"),
+                StepResult::Progress(MainControlStep::Continue)
             );
         }
         let checkpoint = control

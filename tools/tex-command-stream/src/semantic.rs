@@ -22,7 +22,7 @@ use tex_command::{
     DiagnosticArgument, FatalError, FontResource, InputReason, InputTransition, ObservedToken,
     RecoveryKind, RegisteredSourceKind, SourceRegistration, canonical_names,
 };
-use tex_exec::{MainControl, MainControlStep, Mode};
+use tex_exec::{MainControl, MainControlStep, Mode, StepResult};
 use tex_state::{ContentHash, InputReadState, node::NodeKind};
 
 pub mod channels;
@@ -1392,7 +1392,7 @@ fn execute_fresh_with_completion(
         let mut mode_transitions = vec![control.current_mode()];
         for _ in 0..MAX_STEPS {
             let step = control
-                .step_with_observer(universe, &mut recorder)
+                .advance_with_observer(universe, &mut recorder)
                 .map_err(|error| {
                     let rendered = format!("{error:?}");
                     if rendered.starts_with("Command(InputInvariant(") {
@@ -1406,8 +1406,8 @@ fn execute_fresh_with_completion(
                 mode_transitions.push(mode);
             }
             match step {
-                MainControlStep::Continue => {}
-                MainControlStep::End | MainControlStep::EndOfInput => {
+                StepResult::Progress(MainControlStep::Continue) => {}
+                StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput) => {
                     let mut counts = [0; COUNT_SLOTS];
                     for (slot, value) in counts.iter_mut().enumerate() {
                         *value = universe
@@ -1480,6 +1480,11 @@ fn execute_fresh_with_completion(
                         effect_artifacts,
                         complete_job_channel_streams: None,
                     });
+                }
+                StepResult::Suspended(need) => {
+                    return Err(format!(
+                        "main-control suspended awaiting resource: {need:?}"
+                    ));
                 }
             }
         }

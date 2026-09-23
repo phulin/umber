@@ -588,8 +588,8 @@ fn discretionary_nest_overflow_leaves_group_and_active_stack_untouched() {
         let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\noindent\discretionary{}{}{}");
         assert_eq!(
-            control.step(stores).expect("paragraph starts"),
-            MainControlStep::Continue
+            control.advance(stores).expect("paragraph starts"),
+            StepResult::Progress(MainControlStep::Continue)
         );
         while control.modes.depth() < 41 {
             control
@@ -599,8 +599,8 @@ fn discretionary_nest_overflow_leaves_group_and_active_stack_untouched() {
         }
 
         assert_eq!(
-            control.step(stores).expect("fatal overflow succumbs"),
-            MainControlStep::End
+            control.advance(stores).expect("fatal overflow succumbs"),
+            StepResult::Progress(MainControlStep::End)
         );
         assert_eq!(control.modes.depth(), 41);
         assert_eq!(
@@ -1035,11 +1035,12 @@ fn etex_identical_local_integer_parameter_reassignment_is_not_a_mutation() {
         let mut observations = ObservationRecorder::default();
         loop {
             match control
-                .step_with_observer(stores, &mut observations)
+                .advance_with_observer(stores, &mut observations)
                 .expect("e-TeX integer-parameter reassignments execute")
             {
-                MainControlStep::End | MainControlStep::EndOfInput => break,
-                MainControlStep::Continue => {}
+                StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput) => break,
+                StepResult::Progress(MainControlStep::Continue) => {}
+                StepResult::Suspended(need) => panic!("unexpected resource suspension: {need:?}"),
             }
         }
 
@@ -1266,9 +1267,9 @@ fn braced_token_parameter_assignment_normalizes_empty_to_null_and_restores_scope
         register_source(&mut empty_control, br"\everypar={}\end");
         assert_eq!(
             empty_control
-                .step(empty_stores)
+                .advance(empty_stores)
                 .expect("empty assignment executes"),
-            MainControlStep::Continue
+            StepResult::Progress(MainControlStep::Continue)
         );
         assert_eq!(
             admitted!(empty_stores, |context| context
@@ -1282,8 +1283,10 @@ fn braced_token_parameter_assignment_normalizes_empty_to_null_and_restores_scope
             let mut control = MainControl::tex82_initex(stores);
             register_source(&mut control, br"\everypar={A}{\everypar={}}\end");
             assert_eq!(
-                control.step(stores).expect("nonempty assignment executes"),
-                MainControlStep::Continue
+                control
+                    .advance(stores)
+                    .expect("nonempty assignment executes"),
+                StepResult::Progress(MainControlStep::Continue)
             );
             let outer = admitted!(stores, |context| context
                 .token_parameter(TokParam::EVERY_PAR)
@@ -1300,14 +1303,14 @@ fn braced_token_parameter_assignment_normalizes_empty_to_null_and_restores_scope
                 })]
             );
             assert_eq!(
-                control.step(stores).expect("group opens"),
-                MainControlStep::Continue
+                control.advance(stores).expect("group opens"),
+                StepResult::Progress(MainControlStep::Continue)
             );
             assert_eq!(
                 control
-                    .step(stores)
+                    .advance(stores)
                     .expect("scoped empty assignment executes"),
-                MainControlStep::Continue
+                StepResult::Progress(MainControlStep::Continue)
             );
             assert_eq!(
                 admitted!(stores, |context| context
@@ -1316,8 +1319,8 @@ fn braced_token_parameter_assignment_normalizes_empty_to_null_and_restores_scope
                 None
             );
             assert_eq!(
-                control.step(stores).expect("group closes"),
-                MainControlStep::Continue
+                control.advance(stores).expect("group closes"),
+                StepResult::Progress(MainControlStep::Continue)
             );
             assert_eq!(
                 admitted!(stores, |context| context
@@ -1413,11 +1416,12 @@ fn etex_identical_local_code_reassignment_is_a_save_stack_noop() {
         let mut observations = ObservationRecorder::default();
         loop {
             match control
-                .step_with_observer(stores, &mut observations)
+                .advance_with_observer(stores, &mut observations)
                 .expect("e-TeX code-table reassignments execute")
             {
-                MainControlStep::End | MainControlStep::EndOfInput => break,
-                MainControlStep::Continue => {}
+                StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput) => break,
+                StepResult::Progress(MainControlStep::Continue) => {}
+                StepResult::Suspended(need) => panic!("unexpected resource suspension: {need:?}"),
             }
         }
 
@@ -1513,11 +1517,12 @@ fn etex_zero_glue_parameter_reassignment_uses_canonical_pointer_identity() {
         let mut observations = ObservationRecorder::default();
         loop {
             match control
-                .step_with_observer(stores, &mut observations)
+                .advance_with_observer(stores, &mut observations)
                 .expect("e-TeX glue-parameter reassignments execute")
             {
-                MainControlStep::End | MainControlStep::EndOfInput => break,
-                MainControlStep::Continue => {}
+                StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput) => break,
+                StepResult::Progress(MainControlStep::Continue) => {}
+                StepResult::Suspended(need) => panic!("unexpected resource suspension: {need:?}"),
             }
         }
 
@@ -1604,11 +1609,12 @@ fn etex_glue_expression_reassignment_retains_source_pointer_identity() {
         let mut observations = ObservationRecorder::default();
         loop {
             match control
-                .step_with_observer(stores, &mut observations)
+                .advance_with_observer(stores, &mut observations)
                 .expect("e-TeX glue-expression reassignments execute")
             {
-                MainControlStep::End | MainControlStep::EndOfInput => break,
-                MainControlStep::Continue => {}
+                StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput) => break,
+                StepResult::Progress(MainControlStep::Continue) => {}
+                StepResult::Suspended(need) => panic!("unexpected resource suspension: {need:?}"),
             }
         }
 
@@ -1701,8 +1707,8 @@ fn etex_penalty_array_assignments_are_mode_complete_and_consume_exactly_their_va
                 register_source(&mut control, source.as_bytes());
 
                 assert_eq!(
-                    control.step(stores).expect("penalty array assignment"),
-                    MainControlStep::Continue,
+                    control.advance(stores).expect("penalty array assignment"),
+                    StepResult::Progress(MainControlStep::Continue),
                     "selector {name}, mode {mode:?}"
                 );
                 assert_eq!(
@@ -1717,8 +1723,8 @@ fn etex_penalty_array_assignments_are_mode_complete_and_consume_exactly_their_va
                 assert_eq!(control.current_mode(), mode);
 
                 assert_eq!(
-                    control.step(stores).expect("following assignment"),
-                    MainControlStep::Continue,
+                    control.advance(stores).expect("following assignment"),
+                    StepResult::Progress(MainControlStep::Continue),
                     "selector {name}, mode {mode:?}"
                 );
                 assert_eq!(
@@ -1972,9 +1978,9 @@ fn read_to_mutation_precedes_afterassignment_replay_and_carries_exact_meaning() 
         loop {
             if matches!(
                 control
-                    .step_with_observer(stores, &mut observations)
+                    .advance_with_observer(stores, &mut observations)
                     .expect("read and its replay execute"),
-                MainControlStep::End | MainControlStep::EndOfInput
+                StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput)
             ) {
                 break;
             }
@@ -2040,9 +2046,9 @@ fn hot_definition_publication_precedes_afterassignment_and_its_host_effect() {
         loop {
             if matches!(
                 control
-                    .step_with_observer(stores, &mut observations)
+                    .advance_with_observer(stores, &mut observations)
                     .expect("hot definition and saved token execute"),
-                MainControlStep::End | MainControlStep::EndOfInput
+                StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput)
             ) {
                 break;
             }
@@ -2130,9 +2136,9 @@ fn effective_scope_is_shared_by_provisional_and_committed_meaning_mutations() {
         loop {
             if matches!(
                 control
-                    .step_with_observer(stores, &mut observations)
+                    .advance_with_observer(stores, &mut observations)
                     .expect("scope matrix executes"),
-                MainControlStep::End | MainControlStep::EndOfInput
+                StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput)
             ) {
                 break;
             }

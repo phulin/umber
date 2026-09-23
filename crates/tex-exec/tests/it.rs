@@ -38,9 +38,11 @@ fn run_tex82(source: &[u8], tracing_online: bool) -> String {
             .expect("test source registers");
 
         loop {
-            match control.step(stores).expect("test source executes") {
-                MainControlStep::End | MainControlStep::EndOfInput => break,
-                MainControlStep::Continue => {}
+            match control.advance(stores).expect("test source executes") {
+                StepResult::Progress(MainControlStep::End)
+                | StepResult::Progress(MainControlStep::EndOfInput) => break,
+                StepResult::Progress(MainControlStep::Continue) => {}
+                StepResult::Suspended(need) => panic!("unexpected resource suspension: {need:?}"),
             }
         }
 
@@ -80,11 +82,12 @@ fn observed_etex(source: &[u8]) -> (i32, Vec<CommandObservation>) {
         let mut observer = ObservationCollector::default();
         loop {
             match control
-                .step_with_observer(stores, &mut observer)
+                .advance_with_observer(stores, &mut observer)
                 .expect("observed e-TeX source executes")
             {
-                MainControlStep::End | MainControlStep::EndOfInput => break,
-                MainControlStep::Continue => {}
+                StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput) => break,
+                StepResult::Progress(MainControlStep::Continue) => {}
+                StepResult::Suspended(need) => panic!("unexpected resource suspension: {need:?}"),
             }
         }
         let count = stores
@@ -135,9 +138,11 @@ fn fresh_and_memo_shipouts_share_canonical_artifact_dvi() {
             .expect("test source registers");
 
         loop {
-            match control.step(stores).expect("shipouts execute") {
-                MainControlStep::End | MainControlStep::EndOfInput => break,
-                MainControlStep::Continue => {}
+            match control.advance(stores).expect("shipouts execute") {
+                StepResult::Progress(MainControlStep::End)
+                | StepResult::Progress(MainControlStep::EndOfInput) => break,
+                StepResult::Progress(MainControlStep::Continue) => {}
+                StepResult::Suspended(need) => panic!("unexpected resource suspension: {need:?}"),
             }
         }
 
@@ -174,9 +179,11 @@ fn dvi_disabled_fresh_and_memo_shipouts_both_omit_plans() {
             .expect("test source registers");
 
         loop {
-            match control.step(stores).expect("shipouts execute") {
-                MainControlStep::End | MainControlStep::EndOfInput => break,
-                MainControlStep::Continue => {}
+            match control.advance(stores).expect("shipouts execute") {
+                StepResult::Progress(MainControlStep::End)
+                | StepResult::Progress(MainControlStep::EndOfInput) => break,
+                StepResult::Progress(MainControlStep::Continue) => {}
+                StepResult::Suspended(need) => panic!("unexpected resource suspension: {need:?}"),
             }
         }
 
@@ -232,11 +239,12 @@ fn unified_operation_preserves_state_output_and_typed_evidence() {
         let mut evidence = ObservationCollector::default();
         loop {
             match control
-                .step_with_observer(stores, &mut evidence)
+                .advance_with_observer(stores, &mut evidence)
                 .expect("observed execution")
             {
-                MainControlStep::End | MainControlStep::EndOfInput => break,
-                MainControlStep::Continue => {}
+                StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput) => break,
+                StepResult::Progress(MainControlStep::Continue) => {}
+                StepResult::Suspended(need) => panic!("unexpected resource suspension: {need:?}"),
             }
         }
         let context = stores.command_context().expect("command admission");
@@ -258,9 +266,11 @@ fn unified_operation_preserves_state_output_and_typed_evidence() {
     let stepped = support::with_plain_universe(|stores| {
         let mut control = etex_session(stores, source);
         loop {
-            match control.step(stores).expect("step execution") {
-                MainControlStep::End | MainControlStep::EndOfInput => break,
-                MainControlStep::Continue => {}
+            match control.advance(stores).expect("step execution") {
+                StepResult::Progress(MainControlStep::End)
+                | StepResult::Progress(MainControlStep::EndOfInput) => break,
+                StepResult::Progress(MainControlStep::Continue) => {}
+                StepResult::Suspended(need) => panic!("unexpected resource suspension: {need:?}"),
             }
         }
         let context = stores.command_context().expect("command admission");
@@ -360,9 +370,13 @@ fn command_host_facts_are_sampled_only_by_the_consuming_query() {
         support::with_plain_universe(|stores| {
             let mut control = etex_session(stores, source);
             loop {
-                match control.step(stores).expect("host fact probe executes") {
-                    MainControlStep::End | MainControlStep::EndOfInput => break,
-                    MainControlStep::Continue => {}
+                match control.advance(stores).expect("host fact probe executes") {
+                    StepResult::Progress(MainControlStep::End)
+                    | StepResult::Progress(MainControlStep::EndOfInput) => break,
+                    StepResult::Progress(MainControlStep::Continue) => {}
+                    StepResult::Suspended(need) => {
+                        panic!("unexpected resource suspension: {need:?}")
+                    }
                 }
             }
             let telemetry = control.episode_telemetry();
@@ -460,9 +474,11 @@ fn let_endgroup_alias_runs_off_save_and_restores_the_primitive() {
             .expect("test source registers");
 
         loop {
-            match control.step(stores).expect("alias recovery executes") {
-                MainControlStep::End | MainControlStep::EndOfInput => break,
-                MainControlStep::Continue => {}
+            match control.advance(stores).expect("alias recovery executes") {
+                StepResult::Progress(MainControlStep::End)
+                | StepResult::Progress(MainControlStep::EndOfInput) => break,
+                StepResult::Progress(MainControlStep::Continue) => {}
+                StepResult::Suspended(need) => panic!("unexpected resource suspension: {need:?}"),
             }
         }
 

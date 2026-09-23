@@ -20,11 +20,12 @@ fn trip_valign_row_uses_raw_main_loop_lookahead_before_assignment() {
         let mut observations = ObservationRecorder::default();
         loop {
             match control
-                .step_with_observer(stores, &mut observations)
+                .advance_with_observer(stores, &mut observations)
                 .expect("source-fed valign executes")
             {
-                MainControlStep::End | MainControlStep::EndOfInput => break,
-                MainControlStep::Continue => {}
+                StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput) => break,
+                StepResult::Progress(MainControlStep::Continue) => {}
+                StepResult::Suspended(need) => panic!("unexpected resource suspension: {need:?}"),
             }
         }
 
@@ -569,12 +570,15 @@ fn ignorespaces_surfaces_an_alignment_delimiter_before_fin_col() {
             loop {
                 let before = observations.0.len();
                 match control
-                    .step_with_observer(stores, &mut observations)
+                    .advance_with_observer(stores, &mut observations)
                     .expect("alignment operation executes")
                 {
-                    MainControlStep::Continue => {}
-                    MainControlStep::End | MainControlStep::EndOfInput => {
+                    StepResult::Progress(MainControlStep::Continue) => {}
+                    StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput) => {
                         panic!("input ended before the first v-template")
+                    }
+                    StepResult::Suspended(need) => {
+                        panic!("unexpected resource suspension: {need:?}")
                     }
                 }
                 if observations.0[before..].iter().any(|observation| {
@@ -1139,9 +1143,14 @@ fn noalign_body_dispatches_nested_math_braces_by_save_stack_group() {
         );
 
         for _ in 0..256 {
-            match control.step(stores).expect("nested noalign math executes") {
-                MainControlStep::End | MainControlStep::EndOfInput => return,
-                MainControlStep::Continue => {}
+            match control
+                .advance(stores)
+                .expect("nested noalign math executes")
+            {
+                StepResult::Progress(MainControlStep::End)
+                | StepResult::Progress(MainControlStep::EndOfInput) => return,
+                StepResult::Progress(MainControlStep::Continue) => {}
+                StepResult::Suspended(need) => panic!("unexpected resource suspension: {need:?}"),
             }
         }
         panic!("noalign regression exceeded its step bound");
@@ -1432,8 +1441,8 @@ fn stray_endv_outside_math_runs_off_save_once_and_continues_in_every_mode() {
             register_source(&mut control, br"\forcedendv\count0=23");
 
             assert_eq!(
-                control.step(stores).expect("stray end-v recovers"),
-                MainControlStep::Continue
+                control.advance(stores).expect("stray end-v recovers"),
+                StepResult::Progress(MainControlStep::Continue)
             );
             // §62's `print_nl` emits no newline at offset 0, so the headline opens
             // the terminal. What follows it is §§310-318's context and the §1131
@@ -1445,8 +1454,8 @@ fn stray_endv_outside_math_runs_off_save_once_and_continues_in_every_mode() {
                 "mode {mode:?}: {terminal}"
             );
             assert_eq!(
-                control.step(stores).expect("following command executes"),
-                MainControlStep::Continue
+                control.advance(stores).expect("following command executes"),
+                StepResult::Progress(MainControlStep::Continue)
             );
             assert_eq!(
                 stores.count(0).expect("count register"),
@@ -1476,7 +1485,7 @@ fn stray_endv_in_math_inserts_shift_then_replays_for_off_save() {
 
             for _ in 0..16 {
                 control
-                    .step(stores)
+                    .advance(stores)
                     .expect("math end-v recovery remains finite");
                 if stores.count(0).expect("count register") == 29 {
                     break;

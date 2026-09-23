@@ -153,9 +153,13 @@ fn with_source_to_end<R>(
             .open_registered_source(registered)
             .expect("source opens");
         loop {
-            match control.step(universe).expect("step executes") {
-                MainControlStep::End | MainControlStep::EndOfInput => break,
-                MainControlStep::Continue => {}
+            match control.advance(universe).expect("step executes") {
+                crate::StepResult::Progress(MainControlStep::End)
+                | crate::StepResult::Progress(MainControlStep::EndOfInput) => break,
+                crate::StepResult::Progress(MainControlStep::Continue) => {}
+                crate::StepResult::Suspended(need) => {
+                    panic!("unexpected resource suspension: {need:?}")
+                }
             }
         }
         test(&mut control, universe)

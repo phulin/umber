@@ -362,8 +362,8 @@ fn hbox_group_type_respects_box_context_and_vertical_mode() {
             register_source(&mut control, source);
 
             assert_eq!(
-                control.step(stores).expect("prefix executes"),
-                MainControlStep::Continue
+                control.advance(stores).expect("prefix executes"),
+                StepResult::Progress(MainControlStep::Continue)
             );
             assert_eq!(
                 admitted!(stores, |context| context.innermost_group_kind()),
@@ -945,13 +945,13 @@ fn extra_endcsname_reports_once_and_continues_with_observer_parity_in_every_mode
                     let mut observations = ObservationRecorder::default();
                     for _ in 0..2 {
                         control
-                            .step_with_observer(stores, &mut observations)
+                            .advance_with_observer(stores, &mut observations)
                             .expect("observed stray endcsname continues");
                     }
                 } else {
                     for _ in 0..2 {
                         control
-                            .step(stores)
+                            .advance(stores)
                             .expect("unobserved stray endcsname continues");
                     }
                 }
@@ -1306,9 +1306,9 @@ fn main_control_error_privilege_and_stop_paths_are_finite() {
             let mut observations = ObservationRecorder::default();
             for _ in 0..32 {
                 if matches!(
-                    page.step_with_observer(page_stores, &mut observations)
+                    page.advance_with_observer(page_stores, &mut observations)
                         .expect("page stop remains finite"),
-                    MainControlStep::End | MainControlStep::EndOfInput
+                    StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput)
                 ) {
                     break;
                 }
@@ -1435,9 +1435,9 @@ fn out_of_range_read_selector_reaches_the_terminal_without_a_report() {
         for _ in 0..64 {
             if matches!(
                 control
-                    .step_with_observer(stores, &mut observations)
+                    .advance_with_observer(stores, &mut observations)
                     .expect("recovered read remains executable"),
-                MainControlStep::End | MainControlStep::EndOfInput
+                StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput)
             ) {
                 break;
             }
@@ -1707,11 +1707,12 @@ fn showlists_is_a_diagnostic_without_a_canonical_effect_event() {
         let mut observations = ObservationRecorder::default();
         loop {
             match control
-                .step_with_observer(stores, &mut observations)
+                .advance_with_observer(stores, &mut observations)
                 .expect("showlists executes")
             {
-                MainControlStep::End | MainControlStep::EndOfInput => break,
-                MainControlStep::Continue => {}
+                StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput) => break,
+                StepResult::Progress(MainControlStep::Continue) => {}
+                StepResult::Suspended(need) => panic!("unexpected resource suspension: {need:?}"),
             }
         }
 
@@ -1799,8 +1800,8 @@ fn show_meaning_prints_all_named_glue_and_register_symbols() {
             // command, assignments, and symbolic register aliases have committed.
             while stores.count(255).expect("count register") == 0 {
                 assert_eq!(
-                    control.step(stores).expect("setup command executes"),
-                    MainControlStep::Continue
+                    control.advance(stores).expect("setup command executes"),
+                    StepResult::Progress(MainControlStep::Continue)
                 );
             }
             let glue_parameters = (0..18)
@@ -2038,8 +2039,8 @@ fn a_succumbed_session_stays_terminal_without_delivering_another_command() {
 
         for _ in 0..4 {
             assert_eq!(
-                control.step(stores).expect("a terminal session reports"),
-                MainControlStep::End,
+                control.advance(stores).expect("a terminal session reports"),
+                StepResult::Progress(MainControlStep::End),
             );
         }
         assert_eq!(control.fatal_error(), fatal);
@@ -2055,11 +2056,12 @@ fn succumbing_commits_fatal_diagnostic_then_engine_termination() {
         let mut observations = ObservationRecorder::default();
         loop {
             match control
-                .step_with_observer(stores, &mut observations)
+                .advance_with_observer(stores, &mut observations)
                 .expect("a fatal error is a terminal state, never an Err")
             {
-                MainControlStep::End | MainControlStep::EndOfInput => break,
-                MainControlStep::Continue => {}
+                StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput) => break,
+                StepResult::Progress(MainControlStep::Continue) => {}
+                StepResult::Suspended(need) => panic!("unexpected resource suspension: {need:?}"),
             }
         }
 
@@ -2341,7 +2343,7 @@ fn invalid_arithmetic_targets_use_print_cmd_chr_and_commit_without_mutation() {
             register_source(&mut isolated, br"\advance x");
             let mut isolated_observations = ObservationRecorder::default();
             isolated
-                .step_with_observer(isolated_stores, &mut isolated_observations)
+                .advance_with_observer(isolated_stores, &mut isolated_observations)
                 .expect("observed invalid target recovers");
             assert!(
                 !isolated_observations

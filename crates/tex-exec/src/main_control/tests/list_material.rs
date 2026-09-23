@@ -338,11 +338,12 @@ fn observed_box_packaging_commits_geometry_at_the_operation_boundary() {
         let mut observations = GeometryObservationRecorder::default();
         loop {
             match control
-                .step_with_observer(stores, &mut observations)
+                .advance_with_observer(stores, &mut observations)
                 .expect("box packaging executes")
             {
-                MainControlStep::End | MainControlStep::EndOfInput => break,
-                MainControlStep::Continue => {}
+                StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput) => break,
+                StepResult::Progress(MainControlStep::Continue) => {}
+                StepResult::Suspended(need) => panic!("unexpected resource suspension: {need:?}"),
             }
         }
         let geometry = observations
@@ -422,20 +423,27 @@ fn end_inside_unterminated_box_reaches_outer_cleanup() {
         let mut artifact_counts = Vec::new();
         for step_index in 1..=16 {
             let step = control
-                .step(stores)
+                .advance(stores)
                 .expect("unterminated-box recovery executes");
             artifact_counts.push(stores.world().artifact_commits().len());
             assert!(
                 artifact_counts.last() <= Some(&1),
                 "end-job recovery must not repeat shipout"
             );
-            if matches!(step, MainControlStep::End | MainControlStep::EndOfInput) {
+            if matches!(
+                step,
+                StepResult::Progress(MainControlStep::End)
+                    | StepResult::Progress(MainControlStep::EndOfInput)
+            ) {
                 terminal_step = Some((step_index, step));
                 break;
             }
         }
 
-        assert_eq!(terminal_step, Some((6, MainControlStep::End)));
+        assert_eq!(
+            terminal_step,
+            Some((6, StepResult::Progress(MainControlStep::End)))
+        );
         assert_eq!(artifact_counts, [0, 0, 0, 0, 1, 1]);
         assert_eq!(stores.world().artifact_commits().len(), 1);
         assert!(
