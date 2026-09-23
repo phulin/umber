@@ -425,7 +425,7 @@ fn end_inside_unterminated_box_reaches_outer_cleanup() {
             let step = control
                 .advance(stores)
                 .expect("unterminated-box recovery executes");
-            artifact_counts.push(stores.world().artifact_commits().len());
+            artifact_counts.push(stores.world().committed_artifacts().len());
             assert!(
                 artifact_counts.last() <= Some(&1),
                 "end-job recovery must not repeat shipout"
@@ -445,7 +445,7 @@ fn end_inside_unterminated_box_reaches_outer_cleanup() {
             Some((6, StepResult::Progress(MainControlStep::End)))
         );
         assert_eq!(artifact_counts, [0, 0, 0, 0, 1, 1]);
-        assert_eq!(stores.world().artifact_commits().len(), 1);
+        assert_eq!(stores.world().committed_artifacts().len(), 1);
         assert!(
             admitted!(stores, |context| context
                 .current_page_nodes()

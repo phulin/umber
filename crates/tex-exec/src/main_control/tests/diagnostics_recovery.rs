@@ -1313,7 +1313,7 @@ fn main_control_error_privilege_and_stop_paths_are_finite() {
                     break;
                 }
             }
-            assert_eq!(page_stores.world().artifact_commits().len(), 1);
+            assert_eq!(page_stores.world().committed_artifacts().len(), 1);
             assert!(observations.0.iter().any(|observation| matches!(
         observation,
         CommandObservation::Effect(effect) if effect.kind == ObservationEffectKind::Terminate

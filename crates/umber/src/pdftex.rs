@@ -652,7 +652,7 @@ mod tests {
             .expect("the form ledger retains its consumed box through outer box teardown");
 
             assert!(stores.pdf_form_artifact(1).is_some());
-            assert_eq!(stores.world().artifact_commits().len(), 1);
+            assert_eq!(stores.world().committed_artifacts().len(), 1);
         });
     }
 
@@ -903,7 +903,7 @@ mod tests {
             assert_eq!(stores.pdf_annotations().len(), 1);
             assert_eq!(stores.pdf_links().len(), 1);
 
-            let hash = stores.world().artifact_commits()[0];
+            let hash = stores.world().committed_artifacts()[0].hash();
             let bytes = stores
                 .world()
                 .read_artifact(hash)
@@ -985,7 +985,7 @@ mod tests {
                 assert!(stores.pdf_destinations(false)[0].defined());
                 let bytes = stores
                     .world()
-                    .read_artifact(stores.world().artifact_commits()[0])
+                    .read_artifact(stores.world().committed_artifacts()[0].hash())
                     .expect("artifact read")
                     .expect("artifact exists");
                 let artifact = tex_out::PageArtifact::from_bytes(&bytes).expect("artifact parses");
@@ -1043,12 +1043,12 @@ mod tests {
             );
             let destination_effects = stores
                 .world()
-                .artifact_commits()
+                .committed_artifacts()
                 .iter()
-                .map(|&hash| {
+                .map(|artifact| {
                     stores
                         .world()
-                        .read_artifact(hash)
+                        .read_artifact(artifact.hash())
                         .expect("artifact read")
                         .expect("artifact exists")
                 })
@@ -1129,7 +1129,7 @@ mod tests {
             assert_eq!(thread.beads().len(), 1);
             let bytes = stores
                 .world()
-                .read_artifact(stores.world().artifact_commits()[0])
+                .read_artifact(stores.world().committed_artifacts()[0].hash())
                 .expect("artifact read")
                 .expect("artifact exists");
             let artifact = tex_out::PageArtifact::from_bytes(&bytes).expect("artifact parses");
@@ -1218,7 +1218,7 @@ mod tests {
                 }
                 assert!(stores.pdf_threads().is_empty());
                 assert!(stores.pdf_pages().is_empty());
-                assert!(stores.world().artifact_commits().is_empty());
+                assert!(stores.world().committed_artifacts().is_empty());
             });
         }
 
@@ -1250,7 +1250,7 @@ mod tests {
             );
             assert!(stores.pdf_threads().is_empty());
             assert!(stores.pdf_pages().is_empty());
-            assert!(stores.world().artifact_commits().is_empty());
+            assert!(stores.world().committed_artifacts().is_empty());
         });
     }
 

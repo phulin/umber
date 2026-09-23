@@ -169,8 +169,7 @@ impl World {
                 .artifact_commit_len
                 .checked_sub(self.artifact_base)
                 .expect("World artifact snapshot precedes retained base");
-            if self.artifact_commits.len() != retained {
-                Arc::make_mut(&mut self.artifact_commits).truncate(retained);
+            if self.committed_artifacts.len() != retained {
                 Arc::make_mut(&mut self.committed_artifacts).truncate(retained);
                 Arc::make_mut(&mut self.artifact_publications).truncate(retained);
             }
@@ -307,9 +306,6 @@ impl World {
             .checked_sub(self.artifact_base)
             .expect("World artifact mark follows the live base");
         detached
-            .artifact_commits
-            .extend(Arc::make_mut(&mut self.artifact_commits).drain(artifact_mark..));
-        detached
             .committed_artifacts
             .extend(Arc::make_mut(&mut self.committed_artifacts).drain(artifact_mark..));
         detached
@@ -412,7 +408,6 @@ impl World {
                 .map(|write| (write.path, write.previous)),
         );
         self.shell_escapes.append(&mut detached.shell_escapes);
-        Arc::make_mut(&mut self.artifact_commits).append(&mut detached.artifact_commits);
         Arc::make_mut(&mut self.committed_artifacts).append(&mut detached.committed_artifacts);
         Arc::make_mut(&mut self.artifact_publications).append(&mut detached.artifact_publications);
         self.detached = detached;
@@ -505,7 +500,6 @@ impl World {
         self.shell_escapes.truncate(snapshot.shell_escape_len);
         if snapshot.commit_mode == WorldCommitMode::Retained {
             self.artifact_base = snapshot.artifact_commit_len;
-            self.artifact_commits = Arc::new(Vec::new());
             self.committed_artifacts = Arc::new(Vec::new());
             self.artifact_publications = Arc::new(Vec::new());
         }

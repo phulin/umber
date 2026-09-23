@@ -216,7 +216,10 @@ fn reachable_future_state_identity_excludes_committed_artifact_history() {
             reservation,
         );
     }
-    assert_ne!(first.artifact_commits(), second.artifact_commits());
+    assert_ne!(
+        first.committed_artifacts()[0].hash(),
+        second.committed_artifacts()[0].hash()
+    );
     assert_eq!(
         first.reachable_state_identity_root(),
         second.reachable_state_identity_root(),
@@ -675,6 +678,11 @@ fn checkpoint_candidate_reuses_detached_storage_and_moves_owned_payloads() {
 
     let accepted = world.snapshot();
     let warmed_capacities = world.detached.capacities();
+    let artifact_hashes = world
+        .committed_artifacts()
+        .iter()
+        .map(CommittedArtifact::hash)
+        .collect::<Vec<_>>();
     let effect_payload = world
         .effects
         .iter()
@@ -691,6 +699,15 @@ fn checkpoint_candidate_reuses_detached_storage_and_moves_owned_payloads() {
     assert_eq!(world.detached.effects.len(), accepted.effect_len);
     assert_eq!(world.detached.inputs.len(), accepted.input_len);
     assert_eq!(world.detached.committed_artifacts.len(), 8);
+    assert_eq!(
+        world
+            .detached
+            .committed_artifacts
+            .iter()
+            .map(CommittedArtifact::hash)
+            .collect::<Vec<_>>(),
+        artifact_hashes
+    );
     assert_eq!(
         world
             .detached
@@ -712,6 +729,14 @@ fn checkpoint_candidate_reuses_detached_storage_and_moves_owned_payloads() {
     world.record_special("rejected", vec![255; 32]);
     world.reject_checkpoint_candidate(&root, tail);
     assert_eq!(world.snapshot(), accepted);
+    assert_eq!(
+        world
+            .committed_artifacts()
+            .iter()
+            .map(CommittedArtifact::hash)
+            .collect::<Vec<_>>(),
+        artifact_hashes
+    );
     assert!(world.detached.is_empty());
     assert_eq!(world.detached.capacities(), warmed_capacities);
     assert_eq!(
@@ -731,10 +756,24 @@ fn checkpoint_candidate_reuses_detached_storage_and_moves_owned_payloads() {
         artifact_bytes
     );
 
+    let fork = world.fork_checkpoint(&accepted);
+    assert_eq!(fork.artifact_pos(), world.artifact_pos());
+    assert!(fork.committed_artifacts().is_empty());
+    assert_eq!(
+        world
+            .committed_artifacts()
+            .iter()
+            .map(CommittedArtifact::hash)
+            .collect::<Vec<_>>(),
+        artifact_hashes,
+        "forking must leave the source publication history intact"
+    );
+
     let tail = world.begin_checkpoint_candidate(&root);
     world.record_special("accepted", vec![127; 32]);
     world.accept_checkpoint_candidate(tail);
     assert!(world.detached.is_empty());
+    assert!(world.committed_artifacts().is_empty());
     assert_eq!(world.detached.capacities(), warmed_capacities);
 }
 

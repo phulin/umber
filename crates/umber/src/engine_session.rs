@@ -490,7 +490,7 @@ impl<'a, G> EngineSession<'a, G> {
         let mut control = MainControl::with_profile(profile);
         control.bind_primitive_handles(stores);
         Self {
-            artifact_cursor: stores.world().artifact_commits().len(),
+            artifact_cursor: stores.world().committed_artifacts().len(),
             effect_cursor: stores.world().effect_records().len(),
             terminal_text_cursor: stores.world().effect_pos(),
             project_root_body_terminal_text: false,
@@ -525,7 +525,7 @@ impl<'a, G> EngineSession<'a, G> {
     #[must_use]
     pub fn tex82_initex(stores: &'a mut Universe<G>) -> Self {
         Self {
-            artifact_cursor: stores.world().artifact_commits().len(),
+            artifact_cursor: stores.world().committed_artifacts().len(),
             effect_cursor: stores.world().effect_records().len(),
             terminal_text_cursor: stores.world().effect_pos(),
             project_root_body_terminal_text: false,
@@ -559,7 +559,7 @@ impl<'a, G> EngineSession<'a, G> {
         let mut control = MainControl::prepared_initex(profile);
         control.bind_primitive_handles(stores);
         Self {
-            artifact_cursor: stores.world().artifact_commits().len(),
+            artifact_cursor: stores.world().committed_artifacts().len(),
             effect_cursor: stores.world().effect_records().len(),
             terminal_text_cursor: stores.world().effect_pos(),
             project_root_body_terminal_text: false,

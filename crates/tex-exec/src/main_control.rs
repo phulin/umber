@@ -2823,7 +2823,7 @@ impl<G> MainControl<G> {
     ) -> Result<StepResult, ExecError> {
         self.error_operation_committed = false;
         let initial_effect_pos = stores.world().effect_pos();
-        let initial_artifacts = stores.world().artifact_commits().len();
+        let initial_artifacts = stores.world().committed_artifacts().len();
         let initial_boundaries = 0;
         let initial_format_dump = self.dumped_format.is_some();
         let initial_diagnostic = self.first_causal_context.is_some();
@@ -5974,7 +5974,7 @@ impl<G> MainControl<G> {
             return Ok(StepResult::Progress(MainControlStep::End));
         }
         let effect_start = stores.world().effect_pos();
-        let artifact_start = stores.world().artifact_commits().len();
+        let artifact_start = stores.world().committed_artifacts().len();
         // Occupying the slot is what makes this operation observed. Every
         // command-processor episode the operation runs, including the nested
         // ones a host-applied step runs, publishes into this one buffer.
@@ -6255,7 +6255,7 @@ impl<G> MainControl<G> {
                 OperationOutputStart {
                     outer_paragraph_was_active,
                     source_role,
-                    artifact_count: stores.world().artifact_commits().len(),
+                    artifact_count: stores.world().committed_artifacts().len(),
                     effect_count: stores.world().effect_records().len(),
                     prepared_page_count: self.prepared_dvi_pages.len(),
                     tracked_region_is_active,
@@ -6520,7 +6520,7 @@ impl<G> MainControl<G> {
                 OperationOutputStart {
                     outer_paragraph_was_active,
                     source_role,
-                    artifact_count: stores.world().artifact_commits().len(),
+                    artifact_count: stores.world().committed_artifacts().len(),
                     effect_count: stores.world().effect_records().len(),
                     prepared_page_count: self.prepared_dvi_pages.len(),
                     tracked_region_is_active,
@@ -6536,7 +6536,7 @@ impl<G> MainControl<G> {
                     OperationOutputStart {
                         outer_paragraph_was_active,
                         source_role,
-                        artifact_count: stores.world().artifact_commits().len(),
+                        artifact_count: stores.world().committed_artifacts().len(),
                         effect_count: stores.world().effect_records().len(),
                         prepared_page_count: self.prepared_dvi_pages.len(),
                         tracked_region_is_active,
@@ -7003,7 +7003,7 @@ impl<G> MainControl<G> {
         }
         debug_assert!(
             !settled_in_admission
-                || (stores.world().artifact_commits().len() == output_start.artifact_count
+                || (stores.world().committed_artifacts().len() == output_start.artifact_count
                     && stores.world().effect_records().len() == output_start.effect_count
                     && self.prepared_dvi_pages.len() == output_start.prepared_page_count
                     && self.page_output_observations.is_empty()),

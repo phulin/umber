@@ -222,8 +222,8 @@ impl<G> MainControl<G> {
         for effect in &live_effects[effect_start..] {
             pending.record_world_effect(effect.clone());
         }
-        for artifact in &stores.world().artifact_commits()[start.artifact..] {
-            pending.record_artifact(*artifact);
+        for artifact in &stores.world().committed_artifacts()[start.artifact..] {
+            pending.record_artifact(artifact.hash());
         }
         pending.receipt.set_termination(termination);
         self.operation_evidence_limit_error()
@@ -320,7 +320,7 @@ impl<G> MainControl<G> {
         if matches!(applied, Ok(ReplayStep::End | ReplayStep::EndOfInput)) {
             return Some(crate::EpisodeCommitBoundary::Terminal);
         }
-        if stores.world().artifact_commits().len() != initial_artifacts {
+        if stores.world().committed_artifacts().len() != initial_artifacts {
             return Some(crate::EpisodeCommitBoundary::Semantic(
                 crate::SemanticEpisodeBarrier::Output,
             ));
@@ -366,7 +366,7 @@ impl<G> MainControl<G> {
                     .expect("bounded episode operation count fits u16"),
                 boundary,
             ));
-        if stores.world().artifact_commits().len() != initial_artifacts
+        if stores.world().committed_artifacts().len() != initial_artifacts
             && boundary
                 != crate::EpisodeCommitBoundary::Semantic(crate::SemanticEpisodeBarrier::Output)
         {

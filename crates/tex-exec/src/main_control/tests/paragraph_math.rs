@@ -86,7 +86,7 @@ fn paragraph_boundaries_run_everypar_in_outer_and_internal_vertical_modes() {
         assert_eq!(stores.count(0).expect("count register"), 2);
         assert_eq!(control.current_mode(), Mode::Vertical);
         assert!(stores.copy_box_to_page(0).is_some());
-        assert_eq!(stores.world().artifact_commits().len(), 1);
+        assert_eq!(stores.world().committed_artifacts().len(), 1);
     });
 }
 #[test]

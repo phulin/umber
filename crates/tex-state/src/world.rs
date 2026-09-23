@@ -1890,7 +1890,6 @@ struct DetachedWorldStorage {
     inputs: Vec<InputRecord>,
     input_dependencies: Vec<AcceptedInputDependencyWrite>,
     shell_escapes: Vec<ShellEscapeRecord>,
-    artifact_commits: Vec<ContentHash>,
     committed_artifacts: Vec<CommittedArtifact>,
     artifact_publications: Vec<ArtifactPublicationRecord>,
     stream_open_contexts: Vec<Option<String>>,
@@ -1910,7 +1909,6 @@ impl DetachedWorldStorage {
             && self.inputs.is_empty()
             && self.input_dependencies.is_empty()
             && self.shell_escapes.is_empty()
-            && self.artifact_commits.is_empty()
             && self.committed_artifacts.is_empty()
             && self.artifact_publications.is_empty()
             && self.stream_open_contexts.is_empty()
@@ -1948,7 +1946,6 @@ impl DetachedWorldStorage {
     }
 
     fn reserve_artifact(&mut self, needed: usize) {
-        Self::reserve_to(&mut self.artifact_commits, needed);
         Self::reserve_to(&mut self.committed_artifacts, needed);
         Self::reserve_to(&mut self.artifact_publications, needed);
     }
@@ -1972,14 +1969,13 @@ impl DetachedWorldStorage {
         self.inputs.clear();
         self.input_dependencies.clear();
         self.shell_escapes.clear();
-        self.artifact_commits.clear();
         self.committed_artifacts.clear();
         self.artifact_publications.clear();
         self.stream_open_contexts.clear();
     }
 
     #[cfg(test)]
-    fn capacities(&self) -> [usize; 16] {
+    fn capacities(&self) -> [usize; 15] {
         [
             self.effects.capacity(),
             self.effect_sequences.capacity(),
@@ -1993,7 +1989,6 @@ impl DetachedWorldStorage {
             self.inputs.capacity(),
             self.input_dependencies.capacity(),
             self.shell_escapes.capacity(),
-            self.artifact_commits.capacity(),
             self.committed_artifacts.capacity(),
             self.artifact_publications.capacity(),
             self.stream_open_contexts.capacity(),
@@ -2234,7 +2229,6 @@ pub struct World {
     terminal_input_owner: u64,
     shell_escapes: Vec<ShellEscapeRecord>,
     artifact_base: usize,
-    artifact_commits: Arc<Vec<ContentHash>>,
     committed_artifacts: Arc<Vec<CommittedArtifact>>,
     artifact_publications: Arc<Vec<ArtifactPublicationRecord>>,
     provisional_page_output_receipts:
@@ -2687,7 +2681,6 @@ impl Clone for World {
             terminal_input_owner: fresh_terminal_input_owner(),
             shell_escapes: self.shell_escapes.clone(),
             artifact_base: self.artifact_base,
-            artifact_commits: self.artifact_commits.clone(),
             committed_artifacts: self.committed_artifacts.clone(),
             artifact_publications: self.artifact_publications.clone(),
             provisional_page_output_receipts: self.provisional_page_output_receipts.clone(),
@@ -2734,7 +2727,6 @@ impl PartialEq for World {
             && self.stream_open_contexts == other.stream_open_contexts
             && self.shell_escapes == other.shell_escapes
             && self.artifact_base == other.artifact_base
-            && self.artifact_commits == other.artifact_commits
             && self.committed_artifacts == other.committed_artifacts
             && self.artifact_publications == other.artifact_publications
             && self.provisional_page_output_receipts == other.provisional_page_output_receipts
@@ -2983,7 +2975,6 @@ impl World {
             terminal_input_owner: fresh_terminal_input_owner(),
             shell_escapes: Vec::new(),
             artifact_base: 0,
-            artifact_commits: Arc::new(Vec::new()),
             committed_artifacts: Arc::new(Vec::new()),
             artifact_publications: Arc::new(Vec::new()),
             provisional_page_output_receipts: Arc::new(BTreeMap::new()),
@@ -3915,23 +3906,13 @@ impl World {
         }
     }
 
-    /// Returns committed page artifact ids in shipout order.
-    ///
-    /// This is downstream notification state: shipout is the commit barrier,
-    /// so these entries are never rolled back or included in semantic hashes.
-    #[must_use]
-    pub fn artifact_commits(&self) -> &[ContentHash] {
-        self.artifact_commits.as_slice()
-    }
-
     /// Absolute artifact prefix position including the detached inherited prefix.
     #[must_use]
     pub fn artifact_pos(&self) -> usize {
-        self.artifact_base + self.artifact_commits.len()
+        self.artifact_base + self.committed_artifacts.len()
     }
 
-    /// Returns the in-process commit receipts aligned with
-    /// [`Self::artifact_commits`].
+    /// Returns in-process commit receipts in shipout order.
     ///
     /// These are downstream notification state, not rollback or semantic
     /// state. Durable consumers should retain the content id and use
@@ -4158,8 +4139,7 @@ impl World {
         reservation: ArtifactPublicationReservation,
     ) {
         self.detached
-            .reserve_artifact(self.artifact_commits.len() + 1);
-        Arc::make_mut(&mut self.artifact_commits).push(hash);
+            .reserve_artifact(self.committed_artifacts.len() + 1);
         Arc::make_mut(&mut self.committed_artifacts).push(CommittedArtifact::new(
             hash,
             bytes,
@@ -4197,8 +4177,7 @@ impl World {
         publication: ArtifactPublicationRecord,
     ) {
         self.detached
-            .reserve_artifact(self.artifact_commits.len() + 1);
-        Arc::make_mut(&mut self.artifact_commits).push(artifact.hash);
+            .reserve_artifact(self.committed_artifacts.len() + 1);
         Arc::make_mut(&mut self.committed_artifacts).push(artifact);
         Arc::make_mut(&mut self.artifact_publications).push(publication);
     }

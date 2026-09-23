@@ -349,7 +349,7 @@ fn raw_etex_cache_reuse_reloads_exact_live_registry_into_fresh_runtime_state() {
         );
         assert_eq!(universe.primitive_meaning("pdfprimitive"), None);
         assert!(universe.world().effect_records().is_empty());
-        assert!(universe.world().artifact_commits().is_empty());
+        assert!(universe.world().committed_artifacts().is_empty());
         assert_eq!(universe.int_param(IntParam::YEAR), 2031);
     });
 }
@@ -406,7 +406,7 @@ fn production_pdftex_cache_reuse_reloads_exact_live_registry_into_fresh_runtime_
             ))
         );
         assert!(universe.world().effect_records().is_empty());
-        assert!(universe.world().artifact_commits().is_empty());
+        assert!(universe.world().committed_artifacts().is_empty());
         assert_eq!(universe.int_param(IntParam::PDF_OUTPUT), 0);
         assert_eq!(universe.fixed_pdf_output_parameters(), None);
         assert_eq!(universe.int_param(IntParam::YEAR), 2031);

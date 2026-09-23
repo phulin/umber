@@ -221,7 +221,12 @@ fn unified_operation_preserves_state_output_and_typed_evidence() {
         (
             state,
             stores.world().effect_records().to_vec(),
-            stores.world().artifact_commits().to_vec(),
+            stores
+                .world()
+                .committed_artifacts()
+                .iter()
+                .map(|artifact| artifact.hash())
+                .collect::<Vec<_>>(),
             stores
                 .world()
                 .memory_terminal_output()
@@ -258,7 +263,12 @@ fn unified_operation_preserves_state_output_and_typed_evidence() {
             (
                 state,
                 stores.world().effect_records().to_vec(),
-                stores.world().artifact_commits().to_vec(),
+                stores
+                    .world()
+                    .committed_artifacts()
+                    .iter()
+                    .map(|artifact| artifact.hash())
+                    .collect::<Vec<_>>(),
             ),
             evidence,
         )
@@ -283,7 +293,12 @@ fn unified_operation_preserves_state_output_and_typed_evidence() {
         (
             state,
             stores.world().effect_records().to_vec(),
-            stores.world().artifact_commits().to_vec(),
+            stores
+                .world()
+                .committed_artifacts()
+                .iter()
+                .map(|artifact| artifact.hash())
+                .collect::<Vec<_>>(),
         )
     });
 

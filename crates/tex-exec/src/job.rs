@@ -138,7 +138,7 @@ pub(crate) struct JobFraming {
 ///
 /// tex.web's §642 `finish_dvi` prints the current job's total page count
 /// alongside the file's name and final byte length. The page count is
-/// durable engine state (`Universe::world().artifact_commits()`, incremented
+/// durable engine state (`Universe::world().committed_artifacts()`, incremented
 /// at every `\shipout`), so it is not a field here: threading it through
 /// this struct would let a caller's wrong number silently override the
 /// engine's own count. Only the name and byte length are supplied, because
@@ -977,7 +977,7 @@ pub fn confirm_format_dump_publication<G>(
 /// tex.web §642's `<Finish the DVI file>`.
 ///
 /// The page count is read from the engine's own durable commit log
-/// (`Universe::world().artifact_commits()`), never from `dvi`: a caller
+/// (`Universe::world().committed_artifacts()`), never from `dvi`: a caller
 /// cannot make this print "Output written on..." with a fabricated page
 /// count, and cannot make it print a byte count when the engine committed no
 /// pages, because the zero-page branch never inspects `dvi` at all.
@@ -995,7 +995,7 @@ fn print_dvi_report<G>(
     if statistics_left_file_offset_open {
         stores.printer().print_ln();
     }
-    let total_pages = i32::try_from(stores.world().artifact_commits().len()).unwrap_or(i32::MAX);
+    let total_pages = i32::try_from(stores.world().committed_artifacts().len()).unwrap_or(i32::MAX);
     if total_pages == 0 {
         stores.printer().print_nl("No pages of output.");
         return;

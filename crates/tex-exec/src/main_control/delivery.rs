@@ -652,7 +652,7 @@ impl<G> MainControl<G> {
             let output_start = OperationOutputStart {
                 outer_paragraph_was_active,
                 source_role: frame.operation_source_role(),
-                artifact_count: stores.world().artifact_commits().len(),
+                artifact_count: stores.world().committed_artifacts().len(),
                 effect_count: stores.world().effect_records().len(),
                 prepared_page_count: self.prepared_dvi_pages.len(),
                 tracked_region_is_active: false,

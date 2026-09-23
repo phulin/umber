@@ -775,7 +775,7 @@ impl<'a, G> CommandContext<'a, G> {
     /// admitted command episode.
     #[must_use]
     pub fn artifact_commit_count(&self) -> usize {
-        self.resident.world.artifact_commits().len()
+        self.resident.world.committed_artifacts().len()
     }
 
     /// Captures the current host-effect boundary without ending the admitted

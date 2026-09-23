@@ -13,7 +13,7 @@ fn automatic_output_box_remains_page_owned_until_shipout() {
 
         run_to_end(&mut control, stores);
 
-        assert_eq!(stores.world().artifact_commits().len(), 1);
+        assert_eq!(stores.world().committed_artifacts().len(), 1);
         let lifecycle = stores.page_region_counters();
         assert_eq!(
             lifecycle.page_to_durable_nodes_copied, 0,
@@ -774,7 +774,7 @@ fn end_job_transition_census_covers_output_and_residual_paths() {
             assert_eq!(stop_positions.len(), expected_stops, "{name}");
             assert_eq!(shipout_positions.len(), expected_pages, "{name}");
             assert_eq!(
-                stores.world().artifact_commits().len(),
+                stores.world().committed_artifacts().len(),
                 expected_pages,
                 "{name}"
             );

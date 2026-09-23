@@ -435,7 +435,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
   handle-free deferred-write memos, artifact-owned detached rendered-source
   recipes, value-stamped snapshot-root mounts, direct stream state with fixed
   input/path cursors and scalar printer offsets, reusable detached-prior
-  effect/input/artifact journals for candidate settlement, and
+  effect/input/artifact journals for candidate settlement, one committed
+  artifact receipt column whose hashes are derived on demand, and
   field/key-specific allocation-independent dependency projections.
   Stored artifacts are authenticated with the current artifact-domain content
   hash; historical hash schemes are not accepted.

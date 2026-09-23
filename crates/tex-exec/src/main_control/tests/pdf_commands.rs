@@ -2905,7 +2905,7 @@ fn outer_vertical_pdf_whatsits_cross_page_successors_before_final_end() {
             let mut observations = ObservationRecorder::default();
             run_to_end_observed(&mut control, stores, &mut observations);
 
-            assert_eq!(stores.world().artifact_commits().len(), 2, "{name}");
+            assert_eq!(stores.world().committed_artifacts().len(), 2, "{name}");
             assert!(mode_vec(&control, stores).is_empty(), "{name}");
             assert!(admitted!(stores, |context| context
                 .page_contributions()

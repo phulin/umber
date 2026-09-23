@@ -80,14 +80,27 @@ fn partial_execution_cannot_detach_or_latch_terminal_state() {
             .expect("source opens");
         let ledger = OutputLedger::default();
         let effects_before = universe.world().effect_records().to_vec();
-        let artifacts_before = universe.world().committed_artifacts().to_vec();
+        let artifacts_before = universe
+            .world()
+            .committed_artifacts()
+            .iter()
+            .map(|artifact| artifact.hash())
+            .collect::<Vec<_>>();
 
         assert!(matches!(
             ledger.terminal_receipt(&control, universe, MainControlStep::End),
             Err(EngineCompletionError::TerminalRevisionUnavailable)
         ));
         assert_eq!(universe.world().effect_records(), effects_before);
-        assert_eq!(universe.world().committed_artifacts(), artifacts_before);
+        assert_eq!(
+            universe
+                .world()
+                .committed_artifacts()
+                .iter()
+                .map(|artifact| artifact.hash())
+                .collect::<Vec<_>>(),
+            artifacts_before
+        );
         assert_eq!(
             control
                 .advance(universe)

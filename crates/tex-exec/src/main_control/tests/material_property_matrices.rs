@@ -1205,7 +1205,7 @@ fn direct_material_modes_operands_page_boundary_and_group_clear_matrix() {
                 br"\vsize=1pt\topskip=0pt\hrule height2pt\penalty-10000\end",
                 false,
                 |_, page| {
-                    assert_eq!(page.world().artifact_commits().len(), 1);
+                    assert_eq!(page.world().committed_artifacts().len(), 1);
 
                     with_run(
                         br"\setbox0=\hbox{\vrule width1pt X\kern2pt}",
@@ -1591,7 +1591,7 @@ fn box_construction_targets_specs_hooks_shifts_leaders_and_register_matrix() {
                 matches!(register_shapes(universe, 12).as_deref(), Some([Shape::VBox { children, .. }])
         if matches!(children.as_slice(), [Shape::VBox { shift, .. }] if *shift == 3 * Scaled::UNITY))
             );
-            assert_eq!(universe.world().artifact_commits().len(), 1);
+            assert_eq!(universe.world().committed_artifacts().len(), 1);
 
             with_run(
                 br"\nonstopmode\setbox0=\hbox\kern2pt}\setbox1=\count0=7\setbox2=\hbox{}",
@@ -1661,7 +1661,7 @@ fn paragraph_entry_endings_migration_depth_and_recovery_matrix() {
                 matches!(register_shapes(universe, 5).as_deref(), Some([Shape::VBox { children, .. }])
         if matches!(children.as_slice(), [Shape::HBox { children: line, .. }] if line.contains(&Shape::Char('E'))))
             );
-            assert_eq!(universe.world().artifact_commits().len(), 1);
+            assert_eq!(universe.world().committed_artifacts().len(), 1);
             assert!(!terminal(universe).contains("Missing \\par inserted"));
             assert!(!terminal(universe).contains("Emergency stop"));
         },

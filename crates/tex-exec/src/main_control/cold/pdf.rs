@@ -1127,7 +1127,7 @@ pub(in crate::main_control) fn committed_shipout_observations<G>(
     before: usize,
     stores: &Universe<G>,
 ) -> Vec<EffectRecord> {
-    (before..stores.world().artifact_commits().len())
+    (before..stores.world().committed_artifacts().len())
         .map(|committed| EffectRecord {
             kind: ObservationEffectKind::Shipout,
             channel: "dvi".into(),

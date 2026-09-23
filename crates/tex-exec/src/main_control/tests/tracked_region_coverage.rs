@@ -42,7 +42,12 @@ fn run_complete_job(tracked: bool) -> ParityOutcome {
             steps,
             count: stores.count(0).expect("count register"),
             effects: stores.world().effect_records().to_vec(),
-            artifacts: stores.world().artifact_commits().to_vec(),
+            artifacts: stores
+                .world()
+                .committed_artifacts()
+                .iter()
+                .map(|artifact| artifact.hash())
+                .collect::<Vec<_>>(),
             dvi_pages: control.take_prepared_dvi_pages(),
             boundaries: Vec::new(),
         }
@@ -79,7 +84,12 @@ fn run_missing_font(tracked: bool) -> SuspensionOutcome {
             step,
             region_was_published,
             effects: stores.world().effect_records().to_vec(),
-            artifacts: stores.world().artifact_commits().to_vec(),
+            artifacts: stores
+                .world()
+                .committed_artifacts()
+                .iter()
+                .map(|artifact| artifact.hash())
+                .collect::<Vec<_>>(),
             boundaries: Vec::new(),
         }
     })

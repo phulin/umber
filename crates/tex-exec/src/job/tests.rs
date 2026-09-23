@@ -620,7 +620,7 @@ fn finish_job_keeps_log_only_statistics_before_the_committed_page_report() {
 #[test]
 fn finish_job_reports_output_written_with_the_singular_page_form() {
     with_source_to_end(br"\shipout\hbox{}\end", |_, universe| {
-        assert_eq!(universe.world().artifact_commits().len(), 1);
+        assert_eq!(universe.world().committed_artifacts().len(), 1);
 
         finish_test_job(
             universe,
@@ -645,7 +645,7 @@ fn finish_job_reports_output_written_with_the_singular_page_form() {
 #[test]
 fn finish_job_reports_output_written_with_the_plural_page_form() {
     with_source_to_end(br"\shipout\hbox{}\shipout\hbox{}\end", |_, universe| {
-        assert_eq!(universe.world().artifact_commits().len(), 2);
+        assert_eq!(universe.world().committed_artifacts().len(), 2);
 
         finish_test_job(
             universe,

@@ -1282,7 +1282,7 @@ fn preloaded_output_routine_preserves_end_job_progress_and_observation_order() {
         let mut observations = ObservationRecorder::default();
         run_to_end_observed(&mut control, stores, &mut observations);
 
-        assert_eq!(stores.world().artifact_commits().len(), 1);
+        assert_eq!(stores.world().committed_artifacts().len(), 1);
         let shipout = observations
             .0
             .iter()
