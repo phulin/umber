@@ -617,7 +617,7 @@
       "test_level": "planned-rust-unit",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests/alignment.rs",
           "test": "align_peek_full_branch_prefix_recovery_and_nesting_matrix"
         }
       ],
@@ -654,7 +654,7 @@
       "test_level": "planned-rust-unit",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests/alignment.rs",
           "test": "init_row_halign_valign_leading_tabskip_template_span_and_aux_matrix"
         }
       ],
@@ -781,7 +781,7 @@
       "test_level": "planned-rust-unit",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests/alignment.rs",
           "test": "fin_col_delimiter_periodic_extra_tab_and_brace_depth_matrix"
         }
       ],
@@ -1401,7 +1401,7 @@
       "test_level": "planned-rust-unit",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests/alignment.rs",
           "test": "display_alignment_finish_complete_content_delimiter_and_spacing_matrix"
         }
       ],

@@ -507,7 +507,7 @@
           "test": "filename_scan_stops_at_space_and_keeps_area_name_and_extension"
         },
         {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests/shipout.rs",
           "test": "openin_closein_replace_stream_state_and_apply_filename_rules"
         },
         {
@@ -1426,7 +1426,7 @@
           "test": "base_whatsit_construction_projects_fields_display_size_and_ownership"
         },
         {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests/paragraph_math.rs",
           "test": "language_normalization_and_same_language_append_boundaries_match_tex82"
         }
       ],
@@ -1642,11 +1642,11 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests/paragraph_math.rs",
           "test": "language_normalization_and_same_language_append_boundaries_match_tex82"
         },
         {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests/diagnostics_recovery.rs",
           "test": "setlanguage_illegal_mode_recovers_without_scan_or_append"
         },
         {

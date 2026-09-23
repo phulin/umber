@@ -895,11 +895,11 @@
           "test": "vsplit_breakpoint_mark_scope_and_complete_ownership_matrix"
         },
         {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests/list_material.rs",
           "test": "vsplit_kernel_separates_result_remainder_and_split_marks"
         },
         {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests/diagnostics_recovery.rs",
           "test": "vsplit_infinite_shrink_reports_the_scanner_owned_live_context"
         }
       ],
@@ -966,11 +966,11 @@
           "test": "text_outer_vertical_math_illegal_meaning_and_trigger_provenance_matrix"
         },
         {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests/paragraph_math.rs",
           "test": "text_material_preserves_ligature_space_factor_and_font_glue"
         },
         {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests/paragraph_math.rs",
           "test": "language_normalization_and_same_language_append_boundaries_match_tex82"
         }
       ],
@@ -1032,11 +1032,11 @@
           "test": "direct_material_math_recovery_and_failed_keyword_token_ownership_matrix"
         },
         {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests/list_material.rs",
           "test": "direct_material_appends_typed_nodes_in_source_order"
         },
         {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests/shipout.rs",
           "test": "outer_vertical_kern_joins_contributions_without_running_page_builder"
         }
       ],
@@ -1110,23 +1110,23 @@
           "test": "box_forbidden_shift_lastbox_vsplit_and_recovery_ownership_matrix"
         },
         {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests/assignments.rs",
           "test": "copy_preserves_every_recursive_node_payload_and_source_register"
         },
         {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests/list_material.rs",
           "test": "destructive_unbox_transfers_nested_structural_children"
         },
         {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests/diagnostics_recovery.rs",
           "test": "hbox_group_type_respects_box_context_and_vertical_mode"
         },
         {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests/assignments.rs",
           "test": "setbox_scope_is_globaldefs_adjusted_before_the_box_is_scanned"
         },
         {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests/list_material.rs",
           "test": "vsplit_kernel_separates_result_remainder_and_split_marks"
         }
       ],
@@ -1188,15 +1188,15 @@
           "test": "paragraph_prev_graf_depth_off_save_and_replay_provenance_matrix"
         },
         {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests/paragraph_math.rs",
           "test": "paragraph_boundaries_run_everypar_in_outer_and_internal_vertical_modes"
         },
         {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests/paragraph_math.rs",
           "test": "vertical_unbox_in_horizontal_mode_ends_the_paragraph_before_splicing"
         },
         {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests/list_material.rs",
           "test": "end_inside_unterminated_box_reaches_outer_cleanup"
         }
       ],
@@ -1282,19 +1282,19 @@
           "test": "insert_class_and_forbidden_vadjust_recovery_preserve_state_and_input"
         },
         {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests/list_material.rs",
           "test": "etex_lastnodetype_covers_every_node_code"
         },
         {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests/shipout.rs",
           "test": "etex_marks_scans_extended_classes_and_expanded_text_in_every_mode"
         },
         {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests/list_material.rs",
           "test": "destructive_unbox_transfers_nested_structural_children"
         },
         {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests/assignments.rs",
           "test": "incompatible_unbox_commands_preserve_registers_and_replay_state"
         }
       ],
@@ -1347,7 +1347,7 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests/assignments.rs",
           "test": "discretionary_parts_execute_live_in_disc_group_without_duplicate_delivery"
         }
       ],

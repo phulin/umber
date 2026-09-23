@@ -256,10 +256,10 @@ of the contract, its oracle, and exclusions where it helps. Keep case identity
 in failure messages. Use Rust filters for focused debugging without creating
 one Cargo integration binary per class.
 
-Start with `tex-exec/src/main_control/tests.rs`, approximately 17,800 lines:
-split initialization/formats, assignments, recovery/diagnostics, alignment,
-resource replay, and shipout into named sibling modules within the same test
-target. Apply the same approach to the large CLI, conformance, expansion,
+The original `tex-exec/src/main_control/tests.rs` was approximately 17,800
+lines. Its cases now live in named behavior modules under
+`tex-exec/src/main_control/tests/` within the same test target. Apply the same
+approach to the large CLI, conformance, expansion,
 and line-breaking suites. Preserve test names or update their catalogue
 links and scripts atomically.
 

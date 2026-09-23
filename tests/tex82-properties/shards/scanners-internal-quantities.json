@@ -304,7 +304,7 @@
       "test_level": "rust-unit",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests/diagnostics_recovery.rs",
           "test": "showthe_uses_the_toks_for_each_internal_value_family_and_releases_output"
         },
         {
@@ -354,7 +354,7 @@
       "test_level": "rust-unit",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests/diagnostics_recovery.rs",
           "test": "showthe_uses_the_toks_for_each_internal_value_family_and_releases_output"
         },
         {
@@ -400,7 +400,7 @@
       "test_level": "rust-unit",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests/diagnostics_recovery.rs",
           "test": "fontdimen_identifier_and_bound_recovery_matrix_is_exact"
         },
         {
@@ -804,7 +804,7 @@
       "test_level": "rust-unit",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests/diagnostics_recovery.rs",
           "test": "macro_parameter_errors_have_distinct_tex82_diagnostics_and_commit_scope"
         },
         {
@@ -847,7 +847,7 @@
       "test_level": "rust-unit",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests/diagnostics_recovery.rs",
           "test": "invalid_middle_and_right_report_missing_delimiter_before_extra_command"
         },
         {

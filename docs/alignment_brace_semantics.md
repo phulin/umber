@@ -147,7 +147,7 @@ value (TeX82 §37 `push_alignment`/`pop_alignment`, `align_peek`, and
 Focused regressions live at the owning boundary:
 
 - aliases, `do_endv` recovery, and command-owned outer-delivery resumption:
-  `crates/tex-exec/src/main_control/tests.rs`;
+  `crates/tex-exec/src/main_control/tests/alignment.rs`;
 - raw brace accounting, nested suspension, and v-template retirement:
   `crates/tex-command/src/input/tests.rs`,
   `crates/tex-command/src/state/tests.rs`,

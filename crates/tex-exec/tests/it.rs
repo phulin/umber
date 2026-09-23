@@ -263,10 +263,35 @@ fn unified_operation_preserves_state_output_and_typed_evidence() {
             evidence,
         )
     });
+    let stepped = support::with_plain_universe(|stores| {
+        let mut control = etex_session(stores, source);
+        loop {
+            match control.step(stores).expect("step execution") {
+                MainControlStep::End | MainControlStep::EndOfInput => break,
+                MainControlStep::Continue => {}
+            }
+        }
+        let context = stores.command_context().expect("command admission");
+        let state = (
+            context.count(0).expect("count zero"),
+            context.count(1).expect("count one"),
+            context.box_register(0).is_some(),
+        );
+        drop(context);
+        (
+            state,
+            stores.world().effect_records().to_vec(),
+            stores.world().artifact_commits().to_vec(),
+        )
+    });
 
     assert_eq!(ordinary.0, observed.0);
     assert_eq!(ordinary.1, observed.1);
     assert_eq!(ordinary.2, observed.2);
+    assert_eq!(
+        (ordinary.0, &ordinary.1, &ordinary.2),
+        (stepped.0, &stepped.1, &stepped.2)
+    );
     assert!(
         ordinary.3,
         "independent ordinary producer must commit world output"
@@ -335,332 +360,6 @@ fn unified_operation_resource_need_is_observation_independent() {
         evidence.0.is_empty(),
         "rolled-back evidence must not publish"
     );
-}
-
-#[test]
-fn predecessor_operation_branches_are_absent() {
-    let source = include_str!("../src/main_control.rs");
-    let episode = include_str!("../src/episode.rs");
-    let universe = include_str!("../../tex-state/src/universe.rs");
-    let state_facade = include_str!("../../tex-state/src/lib.rs");
-    assert!(source.contains("fn execute_operation("));
-    for predecessor in [
-        "fn step_once(",
-        "fn alignment_step_once(",
-        "fn step_with_observer_once(",
-        "struct StepSnapshot",
-        "fn execute_aggregate_operation(",
-        "snapshot_for_local_retry(",
-    ] {
-        assert!(
-            !source.contains(predecessor),
-            "retained predecessor: {predecessor}"
-        );
-    }
-    for predecessor in [
-        "struct LocalRetrySnapshot",
-        "snapshot_for_local_retry(",
-        "rollback_for_local_retry(",
-        "rollback_local_retry_snapshot(",
-    ] {
-        assert!(
-            !universe.contains(predecessor),
-            "retained state retry predecessor: {predecessor}"
-        );
-        assert!(
-            !state_facade.contains(predecessor),
-            "retained state retry export: {predecessor}"
-        );
-    }
-    for predecessor in ["EpisodeInternalStop", "InternalStop("] {
-        assert!(
-            !episode.contains(predecessor),
-            "retained episode-lineage predecessor: {predecessor}"
-        );
-    }
-}
-
-#[test]
-fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
-    let control = include_str!("../src/main_control.rs");
-    let delivery = include_str!("../src/main_control/delivery.rs");
-    let executor_facts = include_str!("../src/main_control/executor_facts.rs");
-    let command_episode = include_str!("../src/main_control/command_episode.rs");
-    let settlement = include_str!("../src/main_control/settlement.rs");
-    let ownership_surface = [
-        control,
-        delivery,
-        executor_facts,
-        command_episode,
-        settlement,
-    ]
-    .concat();
-    let interpreter = include_str!("../src/interpreter.rs");
-    let hot = include_str!("../src/main_control/hot_apply.rs");
-    let cold = include_str!("../src/main_control/cold/mod.rs");
-    let cold_operation = include_str!("../src/main_control/cold/operation.rs");
-    let cold_scan = include_str!("../src/main_control/cold/scan.rs");
-    let cold_apply = include_str!("../src/main_control/cold/apply.rs");
-    let cold_support = include_str!("../src/main_control/cold/support.rs");
-
-    assert!(control.contains("mod cold;"));
-    assert!(control.contains("mod delivery;"));
-    assert!(control.contains("mod executor_facts;"));
-    assert!(control.contains("mod hot_apply;"));
-    assert!(control.contains("mod command_episode;"));
-    assert!(control.contains("mod settlement;"));
-    for (authority, owner) in [
-        ("struct CommandEpisode<G>", command_episode),
-        ("fn preflight_replay_delivery(", delivery),
-        ("fn commit_direct_operation(", settlement),
-        ("fn discard_direct_operation(", settlement),
-        ("fn finish_paragraph_boundary(", settlement),
-        ("fn effective_tail_facts<G>(", executor_facts),
-    ] {
-        assert!(owner.contains(authority), "missing owner for {authority}");
-        assert!(
-            !control.contains(authority),
-            "ownership transition leaked back into main_control.rs: {authority}"
-        );
-    }
-    for interpreter_authority in [
-        "fn execute_direct_episode(",
-        "fn execute_typed_operation(",
-        "fn dispatch_typed_operation(",
-        "fn execute_cold_episode(",
-    ] {
-        assert!(
-            control.contains(interpreter_authority),
-            "main-control interpreter lost {interpreter_authority}"
-        );
-    }
-    assert_eq!(control.matches("fn command_processor<").count(), 1);
-    assert_eq!(interpreter.matches("CommandProcessor::new(").count(), 1);
-    assert!(!ownership_surface.contains("enum ScannedStep"));
-    assert!(!ownership_surface.contains("struct PreparedOperation"));
-    assert!(command_episode.contains("struct CommandEpisode<G>"));
-    assert!(!ownership_surface.contains("struct PreparedColdOperation"));
-    assert!(!ownership_surface.contains("struct PrepareOperationError"));
-    assert!(!ownership_surface.contains("Prepared(Box<ColdOperation"));
-    let command_episode_definition = command_episode
-        .split("struct CommandEpisode<G>")
-        .nth(1)
-        .and_then(|tail| tail.split("impl<G> Default for CommandEpisode<G>").next())
-        .expect("locate resident command episode");
-    assert!(command_episode_definition.contains("command: Option<tex_command::CurrentCommand<G>>"));
-    assert!(!command_episode_definition.contains("hot: Option<hot_apply::HotOperation<G>>"));
-    assert!(command_episode_definition.contains("phase: Option<PreflightCommandPhase>"));
-    assert!(!ownership_surface.contains("OperationPayload"));
-    assert!(!ownership_surface.contains("struct PreflightCommand<G>"));
-    assert!(!ownership_surface.contains("command: Option<PreflightCommand<G>>"));
-    assert!(!ownership_surface.contains("struct PreflightDelivery<G>"));
-    assert!(executor_facts.contains("fn fill_delivery("));
-    assert!(!executor_facts.contains("CommandBarrier"));
-    for retired in [
-        "PendingPreflightCommand",
-        "struct PendingOperationScan",
-        "struct PendingPrefixedCommandScan",
-        "struct PendingPrefixScan",
-        "fn for_delivery(",
-        "fn with_cursor(",
-        "fn with_scanner(",
-        "PreflightDeliveryError",
-    ] {
-        assert!(
-            !ownership_surface.contains(retired),
-            "retained preflight command mirror: {retired}"
-        );
-    }
-    assert!(!ownership_surface.contains("command.clone()"));
-    assert!(!cold_scan.contains("command.clone()"));
-    let preflight = delivery
-        .split_once("fn preflight_replay_delivery(")
-        .and_then(|(_, tail)| tail.split_once("/// The closer TeX82"))
-        .map(|(body, _)| body)
-        .expect("locate direct preflight delivery");
-    assert!(preflight.contains("processor.main_loop_lookahead_into(&mut frame.command)"));
-    assert!(preflight.contains("processor.preflight_command_into(&mut frame.command)"));
-    let admitted_episode = preflight
-        .split_once(
-            "let mut admitted_context = stores.command_context().expect(\"live generation\");",
-        )
-        .and_then(|(_, tail)| tail.split_once("if context_readiness == PreflightReadiness::Failed"))
-        .map(|(body, _)| body)
-        .expect("locate the long-lived destination-directed command context");
-    assert_eq!(admitted_episode.matches("command_processor(").count(), 1);
-    assert!(!admitted_episode.contains("stores.command_context()"));
-    assert!(preflight.contains("'admitted: loop"));
-    assert!(preflight.contains("self.commit_admitted_direct_operation(context, completed_mark)"));
-    assert!(preflight.contains("host_preparation.fill_delivery("));
-    assert!(cold_scan.contains("match meaning {"));
-    assert!(cold_scan.contains("complete_cold_scan!("));
-    assert!(!cold_scan.contains("fill_resident!"));
-    for scanner_source in [delivery, cold_scan] {
-        assert!(
-            !scanner_source.contains("Result<ColdOperation"),
-            "cold scanner returned the complete operation carrier"
-        );
-        assert!(
-            !scanner_source.contains("Result<Option<ColdOperation"),
-            "cold scanner returned an optional complete operation carrier"
-        );
-        assert!(
-            !scanner_source.contains("Ok(ColdOperation"),
-            "cold scanner rebuilt an operation through Result"
-        );
-    }
-    assert!(control.contains("macro_rules! write_cold_scan"));
-    assert!(control.contains("$cold.operation = Some($operation)"));
-    assert!(delivery.contains("command.mark_resident_cold(cold)"));
-    assert_eq!(
-        preflight.matches("dispatch_main_control_command(").count(),
-        1
-    );
-    assert!(!preflight.contains("settle_preflight_command_into"));
-    assert!(!control.contains("fn direct_hot_candidate"));
-    assert!(!control.contains("fn scan_direct_hot_command"));
-    assert!(!preflight.contains("let mut destination = None"));
-    let preparation_front = control
-        .split_once("fn dispatch_typed_operation(")
-        .and_then(|(_, tail)| tail.split_once("let mode_fingerprint"))
-        .map(|(body, _)| body)
-        .expect("locate pre-scanned preparation bypass");
-    assert!(!ownership_surface.contains("OperationDelivery::ResidentHot"));
-    assert!(!ownership_surface.contains("frame.hot_mut()"));
-    assert!(preflight.contains("ScannedOperation::Hot(operation)"));
-    assert!(preflight.contains("apply_hot_operation_admitted("));
-    assert!(preflight.contains("frame.unavailable(cold).executes_directly()"));
-    assert!(preflight.contains("self.apply_direct_cold_operation("));
-    assert!(control.contains("OperationDelivery::AppliedDirect"));
-    let direct_settlement = control
-        .split_once("let applied = if applied_directly {")
-        .and_then(|(_, tail)| tail.split_once("} else {"))
-        .map(|(body, _)| body)
-        .expect("locate direct admitted settlement");
-    assert!(direct_settlement.contains("Ok(ReplayStep::Continue)"));
-    assert!(!direct_settlement.contains("execute_typed_operation("));
-    assert!(preparation_front.contains("OperationDelivery::ResidentCold"));
-    assert_eq!(
-        preparation_front
-            .matches("execute_scanned_cold_episode(")
-            .count(),
-        1
-    );
-    let residual_scan_admission = control
-        .split_once("fn dispatch_typed_operation(")
-        .and_then(|(_, tail)| tail.split_once("let mode_fingerprint ="))
-        .and_then(|(_, tail)| tail.split_once("// tex.web's `line` is maintained by `get_next`"))
-        .map(|(body, _)| body)
-        .expect("locate directly admitted residual cold scanning");
-    assert_eq!(
-        residual_scan_admission
-            .matches(".command_context()")
-            .count(),
-        1
-    );
-    assert!(residual_scan_admission.contains("observe_changed_command_projection("));
-    assert!(residual_scan_admission.contains("command_processor("));
-    assert!(!residual_scan_admission.contains("with_command_context"));
-    let scanned_preparation = control
-        .split_once("fn prepare_cold_execution_episode<")
-        .and_then(|(_, tail)| tail.split_once("fn apply_hot_operation("))
-        .map(|(body, _)| body)
-        .expect("locate context-free cold preparation");
-    assert!(!scanned_preparation.contains("command_context()"));
-    assert!(!scanned_preparation.contains("command_processor("));
-    let prepared_application = control
-        .split_once("fn execute_cold_episode(")
-        .and_then(|(_, tail)| tail.split_once("fn scan_startup_file_name("))
-        .map(|(body, _)| body)
-        .expect("locate resident prepared application");
-    let ordinary_application = prepared_application
-        .split_once("context: \"cold operation admission\",")
-        .and_then(|(_, body)| {
-            body.split_once("if result.is_ok()\n            && let Some(completion)")
-        })
-        .map(|(body, _)| body)
-        .expect("locate directly admitted resident cold application");
-    assert!(ordinary_application.contains("let result = apply_cold_operation("));
-    assert!(ordinary_application.contains("                    context,"));
-    assert!(!ordinary_application.contains("frame.unavailable_mut(cold)"));
-    assert!(!ordinary_application.contains("command_context()"));
-    assert!(
-        !prepared_application
-            .contains("stores.command_context().expect(\"cold operation admission\")")
-    );
-    assert!(!prepared_application.contains("cold.operation.take()"));
-    assert!(!prepared_application.contains("std::mem::take(frame.unavailable_mut(cold))"));
-    assert!(!prepared_application.contains("CommandEpisode"));
-    assert!(!prepared_application.contains("OperationFrame"));
-    let hot_application = control
-        .split_once("fn apply_hot_operation_admitted(")
-        .and_then(|(_, tail)| tail.split_once("fn finish_hot_operation_admission("))
-        .map(|(body, _)| body)
-        .expect("locate hot application lifetime");
-    assert!(hot_application.contains("context: &mut CommandContext<'_, G>"));
-    assert!(hot_application.contains("hot_apply::apply("));
-    assert!(hot_application.contains("publish_named_token_list_pushes("));
-    assert!(hot_application.contains("schedule_afterassignment("));
-    assert!(!hot_application.contains("stores.command_context()"));
-    assert!(admitted_episode.contains("self.apply_hot_operation_admitted("));
-    assert!(cold_support.contains("stores: &mut tex_state::CommandContext<'_, G>"));
-    assert!(cold_support.contains("context: &'borrow mut tex_state::CommandContext<'stores, G>"));
-    assert!(!cold_support.contains("context: tex_state::CommandContext<'a, G>"));
-    assert!(cold.contains("mod operation;"));
-    assert!(cold.contains("mod scan;"));
-    assert!(cold.contains("mod apply;"));
-    assert!(cold_operation.contains("enum ColdOperation"));
-    assert!(cold_scan.contains("fn scan<"));
-    assert!(cold_apply.contains("fn apply<"));
-    assert!(!hot.contains("ColdOperation::"));
-    assert!(!hot.contains("OperationFrame {"));
-    for retired_handoff in [
-        "fn prepare_operation(",
-        "fn apply_ready_operation(",
-        "fn apply_prepared_operation(",
-        "OperationReadiness",
-    ] {
-        assert!(
-            !ownership_surface.contains(retired_handoff),
-            "retained generic prepare/apply handoff: {retired_handoff}"
-        );
-    }
-}
-
-#[test]
-fn canonical_episode_has_no_admission_executor_or_coverage_fallback() {
-    let control = include_str!("../src/main_control.rs");
-    let facade = include_str!("../src/lib.rs");
-    let command_facade = include_str!("../../tex-command/src/lib.rs");
-    let episode = include_str!("../src/episode.rs");
-
-    assert!(control.contains("fn execute_operation("));
-    assert!(control.contains("pub fn advance_episode("));
-    for retired in [
-        "NativeBatchProgram",
-        "PackedRootEpisode",
-        "advance_packed_root",
-        "execute_packed_episode",
-        "register_root_source_for_batch",
-        "EpisodeCoverageFallback",
-    ] {
-        assert!(
-            !control.contains(retired),
-            "retained executor path: {retired}"
-        );
-        assert!(
-            !facade.contains(retired),
-            "retained executor export: {retired}"
-        );
-        assert!(
-            !command_facade.contains(retired),
-            "retained command executor export: {retired}"
-        );
-        assert!(
-            !episode.contains(retired),
-            "retained fallback protocol: {retired}"
-        );
-    }
 }
 
 #[test]

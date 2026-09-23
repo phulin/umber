@@ -235,6 +235,11 @@ Command operands are scanned by `tex-command` into typed request and result valu
 - `src/**/tests.rs` and crate-local `#[cfg(test)]` modules: active semantic,
   replay, diagnostic, state, and exact-operand regression coverage selected by
   the library test target.
+- `src/main_control/tests.rs` shares private test fixtures and names the
+  behavior modules in `src/main_control/tests/`: initialization and formats,
+  assignments, tracing, diagnostics and recovery, alignment, resource replay,
+  shipout, PDF commands, list material, paragraph and math, execution
+  lifecycle, and episode observation. These remain one library test target.
 - `src/main_control/tests/tracked_region_coverage.rs`: cross-layer tracked-region
   perturbation, omission detection, lifecycle cleanup, and recording parity
   proof for the supported ordinary-operation region.
