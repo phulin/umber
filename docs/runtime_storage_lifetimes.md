@@ -88,9 +88,13 @@ Mutable TeX state, immutable definitions, speculative execution data, page
 material, source evidence, and detached output have different owners and must
 not be forced into one universal store.
 
-Umber contains no unsafe Rust. Direct indexing, compact words, lifetime
-branding, and arena storage are implemented entirely through safe Rust and
-private APIs.
+Engine and semantic crates forbid unsafe Rust. `tex-dense-prefix` owns the
+isolated allocation and initialized-prefix operations needed by dense
+superblocks; `umber-hot-core-allocator` owns profiling allocator forwarding.
+Their callers use safe APIs and keep semantic lifetimes, direct indexing, and
+compact identities in checked wrappers. See
+[Dense fork-arena superblocks](fork_arena_dense_prefix_emplacement.md) for the
+physical storage boundary.
 
 ## Lifetime hierarchy
 
@@ -1201,7 +1205,9 @@ generation is retired.
 
 The following designs are forbidden:
 
-- unsafe code anywhere in Umber, including arena access and id construction;
+- unsafe code outside the isolated `tex-dense-prefix` allocation/prefix and
+  profiling allocator forwarding boundaries, or in semantic arena access and
+  id construction;
 - stored Rust references in definitions, state cells, stacks, checkpoints,
   continuations, memos, or output;
 - self-referential arena owners or continuations;

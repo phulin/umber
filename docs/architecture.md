@@ -54,7 +54,7 @@ detached output only after the relevant transaction commits.
   breaking, and Appendix G math conversion. Packing preserves TeX's distinct
   `\badness` results: 10000 for infinitely bad adjustment and 1000000 for a
   nonempty overfull box whose normal-order glue cannot shrink far enough.
-- `tex-out`: detached artifact schema 23, positioned output, HTML, DVI page
+- `tex-out`: detached artifact schema 24, positioned output, HTML, DVI page
   planning, final DVI assembly, and artifact replay.
 - `tex-incr`: editor revisions, named-boundary checkpoints, convergence,
   pruning, retained output, and rendered-source queries.
@@ -602,7 +602,10 @@ performing a second delivery phase.
 
 ## 10. Output drivers (`tex-out`)
 
-Artifact schema 23 is the durable, content-addressed page representation.
+Artifact schema 24 is the durable, content-addressed page representation.
+The owned and streaming readers currently accept version 24 and reject older
+headers as unsupported; migration branches retained inside the decoder do not
+make earlier artifacts readable.
 `tex-out` owns its validation, encoding, replay, positioned-event projection,
 HTML schema 1, DVI page plans, and final DVI assembly.
 
@@ -690,8 +693,11 @@ it.
 7. Durable identities exclude allocation order, provenance, and host paths.
 8. Incremental reuse is optional; cold execution defines correctness.
 9. Native and WASM hosts observe the same engine and session semantics.
-10. Production crates contain no unsafe code; a future sealed JIT is the only
-    possible exception.
+10. Engine and semantic crates forbid unsafe code. `tex-dense-prefix` owns the
+    isolated dense-allocation and initialized-prefix unsafe surface;
+    `umber-hot-core-allocator` owns the profiling `GlobalAlloc` forwarding
+    surface. Safe wrappers validate their inputs before crossing either
+    boundary.
 
 ## 14. Portable format images
 

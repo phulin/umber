@@ -36,14 +36,19 @@ the four axes, the crate that owns each declaration, why `required-features`
 is not one of them, and why no engine crate has a non-empty `default`. Read it
 before adding a feature to any manifest.
 
-`testing_policy.md` is forward-looking guidance for test design and placement.
-`testing_infrastructure.md` inventories the current test commands, budgets,
-fixtures, corpora, and harnesses; update it when those implementation facts
-change.
+`testing_policy.md` gives test design and placement rules.
+`testing_infrastructure.md` is the current front door for the seven behavior
+classes, independent execution lanes, command prerequisites, result meanings,
+fixtures, corpora, and harnesses. Update it when gate facts change.
+`command_core_diagnostics.md` is the operational reference for differential
+tracer worklists, generated document traces, stream alignment, and the
+first-failure locator. Keep diagnosis order in
+`canonical_divergence_workflow.md`.
 
 `repository_simplification_plan.md` records the September 2026 repository
-review and proposed code/test migration. Its seven test classes and execution
-lanes are proposals, not replacements for the current testing policy or gates.
+review and staged migration. Its seven test classes and execution lanes now
+describe the testing front door; later code and bibliography sections remain
+proposals until implemented.
 
 `tooling_surface_inventory.md` records the owner-approved disposition of
 reference/parity commands, one-time fixture migrations, benchmark and trace

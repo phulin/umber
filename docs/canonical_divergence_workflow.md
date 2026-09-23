@@ -79,7 +79,7 @@ away from.
      Exact recurrences of one root site are collapsed into one entry;
      `--ungrouped` prints one entry per divergence. Compare a fix against the
      divergence total, not the root-site total. See "Grouped worklist and run
-     accounting" in [Testing Infrastructure](testing_infrastructure.md).
+     accounting" in [Command-core diagnostic tools](command_core_diagnostics.md#grouped-worklist-and-run-accounting).
    - Exit `2` (`PARTIAL`): a registered fixture was never compared (its
      document trace is not generated on this checkout) or a fixture's
      comparison stopped at its `--max-divergences` budget. Every total is a

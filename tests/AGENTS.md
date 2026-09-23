@@ -538,11 +538,14 @@ cross-check. It requires `tftopl` on `PATH` or
 
 ## Cargo Test Scope
 
-`cargo test --workspace --tests` is the correctness gate. It reads committed
-fixtures and must run without TeX tools on `PATH`; keep warmed
-`cargo test --tests` under the documented 10-second target in
-`docs/testing_infrastructure.md`. `scripts/check.sh` is the broader local
-quality gate that includes formatting and clippy.
+`cargo test -q --tests` is the routine native correctness gate. Cargo's
+`default-members` covers every host-testable workspace crate, and
+`test-support` checks that selection. It reads committed fixtures and
+provisioned local oracles without requiring TeX tools on `PATH`. There is no
+portable ten-second budget; compare warmed runs on a quiet host when measuring
+feedback time. `scripts/check.sh` is the formatting and clippy gate, and
+`scripts/check-and-test.sh` runs the guarded native and quality gates with an
+aggregate verdict.
 
 Font metric parity tests use a locked local TFM corpus under
 `third_party/fonts/`, which is gitignored. Populate it from the authenticated
@@ -631,7 +634,7 @@ Run the required official e-TRIP artifact gate with
 ## Proptest Budgets
 
 Replay-identity proptests use `PROPTEST_CASES` for their case budget. Leave
-the default small enough for `cargo test --workspace --tests`; raise it for
+the default small enough for `cargo test -q --tests`; raise it for
 local long runs, for example:
 
 ```bash

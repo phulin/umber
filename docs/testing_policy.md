@@ -56,18 +56,14 @@ Move expensive scaling and live-reference checks into explicit performance or
 regeneration tiers instead of weakening coverage in the default tier.
 
 `cargo test --tests` selects the workspace's `default-members`, and that list
-now names every host-testable member, so the plain command is the whole tier.
-It once named 21 of 34, which silently left the nine `bib-*` crates,
-`umber-interrupt`, `refexec`, and `profile-analyzer` executed by no routine
-command at all (`umber2-johp.211`).
+names every host-testable member, so the plain command is the whole native tier.
 
-The fix is a test rather than a wrapper. `default_members_cover_every_host_testable_crate`
+The selection contract is a test. `default_members_cover_every_host_testable_crate`
 in `test-support` reads `cargo metadata` and fails if any member is absent from
 `default-members` without a declared reason naming the check that runs it, and
 a companion test does the same for every `[workspace] exclude` directory, which
 `--workspace` cannot reach at all. The coverage invariant is therefore enforced
-inside the suite, under the command everyone already runs -- strictly better
-than being enforced by remembering to invoke a particular script.
+inside the suite under the routine command.
 
 `cargo test -q --tests -p <crate>` remains the right command while iterating on
 one crate.

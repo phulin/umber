@@ -1,13 +1,25 @@
 # Repository simplification and testing plan
 
-Status: review and proposed migration, not an implemented architecture change.
+Status: staged migration. The testing documentation and gate contracts below
+describe the current repository; the production-owner and bibliography changes
+remain proposals until their code and evidence land.
 Review baseline: `11c7bf7cd8ec78b36337c3ee3a97e38d0dc099e9`.
 
 The objective is to preserve Umber's current behavior while making both the
 implementation and its evidence easier to understand. The first priority is
 making the tests safe to refactor against; the second is reducing the number
 of responsibilities and independently maintained representations in the core.
-This document is the requested review deliverable, not a task tracker.
+This document preserves the review rationale and proposed sequence. For the
+current testing entry point, use [Testing Infrastructure](testing_infrastructure.md)
+and [Testing Policy](testing_policy.md).
+
+The current testing pass has established the seven-class front door, executable
+script-suite inventory, and aggregate gate verdicts. The executor test split,
+browser/package coverage, and artifact cleanup have separate implementation
+owners and must be judged against their final merged gates. Bibliography
+selection and status have not been changed by this pass; its migration is
+deferred. The later storage, session, scanner, output, and bibliography sections
+below are design proposals, not reports of completed implementation.
 
 ## Assessment
 
@@ -96,12 +108,12 @@ defects. Its manifest/source audits validate declarations rather than execute
 them. Derive the eventual census from expanded test discovery and typed case
 metadata, not substring counts.
 
-**Documentation has competing levels of authority.**
-[Testing Infrastructure](testing_infrastructure.md) is over 2,000 lines and
-mixes commands, detailed tracer operations, old measurements, and migration
-history. It still describes three excluded tool workspaces in one table while
-the current manifest excludes two. [Architecture](architecture.md) states
-that production contains no unsafe code, while
+**At the review baseline, documentation had competing levels of authority.**
+[Testing Infrastructure](testing_infrastructure.md) was over 2,000 lines and
+mixed commands, detailed tracer operations, old measurements, and migration
+history. It described three excluded tool workspaces in one table while
+the manifest excluded two. [Architecture](architecture.md) stated
+that production contained no unsafe code, while
 [tex-dense-prefix](../crates/tex-dense-prefix/src/lib.rs) intentionally contains
 the isolated allocator unsafe surface. Reconcile these statements with the
 specific storage contract before using them to approve further changes.
@@ -114,13 +126,13 @@ session modules (over 3,500 each). These are navigation indicators, not
 automatic deletion targets. The refactors below require a responsibility or
 ownership improvement in addition to smaller files.
 
-**Execution tiers are discoverable only by reading many scripts.**
+**At the review baseline, execution tiers required reading many scripts.**
 [check-tools.sh](../scripts/check-tools.sh) calls a mixture of contract tests,
-feature builds, and excluded-workspace tests. Its `oracle-regeneration` step
+feature builds, and excluded-workspace tests. Its `oracle-contract` step
 validates contracts; it does not rebuild all reference engines. Several script
-self-tests and benchmark commands have no aggregate caller in the inspected
-repository. That makes their execution an operator responsibility, not proof
-that they are obsolete. Preserve the explicit dispositions in
+self-tests and benchmark commands had no aggregate caller in the reviewed
+baseline. Their selection was an operator responsibility, not proof that they
+were obsolete. Preserve the explicit dispositions in
 [the tooling inventory](tooling_surface_inventory.md).
 
 **Package selection does not prove target-specific test selection.**
@@ -131,14 +143,15 @@ Give the allocator crates explicit WASM test steps and extend discovery to
 target-specific suites. The host default-member guard remains valuable but
 does not establish this separate coverage.
 
-**The browser distribution integration gate currently validates an unavailable
+**The review baseline browser distribution integration gate validated an unavailable
 placeholder.** [browser-tests/run.mjs](../crates/umber-wasm/browser-tests/run.mjs)
-asserts schema 0 and an `unavailable` marker, prints an unavailable message,
-and exits successfully. The separate `node-project.mjs` does exercise generated
-WASM with a custom resolver, and Rust wasm-bindgen tests remain independent
-evidence. However, the aggregate package step cannot establish actual
-browser distribution/catalog/worker integration. Report that substep as
-blocked or partial and restore real package/resource-flow coverage.
+asserted schema 0 and an `unavailable` marker, printed an unavailable message,
+and exited successfully. The separate `node-project.mjs` exercised generated
+WASM with a custom resolver, and Rust wasm-bindgen tests remained independent
+evidence. At that baseline, the aggregate package step could not establish
+actual browser distribution/catalog/worker integration. The replacement must
+report a blocked prerequisite or actual execution and prove a real package
+resource round trip.
 
 ## The test model
 
@@ -231,11 +244,11 @@ Keep performance evidence interpretable:
 
 ### Make the suite understandable without building another framework
 
-Restructure [Testing Infrastructure](testing_infrastructure.md) around the
-class table, the command table, prerequisites, and a short failure-routing
-guide. Move detailed tracer operation instructions to the existing diagnostic
-documentation; remove superseded history from the current reference pages.
-Keep [Testing Policy](testing_policy.md) focused on authoring rules.
+[Testing Infrastructure](testing_infrastructure.md) now starts with the class
+table, command/prerequisite table, and result meanings. Detailed tracer
+operation moved to [Command-core diagnostic tools](command_core_diagnostics.md).
+Keep [Testing Policy](testing_policy.md) focused on authoring rules as later
+work changes the suite.
 
 Within existing test modules, use descriptive groups such as `recovery`,
 `rollback`, `format_validation`, and `cli`. Put a short module-level statement
@@ -544,7 +557,7 @@ code-deletion target is justified by this review.
 
 ## Review validation and limits
 
-This is a source and test-design review, not a claim that the full current
+The baseline was a source and test-design review, not a claim that the full current
 native, browser, corpus, or performance suites pass. Cargo metadata was
 inspected without a build. The existing `scripts/check-wasm.sh node-unit`
 step passed 105 tests with no skips; its verdict was `PARTIAL`, one of six
