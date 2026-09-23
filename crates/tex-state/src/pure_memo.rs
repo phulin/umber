@@ -5,9 +5,8 @@
 //! uses no locks or atomics.
 
 use crate::glue::GlueSpec;
-use crate::{ContentHash, DetachedMemoValue, RootSpanId};
+use crate::{ContentHash, DetachedMemoValue};
 use std::collections::{HashMap, VecDeque};
-use std::sync::Arc;
 use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
@@ -213,50 +212,11 @@ pub struct PureBreakPlan {
     pub memory: PureBreakMemoryPlan,
 }
 
-/// Stable current-revision recipe for artifact provenance slots.
-///
-/// `piece_anchors` stores one full stable identity per referenced editor piece;
-/// `root_spans` stores compact offsets into those pieces. `origin_slots`
-/// indexes `root_spans`; `u32::MAX` denotes provenance which cannot be
-/// represented by a stable root.
-#[derive(Clone, Debug, Default)]
-pub struct OutputProvenanceRecipe {
-    pub piece_anchors: Arc<[RootSpanId]>,
-    pub root_spans: Arc<[OutputProvenanceSpan]>,
-    pub origin_slots: Arc<[u32]>,
-}
-
-impl OutputProvenanceRecipe {
-    /// Resolves one compact diagnostic slot to stable editor backing without
-    /// allocating a live provenance record.
-    #[must_use]
-    pub fn stable_span(&self, slot: usize) -> Option<RootSpanId> {
-        let ordinal = usize::try_from(*self.origin_slots.get(slot)?).ok()?;
-        let span = self.root_spans.get(ordinal)?;
-        let piece = self.piece_anchors.get(usize::try_from(span.piece).ok()?)?;
-        Some(piece.with_offsets(span.start, span.end))
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct OutputProvenanceSpan {
-    pub piece: u32,
-    pub start: u32,
-    pub end: u32,
-}
-
 #[derive(Clone, Debug)]
 pub struct PurePageEntry {
     pub transition: DetachedMemoValue,
     pub contributions: usize,
     pub origin_ordinals: Vec<u32>,
-}
-
-#[derive(Clone, Debug)]
-pub struct PureShipoutEntry {
-    pub artifact: DetachedMemoValue,
-    pub render_origin_ends: Vec<u32>,
-    pub render_provenance: OutputProvenanceRecipe,
 }
 
 /// Strong key used to verify a compact candidate bucket.
@@ -290,7 +250,7 @@ struct Entry {
 enum PureMemoValue {
     Pretolerance(Option<PureBreakPlan>),
     Page(PurePageEntry),
-    Shipout(PureShipoutEntry),
+    Shipout(DetachedMemoValue),
 }
 
 #[derive(Clone, Debug)]
@@ -504,7 +464,7 @@ impl PureMemoRuntime {
         }
     }
 
-    pub fn lookup_shipout(&mut self, key: PureMemoKey) -> Option<PureShipoutEntry> {
+    pub fn lookup_shipout(&mut self, key: PureMemoKey) -> Option<DetachedMemoValue> {
         if !self.shipout_episodes {
             self.record_not_attempted(PureMemoLayer::Shipout);
             return None;
@@ -550,16 +510,13 @@ impl PureMemoRuntime {
         hit
     }
 
-    pub fn insert_shipout(&mut self, key: PureMemoKey, value: PureShipoutEntry) {
+    pub fn insert_shipout(&mut self, key: PureMemoKey, value: DetachedMemoValue) {
         if !self.shipout_episodes {
             return;
         }
         let owned_bytes = value
-            .artifact
             .retained_bytes()
-            .saturating_sub(std::mem::size_of::<DetachedMemoValue>())
-            .saturating_add(value.render_origin_ends.capacity().saturating_mul(4))
-            .saturating_add(output_provenance_retained_bytes(&value.render_provenance));
+            .saturating_sub(std::mem::size_of::<DetachedMemoValue>());
         let started = TelemetryTimer::start();
         let before = self.cache.as_ref().map_or(0, |cache| cache.stats.inserts);
         self.insert_value(key, PureMemoValue::Shipout(value), owned_bytes);
@@ -902,25 +859,6 @@ impl PureMemoStats {
 
 fn elapsed_nanos(duration: Duration) -> u64 {
     u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
-}
-
-fn output_provenance_retained_bytes(recipe: &OutputProvenanceRecipe) -> usize {
-    recipe
-        .piece_anchors
-        .len()
-        .saturating_mul(std::mem::size_of::<RootSpanId>())
-        .saturating_add(
-            recipe
-                .root_spans
-                .len()
-                .saturating_mul(std::mem::size_of::<OutputProvenanceSpan>()),
-        )
-        .saturating_add(
-            recipe
-                .origin_slots
-                .len()
-                .saturating_mul(std::mem::size_of::<u32>()),
-        )
 }
 
 #[cfg(test)]

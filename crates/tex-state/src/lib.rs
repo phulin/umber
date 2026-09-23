@@ -235,10 +235,9 @@ pub use provenance_resolver::{
     DiagnosticOriginRequest, ResolvedSourceLocation,
 };
 pub use pure_memo::{
-    MemoLayerStats, MemoTimingPhase, OutputProvenanceRecipe, OutputProvenanceSpan,
-    PureBreakDecision, PureBreakMemoryEvent, PureBreakMemoryOwner, PureBreakMemoryPlan,
-    PureBreakPlan, PureMemoConfig, PureMemoKey, PureMemoLayer, PureMemoRecordingPolicy,
-    PureMemoRuntime, PureMemoStats, PurePageEntry, PureShipoutEntry,
+    MemoLayerStats, MemoTimingPhase, PureBreakDecision, PureBreakMemoryEvent, PureBreakMemoryOwner,
+    PureBreakMemoryPlan, PureBreakPlan, PureMemoConfig, PureMemoKey, PureMemoLayer,
+    PureMemoRecordingPolicy, PureMemoRuntime, PureMemoStats, PurePageEntry,
 };
 pub use shipout_scratch::{
     ShipoutListId, ShipoutNodeSource, ShipoutScratchListId, ShipoutScratchNode, ShipoutTokenField,

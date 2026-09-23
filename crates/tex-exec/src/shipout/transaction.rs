@@ -4,7 +4,7 @@ use tex_state::node::{Node, NodeKind};
 use tex_state::node_view::NodeView;
 use tex_state::{
     ContentHash, DetachedArtifact, MemoTimingPhase, MemoValueLimits, PrintSink, PureMemoKey,
-    PureMemoLayer, PureShipoutEntry, Universe,
+    PureMemoLayer, Universe,
 };
 
 use crate::ExecError;
@@ -163,15 +163,10 @@ pub(crate) fn shipout_node<G>(
             .flatten()
     {
         let import_started = crate::timing::TelemetryTimer::start();
-        let detached = entry.artifact.artifact(MemoValueLimits::default());
+        let detached = entry.artifact(MemoValueLimits::default());
         if let Ok(detached) = detached {
-            let imported_bytes = entry.artifact.retained_bytes();
-            let replayed = stores.commit_replayed_artifact(
-                detached.payload,
-                Vec::new(),
-                Default::default(),
-                None,
-            );
+            let imported_bytes = entry.retained_bytes();
+            let replayed = stores.commit_replayed_artifact(detached.payload, None);
             let (hash, artifact, publication) = match replayed {
                 Ok(replayed) => replayed,
                 Err(error) => {
@@ -305,16 +300,7 @@ pub(crate) fn shipout_node<G>(
             payload: artifact_bytes,
         })
     {
-        stores.with_pure_memo(|memo| {
-            memo.insert_shipout(
-                key,
-                PureShipoutEntry {
-                    artifact,
-                    render_origin_ends: Vec::new(),
-                    render_provenance: Default::default(),
-                },
-            );
-        });
+        stores.with_pure_memo(|memo| memo.insert_shipout(key, artifact));
     }
     Ok(Some(CommittedPagePublication {
         artifact,

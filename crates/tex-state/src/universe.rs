@@ -3368,14 +3368,11 @@ impl<G> Universe<G> {
 
     /// Publishes already-verified replay bytes through the ordinary shipout
     /// barrier. Memo replay is disabled whenever rendered-source provenance is
-    /// demanded, so the legacy compact provenance input is intentionally not
-    /// attached to the detached artifact.
+    /// demanded, so replayed artifacts have no rendered-source sidecar.
     #[doc(hidden)]
     pub fn commit_replayed_artifact(
         &mut self,
         bytes: Vec<u8>,
-        _render_origin_ends: Vec<u32>,
-        _render_provenance: crate::OutputProvenanceRecipe,
         receipt: Option<crate::PageOutputPublicationReceiptId>,
     ) -> Result<
         (
