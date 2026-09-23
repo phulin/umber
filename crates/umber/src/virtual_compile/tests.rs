@@ -2127,6 +2127,91 @@ fn accepted_publication_is_atomic_across_render_gap_output_failure_and_retry() {
 }
 
 #[test]
+fn rejected_render_patch_keeps_accepted_revision_and_retries() {
+    let source = concat!(
+        "\\def\\size{1pt}",
+        "\\immediate\\openout1=result.aux ",
+        "\\immediate\\write1{\\size} ",
+        "\\immediate\\closeout1 ",
+        "\\shipout\\hbox{\\vrule width \\size height 1pt}\\end"
+    );
+    let mut session = VirtualCompileSession::new(SessionOptions {
+        outputs: OutputCapabilitySet::HTML,
+        ..SessionOptions::default()
+    })
+    .expect("HTML session");
+    session
+        .add_user_file("main.tex", source.as_bytes().to_vec())
+        .expect("source");
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::Complete(_)
+    ));
+    let first_update = session.render_update().expect("initial snapshot");
+    session
+        .acknowledge_render_update(first_update.target_revision(), first_update.target_digest())
+        .expect("initial acknowledgement");
+    let accepted_output = session.accepted_output.clone();
+    let accepted_render = session.render_resync();
+    let accepted_generated = session
+        .accepted_generated_fingerprint()
+        .expect("accepted generated files");
+    let accepted_reuse = session.reuse_metrics();
+
+    session.render_patch_limits = tex_out::html::incremental::PatchLimits {
+        max_operations: 0,
+        ..tex_out::html::incremental::PatchLimits::default()
+    };
+    let _ = apply_text_replacement(&mut session, 2, source, "1pt", "2pt");
+    let failed = session.compile_attempt();
+    assert!(
+        matches!(
+            &failed,
+            CompileAttemptResult::Error(CompileError::OutputCapability {
+                capability: OutputCapability::Html,
+                message,
+            }) if message.contains("operations")
+        ),
+        "planner should reject before acceptance: {failed:?}"
+    );
+    assert_eq!(session.revision(), Some(RevisionId::new(1)));
+    assert_eq!(session.accepted_output, accepted_output);
+    assert_eq!(session.render_resync(), accepted_render);
+    assert!(session.render_update().is_none());
+    assert_eq!(session.reuse_metrics(), accepted_reuse);
+    assert_eq!(
+        session
+            .accepted_generated_fingerprint()
+            .expect("accepted generated files"),
+        accepted_generated
+    );
+
+    session.render_patch_limits = tex_out::html::incremental::PatchLimits::default();
+    let _ = apply_text_replacement(&mut session, 2, source, "1pt", "2pt");
+    let CompileAttemptResult::Complete(retried) = session.compile_attempt() else {
+        panic!("the same revision should complete with the normal patch limit");
+    };
+    assert_eq!(session.revision(), Some(RevisionId::new(2)));
+    assert!(matches!(
+        session.render_update(),
+        Some(RenderUpdate::Patch(patch)) if patch.target_revision == 2
+    ));
+    assert_ne!(session.accepted_output, accepted_output);
+    assert_ne!(
+        session
+            .accepted_generated_fingerprint()
+            .expect("new generated files"),
+        accepted_generated
+    );
+    assert!(
+        retried
+            .files
+            .iter()
+            .any(|file| file.bytes.windows(3).any(|bytes| bytes == b"2pt"))
+    );
+}
+
+#[test]
 fn classic_html_font_names_bind_one_tfm_identity() {
     let key = FontRequestKey::new(
         "cmr10",
@@ -5275,6 +5360,64 @@ fn returned_output_limit_remains_a_typed_session_error() {
             ..
         })
     ));
+}
+
+#[test]
+fn loaded_format_survives_initial_publication_failure_and_retry() {
+    let format = construct_test_format(EngineMode::Tex82, "\\count37=1403\\dump").into_bytes();
+    let source =
+        b"\\message{count=\\the\\count37}\\shipout\\hbox{\\vrule width 1pt height 1pt}\\end";
+    let mut session = VirtualCompileSession::new(SessionOptions {
+        format: Some(format.clone()),
+        outputs: OutputCapabilitySet::DVI,
+        limits: SessionLimits {
+            output_bytes: 1,
+            ..SessionLimits::default()
+        },
+        ..SessionOptions::default()
+    })
+    .expect("loaded session");
+    session
+        .add_user_file("main.tex", source.to_vec())
+        .expect("source");
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::Error(CompileError::LimitExceeded {
+            resource: "returned output bytes",
+            ..
+        })
+    ));
+    assert_eq!(session.revision(), None);
+    assert!(session.accepted_output.is_none());
+    assert!(
+        session.format.is_some(),
+        "the initial retry needs its loaded image"
+    );
+
+    session.limits.output_bytes = SessionLimits::default().output_bytes;
+    let CompileAttemptResult::Complete(retried) = session.compile_attempt() else {
+        panic!("loaded initial revision should complete after raising the output limit");
+    };
+    assert!(String::from_utf8_lossy(&retried.terminal).contains("count=1403"));
+    assert_eq!(session.revision(), Some(RevisionId::new(1)));
+    assert!(
+        session.format.is_none(),
+        "accepted sessions release format bytes"
+    );
+
+    let mut fresh = VirtualCompileSession::new(SessionOptions {
+        format: Some(format),
+        outputs: OutputCapabilitySet::DVI,
+        ..SessionOptions::default()
+    })
+    .expect("fresh loaded session");
+    fresh
+        .add_user_file("main.tex", source.to_vec())
+        .expect("source");
+    let CompileAttemptResult::Complete(expected) = fresh.compile_attempt() else {
+        panic!("fresh loaded revision should complete");
+    };
+    assert_eq!(retried, expected);
 }
 
 #[test]

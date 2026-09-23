@@ -884,6 +884,8 @@ pub struct VirtualCompileSession<'store> {
     accepted_output: Option<MemoryRunOutput>,
     accepted_render_document: Option<RenderDocument>,
     pending_render_update: Option<RenderUpdate>,
+    #[cfg(test)]
+    render_patch_limits: tex_out::html::incremental::PatchLimits,
     pending_patch: Option<(tex_incr::RevisionId, tex_incr::Edit)>,
     candidate: Option<Box<RetainedCandidate<'store>>>,
     response_generation: u64,
@@ -1201,6 +1203,8 @@ impl<'store> VirtualCompileSession<'store> {
             accepted_output: None,
             accepted_render_document: None,
             pending_render_update: None,
+            #[cfg(test)]
+            render_patch_limits: tex_out::html::incremental::PatchLimits::default(),
             pending_patch: None,
             candidate: None,
             response_generation: 0,
@@ -2235,8 +2239,10 @@ impl<'store> VirtualCompileSession<'store> {
                 .map_err(|error| CompileError::World(error.to_string()))?
                 .ok_or_else(|| CompileError::MissingMainFile(self.main_path.to_string()))?;
             let source = source.bytes().to_vec();
-            let format_image = if let Some(format) = self.format.take() {
-                let image = tex_state::DetachedFormatImage::try_from_bytes(format)
+            // Keep the loaded image available if output preparation rejects
+            // this first candidate and the host retries the initial revision.
+            let format_image = if let Some(format) = self.format.as_ref() {
+                let image = tex_state::DetachedFormatImage::try_from_bytes(format.clone())
                     .map_err(|error| CompileError::Format(error.to_string()))?;
                 Some(image)
             } else {

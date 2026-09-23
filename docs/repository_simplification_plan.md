@@ -507,7 +507,10 @@ rendered outputs, output limits, and the HTML update while the candidate and
 generated transaction are still private. It accepts generated files into a
 private workspace, computes generated-file fingerprints, accepts the
 incremental revision, and installs the accepted output, workspace, and render
-state together. An HTML update for a valid
+state together at the host session boundary. The incremental layer retains its
+own candidate acceptance validation and error contract. Loaded format bytes
+remain available until the first revision is accepted, so a failed initial
+output preparation can retry with the same format. An HTML update for a valid
 nonconsecutive revision is a full snapshot, since patches require adjacent
 revision numbers. `EngineSession` keeps its bounded execution and resource
 resume role; `tex-incr` keeps candidate validation and revision acceptance.

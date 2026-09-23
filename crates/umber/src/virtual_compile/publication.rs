@@ -5,8 +5,10 @@
 
 use super::*;
 use crate::memory_output::publish_auxiliary_outputs;
+#[cfg(not(test))]
+use tex_out::html::incremental::PatchLimits;
 use tex_out::html::incremental::{
-    PatchLimits, RenderLimits, RenderSessionId, build_render_document, plan_patch,
+    RenderLimits, RenderSessionId, build_render_document, plan_patch,
 };
 use umber_vfs::GeneratedTransaction;
 
@@ -168,12 +170,15 @@ impl<'store> VirtualCompileSession<'store> {
                 if target.revision.revision != base.revision.revision.saturating_add(1) {
                     Some(RenderUpdate::Snapshot(target.clone()))
                 } else {
-                    let patch =
-                        plan_patch(&base.revision, &target.revision, PatchLimits::default())
-                            .map_err(|error| CompileError::OutputCapability {
-                                capability: OutputCapability::Html,
-                                message: error.to_string(),
-                            })?;
+                    #[cfg(test)]
+                    let patch_limits = self.render_patch_limits;
+                    #[cfg(not(test))]
+                    let patch_limits = PatchLimits::default();
+                    let patch = plan_patch(&base.revision, &target.revision, patch_limits)
+                        .map_err(|error| CompileError::OutputCapability {
+                            capability: OutputCapability::Html,
+                            message: error.to_string(),
+                        })?;
                     Some(RenderUpdate::Patch(patch))
                 }
             }
@@ -202,6 +207,7 @@ impl<'store> VirtualCompileSession<'store> {
         let accepted_engine_output = match execution {
             PreparedExecution::Initial { session, accepted } => {
                 self.incremental = Some(session);
+                self.format = None;
                 accepted
             }
             PreparedExecution::Transaction(transaction) => Box::new(
