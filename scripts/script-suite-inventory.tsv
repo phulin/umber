@@ -20,6 +20,7 @@ scripts/test-publish-texlive-r2.sh	routine	publication-contract	scripts/check-an
 scripts/test-run-pinned-pdflatex-50m-authority-row.sh	manual	tool-integrity	-	bash,python3
 scripts/test-run-umber-guarded.sh	manual	limit-contract	-	python3
 scripts/test-script-suite-inventory.py	routine	tool-integrity	scripts/test-gate-verdicts.sh	python3
+scripts/test-selected-rust-suites.py	routine	tool-integrity	scripts/test-gate-verdicts.sh	python3
 scripts/test-stepwise-arxiv-census.sh	subsystem	tool-integrity	scripts/check-tools.sh	python3,tar,gzip
 scripts/test-survey-pdftex-arxiv-pdf.sh	manual	oracle-contract	-	python3
 scripts/test-tex82-trip-observer.sh	manual	oracle-regeneration	-	pinned-oracle,python3,cargo

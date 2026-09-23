@@ -1,0 +1,19 @@
+# mode	package	target	selector	match	feature	class	lane	command	prerequisites	status
+host-ignored	umber	lib	format_cache::tests::process_cache_worker	exact	-	test-tool-integrity	manual	cargo test -q -p umber --lib format_cache::tests::process_cache_worker -- --exact --ignored	parent-process-env	ignored-helper
+host-ignored	umber	lib	prepared_format::tests::process_prepared_format_worker	exact	-	formats-outputs	manual	cargo test -q -p umber --lib prepared_format::tests::process_prepared_format_worker -- --exact --ignored	parent-process-env	ignored-helper
+host-ignored	umber	test:it	cli::corpus::	prefix	-	reference-compatibility	manual	cargo test -q -p umber --test it cli::corpus:: -- --ignored	corpus-assets	ignored-manual
+host-ignored	umber	test:it	cli::pdf_publication::pdflatex_mode_composes_latex_compatibility_with_pdf_output	exact	-	formats-outputs	manual	cargo test -q -p umber --test it cli::pdf_publication::pdflatex_mode_composes_latex_compatibility_with_pdf_output -- --exact --ignored	latex-assets	ignored-manual
+host-ignored	umber	test:it	e2e_conformance::e2e_conformance_	prefix	-	reference-compatibility	manual	cargo test -q -p umber --test it e2e_conformance::e2e_conformance_ -- --ignored	pinned-e2e-oracles	ignored-manual
+host-ignored	umber	test:it	e2e_conformance::loaded_diagnostics::	prefix	-	reference-compatibility	manual	cargo test -q -p umber --test it e2e_conformance::loaded_diagnostics:: -- --ignored	pinned-e2e-oracles	ignored-manual
+host-ignored	umber	test:it	e2e_conformance::loaded_math::	prefix	-	reference-compatibility	manual	cargo test -q -p umber --test it e2e_conformance::loaded_math:: -- --ignored	pinned-e2e-oracles	ignored-manual
+host-ignored	tex-incr	lib	tests::long_session::	prefix	-	state-lifecycle	manual	cargo test -q -p tex-incr --lib tests::long_session:: -- --ignored	cargo	ignored-manual
+host-ignored	tex-incr	lib	tests::thousand_edit_scripted_fuzz_matches_cold_every_revision	exact	-	state-lifecycle	manual	cargo test -q -p tex-incr --lib tests::thousand_edit_scripted_fuzz_matches_cold_every_revision -- --exact --ignored	cargo	ignored-manual
+host-ignored	tex-command	lib	processor::expand::tests::nesting::full_default_expansion_capacity_on_a_sufficient_native_stack	exact	-	limits-performance	manual	cargo test -q -p tex-command --lib processor::expand::tests::nesting::full_default_expansion_capacity_on_a_sufficient_native_stack -- --exact --ignored	large-native-stack	ignored-manual
+host-ignored	tex-exec	lib	paragraph_end::runtime::tests::paragraph_normalization_	prefix	-	limits-performance	manual	cargo test -q -p tex-exec --lib paragraph_end::runtime::tests::paragraph_normalization_ -- --ignored	perf-stat	ignored-manual
+host-ignored	tex-command-stream	test:it	command_semantic::	prefix	-	reference-compatibility	manual	cargo test -q -p tex-command-stream --test it command_semantic:: -- --ignored --nocapture	pinned-command-fixtures	ignored-manual
+feature	tex-command	lib	one_and_4096_deliveries_derive_ordinary_freshness_without_a_coordinate_mirror	exact	profiling	limits-performance	subsystem	scripts/check-tools.sh profiling-command-tests	cargo	selected-only
+feature	umber	test:it	profiling_stats_flag_reports_feature_only_census	exact	profiling	product-platform	subsystem	scripts/check-tools.sh profiling-cli	cargo	selected-only
+wasm	umber-wasm	test:it	*	all	-	product-platform	subsystem	scripts/check-wasm.sh wasm-bindgen	wasm-pack,firefox	selected-only
+wasm	umber-wasm	test:virtual_font_acquisition	*	all	-	product-platform	subsystem	scripts/check-wasm.sh wasm-bindgen	wasm-pack,firefox	selected-only
+wasm	tex-dense-prefix	lib	*	all	-	local-rules	subsystem	scripts/check-wasm.sh dense-prefix-wasm	wasm-pack,node	selected-only
+wasm	tex-dense-arena	lib	*	all	-	local-rules	subsystem	scripts/check-wasm.sh dense-arena-wasm	wasm-pack,node	selected-only

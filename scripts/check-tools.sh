@@ -64,15 +64,23 @@ optional_check_step_requiring "cargo" texlive-wasm-publish \
 # input owners before testing the user-facing binary. Selecting the focused
 # resident fixture still compiles the complete unit-test target without running
 # unrelated allocation-budget tests.
-optional_check_step_requiring "cargo" profiling-command-tests \
-  cargo test -q --tests -p tex-command --features profiling \
-  one_and_4096_typed_resident_branches_select_and_write_exactly_once
+profiling_command_tests() {
+  python3 scripts/check-selected-rust-suites.py --verify-feature tex-command &&
+    cargo test -q --tests -p tex-command --features profiling \
+      one_and_4096_deliveries_derive_ordinary_freshness_without_a_coordinate_mirror
+}
+
+optional_check_step_requiring "cargo python3" profiling-command-tests \
+  profiling_command_tests
 
 # Build the user-facing binary in its real profiling profile and prove that
 # the feature-only flag publishes a non-empty command census.
-optional_check_step_requiring "cargo" profiling-cli \
-  cargo test -q --profile profiling -p umber --test it --features profiling \
-  profiling_stats_flag_reports_feature_only_census
+profiling_cli() {
+  python3 scripts/check-selected-rust-suites.py --verify-feature umber &&
+    cargo test -q --profile profiling -p umber --test it --features profiling \
+      profiling_stats_flag_reports_feature_only_census
+}
+optional_check_step_requiring "cargo python3" profiling-cli profiling_cli
 optional_check_step_requiring "cc rustc addr2line python3 cargo" copy-attribution \
   scripts/test-copy-attribution.sh
 

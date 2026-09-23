@@ -494,9 +494,12 @@ staged and swapped the workspace, font map, non-file admission state, and
 PK-font map, then restored them after rejection. `LatexProjectSession`
 separately staged project resources. The implemented admission transaction
 stages mixed resources before publishing them to either layer. Registration
-into incremental input state occurs before its rollback guard commits. Tests
-reject invalid mixed batches, late child font admission, file-then-font retry,
-and incremental input registration without changing the accepted revision.
+into incremental input state occurs before its rollback guard commits. The
+current `tex-incr::Session::register_input_files` batch is infallible after
+preparation; a future fallible validation step needs a targeted rollback test
+before atomicity is claimed for that phase. Current tests reject invalid mixed
+batches, late child font admission, and file-then-font retry without changing
+the accepted revision.
 Authorization and font policy remain with their respective layers.
 
 `VirtualCompileSession` still owns configuration, resources, candidates,
@@ -642,7 +645,7 @@ and dependency vectors without another JavaScript packed decoder.
 
 | Review deliverable                          | Disposition                                                                                                                                                                                            | Acceptance evidence and limit                                                                                                                         |
 | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Test selection and honest verdicts          | Implemented. The seven classes, inventory, required-asset behavior, and combined/subsystem verdicts have one documented entry point.                                                                   | `test-support` selection tests, gate-verdict and script-inventory tests, `scripts/check-and-test.sh`; a selected optional subset reports `PARTIAL`.   |
+| Test selection and honest verdicts          | Implemented. The seven classes, script and selected-Rust inventories, required-asset behavior, and combined/subsystem verdicts have one documented entry point.                                        | `test-support` selection tests, gate-verdict and inventory tests, `scripts/check-and-test.sh`; a selected optional subset reports `PARTIAL`.          |
 | Refactoring-safe test organization          | Implemented. Executor and other large test families retain their original Cargo targets; retired private source checks have named replacement evidence.                                                | Original fixture/parity selections, executor receipt and host-fact tests, compile-fail capability checks, and the assertion tables above.             |
 | Bounded production simplification           | Implemented. Scanner, command, state-method, node-view, resource-admission, session-publication, artifact codec, PDF lowering, and Rust prefetch changes keep one authority at each mutation boundary. | Final combined native/quality, real WASM/package, and external PDF checks have the scoped results below.                                              |
 | Broader storage and paragraph consolidation | Retained as a separate measured audit. Existing public adapters and distinct semantic/physical channels have identified consumers.                                                                     | Delete an owner or conversion only after caller, compatibility, rollback, and cost evidence; shorter files alone do not qualify.                      |
@@ -694,6 +697,15 @@ Final integrated acceptance at `f22424e2d` has these scoped results:
 | Shared [resource-transition cases](../tests/resource-transition-cases.json) | One native integration test and the generated WASM package runner each passed all three cases.                                                                                                                                                                                                                         | Ordered typed required/probe/hint requests, a positive retry, authoritative absence, an empty hint drain, atomic rejection, and accepted observations agree across hosts.      |
 | `scripts/check-wasm.sh`                                                     | All nine steps ran: eight `PASS`, one `BLOCKED` (`default-format`). Firefox ran 36 `umber-wasm` binding tests; the two dense allocators ran one and two tests; Node ran 106 tests. The optimized Chromium/package path passed the three shared cases, catalog-only resolution, and separate full Rust prefetch checks. | Real bindings, allocators, authored JavaScript, packed catalog, worker, and generated package were exercised. The aggregate is `BLOCKED`, so this is not an all-optional pass. |
 | `scripts/check-pdf-external.sh`                                             | `PASS`: 15 cases with pinned qpdf 12.3.2 and Poppler 25.08.0.                                                                                                                                                                                                                                                          | Independent PDF structural and rendered-output checks complement Rust semantic and deterministic-byte tests.                                                                   |
+
+The follow-on selected-Rust inventory reran `scripts/check-and-test.sh`: all
+seven stages passed, including the new libtest-discovered inventory stage (40
+ignored host tests grouped into 18 suite rows), and the quality gate passed
+all four checks. This routine receipt does not execute the ignored
+command-semantic parity driver. Its explicitly selected run currently exits
+`FAIL` with 79 matched and 131 other-failure cases; the exact command, case
+census, and native CLI panic reproduction are in
+[Testing Infrastructure](testing_infrastructure.md).
 
 The optimized generated `umber_wasm_bg.wasm` measured 9,513,973 bytes with
 SHA-256 `0facb2543df068cf7de67d20a0d2f192b1d74237be70f1fa44cfe8ce454aa8f9`.

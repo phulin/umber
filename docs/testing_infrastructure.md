@@ -101,6 +101,62 @@ regeneration contract through `scripts/test-oracle-regeneration.sh`; live oracle
 construction remains an explicit `scripts/regen-fixtures.sh` maintenance
 operation.
 
+[`selected-rust-suite-inventory.tsv`](../scripts/selected-rust-suite-inventory.tsv)
+names the separately selected nonbibliography Rust suites by owner, behavior
+class, lane, command, prerequisites, and declared status. After the native
+prebuild, `check-selected-rust-suites.py` asks Cargo for the actual default
+test executables and asks libtest for their ignored tests. Every discovered
+nonbibliography ignored test must belong to exactly one indexed selector;
+stale and overlapping selectors fail. It does not execute those tests. The
+same validator checks optional profiling and WASM rows against Cargo targets,
+features, source annotations, and the named subsystem steps. The selected
+profiling steps additionally confirm their exact feature test through libtest
+discovery when run. Real WASM execution remains the evidence from
+`scripts/check-wasm.sh`, not from host Cargo metadata.
+
+The manual command-semantic driver prints a case census from the typed fixture
+manifests after it executes. `matched` means all selected projections and
+channels passed; `executed-known-failure` means a reviewed strict divergence
+matched; `unexpected-pass` and `other-failure` fail the test. Its routine
+census reports the declared cases as `unselected`, because the manual driver
+does not run in the routine lane. `dormant` is reserved for declared cases
+without an executable selected runner; an ignored manual test is not dormant
+when explicitly selected. Bibliography's dormant upstream inventory remains
+separate from this nonbibliography census.
+
+On the indexed checkout, explicitly selecting
+`cargo test -q -p tex-command-stream --test it command_semantic::declared_command_semantic_cases_match -- --exact --ignored --nocapture`
+reports `matched=79, executed-known-failure=0, unexpected-pass=0,
+other-failure=131, dormant=0, unselected=0` and exits `FAIL`. The 131 cases
+have 102 event-count, 64 projection, 38 terminal/log content, 7 incomplete
+channel, and 4 nonempty-output diagnostics; a case can have more than one
+diagnostic. These results are not strict known failures. The fixture manifests
+retain their pinned reference projections and channel contracts. In
+particular, `main-control/current-font-selection` panics while scanning
+`\the\font` with the null font, and `page-output/insertion-split-footnote`
+panics on a page-arena range. A native CLI run with a raw TeX82 format also
+reproduces the null-font panic. The routine gate still reports these 210
+declared cases as unselected; the selected manual command is the only claim
+about their current compatibility.
+
+Set `UMBER_COMMAND_SEMANTIC_CASE=domain/id` with the same manual Cargo command
+to run one exact fixture. The census then counts every other declared fixture
+as `unselected`, and an unknown id fails rather than selecting zero tests.
+For example, `main-control/save-level-lifecycle` reports one match and 209
+unselected cases, whereas `main-control/current-font-selection` reports one
+other failure and 209 unselected cases. The CLI reproduction of the latter is:
+
+```sh
+mkdir -p target/simplify-suite-index
+printf '\\dump\n' > target/simplify-suite-index/raw-tex82.ini
+cargo run-dev -q -p umber --bin umber -- run target/simplify-suite-index/raw-tex82.ini --format-out target/simplify-suite-index/raw-tex82.fmt
+cargo run-dev -q -p umber --bin umber -- run tests/corpus/command-semantic/main-control/current-font-selection/current-font-selection.tex --format target/simplify-suite-index/raw-tex82.fmt
+```
+
+The format construction succeeds; the loaded run exits 101 at
+`tex-command/src/scanners/scalar.rs` while looking up the null-font control
+sequence identity.
+
 Routine tests read committed fixtures and provisioned local oracles without
 invoking reference TeX. Provision the primary checkout once with
 `python3 scripts/provision.py worktree .`; provision each linked checkout with

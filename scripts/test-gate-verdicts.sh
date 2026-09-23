@@ -39,6 +39,12 @@ with open(os.environ["STAGE_TRACE"], "a") as trace:
     trace.write("assets\n")
 raise SystemExit(int(os.environ.get("ASSET_STATUS", "0")))
 SH
+cat > "$fixture/scripts/check-selected-rust-suites.py" <<'SH'
+import os
+with open(os.environ["STAGE_TRACE"], "a") as trace:
+    trace.write("rust-suite-inventory\n")
+raise SystemExit(int(os.environ.get("RUST_SUITE_STATUS", "0")))
+SH
 cat > "$fixture/scripts/test-gate-verdicts.sh" <<'SH'
 #!/usr/bin/env bash
 printf 'gate-contract\n' >> "$STAGE_TRACE"
@@ -76,13 +82,14 @@ assert_case() {
 
 assert_case pass 0 PASS
 grep -Fqx prebuild "$scratch/trace"
+grep -Fqx rust-suite-inventory "$scratch/trace"
 grep -Fqx native-tests "$scratch/trace"
 grep -Fqx quality "$scratch/trace"
 
 assert_case combined-fail 1 FAIL \
   PUBLISH_STATUS=3 ASSET_STATUS=5 CONTRACT_STATUS=6 PREBUILD_STATUS=7 QUALITY_STATUS=8
 for expected in publish-contract asset-contract gate-contract native-prebuild \
-  'native-tests (prebuild failed)' quality; do
+  'rust-suite-inventory (prebuild failed)' 'native-tests (prebuild failed)' quality; do
   grep -Fq "$expected" "$scratch/output"
 done
 if grep -Fqx native-tests "$scratch/trace"; then
@@ -93,6 +100,9 @@ fi
 assert_case fail-and-blocked 1 FAIL NATIVE_STATUS=9 QUALITY_STATUS=4
 grep -Fq 'FAILED: native-tests (exit 9)' "$scratch/output"
 grep -Fq 'BLOCKED: quality (exit 4)' "$scratch/output"
+
+assert_case missing-rust-suite 1 FAIL RUST_SUITE_STATUS=9
+grep -Fq 'FAILED: rust-suite-inventory (exit 9)' "$scratch/output"
 
 rm "$fixture/tests/corpus/e2e/story.expected.dvi"
 assert_case missing-required 4 BLOCKED
@@ -193,5 +203,6 @@ for selector in oracle-contract oracle-regeneration; do
 done
 
 python3 "$repo_root/scripts/test-script-suite-inventory.py"
+python3 "$repo_root/scripts/test-selected-rust-suites.py"
 
 printf 'gate verdict contracts: PASS\n'

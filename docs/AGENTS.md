@@ -48,6 +48,8 @@ the catalog-only resolver's disabled-speculation behavior.
 `testing_infrastructure.md` is the current front door for the seven behavior
 classes, independent execution lanes, command prerequisites, result meanings,
 fixtures, corpora, and harnesses. Update it when gate facts change.
+It also explains the selected Rust suite index and the command-semantic
+compatibility census; the script index owns discovery, not this document.
 `command_core_diagnostics.md` is the operational reference for differential
 tracer worklists, generated document traces, stream alignment, and the
 first-failure locator. Keep diagnosis order in

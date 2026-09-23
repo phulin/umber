@@ -21,6 +21,10 @@ use umber::{FormatWorkerLauncher, PreparedFormatProvider};
 use tex_command_stream::semantic::channels::compare;
 use tex_command_stream::semantic::*;
 
+#[path = "command_semantic/census.rs"]
+mod census;
+use census::CompatibilityCensus;
+
 struct HermeticFormats {
     _root: tempfile::TempDir,
     provider: PreparedFormatProvider,
@@ -80,38 +84,75 @@ fn declared_command_semantic_cases_match() {
     let launcher = FormatWorkerLauncher::registered_libtest("umber_format_worker_bootstrap");
     let cases =
         load_suite().unwrap_or_else(|error| panic!("invalid command-semantic corpus: {error}"));
+    let selected_case = std::env::var("UMBER_COMMAND_SEMANTIC_CASE").ok();
     let mut failures = Vec::new();
+    let mut census = CompatibilityCensus::default();
     for declared in &cases {
         let label = format!("{}/{}", declared.domain, declared.case.id);
-        let run = fs::read(declared.fixture_dir.join(&declared.case.source))
-            .map_err(|error| format!("source read: {error}"))
-            .and_then(|source| {
-                // Independent provider instances exercise persistent reuse;
-                // the shared authority is the store and complete identity.
-                let provider = PreparedFormatProvider::with_store(
-                    FormatCacheStore::new(root.path()),
-                    launcher.clone(),
-                );
-                execute_with_provider(&source, &declared.case, &provider)
-            });
+        if selected_case
+            .as_deref()
+            .is_some_and(|selected| selected != label)
+        {
+            census.skip_unselected();
+            continue;
+        }
+        let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            fs::read(declared.fixture_dir.join(&declared.case.source))
+                .map_err(|error| format!("source read: {error}"))
+                .and_then(|source| {
+                    // Independent providers exercise persistent format reuse.
+                    let provider = PreparedFormatProvider::with_store(
+                        FormatCacheStore::new(root.path()),
+                        launcher.clone(),
+                    );
+                    execute_with_provider(&source, &declared.case, &provider)
+                })
+        }))
+        .unwrap_or_else(|payload| {
+            let message = payload
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| payload.downcast_ref::<&str>().copied())
+                .unwrap_or("non-string panic");
+            Err(format!("panic: {message}"))
+        });
         let actual = run
             .as_ref()
             .map(|run| project(run, &declared.case.projection))
             .map_err(Clone::clone);
-        if let Err(error) =
-            evaluate_expectation(&declared.case.expected, &actual, &declared.case.expectation)
-        {
+        let expectation =
+            evaluate_expectation(&declared.case.expected, &actual, &declared.case.expectation);
+        if let Err(error) = &expectation {
             failures.push(format!("{label}: {error:?}"));
         }
         // The projection is a focused property claim about one observable.
         // The channel contract is the completeness claim about the rest of
         // the same run, and both have to hold.
-        if let Ok(run) = &run {
-            for failure in compare_declared_channels(declared, run) {
-                failures.push(format!("{label}: {failure:?}"));
-            }
+        let channel_failures = if let Ok(run) = &run {
+            compare_declared_channels(declared, run)
+        } else {
+            failures.push(format!(
+                "{label}: execution did not reach the channel contract"
+            ));
+            Vec::new()
+        };
+        for failure in &channel_failures {
+            failures.push(format!("{label}: {failure:?}"));
         }
+        census.record(declared, run.is_ok(), &expectation, &channel_failures);
     }
+    assert_eq!(
+        census.total(),
+        cases.len(),
+        "every selected case has one census status"
+    );
+    if let Some(selected) = &selected_case {
+        assert!(
+            census.total() > census.unselected(),
+            "unknown command-semantic case: {selected}"
+        );
+    }
+    println!("command-semantic selected: {census}");
     assert!(
         failures.is_empty(),
         "{} of {} declared cases failed:\n{}",
@@ -119,6 +160,9 @@ fn declared_command_semantic_cases_match() {
         cases.len(),
         failures.join("\n")
     );
+    if selected_case.is_some() {
+        return;
+    }
     let published_entries = fs::read_dir(root.path().join("blobs-v1"))
         .expect("persistent format namespace")
         .filter_map(Result::ok)

@@ -130,6 +130,12 @@ lower `tex-observe` crate, and reports a ranked worklist of up to
 replay failures alike). It never invokes a reference engine or joins the
 production engine dependency graph.
 
+`tests/it/command_semantic/census.rs` owns typed case counts for the selected
+manual command-semantic run and the routine unselected-case report. It counts
+strict projection and channel xfails only after execution reaches the channel
+contract; an unexpected pass or execution failure never counts as a matched
+known failure.
+
 `event-stream-diff EXPECTED.jsonl ACTUAL.jsonl` is the read-only exhaustive
 counterpart for already-captured canonical streams such as guarded TRIP
 artifacts. It applies the same keyed alignment and exact root-site grouping,

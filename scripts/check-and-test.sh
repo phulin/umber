@@ -71,6 +71,9 @@ cargo test --quiet --tests --no-run || prebuild_status=$?
 record_status native-prebuild "$prebuild_status"
 
 if (( prebuild_status == 0 )); then
+  # Libtest discovery is authoritative for ignored host cases. It reads the
+  # already-built executables and rejects newly unowned optional suites.
+  run_stage rust-suite-inventory python3 scripts/check-selected-rust-suites.py
   python3 scripts/run-umber-guarded.py \
     --timeout-seconds 1800 --max-rss-mib 6144 --term-grace-seconds 5 -- \
     cargo test --quiet --tests &
@@ -80,6 +83,7 @@ if (( prebuild_status == 0 )); then
   run_stage native-tests wait "$test_pid"
   run_stage quality wait "$check_pid"
 else
+  blocked+=("rust-suite-inventory (prebuild failed)")
   blocked+=("native-tests (prebuild failed)")
   run_stage quality scripts/check.sh
 fi
