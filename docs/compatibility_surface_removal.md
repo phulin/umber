@@ -28,7 +28,7 @@ The current owners are:
 | Main-control execution and resource suspension             | `tex-exec::MainControl::advance` and the canonical step runner                                                                                                         | Remove the old step/error translation; preserve exact typed need, failure, and completion behavior.                                                                       |
 | Cold and incremental revision lifecycle                    | `tex-incr::Session` candidate, resolver, and publication APIs                                                                                                          | Remove spelling aliases and uncalled generic trace compatibility exports; preserve accepted/rejected revision behavior.                                                   |
 | Resource resolution                                        | Borrowed command input admission, the typed need/result protocol, and host-owned replay                                                                                | Keep the one adapter from object-safe host policy to the admitted generic provider. Remove unused resolver traits, duplicate lookup vocabularies, and old error variants. |
-| Reference execution and fixture authority                  | `fixturegen::reference` for process execution and publication; `test-support::dvi` for byte comparison; `parity-harness` for conformance composition and triage        | Retire the `refexec` compatibility facade and command only after every script and parity caller has a current owner. Fixture regeneration remains transactional.          |
+| Reference execution and fixture authority                  | `fixturegen-reference` shared execution kernel; `fixturegen` direct run/publication CLI; `test-support::dvi` and `parity-harness` comparison/triage                    | Retire the `refexec` compatibility facade and command only after every script and parity caller has a current owner. Fixture regeneration remains transactional.          |
 | Node/state, artifact/format/output, and host/WASM adapters | `PageMaterialArena`/`NodeRegion` own page material; `NodeView`/`NodeCursor` borrow compact records. Artifact, format, and host output owners use their current schema. | Remove generic `NodeArena`, duplicated page/paragraph ownership, and obsolete adapters with their callers; no import of old Umber-owned data is required.                 |
 
 On combined production `e685e55d8`, the obsolete scanner owned-return methods,
@@ -59,10 +59,44 @@ catalogue-only cache warming within the shared budget; the worker does not
 inject them as typed session hints or claim VFS readiness or semantic replay
 history. Explicit semantic format hints still use exact file keys.
 
+Pins protect independent source, distribution, and reference-fixture bytes,
+not incidental implementation observations or a particular installed renderer
+version. Generated formats use cache identity schema 3: actual optional
+semantic, producer, and generation-guard fingerprints are represented by
+distinct presence tags, and the builder includes its real binary and script
+SHA-256 identities. Producer contract 22 rebuilds incomplete old format images
+from authenticated inputs; loaded TeX activation rejects a missing frozen
+null-font identity instead of repairing it. The packed-catalog reader, PDF
+state reader, and artifact/hash owner accept their current representations
+without old-schema or duplicate-hash fallbacks. External PDF checks use qpdf
+for current structure and compare each independent reference/Umber PDF pair
+with the same available Poppler renderer and extractor, recording tool versions
+as provenance rather than pinning their exact version.
+
 The reference channels also have distinct current geometry contracts: the
 committed TeX82 microfixture is source-located schema V3; the independently
 generated e-TeX 2.6 e-TRIP stream remains positionless schema V2. Neither is
 an old Umber image or a fallback for the other.
+
+At combined production `e685e55d8`, `scripts/check-and-test.sh` passed all
+seven native/quality stages with zero failures and no scope reductions. The
+manual selected compatibility corpus has the separate failing result below.
+Generated-browser and external-PDF gates are separate platform evidence and
+are not included in this native verdict. At the same production revision,
+`scripts/check-pdf-external.sh --ci` passed its real qpdf 12.3.2 structural
+matrix and all 15 reference/Umber PDF render and text pairs through the same
+available Poppler 25.08.0 tools. These versions are recorded provenance;
+semantic structure, paired pixels, and extracted text are the acceptance
+criteria.
+
+Selected state and feature gates at the same revision also passed: snapshot
+lifecycle and hot-path checks; locked `state_budgets` and shipout benchmark
+compilation; one-node and 4,096-node page destination move/copy allocation
+checks; one million PDF checkpoint capture/restore iterations on 1-byte and
+64-MiB payloads with zero hot-path allocations; the locked direct-linebreak
+check; and selected state testing, shadow, state-profiling, executor-profiling, and
+command-profiling suites. These establish the
+named bounds and selected feature coverage, not general performance parity.
 
 Removal is complete only when repository callers no longer use the old
 surface, active tests exercise the replacement contract rather than a retained
