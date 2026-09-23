@@ -50,9 +50,13 @@ first-failure locator. Keep diagnosis order in
 
 `repository_simplification_plan.md` records the September 2026 repository
 review and staged migration. Its seven test classes and execution lanes now
-describe the testing front door. The artifact codec cleanup and bounded node
-view pass are implemented; other downstream and bibliography sections remain
-proposals until implemented.
+describe the testing front door. The artifact codec cleanup, bounded node
+view pass, and PDF finalization split are implemented; other downstream and
+bibliography sections remain proposals until implemented.
+
+`pdf_finalization_modules.md` records the implemented private PDF lowering
+boundaries, single object-allocation and publication authority, and the
+format-specific validation contract.
 
 `state_responsibility_boundaries.md` maps the `World`, `ForkArena`, and
 `CommandContext` method groups onto their unchanged storage and checkpoint

@@ -529,6 +529,12 @@ resident, Type1, TrueType, and PK font branches, including subsets, shared
 encodings, ToUnicode, and virtual fonts. Their resource identities and
 embedding rules are not interchangeable.
 
+The finalization extraction now keeps the allocation cursor, indirect-object
+collection, graph validation, serialization, and diagnostic publication in
+`finalize_pdf`. Private navigation, content, font, image, and numeric modules
+borrow that operation's state. Page and form assembly retain their separate
+geometry and resource policies. See [PDF Finalization Module Boundaries](pdf_finalization_modules.md) for the current file map and ownership rule.
+
 Treat classic BibTeX and the Biber-compatible pipeline as separate semantic
 backends. Share source acquisition, resource identity, and orchestration where
 already common; do not force their different algorithms into a universal VM

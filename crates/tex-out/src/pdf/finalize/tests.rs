@@ -535,6 +535,96 @@ fn font_dictionary_name_is_type3_only() {
 }
 
 #[test]
+fn resident_program_keeps_distinct_font_widths_without_embedding() {
+    let map_entry =
+        tex_fonts::PdfFontMapEntry::parse(b"cmr10 Times-Roman").expect("resident PDF map entry");
+    assert_eq!(map_entry.program, tex_fonts::PdfFontMapProgram::Resident);
+    let font = crate::FontResource {
+        font_id: 1,
+        name: "cmr10".to_owned(),
+        tfm_content_hash: tex_fonts::font_content_hash(b"cmr10.tfm"),
+        tfm_checksum: 0,
+        design_size: Scaled::from_raw(10 * Scaled::UNITY),
+        at_size: Scaled::from_raw(10 * Scaled::UNITY),
+        layout_policy: tex_fonts::FontLayoutPolicy::ClassicTfmExact,
+        mapping_fallback: None,
+        opentype: None,
+        semantic_identity: tex_fonts::FontSourceIdentity::from_bytes([1; 8]),
+        construction: crate::FontResourceConstruction::Loaded,
+    };
+    let mut metrics = PdfFontMetricsInput {
+        widths: [Scaled::from_raw(0); 256],
+        heights: [Scaled::from_raw(0); 256],
+        depths: [Scaled::from_raw(0); 256],
+        x_height: Scaled::from_raw(0),
+    };
+    let used_codes = BTreeSet::from(*b"A");
+    let mut font_input = PdfFontInput {
+        artifact_resource: font.clone(),
+        resource_number: 1,
+        object_number: 10,
+        metrics: metrics.clone(),
+        included_codes: used_codes.clone(),
+        descriptor_entries: Vec::new(),
+        generate_to_unicode: false,
+        disable_builtin_to_unicode: false,
+        infer_builtin_glyph_unicode: false,
+        omit_charset: false,
+        glyph_to_unicode: BTreeMap::new(),
+        map_entry: Some(map_entry),
+        encoding: None,
+        program: PdfFontProgramInput::Resident,
+    };
+    for (object, identity, width, expected_width) in [
+        (10, [1; 8], 5 * Scaled::UNITY, 5000),
+        (11, [2; 8], 7 * Scaled::UNITY, 7000),
+    ] {
+        metrics.widths[usize::from(b'A')] = Scaled::from_raw(width);
+        font_input.metrics = metrics.clone();
+        font_input.artifact_resource.semantic_identity =
+            tex_fonts::FontSourceIdentity::from_bytes(identity);
+        let ids = PdfFontObjectIds {
+            font: object_id(object).expect("font object id"),
+            descriptor: None,
+            program: None,
+            to_unicode: None,
+            encoding: None,
+            char_procs: BTreeMap::new(),
+        };
+        let [font_object] = pdf_font_objects(
+            &font_input,
+            ids,
+            &font_input.artifact_resource,
+            b"F1",
+            &used_codes,
+        )
+        .expect("resident font object")
+        .try_into()
+        .expect("resident font has no descriptor or embedded stream");
+        assert_eq!(font_object.id, object_id(object).expect("font object id"));
+        let PdfObject::Value(PdfValue::Dictionary(dictionary)) = font_object.object else {
+            panic!("resident font object was not a dictionary");
+        };
+        assert_eq!(
+            dictionary.get(b"Subtype"),
+            Some(&PdfValue::Name("Type1".into()))
+        );
+        assert_eq!(
+            dictionary.get(b"BaseFont"),
+            Some(&PdfValue::Name("Times-Roman".into()))
+        );
+        assert!(dictionary.get(b"FontDescriptor").is_none());
+        let Some(PdfValue::Array(widths)) = dictionary.get(b"Widths") else {
+            panic!("resident font widths were absent");
+        };
+        assert_eq!(
+            widths[usize::from(b'A')],
+            PdfValue::Number(PdfNumber::new(expected_width, 1).expect("width raster")),
+        );
+    }
+}
+
+#[test]
 fn type1_descriptor_fallback_uses_named_tfm_characters_instead_of_table_extrema() {
     let mut widths = [Scaled::from_raw(0); 256];
     let mut heights = [Scaled::from_raw(0); 256];

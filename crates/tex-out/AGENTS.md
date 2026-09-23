@@ -46,7 +46,23 @@ Use this crate for stable, driver-facing artifact structures and serialization c
 - `src/node_cursor.rs`: Canonical explicit-stack artifact node/list event order shared by codec emission and validation.
 - `src/pdf.rs`: validated detached PDF object/page/resource graph, canonical ordering, and semantic identity.
 - `src/pdf/finalization.rs`: complete host-neutral PDF finalization input, including committed pages/forms, realized fonts/programs, images, metadata/navigation, allocation state, and explicit limits.
-- `src/pdf/finalize.rs`: pure detached form validation, artifact positioning, page/content lowering, font-object emission, object allocation, graph validation, and deterministic serialization.
+- `src/pdf/finalize.rs`: finalization coordinator, sole indirect-object allocation/publication authority, graph validation, deterministic serialization, and diagnostics.
+- `src/pdf/finalize/errors.rs`: public finalization errors and source conversions.
+- `src/pdf/finalize/content.rs`: private page/form content module wiring.
+- `src/pdf/finalize/content/traversal.rs`: positioned traversal, form validation, font-use collection, and resource classification.
+- `src/pdf/finalize/content/assembly.rs`: page/form event lowering and resource object assembly with borrowed allocation and object state.
+- `src/pdf/finalize/navigation.rs`: private navigation module wiring.
+- `src/pdf/finalize/navigation/annotations.rs`: annotation, link, action, and rectangle lowering.
+- `src/pdf/finalize/navigation/destinations.rs`: destination name trees and outline lowering.
+- `src/pdf/finalize/navigation/threads.rs`: thread and bead lowering.
+- `src/pdf/finalize/fonts.rs`: font encodings and mapped-text metrics.
+- `src/pdf/finalize/fonts/objects.rs`: resident, Type-1, TrueType, and PK font object assembly.
+- `src/pdf/finalize/fonts/unicode.rs`: encoding differences and ToUnicode maps.
+- `src/pdf/finalize/images.rs`: private image module wiring.
+- `src/pdf/finalize/images/raster.rs`: raster metadata, decoding, and stream selection.
+- `src/pdf/finalize/images/raster/png_rows.rs`: PNG alpha, indexed, row-filter, and compression helpers.
+- `src/pdf/finalize/images/imported.rs`: imported PDF page images and form geometry.
+- `src/pdf/finalize/numeric.rs`: checked scaled-point and PDF-number conversion helpers.
 - `src/pdf/finalize/tests.rs`: focused pure PDF-finalization regressions, including canonical pdfTeX Type-1 descriptor fallback metrics.
 - `src/pdf/graph.rs`: private canonical graph-role and nested-value cursor shared by validation, hashing, preflight, and serialization.
 - `src/pdf/import.rs`: sole bounded pure selected-page PDF resource importer used by detached external-image lowering.
