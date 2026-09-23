@@ -1386,6 +1386,9 @@ fn execute_fresh_with_completion(
         control
             .register_root_source(root)
             .map_err(|error| format!("source registration: {error:?}"))?;
+        // §537's file opening belongs after the job banner and transcript
+        // start. The ordinary host calls this boundary explicitly too.
+        control.open_registered_root_framing(universe);
         let mut recorder = Recorder::default();
         let mut mode_transitions = vec![control.current_mode()];
         for _ in 0..MAX_STEPS {

@@ -235,6 +235,22 @@ fn case() -> Case {
     case_with_inputs(&[])
 }
 
+#[test]
+fn fresh_runner_opens_registered_root_in_both_reference_text_channels() {
+    let run = super::execute_fresh(br"\end", &case()).expect("complete fresh job");
+    let channels = super::CapturedChannels::capture(&run);
+    for channel in [StreamChannel::Terminal, StreamChannel::Log] {
+        assert!(
+            channels
+                .stream(channel)
+                .windows(b"(./probe.tex".len())
+                .any(|window| window == b"(./probe.tex"),
+            "{} must include TeX82 §537's opened root name",
+            channel.name()
+        );
+    }
+}
+
 // --- MAX_SOURCE_BYTES -------------------------------------------------
 
 #[test]
