@@ -264,14 +264,17 @@ All production mutation of live TeX state should pass through `Universe` or simi
   materialize two owned channels. Named checkpoints retain direct child
   coordinates without publishing duplicate page-arena rows. The module also
   owns TeX-cell lineage metadata and semantic-only equality.
-- `src/node_arena.rs`: Generation page and cold loaded-node arenas; copy-only
+- `src/node_arena.rs`: Compatibility scratch and cold loaded-node arenas; copy-only
   typed/rebranded coordinates; shared immutable checkpoint rows; exact
   branch-local generation frontiers; owner-checked suffix cursors; borrowed
-  resolution, including the replacement page-material `ArenaListView` cursor,
-  direct linear `NodeCursor::for_each`/`try_for_each_range` callbacks, and
-  compatibility start-position iteration;
-  demand-enabled layout-independent list identities; and cold-only exact-root
-  relocation.
+  resolution; demand-enabled layout-independent list identities; and cold-only
+  exact-root relocation. Public `NodeArena` compatibility remains live.
+- `src/node_arena/view.rs`: Borrowed `NodeView` projections and transitional
+  conversions shared by compact and owned sources.
+- `src/node_arena/cursor.rs`: Direct `NodeCursor` traversal over resident
+  page-material records and owned slices, including linear callbacks,
+  positional compatibility iteration, and direct scalar projections. The
+  public types remain reexported through `node_arena`.
 - `src/node_destination.rs`: One-use variant-directed construction capability
   for initializing a final resident node slot without a complete caller-owned
   node crossing the arena boundary.
