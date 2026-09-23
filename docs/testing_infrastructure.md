@@ -127,22 +127,29 @@ and oracle identities.
 
 ### Optional checks
 
-| Entry point                          | Scope                                                                                                                                     |
-| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `scripts/check-tools.sh`             | Excluded host-tool workspaces, `parity-harness` with `reference-tools`, profiling targets, tool contracts, and opt-in clippy resolutions. |
-| `scripts/check-wasm.sh`              | WASM target, binding tests, authored JavaScript, and generated browser package checks.                                                    |
-| `scripts/check-hb-shape-fixtures.sh` | Rustybuzz against C HarfBuzz.                                                                                                             |
-| `scripts/check-latex-corpus.sh`      | Pinned native LaTeX corpus and runtime closure.                                                                                           |
-| `scripts/check-latex-wasm.sh`        | Native/WASM LaTeX article parity.                                                                                                         |
-| `scripts/check-latex-parity.sh`      | Upstream LaTeX2e DVI parity cohort.                                                                                                       |
+| Entry point                          | Scope                                                                                                                                             |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scripts/check-tools.sh`             | Excluded host-tool workspaces, `parity-harness` with `reference-tools`, profiling targets, tool contracts, and opt-in clippy resolutions.         |
+| `scripts/check-wasm.sh`              | WASM target, Umber and dense-allocator binding tests, authored JavaScript, packed-catalog/browser worker checks, and default-format availability. |
+| `scripts/check-hb-shape-fixtures.sh` | Rustybuzz against C HarfBuzz.                                                                                                                     |
+| `scripts/check-latex-corpus.sh`      | Pinned native LaTeX corpus and runtime closure.                                                                                                   |
+| `scripts/check-latex-wasm.sh`        | Native/WASM LaTeX article parity.                                                                                                                 |
+| `scripts/check-latex-parity.sh`      | Upstream LaTeX2e DVI parity cohort.                                                                                                               |
 
 Optional runner verdicts list selected, passed, failed, and blocked steps.
 Naming a step runs exactly that command and reports `PARTIAL` for the whole
 subsystem. Consult the entry point for its precise current step list and
-required programs. In particular, browser package integration requires the
-generated WASM package and an actual browser; a Node mock or an unavailable
-placeholder cannot certify a worker round trip. Report the final worker result
-only after that step executes.
+required programs. The `wasm-bindgen` step requires wasm-pack and headless
+Firefox. `dense-prefix-wasm` and `dense-arena-wasm` run their wasm-bindgen tests
+through Node. `browser-package` runs `scripts/test-wasm-browser.sh`, which needs
+Cargo, wasm-pack, Node, and headless Chrome or Chromium. It builds the package,
+uses the production publisher to generate small packed shards locally, and
+checks the generated WASM catalog, prefetch, and packaged worker resource flow
+in a real browser. The existing `node-unit` step retains fake-binding transport
+tests. `default-format` reports `BLOCKED` (exit 4) while the shipped Plain
+format metadata declares schema 0 unavailable; that availability result is
+separate from the local browser fixture's result. `npm-pack` checks the package
+inventory after package construction.
 
 ### Declarative Command Semantic Minifixtures
 
