@@ -130,6 +130,9 @@ async function checkRealBindings(base, root, rootAHash64) {
 	const plan = session.planBatch(keys);
 	assert.deepEqual(plan.misses, []);
 	assert(plan.jobs.some((job) => job.manifestKey === "tex:probe.tex"));
+	const hintObject = plan.jobs.find((job) => job.manifestKey === "tex:hint.tex")
+		?.entry.object;
+	assert.equal(typeof hintObject, "string");
 	assert.equal(session.prepareBatch(keys).shards.length, 0);
 	const other = (first.index + 1) % root.shardCount;
 	const wrongRoot = { ...root, shards: [...root.shards] };
@@ -185,10 +188,15 @@ async function checkRealBindings(base, root, rootAHash64) {
 	});
 	assert(reboundRun.hints.some((hint) => hint.name === "probe.tex"));
 	catalogOnly.discardRun();
+	const fetched = [];
 	const resolver = await HttpManifestResolver.create({
 		manifestUrl: `${base}/publication/manifest.json`,
 		manifestAHash64: rootAHash64,
 		catalog: bindings,
+		fetch(url, options) {
+			fetched.push(url);
+			return fetch(url, options);
+		},
 	});
 	assert.equal(
 		resolver.bindPrefetchPolicy(bindings),
@@ -213,17 +221,36 @@ async function checkRealBindings(base, root, rootAHash64) {
 					.includes("PACKED-CATALOG-RESOURCE"),
 		),
 	);
-	assert(resources.some((resource) => resource.name === "hint.tex"));
-	assert(
-		resources.some(
-			(resource) =>
-				resource.name === "hint.tex" && resource.speculative === true,
-		),
+	assert.deepEqual(
+		resources.map(({ name }) => name),
+		["probe.tex"],
 	);
+	assert.equal(
+		resolver.readinessOf({ type: "file", kind: "tex", name: "hint.tex" }),
+		undefined,
+	);
+	const hintFetches = () =>
+		fetched.filter((url) => url.endsWith(`/${hintObject}`)).length;
+	assert.equal(hintFetches(), 1, "catalog companion was fetched once");
 	resolver.noteAdmitted(resources);
 	assert(resolver.metrics.demandBytes > 0);
-	assert(resolver.metrics.prefetchBytes > 0);
+	assert.equal(
+		resolver.metrics.prefetchBytes,
+		0,
+		"catalog cache warming is not engine-admitted prefetch",
+	);
 	await resolver.commitRun();
+	const hinted = await resolver.resolve([{ kind: "tex", name: "hint.tex" }]);
+	assert.deepEqual(
+		hinted.map(({ name }) => name),
+		["hint.tex"],
+	);
+	assert.equal(
+		new TextDecoder().decode(hinted[0].bytes),
+		"\\relax",
+		"the later typed request receives verified catalog bytes",
+	);
+	assert.equal(hintFetches(), 1, "the typed request reuses the object cache");
 	const absent = await resolver.resolve([{ kind: "tex", name: "absent.tex" }]);
 	assert.equal(absent[0].type, "file-unavailable");
 	assert.equal(

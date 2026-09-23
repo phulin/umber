@@ -37,8 +37,10 @@ fn prefetch_binding_rejects_incomplete_requests_without_partial_queue_mutation()
         "depth": 0
     });
     let requests =
-        serde_wasm_bindgen::to_value(&vec![valid.clone(), missing_kind]).expect("request fixture");
-    assert!(policy.enqueue(requests).is_err());
+        js_sys::JSON::parse(&serde_json::json!([valid.clone(), missing_kind]).to_string())
+            .expect("plain-object request fixture");
+    let error = policy.enqueue(requests).expect_err("missing semantic kind");
+    assert!(string_field(&error, "message").contains("missing field `kind`"));
     assert_eq!(
         Array::from(&policy.drain(2).expect("empty queue")).length(),
         0
@@ -46,11 +48,10 @@ fn prefetch_binding_rejects_incomplete_requests_without_partial_queue_mutation()
 
     let mut unknown_origin = valid;
     unknown_origin["origin"] = serde_json::json!("unknown");
-    assert!(
-        policy
-            .enqueue(serde_wasm_bindgen::to_value(&vec![unknown_origin]).expect("origin fixture"))
-            .is_err()
-    );
+    let unknown_origin = js_sys::JSON::parse(&serde_json::json!([unknown_origin]).to_string())
+        .expect("plain-object origin fixture");
+    let error = policy.enqueue(unknown_origin).expect_err("unknown origin");
+    assert!(string_field(&error, "message").contains("invalid prefetch origin"));
     assert_eq!(
         Array::from(&policy.drain(2).expect("empty queue")).length(),
         0
@@ -73,11 +74,12 @@ fn prefetch_binding_keeps_catalog_and_semantic_hint_identities_separate() {
         "maxFiles": 1, "maxBytes": 4, "maxRuntimeBytes": 4, "maxFontBytes": 4,
         "maxImageBytes": 4, "maxDocumentBytes": 4
     });
-    let empty = serde_wasm_bindgen::to_value(&Vec::<serde_json::Value>::new()).expect("empty");
-    let budget = serde_wasm_bindgen::to_value(&budget).expect("budget");
+    let empty: JsValue = Array::new().into();
+    let budget = js_sys::JSON::parse(&budget.to_string()).expect("plain-object budget");
     let file_first = prefetch_select(
         empty.clone(),
-        serde_wasm_bindgen::to_value(&vec![file.clone(), catalog.clone()]).expect("candidates"),
+        js_sys::JSON::parse(&serde_json::json!([file.clone(), catalog.clone()]).to_string())
+            .expect("plain-object candidates"),
         budget.clone(),
     )
     .expect("file selection");
@@ -88,7 +90,8 @@ fn prefetch_binding_keeps_catalog_and_semantic_hint_identities_separate() {
     );
     let catalog_first = prefetch_select(
         empty,
-        serde_wasm_bindgen::to_value(&vec![catalog, file]).expect("candidates"),
+        js_sys::JSON::parse(&serde_json::json!([catalog, file]).to_string())
+            .expect("plain-object candidates"),
         budget,
     )
     .expect("catalog selection");
