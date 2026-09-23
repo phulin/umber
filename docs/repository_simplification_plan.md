@@ -1,11 +1,11 @@
 # Repository simplification and testing plan
 
 Status: the bounded nonbibliography review changes are implemented through the
-executor, state, session, scanner, codec, PDF, and browser owners. The native
-combined gate passed through the session retry fix; final integrated WASM
-verification is pending. The broader storage and
-paragraph-traversal proposals below retain their existing owners;
-bibliography migration is deferred.
+executor, state, session, scanner, codec, PDF, and browser owners. The final
+native, quality, generated WASM/package, and external PDF checks ran with the
+scoped verdicts below. Shipped Plain-format availability is blocked by its
+unpublished asset. Broader storage and paragraph-traversal proposals retain
+their existing owners; bibliography migration is deferred.
 Review baseline: `11c7bf7cd8ec78b36337c3ee3a97e38d0dc099e9`.
 
 The objective is to preserve Umber's current behavior while making both the
@@ -20,9 +20,9 @@ The testing pass established the seven-class front door, executable
 script-suite inventory, and aggregate gate verdicts. Its test-family splits
 and private source-guard dispositions make implementation-only changes easier
 to review. The bounded implementation passes are recorded under their owners
-below. The native combined gate passed through the session retry fix. The
-shared resource vectors and final integrated WASM checks still need their own
-verification; earlier passes establish only their selected revisions and steps.
+below. Shared resource-transition vectors now run against both the native
+session and generated WASM package. The acceptance results below identify the
+selected revision and steps; they do not imply that every optional tier ran.
 
 ### Implemented scope and retained boundaries
 
@@ -30,7 +30,7 @@ verification; earlier passes establish only their selected revisions and steps.
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Test selection and reporting | The script-suite inventory, seven behavior classes, combined verdict, and explicit optional-step verdicts are live. Executor, CLI, conformance, expansion, and line-breaking tests are grouped within their original targets. Private spelling guards were replaced with behavior, compile-fail, or narrow structural evidence. | `scripts/check-and-test.sh`, `scripts/check.sh`, `scripts/check-wasm.sh`, `test-support` workspace selection, and the assertion dispositions below.                                        |
 | Command and state            | Structured scanner families and their ownership are explicit. Unreachable detached-continuation code is removed. `MainControl`, `World`, `ForkArena`, and `CommandContext` methods are grouped by responsibility without adding a second state or checkpoint owner.                                                             | Existing command fixtures, scanner recovery and resource replay tests, state rollback tests, and [responsibility boundaries](state_responsibility_boundaries.md).                          |
-| Resources and sessions       | Mixed file/font/project admission is staged and rejected atomically. A private publication seam prepares output before accepting the revision and installs accepted output, workspace, and render state together. Valid nonconsecutive HTML revisions publish a full snapshot.                                                  | Virtual/project admission rejection tests, accepted-revision and render-update tests, then final merged session gates.                                                                     |
+| Resources and sessions       | Mixed file/font/project admission is staged and rejected atomically. A private publication seam prepares output before accepting the revision and installs accepted output, workspace, and render state together. Valid nonconsecutive HTML revisions publish a full snapshot.                                                  | Virtual/project admission rejection tests, accepted-revision and render-update tests, and three shared native/generated-WASM transition cases.                                             |
 | Nodes and output             | Borrowed node views and compact page reads are separated from the generic legacy `NodeArena<L>`. Artifact codec accepts only version 24 while preserving public aliases and owned/streaming byte identity. PDF lowering has private content, navigation, font, image, and numeric modules under one finalization authority.     | Node checkpoint/borrow tests; old-version rejection and codec identity; PDF semantic tests and the explicit qpdf/Poppler gate.                                                             |
 | Browser                      | Rust owns prefetch policy; generated packed-catalog and real package tests cover browser worker resource flow. Standalone catalog-only resolution disables speculation until bindings are installed.                                                                                                                            | Node transport tests, Firefox wasm-bindgen tests, allocator WASM steps, and Chromium package checks. Shipped Plain-format availability remains `BLOCKED` while metadata declares schema 0. |
 
@@ -532,14 +532,19 @@ that reuse. The editor's provisional/stable distinction and bibliography
 fixed-point passes represent different product behavior and should not be
 collapsed into one generic session state machine without proof of equivalence.
 
-One review recommendation remains open: native and browser resource loops have
-separate tests but no shared transition fixture for attempt, need, admission,
-speculative drain, retry, and acceptance. A bounded common vector could check
-their shared state transitions while leaving native filesystem policy and
-browser asynchronous fetch/cache policy separate. An empty speculative
-response, cancellation, and an unavailable required resource need distinct
-transitions. This fixture work is a separate test-harness follow-up, not a
-second resource-policy owner or evidence of an introduced regression.
+The shared [resource-transition cases](../tests/resource-transition-cases.json)
+now drive the public native `VirtualCompileSession` and the generated WASM
+package session with its real HTTP manifest resolver. Three cases cover a
+required positive retry, authoritative absence from a blocking probe, and an
+empty speculative response followed by required demand. The positive case
+also rejects a conflicting late response without admitting part of its batch.
+Both runners compare ordered typed request roles, candidate privacy, and
+accepted terminal observations. The browser shared-case runner uses the real
+packed-catalog decoder with speculation disabled for its catalog-only resolver;
+separate package tests exercise the full Rust prefetch policy. Native file
+lookup and browser fetch, cache, worker, and cancellation behavior keep their
+host-specific tests. [Resource Lifecycle](resource_lifecycle.md) records the
+bounded common contract.
 
 ### 5. Simplify downstream families using the same method
 
@@ -632,14 +637,14 @@ and dependency vectors without another JavaScript packed decoder.
 
 ## Delivery and acceptance
 
-| Review deliverable                          | Disposition                                                                                                                                                                                            | Acceptance evidence and limit                                                                                                                              |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Test selection and honest verdicts          | Implemented. The seven classes, inventory, required-asset behavior, and combined/subsystem verdicts have one documented entry point.                                                                   | `test-support` selection tests, gate-verdict and script-inventory tests, `scripts/check-and-test.sh`; a selected optional subset reports `PARTIAL`.        |
-| Refactoring-safe test organization          | Implemented. Executor and other large test families retain their original Cargo targets; retired private source checks have named replacement evidence.                                                | Original fixture/parity selections, executor receipt and host-fact tests, compile-fail capability checks, and the assertion tables above.                  |
-| Bounded production simplification           | Implemented. Scanner, command, state-method, node-view, resource-admission, session-publication, artifact codec, PDF lowering, and Rust prefetch changes keep one authority at each mutation boundary. | Focused native tests, codec byte/rejection tests, PDF structural/rendering checks, and real WASM/package tests; final merged verification remains pending. |
-| Broader storage and paragraph consolidation | Retained as a separate measured audit. Existing public adapters and distinct semantic/physical channels have identified consumers.                                                                     | Delete an owner or conversion only after caller, compatibility, rollback, and cost evidence; shorter files alone do not qualify.                           |
-| Shared native/browser transition fixture    | Open test-harness follow-up. Existing platform tests are separate; a common vector has not been added.                                                                                                 | Check attempt, need, admission, speculative drain, retry, and acceptance while preserving host-specific policy.                                            |
-| Bibliography migration                      | Deferred. Classic and Biber-compatible backends and their ignored upstream inventory keep their existing status.                                                                                       | A future scoped pass must distinguish executed matched cases, strict known failures, ignored declarations, and unsupported cases.                          |
+| Review deliverable                          | Disposition                                                                                                                                                                                            | Acceptance evidence and limit                                                                                                                         |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Test selection and honest verdicts          | Implemented. The seven classes, inventory, required-asset behavior, and combined/subsystem verdicts have one documented entry point.                                                                   | `test-support` selection tests, gate-verdict and script-inventory tests, `scripts/check-and-test.sh`; a selected optional subset reports `PARTIAL`.   |
+| Refactoring-safe test organization          | Implemented. Executor and other large test families retain their original Cargo targets; retired private source checks have named replacement evidence.                                                | Original fixture/parity selections, executor receipt and host-fact tests, compile-fail capability checks, and the assertion tables above.             |
+| Bounded production simplification           | Implemented. Scanner, command, state-method, node-view, resource-admission, session-publication, artifact codec, PDF lowering, and Rust prefetch changes keep one authority at each mutation boundary. | Final combined native/quality, real WASM/package, and external PDF checks have the scoped results below.                                              |
+| Broader storage and paragraph consolidation | Retained as a separate measured audit. Existing public adapters and distinct semantic/physical channels have identified consumers.                                                                     | Delete an owner or conversion only after caller, compatibility, rollback, and cost evidence; shorter files alone do not qualify.                      |
+| Shared native/browser transition fixture    | Implemented as three ordered file-resource cases over the public native and generated WASM sessions.                                                                                                   | Both runners check request roles, positive/negative/empty outcomes, atomic rejection, and accepted observations; host-specific policy stays separate. |
+| Bibliography migration                      | Deferred. Classic and Biber-compatible backends and their ignored upstream inventory keep their existing status.                                                                                       | A future scoped pass must distinguish executed matched cases, strict known failures, ignored declarations, and unsupported cases.                     |
 
 The original first four pilots are complete: verdict and inventory work,
 executor test organization and source-guard replacement, version-24 codec
@@ -678,23 +683,23 @@ were regenerated or production code changed for that review. The baseline
 `scripts/check.sh` passed all four gates, including both clippy feature
 resolutions over 32 workspace members.
 
-Post-review component evidence has a different scope:
+Final integrated acceptance at `f22424e2d` has these scoped results:
 
-| Command and selected behavior class                                                                                  | Recorded result                                                                                                                                                    | What it establishes                                                                                                                               |
-| -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `scripts/check-and-test.sh` on the Rust-prefetch revision `94ed259e9`                                                | `PASS` for its selected native, quality, publication, asset, and gate-contract steps.                                                                              | Routine native correctness and tool integrity on that revision; it predates executor and session publication integration.                         |
-| `scripts/check-and-test.sh` on executor revision `60589ecf6`                                                         | `PASS` across its six aggregate stages.                                                                                                                            | Refactoring-safe executor evidence and routine native correctness through that revision; it predates session publication integration.             |
-| `scripts/check-and-test.sh` on session retry revision `908f31060`                                                    | `PASS` across all six aggregate stages; 126 virtual-session tests passed in the focused run.                                                                       | Routine native and quality evidence includes publication rollback, planner rejection, and loaded-format retry.                                    |
-| Focused `tex-out`, `tex-state`, `tex-command`, `tex-exec`, and `umber` tests on their implementation revisions       | Passed in their respective change gates.                                                                                                                           | Local rules, state/lifecycle, format/output, and reference-fixture contracts for those slices; a focused pass does not certify later integration. |
-| Firefox wasm-bindgen tests for `umber-wasm` and the two dense allocators; Node and generated Chromium package checks | Component runs passed: 36 Firefox binding tests, one `tex-dense-prefix` test, two `tex-dense-arena` tests, 106 Node tests, and the optimized browser package path. | Product/platform coverage includes real binding, packed catalog, and worker acquisition behavior; these runs predate the final combined revision. |
-| `scripts/check-wasm.sh default-format`                                                                               | `BLOCKED`: shipped Plain-format metadata still declares schema 0 unavailable.                                                                                      | This is an external asset availability result, separate from the generated local browser fixture and its passing package tests.                   |
-| `scripts/check-pdf-external.sh`                                                                                      | The component PDF matrix passed 15 qpdf/Poppler cases.                                                                                                             | Independent structural and rendering evidence for PDF lowering, in addition to Rust semantic and deterministic-byte tests.                        |
+| Command or gate                                                             | Result                                                                                                                                                                                                                                                                                                                 | What it establishes                                                                                                                                                            |
+| --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `scripts/check-and-test.sh`                                                 | `PASS`: all six aggregate stages; its authoritative `scripts/check.sh` quality gate passed all four selected gates.                                                                                                                                                                                                    | Complete routine host-testable native suite, quality resolutions, and script/asset/gate contracts on the integrated revision.                                                  |
+| Shared [resource-transition cases](../tests/resource-transition-cases.json) | One native integration test and the generated WASM package runner each passed all three cases.                                                                                                                                                                                                                         | Ordered typed required/probe/hint requests, a positive retry, authoritative absence, an empty hint drain, atomic rejection, and accepted observations agree across hosts.      |
+| `scripts/check-wasm.sh`                                                     | All nine steps ran: eight `PASS`, one `BLOCKED` (`default-format`). Firefox ran 36 `umber-wasm` binding tests; the two dense allocators ran one and two tests; Node ran 106 tests. The optimized Chromium/package path passed the three shared cases, catalog-only resolution, and separate full Rust prefetch checks. | Real bindings, allocators, authored JavaScript, packed catalog, worker, and generated package were exercised. The aggregate is `BLOCKED`, so this is not an all-optional pass. |
+| `scripts/check-pdf-external.sh`                                             | `PASS`: 15 cases with pinned qpdf 12.3.2 and Poppler 25.08.0.                                                                                                                                                                                                                                                          | Independent PDF structural and rendered-output checks complement Rust semantic and deterministic-byte tests.                                                                   |
 
-After shared resource vectors land, run `cargo test -q --tests` and
-`scripts/check.sh` on that combined revision, or use
-`scripts/check-and-test.sh` for their aggregate gate. Run the applicable
-`scripts/check-wasm.sh` steps and the external PDF matrix when their
-prerequisites are available. Report each selected step's result;
-`default-format` remains blocked until a valid shipped Plain format exists.
-No result above claims that every optional corpus, performance, or live
-reference tier passed.
+The optimized generated `umber_wasm_bg.wasm` measured 9,513,973 bytes with
+SHA-256 `0facb2543df068cf7de67d20a0d2f192b1d74237be70f1fa44cfe8ce454aa8f9`.
+This identifies the browser artifact used for the recorded package checks; it
+is a local verification artifact, not a published distribution.
+
+The sole blocked WASM step is shipped Plain-format availability. Its current
+metadata declares schema 0 unavailable; a valid schema-12 aHash format must be
+published before `default-format` can run. The generated local catalog/package
+fixture passed independently of that shipped asset. The receipt above does not
+claim that extended corpus, performance, live reference, or deferred
+bibliography tiers passed.

@@ -151,6 +151,28 @@ format metadata declares schema 0 unavailable; that availability result is
 separate from the local browser fixture's result. `npm-pack` checks the package
 inventory after package construction.
 
+The shared [resource-transition cases](../tests/resource-transition-cases.json)
+run in the native `umber` integration target and the generated WASM package's
+`browser-package` step. Three ordered cases check required positive retry,
+authoritative missing probe, empty speculative response followed by demand,
+and atomic rejection of a conflicting late response. The browser runner uses
+the real packed-catalog decoder with a catalog-only resolver so speculation
+does not add responses to the common vectors. Separate package checks use the
+full Rust prefetch policy. Native filesystem lookup and browser fetch, cache,
+worker, and cancellation behavior retain their own tests. The shared contract
+is explained in [Resource Lifecycle](resource_lifecycle.md).
+
+At the September 2026 integrated revision `f22424e2d`, the combined native
+gate passed all six stages and its quality gate passed all four gates. All
+nine WASM steps ran: eight passed and `default-format` was `BLOCKED` because
+the shipped Plain-format metadata still declares schema 0 unavailable. The
+generated browser package passed independently; its three shared resource
+cases, catalog-only path, and full Rust prefetch path ran on the real package.
+The pinned external PDF gate passed 15 qpdf/Poppler cases. These are results
+for that revision and selection, not a claim about every optional tier. See
+[Repository Simplification and Testing Plan](repository_simplification_plan.md)
+for the acceptance evidence and artifact identity.
+
 ### Declarative Command Semantic Minifixtures
 
 Run the fast property-scoped semantic tier independently with:
