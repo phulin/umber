@@ -276,7 +276,7 @@ pub(super) fn run_two_phase_fixture(
             bytes: tfm,
         },
     ];
-    let mut observers = TripObservers::default();
+    let mut observers = CapturedObservations::default();
     let loaded_run = provider
         .run(
             &prepared,

@@ -2,7 +2,6 @@
 
 mod trip_triage;
 
-pub use tex_observe::CapturedObservations as TripObservers;
 pub use trip_triage::{
     TripTriageChannels, TripTriageInput, TripTriageSource, TripTriageVerdict,
     write_trip_triage_artifact,
@@ -23,7 +22,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use corpus_manifest::Entry as Document;
 use corpus_manifest::{Manifest, parse_manifest_file};
 #[cfg(feature = "reference-tools")]
-use refexec::{RefTex, run_reference_document};
+use fixturegen_reference::reference::{RefTex, run_reference_document};
 use sha2::{Digest, Sha256};
 use similar::TextDiff;
 use test_support::dvi::normalized_dvi_for_comparison;
@@ -285,56 +284,6 @@ fn compare_normalized_dvi(
     )
 }
 
-/// Runs one manifest-backed document through reference TeX and Umber, then
-/// requires byte-identical DVI output after normalizing only the preamble
-/// comment payload.
-#[cfg(feature = "reference-tools")]
-pub fn run_named_external_document(
-    repo_root: &Path,
-    umber_bin: &Path,
-    document: &str,
-) -> Result<()> {
-    let repo_root = repo_root
-        .canonicalize()
-        .with_context(|| format!("failed to resolve repository root {}", repo_root.display()))?;
-    let manifest_path = repo_root.join("tests/corpus-manifest.txt");
-    let manifest = read_manifest(&manifest_path)?;
-    if !manifest
-        .entries
-        .iter()
-        .any(|doc| doc.is_document() && doc.name == document)
-    {
-        bail!(
-            "document {document} is not declared in {}",
-            manifest_path.display()
-        );
-    }
-    let source_path = repo_root.join("third_party/corpus").join(document);
-    if !source_path.is_file() {
-        bail!(
-            "missing external conformance input {}; run python3 scripts/provision.py worktree . first",
-            source_path.display()
-        );
-    }
-    let options = Options {
-        manifest_path,
-        corpus_dir: repo_root.join("third_party/corpus"),
-        triage_dir: repo_root.join("target/conformance-triage"),
-        umber_bin: umber_bin.to_path_buf(),
-        doc_filter: Some(document.to_string()),
-        keep_triage: true,
-        self_test: false,
-        compare_existing_dvi: None,
-        comparison_label: "dvi-comparison".to_string(),
-        repo_root,
-    };
-    if run_e2e(&options)? {
-        Ok(())
-    } else {
-        bail!("end-to-end DVI conformance failed for {document}")
-    }
-}
-
 #[cfg(feature = "reference-tools")]
 #[derive(Clone, Debug)]
 struct Options {
@@ -410,16 +359,6 @@ impl Options {
         }
         Ok(options)
     }
-}
-
-#[cfg(feature = "reference-tools")]
-pub fn generate_reference_fixture(
-    repo_root: &Path,
-    manifest_path: &Path,
-    corpus_dir: &Path,
-    document: &str,
-) -> Result<Vec<u8>> {
-    refexec::generate_reference_fixture(repo_root, manifest_path, corpus_dir, document)
 }
 
 #[cfg(feature = "reference-tools")]

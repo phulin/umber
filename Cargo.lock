@@ -671,7 +671,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "corpus-manifest",
- "refexec",
+ "fixturegen-reference",
  "serde_json",
  "sha2",
  "similar",
@@ -882,16 +882,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.3",
-]
-
-[[package]]
-name = "refexec"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "fixturegen-reference",
- "tempfile",
- "test-support",
 ]
 
 [[package]]

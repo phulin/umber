@@ -40,7 +40,7 @@ optional_check_step_requiring "python3 tar gzip" arxiv-census \
 optional_check_step_requiring "python3 openssl" oracle-contract \
   scripts/test-oracle-regeneration.sh
 
-# `profile-analyzer` and `refexec` are tested by the routine `cargo test` suite
+# `profile-analyzer` is tested by the routine `cargo test` suite
 # with everything else, so re-running them here would only thrash the shared
 # target directory with a narrower feature resolution. `parity-harness` stays
 # because `reference-tools` is a resolution no other gate builds.
@@ -90,7 +90,7 @@ tools_clippy() {
   CARGO_TARGET_DIR="${TOOLS_TARGET_DIR:-target/tools}" cargo clippy -q "$@"
 }
 optional_check_step_requiring "cargo" clippy-reference-tools tools_clippy \
-  -p profile-analyzer -p refexec -p parity-harness \
+  -p profile-analyzer -p parity-harness \
   --all-targets --features parity-harness/reference-tools -- -D warnings
 optional_check_step_requiring "cargo" clippy-profiling-runner tools_clippy \
   -p umber --bin gentle-profile \

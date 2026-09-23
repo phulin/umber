@@ -32,10 +32,10 @@ scripts/build-latex-format.sh \
   --distribution "$format_distribution" \
   --distribution-ahash64 "$format_distribution_ahash64"
 cargo build --release -p umber
-cargo build -p refexec
+cargo build -p parity-harness --features reference-tools
 
 umber_bin="${CARGO_TARGET_DIR:-${repo_root}/target}/release/umber"
-refexec_bin="${CARGO_TARGET_DIR:-${repo_root}/target}/debug/refexec"
+parity_harness_bin="${CARGO_TARGET_DIR:-${repo_root}/target}/debug/parity-harness"
 format_file="${repo_root}/target/latex-format/latex.fmt"
 texinputs="${texmf_dist}/tex/latex/base:${texmf_dist}/tex/latex/l3kernel:${texmf_dist}/tex/latex/l3backend:${texmf_dist}/tex/generic/unicode-data:${texmf_dist}/tex/generic/babel:${texmf_dist}/tex/generic/hyphen"
 texfonts="${texmf_dist}/fonts/tfm/public/cm:${texmf_dist}/fonts/tfm/public/latex-fonts:${texmf_dist}/fonts/tfm/jknappen/ec"
@@ -111,7 +111,7 @@ for source in tests/latex/article.tex tests/latex/report.tex tests/latex/book.te
     fi
   done
 
-  "$refexec_bin" --compare-existing-dvi \
+  "$parity_harness_bin" --compare-existing-dvi \
     "${reference_dir}/document.dvi" "${umber_dir}/document.dvi" || \
     fail "DVI mismatch for ${case_name}"
   compare_auxiliary_files "$reference_dir" "$umber_dir"

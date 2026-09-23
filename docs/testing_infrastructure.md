@@ -969,10 +969,10 @@ boundary.
 ## Fixture Regeneration
 
 `scripts/regen-fixtures.sh` is the sole live-reference rewrite path. It builds
-`tools/fixturegen` for text/native and PDF fixture updates and `tools/refexec`
-for DVI fixture updates. Its `--area pdf` mode requires the authenticated
-pdfTeX 1.40.29 reference producer and records the selected Poppler tool
-versions; its `--area fonts` mode owns the explicit live
+`tools/fixturegen` for text/native, PDF, and reference DVI generation, and
+`parity-harness` for DVI comparison. Its `--area pdf` mode requires the
+authenticated pdfTeX 1.40.29 reference producer and records the selected
+Poppler tool versions; its `--area fonts` mode owns the explicit live
 `tftopl` cross-check and does not rewrite fixtures.
 
 Its `--oracle tex82 --profile initex-eight-bit` and `--oracle etex26
@@ -1205,8 +1205,8 @@ canonical-divergence regression tests in
 outside `scripts/regen-fixtures.sh`'s DVI-area list, because those two tests
 pin a specific past divergence rather than tracking the reference engine.
 
-DVI-area regeneration runs the supported `tools/refexec` compatibility CLI,
-which delegates its process kernel to fixturegen,
+DVI-area regeneration runs `fixturegen --reference-run` and
+`parity-harness --compare-existing-dvi`,
 copies the pinned local CM TFMs and case-local support files, uses INITEX for the math
 corpus, and rewrites raw reference DVI only when the existing
 preamble-comment-only comparison detects a change.

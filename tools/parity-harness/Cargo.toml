@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-reference-tools = ["dep:refexec"]
+reference-tools = ["dep:fixturegen-reference"]
 
 [[bin]]
 name = "parity-harness"
@@ -16,7 +16,7 @@ bench = false
 [dependencies]
 anyhow.workspace = true
 corpus-manifest = { path = "../../crates/corpus-manifest" }
-refexec = { path = "../refexec", optional = true }
+fixturegen-reference = { path = "../fixturegen/reference-kernel", optional = true }
 serde_json.workspace = true
 sha2.workspace = true
 similar.workspace = true

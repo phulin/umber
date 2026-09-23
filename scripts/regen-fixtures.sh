@@ -21,12 +21,10 @@ target_dir="${CARGO_TARGET_DIR:-target}"
 if [[ "$target_dir" != /* ]]; then
   target_dir="${repo_root}/${target_dir}"
 fi
-refexec_bin="${target_dir}/debug/refexec"
 fixturegen_bin="${target_dir}/debug/fixturegen"
 umber_bin="${target_dir}/debug/umber"
 parity_harness_bin="${target_dir}/debug/parity-harness"
 command_semantic_channels_bin="${target_dir}/debug/command-semantic-channels"
-refexec_built=0
 fixturegen_built=0
 umber_built=0
 parity_harness_built=0
@@ -64,8 +62,8 @@ Reference tools:
 
   Text and DVI reference regeneration requires pdftex or tex on PATH, or
   UMBER_REF_TEX=/absolute/path/to/pdftex. Text/native regeneration builds and
-  runs the workspace fixturegen tool; DVI regeneration builds and runs the
-  workspace refexec tool and copies pinned CM TFMs from
+  runs fixturegen; DVI regeneration runs its direct reference command and
+  parity-harness's DVI comparator, copying pinned CM TFMs from
   crates/tex-fonts/tests/fixtures/cm plus area-local support files.
 
   tex_exec is validation-only. Its expected.ref files are preserved historical
@@ -249,13 +247,6 @@ format_regenerated_output() {
   run_command 'Formatting regenerated fixtures' dprint fmt
 }
 
-build_refexec_once() {
-  if [[ "$refexec_built" -eq 0 ]]; then
-    run_command 'Building refexec' cargo build -p refexec
-    refexec_built=1
-  fi
-}
-
 build_fixturegen_once() {
   if [[ "$fixturegen_built" -eq 0 ]]; then
     run_command 'Building fixturegen' cargo build --manifest-path tools/fixturegen/Cargo.toml --target-dir "$target_dir"
@@ -325,12 +316,14 @@ regen_dvi_case() {
 
   [[ -f "$source" ]] || die "missing DVI source: tests/corpus/${area}/${case}.tex"
 
-  build_refexec_once
+  build_fixturegen_once
+  build_parity_harness_once
   tmp_root="$(mktemp -d)"
   case_dir="${tmp_root}/${area}-${case}"
   mkdir -p "$case_dir"
   dvi_extra_inputs=()
   copy_dvi_inputs "$area" "$case_name" "$case_dir"
+  ref_dvi="${case_dir}/${case}.ref.dvi"
   if [[ "$area" == "math" ]]; then
     ini_arg="--ini"
   fi
@@ -339,32 +332,22 @@ regen_dvi_case() {
   if [[ -n "$ini_arg" ]]; then
     (
       cd "$case_dir"
-      "$refexec_bin" "$case_name" --dvi "$ini_arg" "${dvi_extra_inputs[@]}"
+      "$fixturegen_bin" --reference-run "$case_name" --dvi-output "$ref_dvi" \
+        "$ini_arg" "${dvi_extra_inputs[@]}"
     )
   else
     (
       cd "$case_dir"
-      "$refexec_bin" "$case_name" --dvi "${dvi_extra_inputs[@]}"
+      "$fixturegen_bin" --reference-run "$case_name" --dvi-output "$ref_dvi" \
+        "${dvi_extra_inputs[@]}"
     )
   fi
-  ref_dvi="${case_dir}/${case}.ref.dvi"
   [[ -f "$ref_dvi" ]] || die "reference DVI was not written for ${area}/${case}"
 
   if [[ -f "$fixture" ]]; then
     set +e
-    if [[ -n "$ini_arg" ]]; then
-      (
-        cd "$case_dir"
-        "$refexec_bin" "$case_name" --compare-dvi "$fixture" \
-          "$ini_arg" "${dvi_extra_inputs[@]}"
-      )
-    else
-      (
-        cd "$case_dir"
-        "$refexec_bin" "$case_name" --compare-dvi "$fixture" \
-          "${dvi_extra_inputs[@]}"
-      )
-    fi
+    "$parity_harness_bin" --compare-existing-dvi "$fixture" "$ref_dvi" \
+      --triage-dir "${tmp_root}/triage"
     compare_status=$?
     set -e
     if [[ "$compare_status" -eq 0 ]]; then

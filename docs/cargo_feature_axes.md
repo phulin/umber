@@ -154,7 +154,7 @@ was already saving.
 So the rule is not "crates beat features". It is:
 
 - an optional **dependency** is a feature (`reference-tools` gates
-  `dep:refexec`);
+  `dep:fixturegen-reference`);
 - an optional **artifact** is `required-features` on its target;
 - everything else is one of the three axes, or it does not exist.
 

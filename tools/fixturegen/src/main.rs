@@ -6,8 +6,10 @@ mod corpus_sync;
 mod fixture_transaction;
 mod fonts;
 mod pdf;
+mod reference_run;
 
 use std::env;
+use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -46,6 +48,9 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<()> {
+    if env::args_os().nth(1).as_deref() == Some(OsStr::new("--reference-run")) {
+        return reference_run::run_cli(env::args_os().skip(2).collect());
+    }
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
         Some("--classic-bibtex-differential") => classic_bibtex::run(&repo_root(), args.collect()),
@@ -94,7 +99,7 @@ fn run() -> Result<()> {
 
 fn print_usage() {
     eprintln!(
-        "usage: fixturegen --area AREA | --case AREA/CASE | --case AREA CASE | --cohort-transaction (--plan|--apply) PLAN.json | --sync-corpus [--manifest PATH] [--dest PATH] [--offline] | --reference-dvi DOCUMENT OUTPUT | --check-pdf-raster\n\
+        "usage: fixturegen --area AREA | --case AREA/CASE | --case AREA CASE | --cohort-transaction (--plan|--apply) PLAN.json | --sync-corpus [--manifest PATH] [--dest PATH] [--offline] | --reference-dvi DOCUMENT OUTPUT | --reference-run INPUT [--dvi-output PATH] [--ini] [--etex] [--extra-input PATH] [--print-log] | --check-pdf-raster\n\
          areas: lexer expand lexer_dynamic exec etex_exec typeset pdf fonts"
     );
 }

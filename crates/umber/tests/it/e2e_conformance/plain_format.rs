@@ -80,7 +80,7 @@ fn plain_provider_reuses_one_verified_construction_with_fresh_jobs() {
         (b"\\count0=41\\end\n".as_slice(), 41),
         (b"\\end\n".as_slice(), 1),
     ] {
-        let mut observer = TripObservers::default();
+        let mut observer = CapturedObservations::default();
         let run = second_provider
             .run(
                 &second,

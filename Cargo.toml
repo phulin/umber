@@ -4,7 +4,6 @@ members = [
   "crates/tex-state/profiling-allocator",
   "tools/parity-harness",
   "tools/profile-analyzer",
-  "tools/refexec",
   "tools/tex-command-stream",
 ]
 # Every host-testable member, so `cargo test --tests` IS the routine gate.
@@ -43,7 +42,6 @@ default-members = [
   "crates/umber-vfs",
   "tools/parity-harness",
   "tools/profile-analyzer",
-  "tools/refexec",
   "tools/tex-command-stream",
 ]
 exclude = [

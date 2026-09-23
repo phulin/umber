@@ -385,7 +385,7 @@ fn trip_profiles_reuse_verified_provider_entries_and_fresh_jobs() {
         );
 
         for (assignment, expected) in [("\\count0=41\\end\n", 41), ("\\end\n", 0)] {
-            let mut observer = TripObservers::default();
+            let mut observer = CapturedObservations::default();
             let run = second_provider
                 .run(
                     &second,

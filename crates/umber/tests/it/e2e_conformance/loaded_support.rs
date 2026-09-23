@@ -17,7 +17,7 @@ pub(super) fn run_loaded_trip_source(source: Arc<[u8]>) -> String {
     run_loaded_trip_source_observed(source).0
 }
 
-pub(super) fn positionless_geometry(observer: TripObservers, oracle: &[u8]) -> Vec<u8> {
+pub(super) fn positionless_geometry(observer: CapturedObservations, oracle: &[u8]) -> Vec<u8> {
     let mut translator = LiveSessionTranslator::new("terminal", SchemaVersion::V2);
     translator.translate_captured(observer.into_captured());
     let evidence = translator.finalize_profile(
@@ -28,7 +28,7 @@ pub(super) fn positionless_geometry(observer: TripObservers, oracle: &[u8]) -> V
         .expect("focused geometry stream")
 }
 
-pub(super) fn run_loaded_trip_source_observed(source: Arc<[u8]>) -> (String, TripObservers) {
+pub(super) fn run_loaded_trip_source_observed(source: Arc<[u8]>) -> (String, CapturedObservations) {
     let trip =
         test_support::read_repository_asset("third_party/trip/trip.tex").expect("read TRIP source");
     let tripos = test_support::read_repository_asset("third_party/trip/tripos.tex")
@@ -46,7 +46,7 @@ pub(super) fn run_loaded_trip_source_observed(source: Arc<[u8]>) -> (String, Tri
     let provider = PreparedFormatProvider::from_environment(super::umber_format_worker_launcher())
         .expect("focused TRIP format provider");
     let prepared = provider.prepare(&recipe).expect("focused TRIP format");
-    let mut observer = TripObservers::default();
+    let mut observer = CapturedObservations::default();
     let loaded = provider
         .run(
             &prepared,

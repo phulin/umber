@@ -6,15 +6,15 @@ use std::time::Duration;
 
 use parity_harness::run_named_fixture_document;
 use parity_harness::{
-    ManifestBoundSource, TripObservers, TripTriageChannels, TripTriageInput, TripTriageSource,
-    compare_dvi_files, write_trip_triage_artifact,
+    ManifestBoundSource, TripTriageChannels, TripTriageInput, TripTriageSource, compare_dvi_files,
+    write_trip_triage_artifact,
 };
 use sha2::{Digest, Sha256};
 use test_support::dvi::normalized_dvi_for_comparison;
 use tex_command::RegisteredSourceKind;
 use tex_observe::{
-    GeometryEvidenceProfile, LiveSessionOutcome, LiveSessionStreams, LiveSessionTranslator,
-    LiveSource, SemanticEvidenceProfile,
+    CapturedObservations, GeometryEvidenceProfile, LiveSessionOutcome, LiveSessionStreams,
+    LiveSessionTranslator, LiveSource, SemanticEvidenceProfile,
 };
 use tex_oracle::{ObservationStream, SchemaVersion};
 use tex_state::{EffectRecord, PrintSink, ProvenanceDemand};

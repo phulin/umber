@@ -1,15 +1,14 @@
 # Tools Guidance
 
-`tools/refexec` is the supported compatibility facade and CLI for reference
-execution. Its Rust API and command preserve the established lookup, flags,
-environment, staging, output, status, and DVI-comparison behavior, while the
-single process implementation lives in `fixturegen::reference`. By default it
-locates `pdftex` or `tex` on `PATH`; set
+`tools/fixturegen/src/reference.rs` owns live reference execution. The
+`fixturegen --reference-run INPUT --dvi-output OUTPUT` command stages an
+explicit diagnostic run; `--reference-dvi` validates and publishes a corpus
+fixture. By default the reference kernel locates `pdftex` or `tex` on `PATH`; set
 `UMBER_REF_TEX=/absolute/path/to/pdftex` to select another reference binary.
-Exact DVI normalization/comparison is owned by `test-support`; `refexec`
-re-exports and uses that shared contract for its CLI comparison paths.
+Exact DVI normalization/comparison is owned by `test-support`, with
+`parity-harness --compare-existing-dvi` as the operator command.
 
-`tools/fixturegen` is the sole host-side fixture publication owner used by `scripts/regen-fixtures.sh` and primary-checkout provisioning. Its `reference` library module owns deterministic TeX and TFtoPL executable lookup, environment, staging, flags, output capture, and manifest-hash verification; `--reference-dvi` runs that module directly before atomic publication. The minimal `reference-kernel` crate exposes that same source to compatibility consumers without making the excluded fixturegen program or its dependency tree part of routine workspace builds. Its `CasePlan`, `ArtifactSpec`, and `AtomicCaseTransaction` cover ordinary text/native updates, layout and PDF migration, externally staged cohorts, command-semantic batches, end-to-end reference DVI publication, and corpus acquisition. It is intentionally not a root workspace member; build it via `cargo build --manifest-path tools/fixturegen/Cargo.toml`. It may invoke `umber`, `pdftex`, `pdftoppm`, and `tftopl`, but cargo tests must not run it.
+`tools/fixturegen` is the sole host-side fixture publication owner used by `scripts/regen-fixtures.sh` and primary-checkout provisioning. Its `reference` library module owns deterministic TeX and TFtoPL executable lookup, environment, staging, flags, output capture, and manifest-hash verification; `--reference-dvi` runs that module directly before atomic publication. The minimal `reference-kernel` crate exposes that same source to the opt-in parity runner without making the excluded fixturegen program or its dependency tree part of routine workspace builds. Its `CasePlan`, `ArtifactSpec`, and `AtomicCaseTransaction` cover ordinary text/native updates, layout and PDF migration, externally staged cohorts, command-semantic batches, end-to-end reference DVI publication, and corpus acquisition. It is intentionally not a root workspace member; build it via `cargo build --manifest-path tools/fixturegen/Cargo.toml`. It may invoke `umber`, `pdftex`, `pdftoppm`, and `tftopl`, but cargo tests must not run it.
 Candidate closed-directory validation and non-authoritative staging are shared from `test-support::closed_case`; only fixturegen may turn a validated candidate into repository authority.
 Single-case and whole-area PDF regeneration both stage typed cases and use the
 same fixturegen cohort transaction; no PDF generator writes committed fixture
@@ -75,8 +74,7 @@ legal `.bst` programs, stages each case without host lookup, and compares
 reference/Umber status, BBL, and BLG bytes. Failures are preserved under
 `target/bst-differential/failures/` with their exact seed and inputs.
 
-Fixturegen also wraps `tftopl` for its font metric check. The `refexec` Rust
-facade re-exports that compatibility type. The lookup uses `PATH`; set
+Fixturegen also wraps `tftopl` for its font metric check. The lookup uses `PATH`; set
 `UMBER_REF_TFTOPL=/absolute/path/to/tftopl` to select a specific TeX
 installation.
 
@@ -96,7 +94,7 @@ distribution from selected format closures, runtime TeX/TFM objects, and an
 exact curated WOFF2/mapping/license catalog. It does not mutate or filter the
 schema-3 production snapshot in place.
 
-`tools/parity-harness` is the shared Rust library and opt-in compatibility CLI for end-to-end DVI conformance. Oracle-presence-conditional Story, Gentle, TRIP, and e-TRIP tests use its default library for final artifact comparison against gitignored, locally generated `tests/corpus/e2e` DVI files, without compiling live reference execution. Its fixture path stages manifest inputs and calls an in-process Umber runner supplied by the Cargo test; it never launches the Umber binary. The `reference-tools` compatibility feature composes fixturegen-owned reference execution with Umber execution and retains the public `run_named_external_document` boundary; it owns no second reference runner or publication path. Canonical publication belongs to `fixturegen --reference-dvi`. Comparison uses `test-support` to normalize only DVI preamble comments, requires byte-identical final DVI, and writes automatic bundles under `target/conformance-triage/` or the CLI-selected triage directory.
+`tools/parity-harness` is the shared Rust library and opt-in CLI for end-to-end DVI conformance. Oracle-presence-conditional Story, Gentle, TRIP, and e-TRIP tests use its default library for final artifact comparison against gitignored, locally generated `tests/corpus/e2e` DVI files, without compiling live reference execution. Its fixture path stages manifest inputs and calls an in-process Umber runner supplied by the Cargo test; it never launches the Umber binary. The `reference-tools` feature composes fixturegen-owned reference execution with Umber execution; it owns no second reference runner or publication path. Canonical publication belongs to `fixturegen --reference-dvi`. Comparison uses `test-support` to normalize only DVI preamble comments, requires byte-identical final DVI, and writes automatic bundles under `target/conformance-triage/` or the CLI-selected triage directory.
 
 `tools/parity-harness/src/trip_triage.rs` owns the compact TRIP-specific v1
 artifact. It compares canonical `tex-oracle` event streams before transcript,

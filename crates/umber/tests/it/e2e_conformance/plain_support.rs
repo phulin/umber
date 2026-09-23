@@ -138,7 +138,7 @@ pub(super) fn run_file_with_plain_format(path: &Path) -> Result<InProcessRun, St
     let input = plain_job_input(path)?;
     let source_name = input.source_name.clone();
     let source = input.source.clone();
-    let mut observers = TripObservers::default();
+    let mut observers = CapturedObservations::default();
     let loaded = provider
         .run(
             &prepared,
@@ -242,7 +242,7 @@ pub(super) fn run_file_with_raw_tex82_format(path: &Path) -> Result<InProcessRun
     let prepared = provider
         .prepare(&recipe)
         .map_err(|error| format!("raw TeX82 format preparation failed: {error}"))?;
-    let mut observers = TripObservers::default();
+    let mut observers = CapturedObservations::default();
     let loaded = provider
         .run(
             &prepared,
