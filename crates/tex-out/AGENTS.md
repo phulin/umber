@@ -20,7 +20,7 @@ Use this crate for stable, driver-facing artifact structures and serialization c
 - `src/binary/nodes.rs`: Iterative owned node parsing, skip traversal, and decode frames.
 - `src/binary/streaming_writer.rs`: Fresh-shipout root-child, nested-list, token, and discretionary emission.
 - `src/binary/streaming_scan.rs`: Borrowed root-child scanning and validation without an owned page tree.
-- `src/dvi.rs`: Slice-compatible and incremental output-sink DVI APIs, the private body compiler and file writer, one-page writer state, errors, and submodule wiring.
+- `src/dvi.rs`: Incremental output-sink DVI API, the private body compiler and file writer, one-page writer state, errors, and submodule wiring.
 - `src/bin/texout-dvitype.rs`: Small host-side DVI disassembly binary for parity triage, enabled by the opt-in `dvi-tools` feature.
 - `src/dvi/disasm.rs`: Bounded backpointer-graph validator and single-pass retained DVI command index/disassembler.
 - `src/dvi/disasm/tests.rs`: Page-graph corruption, retained-index, disassembly, and command lookup tests.

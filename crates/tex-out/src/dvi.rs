@@ -118,18 +118,6 @@ impl From<crate::geometry::GeometryError> for DviError {
     }
 }
 
-/// Writes a complete DVI file from committed page artifacts.
-///
-/// The writer is intentionally downstream-only: all DVI preamble data, page
-/// counters, dimensions, and font resources come from the artifact stream.
-pub fn write_dvi(pages: &[PageArtifact]) -> Result<Vec<u8>, DviError> {
-    let mut writer = DviStreamWriter::new(Vec::new());
-    for page in pages {
-        writer.write_page(page)?;
-    }
-    writer.finish()
-}
-
 /// Incremental DVI emitter that retains at most one encoded page buffer.
 pub struct DviStreamWriter<W: Write> {
     writer: DviFileWriter<W>,

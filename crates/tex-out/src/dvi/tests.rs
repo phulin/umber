@@ -5,7 +5,7 @@ use super::opcodes::{
 };
 use super::{
     DVI_BUFFER_SIZE, DviError, DviPagePlan, DviPagePlanBuilder, DviPagePlanCoEmitter,
-    DviStreamWriter, write_dvi,
+    DviStreamWriter,
 };
 use crate::{
     BoxNode, FontResource, GlueKind, GlueOrder, GlueSetRatio, GlueSign, GlueSpec, JobInfo,
@@ -40,7 +40,13 @@ impl std::io::Write for ChunkSink {
 #[test]
 fn streaming_writer_flushes_preamble_each_page_and_postamble() {
     let pages = [glyph_page(1), glyph_page(2)];
-    let expected = write_dvi(&pages).expect("slice compatibility writer");
+    let mut dvi_writer = DviStreamWriter::new(Vec::new());
+    for page in &pages {
+        dvi_writer
+            .write_page(page)
+            .expect("vector sink page writes");
+    }
+    let expected = dvi_writer.finish().expect("vector sink DVI finishes");
     let mut writer = DviStreamWriter::new(ChunkSink::default());
     writer.write_page(&pages[0]).expect("write first page");
     writer.write_page(&pages[1]).expect("write second page");
@@ -57,7 +63,11 @@ fn streaming_writer_flushes_preamble_each_page_and_postamble() {
 #[test]
 fn precompiled_page_plans_match_owned_multi_page_output() {
     let pages = [glyph_page(1), glyph_page(2)];
-    let expected = write_dvi(&pages).expect("owned pages write");
+    let mut dvi_writer = DviStreamWriter::new(Vec::new());
+    for page in &pages {
+        dvi_writer.write_page(page).expect("owned pages write");
+    }
+    let expected = dvi_writer.finish().expect("owned pages write");
     let plans = pages
         .iter()
         .map(DviPagePlan::compile)
@@ -98,8 +108,11 @@ fn dvi_pop_does_not_cancel_across_pdftex_full_buffer_boundary() {
     // occupies five more framing bytes, so this payload puts `push` at byte
     // 16,383 and leaves pdfTeX's next buffer pointer at zero.
     let boundary_payload = DVI_BUFFER_SIZE - 67;
-    let boundary =
-        write_dvi(&[inert_box_after_special(boundary_payload)]).expect("boundary page writes");
+    let mut dvi_writer = DviStreamWriter::new(Vec::new());
+    dvi_writer
+        .write_page(&inert_box_after_special(boundary_payload))
+        .expect("boundary page writes");
+    let boundary = dvi_writer.finish().expect("boundary page writes");
     assert_eq!(
         &boundary[DVI_BUFFER_SIZE - 1..=DVI_BUFFER_SIZE],
         &[PUSH, POP]
@@ -114,8 +127,11 @@ fn dvi_pop_does_not_cancel_across_pdftex_full_buffer_boundary() {
     );
 
     let ordinary_payload = boundary_payload - 1;
-    let ordinary =
-        write_dvi(&[inert_box_after_special(ordinary_payload)]).expect("ordinary page writes");
+    let mut dvi_writer = DviStreamWriter::new(Vec::new());
+    dvi_writer
+        .write_page(&inert_box_after_special(ordinary_payload))
+        .expect("ordinary page writes");
+    let ordinary = dvi_writer.finish().expect("ordinary page writes");
     let ordinary_bop = ordinary
         .iter()
         .position(|&byte| byte == BOP)
@@ -128,7 +144,7 @@ fn dvi_pop_does_not_cancel_across_pdftex_full_buffer_boundary() {
 }
 
 #[test]
-fn streamed_v10_plans_match_owned_compilation() {
+fn streamed_artifact_plans_match_owned_compilation() {
     let pages = [glyph_page(11), glyph_page(12)];
     let owned = pages
         .iter()
@@ -138,7 +154,7 @@ fn streamed_v10_plans_match_owned_compilation() {
     let streamed = pages
         .iter()
         .map(|page| {
-            let bytes = page.to_bytes().expect("serialize v10 page");
+            let bytes = page.to_bytes().expect("serialize current page artifact");
             DviPagePlan::compile_artifact(&bytes)
         })
         .collect::<Result<Vec<_>, _>>()
@@ -149,9 +165,13 @@ fn streamed_v10_plans_match_owned_compilation() {
     for plan in &streamed {
         writer.write_page_plan(plan).expect("write streamed plan");
     }
+    let mut owned_writer = DviStreamWriter::new(Vec::new());
+    for page in &pages {
+        owned_writer.write_page(page).expect("write owned page");
+    }
     assert_eq!(
         writer.finish().expect("finish streamed DVI"),
-        write_dvi(&pages).expect("write owned DVI")
+        owned_writer.finish().expect("finish owned DVI")
     );
 }
 
@@ -337,7 +357,9 @@ fn streaming_writer_rejects_cross_page_font_identity_conflicts() {
 
 #[test]
 fn writes_preamble_bop_body_and_postamble() {
-    let dvi = write_dvi(&[glyph_page(7)]).expect("DVI writes");
+    let mut dvi_writer = DviStreamWriter::new(Vec::new());
+    dvi_writer.write_page(&glyph_page(7)).expect("DVI writes");
+    let dvi = dvi_writer.finish().expect("DVI writes");
     let bop = 16;
     let body = page_body(&dvi, bop);
     let mut expected_body = vec![DOWN1, 100];
@@ -393,7 +415,9 @@ fn page_offsets_initialize_tex82_shipout_coordinates() {
         vec![hlist(1, 10, 0, vec![char_node(0, b'A' as u32, 1)])],
     );
 
-    let dvi = write_dvi(&[page]).expect("DVI writes");
+    let mut dvi_writer = DviStreamWriter::new(Vec::new());
+    dvi_writer.write_page(&page).expect("DVI writes");
+    let dvi = dvi_writer.finish().expect("DVI writes");
     let body = page_body(&dvi, 16);
 
     assert_eq!(&body[..5], &[DOWN1, 19, PUSH, RIGHT1, 7]);
@@ -404,7 +428,10 @@ fn page_offsets_initialize_tex82_shipout_coordinates() {
 
 #[test]
 fn chains_bop_pointers_across_pages() {
-    let dvi = write_dvi(&[empty_page(1), empty_page(2)]).expect("DVI writes");
+    let mut dvi_writer = DviStreamWriter::new(Vec::new());
+    dvi_writer.write_page(&empty_page(1)).expect("DVI writes");
+    dvi_writer.write_page(&empty_page(2)).expect("DVI writes");
+    let dvi = dvi_writer.finish().expect("DVI writes");
     let first_bop = 16;
     let second_bop = 62;
     let post = 108;
@@ -428,7 +455,12 @@ fn permits_page_local_offset_changes() {
     second.job.h_offset = sp(17);
     second.job.v_offset = sp(-23);
 
-    write_dvi(&[first, second]).expect("page offsets are not DVI preamble identity");
+    let mut writer = DviStreamWriter::new(Vec::new());
+    writer.write_page(&first).expect("first page writes");
+    writer
+        .write_page(&second)
+        .expect("page offsets are not DVI preamble identity");
+    writer.finish().expect("DVI finishes");
 }
 
 #[test]
@@ -444,7 +476,9 @@ fn defines_fonts_at_first_use_and_uses_fnt_num_or_fnt1() {
         (0..65).map(|id| char_node(id, b'A' as u32, 1)).collect(),
     );
 
-    let dvi = write_dvi(&[page]).expect("DVI writes");
+    let mut dvi_writer = DviStreamWriter::new(Vec::new());
+    dvi_writer.write_page(&page).expect("DVI writes");
+    let dvi = dvi_writer.finish().expect("DVI writes");
     let body = page_body(&dvi, 16);
 
     let first_font = find_font_def(body, b"f00", 0).expect("body f00 def");
@@ -468,7 +502,9 @@ fn set1_is_used_for_high_tex82_character_codes() {
     let mut page = glyph_page(0);
     page.root = hlist(1, 3, 0, vec![char_node(3, 200, 1)]);
 
-    let dvi = write_dvi(&[page]).expect("DVI writes");
+    let mut dvi_writer = DviStreamWriter::new(Vec::new());
+    dvi_writer.write_page(&page).expect("DVI writes");
+    let dvi = dvi_writer.finish().expect("DVI writes");
     let body = page_body(&dvi, 16);
 
     assert!(body.windows(2).any(|window| window == [SET1, 200]));
@@ -492,7 +528,9 @@ fn vertical_movement_reuses_y_registers() {
         ],
     );
 
-    let dvi = write_dvi(&[page]).expect("DVI writes");
+    let mut dvi_writer = DviStreamWriter::new(Vec::new());
+    dvi_writer.write_page(&page).expect("DVI writes");
+    let dvi = dvi_writer.finish().expect("DVI writes");
     let body = page_body(&dvi, 16);
 
     assert_eq!(&body[0..2], &[Y1, 10]);
@@ -515,7 +553,9 @@ fn horizontal_movement_reuses_w_registers() {
         ],
     );
 
-    let dvi = write_dvi(&[page]).expect("DVI writes");
+    let mut dvi_writer = DviStreamWriter::new(Vec::new());
+    dvi_writer.write_page(&page).expect("DVI writes");
+    let dvi = dvi_writer.finish().expect("DVI writes");
     let body = page_body(&dvi, 16);
 
     assert!(body.windows(2).any(|window| window == [W1, 10]));
@@ -535,7 +575,9 @@ fn negative_hlist_shift_moves_nested_box_up() {
         vec![char_node(0, b'A' as u32, 1), PageNode::HList(raised)],
     );
 
-    let dvi = write_dvi(&[page]).expect("DVI writes");
+    let mut dvi_writer = DviStreamWriter::new(Vec::new());
+    dvi_writer.write_page(&page).expect("DVI writes");
+    let dvi = dvi_writer.finish().expect("DVI writes");
     let body = page_body(&dvi, 16);
 
     assert!(
@@ -549,7 +591,9 @@ fn rules_with_negative_width_still_move_without_rule_output() {
     let mut page = empty_page(0);
     page.root = hlist(-4, 1, 0, vec![rule_node(-5, 1, 0), rule_node(1, 1, 0)]);
 
-    let dvi = write_dvi(&[page]).expect("DVI writes");
+    let mut dvi_writer = DviStreamWriter::new(Vec::new());
+    dvi_writer.write_page(&page).expect("DVI writes");
+    let dvi = dvi_writer.finish().expect("DVI writes");
     let body = page_body(&dvi, 16);
     let first_rule = body
         .iter()
@@ -573,7 +617,9 @@ fn vlist_rules_use_put_rule_and_running_width() {
         }],
     );
 
-    let dvi = write_dvi(&[page]).expect("DVI writes");
+    let mut dvi_writer = DviStreamWriter::new(Vec::new());
+    dvi_writer.write_page(&page).expect("DVI writes");
+    let dvi = dvi_writer.finish().expect("DVI writes");
     let body = page_body(&dvi, 16);
     let put_rule = body
         .iter()
@@ -619,7 +665,9 @@ fn glue_set_is_rounded_cumulatively() {
         ],
     });
 
-    let dvi = write_dvi(&[page]).expect("DVI writes");
+    let mut dvi_writer = DviStreamWriter::new(Vec::new());
+    dvi_writer.write_page(&page).expect("DVI writes");
+    let dvi = dvi_writer.finish().expect("DVI writes");
     let body = page_body(&dvi, 16);
 
     assert!(body.windows(2).any(|window| window == [RIGHT1, 13]));
@@ -656,7 +704,9 @@ fn cumulative_glue_rounding_matches_pdftex_w0_x0_sequence() {
         children,
     });
 
-    let dvi = write_dvi(&[page]).expect("DVI writes");
+    let mut dvi_writer = DviStreamWriter::new(Vec::new());
+    dvi_writer.write_page(&page).expect("DVI writes");
+    let dvi = dvi_writer.finish().expect("DVI writes");
     let body = page_body(&dvi, 16);
     let rules: Vec<_> = body
         .iter()
@@ -695,7 +745,9 @@ fn hlist_rule_leaders_use_glue_width_and_running_height_depth() {
         }],
     );
 
-    let dvi = write_dvi(&[page]).expect("DVI writes");
+    let mut dvi_writer = DviStreamWriter::new(Vec::new());
+    dvi_writer.write_page(&page).expect("DVI writes");
+    let dvi = dvi_writer.finish().expect("DVI writes");
     let body = page_body(&dvi, 16);
     let set_rule = body
         .iter()
@@ -736,7 +788,9 @@ fn hlist_box_leaders_repeat_payloads_for_all_subtypes() {
         ],
     );
 
-    let dvi = write_dvi(&[page]).expect("DVI writes");
+    let mut dvi_writer = DviStreamWriter::new(Vec::new());
+    dvi_writer.write_page(&page).expect("DVI writes");
+    let dvi = dvi_writer.finish().expect("DVI writes");
     let body = page_body(&dvi, 16);
 
     assert_eq!(count_op(body, SET_RULE), 9);
@@ -758,7 +812,9 @@ fn vlist_box_leaders_repeat_payloads_downward() {
         vec![leader_glue(GlueKind::Xleaders, 30_000, leader)],
     );
 
-    let dvi = write_dvi(&[page]).expect("DVI writes");
+    let mut dvi_writer = DviStreamWriter::new(Vec::new());
+    dvi_writer.write_page(&page).expect("DVI writes");
+    let dvi = dvi_writer.finish().expect("DVI writes");
     let body = page_body(&dvi, 16);
 
     assert_eq!(count_op(body, SET_RULE), 3);
@@ -788,7 +844,9 @@ fn vlist_rule_leaders_use_glue_height_and_running_width() {
         }],
     );
 
-    let dvi = write_dvi(&[page]).expect("DVI writes");
+    let mut dvi_writer = DviStreamWriter::new(Vec::new());
+    dvi_writer.write_page(&page).expect("DVI writes");
+    let dvi = dvi_writer.finish().expect("DVI writes");
     let body = page_body(&dvi, 16);
     let put_rule = body
         .iter()
@@ -822,7 +880,9 @@ fn specials_emit_xxx1_and_xxx4_at_anchor_positions() {
         },
     ];
 
-    let dvi = write_dvi(&[page]).expect("DVI writes");
+    let mut dvi_writer = DviStreamWriter::new(Vec::new());
+    dvi_writer.write_page(&page).expect("DVI writes");
+    let dvi = dvi_writer.finish().expect("DVI writes");
     let body = page_body(&dvi, 16);
     let short = body.iter().position(|&byte| byte == XXX1).expect("xxx1");
     let long = body.iter().position(|&byte| byte == XXX4).expect("xxx4");
@@ -846,7 +906,11 @@ fn dvi_preamble_signed_encoding_pop_and_font_definition_match_tex82() {
             vec![char_node(3, b'A' as u32, 50)],
         ))],
     );
-    let dvi = write_dvi(&[page]).expect("signed framing page writes");
+    let mut dvi_writer = DviStreamWriter::new(Vec::new());
+    dvi_writer
+        .write_page(&page)
+        .expect("signed framing page writes");
+    let dvi = dvi_writer.finish().expect("signed framing page writes");
     let body = page_body(&dvi, 16);
     assert_eq!(be_i32(&dvi, 17), -7);
     assert!(body.contains(&PUSH));
@@ -857,7 +921,11 @@ fn dvi_preamble_signed_encoding_pop_and_font_definition_match_tex82() {
 #[test]
 fn dvi_buffer_half_boundaries_preserve_exact_byte_order() {
     let pages = (0..9).map(glyph_page).collect::<Vec<_>>();
-    let expected = write_dvi(&pages).expect("owned DVI writes");
+    let mut dvi_writer = DviStreamWriter::new(Vec::new());
+    for page in &pages {
+        dvi_writer.write_page(page).expect("owned DVI writes");
+    }
+    let expected = dvi_writer.finish().expect("owned DVI writes");
     let mut writer = DviStreamWriter::new(ChunkSink::default());
     for page in &pages {
         writer.write_page(page).expect("streamed page writes");
@@ -993,7 +1061,9 @@ fn dvi_opcode_width_boundaries() {
             class: "dvi".to_owned(),
             payload: vec![b'x'; len],
         }];
-        let dvi = write_dvi(&[page]).expect("special writes");
+        let mut dvi_writer = DviStreamWriter::new(Vec::new());
+        dvi_writer.write_page(&page).expect("special writes");
+        let dvi = dvi_writer.finish().expect("special writes");
         assert!(
             page_body(&dvi, 16).contains(&opcode),
             "special length {len}"
@@ -1050,7 +1120,11 @@ fn hlist_out_node_positioning_and_coordinate_restoration_match_tex82() {
         0,
         vec![rule_node(3, 2, 0), kern_node(10), PageNode::HList(shifted)],
     );
-    let dvi = write_dvi(&[page]).expect("hlist traversal writes");
+    let mut dvi_writer = DviStreamWriter::new(Vec::new());
+    dvi_writer
+        .write_page(&page)
+        .expect("hlist traversal writes");
+    let dvi = dvi_writer.finish().expect("hlist traversal writes");
     let body = page_body(&dvi, 16);
     assert!(body.contains(&PUSH));
     assert!(body.contains(&POP));
@@ -1072,7 +1146,11 @@ fn hlist_out_leader_and_nonpositive_rule_boundaries_match_tex82() {
             rule_node(0, 2, 0),
         ],
     );
-    let dvi = write_dvi(&[page]).expect("hlist leader page writes");
+    let mut dvi_writer = DviStreamWriter::new(Vec::new());
+    dvi_writer
+        .write_page(&page)
+        .expect("hlist leader page writes");
+    let dvi = dvi_writer.finish().expect("hlist leader page writes");
     let body = page_body(&dvi, 16);
     assert_eq!(count_op(body, SET_RULE), 3);
 }
@@ -1088,7 +1166,11 @@ fn vlist_out_node_positioning_and_coordinate_restoration_match_tex82() {
         0,
         vec![PageNode::HList(shifted), kern_node(7), rule_node(20, 3, 0)],
     );
-    let dvi = write_dvi(&[page]).expect("vlist traversal writes");
+    let mut dvi_writer = DviStreamWriter::new(Vec::new());
+    dvi_writer
+        .write_page(&page)
+        .expect("vlist traversal writes");
+    let dvi = dvi_writer.finish().expect("vlist traversal writes");
     let body = page_body(&dvi, 16);
     assert!(body.contains(&PUSH));
     assert!(body.contains(&POP));
@@ -1110,7 +1192,11 @@ fn vlist_out_leader_and_nonpositive_rule_boundaries_match_tex82() {
             rule_node(3, 0, 0),
         ],
     );
-    let dvi = write_dvi(&[page]).expect("vlist leader page writes");
+    let mut dvi_writer = DviStreamWriter::new(Vec::new());
+    dvi_writer
+        .write_page(&page)
+        .expect("vlist leader page writes");
+    let dvi = dvi_writer.finish().expect("vlist leader page writes");
     let body = page_body(&dvi, 16);
     assert_eq!(count_op(body, SET_RULE), 4);
 }
@@ -1123,7 +1209,10 @@ fn ship_out_frames_counts_offsets_page_accounting_and_box_retirement() {
     first.testing_mut().job.v_offset = sp(9);
     first.testing_mut().root = hlist(20, 10, 2, vec![rule_node(20, 10, 2)]);
     let second = empty_page(12);
-    let dvi = write_dvi(&[first, second]).expect("framed pages write");
+    let mut dvi_writer = DviStreamWriter::new(Vec::new());
+    dvi_writer.write_page(&first).expect("framed pages write");
+    dvi_writer.write_page(&second).expect("framed pages write");
+    let dvi = dvi_writer.finish().expect("framed pages write");
     let first_bop = 16;
     let second_bop = page_eop(&dvi, first_bop) + 1;
     assert_eq!(be_i32(&dvi, first_bop + 1), 11);
@@ -1150,7 +1239,10 @@ fn dvi_finalization_writes_postamble_fonts_stack_pages_and_padding() {
         ))],
     );
     let second = glyph_page(2);
-    let dvi = write_dvi(&[first, second]).expect("final DVI writes");
+    let mut dvi_writer = DviStreamWriter::new(Vec::new());
+    dvi_writer.write_page(&first).expect("final DVI writes");
+    dvi_writer.write_page(&second).expect("final DVI writes");
+    let dvi = dvi_writer.finish().expect("final DVI writes");
     let post = dvi
         .iter()
         .rposition(|byte| *byte == POST)
@@ -1186,7 +1278,9 @@ fn dvi_finalization_zero_page_and_unfinished_nesting_paths_match_tex82() {
             vec![PageNode::HList(box_node(4, 4, 0, vec![rule_node(4, 4, 0)]))],
         ))],
     );
-    let dvi = write_dvi(&[page]).expect("nested page finalizes");
+    let mut dvi_writer = DviStreamWriter::new(Vec::new());
+    dvi_writer.write_page(&page).expect("nested page finalizes");
+    let dvi = dvi_writer.finish().expect("nested page finalizes");
     let body = page_body(&dvi, 16);
     assert_eq!(count_op(body, PUSH), count_op(body, POP));
     assert_eq!(dvi[page_eop(&dvi, 16)], EOP);
@@ -1196,7 +1290,11 @@ fn dvi_finalization_zero_page_and_unfinished_nesting_paths_match_tex82() {
 /// definition, rather than deriving an identity from the font name.
 #[test]
 fn loaded_tfm_checksum_is_emitted_in_dvi() {
-    let dvi = write_dvi(&[glyph_page(1)]).expect("loaded-font page writes");
+    let mut dvi_writer = DviStreamWriter::new(Vec::new());
+    dvi_writer
+        .write_page(&glyph_page(1))
+        .expect("loaded-font page writes");
+    let dvi = dvi_writer.finish().expect("loaded-font page writes");
     let definition = font_def_bytes(3, "cmr10");
     assert!(
         dvi.windows(definition.len())
@@ -1211,7 +1309,13 @@ fn loaded_tfm_checksum_is_emitted_in_dvi() {
 fn explicit_font_area_reaches_dvi_font_definition() {
     let mut page = glyph_page(1);
     page.testing_mut().fonts[0].name = "texfonts/cm/cmr10".to_owned();
-    let dvi = write_dvi(&[page]).expect("area-qualified font page writes");
+    let mut dvi_writer = DviStreamWriter::new(Vec::new());
+    dvi_writer
+        .write_page(&page)
+        .expect("area-qualified font page writes");
+    let dvi = dvi_writer
+        .finish()
+        .expect("area-qualified font page writes");
     let mut definition = vec![FNT_DEF1, 3];
     definition.extend_from_slice(&0x1234_5678_u32.to_be_bytes());
     definition.extend_from_slice(&655_360_i32.to_be_bytes());
