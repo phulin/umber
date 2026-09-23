@@ -273,24 +273,6 @@ pub(crate) struct HotCommand<G> {
     font: Option<FontId>,
 }
 
-/// Fixed compact invocation facts for an expandable primitive.
-///
-/// Primitive scanners and conversion starters must not receive a rich
-/// `CurrentCommand` merely to preserve the opener's identity across the
-/// synchronous hot loop.  The occupied [`HotCommand`] remains the owner;
-/// this copy-small descriptor is only the spelling, identity, and delivery
-/// projection needed by a starter that crosses into a typed control lane.
-#[allow(dead_code)]
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct HotPrimitiveInvocation<G> {
-    pub(crate) primitive: ExpandablePrimitive,
-    pub(crate) spelling: TracedTokenWord,
-    pub(crate) identity: CommandIdentity,
-    pub(crate) origin: OriginId,
-    pub(crate) site: DeliverySite,
-    pub(crate) _generation: core::marker::PhantomData<fn() -> G>,
-}
-
 impl<G> PartialEq for HotCommand<G> {
     fn eq(&self, other: &Self) -> bool {
         self.token == other.token
@@ -1039,25 +1021,6 @@ impl<G> HotCommand<G> {
             },
             command: command_word,
             font,
-        }
-    }
-
-    /// Projects one primitive's fixed invocation facts from the occupied hot
-    /// owner.  No meaning resolution, rich command construction, or owner
-    /// transfer occurs here.
-    #[allow(dead_code)]
-    #[inline(always)]
-    pub(crate) fn primitive_invocation(
-        &self,
-        primitive: ExpandablePrimitive,
-    ) -> HotPrimitiveInvocation<G> {
-        HotPrimitiveInvocation {
-            primitive,
-            spelling: self.spelling(),
-            identity: self.identity(),
-            origin: self.origin(),
-            site: self.token.site,
-            _generation: core::marker::PhantomData,
         }
     }
 }
