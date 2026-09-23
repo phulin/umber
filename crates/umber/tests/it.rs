@@ -13,5 +13,7 @@ mod gentle_profile_cli;
 mod pdf_parity;
 #[path = "it/replay_identity.rs"]
 mod replay_identity;
+#[path = "it/resource_transitions.rs"]
+mod resource_transitions;
 
 umber::register_format_worker_test_bootstrap!();

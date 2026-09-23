@@ -77,6 +77,7 @@ try {
 		publisher,
 	);
 	await checkRealBindings(base, root, rootAHash64);
+	await checkSharedResourceTransitions(base, rootAHash64);
 	console.log("generated WASM packed catalog and Rust prefetch: PASS");
 	const result = await runBrowserFixture(
 		`${base}/fixture/fixture.html?digest=${rootAHash64}`,
@@ -231,4 +232,136 @@ async function checkRealBindings(base, root, rootAHash64) {
 		),
 		rootAHash64,
 	);
+}
+
+async function checkSharedResourceTransitions(base, rootAHash64) {
+	const fixture = JSON.parse(
+		await readFile(
+			path.join(repository, "tests/resource-transition-cases.json"),
+		),
+	);
+	assert.equal(fixture.schema, 1);
+	const expectedNames = [
+		"authoritative-missing-probe",
+		"empty-speculation-then-demand",
+		"required-positive-retry",
+	];
+	assert.deepEqual(
+		fixture.cases.map(({ name }) => name).sort(),
+		expectedNames,
+		"shared resource cases must be unique and complete",
+	);
+	const bindings = await import(
+		pathToFileURL(path.join(packageDirectory, "umber_wasm.js"))
+	);
+	const encoder = new TextEncoder();
+	const decoder = new TextDecoder();
+	for (const testCase of fixture.cases) {
+		const resolver = await HttpManifestResolver.create({
+			manifestUrl: `${base}/publication/manifest.json`,
+			manifestAHash64: rootAHash64,
+			catalog: bindings,
+		});
+		assert.equal(resolver.bindPrefetchPolicy({}), "unavailable-v1");
+		await resolver.beginRun({
+			source: testCase.source,
+			options: { engine: "tex82" },
+		});
+		const session = new bindings.CompilerSession({
+			mainPath: "/job/main.tex",
+			outputs: ["dvi"],
+			formatPrefetchHints: testCase.initialHints.map((name) => ({
+				type: "file",
+				domain: "tex",
+				kind: "tex",
+				name,
+				originalName: name,
+			})),
+		});
+		try {
+			session.addUserFile("main.tex", encoder.encode(testCase.source));
+			for (const [index, step] of testCase.steps.entries()) {
+				const attempt = session.compileAttempt();
+				assert.equal(
+					attempt.kind,
+					"need-resources",
+					`${testCase.name} step ${index}`,
+				);
+				for (const role of ["required", "probes", "prefetchHints"]) {
+					assert.deepEqual(
+						attempt[role].map((request) => {
+							assert.equal(request.type, "file");
+							assert.equal(request.domain, "tex");
+							assert.equal(request.kind, "tex");
+							return request.name;
+						}),
+						step.need[role],
+						`${testCase.name} step ${index} ${role}`,
+					);
+				}
+				assert(session.acceptedInputObservations == null);
+				const requests = [
+					...attempt.required,
+					...attempt.probes,
+					...attempt.prefetchHints,
+				];
+				const acquired = await resolver.resolve(attempt.required, {
+					probes: attempt.probes,
+					prefetchHints: attempt.prefetchHints,
+					admitPrefetch: true,
+				});
+				const responses = step.responses.map((expected) => {
+					const request = requests.find(({ name }) => name === expected.name);
+					assert(request, `${testCase.name}: response has a matching request`);
+					const response = acquired.find(({ name }) => name === expected.name);
+					assert(
+						response,
+						`${testCase.name}: resolver answered ${expected.name}`,
+					);
+					assert.equal(
+						response.type,
+						expected.outcome === "file" ? "file" : "file-unavailable",
+					);
+					if (expected.outcome === "file") {
+						assert.equal(decoder.decode(response.bytes), expected.bytes);
+					} else {
+						assert.equal(expected.bytes, undefined);
+					}
+					return response;
+				});
+				assert.equal(
+					acquired.length,
+					responses.length,
+					`${testCase.name}: extra response`,
+				);
+				if (step.rejectLateConflict) {
+					assert.equal(responses.length, 1);
+					const conflict = {
+						...responses[0],
+						bytes: encoder.encode("conflicting-late-payload"),
+					};
+					assert.throws(
+						() => session.provideResources([responses[0], conflict]),
+						(error) => error.code === "conflicting-resource",
+						`${testCase.name}: late batch must reject atomically`,
+					);
+					assert.equal(session.resolvedFileCount, 0);
+					assert(session.acceptedInputObservations == null);
+				}
+				session.provideResources(responses);
+				resolver.noteAdmitted(responses);
+			}
+			const completed = session.compileAttempt();
+			assert.equal(completed.kind, "complete", testCase.name);
+			assert(
+				completed.output.terminal.includes(testCase.terminal),
+				testCase.name,
+			);
+			assert(session.acceptedInputObservations, testCase.name);
+			await resolver.commitRun();
+		} finally {
+			resolver.discardRun();
+			session.dispose();
+		}
+	}
 }

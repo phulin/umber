@@ -51,6 +51,18 @@ TeX search, bibliography search, font/image/format parsing, and output closure
 remain with their domain owners. A catalogue key, object digest, VFS path,
 URL, and cache key are not semantic request identities.
 
+The executable cross-host transition cases live in
+[`tests/resource-transition-cases.json`](../tests/resource-transition-cases.json).
+The native public compile session and the generated WASM package session with
+its real HTTP manifest resolver run the same ordered file-request and response
+steps. The bounded cases cover a required positive retry, an authoritative
+missing probe, an empty speculative response followed by required demand, and
+a conflicting late response that rejects the whole batch before a successful
+retry. They compare typed request roles, accepted terminal markers, and the
+absence of accepted observations before completion. Native file lookup and
+browser fetch, cache, worker, and cancellation policy retain their own tests;
+those host operations do not share a state machine fixture.
+
 ## Canonical vocabulary
 
 Names below describe target semantic roles. Migration may preserve current

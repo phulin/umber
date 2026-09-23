@@ -1,0 +1,50 @@
+{
+  "schema": 1,
+  "cases": [
+    {
+      "name": "required-positive-retry",
+      "source": "\\input probe.tex \\message{CONTRACT-REQUIRED} \\end",
+      "initialHints": [],
+      "steps": [
+        {
+          "need": { "required": ["probe.tex"], "probes": [], "prefetchHints": [] },
+          "responses": [
+            { "name": "probe.tex", "outcome": "file", "bytes": "\\message{PACKED-CATALOG-RESOURCE}\\relax" }
+          ],
+          "rejectLateConflict": true
+        }
+      ],
+      "terminal": "CONTRACT-REQUIRED"
+    },
+    {
+      "name": "authoritative-missing-probe",
+      "source": "\\openin0=absent.tex \\ifeof0 \\message{CONTRACT-ABSENT} \\fi \\end",
+      "initialHints": [],
+      "steps": [
+        {
+          "need": { "required": [], "probes": ["absent.tex"], "prefetchHints": [] },
+          "responses": [{ "name": "absent.tex", "outcome": "unavailable" }]
+        }
+      ],
+      "terminal": "CONTRACT-ABSENT"
+    },
+    {
+      "name": "empty-speculation-then-demand",
+      "source": "\\input probe.tex \\message{CONTRACT-DRAINED} \\end",
+      "initialHints": ["false-positive.tex"],
+      "steps": [
+        {
+          "need": { "required": [], "probes": [], "prefetchHints": ["false-positive.tex"] },
+          "responses": []
+        },
+        {
+          "need": { "required": ["probe.tex"], "probes": [], "prefetchHints": [] },
+          "responses": [
+            { "name": "probe.tex", "outcome": "file", "bytes": "\\message{PACKED-CATALOG-RESOURCE}\\relax" }
+          ]
+        }
+      ],
+      "terminal": "CONTRACT-DRAINED"
+    }
+  ]
+}
