@@ -4,9 +4,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use umber_distribution::{
     FileKind as DistributionFileKind, FileRequestKey as DistributionFileRequestKey, LookupManifest,
-    LookupOutcome, LookupRecord, LookupRole, NegativeScope, PrefetchBudget, PrefetchClass,
-    PrefetchEscalation, PrefetchFileKey, PrefetchIdentity, PrefetchOrigin, PrefetchPolicy,
-    PrefetchRegionKey, Readiness, ResolvedIdentity,
+    LookupOutcome, LookupRecord, LookupRole, NegativeScope, PrefetchBudget,
+    PrefetchCandidateIdentity, PrefetchClass, PrefetchEscalation, PrefetchFileKey,
+    PrefetchIdentity, PrefetchOrigin, PrefetchPolicy, PrefetchRegionKey, Readiness,
+    ResolvedIdentity,
 };
 use umber_hash::{AHash64, HashDomain};
 
@@ -354,11 +355,8 @@ impl PrefetchPlanner {
     }
 
     fn remember_policy_request(&mut self, request: &umber_distribution::PrefetchRequest) {
-        let Some(key) = request.file_key.clone() else {
-            return;
-        };
         self.remember_context(
-            key,
+            request.file_key.clone(),
             DiscoveryContext {
                 origin: request.origin(),
                 depth: request.depth(),
@@ -456,11 +454,10 @@ impl PrefetchPlanner {
             .admitted_request_with_class(&parent, class, bytes, dependencies.clone());
         self.discovery_context.remove(&file_key);
         for dependency in dependencies {
-            if let Some(key) = dependency.file_key.as_ref()
-                && (self.policy.file_key_is_admitted(key)
-                    || !self.policy.request_is_tracked(&dependency))
+            if self.policy.file_key_is_admitted(&dependency.file_key)
+                || !self.policy.request_is_tracked(&dependency)
             {
-                self.discovery_context.remove(key);
+                self.discovery_context.remove(&dependency.file_key);
             }
         }
         if let Some(key) = diagnostic_key {
@@ -552,21 +549,21 @@ impl PrefetchPlanner {
     }
 
     fn note_selected_candidate(&mut self, candidate: &umber_distribution::PrefetchCandidate) {
-        let Some(key) = candidate.file_key.as_ref() else {
+        let Some(key) = candidate.semantic_file_key() else {
             return;
         };
         self.note_diagnostic(key, PrefetchDiagnosticDisposition::CandidateSelected);
     }
 
     fn startup_seen_candidate(&self, candidate: &umber_distribution::PrefetchCandidate) -> bool {
-        candidate.file_key.as_ref().is_some_and(|key| {
+        candidate.semantic_file_key().is_some_and(|key| {
             self.seen_startup
                 .contains(&format!("file:{}:{}", key.kind, key.normalized_name))
         })
     }
 
     fn note_budget_skipped_candidate(&mut self, candidate: &umber_distribution::PrefetchCandidate) {
-        let Some(key) = candidate.file_key.as_ref() else {
+        let Some(key) = candidate.semantic_file_key() else {
             return;
         };
         self.note_diagnostic(key, PrefetchDiagnosticDisposition::BudgetSkipped);
@@ -772,10 +769,10 @@ fn request_identity(request: &ResourceRequest) -> String {
 }
 
 fn candidate_identity(candidate: &umber_distribution::PrefetchCandidate) -> String {
-    candidate.file_key.as_ref().map_or_else(
-        || format!("transport:{}", candidate.key),
-        PrefetchFileKey::identity,
-    )
+    match &candidate.identity {
+        PrefetchCandidateIdentity::File(key) => key.identity(),
+        PrefetchCandidateIdentity::Catalog(key) => format!("catalog:{key}"),
+    }
 }
 
 fn policy_request(
@@ -801,7 +798,7 @@ fn policy_request(
 }
 
 fn resource_request(request: &umber_distribution::PrefetchRequest) -> Option<ResourceRequest> {
-    let file_key = request.file_key.as_ref()?;
+    let file_key = &request.file_key;
     let domain = crate::ResourceDomain::from_wire_name(&file_key.domain)?;
     let kind = FileKind::from_wire_name(&file_key.kind)?;
     let key = FileRequestKey::for_domain(domain, kind, &file_key.normalized_name).ok()?;
@@ -846,13 +843,7 @@ fn distribution_key(request: &FileRequestKey) -> String {
 
 fn distribution_record_request(record: &LookupRecord) -> Option<ResourceRequest> {
     let key = DistributionFileRequestKey::from_manifest_key(&record.request_key).ok()?;
-    let kind = FileKind::from_wire_name(&record.kind).unwrap_or_else(|| match key.kind() {
-        DistributionFileKind::Tex => FileKind::TexInput,
-        DistributionFileKind::Tfm => FileKind::Tfm,
-        DistributionFileKind::BibAux => FileKind::BibAux,
-        DistributionFileKind::ClassicBib => FileKind::ClassicBibData,
-        DistributionFileKind::BibStyle => FileKind::BibStyle,
-    });
+    let kind = FileKind::from_wire_name(&record.kind)?;
     let key = FileRequestKey::new(kind, key.normalized_name()).ok()?;
     Some(ResourceRequest::File(FileRequest::new(
         key,

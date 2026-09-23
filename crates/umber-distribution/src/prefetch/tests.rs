@@ -1,5 +1,31 @@
 use super::*;
 
+fn typed_tex_request(
+    key: &str,
+    original_spelling: &str,
+    search_context: &str,
+    required: bool,
+) -> PrefetchRequest {
+    let name = key.strip_prefix("tex:").expect("TeX catalogue fixture key");
+    PrefetchRequest::for_file_key(
+        PrefetchFileKey::new("tex", "tex", name).expect("semantic TeX fixture key"),
+        key,
+        original_spelling,
+        search_context,
+        required,
+    )
+}
+
+fn admit_tex(policy: &mut PrefetchPolicy, key: &str, bytes: &[u8]) {
+    let request = typed_tex_request(key, key, "admission", false);
+    policy.admitted_request_with_class(
+        &request,
+        PrefetchClass::SmallRuntime,
+        bytes,
+        std::iter::empty(),
+    );
+}
+
 #[test]
 fn literal_hints_ignore_comments_and_expand_package_lists_only() {
     let source = r#"\documentclass[11pt]{article}
@@ -108,14 +134,7 @@ fn literal_hints_enqueue_typed_default_keys_and_preserve_lookup_spelling() {
             .all(|request| request.class == PrefetchClass::SmallRuntime)
     );
     assert_eq!(requests[6].class, PrefetchClass::Image);
-    assert_eq!(
-        requests[2]
-            .file_key
-            .as_ref()
-            .expect("typed request")
-            .normalized_name,
-        "vendor/graphicx.sty"
-    );
+    assert_eq!(requests[2].file_key.normalized_name, "vendor/graphicx.sty");
 }
 
 #[test]
@@ -232,7 +251,7 @@ fn font_metric_prefetch_requests_use_tfm_identity_and_font_budget_class() {
     assert_eq!(request.original_spelling, "ptmr7t");
     assert_eq!(
         request.file_key,
-        Some(PrefetchFileKey::new("tex", "tfm", "ptmr7t.tfm").expect("typed TFM key"))
+        PrefetchFileKey::new("tex", "tfm", "ptmr7t.tfm").expect("typed TFM key")
     );
 }
 
@@ -302,8 +321,7 @@ fn admitted_font_definition_scans_typed_metrics_with_bounded_closure() {
     assert!(metrics.iter().zip(expected_names).all(|(request, name)| {
         request.class == PrefetchClass::Font
             && request.depth() == 1
-            && request.file_key
-                == Some(PrefetchFileKey::new("tex", "tfm", name).expect("typed TFM key"))
+            && request.file_key == PrefetchFileKey::new("tex", "tfm", name).expect("typed TFM key")
     }));
     assert!(policy.drain(8).is_empty());
 }
@@ -319,7 +337,7 @@ fn group_selection_keeps_required_and_separate_class_budgets() {
         },
         class: PrefetchClass::for_key(key),
         required: false,
-        file_key: None,
+        identity: PrefetchCandidateIdentity::Catalog(key.to_owned()),
     };
     let selected = select_prefetch_group(
         [entry("tex:required.tex", 100)],
@@ -362,7 +380,7 @@ fn group_selection_charges_shared_payload_once() {
         },
         class: PrefetchClass::SmallRuntime,
         required: false,
-        file_key: None,
+        identity: PrefetchCandidateIdentity::Catalog(key.to_owned()),
     };
     let selected = select_prefetch_group(
         [],
@@ -384,7 +402,7 @@ fn admitted_runtime_closure_is_bounded_and_deduplicated() {
         max_followup_hints: 4,
         ..PrefetchBudget::default()
     });
-    assert!(policy.enqueue(PrefetchRequest::new(
+    assert!(policy.enqueue(typed_tex_request(
         "tex:root.sty",
         "root.sty",
         "literal",
@@ -392,7 +410,11 @@ fn admitted_runtime_closure_is_bounded_and_deduplicated() {
     )));
     let root = policy.drain(64);
     assert_eq!(root.len(), 1);
-    policy.admitted("tex:root.sty", br#"\input{child.tex}\input{child.tex}"#);
+    admit_tex(
+        &mut policy,
+        "tex:root.sty",
+        br#"\input{child.tex}\input{child.tex}"#,
+    );
     let child = policy.drain(64);
     assert_eq!(
         child
@@ -401,7 +423,11 @@ fn admitted_runtime_closure_is_bounded_and_deduplicated() {
             .collect::<Vec<_>>(),
         ["tex:child.tex"]
     );
-    policy.admitted("tex:child.tex", br#"\input{root.sty}\input{grand.tex}"#);
+    admit_tex(
+        &mut policy,
+        "tex:child.tex",
+        br#"\input{root.sty}\input{grand.tex}"#,
+    );
     assert!(policy.drain(64).is_empty());
     assert_eq!(policy.metrics().followup_hints, 1);
 }
@@ -428,15 +454,19 @@ fn admitted_typed_runtime_closure_normalizes_package_and_input_children() {
             .collect::<Vec<_>>(),
         ["tex:child.sty", "tex:chapters/intro.tex"]
     );
-    assert!(children.iter().all(|request| request.file_key.is_some()));
+    assert!(
+        children
+            .iter()
+            .all(|request| request.file_key.kind == "tex")
+    );
 }
 
 #[test]
 fn admitted_literal_children_precede_metadata_peers() {
     let mut policy = PrefetchPolicy::new(PrefetchBudget::default());
-    let metadata = PrefetchRequest::new("tex:metadata.sty", "metadata.sty", "metadata", false);
+    let metadata = typed_tex_request("tex:metadata.sty", "metadata.sty", "metadata", false);
     assert!(policy.enqueue_with_priority(metadata, 0));
-    policy.admitted("tex:root.sty", br#"\input{literal-child.tex}"#);
+    admit_tex(&mut policy, "tex:root.sty", br#"\input{literal-child.tex}"#);
     let requests = policy.drain_prefetch_wave(64);
     assert_eq!(
         requests
@@ -467,7 +497,7 @@ fn metadata_origin_is_a_leaf_for_catalogue_peer_traversal() {
     )
     .with_origin(PrefetchOrigin::Metadata)
     .with_depth(1);
-    let peer = PrefetchRequest::new(
+    let peer = typed_tex_request(
         "tex:metadata-peer.sty",
         "metadata-peer.sty",
         "metadata",
@@ -514,8 +544,8 @@ fn admitted_runtime_scan_budget_is_cumulative() {
         max_runtime_scan_bytes: source.len() as u64,
         ..PrefetchBudget::default()
     });
-    policy.admitted("tex:first.sty", source);
-    policy.admitted("tex:second.sty", source);
+    admit_tex(&mut policy, "tex:first.sty", source);
+    admit_tex(&mut policy, "tex:second.sty", source);
     assert_eq!(policy.metrics().scanned_runtime_bytes, source.len() as u64);
     assert_eq!(policy.metrics().followup_hints, 1);
 }
@@ -526,8 +556,12 @@ fn followup_hint_budget_is_shared_across_admitted_runtime_files() {
         max_followup_hints: 1,
         ..PrefetchBudget::default()
     });
-    policy.admitted("tex:first.sty", br#"\input{first-child.tex}"#);
-    policy.admitted("tex:second.sty", br#"\input{second-child.tex}"#);
+    admit_tex(&mut policy, "tex:first.sty", br#"\input{first-child.tex}"#);
+    admit_tex(
+        &mut policy,
+        "tex:second.sty",
+        br#"\input{second-child.tex}"#,
+    );
     assert_eq!(policy.metrics().followup_hints, 1);
     assert_eq!(policy.drain(64).len(), 1);
 }
@@ -535,8 +569,8 @@ fn followup_hint_budget_is_shared_across_admitted_runtime_files() {
 #[test]
 fn semantic_image_admission_never_scans_runtime_looking_spelling() {
     let mut policy = PrefetchPolicy::new(PrefetchBudget::default());
-    policy.admitted_with_class(
-        "tex:figure.sty",
+    policy.admitted_request_with_class(
+        &typed_tex_request("tex:figure.sty", "figure.sty", "admission", false),
         PrefetchClass::Image,
         br#"\input{not-a-child.tex}"#,
         std::iter::empty(),
@@ -548,18 +582,12 @@ fn semantic_image_admission_never_scans_runtime_looking_spelling() {
 #[test]
 fn admitted_dependency_metadata_expands_replay_tiers_without_cycles() {
     let mut policy = PrefetchPolicy::new(PrefetchBudget::default());
-    let request = PrefetchRequest::new("tex:root.sty", "root.sty", "required", false);
-    let child = PrefetchRequest::new("tex:child.sty", "child.sty", "metadata", false);
-    let grandchild =
-        PrefetchRequest::new("tex:grandchild.sty", "grandchild.sty", "metadata", false);
-    policy.admitted_with_metadata("tex:root.sty", "/tex/root.sty", b"root", [child.clone()]);
-    policy.admitted_with_metadata(
-        "tex:child.sty",
-        "/tex/child.sty",
-        b"child",
-        [grandchild.clone(), request],
-    );
-    let closure = policy.dependency_closure("tex:root.sty", 2);
+    let request = typed_tex_request("tex:root.sty", "root.sty", "required", false);
+    let child = typed_tex_request("tex:child.sty", "child.sty", "metadata", false);
+    let grandchild = typed_tex_request("tex:grandchild.sty", "grandchild.sty", "metadata", false);
+    policy.admitted_request_with_metadata(&request, b"root", [child.clone()]);
+    policy.admitted_request_with_metadata(&child, b"child", [grandchild.clone(), request.clone()]);
+    let closure = policy.dependency_closure_for_file_key(&request.file_key, 2);
     assert_eq!(
         closure
             .iter()
@@ -582,13 +610,13 @@ fn queue_insertion_does_not_consume_optional_file_capacity() {
         max_files: 0,
         ..PrefetchBudget::default()
     });
-    assert!(policy.enqueue(PrefetchRequest::new(
+    assert!(policy.enqueue(typed_tex_request(
         "tex:demand.sty",
         "demand.sty",
         "required",
         true,
     )));
-    assert!(policy.enqueue(PrefetchRequest::new(
+    assert!(policy.enqueue(typed_tex_request(
         "tex:hint.sty",
         "hint.sty",
         "literal",
@@ -604,7 +632,7 @@ fn deferred_optional_requests_wait_for_the_next_phase() {
         max_files: 0,
         ..PrefetchBudget::default()
     });
-    let request = PrefetchRequest::new("tex:deferred.sty", "deferred.sty", "literal", false);
+    let request = typed_tex_request("tex:deferred.sty", "deferred.sty", "literal", false);
     assert!(policy.enqueue(request.clone()));
     let drained_batch = policy.drain(1);
     let [drained] = drained_batch.as_slice() else {
@@ -625,19 +653,19 @@ fn demanded_duplicate_promotes_without_consuming_speculative_capacity() {
         max_files: 1,
         ..PrefetchBudget::default()
     });
-    assert!(policy.enqueue(PrefetchRequest::new(
+    assert!(policy.enqueue(typed_tex_request(
         "tex:shared.sty",
         "shared.sty",
         "literal",
         false,
     )));
-    assert!(policy.enqueue(PrefetchRequest::new(
+    assert!(policy.enqueue(typed_tex_request(
         "tex:shared.sty",
         "./shared.sty",
         "required",
         true,
     )));
-    assert!(policy.enqueue(PrefetchRequest::new(
+    assert!(policy.enqueue(typed_tex_request(
         "tex:other.sty",
         "other.sty",
         "literal",
@@ -656,15 +684,31 @@ fn replay_escalation_uses_region_and_discards_work_not_serials() {
     let region = PrefetchRegionKey::new("outer-paragraph-end:12:3").expect("region");
     assert!(
         policy
-            .note_replay(region.clone(), "tex:one.sty", 10)
+            .note_replay_for_file_key(
+                region.clone(),
+                &typed_tex_request("tex:one.sty", "one.sty", "demand", true).file_key,
+                10,
+            )
             .is_none()
     );
     let escalation = policy
-        .note_replay(region, "tex:two.sty", 20)
+        .note_replay_for_file_key(
+            region,
+            &typed_tex_request("tex:two.sty", "two.sty", "demand", true).file_key,
+            20,
+        )
         .expect("same region escalates different request");
     assert_eq!(escalation.tier, 1);
     let other = PrefetchRegionKey::new("outer-paragraph-end:99:1").expect("region");
-    assert!(policy.note_replay(other, "tex:one.sty", 30).is_none());
+    assert!(
+        policy
+            .note_replay_for_file_key(
+                other,
+                &typed_tex_request("tex:one.sty", "one.sty", "demand", true).file_key,
+                30,
+            )
+            .is_none()
+    );
 }
 
 #[test]
@@ -679,7 +723,7 @@ fn semantic_kinds_do_not_alias_when_transport_key_is_shared() {
         },
         class: PrefetchClass::Other,
         required: false,
-        file_key: Some(key(kind)),
+        identity: PrefetchCandidateIdentity::File(key(kind)),
     };
     let mut policy = PrefetchPolicy::new(PrefetchBudget {
         max_files: 4,
@@ -693,6 +737,41 @@ fn semantic_kinds_do_not_alias_when_transport_key_is_shared() {
 }
 
 #[test]
+fn catalog_companion_and_semantic_request_keep_distinct_identities() {
+    let file = PrefetchCandidate {
+        key: "tex:shared.sty".to_owned(),
+        object: ObjectEntry {
+            object: "shared-object".to_owned(),
+            ahash64: "0123456789abcdef".to_owned(),
+            bytes: 12,
+        },
+        class: PrefetchClass::SmallRuntime,
+        required: false,
+        identity: PrefetchCandidateIdentity::File(
+            PrefetchFileKey::new("tex", "vf", "shared.sty").expect("semantic key"),
+        ),
+    };
+    let catalog = PrefetchCandidate {
+        identity: PrefetchCandidateIdentity::Catalog("tex:shared.sty".to_owned()),
+        ..file.clone()
+    };
+    let selected = select_prefetch_group(
+        [],
+        [file, catalog],
+        PrefetchBudget {
+            max_files: 2,
+            max_bytes: 12,
+            max_runtime_bytes: 12,
+            ..PrefetchBudget::default()
+        },
+    );
+    assert_eq!(selected.hints.len(), 2);
+    assert_eq!(selected.prefetch_bytes, 12);
+    assert!(selected.hints[0].semantic_file_key().is_some());
+    assert!(selected.hints[1].semantic_file_key().is_none());
+}
+
+#[test]
 fn selection_budget_spans_waves_and_renews_for_a_new_phase() {
     let candidate = |name: &str, object: &str, bytes: u64| PrefetchCandidate {
         key: format!("tex:{name}"),
@@ -703,7 +782,9 @@ fn selection_budget_spans_waves_and_renews_for_a_new_phase() {
         },
         class: PrefetchClass::SmallRuntime,
         required: false,
-        file_key: Some(PrefetchFileKey::new("tex", "tex", name).expect("key")),
+        identity: PrefetchCandidateIdentity::File(
+            PrefetchFileKey::new("tex", "tex", name).expect("key"),
+        ),
     };
     let mut policy = PrefetchPolicy::new(PrefetchBudget {
         max_files: 8,
@@ -741,12 +822,12 @@ fn selection_budget_spans_waves_and_renews_for_a_new_phase() {
 
 #[test]
 fn drained_optional_keys_are_not_rediscovered_but_demand_can_requeue() {
-    let optional = PrefetchRequest::new("tex:declined.sty", "declined.sty", "literal", false);
-    let demand = PrefetchRequest::new("tex:declined.sty", "declined.sty", "required", true);
+    let optional = typed_tex_request("tex:declined.sty", "declined.sty", "literal", false);
+    let demand = typed_tex_request("tex:declined.sty", "declined.sty", "required", true);
     let mut policy = PrefetchPolicy::new(PrefetchBudget::default());
     assert!(policy.enqueue(optional.clone()));
     assert_eq!(policy.drain(1), vec![optional]);
-    assert!(!policy.enqueue(PrefetchRequest::new(
+    assert!(!policy.enqueue(typed_tex_request(
         "tex:declined.sty",
         "again.sty",
         "runtime",

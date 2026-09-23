@@ -31,6 +31,22 @@ The current owners are:
 | Reference execution and fixture authority                  | `fixturegen::reference` for process execution and publication; `test-support::dvi` for byte comparison; `parity-harness` for conformance composition and triage        | Retire the `refexec` compatibility facade and command only after every script and parity caller has a current owner. Fixture regeneration remains transactional.          |
 | Node/state, artifact/format/output, and host/WASM adapters | `PageMaterialArena`/`NodeRegion` own page material; `NodeView`/`NodeCursor` borrow compact records. Artifact, format, and host output owners use their current schema. | Remove generic `NodeArena`, duplicated page/paragraph ownership, and obsolete adapters with their callers; no import of old Umber-owned data is required.                 |
 
+Predictive resource scheduling has two current identities. An engine-facing
+file request carries its exact semantic domain, kind, and normalized name;
+the shared prefetch queue must never infer those facts from a catalogue
+transport key. Authenticated catalogue dependencies may instead be known only
+by their distribution key. They may compete in the optional payload budget
+under an explicit catalogue identity, but cannot masquerade as an engine file
+request or establish engine readiness without a typed admission. Browser DTOs
+must reject an incomplete semantic request. Optional prior lookup records
+with an unknown old semantic kind are skipped as hints rather than retyped
+from their coarse catalogue key.
+
+The reference channels also have distinct current geometry contracts: the
+committed TeX82 microfixture is source-located schema V3; the independently
+generated e-TeX 2.6 e-TRIP stream remains positionless schema V2. Neither is
+an old Umber image or a fallback for the other.
+
 Removal is complete only when repository callers no longer use the old
 surface, active tests exercise the replacement contract rather than a retained
 shim, and current documentation names the new entry point. A historical test

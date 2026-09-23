@@ -52,6 +52,40 @@ fn startup_policy_combines_prior_manifest_and_literal_hints() {
 }
 
 #[test]
+fn optional_prior_record_with_unknown_semantic_kind_is_not_retyped_from_catalog_key() {
+    let identity = PrefetchIdentity::new("pdftex", "latex", "dvi", "root", PREFETCH_POLICY_VERSION)
+        .expect("identity");
+    let mut prior = LookupManifest::new(identity.clone());
+    prior
+        .record(
+            LookupRecord::new(
+                "old.sty",
+                "tex:old.sty",
+                "unknown-old-kind",
+                "distribution",
+                LookupRole::Required,
+                LookupOutcome::Resolved(
+                    ResolvedIdentity::new(
+                        "tex:old.sty",
+                        Some("/texlive/old.sty".to_owned()),
+                        "object",
+                        "0123456789abcdef",
+                        10,
+                    )
+                    .expect("resolved"),
+                ),
+            )
+            .expect("bounded history record"),
+        )
+        .expect("prior history");
+    let mut planner = PrefetchPlanner::with_prior(identity, PrefetchBudget::default(), Some(prior));
+    let hints = planner.startup_hints("\\input{current}");
+    assert!(
+        matches!(hints.as_slice(), [ResourceRequest::File(request)] if request.key().name() == "current.tex")
+    );
+}
+
+#[test]
 fn source_edits_do_not_change_identity_or_publish_predictions() {
     let mut planner = planner();
     let first = planner.startup_hints("\\input{first}");

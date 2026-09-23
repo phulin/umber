@@ -2223,7 +2223,7 @@ impl DistributionResolver {
             let selected_keys = selected
                 .hints
                 .into_iter()
-                .filter_map(|candidate| candidate.file_key.map(|key| key.identity()))
+                .filter_map(|candidate| candidate.semantic_file_key().map(|key| key.identity()))
                 .collect::<BTreeSet<_>>();
             for (request, file) in local_prefetch {
                 if semantic_file_key(request.key())
@@ -2508,7 +2508,10 @@ impl DistributionResolver {
                             object: entry.object.clone(),
                             class: prefetch_class_for_request(request, key),
                             required: false,
-                            file_key: semantic_file_key(request.key()),
+                            identity: umber_distribution::PrefetchCandidateIdentity::File(
+                                semantic_file_key(request.key())
+                                    .expect("validated catalogue request has a semantic key"),
+                            ),
                         })
                 })
                 .collect::<Vec<_>>(),
@@ -2524,7 +2527,10 @@ impl DistributionResolver {
                         object: entry.object.clone(),
                         class: prefetch_class_for_request(request, key),
                         required: true,
-                        file_key: semantic_file_key(request.key()),
+                        identity: umber_distribution::PrefetchCandidateIdentity::File(
+                            semantic_file_key(request.key())
+                                .expect("validated catalogue request has a semantic key"),
+                        ),
                     })
             }),
             hint_candidates,
@@ -2532,7 +2538,7 @@ impl DistributionResolver {
         let selected_semantic_keys = selected_hints
             .hints
             .into_iter()
-            .filter_map(|candidate| candidate.file_key.map(|key| key.identity()))
+            .filter_map(|candidate| candidate.semantic_file_key().map(|key| key.identity()))
             .collect::<BTreeSet<_>>();
         for (request, file) in local_prefetch {
             if semantic_file_key(request.key())
@@ -3316,7 +3322,9 @@ fn prefetch_candidate_for_file(
         },
         class: prefetch_class_for_request(request, &manifest_key),
         required: false,
-        file_key: semantic_file_key(request.key()),
+        identity: umber_distribution::PrefetchCandidateIdentity::File(
+            semantic_file_key(request.key()).expect("validated local request has a semantic key"),
+        ),
     })
 }
 

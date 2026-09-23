@@ -460,8 +460,6 @@ pub enum PrefetchClass {
 /// request.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum PrefetchOrigin {
-    /// A legacy transport-only request with no stronger provenance.
-    Unknown,
     /// A request seeded directly from the source or an explicit host seed.
     Source,
     Explicit,
@@ -491,7 +489,6 @@ impl PrefetchOrigin {
     #[must_use]
     pub const fn strength(self) -> u8 {
         match self {
-            Self::Unknown => 0,
             Self::Metadata => 1,
             Self::RuntimeLiteral => 2,
             Self::Literal => 3,
@@ -587,12 +584,30 @@ impl PrefetchClass {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PrefetchCandidateIdentity {
+    /// A candidate for a specific engine-visible file request.
+    File(PrefetchFileKey),
+    /// An authenticated catalogue companion without an engine file kind.
+    Catalog(String),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PrefetchCandidate {
     pub key: String,
     pub object: ObjectEntry,
     pub class: PrefetchClass,
     pub required: bool,
-    pub file_key: Option<PrefetchFileKey>,
+    pub identity: PrefetchCandidateIdentity,
+}
+
+impl PrefetchCandidate {
+    #[must_use]
+    pub fn semantic_file_key(&self) -> Option<&PrefetchFileKey> {
+        match &self.identity {
+            PrefetchCandidateIdentity::File(key) => Some(key),
+            PrefetchCandidateIdentity::Catalog(_) => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -636,10 +651,10 @@ pub struct PrefetchSelection {
 }
 
 fn candidate_identity(candidate: &PrefetchCandidate) -> String {
-    candidate.file_key.as_ref().map_or_else(
-        || format!("transport:{}", candidate.key),
-        PrefetchFileKey::identity,
-    )
+    match &candidate.identity {
+        PrefetchCandidateIdentity::File(key) => key.identity(),
+        PrefetchCandidateIdentity::Catalog(key) => format!("catalog:{key}"),
+    }
 }
 
 fn payload_identity(object: &ObjectEntry) -> (String, String, u64) {
@@ -713,14 +728,13 @@ pub fn select_prefetch_group(
 /// A host-neutral file request used by the shared prefetch policy.
 ///
 /// `key` is the immutable catalogue transport key. `file_key` is the complete
-/// semantic identity and is the policy's equality/deduplication key whenever
-/// supplied by a typed host. The original spelling and search context remain
-/// attached so an adapter can issue the same lookup without reconstructing it
-/// from a coarse budget class.
+/// semantic identity and is always the policy's equality/deduplication key.
+/// The original spelling and search context remain attached so an adapter can
+/// issue the same lookup without reconstructing it from a coarse budget class.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct PrefetchRequest {
     pub key: String,
-    pub file_key: Option<PrefetchFileKey>,
+    pub file_key: PrefetchFileKey,
     pub original_spelling: String,
     pub search_context: String,
     pub class: PrefetchClass,
@@ -730,31 +744,9 @@ pub struct PrefetchRequest {
 }
 
 impl PrefetchRequest {
-    #[must_use]
-    pub fn new(
-        key: impl Into<String>,
-        original_spelling: impl Into<String>,
-        search_context: impl Into<String>,
-        required: bool,
-    ) -> Self {
-        let key = key.into();
-        Self {
-            // Legacy callers only have a catalogue transport key. Keep that
-            // identity opaque; typed hosts must use `for_file_key` so no
-            // semantic kind is guessed from a prefix or budget class.
-            file_key: None,
-            class: PrefetchClass::for_key(&key),
-            key,
-            original_spelling: original_spelling.into(),
-            search_context: search_context.into(),
-            required,
-            origin: PrefetchOrigin::Unknown,
-            depth: 0,
-        }
-    }
-
-    /// Constructs a request at a typed host boundary. This is the production
-    /// constructor; the transport key is retained only for catalogue lookup.
+    /// Constructs a typed request. The transport key is retained only for
+    /// catalogue lookup. Callers promoting or discovering another origin use
+    /// `with_origin` at that exact scheduling boundary.
     #[must_use]
     pub fn for_file_key(
         file_key: PrefetchFileKey,
@@ -767,21 +759,18 @@ impl PrefetchRequest {
         Self {
             class: PrefetchClass::for_key(&key),
             key,
-            file_key: Some(file_key),
+            file_key,
             original_spelling: original_spelling.into(),
             search_context: search_context.into(),
             required,
-            origin: PrefetchOrigin::Unknown,
+            origin: PrefetchOrigin::Source,
             depth: 0,
         }
     }
 
     #[must_use]
     pub fn identity(&self) -> String {
-        self.file_key.as_ref().map_or_else(
-            || format!("transport:{}", self.key),
-            PrefetchFileKey::identity,
-        )
+        self.file_key.identity()
     }
 
     #[must_use]
@@ -831,7 +820,6 @@ fn literal_hint_request(
     hint: &LiteralHint,
     search_context: &str,
     required: bool,
-    typed: bool,
     depth: usize,
     origin: PrefetchOrigin,
 ) -> Option<PrefetchRequest> {
@@ -853,7 +841,7 @@ fn literal_hint_request(
         LiteralHintKind::FontMetric => PrefetchClass::Font,
         _ => PrefetchClass::for_key(&transport_key),
     };
-    let request = if typed {
+    Some(
         PrefetchRequest::for_file_key(
             file_key,
             transport_key,
@@ -861,19 +849,9 @@ fn literal_hint_request(
             search_context,
             required,
         )
-    } else {
-        PrefetchRequest::new(
-            transport_key,
-            hint.original_spelling.clone(),
-            search_context,
-            required,
-        )
-    };
-    Some(
-        request
-            .with_class(class)
-            .with_depth(depth)
-            .with_origin(origin),
+        .with_class(class)
+        .with_depth(depth)
+        .with_origin(origin),
     )
 }
 
@@ -1297,7 +1275,7 @@ impl PrefetchPolicy {
         let mut count = 0;
         for hint in extract_literal_hints(source, LiteralHintLimits::default()) {
             let Some(request) =
-                literal_hint_request(&hint, "literal", false, true, 0, PrefetchOrigin::Literal)
+                literal_hint_request(&hint, "literal", false, 0, PrefetchOrigin::Literal)
             else {
                 continue;
             };
@@ -1410,21 +1388,6 @@ impl PrefetchPolicy {
     /// its child literals are queued at the next bounded tier. Authenticated
     /// dependency metadata may be supplied by the host at this same seam;
     /// metadata is scheduling evidence and never engine readiness.
-    pub fn admitted(&mut self, request_key: &str, bytes: &[u8]) {
-        self.admitted_with_metadata(request_key, "", bytes, std::iter::empty());
-    }
-
-    pub fn admitted_with_metadata(
-        &mut self,
-        request_key: &str,
-        _virtual_path: &str,
-        bytes: &[u8],
-        dependencies: impl IntoIterator<Item = PrefetchRequest>,
-    ) {
-        let request = PrefetchRequest::new(request_key, request_key, "admission", false);
-        self.admitted_request_with_metadata(&request, bytes, dependencies);
-    }
-
     pub fn admitted_request_with_metadata(
         &mut self,
         request: &PrefetchRequest,
@@ -1439,18 +1402,6 @@ impl PrefetchPolicy {
     /// The explicit class prevents an image named `figure.sty` from being
     /// interpreted as runtime text merely because its catalogue key ends in a
     /// runtime-looking suffix.
-    pub fn admitted_with_class(
-        &mut self,
-        request_key: &str,
-        class: PrefetchClass,
-        bytes: &[u8],
-        dependencies: impl IntoIterator<Item = PrefetchRequest>,
-    ) {
-        let request =
-            PrefetchRequest::new(request_key, request_key, "admission", false).with_class(class);
-        self.admitted_request_with_class(&request, class, bytes, dependencies);
-    }
-
     pub fn admitted_request_with_class(
         &mut self,
         request: &PrefetchRequest,
@@ -1515,7 +1466,6 @@ impl PrefetchPolicy {
             .scanned_runtime_bytes
             .saturating_add(byte_count);
         let text = String::from_utf8_lossy(bytes);
-        let typed_parent = request.file_key.is_some();
         if parent_depth >= self.budget.max_followup_depth {
             return;
         }
@@ -1537,7 +1487,6 @@ impl PrefetchPolicy {
                 &hint,
                 "runtime",
                 false,
-                typed_parent,
                 parent_depth.saturating_add(1),
                 PrefetchOrigin::RuntimeLiteral,
             ) else {
@@ -1554,11 +1503,6 @@ impl PrefetchPolicy {
     /// Returns the bounded, authenticated dependency closure for replay
     /// escalation. Discovery origin and lexical depth remain attached to each
     /// request; replay priority does not re-root a guessed metadata child.
-    #[must_use]
-    pub fn dependency_closure(&self, request_key: &str, tier: u8) -> Vec<PrefetchRequest> {
-        self.dependency_closure_for_identity(format!("transport:{request_key}"), tier)
-    }
-
     #[must_use]
     pub fn dependency_closure_for_file_key(
         &self,
@@ -1591,15 +1535,6 @@ impl PrefetchPolicy {
     /// Records a miss against the retained anchor.  A new region starts with
     /// a clean count; an unrelated request at the same region contributes to
     /// the region count as well as retaining its own diagnostic count.
-    pub fn note_replay(
-        &mut self,
-        region: PrefetchRegionKey,
-        request_key: &str,
-        discarded_work: u64,
-    ) -> Option<PrefetchEscalation> {
-        self.note_replay_for_identity(region, format!("transport:{request_key}"), discarded_work)
-    }
-
     pub fn note_replay_for_file_key(
         &mut self,
         region: PrefetchRegionKey,
