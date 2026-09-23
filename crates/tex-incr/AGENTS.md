@@ -47,8 +47,6 @@ long-lived editor-session strategy over executor-named checkpoints.
   owners before unwind rejection, and prepared settlement rejects mode,
   command, boundary, ledger, state, page, and PDF ownership in dependency
   order from `Drop` unless Session consumes acceptance explicitly.
-- `src/trace.rs`: derived ordered leaf/parent trace summaries, dependency reduction, and atomic replay.
-- `src/trace/tests.rs`: parent composition, leaf-equivalence, ordering, and atomic-miss coverage.
 - `src/tests.rs`: synthetic edit, convergence, retention, and cold-parity tests.
   It includes a caught-panic production regression at the exact detached-owner
   interval and proves prior-boundary sibling reuse after aggregate rejection.

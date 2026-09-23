@@ -41,12 +41,10 @@ use tex_state::{
 
 mod candidate_lease;
 mod history;
-mod trace;
 
 use candidate_lease::{CandidateLease, CandidateLeaseState};
 pub use history::{BoundaryKey, BoundaryRecord};
 use history::{HistoryComparison, RevisionEditMap, compare_histories};
-pub use trace::{TraceCompositionError, TraceOperation, TraceSummary, TraceValidationError};
 
 /// Stable wire projection of the executor boundary that owns a resource
 /// replay.  It deliberately contains no process-local checkpoint handle or
@@ -3138,13 +3136,6 @@ impl<'store> Session<'store> {
         self.accept_cold_candidate(candidate)
     }
 
-    pub fn cold_with_resource_resolvers(
-        &mut self,
-        host: &mut dyn ResourceHost,
-    ) -> Result<AcceptedOutput, SessionError> {
-        self.cold_with_resolvers(host)
-    }
-
     pub fn start_cold_candidate(&mut self) -> Result<RevisionCandidate<'store>, SessionError> {
         self.candidate(CandidatePlan {
             base_revision: self.revision,
@@ -3822,15 +3813,6 @@ impl<'store> Session<'store> {
         self.accept_revision(transaction)
     }
 
-    pub fn advance_with_resource_resolvers(
-        &mut self,
-        next_revision: RevisionId,
-        edit: Edit,
-        host: &mut dyn ResourceHost,
-    ) -> Result<AcceptedOutput, SessionError> {
-        self.advance_with_resolvers(next_revision, edit, host)
-    }
-
     pub fn prepare_revision_with_resolvers(
         &mut self,
         next_revision: RevisionId,
@@ -3840,15 +3822,6 @@ impl<'store> Session<'store> {
         let mut candidate = self.start_advance_candidate(next_revision, edit)?;
         drive_synchronous_candidate(&mut candidate, host)?;
         self.prepare_revision_candidate(candidate)
-    }
-
-    pub fn prepare_revision_with_resource_resolvers(
-        &mut self,
-        next_revision: RevisionId,
-        edit: Edit,
-        host: &mut dyn ResourceHost,
-    ) -> Result<RevisionTransaction<'store>, SessionError> {
-        self.prepare_revision_with_resolvers(next_revision, edit, host)
     }
 
     pub fn validate_edit(
