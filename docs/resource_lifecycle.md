@@ -275,6 +275,26 @@ policy and translate errors; they do not repeat either workflow.
 
 ## Publication transitions
 
+### Mixed session batches
+
+`VirtualCompileSession` stages a whole response batch in one private
+`VirtualResourceAdmission` value: resolved and unavailable files, OpenType
+bindings, PK bindings, non-file lifecycle records, and the combined cache-byte
+charge. Its existing font validation and output policy remain the virtual
+session's responsibility. It prepares the candidate workspace from that staged
+value and registers newly admitted inputs through a batch operation before
+publishing the staged resources, candidate view, and retry progress together.
+An error in any preparation step leaves the prior admission state, incremental
+input map, candidate view, progress counters, and accepted output intact.
+
+`LatexProjectSession` stages its project workspace and non-file lifecycle in a
+separate private value. It checks project file authorization and its own
+binding rules, then forwards the same responses to the retained TeX pass. The
+project stage is committed only after child admission succeeds. This preserves
+the distinct project and TeX policies while making either rejection atomic for
+the outer session. An empty startup speculative reply remains an acknowledged
+provider round in the virtual session even when it binds no resource.
+
 There are three different publication boundaries:
 
 1. **Verified object.** `umber-fetch::DistributionClient` may atomically write

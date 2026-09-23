@@ -22,7 +22,8 @@ long-lived editor-session strategy over executor-named checkpoints.
 - `src/history.rs`: handle-free named-boundary observations, convergence
   comparison, and prune-first durable-root selection policy.
 - `src/lib.rs`: caller-owned reachability-store constructor and lifetime-bound
-  session/revision APIs, revision/edit model, host-supplied resolver execution,
+  session/revision APIs, revision/edit model, atomic admitted-input batch
+  registration, host-supplied resolver execution,
   immutable resource retry overlays, rendered-source demand selection and lazy
   budgeted/evictable artifact-root/recipe queries, terminal recognition of
   complete-job and explicit-fragment outcomes, candidate acceptance, and

@@ -231,7 +231,8 @@ caching, and native parity.
 
 `resource_lifecycle.md` is the normative cross-subsystem contract for resource
 keys, request intent, verified acquisition, VFS admission, engine suspension,
-candidate ownership, and native/browser scheduling boundaries.
+candidate ownership, mixed virtual/project batch transactions, and
+native/browser scheduling boundaries.
 
 `web_font_bundles.md` specifies the OpenType-first native/WASM font-resource
 model: OTF/TTF native containers, WOFF2 browser containers, canonical program

@@ -3111,6 +3111,19 @@ impl<'store> Session<'store> {
         Ok(())
     }
 
+    /// Registers a group of admitted inputs as one operation.
+    /// Keep preparation fallible before publishing this map when validation is
+    /// added to input registration.
+    pub fn register_input_files(
+        &mut self,
+        files: impl IntoIterator<Item = (PathBuf, tex_state::SharedBytes)>,
+    ) -> Result<(), SessionError> {
+        let files = files.into_iter().collect::<Vec<_>>();
+        // Any future fallible checks belong here, before the first insertion.
+        self.registered_inputs.extend(files);
+        Ok(())
+    }
+
     pub fn cold(&mut self) -> Result<AcceptedOutput, SessionError> {
         self.cold_with_resolvers(&mut DirectResourceHost)
     }

@@ -38,7 +38,7 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `src/fixed_point.rs`: shared deterministic pass/attempt bounds and non-adjacent fixed-point oscillation policy.
 - `src/editor_session.rs`: native provisional/stabilizing/stable editor coordinator over one-pass incremental and TeX fixed-point sessions.
 - `src/editor_session/tests.rs`: editor stabilization state, revision identity, generated-file selection, no-op pass counts, cancellation, and rollback coverage.
-- `src/latex_project.rs`: shared-workspace transactional TeX and optional bibliography multipass orchestration, canonical non-file admission, convergence, and atomic project acceptance.
+- `src/latex_project.rs`: shared-workspace transactional TeX and optional bibliography multipass orchestration, project-owned staged file/non-file admission committed after child TeX admission, convergence, and atomic project acceptance.
 - `src/latex_project/support.rs`: project candidate VFS assembly, generated-file identity, and shared resource conversion helpers.
 - `src/latex_project/tests.rs`: project convergence, bibliography publication, and rollback coverage.
 - `src/tex_fixed_point.rs`: public bibliography-free TeX fixed-point adapter over the shared project candidate machinery.
@@ -66,7 +66,7 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
   selected while detached virtual-font packets are lowered.
 - `src/pdf_output/finalization_input/virtual_fonts/tests.rs`: unified pdfTeX
   engine/VF internal-font timeline regression coverage.
-- `src/virtual_compile.rs`: host-neutral persistent compile session over one `ProjectWorkspace`, versioned mapped-TFM layout policy, revision-checked root patches, canonical file/OpenType/PK admission and retries, atomic response registration, one retained canonical HTML render document, output-budgeted rendered-source caches, retained immutable resources, independently configurable restart-history retention, and execution/resource accounting.
+- `src/virtual_compile.rs`: host-neutral persistent compile session over one typed file/OpenType/PK resource state, versioned mapped-TFM layout policy, revision-checked root patches, rollback-safe batch admission through incremental registration and candidate-view preparation, one retained canonical HTML render document, output-budgeted rendered-source caches, retained immutable resources, independently configurable restart-history retention, and execution/resource accounting.
 - `src/virtual_compile/path.rs`: logical TeX/TFM request normalization over `umber-vfs` canonical paths.
 - `src/virtual_compile/pdf_resources.rs`: post-execution typed VF/local-TFM/map/encoding/program closure discovery and immutable parsed cache.
 - `src/virtual_compile/resolvers.rs`: VFS-snapshot-backed input/font resolvers that register selected bytes through World, with typed missing-file and logical OpenType-font side state.

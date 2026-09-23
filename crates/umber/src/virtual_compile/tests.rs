@@ -750,7 +750,7 @@ struct AcceptedSessionState {
 }
 
 fn accepted_session_state(session: &VirtualCompileSession) -> AcceptedSessionState {
-    let snapshot = session.workspace.snapshot();
+    let snapshot = session.resources.workspace.snapshot();
     let generated_path = VirtualPath::user("state.aux").expect("generated path");
     AcceptedSessionState {
         revision: session.revision().expect("accepted revision"),
@@ -922,6 +922,7 @@ fn generated_probe_missing_to_present_restarts_from_job_start_and_matches_cold()
     ));
     let generated_path = VirtualPath::user("state.aux").expect("generated path");
     let generated = incremental
+        .resources
         .workspace
         .snapshot()
         .get(&generated_path)
@@ -976,6 +977,7 @@ fn changed_required_generated_input_retries_one_job_start_candidate_and_matches_
     ));
     let generated_path = VirtualPath::user("state.aux").expect("generated path");
     let generated = incremental
+        .resources
         .workspace
         .snapshot()
         .get(&generated_path)
@@ -1168,6 +1170,7 @@ fn resumed_job_start_fallback_publishes_root_stage_and_revision_together() {
     assert_eq!(session.revision(), Some(RevisionId::new(2)));
     assert_eq!(
         session
+            .resources
             .workspace
             .snapshot()
             .get(&session.main_path)
@@ -1261,6 +1264,7 @@ fn resumed_job_start_fallback_preserves_legacy_root_byte_representation() {
     ));
     assert_eq!(
         session
+            .resources
             .workspace
             .snapshot()
             .get(&session.main_path)
@@ -1302,6 +1306,7 @@ fn generated_probe_present_to_missing_restarts_from_job_start_and_matches_cold()
     ));
     assert!(
         incremental
+            .resources
             .workspace
             .snapshot()
             .get(&VirtualPath::user("state.aux").expect("generated path"))
@@ -2169,7 +2174,7 @@ fn typed_font_response_obeys_the_per_resource_byte_limit_atomically() {
             attempted,
         }) if limit == font_bytes.len() - 1 && attempted == font_bytes.len()
     ));
-    assert!(session.resolved_fonts.is_empty());
+    assert!(session.resources.resolved_fonts.is_empty());
     assert_eq!(session.cached_file_bytes(), 0);
 }
 
@@ -2616,12 +2621,16 @@ fn preloaded_and_partitioned_positive_negative_resources_are_exactly_equivalent(
     let mut preloaded = session(source);
     register_equivalence_resources(&mut preloaded);
     let optional = FileRequestKey::new(FileKind::TexInput, "optional.cfg").expect("probe key");
-    preloaded.workspace.expect(&FileRequestBatch::with_probes(
-        std::iter::empty(),
-        [FileRequest::new(optional.clone(), "optional.cfg")],
-        std::iter::empty(),
-    ));
     preloaded
+        .resources
+        .workspace
+        .expect(&FileRequestBatch::with_probes(
+            std::iter::empty(),
+            [FileRequest::new(optional.clone(), "optional.cfg")],
+            std::iter::empty(),
+        ));
+    preloaded
+        .resources
         .workspace
         .provision_unavailable(optional.clone())
         .expect("preloaded authoritative absence");
@@ -3059,6 +3068,7 @@ fn missing_resource_attempt_discards_auxiliary_stage_writes() {
     let output_path = VirtualPath::user("attempt.aux").expect("output path");
     assert!(
         session
+            .resources
             .workspace
             .snapshot()
             .get(&output_path)
@@ -3078,7 +3088,7 @@ fn missing_resource_attempt_discards_auxiliary_stage_writes() {
         panic!("retry should complete");
     };
     assert_eq!(output.files.len(), 1);
-    let snapshot = session.workspace.snapshot();
+    let snapshot = session.resources.workspace.snapshot();
     let accepted = snapshot
         .get(&output_path)
         .expect("live snapshot")
@@ -3160,6 +3170,7 @@ fn auxiliary_stage_limit_fails_without_publishing_generated_files() {
     ));
     assert!(
         session
+            .resources
             .workspace
             .snapshot()
             .get(&VirtualPath::user("large.aux").expect("path"))
@@ -3197,7 +3208,7 @@ fn accepted_patch_publishes_root_generated_files_and_output_together() {
         panic!("patched revision should complete");
     };
 
-    let snapshot = session.workspace.snapshot();
+    let snapshot = session.resources.workspace.snapshot();
     assert_eq!(
         snapshot
             .get(&session.main_path)
@@ -3251,7 +3262,7 @@ fn failed_patch_restores_the_complete_accepted_build() {
         panic!("initial revision should fit");
     };
     let old_hash = session.content_hash().expect("accepted hash");
-    let old_snapshot = session.workspace.snapshot();
+    let old_snapshot = session.resources.workspace.snapshot();
     let old_root = old_snapshot
         .get(&session.main_path)
         .expect("root lookup")
@@ -3281,7 +3292,7 @@ fn failed_patch_restores_the_complete_accepted_build() {
         CompileAttemptResult::Error(CompileError::LimitExceeded { .. })
     ));
 
-    let snapshot = session.workspace.snapshot();
+    let snapshot = session.resources.workspace.snapshot();
     assert_eq!(
         snapshot
             .get(&session.main_path)
@@ -4607,6 +4618,175 @@ fn invalid_mixed_batch_publishes_nothing() {
     );
     assert_eq!(session.resolved_file_count(), 0);
     assert_eq!(session.cached_file_bytes(), 0);
+}
+
+#[test]
+fn rejected_file_then_font_batch_preserves_accepted_revision_and_retry_state() {
+    let source = "\\shipout\\hbox{}\\end";
+    let mut session = VirtualCompileSession::new(SessionOptions {
+        outputs: OutputCapabilitySet::DVI.with(OutputCapability::Html),
+        ..SessionOptions::default()
+    })
+    .expect("HTML session");
+    session
+        .add_user_file("cmr10.tfm", CMR10.to_vec())
+        .expect("TFM");
+    session
+        .add_user_file("main.tex", source.as_bytes().to_vec())
+        .expect("source");
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::Complete(_)
+    ));
+    let accepted = accepted_session_state(&session);
+    let insert = source.find("\\end").expect("end");
+    session
+        .apply_patch(SourcePatch {
+            next_revision: RevisionId::new(2),
+            base_revision: RevisionId::new(1),
+            expected_hash: accepted.content_hash,
+            range: insert..insert,
+            replacement: "\\font\\tenrm=cmr10\\relax ".into(),
+        })
+        .expect("patch");
+    let font = resources(session.compile_attempt())
+        .into_iter()
+        .find_map(|request| match request {
+            ResourceRequest::Font(font) => Some(font),
+            _ => None,
+        })
+        .expect("font request");
+    let file = FileRequest::new(
+        FileRequestKey::new(FileKind::TexInput, "prefetch.tex").expect("key"),
+        "prefetch.tex",
+    );
+    session.authorize_prefetch_files([file.clone()]);
+    let resolved_file = ResourceResponse::File(ResolvedFile {
+        request: file.key().clone(),
+        virtual_path: "/texlive/prefetch.tex".into(),
+        bytes: b"% prefetched\n".to_vec().into(),
+        expected_digest: None,
+    });
+    let mut invalid_font = cmu_response(font.clone());
+    invalid_font.provenance = None;
+    let response_generation = session.response_generation;
+    let cached_bytes = session.cached_file_bytes();
+    let candidate_files = session
+        .candidate
+        .as_ref()
+        .expect("candidate")
+        .workspace
+        .len();
+    assert!(matches!(
+        session.provide_resources(vec![
+            resolved_file.clone(),
+            ResourceResponse::Font(invalid_font)
+        ]),
+        Err(CompileError::Font(_))
+    ));
+    assert_eq!(accepted_session_state(&session), accepted);
+    assert_eq!(session.response_generation, response_generation);
+    assert_eq!(session.cached_file_bytes(), cached_bytes);
+    assert_eq!(
+        session
+            .candidate
+            .as_ref()
+            .expect("candidate")
+            .workspace
+            .len(),
+        candidate_files
+    );
+    assert!(session.resources.workspace.get(file.key()).is_none());
+    assert!(session.resources.resolved_fonts.is_empty());
+    session
+        .provide_resources(vec![
+            resolved_file,
+            ResourceResponse::Font(cmu_response(font)),
+        ])
+        .expect("corrected batch");
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::Complete(_)
+    ));
+    assert_eq!(session.revision(), Some(RevisionId::new(2)));
+}
+
+#[test]
+fn rejected_file_then_pk_batch_preserves_every_binding() {
+    let mut session = VirtualCompileSession::new(SessionOptions {
+        engine: EngineMode::PdfTex,
+        outputs: OutputCapabilitySet::PDF,
+        font_layout_policy: tex_fonts::FontLayoutPolicy::ClassicTfmExact,
+        ..SessionOptions::default()
+    })
+    .expect("PDF session");
+    session
+        .add_user_file("cmr10.tfm", CMR10.to_vec())
+        .expect("TFM");
+    session
+        .add_user_file(
+            "main.tex",
+            b"\\pdfoutput=1 \\font\\tenrm=cmr10\\relax \\tenrm \\shipout\\hbox{A}\\end".to_vec(),
+        )
+        .expect("source");
+    let vf = probes(session.compile_attempt()).pop().expect("VF probe");
+    session
+        .provide_resources(vec![ResourceResponse::FileUnavailable(vf.key().clone())])
+        .expect("VF unavailable");
+    let map = requests(session.compile_attempt())
+        .pop()
+        .expect("map request");
+    session
+        .provide_resolved_file(
+            map.key().clone(),
+            "/texlive/fonts/map/pdftex.map",
+            Vec::new(),
+        )
+        .expect("empty map");
+    let pk_requests = resources(session.compile_attempt());
+    let [ResourceRequest::PkFont(pk)] = pk_requests.as_slice() else {
+        panic!("PK request");
+    };
+    let pk = pk.clone();
+    let file = FileRequest::new(
+        FileRequestKey::new(FileKind::TexInput, "prefetch.tex").expect("key"),
+        "prefetch.tex",
+    );
+    session.authorize_prefetch_files([file.clone()]);
+    let resolved_file = ResourceResponse::File(ResolvedFile {
+        request: file.key().clone(),
+        virtual_path: "/texlive/prefetch.tex".into(),
+        bytes: b"% prefetched\n".to_vec().into(),
+        expected_digest: None,
+    });
+    let bytes = include_bytes!("../../../../tests/corpus/pdf/pk_bitmap_600/cmr10.600pk").to_vec();
+    let mut resolved_pk = ResolvedPkFont {
+        request: pk.clone(),
+        virtual_path: "/texlive/fonts/pk/ljfour/public/cm/cmr10.600pk".into(),
+        bytes,
+        expected_ahash64: Some([0; 8]),
+    };
+    let before_bytes = session.cached_file_bytes();
+    let before_generation = session.response_generation;
+    assert!(matches!(
+        session.provide_resources(vec![
+            resolved_file.clone(),
+            ResourceResponse::PkFont(resolved_pk.clone())
+        ]),
+        Err(CompileError::Font(_))
+    ));
+    assert!(session.resources.workspace.get(file.key()).is_none());
+    assert!(session.resources.resolved_pk_fonts.is_empty());
+    assert_eq!(session.cached_file_bytes(), before_bytes);
+    assert_eq!(session.response_generation, before_generation);
+    resolved_pk.expected_ahash64 = None;
+    session
+        .provide_resources(vec![resolved_file, ResourceResponse::PkFont(resolved_pk)])
+        .expect("corrected batch");
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::Complete(_)
+    ));
 }
 
 #[test]

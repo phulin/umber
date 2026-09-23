@@ -205,6 +205,89 @@ enum ProjectNonFileBinding {
     PkFont(ResolvedPkFont),
 }
 
+/// Project-level binding stage. The active TeX pass has its own admission
+/// transaction and policy; publish this stage only after that child succeeds.
+struct ProjectResourceAdmission {
+    workspace: ProjectWorkspace,
+    non_file_resources: umber_vfs::ResourceLifecycle<ProjectNonFileKey, ProjectNonFileBinding>,
+}
+
+impl ProjectResourceAdmission {
+    fn from_session(session: &LatexProjectSession<'_>) -> Self {
+        Self {
+            workspace: session.workspace.clone(),
+            non_file_resources: session.non_file_resources.clone(),
+        }
+    }
+
+    fn admit(
+        &mut self,
+        response: ResourceResponse,
+        awaiting: &BTreeSet<ProjectRequestKey>,
+    ) -> Result<(), LatexProjectError> {
+        match response {
+            ResourceResponse::File(file) => {
+                let key = ProjectRequestKey::File(file.request.clone());
+                if !awaiting.contains(&key) {
+                    return Err(LatexProjectError::UnexpectedResource(
+                        file.request.name().to_owned(),
+                    ));
+                }
+                self.workspace
+                    .provision(file)
+                    .map_err(|e| LatexProjectError::Transaction(e.to_string()))?;
+            }
+            ResourceResponse::FileUnavailable(request) => {
+                let key = ProjectRequestKey::File(request.clone());
+                if !awaiting.contains(&key) {
+                    return Err(LatexProjectError::UnexpectedResource(
+                        request.name().to_owned(),
+                    ));
+                }
+                self.workspace
+                    .provision_unavailable(request)
+                    .map_err(|e| LatexProjectError::Transaction(e.to_string()))?;
+            }
+            ResourceResponse::Font(font) => {
+                let name = font.request.logical_name().to_owned();
+                self.non_file_resources
+                    .admit(
+                        ProjectNonFileKey::Font(font.request.clone()),
+                        ProjectNonFileBinding::Font(font),
+                    )
+                    .map_err(|error| project_admission_error(error, &name))?;
+            }
+            ResourceResponse::FontUnavailable(request) => {
+                let name = request.logical_name().to_owned();
+                self.non_file_resources
+                    .admit_unavailable(ProjectNonFileKey::Font(request))
+                    .map_err(|error| project_admission_error(error, &name))?;
+            }
+            ResourceResponse::PkFont(font) => {
+                let name = String::from_utf8_lossy(&font.request.logical_name()).into_owned();
+                self.non_file_resources
+                    .admit(
+                        ProjectNonFileKey::PkFont(font.request.clone()),
+                        ProjectNonFileBinding::PkFont(font),
+                    )
+                    .map_err(|error| project_admission_error(error, &name))?;
+            }
+            ResourceResponse::PkFontUnavailable(request) => {
+                let name = String::from_utf8_lossy(&request.logical_name()).into_owned();
+                self.non_file_resources
+                    .admit_unavailable(ProjectNonFileKey::PkFont(request))
+                    .map_err(|error| project_admission_error(error, &name))?;
+            }
+        }
+        Ok(())
+    }
+
+    fn publish(self, session: &mut LatexProjectSession<'_>) {
+        session.workspace = self.workspace;
+        session.non_file_resources = self.non_file_resources;
+    }
+}
+
 /// Transactional TeX--bibliography--TeX project session with explicit or
 /// automatic backend selection.
 pub struct LatexProjectSession<'store> {
@@ -427,67 +510,10 @@ impl<'store> LatexProjectSession<'store> {
         &mut self,
         responses: Vec<ResourceResponse>,
     ) -> Result<(), LatexProjectError> {
-        let tex_responses = responses.clone();
-        let mut files = self.workspace.clone();
-        let mut non_file_resources = self.non_file_resources.clone();
-        for response in responses {
-            match response {
-                ResourceResponse::File(file) => {
-                    let key = ProjectRequestKey::File(file.request.clone());
-                    if !self.awaiting.contains(&key) {
-                        return Err(LatexProjectError::UnexpectedResource(
-                            file.request.name().to_owned(),
-                        ));
-                    }
-                    files
-                        .provision(file.clone())
-                        .map_err(|e| LatexProjectError::Transaction(e.to_string()))?;
-                }
-                ResourceResponse::FileUnavailable(request) => {
-                    let key = ProjectRequestKey::File(request.clone());
-                    if !self.awaiting.contains(&key) {
-                        return Err(LatexProjectError::UnexpectedResource(
-                            request.name().to_owned(),
-                        ));
-                    }
-                    files
-                        .provision_unavailable(request)
-                        .map_err(|e| LatexProjectError::Transaction(e.to_string()))?;
-                }
-                ResourceResponse::Font(font) => {
-                    let name = font.request.logical_name().to_owned();
-                    non_file_resources
-                        .admit(
-                            ProjectNonFileKey::Font(font.request.clone()),
-                            ProjectNonFileBinding::Font(font),
-                        )
-                        .map_err(|error| project_admission_error(error, &name))?;
-                }
-                ResourceResponse::FontUnavailable(request) => {
-                    let name = request.logical_name().to_owned();
-                    non_file_resources
-                        .admit_unavailable(ProjectNonFileKey::Font(request))
-                        .map_err(|error| project_admission_error(error, &name))?;
-                }
-                ResourceResponse::PkFont(font) => {
-                    let name = String::from_utf8_lossy(&font.request.logical_name()).into_owned();
-                    non_file_resources
-                        .admit(
-                            ProjectNonFileKey::PkFont(font.request.clone()),
-                            ProjectNonFileBinding::PkFont(font),
-                        )
-                        .map_err(|error| project_admission_error(error, &name))?;
-                }
-                ResourceResponse::PkFontUnavailable(request) => {
-                    let name = String::from_utf8_lossy(&request.logical_name()).into_owned();
-                    non_file_resources
-                        .admit_unavailable(ProjectNonFileKey::PkFont(request))
-                        .map_err(|error| project_admission_error(error, &name))?;
-                }
-            }
+        let mut admission = ProjectResourceAdmission::from_session(self);
+        for response in &responses {
+            admission.admit(response.clone(), &self.awaiting)?;
         }
-        self.workspace = files;
-        self.non_file_resources = non_file_resources;
         if let Some(candidate) = self.candidate.as_mut()
             && candidate.tex_awaiting
         {
@@ -495,10 +521,11 @@ impl<'store> LatexProjectSession<'store> {
                 .tex
                 .as_mut()
                 .expect("a TeX wait retains its session")
-                .provide_resources(tex_responses)
+                .provide_resources(responses)
                 .map_err(LatexProjectError::Compile)?;
             candidate.tex_awaiting = false;
         }
+        admission.publish(self);
         Ok(())
     }
 

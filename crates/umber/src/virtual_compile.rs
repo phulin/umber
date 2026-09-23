@@ -814,6 +814,45 @@ enum NonFileAdmission {
     PkFont { path: String, ahash64: [u8; 8] },
 }
 
+#[derive(Clone)]
+struct VirtualResourceState {
+    workspace: ProjectWorkspace,
+    font_cached_bytes: usize,
+    non_file_admission: ResourceLifecycle<NonFileResourceKey, NonFileAdmission>,
+    resolved_fonts: BTreeMap<FontRequestKey, OpenTypeFont>,
+    resolved_pk_fonts: BTreeMap<PdfPkFontRequest, ResolvedPkFont>,
+}
+
+/// Owns the prior admitted state while the session validates a whole batch.
+/// Dropping before `commit` restores every resource owner together.
+struct VirtualResourceAdmission<'a, 'store> {
+    session: &'a mut VirtualCompileSession<'store>,
+    previous: Option<VirtualResourceState>,
+}
+
+impl<'a, 'store> VirtualResourceAdmission<'a, 'store> {
+    fn begin(session: &'a mut VirtualCompileSession<'store>) -> Self {
+        let staged = session.resources.clone();
+        let previous = std::mem::replace(&mut session.resources, staged);
+        Self {
+            session,
+            previous: Some(previous),
+        }
+    }
+
+    fn commit(mut self) {
+        self.previous = None;
+    }
+}
+
+impl Drop for VirtualResourceAdmission<'_, '_> {
+    fn drop(&mut self) {
+        if let Some(previous) = self.previous.take() {
+            self.session.resources = previous;
+        }
+    }
+}
+
 pub struct VirtualCompileSession<'store> {
     reachability_store: tex_state::ReachabilityStore,
     reachability_owner: core::marker::PhantomData<&'store tex_state::ReachabilityStore>,
@@ -827,8 +866,7 @@ pub struct VirtualCompileSession<'store> {
     clock: JobClock,
     limits: SessionLimits,
     checkpoint_budget: usize,
-    workspace: ProjectWorkspace,
-    font_cached_bytes: usize,
+    resources: VirtualResourceState,
     attempts: u32,
     attempts_without_progress: u32,
     awaiting: Option<BTreeSet<ResourceRequestKey>>,
@@ -837,10 +875,7 @@ pub struct VirtualCompileSession<'store> {
     /// binding check cannot distinguish an unanswered provider round from a
     /// completed round with only false-positive hints.
     startup_prefetch_generation: Option<u64>,
-    non_file_admission: ResourceLifecycle<NonFileResourceKey, NonFileAdmission>,
     font_requests: BTreeMap<FontRequestKey, FontRequest>,
-    resolved_fonts: BTreeMap<FontRequestKey, OpenTypeFont>,
-    resolved_pk_fonts: BTreeMap<PdfPkFontRequest, ResolvedPkFont>,
     accepted_font_containers: AcceptedFontContainers,
     font_layout_policy: FontLayoutPolicy,
     font_mapping_fallback: FontMappingFallbackPolicy,
@@ -1146,16 +1181,18 @@ impl<'store> VirtualCompileSession<'store> {
             // One-shot resource misses use the same bounded restart policy as
             // incremental sessions so they can replay from a full checkpoint.
             checkpoint_budget: limits.cached_file_bytes,
-            workspace: ProjectWorkspace::new(limits.vfs_limits()).map_err(map_vfs_limit)?,
-            font_cached_bytes: 0,
+            resources: VirtualResourceState {
+                workspace: ProjectWorkspace::new(limits.vfs_limits()).map_err(map_vfs_limit)?,
+                font_cached_bytes: 0,
+                non_file_admission: ResourceLifecycle::default(),
+                resolved_fonts: BTreeMap::new(),
+                resolved_pk_fonts: BTreeMap::new(),
+            },
             attempts: 0,
             attempts_without_progress: 0,
             awaiting: None,
             startup_prefetch_generation: None,
-            non_file_admission: ResourceLifecycle::default(),
             font_requests: BTreeMap::new(),
-            resolved_fonts: BTreeMap::new(),
-            resolved_pk_fonts: BTreeMap::new(),
             accepted_font_containers: options.accepted_font_containers,
             font_layout_policy: options.font_layout_policy,
             font_mapping_fallback: options.font_mapping_fallback,
@@ -1205,7 +1242,7 @@ impl<'store> VirtualCompileSession<'store> {
     }
 
     pub(crate) fn workspace(&self) -> &ProjectWorkspace {
-        &self.workspace
+        &self.resources.workspace
     }
 
     /// Consumes a completed session and transfers its accepted engine state
@@ -1229,7 +1266,7 @@ impl<'store> VirtualCompileSession<'store> {
             CompileError::Incremental("the accepted detached completion is missing".to_owned())
         })?;
         let pdf_raw_object_file_receipt =
-            pdf_raw_object_file_receipt(accepted.pdf(), &self.workspace)?;
+            pdf_raw_object_file_receipt(accepted.pdf(), &self.resources.workspace)?;
         let (completion, format_dump) = accepted.into_terminal();
         Ok(AcceptedFinalization {
             completion,
@@ -1246,7 +1283,7 @@ impl<'store> VirtualCompileSession<'store> {
         for request in &self.pdf_font_closure_requests {
             let entry = match request {
                 ResourceRequestKey::File(request) => {
-                    let outcome = if let Some(file) = self.workspace.get(request) {
+                    let outcome = if let Some(file) = self.resources.workspace.get(request) {
                         PdfFontClosureResourceOutcome::Resolved {
                             virtual_path: file.path().as_str().to_owned(),
                             bytes: file.bytes().len(),
@@ -1256,7 +1293,7 @@ impl<'store> VirtualCompileSession<'store> {
                             )
                             .to_le_bytes(),
                         }
-                    } else if self.workspace.is_unavailable(request) {
+                    } else if self.resources.workspace.is_unavailable(request) {
                         PdfFontClosureResourceOutcome::Unavailable
                     } else {
                         return Err(CompileError::Incremental(format!(
@@ -1270,7 +1307,8 @@ impl<'store> VirtualCompileSession<'store> {
                     }
                 }
                 ResourceRequestKey::PkFont(request) => {
-                    let outcome = if let Some(font) = self.resolved_pk_fonts.get(request) {
+                    let outcome = if let Some(font) = self.resources.resolved_pk_fonts.get(request)
+                    {
                         PdfFontClosureResourceOutcome::Resolved {
                             virtual_path: font.virtual_path.clone(),
                             bytes: font.bytes.len(),
@@ -1308,11 +1346,13 @@ impl<'store> VirtualCompileSession<'store> {
             path: path.to_owned(),
             message: error.to_string(),
         })?;
-        self.workspace
+        self.resources
+            .workspace
             .register_user(path.clone(), bytes)
             .map_err(map_user_registration)?;
         if let Some(session) = &mut self.incremental {
             let file = self
+                .resources
                 .workspace
                 .user_files()
                 .find(|file| file.path() == &path)
@@ -1497,7 +1537,7 @@ impl<'store> VirtualCompileSession<'store> {
     pub(crate) fn accepted_generated_fingerprint(
         &self,
     ) -> Result<Vec<(VirtualPath, ContentHash)>, CompileError> {
-        generated_fingerprint(&self.workspace)
+        generated_fingerprint(&self.resources.workspace)
     }
 
     /// Names the generated-output transaction currently being executed.  A
@@ -1507,7 +1547,7 @@ impl<'store> VirtualCompileSession<'store> {
         let workspace = self
             .candidate
             .as_ref()
-            .map_or(&self.workspace, |candidate| &candidate.workspace);
+            .map_or(&self.resources.workspace, |candidate| &candidate.workspace);
         let revision = self.pending_patch.as_ref().map_or_else(
             || self.revision().map_or(0, |revision| revision.raw()),
             |(revision, _)| revision.raw(),
@@ -1543,7 +1583,7 @@ impl<'store> VirtualCompileSession<'store> {
             .candidate
             .as_ref()
             .map_or_else(
-                || self.workspace.snapshot(),
+                || self.resources.workspace.snapshot(),
                 |candidate| candidate.workspace.snapshot(),
             )
             .retention();
@@ -1587,7 +1627,7 @@ impl<'store> VirtualCompileSession<'store> {
         let dependencies = self.accepted_input_dependency_values();
         let observations = crate::input_observation::tex_observations(
             dependencies.into_iter(),
-            &self.workspace.snapshot(),
+            &self.resources.workspace.snapshot(),
             revision,
             None,
         );
@@ -1612,7 +1652,7 @@ impl<'store> VirtualCompileSession<'store> {
             })
             .collect::<BTreeMap<_, _>>();
         if self.accepted_output.is_some()
-            && let Ok(Some(root)) = self.workspace.snapshot().get(&self.main_path)
+            && let Ok(Some(root)) = self.resources.workspace.snapshot().get(&self.main_path)
         {
             dependencies.insert(
                 self.main_path.clone(),
@@ -1684,11 +1724,7 @@ impl<'store> VirtualCompileSession<'store> {
             .iter()
             .filter_map(|response| match response {
                 ResourceResponse::File(file) => Some(file.request.clone()),
-                ResourceResponse::FileUnavailable(_)
-                | ResourceResponse::Font(_)
-                | ResourceResponse::FontUnavailable(_)
-                | ResourceResponse::PkFont(_)
-                | ResourceResponse::PkFontUnavailable(_) => None,
+                _ => None,
             })
             .collect::<BTreeSet<_>>();
         let awaited_before = self.awaiting.as_ref().map(|awaiting| {
@@ -1698,77 +1734,68 @@ impl<'store> VirtualCompileSession<'store> {
                 .count()
         });
         let startup_prefetch_round = self.startup_prefetch_generation.is_some();
-        let mut staged_workspace = self.workspace.clone();
-        let mut staged_fonts = self.resolved_fonts.clone();
-        let mut staged_admission = self.non_file_admission.clone();
-        let mut staged_pk_fonts = self.resolved_pk_fonts.clone();
-        let original_workspace = std::mem::replace(&mut self.workspace, staged_workspace);
-        let original_fonts = std::mem::replace(&mut self.resolved_fonts, staged_fonts);
-        let original_admission = std::mem::replace(&mut self.non_file_admission, staged_admission);
-        let original_pk_fonts = std::mem::replace(&mut self.resolved_pk_fonts, staged_pk_fonts);
-        let original_font_cached_bytes = self.font_cached_bytes;
-        let result = responses
-            .into_iter()
-            .try_for_each(|response| match response {
-                ResourceResponse::File(file) => self.provide_file_inner(file, true),
-                ResourceResponse::FileUnavailable(request) => self
+        let admission = VirtualResourceAdmission::begin(self);
+        let session = &mut *admission.session;
+        for response in responses {
+            match response {
+                ResourceResponse::File(file) => session.provide_file_inner(file, true)?,
+                ResourceResponse::FileUnavailable(request) => session
+                    .resources
                     .workspace
                     .provision_unavailable(request)
                     .map(|_| ())
-                    .map_err(map_provision),
-                ResourceResponse::Font(font) => self.provide_resolved_font_inner(font),
+                    .map_err(map_provision)?,
+                ResourceResponse::Font(font) => session.provide_resolved_font_inner(font)?,
                 ResourceResponse::FontUnavailable(request) => {
-                    self.provide_unavailable_font(request)
+                    session.provide_unavailable_font(request)?;
                 }
-                ResourceResponse::PkFont(font) => self.provide_resolved_pk_font_inner(font),
+                ResourceResponse::PkFont(font) => session.provide_resolved_pk_font_inner(font)?,
                 ResourceResponse::PkFontUnavailable(request) => {
-                    self.provide_unavailable_pk_font(request)
-                }
-            });
-        if result.is_err() {
-            staged_workspace = std::mem::replace(&mut self.workspace, original_workspace);
-            staged_fonts = std::mem::replace(&mut self.resolved_fonts, original_fonts);
-            staged_admission = std::mem::replace(&mut self.non_file_admission, original_admission);
-            staged_pk_fonts = std::mem::replace(&mut self.resolved_pk_fonts, original_pk_fonts);
-            drop((
-                staged_workspace,
-                staged_fonts,
-                staged_admission,
-                staged_pk_fonts,
-            ));
-            self.font_cached_bytes = original_font_cached_bytes;
-        } else {
-            for request in file_requests {
-                if original_workspace.get(&request).is_none()
-                    && self.workspace.get(&request).is_some()
-                {
-                    self.register_incremental_input(&request)?;
+                    session.provide_unavailable_pk_font(request)?;
                 }
             }
-            let awaited_after = self.awaiting.as_ref().map(|awaiting| {
-                awaiting
-                    .iter()
-                    .filter(|key| self.resource_is_bound(key))
-                    .count()
-            });
-            if startup_prefetch_round {
-                // A startup batch intentionally has no blocking requests.  A
-                // successful empty response is still the provider's explicit
-                // acknowledgement that speculative work was attempted; this
-                // lets false-positive hints fall through to execution.
-                self.startup_prefetch_generation = None;
-                self.response_generation = self.response_generation.saturating_add(1);
-                self.finish_resource_wait();
-            } else if awaited_before
-                .zip(awaited_after)
-                .is_some_and(|(before, after)| after > before)
-            {
-                self.response_generation = self.response_generation.saturating_add(1);
-                self.finish_resource_wait();
-            }
-            self.refresh_candidate_files()?;
         }
-        result
+        let new_files = file_requests
+            .into_iter()
+            .filter(|request| {
+                admission
+                    .previous
+                    .as_ref()
+                    .expect("admission is uncommitted")
+                    .workspace
+                    .get(request)
+                    .is_none()
+                    && admission.session.resources.workspace.get(request).is_some()
+            })
+            .collect::<Vec<_>>();
+        let session = &mut *admission.session;
+        let candidate_workspace = session.prepared_candidate_files()?;
+        // Registration is the last fallible operation. Its batch API publishes
+        // the input map only after preparing every new entry.
+        session.register_incremental_inputs(&new_files)?;
+        let awaited_after = session.awaiting.as_ref().map(|awaiting| {
+            awaiting
+                .iter()
+                .filter(|key| session.resource_is_bound(key))
+                .count()
+        });
+        admission.commit();
+        if let (Some(candidate), Some(workspace)) = (&mut self.candidate, candidate_workspace) {
+            candidate.workspace = workspace;
+        }
+        if startup_prefetch_round {
+            // Even an empty speculative response acknowledges the provider round.
+            self.startup_prefetch_generation = None;
+            self.response_generation = self.response_generation.saturating_add(1);
+            self.finish_resource_wait();
+        } else if awaited_before
+            .zip(awaited_after)
+            .is_some_and(|(before, after)| after > before)
+        {
+            self.response_generation = self.response_generation.saturating_add(1);
+            self.finish_resource_wait();
+        }
+        Ok(())
     }
 
     /// Authorizes positive file responses discovered by a provider-side
@@ -1779,7 +1806,8 @@ impl<'store> VirtualCompileSession<'store> {
             .into_iter()
             .map(|request| request.key().clone())
             .collect::<Vec<_>>();
-        self.workspace
+        self.resources
+            .workspace
             .authorize_prefetch_hints(keys.iter().cloned());
         if let Some(candidate) = self.candidate.as_mut() {
             candidate
@@ -1794,7 +1822,7 @@ impl<'store> VirtualCompileSession<'store> {
     pub fn note_resource_exists(&mut self, requests: impl IntoIterator<Item = FileRequestKey>) {
         let keys = requests.into_iter().collect::<Vec<_>>();
         for key in &keys {
-            self.workspace.note_exists(key.clone());
+            self.resources.workspace.note_exists(key.clone());
         }
         if let Some(candidate) = self.candidate.as_mut() {
             for key in &keys {
@@ -1804,10 +1832,21 @@ impl<'store> VirtualCompileSession<'store> {
     }
 
     fn refresh_candidate_files(&mut self) -> Result<(), CompileError> {
-        if self.candidate.is_none() {
+        let Some(refreshed) = self.prepared_candidate_files()? else {
             return Ok(());
+        };
+        self.candidate
+            .as_mut()
+            .expect("candidate presence was checked")
+            .workspace = refreshed;
+        Ok(())
+    }
+
+    fn prepared_candidate_files(&self) -> Result<Option<ProjectWorkspace>, CompileError> {
+        if self.candidate.is_none() {
+            return Ok(None);
         }
-        let mut refreshed = self.workspace.clone();
+        let mut refreshed = self.resources.workspace.clone();
         if let (Some((_, edit)), Some(session)) = (&self.pending_patch, self.incremental.as_ref()) {
             let mut source = session.source().to_owned();
             source.replace_range(edit.range.clone(), &edit.replacement);
@@ -1816,20 +1855,18 @@ impl<'store> VirtualCompileSession<'store> {
                 .register_user(self.main_path.clone(), source)
                 .map_err(map_user_registration)?;
         }
-        let candidate = self
-            .candidate
-            .as_mut()
-            .expect("candidate presence was checked");
-        candidate.workspace = refreshed;
-        Ok(())
+        Ok(Some(refreshed))
     }
 
-    fn register_incremental_input(&mut self, request: &FileRequestKey) -> Result<(), CompileError> {
-        let Some(file) = self.workspace.get(request) else {
-            return Ok(());
-        };
-        let path = file.path().as_path().to_owned();
-        let bytes = file.shared_bytes();
+    fn register_incremental_inputs(
+        &mut self,
+        requests: &[FileRequestKey],
+    ) -> Result<(), CompileError> {
+        let files = requests
+            .iter()
+            .filter_map(|request| self.resources.workspace.get(request))
+            .map(|file| (file.path().as_path().to_owned(), file.shared_bytes()))
+            .collect::<Vec<_>>();
         let session = if let Some(session) = &mut self.incremental {
             Some(session)
         } else if let Some(RetainedCandidate {
@@ -1843,10 +1880,14 @@ impl<'store> VirtualCompileSession<'store> {
         };
         if let Some(session) = session {
             session
-                .register_input_file(&path, bytes)
+                .register_input_files(files)
                 .map_err(|error| CompileError::Incremental(error.to_string()))?;
         }
         Ok(())
+    }
+
+    fn register_incremental_input(&mut self, request: &FileRequestKey) -> Result<(), CompileError> {
+        self.register_incremental_inputs(std::slice::from_ref(request))
     }
 
     fn provide_resolved_font_inner(&mut self, response: ResolvedFont) -> Result<(), CompileError> {
@@ -1868,6 +1909,7 @@ impl<'store> VirtualCompileSession<'store> {
             legacy_mapping: response.legacy_mapping.clone(),
         };
         if let Some(NonFileAdmission::Font(existing)) = self
+            .resources
             .non_file_admission
             .admitted(&NonFileResourceKey::Font(key.clone()))
         {
@@ -1879,6 +1921,7 @@ impl<'store> VirtualCompileSession<'store> {
             ));
         }
         let shared = self
+            .resources
             .resolved_fonts
             .values()
             .find(|font| font.object_identity == fingerprint.object);
@@ -1956,14 +1999,16 @@ impl<'store> VirtualCompileSession<'store> {
             attempted,
             self.limits.cached_file_bytes,
         )?;
-        self.non_file_admission
+        self.resources
+            .non_file_admission
             .admit(
                 NonFileResourceKey::Font(key.clone()),
                 NonFileAdmission::Font(fingerprint.clone()),
             )
             .map_err(|error| map_non_file_admission(error, key.logical_name()))?;
-        self.resolved_fonts.insert(key.clone(), font);
-        self.font_cached_bytes = self
+        self.resources.resolved_fonts.insert(key.clone(), font);
+        self.resources.font_cached_bytes = self
+            .resources
             .font_cached_bytes
             .checked_add(additional_bytes)
             .expect("combined cache limit checked overflow");
@@ -1972,7 +2017,8 @@ impl<'store> VirtualCompileSession<'store> {
 
     fn provide_unavailable_font(&mut self, key: FontRequestKey) -> Result<(), CompileError> {
         let name = key.logical_name().to_owned();
-        self.non_file_admission
+        self.resources
+            .non_file_admission
             .admit_unavailable(NonFileResourceKey::Font(key))
             .map(|_| ())
             .map_err(|error| map_non_file_admission(error, &name))
@@ -2007,7 +2053,7 @@ impl<'store> VirtualCompileSession<'store> {
         }
         tex_fonts::PdfPkFont::parse(&response.bytes)
             .map_err(|error| CompileError::Font(error.to_string()))?;
-        if let Some(existing) = self.resolved_pk_fonts.get(&response.request) {
+        if let Some(existing) = self.resources.resolved_pk_fonts.get(&response.request) {
             if existing == &response {
                 return Ok(());
             }
@@ -2029,7 +2075,8 @@ impl<'store> VirtualCompileSession<'store> {
             attempted,
             self.limits.cached_file_bytes,
         )?;
-        self.font_cached_bytes = self
+        self.resources.font_cached_bytes = self
+            .resources
             .font_cached_bytes
             .checked_add(response.bytes.len())
             .expect("combined cache limit checked overflow");
@@ -2038,7 +2085,8 @@ impl<'store> VirtualCompileSession<'store> {
             "PK font {}",
             String::from_utf8_lossy(&request.logical_name())
         );
-        self.non_file_admission
+        self.resources
+            .non_file_admission
             .admit(
                 NonFileResourceKey::PkFont(request.clone()),
                 NonFileAdmission::PkFont {
@@ -2047,7 +2095,7 @@ impl<'store> VirtualCompileSession<'store> {
                 },
             )
             .map_err(|error| map_non_file_admission(error, &name))?;
-        self.resolved_pk_fonts.insert(request, response);
+        self.resources.resolved_pk_fonts.insert(request, response);
         Ok(())
     }
 
@@ -2059,7 +2107,8 @@ impl<'store> VirtualCompileSession<'store> {
             "PK font {}",
             String::from_utf8_lossy(&request.logical_name())
         );
-        self.non_file_admission
+        self.resources
+            .non_file_admission
             .admit_unavailable(NonFileResourceKey::PkFont(request))
             .map(|_| ())
             .map_err(|error| map_non_file_admission(error, &name))
@@ -2070,7 +2119,7 @@ impl<'store> VirtualCompileSession<'store> {
         response: ResolvedFile,
         require_expected: bool,
     ) -> Result<(), CompileError> {
-        let mut staged = self.workspace.clone();
+        let mut staged = self.resources.workspace.clone();
         if require_expected {
             staged.provision(response)
         } else {
@@ -2079,7 +2128,7 @@ impl<'store> VirtualCompileSession<'store> {
         .map_err(map_provision)?;
         let attempted = staged
             .resolved_bytes()
-            .checked_add(self.font_cached_bytes)
+            .checked_add(self.resources.font_cached_bytes)
             .ok_or(CompileError::LimitExceeded {
                 resource: "cached resource bytes",
                 limit: self.limits.cached_file_bytes,
@@ -2090,7 +2139,7 @@ impl<'store> VirtualCompileSession<'store> {
             attempted,
             self.limits.cached_file_bytes,
         )?;
-        self.workspace = staged;
+        self.resources.workspace = staged;
         Ok(())
     }
 
@@ -2151,7 +2200,7 @@ impl<'store> VirtualCompileSession<'store> {
         let candidate_restore_started = Instant::now();
         let existing_candidate = self.candidate.take();
         let mut pending_workspace = existing_candidate.as_ref().map_or_else(
-            || self.workspace.clone(),
+            || self.resources.workspace.clone(),
             |candidate| candidate.workspace.clone(),
         );
         if existing_candidate.is_none()
@@ -2293,14 +2342,16 @@ impl<'store> VirtualCompileSession<'store> {
             if !prefetch_hints.is_empty() {
                 generated_transaction.discard();
                 check_resource_batch_limit(&[], &[], &prefetch_hints, self.limits.resolved_files)?;
-                self.workspace.expect(&FileRequestBatch::with_probes(
-                    std::iter::empty(),
-                    std::iter::empty(),
-                    prefetch_hints.iter().filter_map(|request| match request {
-                        ResourceRequest::File(request) => Some(request.clone()),
-                        ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => None,
-                    }),
-                ));
+                self.resources
+                    .workspace
+                    .expect(&FileRequestBatch::with_probes(
+                        std::iter::empty(),
+                        std::iter::empty(),
+                        prefetch_hints.iter().filter_map(|request| match request {
+                            ResourceRequest::File(request) => Some(request.clone()),
+                            ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => None,
+                        }),
+                    ));
                 self.begin_non_file_batch(&[], &[], &prefetch_hints);
                 self.awaiting = Some(BTreeSet::new());
                 self.startup_prefetch_generation = Some(self.response_generation);
@@ -2324,7 +2375,7 @@ impl<'store> VirtualCompileSession<'store> {
         let mut resolvers = VirtualRunResolvers::new(
             &snapshot,
             resource_ledger,
-            &self.resolved_fonts,
+            &self.resources.resolved_fonts,
             &unavailable_fonts,
             FontResolutionPolicy {
                 accepted_containers: self.accepted_font_containers,
@@ -2404,20 +2455,22 @@ impl<'store> VirtualCompileSession<'store> {
                 &prefetch_hints,
                 self.limits.resolved_files,
             )?;
-            self.workspace.expect(&FileRequestBatch::with_probes(
-                required.iter().filter_map(|request| match request {
-                    ResourceRequest::File(request) => Some(request.clone()),
-                    ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => None,
-                }),
-                probes.iter().filter_map(|request| match request {
-                    ResourceRequest::File(request) => Some(request.clone()),
-                    ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => None,
-                }),
-                prefetch_hints.iter().filter_map(|request| match request {
-                    ResourceRequest::File(request) => Some(request.clone()),
-                    ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => None,
-                }),
-            ));
+            self.resources
+                .workspace
+                .expect(&FileRequestBatch::with_probes(
+                    required.iter().filter_map(|request| match request {
+                        ResourceRequest::File(request) => Some(request.clone()),
+                        ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => None,
+                    }),
+                    probes.iter().filter_map(|request| match request {
+                        ResourceRequest::File(request) => Some(request.clone()),
+                        ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => None,
+                    }),
+                    prefetch_hints.iter().filter_map(|request| match request {
+                        ResourceRequest::File(request) => Some(request.clone()),
+                        ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => None,
+                    }),
+                ));
             self.begin_non_file_batch(&required, &probes, &prefetch_hints);
             retained.workspace = pending_workspace;
             retained.response_generation = self.response_generation;
@@ -2465,16 +2518,17 @@ impl<'store> VirtualCompileSession<'store> {
                     .expect("a completed drive exposes detached resource discovery"),
             };
             let unavailable_pk_fonts = self.unavailable_pk_font_keys();
-            let raw_object_files = discover_pdf_raw_object_files(completion.pdf(), &self.workspace)
-                .map_err(|message| CompileError::OutputCapability {
-                    capability: OutputCapability::Pdf,
-                    message,
-                })?;
+            let raw_object_files =
+                discover_pdf_raw_object_files(completion.pdf(), &self.resources.workspace)
+                    .map_err(|message| CompileError::OutputCapability {
+                        capability: OutputCapability::Pdf,
+                        message,
+                    })?;
             let mut discovery = pdf_resources::discover(
                 completion,
-                &self.workspace,
+                &self.resources.workspace,
                 &mut self.virtual_font_resources,
-                &self.resolved_pk_fonts,
+                &self.resources.resolved_pk_fonts,
                 &unavailable_pk_fonts,
             )
             .map_err(|message| CompileError::OutputCapability {
@@ -2515,17 +2569,19 @@ impl<'store> VirtualCompileSession<'store> {
                     return Err(CompileError::NoProgress);
                 }
                 self.awaiting = Some(awaiting);
-                self.workspace.expect(&FileRequestBatch::with_probes(
-                    required.iter().filter_map(|request| match request {
-                        ResourceRequest::File(request) => Some(request.clone()),
-                        ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => None,
-                    }),
-                    probes.iter().filter_map(|request| match request {
-                        ResourceRequest::File(request) => Some(request.clone()),
-                        ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => None,
-                    }),
-                    std::iter::empty(),
-                ));
+                self.resources
+                    .workspace
+                    .expect(&FileRequestBatch::with_probes(
+                        required.iter().filter_map(|request| match request {
+                            ResourceRequest::File(request) => Some(request.clone()),
+                            ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => None,
+                        }),
+                        probes.iter().filter_map(|request| match request {
+                            ResourceRequest::File(request) => Some(request.clone()),
+                            ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => None,
+                        }),
+                        std::iter::empty(),
+                    ));
                 self.begin_non_file_batch(&required, &probes, &[]);
                 retained.workspace = pending_workspace;
                 retained.response_generation = self.response_generation;
@@ -2559,7 +2615,7 @@ impl<'store> VirtualCompileSession<'store> {
             let unavailable_fonts = self.unavailable_font_keys();
             let required = discover_html_paint_resources(
                 pages.iter().map(tex_exec::DetachedPreparedPage::artifact),
-                &self.resolved_fonts,
+                &self.resources.resolved_fonts,
                 &unavailable_fonts,
                 self.accepted_font_containers,
             )?;
@@ -2670,7 +2726,7 @@ impl<'store> VirtualCompileSession<'store> {
             };
             let font_responses = self.font_response_fingerprints();
             let assets = SessionFontResolver {
-                resolved: &self.resolved_fonts,
+                resolved: &self.resources.resolved_fonts,
                 responses: &font_responses,
             };
             let html_options = tex_out::html::HtmlOptions {
@@ -2741,7 +2797,7 @@ impl<'store> VirtualCompileSession<'store> {
         }
         check_limit("returned output bytes", existing, self.limits.output_bytes)?;
         generated_transaction.accept().map_err(map_transaction)?;
-        let previous_generated = generated_fingerprint(&self.workspace)?;
+        let previous_generated = generated_fingerprint(&self.resources.workspace)?;
         let next_generated = generated_fingerprint(&pending_workspace)?;
         let reuse = execution.reuse();
         let accepted_engine_output = match execution {
@@ -2758,7 +2814,7 @@ impl<'store> VirtualCompileSession<'store> {
             ),
         };
         self.accepted_engine_output = Some(accepted_engine_output);
-        self.workspace = pending_workspace;
+        self.resources.workspace = pending_workspace;
         self.pending_patch = None;
         self.last_reuse = Some(reuse);
         self.last_stabilization_required = previous_generated != next_generated;
@@ -2787,21 +2843,25 @@ impl<'store> VirtualCompileSession<'store> {
     fn resource_is_bound(&self, key: &ResourceRequestKey) -> bool {
         match key {
             ResourceRequestKey::File(key) => {
-                self.workspace.get(key).is_some()
-                    || self.workspace.is_unavailable(key)
-                    || user_path_for_key(key).is_ok_and(|path| self.workspace.contains_user(&path))
+                self.resources.workspace.get(key).is_some()
+                    || self.resources.workspace.is_unavailable(key)
+                    || user_path_for_key(key)
+                        .is_ok_and(|path| self.resources.workspace.contains_user(&path))
             }
             ResourceRequestKey::Font(key) => self
+                .resources
                 .non_file_admission
                 .is_bound(&NonFileResourceKey::Font(key.clone())),
             ResourceRequestKey::PkFont(key) => self
+                .resources
                 .non_file_admission
                 .is_bound(&NonFileResourceKey::PkFont(key.clone())),
         }
     }
 
     fn unavailable_font_keys(&self) -> BTreeSet<FontRequestKey> {
-        self.non_file_admission
+        self.resources
+            .non_file_admission
             .unavailable_keys()
             .filter_map(|key| match key {
                 NonFileResourceKey::Font(key) => Some(key.clone()),
@@ -2811,7 +2871,8 @@ impl<'store> VirtualCompileSession<'store> {
     }
 
     fn font_response_fingerprints(&self) -> BTreeMap<FontRequestKey, FontResponseFingerprint> {
-        self.non_file_admission
+        self.resources
+            .non_file_admission
             .admitted_entries()
             .filter_map(|(key, binding)| match (key, binding) {
                 (NonFileResourceKey::Font(key), NonFileAdmission::Font(fingerprint)) => {
@@ -2824,7 +2885,8 @@ impl<'store> VirtualCompileSession<'store> {
     }
 
     fn unavailable_pk_font_keys(&self) -> BTreeSet<PdfPkFontRequest> {
-        self.non_file_admission
+        self.resources
+            .non_file_admission
             .unavailable_keys()
             .filter_map(|key| match key {
                 NonFileResourceKey::Font(_) => None,
@@ -2839,7 +2901,7 @@ impl<'store> VirtualCompileSession<'store> {
         probes: &[ResourceRequest],
         hints: &[ResourceRequest],
     ) {
-        self.non_file_admission.begin_batch(
+        self.resources.non_file_admission.begin_batch(
             required.iter().filter_map(non_file_resource_key),
             probes.iter().filter_map(non_file_resource_key),
             hints.iter().filter_map(non_file_resource_key),
@@ -2876,17 +2938,18 @@ impl<'store> VirtualCompileSession<'store> {
     pub fn clear_distribution_cache(&mut self) -> Result<(), CompileError> {
         if let Some(session) = &self.incremental {
             let latest = session.source().as_bytes().to_vec();
-            self.workspace
+            self.resources
+                .workspace
                 .register_user(self.main_path.clone(), latest)
                 .map_err(map_user_registration)?;
         }
-        self.workspace.clear();
-        self.workspace.clear_generated_outputs();
-        self.resolved_fonts.clear();
-        self.resolved_pk_fonts.clear();
-        self.non_file_admission.clear();
+        self.resources.workspace.clear();
+        self.resources.workspace.clear_generated_outputs();
+        self.resources.resolved_fonts.clear();
+        self.resources.resolved_pk_fonts.clear();
+        self.resources.non_file_admission.clear();
         self.font_requests.clear();
-        self.font_cached_bytes = 0;
+        self.resources.font_cached_bytes = 0;
         self.awaiting = None;
         self.startup_prefetch_generation = None;
         self.attempts_without_progress = 0;
@@ -2957,14 +3020,15 @@ impl<'store> VirtualCompileSession<'store> {
 
     #[must_use]
     pub fn resolved_file_count(&self) -> usize {
-        self.workspace.len()
+        self.resources.workspace.len()
     }
 
     #[must_use]
     pub fn cached_file_bytes(&self) -> usize {
-        self.workspace
+        self.resources
+            .workspace
             .resolved_bytes()
-            .saturating_add(self.font_cached_bytes)
+            .saturating_add(self.resources.font_cached_bytes)
     }
 }
 

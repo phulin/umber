@@ -236,6 +236,158 @@ fn project_retains_one_tex_pass_across_positive_and_negative_resources() {
     ));
 }
 
+#[test]
+fn child_late_font_rejection_keeps_project_batch_private_and_retryable() {
+    let mut options = options();
+    options.tex.outputs = crate::OutputCapabilitySet::DVI.with(crate::OutputCapability::Html);
+    let source = "\\shipout\\hbox{}\\end";
+    let mut session = LatexProjectSession::new(options).expect("project");
+    session
+        .add_user_file("main.tex", source.as_bytes().to_vec())
+        .expect("source");
+    let LatexProjectAttempt::Complete(accepted) = session.compile_attempt() else {
+        panic!("initial project output");
+    };
+    let insert = source.find("\\end").expect("end");
+    session
+        .apply_patch(SourcePatch {
+            next_revision: tex_incr::RevisionId::new(2),
+            base_revision: tex_incr::RevisionId::new(1),
+            expected_hash: accepted.content_hash,
+            range: insert..insert,
+            replacement: "\\font\\ot=opentype:cmu-serif-roman at 10pt ".into(),
+        })
+        .expect("patch");
+    let LatexProjectAttempt::NeedResources(needs) = session.compile_attempt() else {
+        panic!("font wait");
+    };
+    let font = needs
+        .required
+        .iter()
+        .find_map(|request| match request {
+            ResourceRequest::Font(font) => Some(font.clone()),
+            _ => None,
+        })
+        .expect("font request");
+    let file = FileRequest::new(
+        umber_vfs::FileRequestKey::new(umber_vfs::FileKind::TexInput, "prefetch.tex").expect("key"),
+        "prefetch.tex",
+    );
+    session.authorize_prefetch_files([file.clone()]);
+    let resolved_file = ResourceResponse::File(ResolvedFile {
+        request: file.key().clone(),
+        virtual_path: "/texlive/prefetch.tex".into(),
+        bytes: b"% prefetched\n".to_vec().into(),
+        expected_digest: None,
+    });
+    let mut resolved_font = ResolvedFont {
+        request: font.key.clone(),
+        container: tex_fonts::FontContainer::Woff2,
+        bytes: include_bytes!("../../../umber-wasm/assets/cmu-serif-500-roman.woff2").to_vec(),
+        declared_object_ahash64: None,
+        declared_program_identity: None,
+        provenance: Some("CMU Serif under the SIL OFL".into()),
+        legacy_mapping: None,
+    };
+    let child = session
+        .candidate
+        .as_ref()
+        .expect("candidate")
+        .tex
+        .as_ref()
+        .expect("TeX pass");
+    let attempts = child.attempts();
+    let cached_bytes = child.cached_file_bytes();
+    resolved_font.provenance = None;
+    assert!(matches!(
+        session.provide_resources(vec![
+            resolved_file.clone(),
+            ResourceResponse::Font(resolved_font.clone())
+        ]),
+        Err(LatexProjectError::Compile(CompileError::Font(_)))
+    ));
+    assert_eq!(session.accepted_output(), Some(accepted.as_ref()));
+    assert!(session.workspace.get(file.key()).is_none());
+    assert!(
+        !session
+            .non_file_resources
+            .is_bound(&ProjectNonFileKey::Font(font.key.clone()))
+    );
+    let child = session
+        .candidate
+        .as_ref()
+        .expect("candidate")
+        .tex
+        .as_ref()
+        .expect("TeX pass");
+    assert_eq!(child.attempts(), attempts);
+    assert_eq!(child.cached_file_bytes(), cached_bytes);
+    assert!(session.candidate.as_ref().expect("candidate").tex_awaiting);
+    resolved_font.provenance = Some("CMU Serif under the SIL OFL".into());
+    session
+        .provide_resources(vec![resolved_file, ResourceResponse::Font(resolved_font)])
+        .expect("corrected batch");
+    let retry = session.compile_attempt();
+    assert!(
+        matches!(retry, LatexProjectAttempt::Complete(_)),
+        "{retry:?}"
+    );
+    assert_eq!(
+        session.accepted_output().expect("accepted").revision,
+        tex_incr::RevisionId::new(2)
+    );
+}
+
+#[test]
+fn project_stage_rejects_late_unexpected_file_without_reaching_child() {
+    let mut session = LatexProjectSession::new(options()).expect("project");
+    session
+        .add_user_file("main.tex", b"\\input first \\end".to_vec())
+        .expect("source");
+    let LatexProjectAttempt::NeedResources(needs) = session.compile_attempt() else {
+        panic!("file wait");
+    };
+    let key = only_file_request(&needs);
+    let valid = resolved(key.clone(), "/texlive/first.tex", b"% first\n");
+    let unrelated = umber_vfs::FileRequestKey::new(umber_vfs::FileKind::TexInput, "other.tex")
+        .expect("other key");
+    let child = session
+        .candidate
+        .as_ref()
+        .expect("candidate")
+        .tex
+        .as_ref()
+        .expect("TeX pass");
+    let attempts = child.attempts();
+    assert!(matches!(
+        session.provide_resources(vec![
+            valid.clone(),
+            resolved(unrelated, "/texlive/other.tex", b"% other\n")
+        ]),
+        Err(LatexProjectError::UnexpectedResource(_))
+    ));
+    assert!(session.workspace.get(&key).is_none());
+    assert_eq!(
+        session
+            .candidate
+            .as_ref()
+            .expect("candidate")
+            .tex
+            .as_ref()
+            .expect("TeX pass")
+            .attempts(),
+        attempts
+    );
+    assert!(session.candidate.as_ref().expect("candidate").tex_awaiting);
+    session
+        .provide_resources(vec![valid])
+        .expect("corrected batch");
+    assert!(matches!(
+        session.compile_attempt(),
+        LatexProjectAttempt::Complete(_)
+    ));
+}
+
 fn classic_options(mode: bib_engine::BibliographyMode) -> LatexProjectOptions {
     LatexProjectOptions {
         tex: SessionOptions {
