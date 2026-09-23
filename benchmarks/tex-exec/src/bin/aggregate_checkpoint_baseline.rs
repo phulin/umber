@@ -9,7 +9,7 @@ use tex_exec::{EngineBoundary, EngineCheckpoint, ExecutionBudgetCounters, Mode, 
 use tex_state::diagnostic::DiagnosticEffects;
 use tex_state::hyphenation::{ExceptionSpec, PatternSpec};
 use tex_state::interner::InternerBudget;
-use tex_state::node::{Node, NodeTokenList};
+use tex_state::node::Node;
 use tex_state::page::{PageInsertion, PageMark};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token, TokenWord};
@@ -107,8 +107,8 @@ fn main() {
                         )
                         .expect("fixture is quiescent");
                         checkpoint.profile_attach_output_ledger(&mut output);
-                        checksum ^= (checkpoint.root_anchor() as u64)
-                            .rotate_left((ordinal % 63) as u32);
+                        checksum ^=
+                            (checkpoint.root_anchor() as u64).rotate_left((ordinal % 63) as u32);
                         checkpoints.push(checkpoint);
                     }
                     (checkpoints, checksum)
@@ -208,20 +208,24 @@ fn run_early_suffix_gate() {
         with_universe(budget(), |universe| {
             let mut command = CommandState::new(CommandProfile::TEX82);
             let mut modes = ModeNest::new();
-            let mark = NodeTokenList::new([TokenWord::pack(Token::Char {
+            let mark_words = [TokenWord::pack(Token::Char {
                 ch: 'm',
                 cat: Catcode::Other,
-            })]);
-            {
+            })];
+            let mark = {
                 let mut context = universe.command_context().expect("root context");
+                let mark = context
+                    .allocate_node_token_list(&mark_words)
+                    .expect("page mark token list");
                 context.append_page_contribution(Node::Penalty(-1));
                 context.push_current_page_node(Node::Penalty(-1));
                 context.push_page_discard(Node::Penalty(-1));
                 let split = context.publish_page_nodes(vec![Node::Penalty(-1)]);
                 context.set_split_discards(split);
                 context.upsert_page_insertion(PageInsertion::new(7, Scaled::from_raw(-1)));
-                context.set_page_mark_class(PageMark::Bot, 7, mark.clone());
-            }
+                context.set_page_mark_class(PageMark::Bot, 7, mark);
+                mark
+            };
             let checkpoint = EngineCheckpoint::profile_capture_checkpoint(
                 EngineBoundary::JobStart,
                 &mut command,
@@ -293,10 +297,7 @@ fn assert_mode_page_flat_gate(
     );
 }
 
-fn fixture<G>(
-    universe: &mut Universe<G>,
-    units: usize,
-) -> (CommandState<G>, ModeNest) {
+fn fixture<G>(universe: &mut Universe<G>, units: usize) -> (CommandState<G>, ModeNest) {
     let mut command = CommandState::new(CommandProfile::TEX82);
     let mut modes = ModeNest::new();
     let token_words = vec![
@@ -366,11 +367,10 @@ fn fixture<G>(
                 index as u16,
                 Scaled::from_raw(index as i32 + 2),
             ));
-            context.set_page_mark_class(
-                PageMark::Bot,
-                index as u16,
-                NodeTokenList::new(token_words.clone().into_boxed_slice()),
-            );
+            let mark = context
+                .allocate_node_token_list(&token_words)
+                .expect("accumulated page mark token list");
+            context.set_page_mark_class(PageMark::Bot, index as u16, mark);
             context
                 .add_hyphenation_pattern_for_language(
                     (index % 8) as u8,

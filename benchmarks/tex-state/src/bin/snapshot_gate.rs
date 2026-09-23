@@ -6,9 +6,9 @@ use tex_state::measurement::{
     HotCoreAllocationMeasurement, HotCoreAllocationOwner, HotCoreAllocator, hot_core_census,
     retained_generation_census,
 };
-use tex_state::node::{Node, NodeTokenList};
-use tex_state::node_arena::PageListId;
+use tex_state::node::{Node, NodeTokenKey};
 use tex_state::page::PageMark;
+use tex_state::page_node_arena::PageListId;
 use tex_state::token::{Token, TokenWord};
 use tex_state::{
     AssignmentScope, ReachabilityStore, RetainedStateGeneration, World, with_universe,
@@ -80,7 +80,7 @@ fn main() {
         "NODE_GRAPH_LAYOUT node_bytes={} coordinate_bytes={} token_payload_bytes={}",
         size_of::<Node>(),
         size_of::<PageListId>(),
-        size_of::<NodeTokenList>(),
+        size_of::<NodeTokenKey>(),
     );
 
     if failures.is_empty() {
@@ -249,7 +249,7 @@ fn hot_state_gate() -> (
                         .expect("registered mark words remain live")
                         .len(),
                 );
-                context.set_page_mark_class(PageMark::Top, 32_767, NodeTokenList::default());
+                context.set_page_mark_class(PageMark::Top, 32_767, NodeTokenKey::default());
                 context.clear_page_mark_class(PageMark::Top, 32_767);
             }
         });

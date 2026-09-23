@@ -6,9 +6,11 @@ use tex_state::font::PdfFontCode;
 use tex_state::glue::GlueSpec;
 use tex_state::ids::FontId;
 use tex_state::node::{GlueKind, Node};
-use tex_state::node_arena::{NodeCursor, PageListId};
 use tex_state::node_region::NodePool;
-use tex_state::page_node_arena::{PageMaterialArena, PageMaterialRegion, PageMaterialView};
+use tex_state::node_view::NodeCursor;
+use tex_state::page_node_arena::{
+    PageListId, PageMaterialArena, PageMaterialRegion, PageMaterialView,
+};
 use tex_state::scaled::Scaled;
 use tex_typeset::TypesetState;
 use tex_typeset::linebreak::{LineBreakParams, LineShape, ParagraphTape};

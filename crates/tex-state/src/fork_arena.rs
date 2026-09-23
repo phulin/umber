@@ -2108,13 +2108,6 @@ impl<T> ChunkPool<T> {
         std::mem::size_of::<ChunkMeta>()
     }
 
-    /// Transitional logical-to-physical adapter row size. This row disappears
-    /// when `AcceptedBlockTable<NodeRecord>` becomes the production resolver.
-    #[must_use]
-    pub const fn logical_mapping_row_bytes(&self) -> usize {
-        std::mem::size_of::<LogicalChunkRow>()
-    }
-
     #[must_use]
     pub fn physical_page_payload_bytes(&self) -> usize {
         tex_dense_prefix::SUPERBLOCK_BYTES

@@ -262,7 +262,6 @@ fn block_byte_budgets_report_payload_and_metadata_overhead() {
             pool.physical_page_metadata_bytes(),
             std::mem::size_of::<super::DenseBlock<u64>>()
         );
-        assert_eq!(pool.logical_mapping_row_bytes(), 16);
         assert!(
             pool.physical_page_metadata_bytes() < pool.physical_page_payload_bytes(),
             "the supported block classes keep chain metadata below payload capacity"

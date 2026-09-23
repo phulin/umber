@@ -96,7 +96,7 @@ fn sample(operation: Operation, before: usize, after: usize) -> Measurement {
                 let elapsed = start.elapsed();
                 let stats = region.change();
                 let checksum = candidate.primitive_registry_len() as u64;
-                universe.return_rejected_pdf_from(&mut candidate);
+                universe.reject_checkpoint_candidate(&mut candidate);
                 Measurement {
                     elapsed,
                     stats,
@@ -124,7 +124,7 @@ fn sample(operation: Operation, before: usize, after: usize) -> Measurement {
                 mutate_candidate(&mut candidate, 31);
                 let region = Region::new(GLOBAL);
                 let start = Instant::now();
-                universe.return_rejected_pdf_from(&mut candidate);
+                universe.reject_checkpoint_candidate(&mut candidate);
                 let elapsed = start.elapsed();
                 let stats = region.change();
                 Measurement {
@@ -159,7 +159,7 @@ fn sample(operation: Operation, before: usize, after: usize) -> Measurement {
                 let elapsed = start.elapsed();
                 let stats = region.change();
                 let checksum = semantic_checksum(&candidate, 51);
-                universe.return_rejected_pdf_from(&mut candidate);
+                universe.reject_checkpoint_candidate(&mut candidate);
                 Measurement {
                     elapsed,
                     stats,
@@ -192,7 +192,7 @@ fn populate_before_checkpoint<G>(universe: &mut Universe<G>, units: usize) {
         universe
             .allocate_provenance(OriginRecord::UnknownBootstrap)
             .expect("generation-local provenance");
-        let nodes = universe.publish_page_nodes(&[Node::Penalty(index as i32)]);
+        let nodes = universe.publish_page_nodes_owned(vec![Node::Penalty(index as i32)]);
         universe.assign_page_box_global(index as u16, nodes);
     }
 }
@@ -212,7 +212,7 @@ fn populate_after_checkpoint<G>(universe: &mut Universe<G>, units: usize) {
         universe
             .allocate_provenance(OriginRecord::UnknownBootstrap)
             .expect("accepted provenance suffix");
-        let nodes = universe.publish_page_nodes(&[Node::Penalty(-(index as i32))]);
+        let nodes = universe.publish_page_nodes_owned(vec![Node::Penalty(-(index as i32))]);
         universe.assign_page_box_global(register, nodes);
     }
 }
@@ -227,7 +227,7 @@ fn mutate_candidate<G>(universe: &mut Universe<G>, value: i32) {
     universe
         .allocate_provenance(OriginRecord::UnknownBootstrap)
         .expect("candidate provenance suffix");
-    let nodes = universe.publish_page_nodes(&[Node::Penalty(value)]);
+    let nodes = universe.publish_page_nodes_owned(vec![Node::Penalty(value)]);
     universe.assign_page_box_global(60_000, nodes);
 }
 

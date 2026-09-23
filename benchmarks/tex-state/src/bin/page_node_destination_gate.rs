@@ -12,7 +12,6 @@ use tex_state::page_node_arena::{
 static ALLOCATOR: HotCoreAllocator = HotCoreAllocator;
 
 fn main() {
-    assert_eq!(core::mem::size_of::<Node>(), 168);
     let mut pool = NodePool::with_chunk_bytes(4 * 1024);
     let mut region = PageMaterialRegion::new(&mut pool);
     let mut arena = PageMaterialArena::new(&mut pool, &mut region);

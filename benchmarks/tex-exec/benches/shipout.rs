@@ -63,7 +63,7 @@ fn run_shipout(shape: Shape) {
                 StepResult::Suspended(need) => panic!("unexpected resource suspension: {need:?}"),
             }
         }
-        black_box(stores.world().artifact_commits().len());
+        black_box(stores.world().committed_artifacts().len());
     })
     .expect("shipout benchmark universe");
 }
