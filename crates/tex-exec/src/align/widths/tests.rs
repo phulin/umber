@@ -1,7 +1,7 @@
 use super::*;
 use crate::mode::AlignColumn;
 use tex_state::glue::{GlueSpec, Order};
-use tex_state::node::{NodeTokenList, UnsetKind, UnsetNodeFields};
+use tex_state::node::{NodeTokenKey, UnsetKind, UnsetNodeFields};
 use tex_state::page_node_arena::PageListId;
 
 fn sp(raw: i32) -> Scaled {
@@ -9,7 +9,7 @@ fn sp(raw: i32) -> Scaled {
 }
 
 fn columns(count: usize) -> Vec<AlignColumn> {
-    let empty = NodeTokenList::default();
+    let empty = NodeTokenKey::default();
     vec![
         AlignColumn {
             u_template: empty,

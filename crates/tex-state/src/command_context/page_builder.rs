@@ -329,7 +329,7 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     #[must_use]
-    pub fn page_mark(&self, mark: crate::page::PageMark) -> crate::node::NodeTokenList {
+    pub fn page_mark(&self, mark: crate::page::PageMark) -> crate::node::NodeTokenKey {
         self.page.mark(mark)
     }
 
@@ -337,7 +337,7 @@ impl<'a, G> CommandContext<'a, G> {
     pub fn page_mark_value(
         &self,
         mark: crate::page::PageMark,
-    ) -> Option<&crate::node::NodeTokenList> {
+    ) -> Option<&crate::node::NodeTokenKey> {
         self.page.mark_value(mark)
     }
 
@@ -346,15 +346,11 @@ impl<'a, G> CommandContext<'a, G> {
         &self,
         mark: crate::page::PageMark,
         class: u16,
-    ) -> Option<&crate::node::NodeTokenList> {
+    ) -> Option<&crate::node::NodeTokenKey> {
         self.page.mark_class_value(mark, class)
     }
 
-    pub fn set_page_mark(
-        &mut self,
-        mark: crate::page::PageMark,
-        value: crate::node::NodeTokenList,
-    ) {
+    pub fn set_page_mark(&mut self, mark: crate::page::PageMark, value: crate::node::NodeTokenKey) {
         self.page.set_mark(mark, value);
         self.resident
             .dependencies
@@ -384,7 +380,7 @@ impl<'a, G> CommandContext<'a, G> {
         &mut self,
         mark: crate::page::PageMark,
         class: u16,
-        value: crate::node::NodeTokenList,
+        value: crate::node::NodeTokenKey,
     ) {
         self.page.set_mark_class(mark, class, value);
         self.resident

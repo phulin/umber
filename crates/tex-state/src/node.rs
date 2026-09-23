@@ -24,10 +24,6 @@ pub struct NodeTokenKey {
     publication_serial: u32,
 }
 
-/// Transitional spelling retained while enum consumers move to `NodeView`.
-/// The value is a copy-only generation coordinate, not a token owner.
-pub type NodeTokenList = NodeTokenKey;
-
 impl serde::Serialize for NodeTokenKey {
     fn serialize<S: serde::Serializer>(&self, _serializer: S) -> Result<S::Ok, S::Error> {
         Err(serde::ser::Error::custom(
@@ -1379,7 +1375,7 @@ pub enum Sign {
 
 /// Extension nodes whose effects are interpreted by later subsystems.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
-pub enum Whatsit<Glue = GlueSpec, Tokens = NodeTokenList> {
+pub enum Whatsit<Glue = GlueSpec, Tokens = NodeTokenKey> {
     OpenOut {
         slot: StreamSlot,
         path: String,
@@ -1570,7 +1566,7 @@ impl<Glue, Tokens> Whatsit<Glue, Tokens> {
 
 /// Rare article-thread marker kept out of the hot inline node representation.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
-pub struct PdfThreadNode<Tokens = NodeTokenList> {
+pub struct PdfThreadNode<Tokens = NodeTokenKey> {
     pub identifier: NodePdfActionIdentifier<Tokens>,
     pub dimensions: crate::PdfAnnotationDimensions,
     pub attributes: Tokens,
@@ -1579,7 +1575,7 @@ pub struct PdfThreadNode<Tokens = NodeTokenList> {
 
 /// Rare destination marker kept out of the hot inline node representation.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
-pub struct PdfDestinationNode<Tokens = NodeTokenList> {
+pub struct PdfDestinationNode<Tokens = NodeTokenKey> {
     pub identifier: NodePdfActionIdentifier<Tokens>,
     pub structure: Option<u32>,
     pub kind: PdfDestinationKind,
@@ -1587,7 +1583,7 @@ pub struct PdfDestinationNode<Tokens = NodeTokenList> {
 
 /// A navigation identifier copied into the semantic lifetime of a node.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
-pub enum NodePdfActionIdentifier<Tokens = NodeTokenList> {
+pub enum NodePdfActionIdentifier<Tokens = NodeTokenKey> {
     Name(Tokens),
     Number(u32),
     Raw(Tokens),

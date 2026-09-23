@@ -278,7 +278,7 @@ fn short_display_maps_all_node_classes() {
             width: Scaled::from_raw(Scaled::UNITY),
             ..GlueSpec::ZERO
         };
-        let mark_tokens = tex_state::node::NodeTokenList::default();
+        let mark_tokens = tex_state::node::NodeTokenKey::default();
         let pre = stores.publish_page_nodes(vec![Node::Kern {
             amount: Scaled::from_raw(Scaled::UNITY),
             kind: KernKind::Explicit,

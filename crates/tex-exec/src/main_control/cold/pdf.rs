@@ -337,7 +337,7 @@ pub(in crate::main_control) fn apply_pdf_navigation_request<G>(
                     dimensions: *dimensions,
                     attributes: attributes
                         .as_ref()
-                        .map_or_else(tex_state::node::NodeTokenList::default, |value| {
+                        .map_or_else(tex_state::node::NodeTokenKey::default, |value| {
                             stores.node_token_list(value.tokens.prepared())
                         }),
                     running: *running,

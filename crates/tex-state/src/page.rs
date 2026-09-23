@@ -5,7 +5,7 @@ mod state_hash;
 
 use crate::fork_arena::{CheckpointMark, ChunkPool, ForkArena, ForkArenaCounters, ForkArenaError};
 use crate::glue::GlueSpec;
-use crate::node::{Node, NodeTokenList};
+use crate::node::{Node, NodeTokenKey};
 use crate::node_region::{NodeCheckpointMark, NodePool, NodeRegionId, PageClosureBuildMark};
 use crate::node_sequence::SemanticSequenceIdentity;
 use crate::node_view::{NodeCursor, NodeCursorIter};
@@ -109,7 +109,7 @@ impl PageMark {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct MarkClassState {
-    marks: [Option<NodeTokenList>; 5],
+    marks: [Option<NodeTokenKey>; 5],
 }
 
 impl Default for MarkClassState {
@@ -121,11 +121,11 @@ impl Default for MarkClassState {
 }
 
 impl MarkClassState {
-    fn get(&self, mark: PageMark) -> Option<&NodeTokenList> {
+    fn get(&self, mark: PageMark) -> Option<&NodeTokenKey> {
         self.marks[usize::from(mark.index())].as_ref()
     }
 
-    fn set(&mut self, mark: PageMark, value: NodeTokenList) {
+    fn set(&mut self, mark: PageMark, value: NodeTokenKey) {
         self.marks[usize::from(mark.index())] = Some(value);
     }
 
@@ -490,11 +490,11 @@ pub(crate) struct PageBuilderState {
     resume_after_output: bool,
     insertions: Vec<PageInsertion>,
     insertion_positions: Vec<Option<u16>>,
-    top_mark: Option<NodeTokenList>,
-    first_mark: Option<NodeTokenList>,
-    bot_mark: Option<NodeTokenList>,
-    split_first_mark: Option<NodeTokenList>,
-    split_bot_mark: Option<NodeTokenList>,
+    top_mark: Option<NodeTokenKey>,
+    first_mark: Option<NodeTokenKey>,
+    bot_mark: Option<NodeTokenKey>,
+    split_first_mark: Option<NodeTokenKey>,
+    split_bot_mark: Option<NodeTokenKey>,
     mark_classes: Vec<(u16, MarkClassState)>,
     mark_class_positions: Vec<Option<u16>>,
     tex82_dynamic_words: usize,
@@ -601,7 +601,7 @@ enum PageInverse {
         class: u16,
         old: Option<PageInsertion>,
     },
-    Marks([Option<NodeTokenList>; 5]),
+    Marks([Option<NodeTokenKey>; 5]),
     MarkClass {
         class: u16,
         old: Option<MarkClassState>,
@@ -657,7 +657,7 @@ struct PageInverseTarget<'a> {
     page_node_root_count: &'a mut usize,
     insertions: &'a mut Vec<PageInsertion>,
     insertion_positions: &'a mut Vec<Option<u16>>,
-    marks: [&'a mut Option<NodeTokenList>; 5],
+    marks: [&'a mut Option<NodeTokenKey>; 5],
     mark_classes: &'a mut Vec<(u16, MarkClassState)>,
     mark_class_positions: &'a mut Vec<Option<u16>>,
 }
@@ -3502,15 +3502,15 @@ impl PageBuilderState {
         }
     }
 
-    pub(crate) fn mark(&self, mark: PageMark) -> NodeTokenList {
+    pub(crate) fn mark(&self, mark: PageMark) -> NodeTokenKey {
         self.mark_root(mark).cloned().unwrap_or_default()
     }
 
-    pub(crate) fn mark_value(&self, mark: PageMark) -> Option<&NodeTokenList> {
+    pub(crate) fn mark_value(&self, mark: PageMark) -> Option<&NodeTokenKey> {
         self.mark_root(mark)
     }
 
-    pub(crate) fn mark_root(&self, mark: PageMark) -> Option<&NodeTokenList> {
+    pub(crate) fn mark_root(&self, mark: PageMark) -> Option<&NodeTokenKey> {
         match mark {
             PageMark::Top => self.top_mark.as_ref(),
             PageMark::First => self.first_mark.as_ref(),
@@ -3520,7 +3520,7 @@ impl PageBuilderState {
         }
     }
 
-    pub(crate) fn set_mark(&mut self, mark: PageMark, value: NodeTokenList) {
+    pub(crate) fn set_mark(&mut self, mark: PageMark, value: NodeTokenKey) {
         if self.identity_enabled {
             if let Some(old) = self.mark_value(mark) {
                 self.semantic_roots.marks ^= mark_identity(0, mark, old);
@@ -3570,13 +3570,13 @@ impl PageBuilderState {
     }
 
     #[cfg(test)]
-    pub(crate) fn mark_class(&self, mark: PageMark, class: u16) -> NodeTokenList {
+    pub(crate) fn mark_class(&self, mark: PageMark, class: u16) -> NodeTokenKey {
         self.mark_class_value(mark, class)
             .cloned()
             .unwrap_or_default()
     }
 
-    pub(crate) fn mark_class_value(&self, mark: PageMark, class: u16) -> Option<&NodeTokenList> {
+    pub(crate) fn mark_class_value(&self, mark: PageMark, class: u16) -> Option<&NodeTokenKey> {
         if class == 0 {
             return self.mark_value(mark);
         }
@@ -3584,7 +3584,7 @@ impl PageBuilderState {
             .and_then(|position| self.mark_classes[position].1.get(mark))
     }
 
-    pub(crate) fn set_mark_class(&mut self, mark: PageMark, class: u16, value: NodeTokenList) {
+    pub(crate) fn set_mark_class(&mut self, mark: PageMark, class: u16, value: NodeTokenKey) {
         if class == 0 {
             self.set_mark(mark, value);
             return;
@@ -4484,7 +4484,7 @@ fn insertion_identity(insertion: PageInsertion) -> u64 {
     hasher.finish()
 }
 
-fn mark_identity(class: u16, mark: PageMark, value: &NodeTokenList) -> u64 {
+fn mark_identity(class: u16, mark: PageMark, value: &NodeTokenKey) -> u64 {
     let mut hasher = page_identity_hasher(b"umber-page-mark-v1");
     class.hash(&mut hasher);
     mark.index().hash(&mut hasher);

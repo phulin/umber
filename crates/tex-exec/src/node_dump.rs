@@ -227,7 +227,7 @@ trait DumpTokensProjection<G> {
     fn visit(&self, stores: &CommandContext<'_, G>, visit: impl FnMut(tex_state::token::TokenWord));
 }
 
-impl<G> DumpTokensProjection<G> for tex_state::node::NodeTokenList {
+impl<G> DumpTokensProjection<G> for tex_state::node::NodeTokenKey {
     fn visit(
         &self,
         stores: &CommandContext<'_, G>,
@@ -280,7 +280,7 @@ impl<List: Copy, Glue: Copy, Tokens: Clone> DumpNodeCollection<List, Glue, Token
     }
 }
 
-impl DumpNodeCollection<PageListId, GlueSpec, tex_state::node::NodeTokenList>
+impl DumpNodeCollection<PageListId, GlueSpec, tex_state::node::NodeTokenKey>
     for tex_state::node_view::NodeCursor<'_>
 {
     fn len(&self) -> usize {

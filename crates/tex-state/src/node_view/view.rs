@@ -1,12 +1,12 @@
 //! Borrowed projections and cursors over resident node records.
 
 use crate::glue::GlueSpec;
-use crate::node::{Node, NodeTokenList};
+use crate::node::{Node, NodeTokenKey};
 use crate::page_node_arena::PageListId;
 
 /// Zero-allocation logical projection of one immutable node.
 #[derive(Clone, Debug, PartialEq)]
-pub enum NodeView<'a, List = PageListId, Glue = GlueSpec, Tokens = NodeTokenList> {
+pub enum NodeView<'a, List = PageListId, Glue = GlueSpec, Tokens = NodeTokenKey> {
     Char {
         font: crate::ids::FontId,
         ch: char,

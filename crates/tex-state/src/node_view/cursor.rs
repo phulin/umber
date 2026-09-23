@@ -598,8 +598,7 @@ pub enum NodeCursorIter<'a> {
 }
 
 impl NodeCursorIter<'_> {
-    /// Explicitly materializes borrowed projections as owned transitional
-    /// enum values.
+    /// Explicitly materializes borrowed projections as owned enum values.
     ///
     /// This mirrors `Iterator::cloned` for callers which intentionally need
     /// mutation scratch or detached test evidence. Ordinary consumers should

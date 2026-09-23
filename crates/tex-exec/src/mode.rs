@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use tex_state::glue::GlueSpec;
 use tex_state::ids::FontId;
 use tex_state::math::FractionThickness;
-use tex_state::node::{BoxNode, Node, NodeTokenList};
+use tex_state::node::{BoxNode, Node, NodeTokenKey};
 use tex_state::node_view::NodeCursor;
 use tex_state::page_node_arena::PageListId;
 use tex_state::page_node_arena::{PageListSpan, PageMaterialActiveListBuilder};
@@ -1265,8 +1265,8 @@ pub enum AlignmentPackSpec {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AlignColumn {
-    pub u_template: NodeTokenList,
-    pub v_template: NodeTokenList,
+    pub u_template: NodeTokenKey,
+    pub v_template: NodeTokenKey,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1904,7 +1904,7 @@ fn hash_mode_list<G>(
 }
 
 fn hash_node_tokens<G>(
-    tokens: &tex_state::node::NodeTokenList,
+    tokens: &tex_state::node::NodeTokenKey,
     projection: &mut EngineBoundaryHasher<'_, G>,
 ) {
     projection.node_token_key(*tokens);

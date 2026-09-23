@@ -268,7 +268,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
   requested bytes to nested hot-core owner scopes.
 - `src/node.rs`: Storage-independent TeX node and box values with copy-only
   provenance, directly owned glue, compact generation token coordinates, and
-  typed list coordinates.
+  typed list coordinates. `NodeTokenKey` is the sole page-node token-list
+  coordinate; callers allocate its storage through the generation owner.
 - `src/node_sequence.rs`: Composable semantic sequence identity and transient
   TeX-cell lineage evidence for borrowed semantic and physical paragraph
   projections. The old owned dual-channel node buffer is retired.

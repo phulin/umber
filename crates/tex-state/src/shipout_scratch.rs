@@ -8,7 +8,7 @@ use core::marker::PhantomData;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::glue::GlueSpec;
-use crate::node::{Node, NodeTokenList};
+use crate::node::{Node, NodeTokenKey};
 use crate::page_node_arena::PageListId;
 
 #[cfg(test)]
@@ -39,7 +39,7 @@ pub enum ShipoutListId {
 }
 
 /// Node representation stored only in the reusable shipout lane.
-pub type ShipoutScratchNode = Node<ShipoutScratchListId, GlueSpec, NodeTokenList>;
+pub type ShipoutScratchNode = Node<ShipoutScratchListId, GlueSpec, NodeTokenKey>;
 
 /// Token payload selected from one immutable shipout source node.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

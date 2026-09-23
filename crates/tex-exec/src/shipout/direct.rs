@@ -601,7 +601,7 @@ struct ScratchPayload;
 impl<G> ShipoutPayload<G> for PagePayload {
     type List = PageListId;
     type Glue = tex_state::glue::GlueSpec;
-    type Tokens = tex_state::node::NodeTokenList;
+    type Tokens = tex_state::node::NodeTokenKey;
 
     fn child(list: Self::List) -> ShipoutListId {
         ShipoutListId::Page(list)
@@ -626,7 +626,7 @@ impl<G> ShipoutPayload<G> for PagePayload {
 impl<G> ShipoutPayload<G> for ScratchPayload {
     type List = tex_state::ShipoutScratchListId;
     type Glue = tex_state::glue::GlueSpec;
-    type Tokens = tex_state::node::NodeTokenList;
+    type Tokens = tex_state::node::NodeTokenKey;
 
     fn child(list: Self::List) -> ShipoutListId {
         ShipoutListId::Scratch(list)

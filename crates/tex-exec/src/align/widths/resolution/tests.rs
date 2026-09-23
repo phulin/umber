@@ -1,7 +1,7 @@
 use super::*;
 use crate::mode::{AlignColumn, AlignmentPackSpec};
 use tex_state::glue::{GlueSpec, Order};
-use tex_state::node::{Node, NodeTokenList, UnsetKind, UnsetNode, UnsetNodeFields};
+use tex_state::node::{Node, NodeTokenKey, UnsetKind, UnsetNode, UnsetNodeFields};
 use tex_state::page_node_arena::PageListId;
 use tex_state::scaled::Scaled;
 
@@ -51,7 +51,7 @@ fn row<G>(stores: &mut CommandContext<'_, G>, cells: &[Node]) -> Node {
 }
 
 fn state(columns: usize, tabskips: Vec<GlueSpec>) -> AlignState {
-    let empty = NodeTokenList::default();
+    let empty = NodeTokenKey::default();
     AlignState::new(
         AlignmentKind::HAlign,
         AlignmentPackSpec::Natural,

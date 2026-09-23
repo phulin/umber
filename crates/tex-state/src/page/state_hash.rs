@@ -1,6 +1,6 @@
 use super::{PageBreak, PageBuilderState, PageContents, PageDimension, PageInsertionStatus};
 use crate::glue::GlueSpec;
-use crate::node::NodeTokenList;
+use crate::node::NodeTokenKey;
 use crate::node_view::NodeCursor;
 use crate::page_node_arena::PageMaterialArena;
 use crate::state_hash::{StateHashComponent, StateHashFragment, StateHasher};
@@ -29,7 +29,7 @@ impl PageBuilderState {
         _cache: &mut PageHashCache,
         mut hash_nodes: impl for<'a> FnMut(NodeCursor<'a>, &mut StateHasher) -> usize,
         mut hash_glue: impl FnMut(GlueSpec, &mut StateHasher),
-        mut hash_tokens: impl FnMut(&NodeTokenList, &mut StateHasher),
+        mut hash_tokens: impl FnMut(&NodeTokenKey, &mut StateHasher),
     ) {
         let scalars = StateHashFragment::from_measured_builder(
             PAGE_SCALARS_DOMAIN,

@@ -1,6 +1,6 @@
 use super::state_hash::PageHashCache;
 use super::{PageBuilderState, PageInsertion, PageRegion, PageRegionHistory};
-use crate::node::{KernKind, Node, NodeTokenList};
+use crate::node::{KernKind, Node, NodeTokenKey};
 use crate::node_region::NodePool;
 use crate::page::{PageInteger, PageMark};
 use crate::page_node_arena::{PageListId, PageMaterialArena, PageMaterialRegion};
@@ -24,13 +24,13 @@ fn kern(value: i32) -> Node {
     }
 }
 
-fn tokens(tokens: &[Token]) -> NodeTokenList {
+fn tokens(tokens: &[Token]) -> NodeTokenKey {
     let serial = tokens
         .iter()
         .copied()
         .map(TokenWord::pack)
         .fold(1_u32, |hash, word| hash.wrapping_mul(33) ^ word.raw());
-    NodeTokenList::new(1, serial, 1, 0, tokens.len() as u32, serial)
+    NodeTokenKey::new(1, serial, 1, 0, tokens.len() as u32, serial)
 }
 
 fn publish_nodes(
@@ -241,7 +241,7 @@ fn bounded_checkpoint_mark_restores_lists_insertions_marks_and_scalars() {
     page.set_mark_class(
         super::PageMark::Bot,
         7,
-        crate::node::NodeTokenList::default(),
+        crate::node::NodeTokenKey::default(),
     );
     page.set_dimension(super::PageDimension::Goal, Scaled::from_raw(6));
     let expected = hash_page(&page, &arena);

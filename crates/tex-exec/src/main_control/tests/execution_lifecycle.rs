@@ -70,7 +70,7 @@ fn etex_fire_up_distinguishes_empty_class_zero_and_sparse_botmarks() {
         admitted!(stores, |context| context.set_page_mark_class(
             PageMark::Top,
             0,
-            tex_state::node::NodeTokenList::default(),
+            tex_state::node::NodeTokenKey::default(),
         ));
         let mut control = etex_initex(stores);
         register_source(

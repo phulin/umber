@@ -952,21 +952,21 @@ fn append_whatsit_effect<G>(
         PreparedWhatsit::DeferredWrite { sink, tokens } => (
             Whatsit::DeferredWrite {
                 sink,
-                tokens: tex_state::node::NodeTokenList::default(),
+                tokens: tex_state::node::NodeTokenKey::default(),
             },
             Some(tokens),
         ),
         PreparedWhatsit::DeferredSpecial { class, tokens } => (
             Whatsit::DeferredSpecial {
                 class,
-                tokens: tex_state::node::NodeTokenList::default(),
+                tokens: tex_state::node::NodeTokenKey::default(),
             },
             Some(tokens),
         ),
         PreparedWhatsit::DeferredPdfLiteral { mode, tokens } => (
             Whatsit::DeferredPdfLiteral {
                 mode,
-                tokens: tex_state::node::NodeTokenList::default(),
+                tokens: tex_state::node::NodeTokenKey::default(),
             },
             Some(tokens),
         ),

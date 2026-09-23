@@ -565,7 +565,7 @@ fn outer_vertical_contribution_routes_every_node_kind_canonically() {
             )
             .expect("parameter");
         let leading = glue(&mut stores, 2, 0, Order::Normal, 0, Order::Normal);
-        let mark = tex_state::node::NodeTokenList::default();
+        let mark = tex_state::node::NodeTokenKey::default();
         stores.append_page_contribution(Node::Glue {
             spec: leading,
             kind: GlueKind::Normal,
@@ -776,7 +776,7 @@ fn page_contribution_last_items_and_max_depth_matrix() {
         assert_eq!(stores.page_last_kern(), s(0));
         assert_eq!(stores.page_dimension(PageDimension::Total), s(23));
 
-        let mark = tex_state::node::NodeTokenList::default();
+        let mark = tex_state::node::NodeTokenKey::default();
         stores.append_page_contribution(Node::Mark {
             class: 4,
             tokens: mark,
