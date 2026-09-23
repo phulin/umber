@@ -1849,9 +1849,10 @@ fn validate_completion_observations(
             )
         };
         if !is_termination(&fragment[index]) {
-            return Err(
-                "complete-job observations diverged before the fragment root-EOF boundary".into(),
-            );
+            return Err(format!(
+                "complete-job observations diverged before the fragment root-EOF boundary at index {index}: fragment={:?}, complete={:?}",
+                fragment[index], complete[index]
+            ));
         }
     }
     Ok(())

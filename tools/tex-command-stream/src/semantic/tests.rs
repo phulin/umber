@@ -211,10 +211,10 @@ fn completion_pair_rejects_semantic_drift_before_fragment_termination() {
     let fragment = [effect(tex_command::ObservationEffectKind::Message)];
     let complete = [effect(tex_command::ObservationEffectKind::Input)];
 
-    assert_eq!(
-        validate_completion_observations(&fragment, &complete),
-        Err("complete-job observations diverged before the fragment root-EOF boundary".into())
-    );
+    let error = validate_completion_observations(&fragment, &complete).unwrap_err();
+    assert!(error.contains("before the fragment root-EOF boundary at index 0"));
+    assert!(error.contains("fragment=Effect("));
+    assert!(error.contains("complete=Effect("));
 }
 
 #[test]
