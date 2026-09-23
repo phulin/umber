@@ -219,6 +219,27 @@ fn configure_nullfont<G>(universe: &mut Universe<G>, install: bool, meaning: Mea
     if install {
         universe.install_primitive_meaning("nullfont", meaning);
     }
+    let mut context = universe
+        .command_context()
+        .expect("nullfont installation requires a live engine state");
+    if context
+        .font_identifier_symbol(tex_state::font::NULL_FONT)
+        .is_none()
+    {
+        // TeX82 §§415/552-553 initialize font_id_base+null_font to the
+        // inaccessible frozen_null_font slot. Formats created before that
+        // sidecar existed need the same fixed identity on restoration, while
+        // a serialized nonempty font_id_text must retain its own identity.
+        let frozen = context.intern_internal_control_sequence("nullfont");
+        context
+            .assign_resolved_meaning(
+                frozen,
+                tex_state::meaning::ResolvedMeaning::Static(meaning),
+                tex_state::AssignmentScope::Global,
+            )
+            .expect("frozen nullfont belongs to the admitted state");
+        context.set_font_identifier_symbol(tex_state::font::NULL_FONT, frozen);
+    }
 }
 
 /// Registers TeX82's inaccessible outer `\endwrite` sentinel. Its macro
@@ -244,6 +265,9 @@ fn configure_primitive<G>(universe: &mut Universe<G>, install: bool, name: &str,
         universe.register_primitive_meaning(name, meaning);
     }
 }
+
+#[cfg(test)]
+mod tests;
 
 fn configure_generated<G>(
     universe: &mut Universe<G>,

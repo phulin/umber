@@ -551,7 +551,9 @@ collector (see `src/conditionals.rs`).
   exact profile name sets, installation slices, observation identities,
   prefix policy, and deterministic documentation tables. `registry.rs`
   consumes those views for fresh INITEX and format restoration; it contains
-  only store-local installation mechanics. `catalogue.rs` defines the
+  only store-local installation mechanics. `registry/tests.rs` checks the
+  frozen null-font identity and missing-only format registration repair.
+  `catalogue.rs` defines the
   behavior-free descriptor vocabulary and exhaustive validation. Execution
   dispatch remains handwritten.
   `prefixed.rs` owns TeX82 §209's `max_non_prefixed_command` partition -- the

@@ -208,6 +208,48 @@ fn declared_command_semantic_cases_match() {
 }
 
 #[test]
+fn current_font_selection_matches_oracle_channels_after_format_load() {
+    let formats = HermeticFormats::new();
+    let cases = load_suite().expect("valid command-semantic corpus");
+    let declared = cases
+        .iter()
+        .find(|declared| {
+            declared.domain == "main-control" && declared.case.id == "current-font-selection"
+        })
+        .expect("pinned current-font-selection fixture");
+    assert_eq!(declared.case.profile, SessionProfile::RawTex82Loaded);
+    let contract = declared.case.channels.as_ref().expect("channel contract");
+    for channel in [StreamChannel::Terminal, StreamChannel::Log] {
+        assert_eq!(contract.stream(channel), &StreamDisposition::File);
+    }
+    assert_eq!(
+        contract.stream(StreamChannel::Effects),
+        &StreamDisposition::Empty
+    );
+
+    let source = fs::read(declared.fixture_dir.join(&declared.case.source))
+        .expect("current-font-selection source");
+    let run = formats
+        .execute(&source, &declared.case)
+        .expect("frozen nullfont selection completes through the loaded format");
+    assert_eq!(
+        project(&run, &declared.case.projection),
+        declared.case.expected,
+        "the pinned TeX82 observer confirms count0=0"
+    );
+    let failures = compare_declared_channels(declared, &run);
+    assert!(
+        failures
+            .iter()
+            .all(|failure| matches!(failure, ChannelFailure::EventCount { .. })),
+        "oracle-backed terminal, log, effects, status, and other channels must match: {failures:?}"
+    );
+    // The full selected manual gate still requires the Umber-observed event
+    // count to match its declared baseline; this active test does not accept
+    // or rewrite that separate count contract.
+}
+
+#[test]
 fn count_write_fixture_keeps_direct_the_internal_to_scan_toks() {
     let formats = HermeticFormats::new();
     let cases = load_suite().expect("valid command-semantic corpus");

@@ -1,9 +1,9 @@
 {
   "schema": 3,
   "name": "plain",
-  "object": "ahash64-v1-c7cd257c5418c846",
-  "ahash64": "c7cd257c5418c846",
-  "bytes": 107334,
+  "object": "ahash64-v1-d973a639880df425",
+  "ahash64": "d973a639880df425",
+  "bytes": 107346,
   "engine": "umber",
   "engineVersion": "0.1.0",
   "formatSchema": 12,

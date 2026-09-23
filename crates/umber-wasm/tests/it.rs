@@ -1480,6 +1480,25 @@ fn schema_twelve_formats_load_and_plain_asset_is_available() {
 }
 
 #[wasm_bindgen_test]
+fn tracked_plain_format_executes_frozen_nullfont_after_redefinition() {
+    // The loaded worker must retain TeX82 §553's frozen identifier even
+    // when the ordinary nullfont control sequence is redefined.
+    let mut session = session_with_format("main.tex", include_bytes!("../assets/plain.fmt"));
+    session
+        .add_user_file(
+            "main.tex",
+            &bytes(br"\def\nullfont{\errmessage{ordinary-nullfont-was-expanded}}\the\font\end"),
+        )
+        .expect("add null-font selection source");
+    let result = session.compile_attempt().expect("loaded Plain attempt");
+    assert_eq!(string_field(result.as_ref(), "kind"), "complete");
+    let terminal = field(&field(result.as_ref(), "output"), "terminal")
+        .as_string()
+        .expect("terminal text");
+    assert!(!terminal.contains("ordinary-nullfont-was-expanded"));
+}
+
+#[wasm_bindgen_test]
 fn formatted_session_survives_multiple_resource_retries() {
     let format = umber::with_engine_world(World::memory(), |initialized| {
         prepare_run_stores(initialized);

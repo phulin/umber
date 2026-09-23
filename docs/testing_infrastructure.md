@@ -124,20 +124,19 @@ without an executable selected runner; an ignored manual test is not dormant
 when explicitly selected. Bibliography's dormant upstream inventory remains
 separate from this nonbibliography census.
 
-On the indexed checkout, explicitly selecting
+After the frozen null-font identity repair, explicitly selecting
 `cargo test -q -p tex-command-stream --test it command_semantic::declared_command_semantic_cases_match -- --exact --ignored --nocapture`
 reports `matched=79, executed-known-failure=0, unexpected-pass=0,
 other-failure=131, dormant=0, unselected=0` and exits `FAIL`. The 131 cases
-have 102 event-count, 64 projection, 38 terminal/log content, 7 incomplete
+have 103 event-count, 63 projection, 38 terminal/log content, 6 incomplete
 channel, and 4 nonempty-output diagnostics; a case can have more than one
 diagnostic. These results are not strict known failures. The fixture manifests
-retain their pinned reference projections and channel contracts. In
-particular, `main-control/current-font-selection` panics while scanning
-`\the\font` with the null font, and `page-output/insertion-split-footnote`
-panics on a page-arena range. A native CLI run with a raw TeX82 format also
-reproduces the null-font panic. The routine gate still reports these 210
-declared cases as unselected; the selected manual command is the only claim
-about their current compatibility.
+retain their reviewed projections and channel contracts. In particular,
+`main-control/current-font-selection` now executes `\the\font` but has an
+Umber event-count drift of 104 versus its 120-event baseline, and
+`page-output/insertion-split-footnote` still panics on a page-arena range. The
+routine gate still reports these 210 declared cases as unselected; the
+selected manual command is the only claim about their current compatibility.
 
 Set `UMBER_COMMAND_SEMANTIC_CASE=domain/id` with the same manual Cargo command
 to run one exact fixture. The census then counts every other declared fixture
@@ -153,9 +152,9 @@ cargo run-dev -q -p umber --bin umber -- run target/simplify-suite-index/raw-tex
 cargo run-dev -q -p umber --bin umber -- run tests/corpus/command-semantic/main-control/current-font-selection/current-font-selection.tex --format target/simplify-suite-index/raw-tex82.fmt
 ```
 
-The format construction succeeds; the loaded run exits 101 at
-`tex-command/src/scanners/scalar.rs` while looking up the null-font control
-sequence identity.
+The format construction and loaded run both complete after the frozen
+null-font identity repair. The manual selected gate above still reports its
+event-count drift.
 
 The `current-font-selection` fixture's original `count:0=1` projection was an
 Umber-authored expectation, not a reference observation. TeX82's frozen
@@ -189,7 +188,11 @@ observation snapshot, not an independently captured oracle event count.
 Named projection acceptance also regenerates that case's complete channel
 block; its proposed 104-event rewrite was reviewed and rejected. The fixture
 source, reference terminal and log bytes, and channel disposition were not
-changed.
+changed. The active `current_font_selection_matches_oracle_channels_after_format_load`
+test executes the same loaded fixture and requires its reviewed projection and
+oracle-backed terminal, log, effects, status, and other channels to match. It
+allows only a typed event-count mismatch; the selected manual gate continues
+to fail on that count.
 
 Routine tests read committed fixtures and provisioned local oracles without
 invoking reference TeX. Provision the primary checkout once with

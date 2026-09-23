@@ -3,6 +3,25 @@
 use super::*;
 
 #[test]
+fn the_font_uses_frozen_nullfont_after_ordinary_name_is_redefined() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\catcode`\{=1 \catcode`\}=2 \def\nullfont{\errmessage{ordinary-nullfont-was-expanded}}\the\font\global\count0=1\end",
+        );
+        run_to_end(&mut control, stores);
+
+        assert_eq!(stores.count(0).expect("count register"), 1);
+        assert!(
+            !terminal_text(stores).contains("ordinary-nullfont-was-expanded"),
+            "{}",
+            terminal_text(stores)
+        );
+    });
+}
+
+#[test]
 fn fresh_initex_installs_canonical_parameters_and_clock_before_execution() {
     let clock = tex_state::JobClock {
         time: 13 * 60 + 37,
