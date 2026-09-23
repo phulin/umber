@@ -35,12 +35,12 @@ pub const OVERFULL_BADNESS: i32 = 1_000_000;
 pub trait TypesetState {
     fn page_nodes(
         &self,
-        list: tex_state::node_arena::PageListId,
-    ) -> tex_state::node_arena::NodeCursor<'_>;
+        list: tex_state::page_node_arena::PageListId,
+    ) -> tex_state::node_view::NodeCursor<'_>;
     fn page_node_sequence(
         &self,
-        _sequence: tex_state::node_arena::PageNodeSequenceId,
-    ) -> Option<tex_state::node_arena::NodeCursor<'_>> {
+        _sequence: tex_state::page_node_arena::PageListId,
+    ) -> Option<tex_state::node_view::NodeCursor<'_>> {
         None
     }
     fn font_char_metrics(&self, font: FontId, code: u8) -> Option<tex_fonts::CharMetrics>;

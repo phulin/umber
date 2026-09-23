@@ -1754,7 +1754,7 @@ impl<G> Universe<G> {
                         let node = node
                             .map_lists(|child| {
                                 if child == 0 {
-                                    crate::node_arena::PageListId::empty()
+                                    crate::page_node_arena::PageListId::empty()
                                 } else {
                                     installed[child as usize - 1]
                                 }

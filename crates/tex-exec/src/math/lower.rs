@@ -7,7 +7,7 @@ use tex_state::glue::GlueSpec;
 use tex_state::ids::FontId;
 use tex_state::math::MathListNode;
 use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, Node};
-use tex_state::node_arena::PageListId;
+use tex_state::page_node_arena::PageListId;
 use tex_state::page_node_arena::UniquePageList;
 use tex_state::scaled::Scaled;
 use tex_typeset::TypesetState;
@@ -490,7 +490,7 @@ impl<'a, 'ctx, G> LoweredMathSink<'a, 'ctx, G> {
                                 .expect("math native source belongs to the page arena")
                                 .get(*index as usize)
                                 .expect("math native source index remains live")
-                                .to_owned_with(std::convert::identity)
+                                .to_owned()
                                 .map_lists(|child| {
                                     self.stores
                                         .copy_page_list_to_shipout_scratch(child)
@@ -515,12 +515,12 @@ impl<'a, 'ctx, G> LoweredMathSink<'a, 'ctx, G> {
                 .ok()
                 .and_then(|nodes| nodes.get(source.index as usize))?;
             match node {
-                tex_state::node_arena::NodeView::HList(source_box)
+                tex_state::node_view::NodeView::HList(source_box)
                     if !vertical && lower_math_box(boxed, source_box.children) == source_box =>
                 {
                     Some(source_box)
                 }
-                tex_state::node_arena::NodeView::VList(source_box)
+                tex_state::node_view::NodeView::VList(source_box)
                     if vertical && lower_math_box(boxed, source_box.children) == source_box =>
                 {
                     Some(source_box)
@@ -536,7 +536,7 @@ impl<'a, 'ctx, G> LoweredMathSink<'a, 'ctx, G> {
 }
 
 impl<G> TypesetState for LoweredMathSink<'_, '_, G> {
-    fn page_nodes(&self, list: PageListId) -> tex_state::node_arena::NodeCursor<'_> {
+    fn page_nodes(&self, list: PageListId) -> tex_state::node_view::NodeCursor<'_> {
         self.stores
             .page_node_list(list)
             .expect("math list belongs to the admitted page arena")
@@ -773,9 +773,9 @@ pub(crate) fn finish_math_lists_owned<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     geometry: &mut dyn crate::geometry::PackGeometrySink,
-    nodes: tex_state::node_arena::PageListId,
+    nodes: tex_state::page_node_arena::PageListId,
     insert_penalties: bool,
-) -> tex_state::node_arena::PageListId {
+) -> tex_state::page_node_arena::PageListId {
     let source_len = nodes.len();
     let source = stores
         .admit_page_node_span(nodes)

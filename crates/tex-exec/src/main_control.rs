@@ -4322,7 +4322,7 @@ impl<G> MainControl<G> {
         diagnostic_effects: &mut DiagnosticEffects,
         tracked_region_is_active: bool,
         resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
-    ) -> Result<tex_state::node_arena::PageListId, ExecError> {
+    ) -> Result<tex_state::page_node_arena::PageListId, ExecError> {
         // The depth sampled before `push_math`, not the innermost group
         // kind, is what identifies this group's own closing brace: a nested
         // subformula opens another `math_group`, and any brace group inside
@@ -4396,7 +4396,7 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
-    ) -> Result<tex_state::node_arena::PageListId, ExecError> {
+    ) -> Result<tex_state::page_node_arena::PageListId, ExecError> {
         self.main_loop_active = false;
         while left_group_open(&self.modes, stores) {
             // The `\right.` applied below is exactly the closer §1065 selects
@@ -4452,7 +4452,7 @@ impl<G> MainControl<G> {
         diagnostic_effects: &mut DiagnosticEffects,
         tracked_region_is_active: bool,
         resource_provider: &mut Option<&mut dyn ResourceProvider<G>>,
-    ) -> Result<tex_state::node_arena::PageListId, ExecError> {
+    ) -> Result<tex_state::page_node_arena::PageListId, ExecError> {
         self.command_scan_math_choice_group(stores, diagnostic_effects, resource_provider)?;
         self.execute_live_math_choice_group(
             stores,
@@ -5001,7 +5001,7 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
-    ) -> Result<tex_state::node_arena::PageListId, ExecError> {
+    ) -> Result<tex_state::page_node_arena::PageListId, ExecError> {
         let math_font_context = self
             .command
             .output_open_context(&stores.command_context().expect("math-font admission"));
@@ -5012,7 +5012,7 @@ impl<G> MainControl<G> {
         )?;
         let content = take_finished_math_list(&mut self.modes, stores)?;
         Ok(if rejected {
-            tex_state::node_arena::PageListId::empty()
+            tex_state::page_node_arena::PageListId::empty()
         } else {
             content
         })
@@ -5026,7 +5026,7 @@ impl<G> MainControl<G> {
         diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<
         (
-            tex_state::node_arena::PageListId,
+            tex_state::page_node_arena::PageListId,
             crate::mode::ModeLevelSummary,
         ),
         ExecError,
@@ -5213,7 +5213,7 @@ impl<G> MainControl<G> {
             diagnostic_effects,
             diagnostic_text,
         )? {
-            content = tex_state::node_arena::PageListId::empty();
+            content = tex_state::page_node_arena::PageListId::empty();
         }
         let mut context = stores.command_context().expect("inline-math admission");
         let _ = crate::box_runtime::commit_current_list(
@@ -5284,10 +5284,10 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
         eq: crate::mode::DisplayEqNo,
-        content: tex_state::node_arena::PageListId,
+        content: tex_state::page_node_arena::PageListId,
     ) -> Result<
         (
-            tex_state::node_arena::PageListId,
+            tex_state::page_node_arena::PageListId,
             crate::math::display::FinishedEqNo,
         ),
         ExecError,
@@ -5404,7 +5404,7 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
-        mut content: tex_state::node_arena::PageListId,
+        mut content: tex_state::page_node_arena::PageListId,
         eq_no: Option<crate::math::display::FinishedEqNo>,
         fonts_checked: bool,
         display_level: Option<crate::mode::ModeLevelSummary>,
@@ -5436,7 +5436,7 @@ impl<G> MainControl<G> {
                 diagnostic_text,
             )?
         {
-            content = tex_state::node_arena::PageListId::empty();
+            content = tex_state::page_node_arena::PageListId::empty();
         }
         let mut context = stores.command_context().expect("display-math admission");
         let mut level = match display_level {
@@ -7917,7 +7917,7 @@ impl PreparedCheckpointControl {
 fn report_improper_discretionary<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
-    deleted: tex_state::node_arena::PageListId,
+    deleted: tex_state::page_node_arena::PageListId,
     context: String,
 ) -> Result<(), ExecError> {
     let text = crate::node_dump::dump_page_list(
@@ -8135,7 +8135,7 @@ pub(crate) fn reserve_script_target<G>(
     // `t<>empty`: the tail was eligible but already carries this script.
     let tail_index = list.nodes(&context).len().checked_sub(1);
     let (eligible, occupied) = match tail_index.and_then(|index| list.nodes(&context).get(index)) {
-        Some(tex_state::node_arena::NodeView::MathNoad(noad))
+        Some(tex_state::node_view::NodeView::MathNoad(noad))
             if !matches!(
                 noad.kind,
                 NoadKind::LeftDelimiter { .. }
@@ -8228,7 +8228,7 @@ fn fill_math_field_target<G>(
                     .expect("math field belongs to the live page arena")
                     .nodes();
                 match nodes.get(0) {
-                    Some(tex_state::node_arena::NodeView::MathNoad(accent))
+                    Some(tex_state::node_view::NodeView::MathNoad(accent))
                         if nodes.len() == 1 && matches!(accent.kind, NoadKind::Accent { .. }) =>
                     {
                         Some(accent.clone())
@@ -8310,10 +8310,10 @@ fn start_fraction<G>(
 }
 
 fn finish_math_list<G>(
-    output: tex_state::node_arena::PageListId,
+    output: tex_state::page_node_arena::PageListId,
     incomplete: Option<crate::mode::IncompleteFraction>,
     stores: &mut CommandContext<'_, G>,
-) -> Result<tex_state::node_arena::PageListId, ExecError> {
+) -> Result<tex_state::page_node_arena::PageListId, ExecError> {
     if let Some(fraction) = incomplete {
         let denominator = output;
         // TeX82 §1185 and e-TeX [48.1185]: `delim_ptr` identifies the most
@@ -8367,14 +8367,14 @@ fn finish_math_list<G>(
 /// author box as `sub_box` instead of wrapping it in a second natural hpack.
 fn collapse_singleton_math_group<G>(
     stores: &CommandContext<'_, G>,
-    list: tex_state::node_arena::PageListId,
+    list: tex_state::page_node_arena::PageListId,
 ) -> MathField {
     let nodes = stores
         .page_node_list(list)
         .expect("math group belongs to the live page arena")
         .nodes();
     if nodes.len() == 1
-        && let Some(tex_state::node_arena::NodeView::MathNoad(noad)) = nodes.get(0)
+        && let Some(tex_state::node_view::NodeView::MathNoad(noad)) = nodes.get(0)
         && noad.kind == NoadKind::Normal(NoadClass::Ord)
         && matches!(noad.subscript, MathField::Empty)
         && matches!(noad.superscript, MathField::Empty)
@@ -8387,7 +8387,7 @@ fn collapse_singleton_math_group<G>(
 fn take_finished_math_list<G>(
     modes: &mut ModeNest,
     stores: &mut Universe<G>,
-) -> Result<tex_state::node_arena::PageListId, ExecError> {
+) -> Result<tex_state::page_node_arena::PageListId, ExecError> {
     let (nodes, incomplete) = {
         let mut list = modes.current_list_mutation();
         (list.take_nodes(), list.take_incomplete_fraction())
@@ -8537,10 +8537,10 @@ fn left_group_open<G>(modes: &ModeNest, stores: &mut Universe<G>) -> bool {
     {
         return false;
     }
-    let starts_left_node = |node: Option<tex_state::node_arena::NodeView<'_>>| {
+    let starts_left_node = |node: Option<tex_state::node_view::NodeView<'_>>| {
         matches!(
             node,
-            Some(tex_state::node_arena::NodeView::MathNoad(MathNoad {
+            Some(tex_state::node_view::NodeView::MathNoad(MathNoad {
                 kind: NoadKind::LeftDelimiter { .. },
                 ..
             }))

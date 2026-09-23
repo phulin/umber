@@ -622,7 +622,7 @@ pub(crate) fn trace_box_write<G>(
     diagnostic_effects: &mut DiagnosticEffects,
     index: u16,
     global: bool,
-    new: Option<&tex_state::node_arena::PageListId>,
+    new: Option<&tex_state::page_node_arena::PageListId>,
     write: impl FnOnce(&mut CommandContext<'_, G>),
 ) {
     fn print_box_trace<G>(

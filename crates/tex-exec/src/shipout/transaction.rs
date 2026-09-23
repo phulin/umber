@@ -1,7 +1,7 @@
 use tex_state::diagnostic::DiagnosticEffects;
 use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::node::{Node, NodeKind};
-use tex_state::node_arena::NodeView;
+use tex_state::node_view::NodeView;
 use tex_state::{
     ContentHash, DetachedArtifact, MemoTimingPhase, MemoValueLimits, PrintSink, PureMemoKey,
     PureMemoLayer, PureShipoutEntry, Universe,

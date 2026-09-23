@@ -9,12 +9,14 @@ use tex_fonts::metrics::ExtensibleRecipe;
 use tex_fonts::{CharMetrics, LigKernChar, LigKernCommand, LoadedFont, MathMetricsSource};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, PARAMETER_COUNT};
 use tex_state::font::{FontExpansion, NULL_FONT, PdfFontCode};
+use tex_state::fork_arena::ForkArenaError;
 use tex_state::glue::GlueSpec;
 use tex_state::ids::FontId;
 use tex_state::math::{MATH_FAMILY_COUNT, MathFontSize};
 use tex_state::node::Node;
-use tex_state::node_arena::{NodeArenaError, NodeCursor, PageListId};
 use tex_state::node_region::NodePool;
+use tex_state::node_view::NodeCursor;
+use tex_state::page_node_arena::PageListId;
 use tex_state::page_node_arena::{PageMaterialArena, PageMaterialRegion, PageMaterialView};
 use tex_state::scaled::Scaled;
 
@@ -105,19 +107,13 @@ impl TestState {
             .expect("test nodes contain only fixture-owned children")
     }
 
-    pub(crate) fn publish_page_node_range(
-        &mut self,
-        nodes: Vec<Node>,
-    ) -> tex_state::node_arena::PageNodeRange {
+    pub(crate) fn publish_owned_page_nodes(&mut self, nodes: Vec<Node>) -> PageListId {
         self.pages_mut()
-            .publish_range(nodes)
+            .publish_owned(nodes)
             .expect("test nodes contain only fixture-owned children")
     }
 
-    pub(crate) fn compose_page_node_sequences(
-        &mut self,
-        inputs: &[tex_state::node_arena::PageNodeSequenceId],
-    ) -> tex_state::node_arena::PageNodeSequenceId {
+    pub(crate) fn compose_page_node_sequences(&mut self, inputs: &[PageListId]) -> PageListId {
         self.pages_mut()
             .compose_sequences(inputs)
             .expect("test sequences belong to fixture page arena")
@@ -126,10 +122,8 @@ impl TestState {
     pub(crate) fn page_node_list(
         &self,
         list: PageListId,
-    ) -> Result<NodeCursor<'_>, NodeArenaError> {
-        self.pages()
-            .node_cursor(list)
-            .map_err(|_| NodeArenaError::InvalidList)
+    ) -> Result<NodeCursor<'_>, ForkArenaError> {
+        self.pages().node_cursor(list)
     }
 
     pub(crate) fn intern_font(&mut self, font: LoadedFont) -> FontId {
@@ -235,7 +229,7 @@ impl TestState {
             .node_cursor(source)
             .ok()?
             .iter()
-            .map(|node| node.to_owned_with(std::convert::identity))
+            .map(|node| node.to_owned())
             .collect::<Vec<_>>();
         self.pages_mut().publish_owned(nodes).ok()
     }
@@ -267,7 +261,7 @@ impl TestState {
 }
 
 impl TypesetState for TestState {
-    fn page_nodes(&self, list: PageListId) -> tex_state::node_arena::NodeCursor<'_> {
+    fn page_nodes(&self, list: PageListId) -> tex_state::node_view::NodeCursor<'_> {
         self.pages()
             .node_cursor(list)
             .expect("live test page coordinate")
@@ -275,8 +269,8 @@ impl TypesetState for TestState {
 
     fn page_node_sequence(
         &self,
-        sequence: tex_state::node_arena::PageNodeSequenceId,
-    ) -> Option<tex_state::node_arena::NodeCursor<'_>> {
+        sequence: PageListId,
+    ) -> Option<tex_state::node_view::NodeCursor<'_>> {
         self.pages().node_cursor(sequence).ok()
     }
 

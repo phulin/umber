@@ -38,7 +38,7 @@ pub(crate) fn split_vbox_register<G>(
         .page_node_list(source)
         .expect("copied box belongs to the live page arena")
         .get(0)
-        .map(|node| node.to_owned_with(|id| id));
+        .map(|node| node.to_owned());
     let Some(source_node) = source_node else {
         clear_split_marks(stores);
         stores.clear_box_preserving_level(index);
@@ -83,7 +83,7 @@ pub(crate) fn split_vbox_register<G>(
             stores.slice_page_node_sequence(split_nodes, 0..index, &mut Vec::new()),
             stores.slice_page_node_sequence(split_nodes, index..split_nodes.len(), &mut Vec::new()),
         ),
-        None => (split_nodes, tex_state::node_arena::PageListId::empty()),
+        None => (split_nodes, tex_state::page_node_arena::PageListId::empty()),
     };
 
     update_split_marks(stores, split_list);
@@ -115,11 +115,11 @@ pub(crate) fn split_vbox_register<G>(
 
 fn normalize_split_infinite_shrink<G>(
     stores: &mut CommandContext<'_, G>,
-    nodes: tex_state::node_arena::PageListId,
+    nodes: tex_state::page_node_arena::PageListId,
     indices: &[usize],
     diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
     diagnostic_effects: &mut DiagnosticEffects,
-) -> Result<tex_state::node_arena::PageListId, ExecError> {
+) -> Result<tex_state::page_node_arena::PageListId, ExecError> {
     let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
     stores.open_page_active_list(&mut output);
     let mut next_replacement = 0;
@@ -135,7 +135,7 @@ fn normalize_split_infinite_shrink<G>(
             .nodes()
             .get(index)
         {
-            Some(tex_state::node_arena::NodeView::Glue { spec, kind, leader }) => {
+            Some(tex_state::node_view::NodeView::Glue { spec, kind, leader }) => {
                 Some((spec, kind, leader))
             }
             _ => None,
@@ -171,7 +171,7 @@ fn replace_split_source<G>(
     geometry: &mut dyn crate::geometry::PackGeometrySink,
     diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
     index: u16,
-    remainder: tex_state::node_arena::PageListId,
+    remainder: tex_state::page_node_arena::PageListId,
     split_top_skip: tex_state::glue::GlueSpec,
 ) {
     let (pruned, discarded) = prune_page_top_list_with_discards(stores, remainder, split_top_skip);
@@ -198,7 +198,7 @@ fn replace_split_source<G>(
 
 fn update_split_marks<G>(
     stores: &mut CommandContext<'_, G>,
-    nodes: tex_state::node_arena::PageListId,
+    nodes: tex_state::page_node_arena::PageListId,
 ) {
     clear_split_marks(stores);
     let mut classes = BTreeMap::new();

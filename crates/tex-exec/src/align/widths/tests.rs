@@ -2,7 +2,7 @@ use super::*;
 use crate::mode::AlignColumn;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::{NodeTokenList, UnsetKind, UnsetNodeFields};
-use tex_state::node_arena::PageListId;
+use tex_state::page_node_arena::PageListId;
 
 fn sp(raw: i32) -> Scaled {
     Scaled::from_raw(raw * Scaled::UNITY)

@@ -2,7 +2,7 @@ use super::*;
 use crate::mode::{AlignColumn, AlignmentPackSpec};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::{Node, NodeTokenList, UnsetKind, UnsetNode, UnsetNodeFields};
-use tex_state::node_arena::PageListId;
+use tex_state::page_node_arena::PageListId;
 use tex_state::scaled::Scaled;
 
 fn sp(raw: i32) -> Scaled {
@@ -93,7 +93,7 @@ fn span_width_list_orders_counts_and_keeps_maximum() {
             row(&mut stores, &[cell(empty, 20, 3)]),
         ];
 
-        let rows = tex_state::node_arena::NodeCursor::owned(&rows);
+        let rows = tex_state::node_view::NodeCursor::owned(&rows);
         let requirements = collect_width_requirements(AlignmentKind::HAlign, rows, &stores)
             .expect("valid unset rows produce width requirements");
         assert_eq!(
@@ -132,7 +132,7 @@ fn resolve_alignment_widths_applies_tex82_recurrence() {
 
         let resolved = resolve_widths(
             &state,
-            tex_state::node_arena::NodeCursor::owned(&rows),
+            tex_state::node_view::NodeCursor::owned(&rows),
             &stores,
         )
         .expect("span recurrence resolves");
@@ -161,7 +161,7 @@ fn resolve_alignment_widths_zeroes_null_column_tabskip() {
 
         let resolved = resolve_widths(
             &state,
-            tex_state::node_arena::NodeCursor::owned(&rows),
+            tex_state::node_view::NodeCursor::owned(&rows),
             &stores,
         )
         .expect("null columns resolve to zero");
@@ -198,7 +198,7 @@ fn alignment_width_resolution_negative_zero_and_competing_span_matrix() {
 
         let resolved = resolve_widths(
             &alignment,
-            tex_state::node_arena::NodeCursor::owned(&rows),
+            tex_state::node_view::NodeCursor::owned(&rows),
             &stores,
         )
         .expect("§802 recurrence resolves");
@@ -215,7 +215,7 @@ fn alignment_width_resolution_negative_zero_and_competing_span_matrix() {
         let empty_rows = [row(&mut stores, &[cell(empty, -3, 2)])];
         let resolved = resolve_widths(
             &empty_state,
-            tex_state::node_arena::NodeCursor::owned(&empty_rows),
+            tex_state::node_view::NodeCursor::owned(&empty_rows),
             &stores,
         )
         .expect("negative residual and null leading column resolve");

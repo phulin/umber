@@ -1,6 +1,6 @@
 use crate::math::{MathChar, MathField, MathNoad, NoadKind};
 use crate::node::{BoxLr, BoxNode, BoxNodeFields, DiscKind, Node, Sign};
-use crate::node_arena::PageListId;
+use crate::page_node_arena::PageListId;
 use crate::scaled::{GlueSetRatio, Scaled};
 use crate::token::OriginId;
 use std::hash::{Hash, Hasher};

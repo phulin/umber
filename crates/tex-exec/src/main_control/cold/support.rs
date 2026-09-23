@@ -91,8 +91,8 @@ pub(in crate::main_control) fn assign_box_dimension<G>(
         return;
     };
     let (mut node, horizontal) = match source {
-        tex_state::node_arena::NodeView::HList(node) => (node, true),
-        tex_state::node_arena::NodeView::VList(node) => (node, false),
+        tex_state::node_view::NodeView::HList(node) => (node, true),
+        tex_state::node_view::NodeView::VList(node) => (node, false),
         _ => return,
     };
     match dimension {
@@ -796,7 +796,7 @@ pub(in crate::main_control) fn read_box_register<G>(
     copy: bool,
     stores: &mut tex_state::CommandContext<'_, G>,
     _command: &CommandMachine<'_, '_, G>,
-) -> Option<tex_state::node_arena::PageListId> {
+) -> Option<tex_state::page_node_arena::PageListId> {
     if !copy {
         return stores.take_box_to_page(index);
     }
@@ -878,7 +878,7 @@ pub(in crate::main_control) fn box_end<G>(
 /// covers immediate `\box`, `\copy`, `\lastbox`, and `\vsplit` operands.
 pub(in crate::main_control) fn commit_set_box_target<G>(
     pending: PendingSetBox,
-    boxed: Option<tex_state::node_arena::PageListId>,
+    boxed: Option<tex_state::page_node_arena::PageListId>,
     stores: &mut tex_state::CommandContext<'_, G>,
     command: &mut CommandMachine<'_, '_, G>,
 ) {

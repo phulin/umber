@@ -910,14 +910,14 @@ impl<Role> NodeRegion<Role> {
         &'region self,
         pool: &'region NodePool,
         root: RegionRoot<Role>,
-    ) -> Result<crate::node_arena::NodeCursor<'region>, ForkArenaError> {
+    ) -> Result<crate::node_view::NodeCursor<'region>, ForkArenaError> {
         pool.validate_region(self)?;
         if root.region != self.id {
             return Err(ForkArenaError::InvalidRegion);
         }
         let view = self.pub_arena.list(&pool.chunks, root.list.coordinate())?;
         let annex = NodeAnnexView::new(&pool.annex_chunks, &self.annex_arena);
-        Ok(crate::node_arena::NodeCursor::fork_arena(view, annex))
+        Ok(crate::node_view::NodeCursor::fork_arena(view, annex))
     }
 
     #[allow(clippy::result_large_err)] // Validation failure must return the exclusive region owner.
@@ -1111,7 +1111,7 @@ impl<Role> OwnedNodeClosure<Role> {
     pub(crate) fn list<'region>(
         &'region self,
         pool: &'region NodePool,
-    ) -> Result<crate::node_arena::NodeCursor<'region>, ForkArenaError> {
+    ) -> Result<crate::node_view::NodeCursor<'region>, ForkArenaError> {
         self.region.list(pool, self.root)
     }
 
@@ -1119,7 +1119,7 @@ impl<Role> OwnedNodeClosure<Role> {
         &'region self,
         pool: &'region NodePool,
         list: PageListId,
-    ) -> Result<crate::node_arena::NodeCursor<'region>, ForkArenaError> {
+    ) -> Result<crate::node_view::NodeCursor<'region>, ForkArenaError> {
         let root = self.region.root(pool, list)?;
         self.region.list(pool, root)
     }

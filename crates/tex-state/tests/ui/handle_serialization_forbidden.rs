@@ -1,6 +1,6 @@
 use serde::de::DeserializeOwned;
 use serde::Serialize;
-use tex_state::node_arena::PageListId;
+use tex_state::page_node_arena::PageListId;
 use tex_state::{DefinitionRef, GlueId, ProvenanceId, TokenListId};
 
 enum Generation {}

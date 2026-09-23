@@ -176,7 +176,7 @@ fn alignment_v_template_continues_the_pending_ligkern_run() {
 
         fn collect_ligatures<G>(
             stores: &Universe<G>,
-            root: tex_state::node_arena::PageListId,
+            root: tex_state::page_node_arena::PageListId,
             found: &mut Vec<Vec<char>>,
         ) {
             for node in stores

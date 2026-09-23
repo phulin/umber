@@ -309,6 +309,15 @@ Ordinary list processing is packed-block movement plus append-only output:
 - source identities compose from packed-block summaries without a descriptor
   lookup.
 
+The old generic `NodeArena<L>` does not participate in these handoffs. Its
+scratch/page/durable lifetime markers, range carrier, and relocation scratch
+are removed rather than wrapped around `ForkArena`. Tests that proved actual
+zero-copy source retention, stale-coordinate rejection, or closure ownership
+must exercise `PageMaterialArena` and the aggregate page facade. A cold owned
+node is still appropriate when a diagnostic, shipout, format, or other
+explicit detachment consumes the value; ordinary list validation and
+typesetting should stay on admitted borrowed records.
+
 The same-arena counted-copy path keeps only stable source chunk/offset
 coordinates while destination mutation is exclusive. It borrows each compact
 source record, derives optional identity without materializing `Node`,

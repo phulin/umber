@@ -1,9 +1,9 @@
 //! Direct borrowed traversal across owned and resident compact nodes.
 
-use super::PageListId;
 use super::view::NodeView;
 use crate::glue::GlueSpec;
 use crate::node::Node;
+use crate::page_node_arena::PageListId;
 
 /// Width-bearing semantic facts read without expanding a compact node record.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -279,15 +279,6 @@ pub struct NodeCursor<'a> {
     source: NodeCursorSource<'a>,
 }
 
-// Keep the large transitional enum projection out of the recursive
-// predecessor-walk frame. The compact-record cutover replaces this conversion
-// with its narrow decoded view, but the enum-backed stage must still traverse
-// one-value chunks on the routine test stack.
-#[inline(never)]
-fn visit_node_view<'a>(visit: &mut impl FnMut(NodeView<'a>), node: &'a Node) {
-    visit(NodeView::from(node));
-}
-
 /// Test-only observations which distinguish positional node probes from
 /// linear predecessor-topology traversal.
 #[cfg(any(test, feature = "testing"))]
@@ -333,10 +324,6 @@ impl<'a> NodeCursor<'a> {
         Self {
             source: NodeCursorSource::Slice(nodes),
         }
-    }
-    #[must_use]
-    pub const fn compact(nodes: &'a [Node]) -> Self {
-        Self::owned(nodes)
     }
     #[must_use]
     pub(crate) const fn fork_arena(
@@ -618,7 +605,7 @@ impl NodeCursorIter<'_> {
     /// mutation scratch or detached test evidence. Ordinary consumers should
     /// continue matching the `NodeView` items yielded by the iterator.
     pub fn cloned(self) -> impl DoubleEndedIterator<Item = Node> + ExactSizeIterator {
-        self.map(|node| node.to_owned_with(std::convert::identity))
+        self.map(|node| node.to_owned())
     }
 }
 

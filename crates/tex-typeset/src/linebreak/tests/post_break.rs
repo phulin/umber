@@ -381,8 +381,8 @@ fn line_materializer_reuses_the_returned_line_buffer() {
             hyphenated: false,
         },
     ];
-    let mut materializer = LineMaterializer::from_nodes(
-        nodes,
+    let mut materializer = LineMaterializer::from_borrowed_nodes(
+        &nodes,
         breaks,
         PostLineBreakParams {
             empty_list: empty,
@@ -521,11 +521,7 @@ fn paragraph_tape_bounds_analysis_storage_for_large_paragraphs() {
         });
     }
     let parameters = params(100);
-    let tape = ParagraphTape::analyze(
-        &universe,
-        tex_state::node_sequence::NodeSequence::mirrored(nodes),
-        &parameters,
-    );
+    let tape = ParagraphTape::analyze_borrowed(&universe, &nodes, &parameters);
 
     assert_eq!(tape.materialization.len(), tape.nodes(&universe).len());
     assert!(tape.break_sites.len() <= tape.nodes(&universe).len() + 1);

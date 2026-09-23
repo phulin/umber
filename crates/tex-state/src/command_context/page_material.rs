@@ -5,7 +5,25 @@ use super::*;
 impl<'a, G> CommandContext<'a, G> {
     /// Publishes one complete page-lifetime list inside this admitted episode.
     pub fn publish_page_nodes(&mut self, nodes: Vec<crate::node::Node>) -> PageListId {
-        self.publish_page_node_range(nodes).list()
+        let etex_node_sizes = self.resident.engine_usage.uses_etex_node_sizes();
+        let words = nodes.iter().fold((0_usize, 0_usize), |words, node| {
+            let node_words = node.tex_memory_words(etex_node_sizes);
+            (
+                words.0.saturating_add(node_words.0),
+                words.1.saturating_add(node_words.1),
+            )
+        });
+        for node in &nodes {
+            self.assert_live_node_font_roots(node);
+        }
+        let list = self
+            .page_nodes
+            .publish_owned(nodes)
+            .expect("page construction contains only live page-arena children");
+        self.resident
+            .engine_usage
+            .observe_transient_memory(words.0, words.1);
+        list
     }
 
     /// Constructs one generated page node in its final resident slot.
@@ -225,38 +243,12 @@ impl<'a, G> CommandContext<'a, G> {
             .expect("page active-list rollback belongs to its live owner");
     }
 
-    /// Publishes one immutable payload segment inside this admitted episode.
-    pub fn publish_page_node_range(
-        &mut self,
-        nodes: Vec<crate::node::Node>,
-    ) -> crate::node_arena::PageNodeRange {
-        let etex_node_sizes = self.resident.engine_usage.uses_etex_node_sizes();
-        let words = nodes.iter().fold((0_usize, 0_usize), |words, node| {
-            let node_words = node.tex_memory_words(etex_node_sizes);
-            (
-                words.0.saturating_add(node_words.0),
-                words.1.saturating_add(node_words.1),
-            )
-        });
-        for node in &nodes {
-            self.assert_live_node_font_roots(node);
-        }
-        let range = self
-            .page_nodes
-            .publish_range(nodes)
-            .expect("page construction contains only live page-arena children");
-        self.resident
-            .engine_usage
-            .observe_transient_memory(words.0, words.1);
-        range
-    }
-
     /// Flattens direct/composite descriptors into this generation's compact
     /// piece stream without copying node payload.
     pub fn compose_page_node_sequences(
         &mut self,
-        inputs: &[crate::node_arena::PageNodeSequenceId],
-    ) -> crate::node_arena::PageNodeSequenceId {
+        inputs: &[crate::page_node_arena::PageListId],
+    ) -> crate::page_node_arena::PageListId {
         self.page_nodes
             .compose_sequences(inputs)
             .expect("page sequence inputs belong to the live page arena")
@@ -265,10 +257,10 @@ impl<'a, G> CommandContext<'a, G> {
     /// Borrows an immutable logical subrange by publishing descriptors only.
     pub fn slice_page_node_sequence(
         &mut self,
-        sequence: crate::node_arena::PageNodeSequenceId,
+        sequence: crate::page_node_arena::PageListId,
         range: core::ops::Range<usize>,
-        scratch: &mut Vec<crate::node_arena::PageNodeSequenceId>,
-    ) -> crate::node_arena::PageNodeSequenceId {
+        scratch: &mut Vec<crate::page_node_arena::PageListId>,
+    ) -> crate::page_node_arena::PageListId {
         self.page_nodes
             .slice_sequence(sequence, range, scratch)
             .expect("page sequence range belongs to the live page arena")
@@ -300,67 +292,6 @@ impl<'a, G> CommandContext<'a, G> {
         self.page_nodes.counters()
     }
 
-    /// Starts a descriptor-only transform in caller-owned reusable scratch.
-    pub fn begin_page_node_transform(
-        &self,
-        scratch: &mut crate::node_arena::PageNodeTransformScratch,
-    ) {
-        scratch.begin();
-    }
-
-    /// Appends an unchanged source range by coordinate only.
-    pub fn retain_page_node_source_range(
-        &mut self,
-        scratch: &mut crate::node_arena::PageNodeTransformScratch,
-        source: crate::node_arena::PageNodeSequenceId,
-        range: core::ops::Range<usize>,
-    ) {
-        let piece = self
-            .page_nodes
-            .slice_sequence(source, range, &mut scratch.slices)
-            .expect("retained source range belongs to the live page arena");
-        if !piece.is_empty() {
-            scratch.pieces.push(piece);
-        }
-    }
-
-    /// Publishes genuinely new transform output once and appends its range.
-    pub fn append_new_page_nodes(
-        &mut self,
-        scratch: &mut crate::node_arena::PageNodeTransformScratch,
-        nodes: Vec<crate::node::Node>,
-    ) {
-        if nodes.is_empty() {
-            return;
-        }
-        scratch.new_semantic_nodes = scratch.new_semantic_nodes.saturating_add(nodes.len());
-        let range = self.publish_page_node_range(nodes);
-        scratch.pieces.push(range);
-    }
-
-    /// Completes a transform by flattening only its compact descriptors.
-    pub fn finish_page_node_transform(
-        &mut self,
-        scratch: &mut crate::node_arena::PageNodeTransformScratch,
-    ) -> crate::node_arena::PageNodeSequenceId {
-        let sequence = self
-            .page_nodes
-            .compose_sequences(&scratch.pieces)
-            .expect("transform pieces belong to the live page arena");
-        scratch.pieces.clear();
-        scratch.slices.clear();
-        sequence
-    }
-
-    /// Returns a whole payload segment to operation-local ownership without
-    /// cloning it. Partial or shared-row extraction is deliberately rejected.
-    pub fn take_page_node_range(
-        &mut self,
-        _range: crate::node_arena::PageNodeRange,
-    ) -> Vec<crate::node::Node> {
-        panic!("page-material ranges are immutable; callers must consume builders before sealing")
-    }
-
     /// Opens one nested structural suffix in the live page arena.
     #[must_use]
     pub fn begin_page_node_region(
@@ -376,30 +307,24 @@ impl<'a, G> CommandContext<'a, G> {
     pub fn release_page_node_region(
         &mut self,
         region: crate::node_region::ClosureBuildMark<crate::node_region::PageRole>,
-    ) -> Result<(), NodeArenaError> {
-        self.page_nodes
-            .cancel_closure_build(region)
-            .map_err(|_| NodeArenaError::ForeignCursor)
+    ) -> Result<(), ForkArenaError> {
+        self.page_nodes.cancel_closure_build(region)
     }
 
     /// Resolves one page-lifetime list while the admitted context is live.
     pub fn page_node_list(
         &self,
         list: PageListId,
-    ) -> Result<crate::node_arena::NodeCursor<'_>, NodeArenaError> {
-        self.page_nodes
-            .node_cursor(list)
-            .map_err(|_| NodeArenaError::InvalidList)
+    ) -> Result<crate::node_view::NodeCursor<'_>, ForkArenaError> {
+        self.page_nodes.node_cursor(list)
     }
 
     /// Validates one transport coordinate at a semantic ownership boundary.
     pub fn admit_page_node_span(
         &self,
         list: PageListId,
-    ) -> Result<crate::page_node_arena::PageListSpan, NodeArenaError> {
-        self.page_nodes
-            .admit_span(list)
-            .map_err(|_| NodeArenaError::InvalidList)
+    ) -> Result<crate::page_node_arena::PageListSpan, ForkArenaError> {
+        self.page_nodes.admit_span(list)
     }
 
     /// Admits one operation-local page list and retains its resolved compact
@@ -407,58 +332,46 @@ impl<'a, G> CommandContext<'a, G> {
     pub fn admit_page_node_list(
         &self,
         list: PageListId,
-    ) -> Result<crate::page_node_arena::AdmittedPageList, NodeArenaError> {
-        self.page_nodes
-            .admit_page_list(list)
-            .map_err(|_| NodeArenaError::InvalidList)
+    ) -> Result<crate::page_node_arena::AdmittedPageList, ForkArenaError> {
+        self.page_nodes.admit_page_list(list)
     }
 
     pub fn admitted_page_nodes(
         &self,
         list: crate::page_node_arena::AdmittedPageList,
-    ) -> Result<crate::node_arena::NodeCursor<'_>, NodeArenaError> {
-        self.page_nodes
-            .admitted_node_cursor(list)
-            .map_err(|_| NodeArenaError::InvalidList)
+    ) -> Result<crate::node_view::NodeCursor<'_>, ForkArenaError> {
+        self.page_nodes.admitted_node_cursor(list)
     }
 
     pub fn admitted_page_tail_chunk(
         &self,
         list: crate::page_node_arena::AdmittedPageList,
-    ) -> Result<Option<crate::page_node_arena::PageListChunkCursor>, NodeArenaError> {
-        self.page_nodes
-            .admitted_tail_chunk(list)
-            .map_err(|_| NodeArenaError::InvalidList)
+    ) -> Result<Option<crate::page_node_arena::PageListChunkCursor>, ForkArenaError> {
+        self.page_nodes.admitted_tail_chunk(list)
     }
 
     /// Resolves a previously admitted span without rescanning its topology.
     pub fn page_node_span(
         &self,
         span: crate::page_node_arena::PageListSpan,
-    ) -> Result<crate::node_arena::NodeCursor<'_>, NodeArenaError> {
-        self.page_nodes
-            .span_node_cursor(span)
-            .map_err(|_| NodeArenaError::InvalidList)
+    ) -> Result<crate::node_view::NodeCursor<'_>, ForkArenaError> {
+        self.page_nodes.span_node_cursor(span)
     }
 
     /// Starts a stack-resident direct packed-chunk walk of an admitted span.
     pub fn page_node_span_tail_chunk(
         &self,
         span: crate::page_node_arena::PageListSpan,
-    ) -> Result<Option<crate::page_node_arena::PageListChunkCursor>, NodeArenaError> {
-        self.page_nodes
-            .span_tail_chunk(span)
-            .map_err(|_| NodeArenaError::InvalidList)
+    ) -> Result<Option<crate::page_node_arena::PageListChunkCursor>, ForkArenaError> {
+        self.page_nodes.span_tail_chunk(span)
     }
 
     /// Follows one admitted page span's predecessor topology directly.
     pub fn page_node_span_previous_chunk(
         &self,
         cursor: &crate::page_node_arena::PageListChunkCursor,
-    ) -> Result<Option<crate::page_node_arena::PageListChunkCursor>, NodeArenaError> {
-        self.page_nodes
-            .span_previous_chunk(cursor)
-            .map_err(|_| NodeArenaError::InvalidList)
+    ) -> Result<Option<crate::page_node_arena::PageListChunkCursor>, ForkArenaError> {
+        self.page_nodes.span_previous_chunk(cursor)
     }
 
     /// Borrows one node from an already-admitted packed chunk without a
@@ -481,11 +394,9 @@ impl<'a, G> CommandContext<'a, G> {
 
     pub fn page_node_sequence(
         &self,
-        sequence: crate::node_arena::PageNodeSequenceId,
-    ) -> Result<crate::node_arena::NodeCursor<'_>, crate::node_arena::NodeArenaError> {
-        self.page_nodes
-            .get_sequence(sequence)
-            .map_err(|_| NodeArenaError::InvalidList)
+        sequence: crate::page_node_arena::PageListId,
+    ) -> Result<crate::node_view::NodeCursor<'_>, crate::fork_arena::ForkArenaError> {
+        self.page_nodes.node_cursor(sequence)
     }
 
     /// Resolves shipout-only derived nodes while the aggregate transaction is
@@ -503,19 +414,19 @@ impl<'a, G> CommandContext<'a, G> {
     pub fn copy_page_list_to_shipout_scratch(
         &mut self,
         root: PageListId,
-    ) -> Result<ShipoutScratchListId, NodeArenaError> {
+    ) -> Result<ShipoutScratchListId, ForkArenaError> {
         fn copy<G>(
             context: &mut CommandContext<'_, G>,
             source: PageListId,
             copied: &mut std::collections::HashMap<PageListId, ShipoutScratchListId>,
-        ) -> Result<ShipoutScratchListId, NodeArenaError> {
+        ) -> Result<ShipoutScratchListId, ForkArenaError> {
             if let Some(destination) = copied.get(&source) {
                 return Ok(*destination);
             }
             let nodes = context
                 .page_node_list(source)?
                 .iter()
-                .map(|node| node.to_owned_with(std::convert::identity))
+                .map(|node| node.to_owned())
                 .collect::<Vec<_>>();
             let destination = context.begin_shipout_scratch_list();
             copied.insert(source, destination);
@@ -727,10 +638,8 @@ impl<'a, G> CommandContext<'a, G> {
     pub fn page_nodes(
         &self,
         list: PageListId,
-    ) -> Result<crate::node_arena::NodeCursor<'_>, NodeArenaError> {
-        self.page_nodes
-            .node_cursor(list)
-            .map_err(|_| NodeArenaError::InvalidList)
+    ) -> Result<crate::node_view::NodeCursor<'_>, ForkArenaError> {
+        self.page_nodes.node_cursor(list)
     }
 
     /// Returns the generation-checked owner of every page-list coordinate
@@ -776,7 +685,7 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     /// Borrows the live page-builder sequence for diagnostic rendering only.
-    pub fn current_page_nodes(&self) -> crate::node_arena::NodeCursorIter<'_> {
+    pub fn current_page_nodes(&self) -> crate::node_view::NodeCursorIter<'_> {
         self.page.current_page(&self.page_nodes)
     }
 }

@@ -15,7 +15,8 @@ use tex_state::node::{
     KernKind as StateKernKind, LeaderPayload as StateLeaderPayload,
     MarginKernSide as StateMarginKernSide, Node, Sign, Whatsit,
 };
-use tex_state::node_arena::{NodeView, PageListId};
+use tex_state::node_view::NodeView;
+use tex_state::page_node_arena::PageListId;
 use tex_state::token::OriginId;
 use tex_state::token::{Catcode, Token, TokenWord};
 use tex_state::{
@@ -123,10 +124,10 @@ fn stage_form_inner<G>(
         .first()
         .ok_or(ExecError::PdfXFormVoidBox)?;
     let (root, children, vertical, box_lr) = match root_node {
-        tex_state::node_arena::NodeView::HList(node) => {
+        tex_state::node_view::NodeView::HList(node) => {
             (lower_box_header(&node), node.children, false, node.box_lr)
         }
-        tex_state::node_arena::NodeView::VList(node) => {
+        tex_state::node_view::NodeView::VList(node) => {
             (lower_box_header(&node), node.children, true, node.box_lr)
         }
         _ => return Err(ExecError::PdfXFormVoidBox),
@@ -852,7 +853,7 @@ fn shipout_kern<G>(
 
 fn emit_char_run<G>(
     stores: &CommandContext<'_, G>,
-    run: tex_state::node_arena::CharRun<'_>,
+    run: tex_state::node_view::CharRun<'_>,
     output: &mut ArtifactNodeListEmitter<'_>,
     dvi: &mut DviPagePlanCoEmitter,
     emission: &mut EmissionState<'_>,

@@ -9,7 +9,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::glue::GlueSpec;
 use crate::node::{Node, NodeTokenList};
-use crate::node_arena::PageListId;
+use crate::page_node_arena::PageListId;
 
 #[cfg(test)]
 mod tests;

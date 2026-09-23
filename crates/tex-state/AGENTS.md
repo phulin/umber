@@ -269,23 +269,13 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/node.rs`: Storage-independent TeX node and box values with copy-only
   provenance, directly owned glue, compact generation token coordinates, and
   typed list coordinates.
-- `src/node_sequence.rs`: Explicit mirrored-or-distinct semantic and
-  TeX-physical operation buffers. Mirrored hot lists store one node/inline
-  lineage channel with demand-enabled composable semantic identity; cold detached extraction can
-  materialize two owned channels. Named checkpoints retain direct child
-  coordinates without publishing duplicate page-arena rows. The module also
-  owns TeX-cell lineage metadata and semantic-only equality.
-- `src/node_arena.rs`: Compatibility scratch and cold loaded-node arenas; copy-only
-  typed/rebranded coordinates; shared immutable checkpoint rows; exact
-  branch-local generation frontiers; owner-checked suffix cursors; borrowed
-  resolution; demand-enabled layout-independent list identities; and cold-only
-  exact-root relocation. Public `NodeArena` compatibility remains live.
-- `src/node_arena/view.rs`: Borrowed `NodeView` projections and transitional
-  conversions shared by compact and owned sources.
-- `src/node_arena/cursor.rs`: Direct `NodeCursor` traversal over resident
-  page-material records and owned slices, including linear callbacks,
-  positional compatibility iteration, and direct scalar projections. The
-  public types remain reexported through `node_arena`.
+- `src/node_sequence.rs`: Composable semantic sequence identity and transient
+  TeX-cell lineage evidence for borrowed semantic and physical paragraph
+  projections. The old owned dual-channel node buffer is retired.
+- `src/node_view.rs` and `src/node_view/{view,cursor}.rs`: Borrowed `NodeView`
+  and `NodeCursor` projections over compact page-material records and slices,
+  including direct scalar reads and admitted linear traversal. Storage and
+  page-list coordinates belong to `page_node_arena`, not this view module.
 - `src/node_destination.rs`: One-use variant-directed construction capability
   for initializing a final resident node slot without a complete caller-owned
   node crossing the arena boundary.
@@ -297,9 +287,6 @@ All production mutation of live TeX state should pass through `Universe` or simi
   node-plus-annex boundaries, checkpoint marks, detached batches, and region
   transitions live directly in `src/node_region.rs`. Do not add parallel
   logical-table or envelope taxonomies beside those production paths.
-- `src/node_arena/tests.rs`: Scratch/page/durable exact-closure relocation,
-  owner-checked rollback, invalid-publication controls, completed-page release,
-  and stale-coordinate rejection after bounded row reuse.
 - `src/node_region.rs` and `src/node_region/tests.rs`: Exclusive move-only node
   regions above the shared fixed-chunk pool, generation-checked owner-relative
   roots and direct borrowed `NodeCursor` admission, paired node/annex checkpoint and closure marks,
@@ -310,7 +297,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
   fallback.
 - `src/page_node_arena.rs` and `src/page_node_arena/tests.rs`: Page-semantic
   identity facade, checked destination construction, and focused warmed
-  1/4,096-node allocation/copy/chunk-work proof over the generic arena.
+  1/4,096-node allocation/copy/chunk-work proof over the live page-material
+  owner. Public page reads return borrowed cursors; cold detachment is explicit.
 - `src/page.rs`: Exclusive move-only `PageRegion` ownership over page payload,
   the four checked `PageListSpan` PageBuilder roots, scalar state, reversible
   same-region journal, and private owner-relative checkpoint rows; active

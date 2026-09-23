@@ -13,7 +13,8 @@ use tex_state::math::{
 use tex_state::node::{
     BoxNode, GlueKind, KernKind, LeaderPayload, Node, Sign, UnsetKind, UnsetNode, Whatsit,
 };
-use tex_state::node_arena::{NodeView, PageListId};
+use tex_state::node_view::NodeView;
+use tex_state::page_node_arena::PageListId;
 use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::token::Token;
 use tex_state::token_show::append_tex_print_char;
@@ -91,7 +92,7 @@ pub(crate) fn dump_node_slice<G>(
 
 pub(crate) fn dump_node_sequence_view<G>(
     stores: &CommandContext<'_, G>,
-    nodes: tex_state::node_arena::NodeCursor<'_>,
+    nodes: tex_state::node_view::NodeCursor<'_>,
     config: DumpConfig,
 ) -> String {
     let mut out = String::new();
@@ -280,26 +281,14 @@ impl<List: Copy, Glue: Copy, Tokens: Clone> DumpNodeCollection<List, Glue, Token
 }
 
 impl DumpNodeCollection<PageListId, GlueSpec, tex_state::node::NodeTokenList>
-    for tex_state::node_arena::NodeCursor<'_>
+    for tex_state::node_view::NodeCursor<'_>
 {
     fn len(&self) -> usize {
-        tex_state::node_arena::NodeCursor::len(self)
+        tex_state::node_view::NodeCursor::len(self)
     }
 
     fn get(&self, index: usize) -> Option<NodeView<'_>> {
         self.get(index)
-    }
-}
-
-impl DumpNodeCollection<PageListId, GlueSpec, tex_state::node::NodeTokenList>
-    for tex_state::node_sequence::NodeSequenceView<'_>
-{
-    fn len(&self) -> usize {
-        tex_state::node_sequence::NodeSequenceView::len(*self)
-    }
-
-    fn get(&self, index: usize) -> Option<NodeView<'_>> {
-        tex_state::node_sequence::NodeSequenceView::get(*self, index).map(NodeView::from)
     }
 }
 

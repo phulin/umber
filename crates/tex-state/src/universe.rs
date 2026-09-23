@@ -14,6 +14,7 @@ use crate::env::{
     DurableBoxState, DurableFormState, StateError,
 };
 use crate::font::{AcceptedFontStoreTail, FontStore, FontStoreMark};
+use crate::fork_arena::ForkArenaError;
 use crate::fork_arena::{OperationMark, PageMaterialLane};
 use crate::generation::{
     CheckpointGenerationOwner, GenerationBrand, GenerationCursor, GenerationOwner, with_generation,
@@ -28,11 +29,11 @@ use crate::interner::{
 use crate::journal::{JournalCursor, StateOperation};
 use crate::meaning::{Meaning, MeaningWord};
 use crate::node::Node;
-use crate::node_arena::{NodeArenaError, PageListId};
 use crate::node_region::NodeCheckpointMark;
 use crate::page::{
     AcceptedPageRegionHistoryTail, PageCheckpointMark, PageRegionCheckpointKey, PageRegionHistory,
 };
+use crate::page_node_arena::PageListId;
 use crate::pdf::PdfStateSlot;
 use crate::print::ErrorContextWidths;
 use crate::provenance::OriginRecord;
@@ -175,7 +176,7 @@ impl<G> EngineBoundaryHasher<'_, G> {
                 .expect("semantic child belongs to the live page arena");
             self.nodes_iter(child.iter());
         });
-        let mut value = node.to_owned_with(std::convert::identity);
+        let mut value = node.to_owned();
         value.visit_node_lists_mut(|child| *child = PageListId::empty());
         match &mut value {
             Node::Char { font, .. } => {
@@ -620,7 +621,7 @@ pub enum UniverseError {
     InternerAccess(InternerAccessError),
     DefinitionAllocation(DefinitionAllocationError),
     DurableAllocation(DurableAllocationError),
-    NodeArena(NodeArenaError),
+    PageNodes(ForkArenaError),
     State(StateError),
     Retired,
 }
@@ -779,7 +780,7 @@ pub trait ResidentPromotionBatch<G> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NodePromotionError {
     Values(PromotionError),
-    Nodes(NodeArenaError),
+    Nodes(ForkArenaError),
 }
 
 /// Fixed-size tex-state portion of a retained aggregate checkpoint.
@@ -796,8 +797,8 @@ impl From<PromotionError> for NodePromotionError {
     }
 }
 
-impl From<NodeArenaError> for NodePromotionError {
-    fn from(error: NodeArenaError) -> Self {
+impl From<ForkArenaError> for NodePromotionError {
+    fn from(error: ForkArenaError) -> Self {
         Self::Nodes(error)
     }
 }
@@ -832,9 +833,9 @@ impl From<DurableAllocationError> for UniverseError {
     }
 }
 
-impl From<NodeArenaError> for UniverseError {
-    fn from(error: NodeArenaError) -> Self {
-        Self::NodeArena(error)
+impl From<ForkArenaError> for UniverseError {
+    fn from(error: ForkArenaError) -> Self {
+        Self::PageNodes(error)
     }
 }
 
@@ -2444,11 +2445,8 @@ impl<G> Universe<G> {
     pub fn page_node_list(
         &self,
         id: PageListId,
-    ) -> Result<crate::node_arena::NodeCursor<'_>, NodeArenaError> {
-        self.page_region
-            .nodes()
-            .node_cursor(id)
-            .map_err(|_| NodeArenaError::InvalidList)
+    ) -> Result<crate::node_view::NodeCursor<'_>, ForkArenaError> {
+        self.page_region.nodes().node_cursor(id)
     }
 
     /// Opens one final shipout-scratch row for direct construction.
@@ -2507,11 +2505,8 @@ impl<G> Universe<G> {
     pub fn release_page_node_region(
         &mut self,
         region: crate::node_region::ClosureBuildMark<crate::node_region::PageRole>,
-    ) -> Result<(), NodeArenaError> {
-        self.page_region
-            .nodes_mut()
-            .cancel_closure_build(region)
-            .map_err(|_| NodeArenaError::ForeignCursor)
+    ) -> Result<(), ForkArenaError> {
+        self.page_region.nodes_mut().cancel_closure_build(region)
     }
 
     /// Truncates a rejected page-arena suffix after canonical roots restore.
@@ -2521,16 +2516,13 @@ impl<G> Universe<G> {
     pub fn truncate_page_nodes(
         &mut self,
         cursor: OperationMark<PageMaterialLane>,
-    ) -> Result<(), NodeArenaError> {
-        self.page_region
-            .nodes_mut()
-            .restore_operation(cursor)
-            .map_err(|_| NodeArenaError::ForeignCursor)
+    ) -> Result<(), ForkArenaError> {
+        self.page_region.nodes_mut().restore_operation(cursor)
     }
 
     /// Releases storage reachable only from a completed page after its
     /// handle-free output has been validated and the canonical root removed.
-    pub fn release_completed_page(&mut self, _root: PageListId) -> Result<(), NodeArenaError> {
+    pub fn release_completed_page(&mut self, _root: PageListId) -> Result<(), ForkArenaError> {
         Ok(())
     }
 
@@ -2620,7 +2612,7 @@ impl<G> Universe<G> {
         let durable = value
             .map(|root| self.page_region.nodes_mut().copy_page_root_to_durable(root))
             .transpose()
-            .map_err(|_| NodePromotionError::Nodes(NodeArenaError::AllocationFailed))?;
+            .map_err(NodePromotionError::Nodes)?;
         let state = self
             .core
             .as_ref()
@@ -2713,11 +2705,11 @@ impl<G> Universe<G> {
     pub fn durable_child_node_list(
         &self,
         id: PageListId,
-    ) -> Result<crate::node_arena::NodeCursor<'_>, UniverseError> {
+    ) -> Result<crate::node_view::NodeCursor<'_>, UniverseError> {
         self.page_region
             .nodes()
             .node_cursor(id)
-            .map_err(|_| UniverseError::NodeArena(NodeArenaError::InvalidList))
+            .map_err(UniverseError::PageNodes)
     }
 
     /// Resolves a generation-owned token payload for borrow-only shipout

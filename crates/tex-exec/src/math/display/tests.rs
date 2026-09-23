@@ -1,7 +1,7 @@
 use tex_state::glue::GlueSpec;
 use tex_state::glue::Order;
 use tex_state::node::{BoxLr, BoxNode, BoxNodeFields, Direction, GlueKind, KernKind, Node, Sign};
-use tex_state::node_arena::PageListId;
+use tex_state::page_node_arena::PageListId;
 use tex_state::scaled::{GlueSetRatio, Scaled};
 
 use super::{display_line_prototype, package_directed_display_line};
@@ -58,7 +58,7 @@ fn etex_display_prototype_replaces_its_list_without_repacking() {
             .expect("display children belong to the page arena")
             .nodes()
             .iter()
-            .map(|node| node.to_owned_with(std::convert::identity))
+            .map(|node| node.to_owned())
             .collect::<Vec<_>>();
         assert!(matches!(
             nodes.as_slice(),

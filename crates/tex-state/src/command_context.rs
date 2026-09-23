@@ -10,12 +10,14 @@ use crate::env::banks::IntParam;
 use crate::env::{AssignmentScope, CodeTableKind, DurableNodeMetadata, StateError};
 use crate::env::{DurableBoxState, DurableFormState};
 use crate::font::FontStore;
+use crate::fork_arena::ForkArenaError;
 use crate::glue::GlueSpec;
 use crate::hyphenation::{ExceptionSpec, PatternSpec};
 use crate::interner::{ControlSequenceKind, InternerAccessError, Symbol, SymbolId};
 use crate::meaning::{Meaning, MeaningWord, ResolvedMeaning};
-use crate::node_arena::{NodeArenaError, PageListId, PageNodeArena};
 use crate::page::PageBuilderState;
+use crate::page_node_arena::PageListId;
+use crate::page_node_arena::PageMaterialArena;
 use crate::provenance::OriginRecord;
 use crate::scaled::Scaled;
 use crate::shipout_scratch::ShipoutScratchArena;
@@ -672,7 +674,7 @@ pub struct CommandContext<'a, G> {
     durable_forms: &'a mut DurableFormState,
     shipout_scratch: &'a mut ShipoutScratchArena<G>,
     admitted: AdmittedStateMut<'a, G>,
-    page_nodes: PageNodeArena<'a>,
+    page_nodes: PageMaterialArena<'a>,
     page: &'a mut PageBuilderState,
 }
 
@@ -680,7 +682,7 @@ impl<'a, G> CommandContext<'a, G> {
     pub(super) fn new(
         owners: CommandLifetimeOwners<'a, G>,
         admitted: AdmittedStateMut<'a, G>,
-        page_nodes: PageNodeArena<'a>,
+        page_nodes: PageMaterialArena<'a>,
         page: &'a mut PageBuilderState,
     ) -> Self {
         let CommandLifetimeOwners {
@@ -758,10 +760,8 @@ impl<'a, G> CommandContext<'a, G> {
     pub fn truncate_page_nodes(
         &mut self,
         cursor: crate::fork_arena::OperationMark<crate::fork_arena::PageMaterialLane>,
-    ) -> Result<(), NodeArenaError> {
-        self.page_nodes
-            .restore_operation(cursor)
-            .map_err(|_| NodeArenaError::ForeignCursor)
+    ) -> Result<(), ForkArenaError> {
+        self.page_nodes.restore_operation(cursor)
     }
 
     /// Records scanner-owned one-word nodes while their owners coexist.
@@ -1622,7 +1622,7 @@ impl<'a, G> CommandContext<'a, G> {
         let durable = self
             .page_nodes
             .copy_page_root_to_durable(root)
-            .map_err(|_| crate::NodePromotionError::Nodes(NodeArenaError::AllocationFailed))?;
+            .map_err(crate::NodePromotionError::Nodes)?;
         self.durable_boxes
             .replace(&mut self.page_nodes, index, Some(durable))
             .map_err(|_| {
@@ -1644,7 +1644,7 @@ impl<'a, G> CommandContext<'a, G> {
         let durable = value
             .map(|root| self.page_nodes.copy_page_root_to_durable(root))
             .transpose()
-            .map_err(|_| crate::NodePromotionError::Nodes(NodeArenaError::AllocationFailed))?;
+            .map_err(crate::NodePromotionError::Nodes)?;
         let current_level = self.admitted.state_ref().current_level();
         let group_save_position = self.admitted.state_ref().save_stack_order_position();
         self.durable_boxes
@@ -1683,14 +1683,12 @@ impl<'a, G> CommandContext<'a, G> {
                         root,
                         self.page.payload_root_lists(),
                     )
-                    .map_err(|_| {
-                        crate::NodePromotionError::Nodes(NodeArenaError::AllocationFailed)
-                    })?,
+                    .map_err(crate::NodePromotionError::Nodes)?,
             ),
             None => {
                 self.page_nodes
                     .cancel_closure_build(build)
-                    .map_err(|_| crate::NodePromotionError::Nodes(NodeArenaError::ForeignCursor))?;
+                    .map_err(crate::NodePromotionError::Nodes)?;
                 None
             }
         };
@@ -1726,7 +1724,7 @@ impl<'a, G> CommandContext<'a, G> {
         debug_assert!(self.durable_boxes.metadata(u16::from(u8::MAX)).is_none());
         self.page
             .install_output_box(&self.page_nodes, value)
-            .map_err(|_| crate::NodePromotionError::Nodes(NodeArenaError::ForeignCursor))?;
+            .map_err(crate::NodePromotionError::Nodes)?;
         #[cfg(feature = "profiling")]
         self.page_nodes.record_page_output_pool_census();
         Ok(())
@@ -1741,7 +1739,7 @@ impl<'a, G> CommandContext<'a, G> {
         let durable = self
             .page_nodes
             .copy_page_root_to_durable(value)
-            .map_err(|_| crate::NodePromotionError::Nodes(NodeArenaError::AllocationFailed))?;
+            .map_err(crate::NodePromotionError::Nodes)?;
         self.durable_boxes
             .replace(&mut self.page_nodes, index, Some(durable))
             .map_err(|_| crate::NodePromotionError::Values(crate::PromotionError::AllocationFailed))
@@ -2070,8 +2068,8 @@ impl<'a, G> CommandContext<'a, G> {
             .page_node_list(value)
             .expect("box assignment root belongs to the admitted page arena");
         let (kind, node) = match (list.len(), list.nodes().first()) {
-            (1, Some(crate::node_arena::NodeView::HList(node))) => ("hbox", node),
-            (1, Some(crate::node_arena::NodeView::VList(node))) => ("vbox", node),
+            (1, Some(crate::node_view::NodeView::HList(node))) => ("hbox", node),
+            (1, Some(crate::node_view::NodeView::VList(node))) => ("vbox", node),
             _ => return "void".to_owned(),
         };
         let abbreviated_children = if self
@@ -3994,13 +3992,13 @@ fn box_glue_setting_text<List>(node: &crate::node::BoxNode<List>) -> String {
 }
 
 fn page_list_semantic_id<G>(
-    page_nodes: &PageNodeArena<'_>,
+    page_nodes: &PageMaterialArena<'_>,
     fonts: &FontStore,
     admitted: &crate::stores::AdmittedStateMut<'_, G>,
     root: PageListId,
 ) -> crate::state_hash::StateHashFragment {
     struct PageSemanticHasher<'a, G> {
-        page_nodes: &'a PageNodeArena<'a>,
+        page_nodes: &'a PageMaterialArena<'a>,
         fonts: &'a FontStore,
         admitted: &'a crate::stores::AdmittedStateMut<'a, G>,
         hasher: crate::state_hash::StateHasher,
@@ -4030,7 +4028,7 @@ fn page_list_semantic_id<G>(
                 self.hasher.tag(0xf0);
                 self.list(*child);
             });
-            let mut value = node.to_owned_with(std::convert::identity);
+            let mut value = node.to_owned();
             value.visit_node_lists_mut(|child| *child = PageListId::empty());
             match &mut value {
                 crate::node::Node::Char { font, .. } => {

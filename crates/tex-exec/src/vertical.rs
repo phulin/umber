@@ -3,7 +3,7 @@ use tex_state::diagnostic::DiagnosticEffects;
 use tex_state::env::banks::{DimenParam, GlueParam};
 use tex_state::glue::GlueSpec;
 use tex_state::node::{GlueKind, Node};
-use tex_state::node_arena::NodeView;
+use tex_state::node_view::NodeView;
 use tex_state::scaled::Scaled;
 
 use crate::{ExecError, Mode, ModeNest};

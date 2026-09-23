@@ -1,7 +1,7 @@
 use tex_state::glue::Order;
 #[cfg(test)]
 use tex_state::node::Node;
-use tex_state::node_arena::{NodeCursor, NodeView};
+use tex_state::node_view::{NodeCursor, NodeView};
 use tex_state::page::{AWFUL_BAD, DEPLORABLE, EJECT_PENALTY, INF_PENALTY};
 use tex_state::scaled::Scaled;
 

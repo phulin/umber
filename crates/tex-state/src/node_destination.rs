@@ -8,7 +8,7 @@ use crate::node::{
     Node, NodeTokenKey, PdfAccessibilityControl, PdfDestinationNode, PdfLiteralMode, PdfThreadNode,
     UnsetNode, Whatsit,
 };
-use crate::node_arena::PageListId;
+use crate::page_node_arena::PageListId;
 use crate::scaled::Scaled;
 use crate::token::OriginId;
 use crate::world::{PrintSink, StreamSlot};
@@ -437,7 +437,7 @@ impl<'a> NodeDestination<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::node_arena::NodeView;
+    use crate::node_view::NodeView;
 
     #[test]
     fn variant_builder_initializes_the_final_vacancy() {

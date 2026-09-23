@@ -1,6 +1,6 @@
 use super::{ActiveListBuilder, ChunkPool, ForkArena, ForkArenaError};
 use crate::node::Node;
-use crate::node_arena::NodeCursor;
+use crate::node_view::NodeCursor;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use umber_hot_core_allocator::{AllocationMeasurement, scope, thread_measurement};

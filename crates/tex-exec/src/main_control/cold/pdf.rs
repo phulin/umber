@@ -662,8 +662,8 @@ pub(in crate::main_control) fn apply_pdf_form_request<G>(
                 .first()
             {
                 Some(
-                    tex_state::node_arena::NodeView::HList(node)
-                    | tex_state::node_arena::NodeView::VList(node),
+                    tex_state::node_view::NodeView::HList(node)
+                    | tex_state::node_view::NodeView::VList(node),
                 ) => (node.width, node.height, node.depth),
                 _ => {
                     stores
@@ -1467,7 +1467,7 @@ impl DetachedArtifactSourceResolver {
     }
 
     pub(in crate::main_control) fn capture_page_list<G>(
-        list: tex_state::node_arena::PageListId,
+        list: tex_state::page_node_arena::PageListId,
         stores: &tex_state::CommandContext<'_, G>,
     ) -> Self {
         let mut recipes = std::collections::HashMap::new();

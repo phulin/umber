@@ -40,7 +40,7 @@ pub(crate) fn make_unset_node<G>(
     diagnostic_effects: &mut DiagnosticEffects,
     geometry: &mut dyn crate::geometry::PackGeometrySink,
     diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
-    children: tex_state::node_arena::PageListId,
+    children: tex_state::page_node_arena::PageListId,
     kind: UnsetKind,
     span_count: u16,
     context: UnsetPackContext,

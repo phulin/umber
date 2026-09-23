@@ -1,8 +1,8 @@
 //! Borrowed projections and cursors over resident node records.
 
-use super::PageListId;
 use crate::glue::GlueSpec;
 use crate::node::{Node, NodeTokenList};
+use crate::page_node_arena::PageListId;
 
 /// Zero-allocation logical projection of one immutable node.
 #[derive(Clone, Debug, PartialEq)]
@@ -75,13 +75,6 @@ pub enum NodeView<'a, List = PageListId, Glue = GlueSpec, Tokens = NodeTokenList
     Nonscript,
     Adjust(crate::node::AdjustNode<List>),
 }
-
-/// Transitional source alias. Production consumers use [`NodeView`]; the
-/// alias remains only so out-of-tree callers can migrate without naming the
-/// resident enum.
-#[deprecated(note = "use NodeView")]
-pub type NodeRef<'a, List = PageListId, Glue = GlueSpec, Tokens = NodeTokenList> =
-    NodeView<'a, List, Glue, Tokens>;
 
 impl<'a, List: Copy, Glue: Copy, Tokens: Clone> From<&'a Node<List, Glue, Tokens>>
     for NodeView<'a, List, Glue, Tokens>
@@ -501,7 +494,7 @@ impl NodeView<'_> {
     }
 
     #[must_use]
-    pub fn to_owned_with(&self, _resolve: impl FnMut(PageListId) -> PageListId) -> Node {
+    pub fn to_owned(&self) -> Node {
         match self {
             Self::Char { font, ch, origin } => Node::Char {
                 font: *font,

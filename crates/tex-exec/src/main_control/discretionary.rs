@@ -319,7 +319,7 @@ impl<G> MainControl<G> {
                 Err(_) => stores.publish_page_nodes(Vec::new()),
             }
         };
-        let empty = tex_state::node_arena::PageListId::empty();
+        let empty = tex_state::page_node_arena::PageListId::empty();
         self.modes.current_list_mutation().push(
             &mut stores.command_context().expect("live generation"),
             Node::Disc {

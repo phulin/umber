@@ -19,7 +19,7 @@ fn empty_hbox<G>(_stores: &mut CommandContext<'_, G>) -> Node {
         glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
-        children: tex_state::node_arena::PageListId::empty(),
+        children: tex_state::page_node_arena::PageListId::empty(),
     }))
 }
 
@@ -53,7 +53,7 @@ fn sink_text<G>(stores: &tex_state::Universe<G>, terminal: bool) -> String {
 fn short_display_skips_the_physical_discretionary_replacement_count() {
     crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
-        let empty = tex_state::node_arena::PageListId::empty();
+        let empty = tex_state::page_node_arena::PageListId::empty();
         let replacement = stores.publish_page_nodes(vec![Node::Kern {
             amount: Scaled::from_raw(Scaled::UNITY),
             kind: KernKind::Explicit,
@@ -112,7 +112,7 @@ fn short_display_retains_rule_after_nonphysical_discretionary_replacement() {
     // linked after the disc, and the following rule must print as `|`.
     crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
-        let empty = tex_state::node_arena::PageListId::empty();
+        let empty = tex_state::page_node_arena::PageListId::empty();
         let replacement = stores.publish_page_nodes(vec![Node::Kern {
             amount: Scaled::from_raw(Scaled::UNITY),
             kind: KernKind::Explicit,
@@ -164,7 +164,7 @@ fn short_display_physical_count_is_independent_of_empty_side_list() {
     // their source side list.
     crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
-        let empty = tex_state::node_arena::PageListId::empty();
+        let empty = tex_state::page_node_arena::PageListId::empty();
         let nodes = [
             Node::Disc {
                 kind: DiscKind::Discretionary,
@@ -209,7 +209,7 @@ fn line_trace_projection_renders_detached_replacement_content() {
                 .collect::<Vec<_>>()
         };
         let pre = stores.publish_page_nodes(chars("B-"));
-        let empty = tex_state::node_arena::PageListId::empty();
+        let empty = tex_state::page_node_arena::PageListId::empty();
         let mut nodes = vec![Node::Disc {
             kind: DiscKind::Discretionary,
             pre,
@@ -272,7 +272,7 @@ fn frozen_line_diagnostic_renders_both_disc_branches_then_skips_replacement() {
 fn short_display_maps_all_node_classes() {
     crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
-        let empty = tex_state::node_arena::PageListId::empty();
+        let empty = tex_state::page_node_arena::PageListId::empty();
         let zero_glue = GlueSpec::ZERO;
         let nonzero_glue = GlueSpec {
             width: Scaled::from_raw(Scaled::UNITY),

@@ -176,7 +176,7 @@ fn pdftex_page_top_discards_snapy_but_preserves_other_whatsits() {
                 .expect("saved page discards remain live")
                 .nodes()
                 .first()
-                .map(|node| node.to_owned_with(std::convert::identity)),
+                .map(|node| node.to_owned()),
             Some(snap)
         );
         let current_page = stores.current_page_nodes().cloned().collect::<Vec<_>>();
@@ -601,7 +601,7 @@ fn outer_vertical_contribution_routes_every_node_kind_canonically() {
 
 #[test]
 fn page_builder_rejects_impossible_contribution_nodes_with_page_confusion() {
-    let empty = tex_state::node_arena::PageListId::empty();
+    let empty = tex_state::page_node_arena::PageListId::empty();
     let impossible = [
         Node::Char {
             font: FontId::testing_new(0),
@@ -687,9 +687,7 @@ fn page_builder_rejects_impossible_contribution_nodes_with_page_confusion() {
             assert_eq!(error.as_fatal(), Some(FatalError::confusion("page")));
             assert_eq!(stores.page_contributions().len(), 1);
             assert_eq!(
-                stores
-                    .page_contribution_front()
-                    .map(|view| view.to_owned_with(std::convert::identity)),
+                stores.page_contribution_front().map(|view| view.to_owned()),
                 Some(node)
             );
             assert_eq!(

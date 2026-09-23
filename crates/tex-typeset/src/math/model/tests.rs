@@ -19,7 +19,8 @@ fn math_char(ch: char) -> MathChar {
 
 #[test]
 fn tex82_noad_field_layout_initialization_and_release_matrix() {
-    let nucleus: MathField<tex_state::node_arena::PageListId> = MathField::MathChar(math_char('x'));
+    let nucleus: MathField<tex_state::page_node_arena::PageListId> =
+        MathField::MathChar(math_char('x'));
     let classes = [
         NoadClass::Ord,
         NoadClass::Op,
@@ -75,7 +76,7 @@ fn tex82_noad_field_layout_initialization_and_release_matrix() {
             .page_node_list(root)
             .expect("math choice arm belongs to the page arena")
             .iter()
-            .map(|node| node.to_owned_with(std::convert::identity))
+            .map(|node| node.to_owned())
             .collect::<Vec<_>>()
     };
     assert_eq!(values(choice.display), [Node::Penalty(1)]);

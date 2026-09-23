@@ -6,7 +6,8 @@ use tex_state::glue::GlueSpec;
 use tex_state::ids::FontId;
 use tex_state::math::FractionThickness;
 use tex_state::node::{BoxNode, Node, NodeTokenList};
-use tex_state::node_arena::{NodeCursor, PageListId};
+use tex_state::node_view::NodeCursor;
+use tex_state::page_node_arena::PageListId;
 use tex_state::page_node_arena::{PageListSpan, PageMaterialActiveListBuilder};
 use tex_state::scaled::Scaled;
 use tex_state::token::OriginId;
@@ -369,7 +370,7 @@ impl ModeList {
             .page_node_span(self.nodes)
             .ok()?
             .get(index)?
-            .to_owned_with(std::convert::identity);
+            .to_owned();
         let result = mutate(&mut node);
         stores.open_page_active_list(&mut self.active);
         stores.append_page_active_span_range(&mut self.active, self.nodes, 0..index);
@@ -529,15 +530,11 @@ impl ModeList {
             return None;
         }
         match stores.page_node_span(self.nodes).ok()?.last() {
-            Some(tex_state::node_arena::NodeView::HList(_))
-            | Some(tex_state::node_arena::NodeView::VList(_)) => {}
+            Some(tex_state::node_view::NodeView::HList(_))
+            | Some(tex_state::node_view::NodeView::VList(_)) => {}
             _ => return None,
         }
-        let mut node = stores
-            .page_node_span(self.nodes)
-            .ok()?
-            .last()?
-            .to_owned_with(std::convert::identity);
+        let mut node = stores.page_node_span(self.nodes).ok()?.last()?.to_owned();
         self.nodes = stores.slice_page_node_span(self.nodes, 0..self.nodes.len() - 1);
         match &mut node {
             Node::HList(box_node) | Node::VList(box_node) => {
@@ -552,11 +549,7 @@ impl ModeList {
         if !self.admit_page_region(stores) {
             return None;
         }
-        let node = stores
-            .page_node_span(self.nodes)
-            .ok()?
-            .last()?
-            .to_owned_with(std::convert::identity);
+        let node = stores.page_node_span(self.nodes).ok()?.last()?.to_owned();
         self.nodes = stores.slice_page_node_span(self.nodes, 0..self.nodes.len() - 1);
         Some(node)
     }
@@ -1473,8 +1466,8 @@ impl HorizontalModeScratch {
     pub(crate) fn reshape_open_type_runs_list<G>(
         &mut self,
         stores: &mut CommandContext<'_, G>,
-        source: tex_state::node_arena::PageListId,
-    ) -> tex_state::node_arena::PageListId {
+        source: tex_state::page_node_arena::PageListId,
+    ) -> tex_state::page_node_arena::PageListId {
         crate::box_runtime::hmode::reshape_open_type_runs_list(stores, source, &mut self.shaping)
     }
 
@@ -2486,8 +2479,8 @@ impl ModeNest {
     pub(crate) fn reshape_open_type_runs_list<G>(
         &mut self,
         stores: &mut CommandContext<'_, G>,
-        source: tex_state::node_arena::PageListId,
-    ) -> tex_state::node_arena::PageListId {
+        source: tex_state::page_node_arena::PageListId,
+    ) -> tex_state::page_node_arena::PageListId {
         self.storage
             .scratch
             .reshape_open_type_runs_list(stores, source)

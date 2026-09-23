@@ -246,7 +246,7 @@ fn origin_text(context: &ExecutionDiagnosticContext) -> String {
 /// subtypes as `[]` instead of ordinary math `$` markers.
 fn short_display<G>(
     stores: &CommandContext<'_, G>,
-    list: tex_state::node_arena::PageListId,
+    list: tex_state::page_node_arena::PageListId,
     list_layout: DiagnosticListLayout,
 ) -> String {
     ShortDisplayRenderer::new().render_list_with_layout(stores, list, list_layout)
@@ -294,7 +294,7 @@ impl ShortDisplayRenderer {
     pub(crate) fn render_node_range<G>(
         &mut self,
         stores: &CommandContext<'_, G>,
-        nodes: tex_state::node_arena::NodeCursor<'_>,
+        nodes: tex_state::node_view::NodeCursor<'_>,
         range: core::ops::Range<usize>,
     ) -> String {
         let mut out = String::new();
@@ -313,7 +313,7 @@ impl ShortDisplayRenderer {
     pub(crate) fn render_line_break_trace_suffix<G>(
         &mut self,
         stores: &CommandContext<'_, G>,
-        list: tex_state::node_arena::PageListId,
+        list: tex_state::page_node_arena::PageListId,
     ) -> String {
         self.render_list_with_layout(stores, list, DiagnosticListLayout::FrozenList)
     }
@@ -322,7 +322,7 @@ impl ShortDisplayRenderer {
     fn render_list<G>(
         &mut self,
         stores: &CommandContext<'_, G>,
-        list: tex_state::node_arena::PageListId,
+        list: tex_state::page_node_arena::PageListId,
     ) -> String {
         self.render_list_with_layout(stores, list, DiagnosticListLayout::FrozenList)
     }
@@ -330,7 +330,7 @@ impl ShortDisplayRenderer {
     fn render_list_with_layout<G>(
         &mut self,
         stores: &CommandContext<'_, G>,
-        list: tex_state::node_arena::PageListId,
+        list: tex_state::page_node_arena::PageListId,
         list_layout: DiagnosticListLayout,
     ) -> String {
         let mut out = String::new();
@@ -341,7 +341,7 @@ impl ShortDisplayRenderer {
 
 fn append_short_display<G>(
     stores: &CommandContext<'_, G>,
-    list: tex_state::node_arena::PageListId,
+    list: tex_state::page_node_arena::PageListId,
     list_layout: DiagnosticListLayout,
     font_in_short_display: &mut Option<u32>,
     out: &mut String,
@@ -384,7 +384,7 @@ fn append_short_display_nodes<G>(
 ) {
     append_short_display_cursor(
         stores,
-        tex_state::node_arena::NodeCursor::owned(nodes),
+        tex_state::node_view::NodeCursor::owned(nodes),
         0,
         nodes.len(),
         disc_layout,
@@ -395,7 +395,7 @@ fn append_short_display_nodes<G>(
 
 fn append_short_display_cursor<G>(
     stores: &CommandContext<'_, G>,
-    nodes: tex_state::node_arena::NodeCursor<'_>,
+    nodes: tex_state::node_view::NodeCursor<'_>,
     start: usize,
     end: usize,
     disc_layout: DiscReplacementLayout,
@@ -407,36 +407,36 @@ fn append_short_display_cursor<G>(
     while let Some(node) = (index < end).then(|| nodes.get(index)).flatten() {
         index += 1;
         match node {
-            tex_state::node_arena::NodeView::Char { font, ch, .. } => {
+            tex_state::node_view::NodeView::Char { font, ch, .. } => {
                 append_short_char(stores, font, ch, font_in_short_display, out);
             }
-            tex_state::node_arena::NodeView::Lig { orig, font, .. } => {
+            tex_state::node_view::NodeView::Lig { orig, font, .. } => {
                 // §175 recurses into `lig_ptr`, the original characters the
                 // ligature replaced, not the ligature character itself.
                 for original in orig.iter() {
                     append_short_char(stores, font, *original, font_in_short_display, out);
                 }
             }
-            tex_state::node_arena::NodeView::HList(_)
-            | tex_state::node_arena::NodeView::VList(_)
-            | tex_state::node_arena::NodeView::Unset(_)
-            | tex_state::node_arena::NodeView::Ins { .. }
-            | tex_state::node_arena::NodeView::Whatsit(_)
-            | tex_state::node_arena::NodeView::Mark { .. }
-            | tex_state::node_arena::NodeView::Adjust(_) => out.push_str("[]"),
-            tex_state::node_arena::NodeView::Rule { .. } => out.push('|'),
-            tex_state::node_arena::NodeView::Glue { spec, .. } => {
+            tex_state::node_view::NodeView::HList(_)
+            | tex_state::node_view::NodeView::VList(_)
+            | tex_state::node_view::NodeView::Unset(_)
+            | tex_state::node_view::NodeView::Ins { .. }
+            | tex_state::node_view::NodeView::Whatsit(_)
+            | tex_state::node_view::NodeView::Mark { .. }
+            | tex_state::node_view::NodeView::Adjust(_) => out.push_str("[]"),
+            tex_state::node_view::NodeView::Rule { .. } => out.push('|'),
+            tex_state::node_view::NodeView::Glue { spec, .. } => {
                 if spec != tex_state::glue::GlueSpec::ZERO {
                     out.push(' ');
                 }
             }
-            tex_state::node_arena::NodeView::MathOn(_)
-            | tex_state::node_arena::NodeView::MathOff(_)
-            | tex_state::node_arena::NodeView::Direction(
+            tex_state::node_view::NodeView::MathOn(_)
+            | tex_state::node_view::NodeView::MathOff(_)
+            | tex_state::node_view::NodeView::Direction(
                 tex_state::node::Direction::BeginM | tex_state::node::Direction::EndM,
             ) => out.push('$'),
-            tex_state::node_arena::NodeView::Direction(_) => out.push_str("[]"),
-            tex_state::node_arena::NodeView::Disc {
+            tex_state::node_view::NodeView::Direction(_) => out.push_str("[]"),
+            tex_state::node_view::NodeView::Disc {
                 pre,
                 post,
                 replace,

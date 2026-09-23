@@ -4,7 +4,8 @@ use tex_state::CommandContext;
 use tex_state::diagnostic::DiagnosticEffects;
 use tex_state::glue::GlueSpec;
 use tex_state::node::{BoxNode, GlueKind, Node, Whatsit};
-use tex_state::node_arena::{NodeView, PageListId};
+use tex_state::node_view::NodeView;
+use tex_state::page_node_arena::PageListId;
 use tex_state::scaled::Scaled;
 use tex_typeset::{INF_BAD, PackSpec, VpackParams};
 

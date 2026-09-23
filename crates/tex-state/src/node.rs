@@ -3,7 +3,7 @@
 use crate::glue::{GlueSpec, Order};
 use crate::ids::FontId;
 use crate::math::{MathChoice, MathFraction, MathListNode, MathNoad, MathStyle};
-use crate::node_arena::PageListId;
+use crate::page_node_arena::PageListId;
 use crate::scaled::{GlueSetRatio, Scaled};
 use crate::token::OriginId;
 use crate::world::{PrintSink, StreamSlot};
@@ -632,26 +632,6 @@ impl<List, Glue, Tokens> Node<List, Glue, Tokens> {
             | Self::Direction(_)
             | Self::MathStyle(_)
             | Self::Nonscript => {}
-        }
-    }
-
-    #[allow(dead_code)] // Used only by the retained legacy NodeArena memory census.
-    pub(crate) fn visit_diagnostic_node_lists(&self, mut visit: impl FnMut(&List, u32)) {
-        match self {
-            Self::HList(node) | Self::VList(node) => {
-                if let Some(children) = &node.diagnostic_children {
-                    visit(children, node.allocator_high_cell_overlap);
-                }
-            }
-            Self::Glue {
-                leader: Some(LeaderPayload::HList(node) | LeaderPayload::VList(node)),
-                ..
-            } => {
-                if let Some(children) = &node.diagnostic_children {
-                    visit(children, node.allocator_high_cell_overlap);
-                }
-            }
-            _ => {}
         }
     }
 

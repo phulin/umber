@@ -1,11 +1,11 @@
 use super::{UniverseError, with_universe};
 use crate::env::AssignmentScope;
 use crate::env::banks::IntParam;
+use crate::fork_arena::ForkArenaError;
 use crate::hyphenation::{ExceptionSpec, PatternSpec};
 use crate::interner::InternerBudget;
 use crate::meaning::{Meaning, MeaningFlags, MeaningWord, ResolvedMeaning};
 use crate::node::{BoxLr, BoxNode, BoxNodeFields, Node, Sign};
-use crate::node_arena::NodeArenaError;
 use crate::token::{Token, TokenWord};
 use crate::{GroupKind, ParagraphShapeLine, PenaltyArrayKind, StateError};
 use std::path::PathBuf;
@@ -1087,7 +1087,7 @@ fn retained_state_checkpoint_restores_dense_roots_before_arena_suffixes() {
             universe
                 .page_node_list(rejected)
                 .expect_err("invalid test fixture is rejected"),
-            NodeArenaError::InvalidList
+            ForkArenaError::InvalidRange
         );
         assert_eq!(
             universe.retire(),
@@ -1237,7 +1237,7 @@ fn page_checkpoint_fork_loans_one_timeline_and_rejection_restores_the_source_hea
                 .expect("restored source context")
                 .page_contributions()
                 .iter()
-                .map(|node| node.to_owned_with(std::convert::identity))
+                .map(|node| node.to_owned())
                 .collect::<Vec<_>>(),
             [Node::Penalty(1), Node::Penalty(2)]
         );
@@ -1452,7 +1452,7 @@ fn runtime_checkpoint_transfers_external_roots_before_suffix_truncation() {
             universe
                 .page_node_list(suffix)
                 .expect_err("runtime suffix was truncated"),
-            NodeArenaError::InvalidList
+            ForkArenaError::InvalidRange
         );
     })
     .expect("universe allocation");
@@ -2033,34 +2033,27 @@ fn multi_byte_source_origin_detaches_the_complete_registered_range() {
 }
 
 #[test]
-fn page_node_transform_counts_new_payload_and_never_copies_source_nodes() {
+fn page_sequence_slices_and_composition_preserve_order() {
     with_universe(budget(), |universe| {
         let mut context = universe.command_context().expect("command admission");
-        let left = context.publish_page_node_range(vec![Node::Penalty(1), Node::Penalty(2)]);
-        let right = context.publish_page_node_range(vec![Node::Penalty(3), Node::Penalty(4)]);
+        let left = context.publish_page_nodes(vec![Node::Penalty(1), Node::Penalty(2)]);
+        let right = context.publish_page_nodes(vec![Node::Penalty(3), Node::Penalty(4)]);
         let source = context.compose_page_node_sequences(&[left, right]);
-        let mut scratch = crate::node_arena::PageNodeTransformScratch::default();
-        context.begin_page_node_transform(&mut scratch);
-        context.retain_page_node_source_range(&mut scratch, source, 0..1);
-        context.append_new_page_nodes(&mut scratch, vec![Node::Penalty(9)]);
-        context.retain_page_node_source_range(&mut scratch, source, 3..4);
-        let transformed = context.finish_page_node_transform(&mut scratch);
+        let mut slice_scratch = Vec::new();
+        let first = context.slice_page_node_sequence(source, 0..1, &mut slice_scratch);
+        let generated = context.publish_page_nodes(vec![Node::Penalty(9)]);
+        let last = context.slice_page_node_sequence(source, 3..4, &mut slice_scratch);
+        let transformed = context.compose_page_node_sequences(&[first, generated, last]);
 
-        assert_eq!(scratch.new_semantic_nodes(), 1);
-        assert_eq!(scratch.source_nodes_copied(), 0);
         assert_eq!(
             context
                 .page_node_sequence(transformed)
                 .expect("transformed sequence resolves")
                 .iter()
-                .map(|node| node.to_owned_with(std::convert::identity))
+                .map(|node| node.to_owned())
                 .collect::<Vec<_>>(),
             [Node::Penalty(1), Node::Penalty(9), Node::Penalty(4)]
         );
-
-        context.begin_page_node_transform(&mut scratch);
-        assert_eq!(scratch.new_semantic_nodes(), 0);
-        assert_eq!(scratch.source_nodes_copied(), 0);
     })
     .expect("universe allocation");
 }

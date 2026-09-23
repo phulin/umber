@@ -202,7 +202,7 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     #[must_use]
-    pub fn current_page_tail(&self) -> Option<crate::node_arena::NodeView<'_>> {
+    pub fn current_page_tail(&self) -> Option<crate::node_view::NodeView<'_>> {
         self.page.current_page_tail(&self.page_nodes)
     }
 
@@ -219,7 +219,7 @@ impl<'a, G> CommandContext<'a, G> {
                 .expect("page carrier belongs to the live arena")
                 .get(0)
                 .expect("page carrier contains one node");
-            let node = node.to_owned_with(std::convert::identity);
+            let node = node.to_owned();
             self.assert_live_node_font_roots(&node);
         }
         self.page
@@ -287,7 +287,7 @@ impl<'a, G> CommandContext<'a, G> {
                 .expect("page carrier belongs to the live arena")
                 .get(0)
                 .expect("page carrier contains one node");
-            let node = node.to_owned_with(std::convert::identity);
+            let node = node.to_owned();
             self.assert_live_node_font_roots(&node);
         }
         self.page

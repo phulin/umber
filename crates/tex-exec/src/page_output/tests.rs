@@ -95,7 +95,7 @@ fn fire_up_recovers_hbox_insertion_register_before_distribution() {
             .expect("held-over list remains live")
             .nodes()
             .iter()
-            .map(|node| node.to_owned_with(std::convert::identity))
+            .map(|node| node.to_owned())
             .collect::<Vec<_>>();
         assert_eq!(heldover, [unrelated, later]);
         assert_eq!(distributed.heldover_count, 2);
@@ -116,7 +116,7 @@ fn fire_up_recovers_hbox_insertion_register_before_distribution() {
             .expect("register children belong to the page arena")
             .nodes()
             .iter()
-            .map(|node| node.to_owned_with(std::convert::identity))
+            .map(|node| node.to_owned())
             .collect::<Vec<_>>();
         assert_eq!(register_children, [rule(11), rule(13)]);
         drop(stores);
@@ -257,7 +257,7 @@ fn earlier_break_preserves_unrelated_pending_penalty() {
                 .expect("unchosen break remains live")
                 .nodes()
                 .first()
-                .map(|node| node.to_owned_with(std::convert::identity)),
+                .map(|node| node.to_owned()),
             Some(chosen_break)
         );
         assert_eq!(stores.page_contributions().len(), 1);
@@ -273,7 +273,7 @@ fn chosen_pending_penalty_is_rewritten() {
     crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         stores.append_page_contribution(Node::Penalty(EJECT_PENALTY));
-        let after_break = tex_state::node_arena::PageListId::empty();
+        let after_break = tex_state::page_node_arena::PageListId::empty();
 
         let (penalty, after_break) =
             output_penalty_and_rewrite_break(&mut stores, after_break, fire_up(1, 1));
@@ -323,7 +323,7 @@ fn job_is_all_over_only_when_page_and_contributions_are_empty() {
             glue_set: GlueSetRatio::ZERO,
             glue_sign: Sign::Normal,
             glue_order: Order::Normal,
-            children: tex_state::node_arena::PageListId::empty(),
+            children: tex_state::page_node_arena::PageListId::empty(),
         }));
         stores.append_page_contribution(residual);
         assert!(!job_is_all_over(&stores));

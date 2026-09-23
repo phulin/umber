@@ -27,11 +27,7 @@ fn paragraph_tape_analyzes_twenty_thousand_nested_replacements_iteratively() {
         Node::Penalty(-10_000),
     ];
     let parameters = params(100);
-    let tape = ParagraphTape::analyze(
-        &universe,
-        tex_state::node_sequence::NodeSequence::mirrored(nodes),
-        &parameters,
-    );
+    let tape = ParagraphTape::analyze_borrowed(&universe, &nodes, &parameters);
 
     assert_eq!(tape.break_sites.len(), 2);
     assert_eq!(tape.break_sites[1].breakpoint.line_width.natural.raw(), 1);
@@ -43,13 +39,17 @@ fn paired_materialization_cursor_preserves_physical_diagnostic_topology() {
     let zero = GlueSpec::ZERO;
     let empty = universe.publish_page_nodes(&[]);
     let parameters = params(100);
-    let tape = ParagraphTape::analyze(
+    let semantic = universe.publish_owned_page_nodes(vec![Node::Penalty(1), Node::Penalty(2)]);
+    let physical = universe.publish_owned_page_nodes(vec![
+        Node::Penalty(10),
+        Node::Penalty(11),
+        Node::Penalty(12),
+    ]);
+    let tape = ParagraphTape::analyze_arena_projection_ids(
         &universe,
-        tex_state::node_sequence::NodeSequence::from_projection(
-            vec![Node::Penalty(1), Node::Penalty(2)],
-            vec![Node::Penalty(10), Node::Penalty(11), Node::Penalty(12)],
-            vec![0, 2, 3],
-        ),
+        semantic,
+        physical,
+        Some(vec![0, 2, 3]),
         &parameters,
     );
     let breaks = vec![
@@ -178,7 +178,7 @@ fn owned_slice_and_composite_arena_paragraphs_agree() {
     ];
     let pieces = source
         .chunks(1)
-        .map(|chunk| universe.publish_page_node_range(chunk.to_vec()))
+        .map(|chunk| universe.publish_owned_page_nodes(chunk.to_vec()))
         .collect::<Vec<_>>();
     let sequence = universe.compose_page_node_sequences(&pieces);
     let arena_view = universe
@@ -186,25 +186,16 @@ fn owned_slice_and_composite_arena_paragraphs_agree() {
         .expect("paragraph resolves");
     let source_nodes = arena_view
         .iter()
-        .map(|node| node.to_owned_with(std::convert::identity))
+        .map(|node| node.to_owned())
         .collect::<Vec<_>>();
     let line_params = params(18);
-    let owned_tape = ParagraphTape::analyze(
-        &universe,
-        tex_state::node_sequence::NodeSequence::mirrored(source.clone()),
-        &line_params,
-    );
     let slice_tape = ParagraphTape::analyze_borrowed(&universe, &source, &line_params);
     let arena_tape = ParagraphTape::analyze_arena(&universe, arena_view, &line_params);
 
-    assert_eq!(owned_tape.break_sites, slice_tape.break_sites);
-    assert_eq!(owned_tape.materialization, slice_tape.materialization);
     assert_eq!(arena_tape.break_sites, slice_tape.break_sites);
     assert_eq!(arena_tape.materialization, slice_tape.materialization);
-    let owned_plan = break_hyphenated_tape(&universe, &owned_tape, &line_params);
     let slice_plan = break_hyphenated_tape(&universe, &slice_tape, &line_params);
     let arena_plan = break_hyphenated_tape(&universe, &arena_tape, &line_params);
-    assert_eq!(owned_plan, slice_plan);
     assert_eq!(arena_plan, slice_plan);
 
     let post_params = PostLineBreakParams {
@@ -220,16 +211,12 @@ fn owned_slice_and_composite_arena_paragraphs_agree() {
         club_penalties: Vec::new(),
         shape: LineShape::natural(sp(18)),
     };
-    let mut owned_materializer =
-        LineMaterializer::new(owned_tape, owned_plan.breaks, post_params.clone());
     let mut slice_materializer =
         LineMaterializer::new(slice_tape, slice_plan.breaks, post_params.clone());
     let mut arena_materializer = LineMaterializer::new(arena_tape, arena_plan.breaks, post_params);
     loop {
         let slice_line = slice_materializer.materialize_next(&universe, Vec::new());
         let arena_line = arena_materializer.materialize_next(&universe, Vec::new());
-        let owned_line = owned_materializer.materialize_next(&universe, Vec::new());
-        assert_eq!(owned_line, slice_line);
         assert_eq!(arena_line, slice_line);
         if arena_line.is_none() {
             break;
@@ -240,7 +227,7 @@ fn owned_slice_and_composite_arena_paragraphs_agree() {
             .page_node_sequence(sequence)
             .expect("source remains live")
             .iter()
-            .map(|node| node.to_owned_with(std::convert::identity))
+            .map(|node| node.to_owned())
             .collect::<Vec<_>>(),
         source_nodes,
         "analysis and materialization retain the original arena payload"
@@ -251,8 +238,8 @@ fn owned_slice_and_composite_arena_paragraphs_agree() {
 fn coordinate_paragraph_tape_reborrows_arena_between_execution_steps() {
     let mut universe = TestState::new();
     let empty = universe.publish_page_nodes(&[]);
-    let left = universe.publish_page_node_range(vec![rule(8)]);
-    let right = universe.publish_page_node_range(vec![
+    let left = universe.publish_owned_page_nodes(vec![rule(8)]);
+    let right = universe.publish_owned_page_nodes(vec![
         Node::Glue {
             spec: GlueSpec {
                 width: sp(2),
@@ -272,7 +259,7 @@ fn coordinate_paragraph_tape_reborrows_arena_between_execution_steps() {
 
     // The tape owns only a coordinate and compact analysis scratch. The page
     // arena can keep appending between analysis and materialization.
-    let _unrelated = universe.publish_page_node_range(vec![Node::Penalty(77)]);
+    let _unrelated = universe.publish_owned_page_nodes(vec![Node::Penalty(77)]);
     let mut materializer = LineMaterializer::new(
         tape,
         plan.breaks,
@@ -298,7 +285,7 @@ fn coordinate_paragraph_tape_reborrows_arena_between_execution_steps() {
             .page_node_sequence(sequence)
             .expect("coordinate source remains live")
             .iter()
-            .map(|node| node.to_owned_with(std::convert::identity))
+            .map(|node| node.to_owned())
             .collect::<Vec<_>>(),
         [
             rule(8),
@@ -321,8 +308,8 @@ fn coordinate_paragraph_tape_reborrows_arena_between_execution_steps() {
 fn coordinate_paragraph_tape_keeps_distinct_physical_channel_in_arena() {
     let mut universe = TestState::new();
     let empty = universe.publish_page_nodes(&[]);
-    let semantic = universe.publish_page_node_range(vec![Node::Penalty(1), Node::Penalty(3)]);
-    let physical = universe.publish_page_node_range(vec![
+    let semantic = universe.publish_owned_page_nodes(vec![Node::Penalty(1), Node::Penalty(3)]);
+    let physical = universe.publish_owned_page_nodes(vec![
         Node::Penalty(1),
         Node::Penalty(2),
         Node::Penalty(3),
@@ -394,11 +381,7 @@ fn materialized_final_line_preserves_two_direct_and_four_frozen_lig_ptr_cells() 
         physical_replace_count: 1,
     };
     let nodes = vec![character('A'), character('/'), disc(bb), disc(ca)];
-    let tape = ParagraphTape::analyze(
-        &universe,
-        tex_state::node_sequence::NodeSequence::from_channels(nodes.clone(), nodes),
-        &params(100),
-    );
+    let tape = ParagraphTape::analyze_borrowed(&universe, &nodes, &params(100));
     let mut materializer = LineMaterializer::new(
         tape,
         vec![BreakDecision {

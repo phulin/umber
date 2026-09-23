@@ -282,8 +282,8 @@ pub(crate) fn append_box_node_to_current_list<G>(
             extract_box_migrations(stores, &mut node)
         } else {
             (
-                tex_state::node_arena::PageListId::empty(),
-                tex_state::node_arena::PageListId::empty(),
+                tex_state::page_node_arena::PageListId::empty(),
+                tex_state::page_node_arena::PageListId::empty(),
             )
         };
     let node = if matches!(nest.current_mode(), Mode::Math | Mode::DisplayMath) {
@@ -311,13 +311,13 @@ fn extract_box_migrations<G>(
     stores: &mut CommandContext<'_, G>,
     node: &mut Node,
 ) -> (
-    tex_state::node_arena::PageListId,
-    tex_state::node_arena::PageListId,
+    tex_state::page_node_arena::PageListId,
+    tex_state::page_node_arena::PageListId,
 ) {
     let Node::HList(boxed) = node else {
         return (
-            tex_state::node_arena::PageListId::empty(),
-            tex_state::node_arena::PageListId::empty(),
+            tex_state::page_node_arena::PageListId::empty(),
+            tex_state::page_node_arena::PageListId::empty(),
         );
     };
     let children = boxed.children;
@@ -331,7 +331,7 @@ fn extract_box_migrations<G>(
 fn append_migration_list<G>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
-    nodes: tex_state::node_arena::PageListId,
+    nodes: tex_state::page_node_arena::PageListId,
 ) {
     if nodes.is_empty() {
         return;
@@ -356,17 +356,17 @@ fn append_migration_list<G>(
 /// exactly this split, and differs only in where the migrated material lands.
 pub(crate) fn split_hpack_migrations<G>(
     stores: &mut CommandContext<'_, G>,
-    nodes: tex_state::node_arena::PageListId,
+    nodes: tex_state::page_node_arena::PageListId,
 ) -> (
-    tex_state::node_arena::PageListId,
-    tex_state::node_arena::PageListId,
-    tex_state::node_arena::PageListId,
+    tex_state::page_node_arena::PageListId,
+    tex_state::page_node_arena::PageListId,
+    tex_state::page_node_arena::PageListId,
 ) {
     fn select<G>(
         stores: &mut CommandContext<'_, G>,
-        nodes: tex_state::node_arena::PageListId,
+        nodes: tex_state::page_node_arena::PageListId,
         selected_class: usize,
-    ) -> tex_state::node_arena::PageListId {
+    ) -> tex_state::page_node_arena::PageListId {
         let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
         stores.open_page_active_list(&mut output);
         for index in 0..nodes.len() {
@@ -377,9 +377,9 @@ pub(crate) fn split_hpack_migrations<G>(
                 .get(index)
                 .expect("hpack source index remains in range")
             {
-                tex_state::node_arena::NodeView::Mark { .. }
-                | tex_state::node_arena::NodeView::Ins { .. } => (2, None),
-                tex_state::node_arena::NodeView::Adjust(adjust) => {
+                tex_state::node_view::NodeView::Mark { .. }
+                | tex_state::node_view::NodeView::Ins { .. } => (2, None),
+                tex_state::node_view::NodeView::Adjust(adjust) => {
                     (usize::from(!adjust.pre) + 1, Some(adjust.content))
                 }
                 _ => (0, None),
@@ -409,7 +409,7 @@ fn append_unboxed<G>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
-    source: Option<tex_state::node_arena::PageListId>,
+    source: Option<tex_state::page_node_arena::PageListId>,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     let Some(children) = source else {
@@ -431,8 +431,8 @@ fn append_unboxed<G>(
             .is_some_and(|node| {
                 matches!(
                     node,
-                    tex_state::node_arena::NodeView::MarginKern { .. }
-                        | tex_state::node_arena::NodeView::Kern {
+                    tex_state::node_view::NodeView::MarginKern { .. }
+                        | tex_state::node_view::NodeView::Kern {
                             kind: KernKind::LeftMargin | KernKind::RightMargin,
                             ..
                         }

@@ -663,12 +663,12 @@ fn page_activity_snapshot<G>(
     Ok(PageActivitySnapshot {
         current_page: stores
             .current_page_nodes()
-            .map(|node| node.to_owned_with(std::convert::identity))
+            .map(|node| node.to_owned())
             .collect(),
         contributions: stores
             .page_contributions()
             .iter()
-            .map(|node| node.to_owned_with(std::convert::identity))
+            .map(|node| node.to_owned())
             .collect(),
         insertions,
         contents: stores.page_contents(),
@@ -692,8 +692,8 @@ fn page_activity_snapshot<G>(
 /// project Umber's typed `DisplayEqNo` owner back onto that level instead of
 /// displaying the now-empty construction list.
 enum ShowlistsNodes<'a> {
-    Page(tex_state::node_arena::PageListId),
-    Mode(tex_state::node_arena::NodeCursor<'a>),
+    Page(tex_state::page_node_arena::PageListId),
+    Mode(tex_state::node_view::NodeCursor<'a>),
 }
 
 fn showlists_level_nodes<'a, G>(

@@ -19,7 +19,7 @@ fn tex82_prune_page_top_prefix_and_split_skip_matrix() {
             width: sp(2),
             ..GlueSpec::ZERO
         };
-        let children = tex_state::node_arena::PageListId::empty();
+        let children = tex_state::page_node_arena::PageListId::empty();
         let box_node = Node::HList(BoxNode::new(BoxNodeFields {
             width: sp(1),
             height: sp(4),
@@ -84,7 +84,7 @@ fn pdftex_prune_page_top_discards_snapy_but_preserves_other_whatsits() {
             glue_set: GlueSetRatio::ZERO,
             glue_sign: Sign::Normal,
             glue_order: Order::Normal,
-            children: tex_state::node_arena::PageListId::empty(),
+            children: tex_state::page_node_arena::PageListId::empty(),
         }));
 
         let source = stores.publish_page_nodes(vec![

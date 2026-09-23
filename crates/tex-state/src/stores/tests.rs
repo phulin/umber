@@ -100,19 +100,3 @@ fn retirement_releases_one_complete_generation_bundle() {
         assert_eq!(retired.journal_entries, 0);
     });
 }
-
-#[test]
-fn reusable_marks_scale_with_reachable_high_water_not_sparse_raw_ids() {
-    let mut marks = crate::node_arena::StampedIndexMap::default();
-    marks.begin();
-    assert!(marks.mark(7));
-    assert!(marks.mark(1_000_000_007));
-    assert!(!marks.mark(7));
-    assert_eq!(marks.len(), 2);
-    assert_eq!(marks.capacity(), 16);
-
-    marks.begin();
-    assert!(marks.mark(usize::MAX - 1));
-    assert_eq!(marks.len(), 1);
-    assert_eq!(marks.capacity(), 16);
-}

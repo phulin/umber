@@ -11,7 +11,7 @@ use tex_state::glue::GlueSpec;
 use tex_state::node::{
     BoxNode, BoxNodeFields, GlueKind, Node, Sign, UnsetKind, UnsetNode, UnsetNodeFields,
 };
-use tex_state::node_arena::PageListId;
+use tex_state::page_node_arena::PageListId;
 use tex_state::page_node_arena::PageMaterialActiveListBuilder;
 use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_typeset::{HpackParams, PackSpec};

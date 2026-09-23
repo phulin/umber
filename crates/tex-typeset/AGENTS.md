@@ -43,9 +43,9 @@ Use this crate for layout algorithms whose correctness can be tested as pure fun
   position and width metrics; production hands its arena coordinate, scalar
   materialization actions, and optional diagnostic projection to the executor's
   retained-range sink rather than materializing nodes.
-- `src/linebreak/post.rs`: pure borrowed-cursor/owned post-line-break adapters for broken
-  lines, skips, migrated discretionary material, and penalties. Production
-  arena tapes must not use their owned-node channel.
+- `src/linebreak/post.rs`: Borrowed-cursor post-line-break materialization for
+  broken lines, skips, migrated discretionary material, and penalties.
+  Production arena tapes use the executor's retained-range sink.
 - `src/linebreak/tests.rs` and `src/linebreak/tests/`: shared line-breaking test setup and named families for analysis, microtype, last-line-fit, tracing, route selection, shape/break decisions, post-break output, and paragraph-tape materialization.
 - `src/linebreak/widths.rs`: line width accumulation, prefix width tables, glue stretch/shrink accounting, and line badness.
 - `tests/production_traits.rs`: public-boundary smoke tests proving packing,

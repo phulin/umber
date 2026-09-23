@@ -2,7 +2,7 @@
 
 use tex_state::font::PdfFontCode;
 use tex_state::node::{GlueKind, KernKind, MarginKernSide, Node};
-use tex_state::node_arena::NodeCursor;
+use tex_state::node_view::NodeCursor;
 use tex_state::scaled::Scaled;
 
 use crate::TypesetState;
@@ -248,10 +248,10 @@ fn leading_left_skip_end_cursor(nodes: NodeCursor<'_>) -> usize {
             matches!(
                 nodes.get(*index),
                 Some(
-                    tex_state::node_arena::NodeView::Glue {
+                    tex_state::node_view::NodeView::Glue {
                         kind: GlueKind::LeftSkip,
                         ..
-                    } | tex_state::node_arena::NodeView::Direction(_)
+                    } | tex_state::node_view::NodeView::Direction(_)
                 )
             )
         })
@@ -263,10 +263,10 @@ fn right_margin_position_cursor(nodes: NodeCursor<'_>) -> usize {
         matches!(
             nodes.get(*index),
             Some(
-                tex_state::node_arena::NodeView::Glue {
+                tex_state::node_view::NodeView::Glue {
                     kind: GlueKind::ParFillSkip | GlueKind::RightSkip,
                     ..
-                } | tex_state::node_arena::NodeView::Direction(_)
+                } | tex_state::node_view::NodeView::Direction(_)
             )
         )
     }) else {
@@ -276,10 +276,10 @@ fn right_margin_position_cursor(nodes: NodeCursor<'_>) -> usize {
         && matches!(
             nodes.get(index - 1),
             Some(
-                tex_state::node_arena::NodeView::Glue {
+                tex_state::node_view::NodeView::Glue {
                     kind: GlueKind::ParFillSkip | GlueKind::RightSkip,
                     ..
-                } | tex_state::node_arena::NodeView::Direction(_)
+                } | tex_state::node_view::NodeView::Direction(_)
             )
         )
     {
@@ -462,11 +462,11 @@ fn edge_search_cursor(
 
 fn search_node(
     state: &impl TypesetState,
-    node: tex_state::node_arena::NodeView<'_>,
+    node: tex_state::node_view::NodeView<'_>,
     edge: Edge,
 ) -> Search {
     match node {
-        tex_state::node_arena::NodeView::Char { font, ch, .. } => {
+        tex_state::node_view::NodeView::Char { font, ch, .. } => {
             u8::try_from(ch as u32).map_or(Search::Block, |code| {
                 Search::Glyph(Glyph {
                     font,
@@ -475,7 +475,7 @@ fn search_node(
                 })
             })
         }
-        tex_state::node_arena::NodeView::Lig { font, ch, .. } => {
+        tex_state::node_view::NodeView::Lig { font, ch, .. } => {
             u8::try_from(ch as u32).map_or(Search::Block, |code| {
                 Search::Glyph(Glyph {
                     font,
@@ -484,7 +484,7 @@ fn search_node(
                 })
             })
         }
-        tex_state::node_arena::NodeView::HList(box_node) => {
+        tex_state::node_view::NodeView::HList(box_node) => {
             let children = state.page_nodes(box_node.children);
             if children.is_empty() {
                 if box_node.width.raw() == 0
@@ -503,7 +503,7 @@ fn search_node(
                 edge_search_cursor(state, children, 0, children.len(), edge)
             }
         }
-        tex_state::node_arena::NodeView::Disc {
+        tex_state::node_view::NodeView::Disc {
             pre, post, replace, ..
         } => {
             let list = match edge {
@@ -515,13 +515,13 @@ fn search_node(
             edge_glyph_cursor(state, children, 0, children.len(), edge)
                 .map_or(Search::Skip, Search::Glyph)
         }
-        tex_state::node_arena::NodeView::Kern { amount, kind }
+        tex_state::node_view::NodeView::Kern { amount, kind }
             if amount.raw() == 0 || matches!(kind, KernKind::Font | KernKind::Auto) =>
         {
             Search::Skip
         }
-        tex_state::node_arena::NodeView::MathOn(amount)
-        | tex_state::node_arena::NodeView::MathOff(amount)
+        tex_state::node_view::NodeView::MathOn(amount)
+        | tex_state::node_view::NodeView::MathOff(amount)
             if amount.raw() == 0 =>
         {
             Search::Skip
@@ -531,31 +531,31 @@ fn search_node(
         // and `\nonscript` kinds retain that identity when their value is
         // zero; scanned explicit glue and leader/muskip specifications are
         // fresh nodes and remain blocking even when all dimensions are zero.
-        tex_state::node_arena::NodeView::Glue { spec, kind, .. }
+        tex_state::node_view::NodeView::Glue { spec, kind, .. }
             if spec == tex_state::glue::GlueSpec::ZERO && shares_zero_glue(kind) =>
         {
             Search::Skip
         }
-        tex_state::node_arena::NodeView::Penalty(_)
-        | tex_state::node_arena::NodeView::MarginKern { .. }
-        | tex_state::node_arena::NodeView::Mark { .. }
-        | tex_state::node_arena::NodeView::Ins { .. }
-        | tex_state::node_arena::NodeView::Whatsit(_)
-        | tex_state::node_arena::NodeView::Direction(_)
-        | tex_state::node_arena::NodeView::Adjust(_)
-        | tex_state::node_arena::NodeView::Nonscript => Search::Skip,
-        tex_state::node_arena::NodeView::VList(_)
-        | tex_state::node_arena::NodeView::Unset(_)
-        | tex_state::node_arena::NodeView::Rule { .. }
-        | tex_state::node_arena::NodeView::Kern { .. }
-        | tex_state::node_arena::NodeView::Glue { .. }
-        | tex_state::node_arena::NodeView::MathOn(_)
-        | tex_state::node_arena::NodeView::MathOff(_)
-        | tex_state::node_arena::NodeView::MathNoad(_)
-        | tex_state::node_arena::NodeView::FractionNoad(_)
-        | tex_state::node_arena::NodeView::MathStyle(_)
-        | tex_state::node_arena::NodeView::MathChoice(_)
-        | tex_state::node_arena::NodeView::MathList(_) => Search::Block,
+        tex_state::node_view::NodeView::Penalty(_)
+        | tex_state::node_view::NodeView::MarginKern { .. }
+        | tex_state::node_view::NodeView::Mark { .. }
+        | tex_state::node_view::NodeView::Ins { .. }
+        | tex_state::node_view::NodeView::Whatsit(_)
+        | tex_state::node_view::NodeView::Direction(_)
+        | tex_state::node_view::NodeView::Adjust(_)
+        | tex_state::node_view::NodeView::Nonscript => Search::Skip,
+        tex_state::node_view::NodeView::VList(_)
+        | tex_state::node_view::NodeView::Unset(_)
+        | tex_state::node_view::NodeView::Rule { .. }
+        | tex_state::node_view::NodeView::Kern { .. }
+        | tex_state::node_view::NodeView::Glue { .. }
+        | tex_state::node_view::NodeView::MathOn(_)
+        | tex_state::node_view::NodeView::MathOff(_)
+        | tex_state::node_view::NodeView::MathNoad(_)
+        | tex_state::node_view::NodeView::FractionNoad(_)
+        | tex_state::node_view::NodeView::MathStyle(_)
+        | tex_state::node_view::NodeView::MathChoice(_)
+        | tex_state::node_view::NodeView::MathList(_) => Search::Block,
     }
 }
 

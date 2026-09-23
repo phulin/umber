@@ -80,10 +80,10 @@ fn direct_page_chunk_analysis_matches_slice_layout_semantics() {
 #[test]
 fn ordinary_breakpoint_analysis_crosses_each_block_once_at_required_sizes() {
     fn delta(
-        after: tex_state::node_arena::NodeTraversalCounters,
-        before: tex_state::node_arena::NodeTraversalCounters,
-    ) -> tex_state::node_arena::NodeTraversalCounters {
-        tex_state::node_arena::NodeTraversalCounters {
+        after: tex_state::node_view::NodeTraversalCounters,
+        before: tex_state::node_view::NodeTraversalCounters,
+    ) -> tex_state::node_view::NodeTraversalCounters {
+        tex_state::node_view::NodeTraversalCounters {
             index_resolutions: after
                 .index_resolutions
                 .saturating_sub(before.index_resolutions),

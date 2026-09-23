@@ -246,7 +246,7 @@ fn active_operation_take_uses_a_rollbackable_zero_copy_loan() {
     assert!(state.metadata(8).is_none());
     assert_eq!(
         arena
-            .list(page)
+            .node_cursor(page)
             .expect("loaned page list")
             .testing_node_address(0),
         Some(original_address)

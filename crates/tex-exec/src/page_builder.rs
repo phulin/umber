@@ -6,7 +6,7 @@ use tex_state::diagnostic::{Diagnostic, DiagnosticEffects};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::{GlueKind, Node};
-use tex_state::node_arena::NodeView;
+use tex_state::node_view::NodeView;
 use tex_state::page::{
     AWFUL_BAD, DEPLORABLE, EJECT_PENALTY, INF_PENALTY, PageContents, PageDimension, PageInsertion,
     PageInsertionStatus,
@@ -147,10 +147,7 @@ fn build_page_cold<G>(
         return Ok(());
     }
 
-    while let Some(node) = stores
-        .page_contribution_front()
-        .map(|node| node.to_owned_with(std::convert::identity))
-    {
+    while let Some(node) = stores.page_contribution_front().map(|node| node.to_owned()) {
         if !matches!(
             node,
             Node::HList(_)
@@ -375,7 +372,7 @@ fn insertion_box_size_with_context<G>(
         return Ok(Scaled::from_raw(0));
     };
     match node {
-        tex_state::node_arena::NodeView::VList(box_node) => add(box_node.height, box_node.depth),
+        tex_state::node_view::NodeView::VList(box_node) => add(box_node.height, box_node.depth),
         _ => Ok(Scaled::from_raw(0)),
     }
 }
@@ -387,7 +384,7 @@ fn ensure_insertion_vbox_with_context<G>(
     diagnostic_effects: &mut DiagnosticEffects,
     class: u16,
     diagnostic_context: PageDiagnosticContext<'_, G>,
-) -> Result<Option<tex_state::node_arena::PageListId>, ExecError> {
+) -> Result<Option<tex_state::page_node_arena::PageListId>, ExecError> {
     let Some(list) = stores.copy_box_to_page(class) else {
         return Ok(None);
     };
@@ -397,7 +394,7 @@ fn ensure_insertion_vbox_with_context<G>(
             .expect("box was copied into the live page arena")
             .nodes()
             .first(),
-        Some(tex_state::node_arena::NodeView::HList(_))
+        Some(tex_state::node_view::NodeView::HList(_))
     ) {
         return Ok(Some(list));
     }
@@ -445,7 +442,7 @@ pub(crate) fn ensure_insertion_vbox<G>(
     diagnostic_effects: &mut DiagnosticEffects,
     class: u16,
     diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
-) -> Result<Option<tex_state::node_arena::PageListId>, ExecError> {
+) -> Result<Option<tex_state::page_node_arena::PageListId>, ExecError> {
     ensure_insertion_vbox_with_context(
         stores,
         diagnostic_effects,
@@ -500,7 +497,7 @@ fn split_page_insertion<G>(
     insertion: &mut PageInsertion,
     current_index: usize,
     node: &Node,
-    content: tex_state::node_arena::PageListId,
+    content: tex_state::page_node_arena::PageListId,
     split_max_depth: Scaled,
     diagnostic_context: PageDiagnosticContext<'_, G>,
 ) -> Result<Option<Node>, ExecError> {
@@ -538,7 +535,7 @@ fn split_page_insertion<G>(
     .map_err(vertical_break_error)?;
     let break_penalty = split.break_index.map_or(EJECT_PENALTY, |index| {
         content_nodes.get(index).map_or(0, |node| match node {
-            tex_state::node_arena::NodeView::Penalty(value) => value,
+            tex_state::node_view::NodeView::Penalty(value) => value,
             _ => 0,
         })
     });
@@ -731,7 +728,7 @@ fn normalize_insert_content_shrink<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     insert_node: &Node,
-    content: tex_state::node_arena::PageListId,
+    content: tex_state::page_node_arena::PageListId,
     indices: &[usize],
     diagnostic_context: PageDiagnosticContext<'_, G>,
 ) -> Result<Option<Node>, ExecError> {
@@ -745,7 +742,7 @@ fn normalize_insert_content_shrink<G>(
         .nodes();
     let mut replacements = Vec::new();
     for &index in indices {
-        let Some(tex_state::node_arena::NodeView::Glue { spec, kind, leader }) =
+        let Some(tex_state::node_view::NodeView::Glue { spec, kind, leader }) =
             content_nodes.get(index)
         else {
             continue;

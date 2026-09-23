@@ -5,7 +5,7 @@ mod tests;
 
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::{BoxNode, BoxNodeFields, Node, Sign, UnsetNode};
-use tex_state::node_arena::PageListId;
+use tex_state::page_node_arena::PageListId;
 use tex_state::page_node_arena::{PageListSpan, PageMaterialActiveListBuilder};
 use tex_state::scaled::{GlueSetRatio, Scaled};
 
@@ -60,8 +60,8 @@ pub(super) fn set_alignment_nodes<G>(
             .get(index)
             .expect("alignment row index remains in range")
         {
-            tex_state::node_arena::NodeView::Unset(row) => RowAction::Unset(row),
-            tex_state::node_arena::NodeView::Rule {
+            tex_state::node_view::NodeView::Unset(row) => RowAction::Unset(row),
+            tex_state::node_view::NodeView::Rule {
                 width,
                 height,
                 depth,
@@ -241,7 +241,7 @@ fn set_row_children<G>(
             .get(index)
             .expect("alignment child index remains in range")
         {
-            tex_state::node_arena::NodeView::Unset(cell) => cell,
+            tex_state::node_view::NodeView::Unset(cell) => cell,
             _ => continue,
         };
         let span = usize::from(cell.span_count) + 1;

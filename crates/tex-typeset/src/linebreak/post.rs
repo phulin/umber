@@ -12,7 +12,12 @@ pub fn post_line_break<S: TypesetState>(
     breaks: &[BreakDecision],
     params: PostLineBreakParams,
 ) -> Vec<BrokenLine> {
-    post_line_break_owned(state, nodes.to_vec(), breaks, params)
+    let mut lines = Vec::with_capacity(breaks.len());
+    let mut materializer = LineMaterializer::from_borrowed_nodes(nodes, breaks.to_vec(), params);
+    while let Some(line) = materializer.materialize_next(state, Vec::new()) {
+        lines.push(line);
+    }
+    lines
 }
 
 /// Stateful source-order materialization of a broken paragraph.
@@ -35,11 +40,10 @@ pub struct LineMaterializer<'a> {
 // paragraph solely to shrink this short-lived control enum.
 #[allow(clippy::large_enum_variant)]
 enum ChannelNodes<'a> {
-    Owned(std::vec::IntoIter<Node>),
-    Arena(core::iter::Peekable<tex_state::node_arena::NodeCursorIter<'a>>),
+    Arena(core::iter::Peekable<tex_state::node_view::NodeCursorIter<'a>>),
     #[cfg(test)]
     ArenaId {
-        sequence: tex_state::node_arena::PageNodeSequenceId,
+        sequence: tex_state::page_node_arena::PageListId,
         cursor: usize,
         remaining: usize,
     },
@@ -70,27 +74,6 @@ impl<'a> LineMaterializer<'a> {
         } = tape;
         let (semantic, physical, semantic_lineages, physical_lineages, physical_breaks) =
             match source {
-                super::ParagraphSource::Owned(sequence) => {
-                    let semantic_lineages = sequence.semantic_high_cell_lineages().to_vec();
-                    let physical_lineages = sequence.physical_high_cell_lineages().to_vec();
-                    let physical_breaks = breaks
-                        .iter()
-                        .map(|decision| BreakDecision {
-                            position: sequence
-                                .physical_boundary(decision.position)
-                                .expect("break position is a semantic boundary"),
-                            ..*decision
-                        })
-                        .collect();
-                    let (semantic, physical, _) = sequence.into_parts();
-                    (
-                        ChannelNodes::Owned(semantic.into_iter()),
-                        ChannelNodes::Owned(physical.into_iter()),
-                        semantic_lineages,
-                        physical_lineages,
-                        physical_breaks,
-                    )
-                }
                 super::ParagraphSource::Borrowed(sequence) => {
                     let semantic_lineages =
                         tex_state::node_sequence::borrowed_mirrored_high_cell_lineages_from(
@@ -170,8 +153,8 @@ impl<'a> LineMaterializer<'a> {
         }
     }
 
-    pub fn from_nodes(
-        nodes: Vec<Node>,
+    pub fn from_borrowed_nodes(
+        nodes: &'a [Node],
         breaks: Vec<BreakDecision>,
         params: PostLineBreakParams,
     ) -> Self {
@@ -202,17 +185,17 @@ impl<'a> LineMaterializer<'a> {
                 };
             }
         }
-        let sequence = tex_state::node_sequence::NodeSequence::mirrored(nodes);
-        let semantic_high_cell_lineages = sequence.semantic_high_cell_lineages().to_vec();
-        let physical_high_cell_lineages = sequence.physical_high_cell_lineages().to_vec();
-        let (semantic, physical) = sequence.take();
+        let source = tex_state::node_view::NodeCursor::owned(nodes);
+        let semantic_high_cell_lineages =
+            tex_state::node_sequence::borrowed_mirrored_high_cell_lineages_from(source.iter());
+        let physical_high_cell_lineages = semantic_high_cell_lineages.clone();
         Self {
             physical: ChannelCursor::new(
-                ChannelNodes::Owned(physical.into_iter()),
+                ChannelNodes::Arena(source.iter().peekable()),
                 physical_high_cell_lineages,
             ),
             semantic: ChannelCursor::new(
-                ChannelNodes::Owned(semantic.into_iter()),
+                ChannelNodes::Arena(source.iter().peekable()),
                 semantic_high_cell_lineages,
             ),
             physical_breaks: breaks.clone(),
@@ -293,7 +276,6 @@ impl<'a> ChannelCursor<'a> {
 impl ChannelNodes<'_> {
     fn len(&self) -> usize {
         match self {
-            Self::Owned(nodes) => nodes.len(),
             Self::Arena(nodes) => nodes.len(),
             #[cfg(test)]
             Self::ArenaId { remaining, .. } => *remaining,
@@ -302,10 +284,7 @@ impl ChannelNodes<'_> {
 
     fn next_owned<S: TypesetState>(&mut self, _state: &S) -> Option<Node> {
         match self {
-            Self::Owned(nodes) => nodes.next(),
-            Self::Arena(nodes) => nodes
-                .next()
-                .map(|node| node.to_owned_with(std::convert::identity)),
+            Self::Arena(nodes) => nodes.next().map(|node| node.to_owned()),
             #[cfg(test)]
             Self::ArenaId {
                 sequence,
@@ -320,7 +299,7 @@ impl ChannelNodes<'_> {
                     .expect("paragraph sequence remains live during materialization")
                     .get(*cursor)
                     .expect("arena-id cursor remains in bounds")
-                    .to_owned_with(std::convert::identity);
+                    .to_owned();
                 *cursor += 1;
                 *remaining -= 1;
                 Some(node)
@@ -331,9 +310,8 @@ impl ChannelNodes<'_> {
     fn first<'state, S: TypesetState>(
         &'state mut self,
         _state: &'state S,
-    ) -> Option<tex_state::node_arena::NodeView<'state>> {
+    ) -> Option<tex_state::node_view::NodeView<'state>> {
         match self {
-            Self::Owned(nodes) => nodes.as_slice().first().map(Into::into),
             Self::Arena(nodes) => nodes.peek().cloned(),
             #[cfg(test)]
             Self::ArenaId {
@@ -454,25 +432,6 @@ const fn matching_end(direction: Direction) -> Direction {
     }
 }
 
-/// Materializes broken lines by moving nodes out of an owned paragraph.
-///
-/// The borrowed convenience entry point above remains useful to pure callers,
-/// while execution can use this path to avoid cloning the entire paragraph a
-/// second time after line breaking.
-pub fn post_line_break_owned<S: TypesetState>(
-    state: &S,
-    nodes: Vec<Node>,
-    breaks: &[BreakDecision],
-    params: PostLineBreakParams,
-) -> Vec<BrokenLine> {
-    let mut lines = Vec::with_capacity(breaks.len());
-    let mut materializer = LineMaterializer::from_nodes(nodes, breaks.to_vec(), params);
-    while let Some(line) = materializer.materialize_next(state, Vec::new()) {
-        lines.push(line);
-    }
-    lines
-}
-
 #[allow(clippy::too_many_arguments)] // Segment transfer keeps source cursors and output lanes explicit.
 fn push_owned_line_segment<S: TypesetState>(
     state: &S,
@@ -484,7 +443,7 @@ fn push_owned_line_segment<S: TypesetState>(
     ),
     end: usize,
     decision: &BreakDecision,
-    empty_list: &tex_state::node_arena::PageListId,
+    empty_list: &tex_state::page_node_arena::PageListId,
     actions: Option<&[MaterializationAction]>,
     par_fill_override: Option<GlueSpec>,
     output: (&mut Vec<Node>, &mut Vec<DirectHighCellLineage>),
@@ -531,18 +490,13 @@ fn push_owned_line_segment<S: TypesetState>(
                     replace: *empty_list,
                     physical_replace_count: 0,
                 });
-                out.extend(
-                    state
-                        .page_nodes(pre)
-                        .iter()
-                        .map(|node| node.to_owned_with(std::convert::identity)),
-                );
+                out.extend(state.page_nodes(pre).iter().map(|node| node.to_owned()));
                 out_lineages.extend(frozen_high_cell_lineages(state, &pre, FrozenListRole::Pre));
                 post.extend(
                     state
                         .page_nodes(post_list)
                         .iter()
-                        .map(|node| node.to_owned_with(std::convert::identity)),
+                        .map(|node| node.to_owned()),
                 );
                 post_lineages.extend(frozen_high_cell_lineages(
                     state,
@@ -564,12 +518,7 @@ fn push_owned_line_segment<S: TypesetState>(
                     replace,
                     physical_replace_count,
                 });
-                out.extend(
-                    state
-                        .page_nodes(replace)
-                        .iter()
-                        .map(|node| node.to_owned_with(std::convert::identity)),
-                );
+                out.extend(state.page_nodes(replace).iter().map(|node| node.to_owned()));
                 out_lineages.extend(frozen_high_cell_lineages(
                     state,
                     &replace,
@@ -602,7 +551,7 @@ fn push_owned_line_segment<S: TypesetState>(
 
 fn frozen_high_cell_lineages<S: TypesetState>(
     state: &S,
-    list: &tex_state::node_arena::PageListId,
+    list: &tex_state::page_node_arena::PageListId,
     role: FrozenListRole,
 ) -> Vec<DirectHighCellLineage> {
     state
@@ -611,8 +560,8 @@ fn frozen_high_cell_lineages<S: TypesetState>(
         .enumerate()
         .flat_map(|(row, node)| {
             let count = match node {
-                tex_state::node_arena::NodeView::Char { .. } => 1,
-                tex_state::node_arena::NodeView::Lig { orig, .. } => orig.len(),
+                tex_state::node_view::NodeView::Char { .. } => 1,
+                tex_state::node_view::NodeView::Lig { orig, .. } => orig.len(),
                 _ => 0,
             };
             (0..count).map(move |unit| DirectHighCellLineage::Frozen {
@@ -672,16 +621,16 @@ fn penalty_array_value(values: &[i32], one_based_index: usize) -> Option<i32> {
     (!values.is_empty()).then(|| values[one_based_index.min(values.len()) - 1])
 }
 
-fn is_discardable(node: tex_state::node_arena::NodeView<'_>) -> bool {
+fn is_discardable(node: tex_state::node_view::NodeView<'_>) -> bool {
     matches!(
         node,
-        tex_state::node_arena::NodeView::Glue { .. }
-            | tex_state::node_arena::NodeView::Kern {
+        tex_state::node_view::NodeView::Glue { .. }
+            | tex_state::node_view::NodeView::Kern {
                 kind: KernKind::Explicit | KernKind::Mu,
                 ..
             }
-            | tex_state::node_arena::NodeView::Penalty(_)
-            | tex_state::node_arena::NodeView::MathOn(_)
-            | tex_state::node_arena::NodeView::MathOff(_)
+            | tex_state::node_view::NodeView::Penalty(_)
+            | tex_state::node_view::NodeView::MathOn(_)
+            | tex_state::node_view::NodeView::MathOff(_)
     )
 }

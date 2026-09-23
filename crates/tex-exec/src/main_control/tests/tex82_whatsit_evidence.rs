@@ -540,14 +540,14 @@ fn base_whatsits_are_passive_for_page_and_vertical_break_visits() {
             let typeset = crate::typeset_context::TypesetContext::new(context);
             let bare_break = tex_typeset::vert_break(
                 &typeset,
-                tex_state::node_arena::NodeCursor::owned(&bare),
+                tex_state::node_view::NodeCursor::owned(&bare),
                 Scaled::from_raw(0),
                 Scaled::from_raw(0),
             )
             .expect("bare vertical break");
             let decorated_break = tex_typeset::vert_break(
                 &typeset,
-                tex_state::node_arena::NodeCursor::owned(&decorated),
+                tex_state::node_view::NodeCursor::owned(&decorated),
                 Scaled::from_raw(0),
                 Scaled::from_raw(0),
             )

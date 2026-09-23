@@ -1,9 +1,9 @@
 use tex_arith::WideScaled;
 use tex_state::glue::GlueSpec;
 use tex_state::node::{KernKind, Node};
-use tex_state::node_arena::{DirectNodeView, NodeCursor, NodeView, PageListId, PageNodeSequenceId};
 use tex_state::node_sequence::DirectHighCellLineages;
-use tex_state::node_sequence::NodeSequence;
+use tex_state::node_view::{DirectNodeView, NodeCursor, NodeView};
+use tex_state::page_node_arena::PageListId;
 use tex_state::scaled::Scaled;
 
 use crate::{INF_BAD, TypesetState};
@@ -201,11 +201,10 @@ pub struct ParagraphTape<'a> {
 
 #[derive(Clone, Debug, PartialEq)]
 enum ParagraphSource<'a> {
-    Owned(NodeSequence),
     Borrowed(NodeCursor<'a>),
     ArenaId {
-        semantic: PageNodeSequenceId,
-        physical: PageNodeSequenceId,
+        semantic: PageListId,
+        physical: PageListId,
         physical_boundaries: Option<Vec<usize>>,
         semantic_high_cell_lineages: Vec<DirectHighCellLineages>,
         physical_high_cell_lineages: Vec<DirectHighCellLineages>,
@@ -217,8 +216,8 @@ enum ParagraphSource<'a> {
 /// Node payload remains in the page-material arena. The vectors contain only
 /// breakpoint and allocator scalar evidence assembled by the line breaker.
 pub struct ArenaParagraphMaterialization {
-    pub semantic: PageNodeSequenceId,
-    pub diagnostic: Option<PageNodeSequenceId>,
+    pub semantic: PageListId,
+    pub diagnostic: Option<PageListId>,
     pub diagnostic_boundaries: Option<Vec<usize>>,
     pub semantic_high_cell_lineages: Vec<DirectHighCellLineages>,
     pub diagnostic_high_cell_lineages: Option<Vec<DirectHighCellLineages>>,
@@ -248,32 +247,13 @@ pub enum MaterializationAction {
 }
 
 impl ParagraphTape<'static> {
-    #[must_use]
-    pub fn analyze<S: TypesetState>(
-        state: &S,
-        sequence: NodeSequence,
-        params: &LineBreakParams,
-    ) -> Self {
-        let nodes = sequence.semantic();
-        let nodes = NodeCursor::owned(nodes);
-        let mut analyzer = LegalBreakpoints::new(state, nodes, params);
-        let break_sites = analyzer.collect_direct();
-        let materialization = analyzer.materialization;
-        Self {
-            source: ParagraphSource::Owned(sequence),
-            break_sites,
-            materialization,
-            par_fill_override: None,
-        }
-    }
-
     /// Analyzes an arena coordinate through short-lived borrowed views. The
     /// resulting tape stores only the compact coordinate and scalar/index
     /// scratch, so it does not keep the execution context borrowed.
     #[must_use]
     pub fn analyze_arena_id<S: TypesetState>(
         state: &S,
-        sequence: PageNodeSequenceId,
+        sequence: PageListId,
         params: &LineBreakParams,
     ) -> Self {
         Self::analyze_arena_projection_ids(state, sequence, sequence, None, params)
@@ -288,8 +268,8 @@ impl ParagraphTape<'static> {
     #[must_use]
     pub fn analyze_arena_projection_ids<S: TypesetState>(
         state: &S,
-        semantic: PageNodeSequenceId,
-        physical: PageNodeSequenceId,
+        semantic: PageListId,
+        physical: PageListId,
         physical_boundaries: Option<Vec<usize>>,
         params: &LineBreakParams,
     ) -> Self {
@@ -380,7 +360,6 @@ impl<'a> ParagraphTape<'a> {
     #[must_use]
     pub fn nodes<'state, S: TypesetState>(&'state self, state: &'state S) -> NodeCursor<'state> {
         match &self.source {
-            ParagraphSource::Owned(sequence) => NodeCursor::owned(sequence.semantic()),
             ParagraphSource::Borrowed(sequence) => *sequence,
             ParagraphSource::ArenaId { semantic, .. } => state
                 .page_node_sequence(*semantic)
@@ -393,7 +372,7 @@ impl<'a> ParagraphTape<'a> {
     }
 
     /// Consumes the production arena-backed tape without materializing either
-    /// node channel. Pure slice and owned adapters deliberately remain separate.
+    /// node channel.
     #[must_use]
     pub fn into_arena_materialization(self) -> Option<ArenaParagraphMaterialization> {
         let Self {
@@ -425,26 +404,6 @@ impl<'a> ParagraphTape<'a> {
             actions: materialization,
             par_fill_override,
         })
-    }
-
-    #[must_use]
-    pub fn into_semantic_nodes<S: TypesetState>(self, state: &S) -> Vec<Node> {
-        match self.source {
-            ParagraphSource::Owned(sequence) => sequence.into_semantic(),
-            ParagraphSource::Borrowed(sequence) => {
-                let mut nodes = Vec::with_capacity(sequence.len());
-                sequence.for_each(|node| {
-                    nodes.push(node.to_owned_with(std::convert::identity));
-                });
-                nodes
-            }
-            ParagraphSource::ArenaId { semantic, .. } => state
-                .page_node_sequence(semantic)
-                .expect("paragraph sequence remains live while its tape is consumed")
-                .iter()
-                .map(|node| node.to_owned_with(std::convert::identity))
-                .collect(),
-        }
     }
 }
 
@@ -531,20 +490,19 @@ pub fn line_break<S, H>(
     nodes: &[Node],
     params: LineBreakParams,
     hyphenation: &mut H,
-) -> LineBreakResult
+) -> BreakPlan
 where
     S: TypesetState,
     H: HyphenationHook<S>,
 {
-    let tape = ParagraphTape::analyze(state, NodeSequence::mirrored(nodes.to_vec()), &params);
+    let tape = ParagraphTape::analyze_borrowed(state, nodes, &params);
     if let Some(plan) = try_tape_without_hyphenation(state, &tape, &params) {
-        return plan_with_tape(plan, tape);
+        return plan;
     }
 
     let hyphenated = hyphenation.hyphenate(nodes);
-    let tape = ParagraphTape::analyze(state, NodeSequence::mirrored(hyphenated), &params);
-    let plan = break_hyphenated_tape(state, &tape, &params);
-    plan_with_tape(plan, tape)
+    let tape = ParagraphTape::analyze_borrowed(state, &hyphenated, &params);
+    break_hyphenated_tape(state, &tape, &params)
 }
 
 pub fn plan_with_tape(plan: BreakPlan, tape: ParagraphTape<'static>) -> LineBreakResult {
@@ -566,7 +524,7 @@ pub fn try_line_break_without_hyphenation<S: TypesetState>(
     nodes: &[Node],
     params: &LineBreakParams,
 ) -> Option<BreakPlan> {
-    let tape = ParagraphTape::analyze(state, NodeSequence::mirrored(nodes.to_vec()), params);
+    let tape = ParagraphTape::analyze_borrowed(state, nodes, params);
     try_tape_without_hyphenation(state, &tape, params)
 }
 
@@ -585,7 +543,7 @@ pub fn try_line_break_without_hyphenation_traced<S: TypesetState>(
     nodes: &[Node],
     params: &LineBreakParams,
 ) -> (Option<BreakPlan>, Vec<LineBreakTrace>) {
-    let tape = ParagraphTape::analyze(state, NodeSequence::mirrored(nodes.to_vec()), params);
+    let tape = ParagraphTape::analyze_borrowed(state, nodes, params);
     try_tape_without_hyphenation_traced(state, &tape, params)
 }
 
@@ -622,7 +580,7 @@ pub fn line_break_hyphenated<S: TypesetState>(
     nodes: &[Node],
     params: &LineBreakParams,
 ) -> BreakPlan {
-    let tape = ParagraphTape::analyze(state, NodeSequence::mirrored(nodes.to_vec()), params);
+    let tape = ParagraphTape::analyze_borrowed(state, nodes, params);
     break_hyphenated_tape(state, &tape, params)
 }
 
@@ -654,7 +612,7 @@ pub fn line_break_hyphenated_traced<S: TypesetState>(
     params: &LineBreakParams,
     trace: Vec<LineBreakTrace>,
 ) -> (BreakPlan, Vec<LineBreakTrace>) {
-    let tape = ParagraphTape::analyze(state, NodeSequence::mirrored(nodes.to_vec()), params);
+    let tape = ParagraphTape::analyze_borrowed(state, nodes, params);
     break_hyphenated_tape_traced(state, &tape, params, trace)
 }
 
@@ -711,7 +669,7 @@ pub fn break_hyphenated_tape_traced<S: TypesetState>(
 mod post;
 mod widths;
 
-pub use post::{LineMaterializer, line_penalty_after, post_line_break, post_line_break_owned};
+pub use post::{LineMaterializer, line_penalty_after, post_line_break};
 
 #[cfg(test)]
 use widths::line_widths_nodes;

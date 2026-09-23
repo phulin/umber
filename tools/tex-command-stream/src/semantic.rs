@@ -1751,7 +1751,7 @@ fn capture_box_outlines<G>(
 
 fn push_live_node_outline<G>(
     universe: &tex_state::Universe<G>,
-    root: tex_state::node_arena::PageListId,
+    root: tex_state::page_node_arena::PageListId,
     path: &mut Vec<usize>,
     depth: u8,
     output: &mut Vec<umber::DetachedNodeOutlineEntry>,
@@ -1764,7 +1764,7 @@ fn push_live_node_outline<G>(
 
 fn push_live_node_children<G>(
     universe: &tex_state::Universe<G>,
-    nodes: tex_state::node_arena::NodeCursor<'_>,
+    nodes: tex_state::node_view::NodeCursor<'_>,
     path: &mut Vec<usize>,
     depth: u8,
     output: &mut Vec<umber::DetachedNodeOutlineEntry>,

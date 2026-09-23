@@ -637,7 +637,7 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
     pub(crate) fn box_register<F>(
         &mut self,
         index: u16,
-        boxed: Option<&tex_state::node_arena::PageListId>,
+        boxed: Option<&tex_state::page_node_arena::PageListId>,
         global: bool,
         write: F,
     ) -> MutationReceipt

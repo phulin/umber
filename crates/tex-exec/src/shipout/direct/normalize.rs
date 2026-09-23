@@ -233,7 +233,7 @@ fn normalize_list<G>(
 }
 
 fn normalization_work_cursor(
-    nodes: tex_state::node_arena::NodeCursor<'_>,
+    nodes: tex_state::node_view::NodeCursor<'_>,
     box_lr: tex_state::node::BoxLr,
 ) -> (SmallVec<[usize; 32]>, Option<Vec<usize>>) {
     let mut permutation = (box_lr != tex_state::node::BoxLr::Reversed)
@@ -472,20 +472,20 @@ fn normalize_index<G>(
 }
 
 fn classify_page_node<G>(
-    node: tex_state::node_arena::NodeView<'_>,
+    node: tex_state::node_view::NodeView<'_>,
     source: tex_state::ShipoutListId,
     index: usize,
     suppress_deferred_streams: bool,
     in_hlist: bool,
 ) -> NormalizeNode<G> {
-    if let tex_state::node_arena::NodeView::MathList(math) = node {
+    if let tex_state::node_view::NodeView::MathList(math) = node {
         return NormalizeNode::Math(math);
     }
-    if let tex_state::node_arena::NodeView::Whatsit(whatsit) = node {
+    if let tex_state::node_view::NodeView::Whatsit(whatsit) = node {
         return NormalizeNode::Whatsit(prepare_whatsit(&whatsit, source, index, |glue| glue));
     }
     classify_transient_node(
-        &node.to_owned_with(std::convert::identity),
+        &node.to_owned(),
         tex_state::ShipoutListId::Page,
         suppress_deferred_streams,
         in_hlist,

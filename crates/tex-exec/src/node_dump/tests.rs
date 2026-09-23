@@ -54,7 +54,7 @@ fn page_vec<G>(context: &tex_state::CommandContext<'_, G>, root: PageListId) -> 
         .expect("test list belongs to the page arena")
         .nodes()
         .iter()
-        .map(|node| node.to_owned_with(std::convert::identity))
+        .map(|node| node.to_owned())
         .collect()
 }
 

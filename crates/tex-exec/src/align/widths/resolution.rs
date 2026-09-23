@@ -13,7 +13,7 @@ use super::{ResolvedWidths, unset_axis_size};
 
 pub(super) fn resolve_widths<G>(
     state: &AlignState,
-    rows: tex_state::node_arena::NodeCursor<'_>,
+    rows: tex_state::node_view::NodeCursor<'_>,
     stores: &CommandContext<'_, G>,
 ) -> Result<ResolvedWidths, ExecError> {
     let requirements = collect_width_requirements(state.kind(), rows, stores)?;
@@ -45,7 +45,7 @@ fn initial_tabskips(state: &AlignState, columns: usize) -> Vec<tex_state::glue::
 
 fn collect_width_requirements<G>(
     kind: AlignmentKind,
-    rows: tex_state::node_arena::NodeCursor<'_>,
+    rows: tex_state::node_view::NodeCursor<'_>,
     stores: &CommandContext<'_, G>,
 ) -> Result<Vec<AlignmentWidthRequirement>, ExecError> {
     let mut requirements = Vec::new();

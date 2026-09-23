@@ -3,7 +3,7 @@
 use tex_state::CommandContext;
 use tex_state::diagnostic::DiagnosticEffects;
 use tex_state::node::Node;
-use tex_state::node_arena::PageListId;
+use tex_state::page_node_arena::PageListId;
 use tex_typeset::{PackDiagnostic, PackSpec};
 
 use crate::packing_params::hpack_params;
@@ -96,8 +96,8 @@ where
     }
 }
 
-fn reset_removed_box_shift(node: tex_state::node_arena::NodeView<'_>) -> Option<Node> {
-    let mut node = node.to_owned_with(std::convert::identity);
+fn reset_removed_box_shift(node: tex_state::node_view::NodeView<'_>) -> Option<Node> {
+    let mut node = node.to_owned();
     match &mut node {
         Node::HList(box_node) | Node::VList(box_node) => {
             box_node.shift = tex_state::scaled::Scaled::from_raw(0);
@@ -130,7 +130,7 @@ pub(crate) fn hpack_with_overfull_rule<G>(
     diagnostic_effects: &mut DiagnosticEffects,
     geometry: &mut dyn crate::geometry::PackGeometrySink,
     context: &crate::pack_report::ExecutionDiagnosticContext,
-    children: tex_state::node_arena::PageListId,
+    children: tex_state::page_node_arena::PageListId,
     spec: PackSpec,
 ) -> tex_state::node::BoxNode {
     let params = hpack_params(stores);
@@ -274,7 +274,7 @@ fn recover_texxet_directions_list<G>(
             .nodes()
             .get(index)
             .and_then(|node| match node {
-                tex_state::node_arena::NodeView::Direction(direction) => Some(direction),
+                tex_state::node_view::NodeView::Direction(direction) => Some(direction),
                 _ => None,
             });
         let replacement = direction.and_then(|direction| {
@@ -331,7 +331,7 @@ fn project_short_diagnostic_discs_list<G>(
             .nodes()
             .get(physical_index)
             .and_then(|node| match node {
-                tex_state::node_arena::NodeView::Disc {
+                tex_state::node_view::NodeView::Disc {
                     kind,
                     pre,
                     post,
@@ -358,7 +358,7 @@ fn project_short_diagnostic_discs_list<G>(
                 .nodes()
                 .get(semantic_index)
                 .and_then(|node| match node {
-                    tex_state::node_arena::NodeView::Disc { pre, post, .. } => Some((pre, post)),
+                    tex_state::node_view::NodeView::Disc { pre, post, .. } => Some((pre, post)),
                     _ => None,
                 });
             semantic_index += 1;
@@ -384,8 +384,8 @@ fn project_short_diagnostic_discs_list<G>(
 
 fn physical_discretionary_projection<G>(
     stores: &mut CommandContext<'_, G>,
-    children: tex_state::node_arena::PageListId,
-) -> Option<tex_state::node_arena::PageListId> {
+    children: tex_state::page_node_arena::PageListId,
+) -> Option<tex_state::page_node_arena::PageListId> {
     let nodes = stores
         .page_node_list(children)
         .expect("packed box belongs to the live page arena")
@@ -429,6 +429,6 @@ pub(crate) fn first_box_node<G>(
         .page_node_list(owner?)
         .ok()?
         .get(0)
-        .map(|node| node.to_owned_with(|id| id))
+        .map(|node| node.to_owned())
         .filter(|node| matches!(node, Node::HList(_) | Node::VList(_)))
 }

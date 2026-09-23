@@ -7,7 +7,8 @@ use tex_state::font::NULL_FONT;
 use tex_state::ids::FontId;
 use tex_state::math::{LimitType, MathChar, MathField, MathNoad, NoadClass, NoadKind};
 use tex_state::node::{GlueKind, KernKind, Node};
-use tex_state::node_arena::{NodeView, PageListId};
+use tex_state::node_view::NodeView;
+use tex_state::page_node_arena::PageListId;
 use tex_state::scaled::Scaled;
 
 use super::{
@@ -273,7 +274,7 @@ fn first_pass<S: MathTypesetState>(
     while index < view.len() {
         if matches!(
             view.node(ctx.state, index),
-            Some(tex_state::node_arena::NodeView::MathNoad(MathNoad {
+            Some(tex_state::node_view::NodeView::MathNoad(MathNoad {
                 kind: NoadKind::Normal(NoadClass::Bin),
                 ..
             }))
@@ -292,15 +293,15 @@ fn first_pass<S: MathTypesetState>(
         }
         if matches!(
             view.node(ctx.state, index),
-            Some(tex_state::node_arena::NodeView::MathNoad(noad)) if matches!(noad.kind, NoadKind::Normal(NoadClass::Ord))
+            Some(tex_state::node_view::NodeView::MathNoad(noad)) if matches!(noad.kind, NoadKind::Normal(NoadClass::Ord))
         ) && operators::ord_pair_may_change(ctx, view, index)
         {
             operators::make_ord(ctx, view, index);
         }
         if let Some(children) = match view.node(ctx.state, index) {
             Some(
-                tex_state::node_arena::NodeView::HList(boxed)
-                | tex_state::node_arena::NodeView::VList(boxed),
+                tex_state::node_view::NodeView::HList(boxed)
+                | tex_state::node_view::NodeView::VList(boxed),
             ) => Some(boxed.children),
             _ => None,
         } {
@@ -311,7 +312,7 @@ fn first_pass<S: MathTypesetState>(
             .node(state, index)
             .expect("expanded math index remains in range")
         {
-            tex_state::node_arena::NodeView::MathStyle(style) => {
+            tex_state::node_view::NodeView::MathStyle(style) => {
                 // AppG rule 3
                 let full_style = view
                     .marker_styles
@@ -322,18 +323,18 @@ fn first_pass<S: MathTypesetState>(
                 ctx.set_style(full_style);
                 out.push(WorkItem::Style(ctx.style));
             }
-            tex_state::node_arena::NodeView::MathChoice(_) => {
+            tex_state::node_view::NodeView::MathChoice(_) => {
                 unreachable!("math choices are expanded by the iterative view")
             }
-            tex_state::node_arena::NodeView::Glue { spec, kind, leader } => {
+            tex_state::node_view::NodeView::Glue { spec, kind, leader } => {
                 // AppG rule 2
                 let suppress_next = matches!(kind, GlueKind::NonScript)
                     && ctx.style.is_script_or_smaller()
                     && view.node(state, index + 1).is_some_and(|next| {
                         matches!(
                             next,
-                            tex_state::node_arena::NodeView::Glue { .. }
-                                | tex_state::node_arena::NodeView::Kern { .. }
+                            tex_state::node_view::NodeView::Glue { .. }
+                                | tex_state::node_view::NodeView::Kern { .. }
                         )
                     });
                 if matches!(kind, tex_state::node::GlueKind::MuSkip) {
@@ -361,7 +362,7 @@ fn first_pass<S: MathTypesetState>(
                     index += 1;
                 }
             }
-            tex_state::node_arena::NodeView::Kern { amount, kind } => {
+            tex_state::node_view::NodeView::Kern { amount, kind } => {
                 // AppG rule 2
                 if matches!(kind, KernKind::Mu) {
                     out.push(WorkItem::Node(MathNode::Kern {
@@ -375,7 +376,7 @@ fn first_pass<S: MathTypesetState>(
                     }));
                 }
             }
-            tex_state::node_arena::NodeView::MathNoad(noad)
+            tex_state::node_view::NodeView::MathNoad(noad)
                 if matches!(
                     noad.kind,
                     NoadKind::LeftDelimiter { .. }
@@ -415,7 +416,7 @@ fn first_pass<S: MathTypesetState>(
                     ctx.set_style(base_style);
                 }
             }
-            tex_state::node_arena::NodeView::MathNoad(noad) => {
+            tex_state::node_view::NodeView::MathNoad(noad) => {
                 let mut class = noad_class(&noad);
                 if class == NoadClass::Bin
                     && matches!(
@@ -448,7 +449,7 @@ fn first_pass<S: MathTypesetState>(
                 r_type = Some(work.class);
                 out.push(WorkItem::Noad(work));
             }
-            tex_state::node_arena::NodeView::FractionNoad(fraction) => {
+            tex_state::node_view::NodeView::FractionNoad(fraction) => {
                 // AppG rule 15
                 let hlist = fractions::make_fraction(ctx, &fraction);
                 // Fractions rejoin the same §724 `check_dimensions` label as
@@ -524,10 +525,10 @@ impl ExpandedMathView {
         &'a self,
         state: &'a impl MathTypesetState,
         index: usize,
-    ) -> Option<tex_state::node_arena::NodeView<'a>> {
+    ) -> Option<tex_state::node_view::NodeView<'a>> {
         match self.nodes.get(index)? {
             ExpandedMathNode::Source { list, index } => state.page_nodes(*list).get(*index),
-            ExpandedMathNode::Owned(node) => Some(tex_state::node_arena::NodeView::from(node)),
+            ExpandedMathNode::Owned(node) => Some(tex_state::node_view::NodeView::from(node)),
         }
     }
 
@@ -541,7 +542,7 @@ impl ExpandedMathView {
             index: source_index,
         } = self.nodes[index]
         {
-            let tex_state::node_arena::NodeView::MathNoad(noad) = state
+            let tex_state::node_view::NodeView::MathNoad(noad) = state
                 .page_nodes(list)
                 .get(source_index)
                 .expect("expanded math source remains live")
@@ -603,7 +604,7 @@ fn expand_math_choices_into(
         let source_index = frame.index;
         frame.index += 1;
         match node {
-            tex_state::node_arena::NodeView::MathStyle(next) => {
+            tex_state::node_view::NodeView::MathStyle(next) => {
                 style = Style::from_math_style(next);
                 view.nodes.push(ExpandedMathNode::Source {
                     list: source_list,
@@ -611,7 +612,7 @@ fn expand_math_choices_into(
                 });
                 view.marker_styles.push(style);
             }
-            tex_state::node_arena::NodeView::MathChoice(choice) => {
+            tex_state::node_view::NodeView::MathChoice(choice) => {
                 // The style marker is semantically observable by the first
                 // pass even though the choice itself disappears.
                 view.nodes.push(ExpandedMathNode::Owned(Node::MathStyle(
@@ -637,7 +638,7 @@ fn expand_math_choices_into(
             node => {
                 let resets_style = matches!(
                     node,
-                    tex_state::node_arena::NodeView::MathNoad(MathNoad {
+                    tex_state::node_view::NodeView::MathNoad(MathNoad {
                         kind: NoadKind::RightDelimiter { .. } | NoadKind::MiddleDelimiter { .. },
                         ..
                     })
@@ -763,12 +764,12 @@ fn nested_mlist_requests(
             .node(state, index)
             .expect("expanded math request remains in range");
         match node {
-            tex_state::node_arena::NodeView::MathStyle(_) => {
+            tex_state::node_view::NodeView::MathStyle(_) => {
                 style = markers
                     .next()
                     .expect("expanded style marker must retain its full style");
             }
-            tex_state::node_arena::NodeView::MathNoad(noad)
+            tex_state::node_view::NodeView::MathNoad(noad)
                 if matches!(
                     noad.kind,
                     NoadKind::LeftDelimiter { .. }
@@ -783,7 +784,7 @@ fn nested_mlist_requests(
                     style = starting_style;
                 }
             }
-            tex_state::node_arena::NodeView::MathNoad(noad) => {
+            tex_state::node_view::NodeView::MathNoad(noad) => {
                 let nucleus_style = if matches!(
                     noad.kind,
                     NoadKind::Radical { .. } | NoadKind::Accent { .. } | NoadKind::Overline
@@ -796,7 +797,7 @@ fn nested_mlist_requests(
                 add_field(&noad.subscript, style.sub_style(), out, seen);
                 add_field(&noad.superscript, style.sup_style(), out, seen);
             }
-            tex_state::node_arena::NodeView::FractionNoad(fraction) => {
+            tex_state::node_view::NodeView::FractionNoad(fraction) => {
                 add_field(
                     &MathField::SubMlist(fraction.numerator),
                     style.num_style(),
@@ -1262,10 +1263,10 @@ pub(crate) fn source_node(
     state: &impl MathTypesetState,
     source_lists: &AHashMap<(PageListId, SourceListRole), FrozenHList>,
     source: Option<(PageListId, usize)>,
-    node: tex_state::node_arena::NodeView<'_>,
+    node: tex_state::node_view::NodeView<'_>,
 ) -> MathNode {
     match node {
-        tex_state::node_arena::NodeView::Char { font, ch, origin } => {
+        tex_state::node_view::NodeView::Char { font, ch, origin } => {
             let code = u8::try_from(u32::from(ch)).ok();
             let metrics = code.and_then(|code| state.classic_math_char_metrics(font, code));
             match (source, metrics) {
@@ -1285,15 +1286,15 @@ pub(crate) fn source_node(
                 }
             }
         }
-        tex_state::node_arena::NodeView::Kern { amount, kind } => match source {
+        tex_state::node_view::NodeView::Kern { amount, kind } => match source {
             Some(source) => native_source(source, NativeNodeEvidence::Kern(amount)),
             None => MathNode::Kern { amount, kind },
         },
-        tex_state::node_arena::NodeView::Penalty(value) => match source {
+        tex_state::node_view::NodeView::Penalty(value) => match source {
             Some(source) => native_source(source, NativeNodeEvidence::Penalty(value)),
             None => MathNode::Penalty(value),
         },
-        tex_state::node_arena::NodeView::Rule {
+        tex_state::node_view::NodeView::Rule {
             width,
             height,
             depth,
@@ -1312,16 +1313,16 @@ pub(crate) fn source_node(
                 depth,
             },
         },
-        tex_state::node_arena::NodeView::Glue { spec, kind, leader } => match source {
+        tex_state::node_view::NodeView::Glue { spec, kind, leader } => match source {
             Some(source) => native_source(source, NativeNodeEvidence::Glue(spec)),
             None => MathNode::Glue { spec, kind, leader },
         },
-        node @ (tex_state::node_arena::NodeView::HList(_)
-        | tex_state::node_arena::NodeView::VList(_)) => {
-            let horizontal = matches!(&node, tex_state::node_arena::NodeView::HList(_));
+        node @ (tex_state::node_view::NodeView::HList(_)
+        | tex_state::node_view::NodeView::VList(_)) => {
+            let horizontal = matches!(&node, tex_state::node_view::NodeView::HList(_));
             let box_node = match node {
-                tex_state::node_arena::NodeView::HList(boxed)
-                | tex_state::node_arena::NodeView::VList(boxed) => boxed,
+                tex_state::node_view::NodeView::HList(boxed)
+                | tex_state::node_view::NodeView::VList(boxed) => boxed,
                 _ => unreachable!(),
             };
             let list = *source_lists

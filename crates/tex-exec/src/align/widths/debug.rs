@@ -3,7 +3,7 @@ use tex_state::CommandContext;
 use tex_state::NodeView;
 #[cfg(debug_assertions)]
 use tex_state::math::MathField;
-use tex_state::node_arena::PageListId;
+use tex_state::page_node_arena::PageListId;
 
 #[cfg(debug_assertions)]
 pub(super) fn debug_assert_no_unset_nodes<G>(stores: &CommandContext<'_, G>, nodes: PageListId) {
@@ -58,7 +58,7 @@ fn debug_assert_no_unset_node<G>(stores: &CommandContext<'_, G>, node: NodeView<
 #[cfg(debug_assertions)]
 fn debug_assert_no_unset_nodes_in<G>(
     stores: &CommandContext<'_, G>,
-    list: tex_state::node_arena::PageListId,
+    list: tex_state::page_node_arena::PageListId,
 ) {
     for node in stores
         .page_node_list(list)

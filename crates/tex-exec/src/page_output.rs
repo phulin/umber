@@ -7,10 +7,10 @@ use tex_state::diagnostic::DiagnosticEffects;
 use tex_state::env::banks::{DimenParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, Node, Sign};
-use tex_state::node_arena::PageListId;
 use tex_state::page::{
     AWFUL_BAD, INF_PENALTY, PageFireUp, PageInsertionStatus, PageInteger, PageMark,
 };
+use tex_state::page_node_arena::PageListId;
 use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_typeset::{INF_BAD, PackSpec, VpackParams};
 
@@ -55,7 +55,11 @@ pub(crate) fn select_pending_page_output<G>(
         .expect("output token parameter is admitted")
         .is_none_or(|output| stores.token_list(output).is_empty());
     if output_is_empty {
-        prepend_output_heldover(stores, tex_state::node_arena::PageListId::empty(), true);
+        prepend_output_heldover(
+            stores,
+            tex_state::page_node_arena::PageListId::empty(),
+            true,
+        );
         let page = take_box255_node(stores)?;
         stores.clear_page_discards();
         return Ok(SelectedPageOutput::Default(page));
@@ -68,7 +72,11 @@ pub(crate) fn select_pending_page_output<G>(
             dead_cycles,
             diagnostic_context.output_context.clone(),
         )?;
-        prepend_output_heldover(stores, tex_state::node_arena::PageListId::empty(), true);
+        prepend_output_heldover(
+            stores,
+            tex_state::page_node_arena::PageListId::empty(),
+            true,
+        );
         let page = take_box255_node(stores)?;
         stores.clear_page_discards();
         return Ok(SelectedPageOutput::Default(page));
@@ -82,7 +90,7 @@ pub(crate) fn select_pending_page_output<G>(
 pub(crate) fn resume_page_builder_after_output<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
-    output_nodes: tex_state::node_arena::PageListId,
+    output_nodes: tex_state::page_node_arena::PageListId,
     diagnostic_context: ExecutionDiagnosticContext,
 ) -> Result<(), ExecError> {
     if let Some(box255) = stores.take_box_to_page(255) {
@@ -177,7 +185,7 @@ pub(crate) fn prepare_box255<G>(
 
 fn update_page_marks_at_fire_up<G>(
     stores: &mut CommandContext<'_, G>,
-    page_nodes: tex_state::node_arena::PageListId,
+    page_nodes: tex_state::page_node_arena::PageListId,
 ) {
     let mut classes = stores.page_mark_classes().collect::<BTreeSet<_>>();
     classes.insert(0);
@@ -247,13 +255,13 @@ fn update_page_marks_at_fire_up<G>(
 }
 
 struct DistributedInsertions {
-    page_nodes: tex_state::node_arena::PageListId,
-    heldover: tex_state::node_arena::PageListId,
+    page_nodes: tex_state::page_node_arena::PageListId,
+    heldover: tex_state::page_node_arena::PageListId,
     heldover_count: usize,
 }
 
 struct InsertionQueue {
-    nodes: tex_state::node_arena::PageListId,
+    nodes: tex_state::page_node_arena::PageListId,
     best_ins_index: usize,
     status: PageInsertionStatus,
     accepting: bool,
@@ -274,12 +282,12 @@ fn distribute_insertions<G>(
     diagnostic_effects: &mut DiagnosticEffects,
     geometry: &mut dyn crate::geometry::PackGeometrySink,
     diagnostic_context: &ExecutionDiagnosticContext,
-    page_nodes: tex_state::node_arena::PageListId,
+    page_nodes: tex_state::page_node_arena::PageListId,
 ) -> Result<DistributedInsertions, ExecError> {
     if stores.int_param(IntParam::HOLDING_INSERTS) > 0 {
         return Ok(DistributedInsertions {
             page_nodes,
-            heldover: tex_state::node_arena::PageListId::empty(),
+            heldover: tex_state::page_node_arena::PageListId::empty(),
             heldover_count: 0,
         });
     }
@@ -316,7 +324,7 @@ fn distribute_insertions<G>(
             .nodes()
             .get(index)
         {
-            Some(tex_state::node_arena::NodeView::Ins {
+            Some(tex_state::node_view::NodeView::Ins {
                 class,
                 size,
                 split_top_skip,
@@ -401,7 +409,7 @@ fn insertion_box_nodes<G>(
     diagnostic_effects: &mut DiagnosticEffects,
     class: u16,
     diagnostic_context: &ExecutionDiagnosticContext,
-) -> Result<tex_state::node_arena::PageListId, ExecError> {
+) -> Result<tex_state::page_node_arena::PageListId, ExecError> {
     // TeX82 §1018 calls §993's `ensure_vbox` again here because an output
     // routine or assignment can replace the class register after page setup.
     let Some(list) = crate::page_builder::ensure_insertion_vbox(
@@ -411,7 +419,7 @@ fn insertion_box_nodes<G>(
         diagnostic_context,
     )?
     else {
-        return Ok(tex_state::node_arena::PageListId::empty());
+        return Ok(tex_state::page_node_arena::PageListId::empty());
     };
     let Some(node) = stores
         .page_node_list(list)
@@ -419,14 +427,14 @@ fn insertion_box_nodes<G>(
         .nodes()
         .first()
     else {
-        return Ok(tex_state::node_arena::PageListId::empty());
+        return Ok(tex_state::page_node_arena::PageListId::empty());
     };
     match node {
-        tex_state::node_arena::NodeView::VList(box_node) => Ok(box_node.children),
-        tex_state::node_arena::NodeView::HList(_) => {
+        tex_state::node_view::NodeView::VList(box_node) => Ok(box_node.children),
+        tex_state::node_view::NodeView::HList(_) => {
             unreachable!("ensure_insertion_vbox rejected the hbox")
         }
-        _ => Ok(tex_state::node_arena::PageListId::empty()),
+        _ => Ok(tex_state::page_node_arena::PageListId::empty()),
     }
 }
 
@@ -486,7 +494,7 @@ fn package_insertion_box<G>(
     geometry: &mut dyn crate::geometry::PackGeometrySink,
     diagnostic_context: &ExecutionDiagnosticContext,
     class: u16,
-    nodes: tex_state::node_arena::PageListId,
+    nodes: tex_state::page_node_arena::PageListId,
 ) {
     let packed = vpack_natural(
         stores,
@@ -503,7 +511,7 @@ fn package_insertion_box<G>(
 
 pub(crate) fn prepend_output_heldover<G>(
     stores: &mut CommandContext<'_, G>,
-    output_nodes: tex_state::node_arena::PageListId,
+    output_nodes: tex_state::page_node_arena::PageListId,
     discard_rewritten_break: bool,
 ) {
     let (mut heldover, _) = stores.take_current_page_prefix(stores.current_page_len());
@@ -524,7 +532,7 @@ pub(crate) fn prepend_output_heldover<G>(
                     .expect("heldover list belongs to the live page arena")
                     .nodes()
                     .first(),
-                Some(tex_state::node_arena::NodeView::Penalty(value)) if value == INF_PENALTY
+                Some(tex_state::node_view::NodeView::Penalty(value)) if value == INF_PENALTY
             )
             && stores.page_contributions().is_empty();
         let contribution_is_rewritten_break = heldover.is_empty()
@@ -534,7 +542,7 @@ pub(crate) fn prepend_output_heldover<G>(
                 Some(tex_state::NodeView::Penalty(value)) if value == INF_PENALTY
             );
         if heldover_is_rewritten_break {
-            heldover = tex_state::node_arena::PageListId::empty();
+            heldover = tex_state::page_node_arena::PageListId::empty();
         } else if contribution_is_rewritten_break
             && let Some(carrier) = stores.pop_page_contribution_front()
         {
@@ -549,16 +557,16 @@ pub(crate) fn prepend_output_heldover<G>(
 
 fn output_penalty_and_rewrite_break<G>(
     stores: &mut CommandContext<'_, G>,
-    after_break: tex_state::node_arena::PageListId,
+    after_break: tex_state::page_node_arena::PageListId,
     fire_up: PageFireUp,
-) -> (i32, tex_state::node_arena::PageListId) {
+) -> (i32, tex_state::page_node_arena::PageListId) {
     let first_penalty = match stores
         .page_node_list(after_break)
         .expect("page-break suffix belongs to the live arena")
         .nodes()
         .first()
     {
-        Some(tex_state::node_arena::NodeView::Penalty(value)) => Some(value),
+        Some(tex_state::node_view::NodeView::Penalty(value)) => Some(value),
         _ => None,
     };
     if let Some(penalty) = first_penalty {
@@ -702,11 +710,10 @@ pub(crate) fn take_box255_node<G>(
         .filter(|node| {
             matches!(
                 node,
-                tex_state::node_arena::NodeView::HList(_)
-                    | tex_state::node_arena::NodeView::VList(_)
+                tex_state::node_view::NodeView::HList(_) | tex_state::node_view::NodeView::VList(_)
             )
         })
-        .map(|node| node.to_owned_with(std::convert::identity));
+        .map(|node| node.to_owned());
     let Some(root) = root else {
         return Err(ExecError::MissingToken { context: "box" });
     };
@@ -723,7 +730,7 @@ pub(crate) fn take_box255_node<G>(
 /// `tail_append` is a plain list append, so none of §679's `append_to_vlist`
 /// baselineskip interposition applies and `prev_depth` is left alone.
 pub(crate) fn append_end_job_contributions<G>(stores: &mut CommandContext<'_, G>) {
-    let empty = tex_state::node_arena::PageListId::empty();
+    let empty = tex_state::page_node_arena::PageListId::empty();
     stores.append_page_contribution(Node::HList(BoxNode::new(BoxNodeFields {
         width: stores.dimen_param(DimenParam::H_SIZE),
         height: Scaled::from_raw(0),

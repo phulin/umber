@@ -1,6 +1,6 @@
 use tex_state::interner::InternerBudget;
 use tex_state::node::Node;
-use tex_state::node_arena::PageListId;
+use tex_state::page_node_arena::PageListId;
 
 fn main() {
     let budget = InternerBudget::new(16, 16, 256).unwrap();

@@ -653,7 +653,7 @@ pub(crate) fn indent_in_hmode<G>(
         return Ok(());
     }
     fn make_indent_box<G>(stores: &mut CommandContext<'_, G>) -> Node {
-        let children = tex_state::node_arena::PageListId::empty();
+        let children = tex_state::page_node_arena::PageListId::empty();
         Node::HList(BoxNode::new(BoxNodeFields {
             width: stores.dimen_param(tex_state::env::banks::DimenParam::PAR_INDENT),
             height: Scaled::from_raw(0),
@@ -835,9 +835,9 @@ pub(crate) trait FinalHNodeSink {
         &mut self,
         stores: &mut CommandContext<'_, G>,
         kind: DiscKind,
-        pre: tex_state::node_arena::PageListId,
-        post: tex_state::node_arena::PageListId,
-        replace: tex_state::node_arena::PageListId,
+        pre: tex_state::page_node_arena::PageListId,
+        post: tex_state::page_node_arena::PageListId,
+        replace: tex_state::page_node_arena::PageListId,
         physical_replace_count: u8,
     );
 }
@@ -912,7 +912,7 @@ impl FinalHNodeSink for PageNodeSink<'_> {
     }
 
     fn explicit_hyphen_disc<G>(&mut self, stores: &mut CommandContext<'_, G>) {
-        let empty = tex_state::node_arena::PageListId::empty();
+        let empty = tex_state::page_node_arena::PageListId::empty();
         self.discretionary(stores, DiscKind::ExplicitHyphen, empty, empty, empty, 0);
     }
 
@@ -920,9 +920,9 @@ impl FinalHNodeSink for PageNodeSink<'_> {
         &mut self,
         stores: &mut CommandContext<'_, G>,
         kind: DiscKind,
-        pre: tex_state::node_arena::PageListId,
-        post: tex_state::node_arena::PageListId,
-        replace: tex_state::node_arena::PageListId,
+        pre: tex_state::page_node_arena::PageListId,
+        post: tex_state::page_node_arena::PageListId,
+        replace: tex_state::page_node_arena::PageListId,
         physical_replace_count: u8,
     ) {
         stores.construct_page_active_list(self.output, |destination| {
@@ -1278,9 +1278,9 @@ impl OpenTypeSourceWalk<'_> {
 
 pub(crate) fn reshape_open_type_runs_list<G>(
     stores: &mut CommandContext<'_, G>,
-    source: tex_state::node_arena::PageListId,
+    source: tex_state::page_node_arena::PageListId,
     shaping: &mut OpenTypeShapingScratch,
-) -> tex_state::node_arena::PageListId {
+) -> tex_state::page_node_arena::PageListId {
     shaping.clear();
     let source = stores
         .admit_page_node_span(source)
@@ -2163,7 +2163,7 @@ pub(crate) fn add_scaled(left: Scaled, right: Scaled) -> Scaled {
 
 pub(crate) fn adjust_interword_glue<G>(
     stores: &CommandContext<'_, G>,
-    nodes: tex_state::node_arena::NodeCursor<'_>,
+    nodes: tex_state::node_view::NodeCursor<'_>,
     spec: &mut GlueSpec,
 ) {
     let mut glyph = None;
@@ -2369,11 +2369,11 @@ pub(crate) fn append_italic_correction_with_fuel<G>(
 }
 
 pub(crate) fn last_font_char(
-    nodes: tex_state::node_arena::NodeCursor<'_>,
+    nodes: tex_state::node_view::NodeCursor<'_>,
 ) -> Option<(tex_state::ids::FontId, char)> {
     match nodes.last()? {
-        tex_state::node_arena::NodeView::Char { font, ch, .. }
-        | tex_state::node_arena::NodeView::Lig { font, ch, .. } => Some((font, ch)),
+        tex_state::node_view::NodeView::Char { font, ch, .. }
+        | tex_state::node_view::NodeView::Lig { font, ch, .. } => Some((font, ch)),
         _ => None,
     }
 }

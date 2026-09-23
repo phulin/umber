@@ -2,7 +2,7 @@ use tex_fonts::CharMetrics;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::FontId;
 use tex_state::node::{GlueKind, KernKind, LeaderPayload, Sign};
-use tex_state::node_arena::PageListId;
+use tex_state::page_node_arena::PageListId;
 use tex_state::scaled::{GlueSetRatio, Scaled};
 
 use crate::metrics::{ListMetrics, MetricEvent, MetricOverflow};

@@ -298,7 +298,7 @@ fn page_mark_is_none<G>(universe: &mut Universe<G>, mark: PageMark) -> bool {
 
 fn page_vec_context<G>(
     context: &CommandContext<'_, G>,
-    root: tex_state::node_arena::PageListId,
+    root: tex_state::page_node_arena::PageListId,
 ) -> Vec<Node> {
     context
         .page_node_list(root)
@@ -400,7 +400,10 @@ fn register_shapes<G>(universe: &mut Universe<G>, register: u16) -> Option<Vec<S
     })
 }
 
-fn page_vec<G>(universe: &mut Universe<G>, root: tex_state::node_arena::PageListId) -> Vec<Node> {
+fn page_vec<G>(
+    universe: &mut Universe<G>,
+    root: tex_state::page_node_arena::PageListId,
+) -> Vec<Node> {
     crate::test_harness::with_admitted(universe, |context| page_vec_context(context, root))
 }
 

@@ -2,7 +2,7 @@ use super::*;
 
 fn node_addresses<G>(
     stores: &CommandContext<'_, G>,
-    list: tex_state::node_arena::PageListId,
+    list: tex_state::page_node_arena::PageListId,
 ) -> Vec<*const Node> {
     let nodes = stores
         .page_node_list(list)
@@ -42,7 +42,7 @@ fn test_line_break_params(width: i32) -> LineBreakParams {
 
 fn test_post_line_break_params(width: i32) -> PostLineBreakParams {
     PostLineBreakParams {
-        empty_list: tex_state::node_arena::PageListId::empty(),
+        empty_list: tex_state::page_node_arena::PageListId::empty(),
         left_skip: GlueSpec::ZERO,
         right_skip: GlueSpec::ZERO,
         interline_penalty: 0,
@@ -67,10 +67,10 @@ fn test_post_line_break_params(width: i32) -> PostLineBreakParams {
 }
 
 fn traversal_delta(
-    after: tex_state::node_arena::NodeTraversalCounters,
-    before: tex_state::node_arena::NodeTraversalCounters,
-) -> tex_state::node_arena::NodeTraversalCounters {
-    tex_state::node_arena::NodeTraversalCounters {
+    after: tex_state::node_view::NodeTraversalCounters,
+    before: tex_state::node_view::NodeTraversalCounters,
+) -> tex_state::node_view::NodeTraversalCounters {
+    tex_state::node_view::NodeTraversalCounters {
         index_resolutions: after
             .index_resolutions
             .saturating_sub(before.index_resolutions),
@@ -85,8 +85,8 @@ fn traversal_delta(
 
 fn normalize_test_paragraph<G>(
     stores: &mut CommandContext<'_, G>,
-    source: tex_state::node_arena::PageListId,
-) -> tex_state::node_arena::PageListId {
+    source: tex_state::page_node_arena::PageListId,
+) -> tex_state::page_node_arena::PageListId {
     let mut params = snapshot_paragraph_params(&ModeNest::new(), stores);
     let mut effects = DiagnosticEffects::new();
     normalize_paragraph_infinite_shrink(
@@ -102,8 +102,8 @@ fn normalize_test_paragraph<G>(
 
 fn normalize_test_paragraph_indexed_reference<G>(
     stores: &mut CommandContext<'_, G>,
-    source: tex_state::node_arena::PageListId,
-) -> tex_state::node_arena::PageListId {
+    source: tex_state::page_node_arena::PageListId,
+) -> tex_state::page_node_arena::PageListId {
     // Preserve the removed indexed loop only as an explicit perf-stat baseline;
     // production callers never select this path.
     let mut params = snapshot_paragraph_params(&ModeNest::new(), stores);

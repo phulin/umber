@@ -51,7 +51,7 @@ pub(crate) fn take_register_payload<G>(
                 .page_node_list(owner)
                 .ok()?
                 .get(0)
-                .map(|node| node.to_owned_with(|id| id))
+                .map(|node| node.to_owned())
         })
         .and_then(payload_from_node)
 }

@@ -1,7 +1,7 @@
 use super::*;
 use tex_state::glue::Order;
 use tex_state::node::{GlueKind, UnsetKind, UnsetNodeFields};
-use tex_state::node_arena::PageListId;
+use tex_state::page_node_arena::PageListId;
 
 fn sp(raw: i32) -> Scaled {
     Scaled::from_raw(raw * Scaled::UNITY)
@@ -12,7 +12,7 @@ fn resolved_nodes<G>(stores: &CommandContext<'_, G>, list: PageListId) -> Vec<No
         .page_node_list(list)
         .expect("test list belongs to the page arena")
         .iter()
-        .map(|node| node.to_owned_with(std::convert::identity))
+        .map(|node| node.to_owned())
         .collect()
 }
 
@@ -193,7 +193,7 @@ fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
             .expect("wrapper children belong to the page arena")
             .nodes()
             .iter()
-            .map(|node| node.to_owned_with(std::convert::identity))
+            .map(|node| node.to_owned())
             .collect::<Vec<_>>();
         let [
             Node::Rule {
@@ -287,7 +287,7 @@ fn materialize_spanned_cell_adds_tabskip_and_empty_boxes() {
             .expect("row children belong to the page arena")
             .nodes()
             .iter()
-            .map(|node| node.to_owned_with(std::convert::identity))
+            .map(|node| node.to_owned())
             .collect::<Vec<_>>();
         let [
             Node::Glue {
@@ -469,7 +469,7 @@ fn set_alignment_preserves_final_node_order_and_running_rules() {
 
 #[test]
 fn convert_unset_cell_computes_tex82_glue_ratio_matrix() {
-    let empty = tex_state::node_arena::PageListId::empty();
+    let empty = tex_state::page_node_arena::PageListId::empty();
     let ordinary = unset_cell(
         UnsetKind::HBox,
         5,

@@ -29,15 +29,15 @@ struct ArenaPostLineChannel {
     source: tex_state::page_node_arena::AdmittedPageList,
     position: usize,
     lineages: Vec<tex_state::node_sequence::DirectHighCellLineages>,
-    pending_post: tex_state::node_arena::PageListId,
+    pending_post: tex_state::page_node_arena::PageListId,
     pending_post_lineages: Vec<tex_state::node_sequence::DirectHighCellLineage>,
     active_directions: Vec<Direction>,
 }
 
 struct ArenaBrokenLine {
-    nodes: tex_state::node_arena::PageListId,
+    nodes: tex_state::page_node_arena::PageListId,
     material_start: usize,
-    diagnostic_nodes: Option<tex_state::node_arena::PageListId>,
+    diagnostic_nodes: Option<tex_state::page_node_arena::PageListId>,
     allocator_high_cell_overlap: u32,
     penalty_after: Option<i32>,
     dimensions: LineDimensions,
@@ -146,7 +146,7 @@ impl ArenaPostLineChannel {
             source,
             position: 0,
             lineages,
-            pending_post: tex_state::node_arena::PageListId::empty(),
+            pending_post: tex_state::page_node_arena::PageListId::empty(),
             pending_post_lineages: Vec::new(),
             active_directions: Vec::new(),
         }
@@ -160,7 +160,7 @@ impl ArenaPostLineChannel {
         actions: Option<&[tex_typeset::linebreak::MaterializationAction]>,
         par_fill_override: Option<GlueSpec>,
         output_lineages: &mut Vec<tex_state::node_sequence::DirectHighCellLineage>,
-    ) -> tex_state::node_arena::PageListId {
+    ) -> tex_state::page_node_arena::PageListId {
         let end = decision.position.min(self.source.len());
         let plain_source_run = params.left_skip == GlueSpec::ZERO
             && self.active_directions.is_empty()
@@ -236,7 +236,7 @@ impl ArenaPostLineChannel {
             );
             stores.append_page_active_span(&mut output, pending_post.span());
             output_lineages.append(&mut self.pending_post_lineages);
-            self.pending_post = tex_state::node_arena::PageListId::empty();
+            self.pending_post = tex_state::page_node_arena::PageListId::empty();
         }
 
         while self.position < end {
@@ -392,9 +392,9 @@ impl ArenaPostLineChannel {
 enum PostLineNode {
     Discretionary {
         kind: tex_state::node::DiscKind,
-        pre: tex_state::node_arena::PageListId,
-        post: tex_state::node_arena::PageListId,
-        replace: tex_state::node_arena::PageListId,
+        pre: tex_state::page_node_arena::PageListId,
+        post: tex_state::page_node_arena::PageListId,
+        replace: tex_state::page_node_arena::PageListId,
         physical_replace_count: u8,
     },
     ParFillGlue,
@@ -405,7 +405,7 @@ enum PostLineNode {
 }
 
 fn next_post_line_event(
-    source: tex_state::node_arena::NodeCursor<'_>,
+    source: tex_state::node_view::NodeCursor<'_>,
     selected: core::ops::Range<usize>,
     actions: Option<&[tex_typeset::linebreak::MaterializationAction]>,
     has_par_fill_override: bool,
@@ -466,7 +466,7 @@ fn post_line_event_is_exceptional(
     }
 }
 
-fn classify_post_line_node_value(node: tex_state::node_arena::DirectNodeView<'_>) -> PostLineNode {
+fn classify_post_line_node_value(node: tex_state::node_view::DirectNodeView<'_>) -> PostLineNode {
     if let Some((kind, pre, post, replace, physical_replace_count)) = node.discretionary() {
         return PostLineNode::Discretionary {
             kind,
@@ -494,10 +494,7 @@ fn classify_post_line_node_value(node: tex_state::node_arena::DirectNodeView<'_>
     }
 }
 
-fn skip_post_line_discardable(
-    source: tex_state::node_arena::NodeCursor<'_>,
-    start: usize,
-) -> usize {
+fn skip_post_line_discardable(source: tex_state::node_view::NodeCursor<'_>, start: usize) -> usize {
     let mut next = start;
     let _ = source.try_for_each_direct_range(start..source.len(), |index, node| {
         if post_line_discardable(node) {
@@ -511,7 +508,7 @@ fn skip_post_line_discardable(
 }
 
 fn append_direction_evidence(
-    source: tex_state::node_arena::NodeCursor<'_>,
+    source: tex_state::node_view::NodeCursor<'_>,
     active: &mut Vec<Direction>,
 ) {
     source.for_each_direct(|node| {
@@ -544,8 +541,8 @@ const fn matching_direction_end(direction: Direction) -> Direction {
 }
 
 fn extend_frozen_lineages(
-    list: tex_state::node_arena::PageListId,
-    nodes: tex_state::node_arena::NodeCursor<'_>,
+    list: tex_state::page_node_arena::PageListId,
+    nodes: tex_state::node_view::NodeCursor<'_>,
     role: tex_state::node_sequence::FrozenListRole,
     output: &mut Vec<tex_state::node_sequence::DirectHighCellLineage>,
 ) {
@@ -564,7 +561,7 @@ fn extend_frozen_lineages(
     });
 }
 
-fn post_line_discardable(node: tex_state::node_arena::DirectNodeView<'_>) -> bool {
+fn post_line_discardable(node: tex_state::node_view::DirectNodeView<'_>) -> bool {
     match node.kind() {
         Some(
             tex_state::node::NodeKind::Glue
@@ -634,7 +631,7 @@ pub(crate) fn break_current_paragraph<G>(
         let mut list = nest.current_list_mutation();
         if matches!(
             list.nodes(stores).last(),
-            Some(tex_state::node_arena::NodeView::Glue { .. })
+            Some(tex_state::node_view::NodeView::Glue { .. })
         ) {
             let _ = list.pop_last_node(stores);
         }
@@ -710,7 +707,7 @@ pub(crate) fn break_current_paragraph<G>(
     if let Some(spec) = decisions.last_line_fill {
         decisions.tape.replace_last_par_fill(spec);
     }
-    let empty_list = tex_state::node_arena::PageListId::empty();
+    let empty_list = tex_state::page_node_arena::PageListId::empty();
     let post_params = post_line_break_params(&params, widow_penalty_selector, empty_list);
     let mut line_count = 0i32;
     let mut last_line = None;
@@ -808,8 +805,8 @@ pub(crate) fn break_current_paragraph<G>(
 
 fn discretionary_diagnostics_differ_list<G>(
     stores: &CommandContext<'_, G>,
-    physical: tex_state::node_arena::PageListId,
-    semantic: tex_state::node_arena::PageListId,
+    physical: tex_state::page_node_arena::PageListId,
+    semantic: tex_state::page_node_arena::PageListId,
 ) -> bool {
     let mut semantic_index = 0;
     for physical_index in 0..physical.len() {
@@ -819,7 +816,7 @@ fn discretionary_diagnostics_differ_list<G>(
             .nodes()
             .get(physical_index)
             .and_then(|node| match node {
-                tex_state::node_arena::NodeView::Disc {
+                tex_state::node_view::NodeView::Disc {
                     kind,
                     pre,
                     post,
@@ -839,7 +836,7 @@ fn discretionary_diagnostics_differ_list<G>(
                 .nodes()
                 .get(semantic_index)
                 .and_then(|node| match node {
-                    tex_state::node_arena::NodeView::Disc {
+                    tex_state::node_view::NodeView::Disc {
                         kind,
                         pre,
                         post,
@@ -870,16 +867,16 @@ fn discretionary_diagnostics_differ_list<G>(
                 .expect("semantic line remains live")
                 .nodes()
                 .get(index),
-            Some(tex_state::node_arena::NodeView::Disc { .. })
+            Some(tex_state::node_view::NodeView::Disc { .. })
         )
     })
 }
 
 fn clear_discretionary_replacements<G>(
     stores: &mut CommandContext<'_, G>,
-    source: tex_state::node_arena::PageListId,
-    empty: tex_state::node_arena::PageListId,
-) -> tex_state::node_arena::PageListId {
+    source: tex_state::page_node_arena::PageListId,
+    empty: tex_state::page_node_arena::PageListId,
+) -> tex_state::page_node_arena::PageListId {
     let needs_replacement_clear = stores
         .page_node_list(source)
         .expect("semantic line remains live")
@@ -898,7 +895,7 @@ fn clear_discretionary_replacements<G>(
             .nodes()
             .get(index)
             .and_then(|node| match node {
-                tex_state::node_arena::NodeView::Disc {
+                tex_state::node_view::NodeView::Disc {
                     kind,
                     pre,
                     post,
@@ -927,8 +924,8 @@ fn clear_discretionary_replacements<G>(
 
 fn filter_migrating_material_list<G>(
     stores: &mut CommandContext<'_, G>,
-    source: tex_state::node_arena::PageListId,
-) -> tex_state::node_arena::PageListId {
+    source: tex_state::page_node_arena::PageListId,
+) -> tex_state::page_node_arena::PageListId {
     let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
     stores.open_page_active_list(&mut output);
     for index in 0..source.len() {
@@ -939,9 +936,9 @@ fn filter_migrating_material_list<G>(
                 .nodes()
                 .get(index),
             Some(
-                tex_state::node_arena::NodeView::Mark { .. }
-                    | tex_state::node_arena::NodeView::Ins { .. }
-                    | tex_state::node_arena::NodeView::Adjust(_)
+                tex_state::node_view::NodeView::Mark { .. }
+                    | tex_state::node_view::NodeView::Ins { .. }
+                    | tex_state::node_view::NodeView::Adjust(_)
             )
         );
         if !migrating {
@@ -953,11 +950,11 @@ fn filter_migrating_material_list<G>(
 
 fn extract_migrating_material_list<G>(
     stores: &mut CommandContext<'_, G>,
-    source: tex_state::node_arena::PageListId,
+    source: tex_state::page_node_arena::PageListId,
 ) -> (
-    tex_state::node_arena::PageListId,
-    tex_state::node_arena::PageListId,
-    tex_state::node_arena::PageListId,
+    tex_state::page_node_arena::PageListId,
+    tex_state::page_node_arena::PageListId,
+    tex_state::page_node_arena::PageListId,
 ) {
     let has_migrating_material = stores
         .page_node_list(source)
@@ -975,8 +972,8 @@ fn extract_migrating_material_list<G>(
     if !has_migrating_material {
         return (
             source,
-            tex_state::node_arena::PageListId::empty(),
-            tex_state::node_arena::PageListId::empty(),
+            tex_state::page_node_arena::PageListId::empty(),
+            tex_state::page_node_arena::PageListId::empty(),
         );
     }
     let mut retained = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
@@ -989,9 +986,9 @@ fn extract_migrating_material_list<G>(
                 .nodes()
                 .get(index),
             Some(
-                tex_state::node_arena::NodeView::Mark { .. }
-                    | tex_state::node_arena::NodeView::Ins { .. }
-                    | tex_state::node_arena::NodeView::Adjust(_)
+                tex_state::node_view::NodeView::Mark { .. }
+                    | tex_state::node_view::NodeView::Ins { .. }
+                    | tex_state::node_view::NodeView::Adjust(_)
             )
         );
         if !migrating {
@@ -1009,7 +1006,7 @@ fn extract_migrating_material_list<G>(
             .nodes()
             .get(index)
             .and_then(|node| match node {
-                tex_state::node_arena::NodeView::Adjust(adjust) if adjust.pre => {
+                tex_state::node_view::NodeView::Adjust(adjust) if adjust.pre => {
                     Some(adjust.content)
                 }
                 _ => None,
@@ -1025,7 +1022,7 @@ fn extract_migrating_material_list<G>(
     for index in 0..source.len() {
         enum PostMigration {
             Direct,
-            Content(tex_state::node_arena::PageListId),
+            Content(tex_state::page_node_arena::PageListId),
             None,
         }
         let migration = match stores
@@ -1035,10 +1032,10 @@ fn extract_migrating_material_list<G>(
             .get(index)
         {
             Some(
-                tex_state::node_arena::NodeView::Mark { .. }
-                | tex_state::node_arena::NodeView::Ins { .. },
+                tex_state::node_view::NodeView::Mark { .. }
+                | tex_state::node_view::NodeView::Ins { .. },
             ) => PostMigration::Direct,
-            Some(tex_state::node_arena::NodeView::Adjust(adjust)) if !adjust.pre => {
+            Some(tex_state::node_view::NodeView::Adjust(adjust)) if !adjust.pre => {
                 PostMigration::Content(adjust.content)
             }
             _ => PostMigration::None,
@@ -1060,7 +1057,7 @@ fn extract_migrating_material_list<G>(
 fn append_migrated_contributions<G>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
-    nodes: tex_state::node_arena::PageListId,
+    nodes: tex_state::page_node_arena::PageListId,
 ) {
     if nodes.is_empty() {
         return;
@@ -1076,12 +1073,12 @@ fn append_migrated_contributions<G>(
 
 fn materialize_pdf_line_list<G>(
     stores: &mut CommandContext<'_, G>,
-    mut nodes: tex_state::node_arena::PageListId,
+    mut nodes: tex_state::page_node_arena::PageListId,
     material_start: usize,
     target: Scaled,
     adjusts_spacing: bool,
     protrudes_chars: bool,
-) -> Result<tex_state::node_arena::PageListId, ExecError> {
+) -> Result<tex_state::page_node_arena::PageListId, ExecError> {
     if protrudes_chars {
         let plan = tex_typeset::protrusion::plan_margin_kerns(
             &crate::typeset_context::TypesetContext::new(stores),
@@ -1120,9 +1117,9 @@ fn materialize_pdf_line_list<G>(
 
 fn apply_line_expansion_list<G>(
     stores: &mut CommandContext<'_, G>,
-    nodes: tex_state::node_arena::PageListId,
+    nodes: tex_state::page_node_arena::PageListId,
     target: Scaled,
-) -> Result<tex_state::node_arena::PageListId, ExecError> {
+) -> Result<tex_state::page_node_arena::PageListId, ExecError> {
     let line_ratio = tex_typeset::linebreak::plan_line_expansion_cursor(
         &crate::typeset_context::TypesetContext::new(stores),
         stores
@@ -1149,7 +1146,7 @@ fn apply_line_expansion_list<G>(
 
 fn expanded_line_node<G>(
     stores: &mut CommandContext<'_, G>,
-    nodes: tex_state::node_arena::PageListId,
+    nodes: tex_state::page_node_arena::PageListId,
     index: usize,
     line_ratio: i32,
 ) -> Result<Option<Node>, ExecError> {
@@ -1159,11 +1156,11 @@ fn expanded_line_node<G>(
         .nodes()
         .get(index)
         .and_then(|node| match node {
-            tex_state::node_arena::NodeView::Char { font, ch, .. }
-            | tex_state::node_arena::NodeView::Lig { font, ch, .. } => {
+            tex_state::node_view::NodeView::Char { font, ch, .. }
+            | tex_state::node_view::NodeView::Lig { font, ch, .. } => {
                 u8::try_from(u32::from(ch)).ok().map(|code| (font, code))
             }
-            tex_state::node_arena::NodeView::MarginKern { font, ch, .. } => Some((font, ch)),
+            tex_state::node_view::NodeView::MarginKern { font, ch, .. } => Some((font, ch)),
             _ => None,
         });
     if let Some((font, code)) = expandable {
@@ -1192,12 +1189,12 @@ fn expanded_line_node<G>(
             .get(index)
             .expect("expanded glyph index remains in bounds")
         {
-            tex_state::node_arena::NodeView::Char { ch, origin, .. } => Node::Char {
+            tex_state::node_view::NodeView::Char { ch, origin, .. } => Node::Char {
                 font: expanded,
                 ch,
                 origin,
             },
-            tex_state::node_arena::NodeView::Lig {
+            tex_state::node_view::NodeView::Lig {
                 ch,
                 orig,
                 left_hit,
@@ -1212,7 +1209,7 @@ fn expanded_line_node<G>(
                 right_hit,
                 origins: origins.to_vec(),
             },
-            tex_state::node_arena::NodeView::MarginKern {
+            tex_state::node_view::NodeView::MarginKern {
                 amount, side, ch, ..
             } => Node::MarginKern {
                 amount,
@@ -1233,7 +1230,7 @@ fn expanded_line_node<G>(
             .expect("line expansion source belongs to the live page arena")
             .nodes()
             .get(index),
-        Some(tex_state::node_arena::NodeView::Kern {
+        Some(tex_state::node_view::NodeView::Kern {
             kind: KernKind::Font,
             ..
         })
@@ -1278,11 +1275,11 @@ fn expanded_line_node<G>(
 fn normalize_paragraph_infinite_shrink<G>(
     stores: &mut CommandContext<'_, G>,
     params: &mut ParagraphParams,
-    nodes: tex_state::node_arena::PageListId,
+    nodes: tex_state::page_node_arena::PageListId,
     tracing: bool,
     diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
     diagnostic_effects: &mut DiagnosticEffects,
-) -> Result<tex_state::node_arena::PageListId, ExecError> {
+) -> Result<tex_state::page_node_arena::PageListId, ExecError> {
     let mut reported = false;
     normalize_paragraph_glue(
         stores,
@@ -1426,11 +1423,11 @@ fn normalize_paragraph_glue<G>(
 }
 
 fn glyph_identity(
-    node: tex_state::node_arena::NodeView<'_>,
+    node: tex_state::node_view::NodeView<'_>,
 ) -> Option<(tex_state::ids::FontId, u8)> {
     match node {
-        tex_state::node_arena::NodeView::Char { font, ch, .. }
-        | tex_state::node_arena::NodeView::Lig { font, ch, .. } => {
+        tex_state::node_view::NodeView::Char { font, ch, .. }
+        | tex_state::node_view::NodeView::Lig { font, ch, .. } => {
             u8::try_from(u32::from(ch)).ok().map(|code| (font, code))
         }
         _ => None,
@@ -1473,7 +1470,7 @@ fn pdf_line_dimensions<G>(stores: &mut CommandContext<'_, G>) -> PdfLineDimensio
     }
 }
 
-fn active_text_directions(nodes: tex_state::node_arena::NodeCursor<'_>) -> Vec<Direction> {
+fn active_text_directions(nodes: tex_state::node_view::NodeCursor<'_>) -> Vec<Direction> {
     let mut active = Vec::new();
     nodes.for_each_direct(|node| match node.direction() {
         Some(direction @ (Direction::BeginL | Direction::BeginR)) => {
@@ -1494,7 +1491,7 @@ fn break_hlist_with_trace<G>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
-    hlist: tex_state::node_arena::PageListId,
+    hlist: tex_state::page_node_arena::PageListId,
     line_params: LineBreakParams,
     fuel: &mut tex_command::CommandFuel,
     tracing: bool,
@@ -1828,7 +1825,7 @@ fn line_break_params<G>(
 fn post_line_break_params(
     params: &ParagraphParams,
     widow_penalty_selector: tex_typeset::linebreak::WidowPenaltySelector,
-    empty_list: tex_state::node_arena::PageListId,
+    empty_list: tex_state::page_node_arena::PageListId,
 ) -> PostLineBreakParams {
     PostLineBreakParams {
         empty_list,

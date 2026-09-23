@@ -269,7 +269,7 @@ fn math_lowering_appends_exactly_the_mu_rewrites() {
     });
 }
 
-fn box_node(children: tex_state::node_arena::PageListId, width: i32) -> BoxNode {
+fn box_node(children: tex_state::page_node_arena::PageListId, width: i32) -> BoxNode {
     BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(width),
         height: Scaled::from_raw(5),

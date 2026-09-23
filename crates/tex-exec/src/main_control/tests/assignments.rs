@@ -2287,7 +2287,7 @@ fn arithmetic_overflow_reports_and_leaves_the_target_unchanged() {
 #[test]
 fn math_group_collapses_only_one_undecorated_ord_nucleus() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
-        let empty_list = tex_state::node_arena::PageListId::empty();
+        let empty_list = tex_state::page_node_arena::PageListId::empty();
         let ch = MathChar {
             family: 0,
             character: 'x',

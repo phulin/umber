@@ -4,7 +4,7 @@ use tex_state::CommandContext;
 use tex_state::diagnostic::DiagnosticEffects;
 use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::node::{Direction, KernKind, Node};
-use tex_state::node_arena::PageListId;
+use tex_state::page_node_arena::PageListId;
 use tex_state::scaled::Scaled;
 use tex_typeset::{HpackParams, PackSpec, PackedBox, VpackParams};
 

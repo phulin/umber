@@ -8,13 +8,13 @@ pub(super) struct MissingHyphenDiagnostic {
 }
 
 struct HyphenationProjection<'a> {
-    physical_post_overrides: &'a mut Vec<(usize, tex_state::node_arena::PageListId)>,
+    physical_post_overrides: &'a mut Vec<(usize, tex_state::page_node_arena::PageListId)>,
     missing_hyphens: &'a mut Vec<MissingHyphenDiagnostic>,
 }
 
 pub(super) struct HyphenatedHlist {
-    pub(super) semantic: tex_state::node_arena::PageListId,
-    pub(super) physical: tex_state::node_arena::PageListId,
+    pub(super) semantic: tex_state::page_node_arena::PageListId,
+    pub(super) physical: tex_state::page_node_arena::PageListId,
     pub(super) physical_boundaries: Vec<usize>,
     pub(super) missing_hyphens: Vec<MissingHyphenDiagnostic>,
 }
@@ -61,7 +61,7 @@ impl HyphenationScanNode {
 
 struct HyphenationWalk<'walk, 'projection> {
     out: &'walk mut tex_state::page_node_arena::PageMaterialActiveListBuilder,
-    out_segments: &'walk mut Vec<tex_state::node_arena::PageListId>,
+    out_segments: &'walk mut Vec<tex_state::page_node_arena::PageListId>,
     tfm_work: &'walk mut crate::box_runtime::hmode::LigatureWorkList,
     fuel: &'walk mut tex_command::CommandFuel,
     projection: &'walk mut HyphenationProjection<'projection>,
@@ -209,11 +209,11 @@ pub(crate) fn apply_scanned_hyphenation_exceptions<G>(
 fn hyphenated_hlist_with_projections<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
-    source: tex_state::node_arena::PageListId,
+    source: tex_state::page_node_arena::PageListId,
     tfm_work: &mut crate::box_runtime::hmode::LigatureWorkList,
     fuel: &mut tex_command::CommandFuel,
     projection: &mut HyphenationProjection<'_>,
-) -> Result<(tex_state::node_arena::PageListId, HyphenationContext), ExecError> {
+) -> Result<(tex_state::page_node_arena::PageListId, HyphenationContext), ExecError> {
     // TeX82 §919 initializes the trie on entry to the first hyphenation pass,
     // even when this particular paragraph ultimately supplies no candidate.
     stores.close_hyphenation_patterns();
@@ -264,7 +264,7 @@ fn hyphenated_hlist_with_projections<G>(
         out_segments.push(tail);
     }
     let output = match out_segments.as_slice() {
-        [] => tex_state::node_arena::PageListId::empty(),
+        [] => tex_state::page_node_arena::PageListId::empty(),
         [only] => *only,
         segments => stores.compose_page_node_sequences(segments),
     };
@@ -286,7 +286,7 @@ fn hyphenated_hlist_with_projections<G>(
 pub(crate) fn hyphenated_hlist_with_fuel<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
-    source: tex_state::node_arena::PageListId,
+    source: tex_state::page_node_arena::PageListId,
     scratch: &mut crate::mode::HorizontalModeScratch,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<HyphenatedHlist, ExecError> {
@@ -342,11 +342,11 @@ pub(crate) fn hyphenated_hlist_with_fuel<G>(
 fn project_physical_hlist<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
-    semantic: tex_state::node_arena::PageListId,
-    post_overrides: &[(usize, tex_state::node_arena::PageListId)],
+    semantic: tex_state::page_node_arena::PageListId,
+    post_overrides: &[(usize, tex_state::page_node_arena::PageListId)],
     tfm_work: &mut crate::box_runtime::hmode::LigatureWorkList,
     fuel: &mut tex_command::CommandFuel,
-) -> Result<tex_state::node_arena::PageListId, ExecError> {
+) -> Result<tex_state::page_node_arena::PageListId, ExecError> {
     let operation = stores.page_node_cursor();
     let semantic = stores
         .admit_page_node_list(semantic)
@@ -398,7 +398,7 @@ fn project_physical_hlist<G>(
         physical_segments.push(tail);
     }
     Ok(match physical_segments.as_slice() {
-        [] => tex_state::node_arena::PageListId::empty(),
+        [] => tex_state::page_node_arena::PageListId::empty(),
         [only] => *only,
         segments => stores.compose_page_node_sequences(segments),
     })
@@ -410,10 +410,10 @@ fn project_physical_chunk_prefix<G>(
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     semantic: tex_state::page_node_arena::AdmittedPageList,
     chunk: tex_state::page_node_arena::PageListChunkCursor,
-    post_overrides: &[(usize, tex_state::node_arena::PageListId)],
+    post_overrides: &[(usize, tex_state::page_node_arena::PageListId)],
     override_index: &mut usize,
     physical: &mut tex_state::page_node_arena::PageMaterialActiveListBuilder,
-    physical_segments: &mut Vec<tex_state::node_arena::PageListId>,
+    physical_segments: &mut Vec<tex_state::page_node_arena::PageListId>,
     retained_start: &mut usize,
     tfm_work: &mut crate::box_runtime::hmode::LigatureWorkList,
     fuel: &mut tex_command::CommandFuel,
@@ -515,7 +515,7 @@ fn physical_pre_break_pending<G>(
         replacement.len() == 1
             && matches!(
                 replacement.first(),
-                Some(tex_state::node_arena::NodeView::Kern {
+                Some(tex_state::node_view::NodeView::Kern {
                     kind: KernKind::Font,
                     ..
                 })
@@ -566,7 +566,7 @@ fn physical_pre_break_pending<G>(
 
 fn compacted_physical_boundaries<G>(
     stores: &CommandContext<'_, G>,
-    semantic: tex_state::node_arena::PageListId,
+    semantic: tex_state::page_node_arena::PageListId,
     physical_len: usize,
 ) -> Vec<usize> {
     let semantic = stores
@@ -617,7 +617,7 @@ fn hyphenate_candidate_after_glue<G>(
     start: usize,
     candidate: HyphenationCandidate,
     out: &mut tex_state::page_node_arena::PageMaterialActiveListBuilder,
-    out_segments: &mut Vec<tex_state::node_arena::PageListId>,
+    out_segments: &mut Vec<tex_state::page_node_arena::PageListId>,
     tfm_work: &mut crate::box_runtime::hmode::LigatureWorkList,
     output_len: &mut usize,
     fuel: &mut tex_command::CommandFuel,
@@ -650,7 +650,7 @@ fn hyphenate_candidate_after_glue<G>(
         .is_some_and(|node| {
             matches!(
                 node,
-                tex_state::node_arena::NodeView::Kern {
+                tex_state::node_view::NodeView::Kern {
                     kind: KernKind::Font,
                     ..
                 }
@@ -664,7 +664,7 @@ fn hyphenate_candidate_after_glue<G>(
             .is_some_and(|node| {
                 matches!(
                     node,
-                    tex_state::node_arena::NodeView::Kern {
+                    tex_state::node_view::NodeView::Kern {
                         kind: KernKind::Font,
                         ..
                     }
@@ -1013,9 +1013,9 @@ fn reconstitute_branch<G>(
     right_boundary: LigatureRightBoundary,
     fuel: &mut tex_command::CommandFuel,
     tfm_work: &mut crate::box_runtime::hmode::LigatureWorkList,
-) -> Result<tex_state::node_arena::PageListId, ExecError> {
+) -> Result<tex_state::page_node_arena::PageListId, ExecError> {
     if source.is_empty() {
-        return Ok(tex_state::node_arena::PageListId::empty());
+        return Ok(tex_state::page_node_arena::PageListId::empty());
     }
     let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
     stores.open_page_active_list(&mut output);
@@ -1171,9 +1171,9 @@ impl FinalHNodeSink for PreBreakSink<'_> {
         &mut self,
         stores: &mut CommandContext<'_, G>,
         kind: DiscKind,
-        pre: tex_state::node_arena::PageListId,
-        post: tex_state::node_arena::PageListId,
-        replace: tex_state::node_arena::PageListId,
+        pre: tex_state::page_node_arena::PageListId,
+        post: tex_state::page_node_arena::PageListId,
+        replace: tex_state::page_node_arena::PageListId,
         physical_replace_count: u8,
     ) {
         if !self.saw_output {
@@ -1210,9 +1210,9 @@ fn pre_break_branch<G>(
     source: &[PendingHChar],
     fuel: &mut tex_command::CommandFuel,
     tfm_work: &mut crate::box_runtime::hmode::LigatureWorkList,
-) -> Result<tex_state::node_arena::PageListId, ExecError> {
+) -> Result<tex_state::page_node_arena::PageListId, ExecError> {
     if source.is_empty() {
-        return Ok(tex_state::node_arena::PageListId::empty());
+        return Ok(tex_state::page_node_arena::PageListId::empty());
     }
     let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
     stores.open_page_active_list(&mut output);
@@ -1249,7 +1249,7 @@ fn singleton_glyph_branch<G>(
     stores: &mut CommandContext<'_, G>,
     glyph: crate::box_runtime::hmode::LigatureGlyphCell,
     tfm_work: &crate::box_runtime::hmode::LigatureWorkList,
-) -> tex_state::node_arena::PageListId {
+) -> tex_state::page_node_arena::PageListId {
     let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
     stores.open_page_active_list(&mut output);
     let source = tfm_work.source(glyph.provenance);
@@ -1264,7 +1264,7 @@ fn singleton_kern_branch<G>(
     stores: &mut CommandContext<'_, G>,
     amount: Scaled,
     kind: KernKind,
-) -> tex_state::node_arena::PageListId {
+) -> tex_state::page_node_arena::PageListId {
     let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
     stores.open_page_active_list(&mut output);
     let mut sink = crate::box_runtime::hmode::PageNodeSink {
@@ -1366,9 +1366,9 @@ impl FinalHNodeSink for PhysicalMeasureSink {
         &mut self,
         _stores: &mut CommandContext<'_, G>,
         _kind: DiscKind,
-        _pre: tex_state::node_arena::PageListId,
-        _post: tex_state::node_arena::PageListId,
-        _replace: tex_state::node_arena::PageListId,
+        _pre: tex_state::page_node_arena::PageListId,
+        _post: tex_state::page_node_arena::PageListId,
+        _replace: tex_state::page_node_arena::PageListId,
         _physical_replace_count: u8,
     ) {
         self.nodes += 1;
@@ -1434,9 +1434,9 @@ impl FinalHNodeSink for PhysicalPrefixSink<'_> {
         &mut self,
         stores: &mut CommandContext<'_, G>,
         kind: DiscKind,
-        pre: tex_state::node_arena::PageListId,
-        post: tex_state::node_arena::PageListId,
-        replace: tex_state::node_arena::PageListId,
+        pre: tex_state::page_node_arena::PageListId,
+        post: tex_state::page_node_arena::PageListId,
+        replace: tex_state::page_node_arena::PageListId,
         physical_replace_count: u8,
     ) {
         if self.remaining == 0 {
@@ -1458,9 +1458,9 @@ fn physical_post_branch<G>(
     nodes: usize,
     fuel: &mut tex_command::CommandFuel,
     tfm_work: &mut crate::box_runtime::hmode::LigatureWorkList,
-) -> Result<tex_state::node_arena::PageListId, ExecError> {
+) -> Result<tex_state::page_node_arena::PageListId, ExecError> {
     if source.is_empty() || nodes == 0 {
-        return Ok(tex_state::node_arena::PageListId::empty());
+        return Ok(tex_state::page_node_arena::PageListId::empty());
     }
     let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
     stores.open_page_active_list(&mut output);
@@ -1502,7 +1502,7 @@ fn physical_projection_for_glyph<G>(
     right_boundary: LigatureRightBoundary,
     fuel: &mut tex_command::CommandFuel,
     tfm_work: &mut crate::box_runtime::hmode::LigatureWorkList,
-) -> Result<(u8, tex_state::node_arena::PageListId), ExecError> {
+) -> Result<(u8, tex_state::page_node_arena::PageListId), ExecError> {
     let minor_pending = pending_word_range(word, position..word.len());
     let mut probe = PhysicalMeasureSink {
         current,
@@ -1560,7 +1560,7 @@ fn physical_projection_for_glyph<G>(
 
 struct HyphenationReconstitutionCursor<'output, 'word, 'projection, 'vectors> {
     output: &'output mut tex_state::page_node_arena::PageMaterialActiveListBuilder,
-    out_segments: &'output mut Vec<tex_state::node_arena::PageListId>,
+    out_segments: &'output mut Vec<tex_state::page_node_arena::PageListId>,
     word: &'word [WordChar],
     positions: &'word [usize],
     right_boundary: LigatureRightBoundary,
@@ -1600,7 +1600,7 @@ impl<'output, 'word, 'projection, 'vectors>
         through_glyph: bool,
         fuel: &mut tex_command::CommandFuel,
         tfm_work: &mut crate::box_runtime::hmode::LigatureWorkList,
-    ) -> Result<tex_state::node_arena::PageListId, ExecError> {
+    ) -> Result<tex_state::page_node_arena::PageListId, ExecError> {
         let previous = self.word[position - 1];
         let mut source = if through_glyph {
             // TeX82 §§913--915 start this alternative at `l`, the start
@@ -1629,7 +1629,7 @@ impl<'output, 'word, 'projection, 'vectors>
                     tfm_work,
                 )
             } else {
-                Ok(tex_state::node_arena::PageListId::empty())
+                Ok(tex_state::page_node_arena::PageListId::empty())
             };
         };
         let fallback = PendingHRunChar::new(previous.font, ch, OriginId::UNKNOWN);
@@ -1688,10 +1688,10 @@ impl<'output, 'word, 'projection, 'vectors>
                 }
             };
         let (replace, physical_replace_count) = replacement.map_or(
-            (tex_state::node_arena::PageListId::empty(), 0),
+            (tex_state::page_node_arena::PageListId::empty(), 0),
             |(amount, kind)| (singleton_kern_branch(stores, amount, kind), 2),
         );
-        let empty = tex_state::node_arena::PageListId::empty();
+        let empty = tex_state::page_node_arena::PageListId::empty();
         self.resume_main(stores);
         stores.construct_page_active_list(self.output, |destination| {
             destination.discretionary(
@@ -1904,9 +1904,9 @@ impl FinalHNodeSink for HyphenationReconstitutionCursor<'_, '_, '_, '_> {
         &mut self,
         stores: &mut CommandContext<'_, G>,
         kind: DiscKind,
-        pre: tex_state::node_arena::PageListId,
-        post: tex_state::node_arena::PageListId,
-        replace: tex_state::node_arena::PageListId,
+        pre: tex_state::page_node_arena::PageListId,
+        post: tex_state::page_node_arena::PageListId,
+        replace: tex_state::page_node_arena::PageListId,
         physical_replace_count: u8,
     ) {
         let mut sink = crate::box_runtime::hmode::PageNodeSink {
@@ -1927,7 +1927,7 @@ fn append_hyphenated_word<G>(
     no_left_boundary: bool,
     right_boundary: HyphenationRightBoundary,
     output: &mut tex_state::page_node_arena::PageMaterialActiveListBuilder,
-    out_segments: &mut Vec<tex_state::node_arena::PageListId>,
+    out_segments: &mut Vec<tex_state::page_node_arena::PageListId>,
     output_len: &mut usize,
     fuel: &mut tex_command::CommandFuel,
     projection: &mut HyphenationProjection<'_>,
@@ -2118,7 +2118,7 @@ mod tests {
     fn hyphenation_source<G>(
         stores: &mut CommandContext<'_, G>,
         font: tex_state::ids::FontId,
-    ) -> tex_state::node_arena::PageListId {
+    ) -> tex_state::page_node_arena::PageListId {
         let mut nodes = vec![Node::Glue {
             spec: tex_state::glue::GlueSpec::ZERO,
             kind: tex_state::node::GlueKind::Normal,
@@ -2886,10 +2886,10 @@ mod tests {
     #[test]
     fn candidate_scan_is_linear_while_positional_probe_remains_explicit() {
         fn delta(
-            after: tex_state::node_arena::NodeTraversalCounters,
-            before: tex_state::node_arena::NodeTraversalCounters,
-        ) -> tex_state::node_arena::NodeTraversalCounters {
-            tex_state::node_arena::NodeTraversalCounters {
+            after: tex_state::node_view::NodeTraversalCounters,
+            before: tex_state::node_view::NodeTraversalCounters,
+        ) -> tex_state::node_view::NodeTraversalCounters {
+            tex_state::node_view::NodeTraversalCounters {
                 index_resolutions: after
                     .index_resolutions
                     .saturating_sub(before.index_resolutions),
@@ -2964,10 +2964,10 @@ mod tests {
     #[test]
     fn outer_hyphenation_walk_reduces_indexed_reads_to_output_block_work() {
         fn delta(
-            after: tex_state::node_arena::NodeTraversalCounters,
-            before: tex_state::node_arena::NodeTraversalCounters,
-        ) -> tex_state::node_arena::NodeTraversalCounters {
-            tex_state::node_arena::NodeTraversalCounters {
+            after: tex_state::node_view::NodeTraversalCounters,
+            before: tex_state::node_view::NodeTraversalCounters,
+        ) -> tex_state::node_view::NodeTraversalCounters {
+            tex_state::node_view::NodeTraversalCounters {
                 index_resolutions: after
                     .index_resolutions
                     .saturating_sub(before.index_resolutions),

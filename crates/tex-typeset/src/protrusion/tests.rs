@@ -56,7 +56,7 @@ fn ligature(font: tex_state::ids::FontId, ch: char) -> Node {
 }
 
 fn hlist(
-    children: tex_state::node_arena::PageListId,
+    children: tex_state::page_node_arena::PageListId,
     width: Scaled,
     height: Scaled,
     depth: Scaled,
@@ -326,7 +326,7 @@ fn finalized_centering_boundaries_do_not_block_margin_kern_planning() {
         },
     ];
 
-    let plan = plan_margin_kerns(&state, tex_state::node_arena::NodeCursor::owned(&nodes), 1);
+    let plan = plan_margin_kerns(&state, tex_state::node_view::NodeCursor::owned(&nodes), 1);
 
     assert!(matches!(
         plan.left,
@@ -379,7 +379,7 @@ fn later_leftskip_remains_a_left_edge_blocker() {
         character(font, 'A'),
     ];
 
-    let plan = plan_margin_kerns(&state, tex_state::node_arena::NodeCursor::owned(&nodes), 1);
+    let plan = plan_margin_kerns(&state, tex_state::node_view::NodeCursor::owned(&nodes), 1);
 
     assert_eq!(plan.left, None);
 }

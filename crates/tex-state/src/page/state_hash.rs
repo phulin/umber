@@ -1,7 +1,8 @@
 use super::{PageBreak, PageBuilderState, PageContents, PageDimension, PageInsertionStatus};
 use crate::glue::GlueSpec;
 use crate::node::NodeTokenList;
-use crate::node_arena::{NodeCursor, PageNodeArena};
+use crate::node_view::NodeCursor;
+use crate::page_node_arena::PageMaterialArena;
 use crate::state_hash::{StateHashComponent, StateHashFragment, StateHasher};
 
 const PAGE_PROJECTION_DOMAIN: u64 = 0x7061_6765_5f70_726a;
@@ -23,7 +24,7 @@ impl PageBuilderState {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn hash_semantic(
         &self,
-        arena: &PageNodeArena,
+        arena: &PageMaterialArena,
         hasher: &mut StateHasher,
         _cache: &mut PageHashCache,
         mut hash_nodes: impl for<'a> FnMut(NodeCursor<'a>, &mut StateHasher) -> usize,

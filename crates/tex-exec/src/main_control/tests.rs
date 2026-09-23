@@ -77,7 +77,7 @@ fn register_source<G>(control: &mut MainControl<G>, bytes: &[u8]) {
         .expect("root source registers and opens");
 }
 
-fn page_vec<G>(stores: &Universe<G>, root: tex_state::node_arena::PageListId) -> Vec<Node> {
+fn page_vec<G>(stores: &Universe<G>, root: tex_state::page_node_arena::PageListId) -> Vec<Node> {
     stores
         .page_node_list(root)
         .expect("test list belongs to the page arena")
@@ -318,7 +318,7 @@ fn box_child_nodes<G>(stores: &mut Universe<G>, register: u16) -> Vec<Node> {
 
 fn first_published_node<G>(
     stores: &Universe<G>,
-    list: tex_state::node_arena::PageListId,
+    list: tex_state::page_node_arena::PageListId,
 ) -> Option<Node> {
     page_vec(stores, list).into_iter().next()
 }
@@ -429,7 +429,7 @@ enum PackagedRowItem {
 fn packaged_row_projection<G>(stores: &Universe<G>, row: &Node) -> Vec<PackagedRowItem> {
     fn material_widths<G>(
         stores: &Universe<G>,
-        nodes: &tex_state::node_arena::PageListId,
+        nodes: &tex_state::page_node_arena::PageListId,
     ) -> Vec<i32> {
         let mut widths = Vec::new();
         for node in page_vec(stores, *nodes) {
@@ -478,7 +478,7 @@ fn alignment_node_projection<G>(
     stores: &Universe<G>,
     nodes: &[Node],
 ) -> Vec<AlignmentNodeProjection> {
-    fn kerns<G>(stores: &Universe<G>, nodes: tex_state::node_arena::PageListId) -> Vec<i32> {
+    fn kerns<G>(stores: &Universe<G>, nodes: tex_state::page_node_arena::PageListId) -> Vec<i32> {
         let mut out = Vec::new();
         for node in page_vec(stores, nodes) {
             match node {
@@ -931,7 +931,7 @@ fn next_input_probe<G>(control: &mut MainControl<G>, stores: &mut Universe<G>) -
     panic!("prefixed-definition probe exceeded the bounded semantic driver")
 }
 
-fn recursive_test_box<G>(stores: &mut Universe<G>) -> tex_state::node_arena::PageListId {
+fn recursive_test_box<G>(stores: &mut Universe<G>) -> tex_state::page_node_arena::PageListId {
     use tex_state::font::NULL_FONT;
     use tex_state::glue::Order;
     use tex_state::node::{
@@ -1077,14 +1077,14 @@ fn recursive_test_box<G>(stores: &mut Universe<G>) -> tex_state::node_arena::Pag
 
 fn recursive_node_signature<G>(
     stores: &Universe<G>,
-    list: &tex_state::node_arena::PageListId,
+    list: &tex_state::page_node_arena::PageListId,
 ) -> String {
     recursive_owned_node_signature(stores, list)
 }
 
 fn recursive_owned_node_signature<G>(
     stores: &Universe<G>,
-    list: &tex_state::node_arena::PageListId,
+    list: &tex_state::page_node_arena::PageListId,
 ) -> String {
     use tex_state::node::{LeaderPayload, Node};
 
@@ -1354,7 +1354,7 @@ fn test_pdf_image_source() -> tex_state::PdfExternalImageSource {
 }
 
 fn install_test_hbox<G>(stores: &mut Universe<G>, register: u16, width: Scaled) {
-    let children = tex_state::node_arena::PageListId::empty();
+    let children = tex_state::page_node_arena::PageListId::empty();
     let list = crate::test_harness::publish_page_nodes(
         stores,
         [Node::HList(tex_state::node::BoxNode::new(

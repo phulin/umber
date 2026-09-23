@@ -2,7 +2,7 @@ use tex_state::env::AssignmentScope;
 use tex_state::glue::Order;
 use tex_state::interner::InternerBudget;
 use tex_state::node::{BoxLr, BoxNode, BoxNodeFields, Node, Sign};
-use tex_state::node_arena::PageListId;
+use tex_state::page_node_arena::PageListId;
 use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::{Universe, with_universe};
 

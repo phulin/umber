@@ -30,10 +30,10 @@ fn identity(nodes: &[PageMaterialNode]) -> SemanticSequenceIdentity {
 
 fn resolved(arena: &PageMaterialArena, list: PageListId) -> Vec<PageMaterialNode> {
     arena
-        .list(list)
+        .node_cursor(list)
         .expect("live page list")
         .iter()
-        .cloned()
+        .map(|node| node.to_owned())
         .collect()
 }
 
@@ -166,7 +166,10 @@ fn warmed_resident_slot_construction_is_allocation_free() {
         },
         AllocationMeasurement::default()
     );
-    assert_eq!(arena.list(list).expect("measured list view").len(), NODES);
+    assert_eq!(
+        arena.node_cursor(list).expect("measured list view").len(),
+        NODES
+    );
     assert_eq!(arena.counters().source_nodes_copied, 0);
 }
 
@@ -338,7 +341,7 @@ fn active_list_preserves_disabled_demand_and_counts_shared_input_copies() {
     page_arena!(arena, pool, state, 32);
     let source = arena.publish_owned(penalties(&[10, 20])).expect("source");
     let source_address = arena
-        .list(source)
+        .node_cursor(source)
         .expect("live source")
         .testing_node_address(0)
         .expect("source node");
@@ -362,7 +365,7 @@ fn active_list_preserves_disabled_demand_and_counts_shared_input_copies() {
     assert_eq!(arena.counters().source_nodes_copied, 2);
     assert_ne!(
         arena
-            .list(composed)
+            .node_cursor(composed)
             .expect("live composed list")
             .testing_node_address(0)
             .expect("composed source node"),
@@ -425,10 +428,10 @@ fn demand_enabled_shared_append_preserves_nested_children_and_exact_identity() {
     assert_eq!(after.source_nodes_copied - before.source_nodes_copied, 2);
     assert_eq!(after.whole_payload_copies - before.whole_payload_copies, 2);
     let Node::HList(copied_box) = arena
-        .list(copied.list())
+        .node_cursor(copied.list())
         .expect("copied parent list")
         .get(0)
-        .cloned()
+        .map(|node| node.to_owned())
         .expect("copied parent")
     else {
         panic!("copied parent lost box shape");
@@ -453,7 +456,10 @@ fn unique_suffix_scaling_is_exact_at_one_sixty_four_and_four_thousand_ninety_six
         let counters = arena.counters();
 
         assert_eq!(list.len(), size);
-        assert_eq!(arena.list(list.list()).expect("direct list").len(), size);
+        assert_eq!(
+            arena.node_cursor(list.list()).expect("direct list").len(),
+            size
+        );
         assert_eq!(counters.new_semantic_nodes, size as u64);
         assert_eq!(counters.direct_blocks_allocated, size as u64);
         assert_eq!(counters.source_nodes_copied, 0);
@@ -479,7 +485,7 @@ fn shared_source_scaling_clones_each_node_directly_at_required_sizes() {
             .expect("shared source");
         let source_identity = source.semantic_identity();
         let source_address = arena
-            .list(source.list())
+            .node_cursor(source.list())
             .expect("source list")
             .testing_node_address(0)
             .expect("source node");
@@ -519,7 +525,7 @@ fn shared_source_scaling_clones_each_node_directly_at_required_sizes() {
         assert_eq!(source.semantic_identity(), source_identity);
         assert_eq!(
             arena
-                .list(source.list())
+                .node_cursor(source.list())
                 .expect("source remains live")
                 .testing_node_address(0),
             Some(source_address)
@@ -708,7 +714,7 @@ fn generated_line_edges_preserve_the_selected_source_subrange_addresses() {
         .expect("source");
     let selected_addresses = [1, 2].map(|index| {
         arena
-            .list(source)
+            .node_cursor(source)
             .expect("live source")
             .testing_node_address(index)
             .expect("selected source node")
@@ -729,7 +735,7 @@ fn generated_line_edges_preserve_the_selected_source_subrange_addresses() {
         .expect("finalize line");
 
     assert_eq!(resolved(&arena, line), penalties(&[1, 20, 30, 2]));
-    let line_view = arena.list(line).expect("live line");
+    let line_view = arena.node_cursor(line).expect("live line");
     assert_ne!(
         [1, 2].map(|index| {
             line_view
@@ -877,7 +883,10 @@ fn long_direct_span_survives_checkpoint_rejection_and_operation_rollback_stales_
         .expect("restore accepted suffix");
 
     assert_eq!(
-        arena.span_list(retained_span).expect("retained span").len(),
+        arena
+            .span_node_cursor(retained_span)
+            .expect("retained span")
+            .len(),
         4_096
     );
     assert!(arena.contains(prior));
@@ -892,9 +901,12 @@ fn long_direct_span_survives_checkpoint_rejection_and_operation_rollback_stales_
         .restore_operation(operation)
         .expect("rollback operation suffix");
 
-    assert!(arena.span_list(temporary_span).is_err());
+    assert!(arena.span_node_cursor(temporary_span).is_err());
     assert_eq!(
-        arena.span_list(retained_span).expect("retained span").len(),
+        arena
+            .span_node_cursor(retained_span)
+            .expect("retained span")
+            .len(),
         4_096
     );
     let bytes_before_visit = arena.allocated_heap_bytes();
@@ -1185,17 +1197,17 @@ fn unique_durable_move_preserves_recursive_addresses_without_copying() {
         .expect("unique move");
     assert!(durable.is_none());
     let Node::HList(box_node) = arena
-        .list(moved)
+        .node_cursor(moved)
         .expect("moved root")
         .get(0)
-        .cloned()
+        .map(|node| node.to_owned())
         .expect("moved box")
     else {
         panic!("moved root lost box shape");
     };
     assert_eq!(
         arena
-            .list(box_node.children)
+            .node_cursor(box_node.children)
             .expect("moved leaf")
             .testing_node_address(0),
         Some(durable_leaf_address)
@@ -1287,10 +1299,10 @@ fn durable_lifetime_copies_preserve_enabled_semantic_identity() {
         .expect("history-preserving copy");
     assert_eq!(copied.semantic_identity(), root_identity);
     let Node::HList(box_node) = arena
-        .list(copied)
+        .node_cursor(copied)
         .expect("copied root")
         .get(0)
-        .cloned()
+        .map(|node| node.to_owned())
         .expect("copied box")
     else {
         panic!("copied root lost box shape");

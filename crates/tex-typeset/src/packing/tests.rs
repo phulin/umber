@@ -166,10 +166,7 @@ fn compact_char_runs_differentially_match_scalar_mixed_lists() {
             .expect("test list belongs to the page arena")
             .nodes();
         let fast = measure_hlist(&universe, view);
-        let owned = view
-            .iter()
-            .map(|node| node.to_owned_with(std::convert::identity))
-            .collect::<Vec<_>>();
+        let owned = view.iter().map(|node| node.to_owned()).collect::<Vec<_>>();
         let scalar = scalar_hlist(&universe, &owned);
         let params = HpackParams {
             hbadness: case % 10_001,

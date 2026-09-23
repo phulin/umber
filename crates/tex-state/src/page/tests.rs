@@ -54,7 +54,7 @@ fn list_nodes(arena: &PageMaterialArena, root: impl super::PageListRoot) -> Vec<
         .node_cursor(root.list_id())
         .expect("test page root remains live")
         .iter()
-        .map(|node| node.to_owned_with(std::convert::identity))
+        .map(|node| node.to_owned())
         .collect()
 }
 
@@ -77,7 +77,7 @@ fn page_buffers_mutate_directly_without_cow_roots() {
     assert_eq!(page.contribution(&arena).to_vec(), [kern(1), kern(3)]);
     assert_eq!(
         page.current_page(&arena)
-            .map(|node| node.to_owned_with(std::convert::identity))
+            .map(|node| node.to_owned())
             .collect::<Vec<_>>(),
         [kern(2), kern(4)]
     );
@@ -308,7 +308,7 @@ fn rooted_fork_uses_coordinate_roots_across_large_later_lanes() {
     assert_eq!(page.contribution(&arena).to_vec(), [kern(-1)]);
     assert_eq!(
         page.current_page(&arena)
-            .map(|node| node.to_owned_with(std::convert::identity))
+            .map(|node| node.to_owned())
             .collect::<Vec<_>>(),
         [kern(-2)]
     );
@@ -365,7 +365,7 @@ fn rooted_candidate_shipout_rollback_restores_accepted_coordinates() {
     assert_eq!(page.contribution(&arena).to_vec(), [kern(-1)]);
     assert_eq!(
         page.current_page(&arena)
-            .map(|node| node.to_owned_with(std::convert::identity))
+            .map(|node| node.to_owned())
             .collect::<Vec<_>>(),
         [kern(-2)]
     );
@@ -690,7 +690,7 @@ fn paragraph_checkpoints_share_one_page_region_without_node_copies() {
     let first_root = region.builder().contribution;
     let first_address = region
         .nodes(&pool)
-        .span_list(first_root)
+        .span_node_cursor(first_root)
         .expect("first contribution")
         .testing_node_address(0)
         .expect("first contribution address");
@@ -717,7 +717,7 @@ fn paragraph_checkpoints_share_one_page_region_without_node_copies() {
     assert_eq!(
         region
             .nodes(&pool)
-            .span_list(first_root)
+            .span_node_cursor(first_root)
             .expect("unchanged prefix remains live")
             .testing_node_address(0),
         Some(first_address),
@@ -742,7 +742,7 @@ fn page_region_fork_reject_and_accept_settle_roots_with_arena_suffix() {
     let prefix = region.builder().contribution;
     let prefix_address = region
         .nodes(&pool)
-        .span_list(prefix)
+        .span_node_cursor(prefix)
         .expect("selected prefix")
         .testing_node_address(0)
         .expect("selected prefix address");
@@ -830,7 +830,7 @@ fn page_region_fork_reject_and_accept_settle_roots_with_arena_suffix() {
     assert_eq!(
         region
             .nodes(&pool)
-            .span_list(prefix)
+            .span_node_cursor(prefix)
             .expect("unchanged prefix survives acceptance")
             .testing_node_address(0),
         Some(prefix_address)
@@ -898,19 +898,20 @@ fn held_over_material_is_self_contained_in_next_page_region() {
     let copied_root = succession
         .current
         .nodes(&pool)
-        .list(succession.held_over)
+        .node_cursor(succession.held_over)
         .expect("held-over root belongs to next region");
-    let Node::Disc { pre, .. } = copied_root.get(0).expect("copied discretionary") else {
+    let Node::Disc { pre, .. } = copied_root.get(0).expect("copied discretionary").to_owned()
+    else {
         panic!("held-over root shape changed");
     };
     assert_eq!(
         succession
             .current
             .nodes(&pool)
-            .list(*pre)
+            .node_cursor(pre)
             .expect("nested child is region-local")
             .iter()
-            .cloned()
+            .map(|node| node.to_owned())
             .collect::<Vec<_>>(),
         [kern(201), kern(202)]
     );
@@ -1219,7 +1220,7 @@ fn prepared_successor_does_not_drop_current_owner_before_shipout_commit() {
     assert_eq!(
         history
             .nodes()
-            .list(copied)
+            .node_cursor(copied)
             .expect("copied holdover belongs to successor")
             .iter()
             .cloned()
@@ -1253,7 +1254,7 @@ fn production_succession_transfers_complete_page_builder_owner() {
     let roots_before = history.builder().payload_roots();
     let contribution_address = history
         .nodes_mut()
-        .span_list(roots_before.contribution)
+        .span_node_cursor(roots_before.contribution)
         .expect("successor contribution")
         .testing_node_address(0)
         .expect("successor contribution address");
@@ -1285,7 +1286,7 @@ fn production_succession_transfers_complete_page_builder_owner() {
     assert_eq!(
         history
             .nodes_mut()
-            .span_list(roots.contribution)
+            .span_node_cursor(roots.contribution)
             .expect("adopted contribution")
             .testing_node_address(0),
         Some(contribution_address),
@@ -1411,7 +1412,7 @@ fn retained_checkpoint_shares_sealed_successor_prefix() {
     let predecessor_contribution = history.builder().payload_roots().contribution;
     let old_address = history
         .nodes_mut()
-        .span_list(predecessor_contribution)
+        .span_node_cursor(predecessor_contribution)
         .expect("predecessor contribution")
         .testing_node_address(0)
         .expect("predecessor contribution address");
@@ -1430,7 +1431,7 @@ fn retained_checkpoint_shares_sealed_successor_prefix() {
     assert_eq!(
         history
             .nodes_mut()
-            .span_list(roots.contribution)
+            .span_node_cursor(roots.contribution)
             .expect("shared contribution")
             .testing_node_address(0),
         Some(old_address)
@@ -1503,11 +1504,14 @@ fn retained_successor_copy_evidence(shareable: bool) -> crate::fork_arena::ForkA
     let roots = history.builder().payload_roots();
     let nodes = history.nodes_mut();
     let view = nodes
-        .span_list(roots.contribution)
+        .span_node_cursor(roots.contribution)
         .expect("successor contribution");
     assert_eq!(view.len(), NODES as usize);
-    assert_eq!(view.get(0), Some(&kern(0)));
-    assert_eq!(view.get(NODES as usize - 1), Some(&kern(NODES - 1)));
+    assert_eq!(view.get(0).map(|node| node.to_owned()), Some(kern(0)));
+    assert_eq!(
+        view.get(NODES as usize - 1).map(|node| node.to_owned()),
+        Some(kern(NODES - 1))
+    );
     history.current().material_counters()
 }
 
@@ -1930,7 +1934,7 @@ fn production_heldover_moves_a_self_contained_successor_envelope() {
     let heldover = publish_nodes(&mut history.nodes_mut(), [kern(7), kern(8)]);
     let heldover_address = history
         .nodes_mut()
-        .list(heldover)
+        .node_cursor(heldover)
         .expect("heldover list")
         .testing_node_address(0)
         .expect("heldover address");
@@ -1950,7 +1954,7 @@ fn production_heldover_moves_a_self_contained_successor_envelope() {
     assert_eq!(
         history
             .nodes_mut()
-            .span_list(contribution)
+            .span_node_cursor(contribution)
             .expect("moved heldover")
             .testing_node_address(0),
         Some(heldover_address)
@@ -2018,7 +2022,7 @@ fn production_heldover_copies_only_the_interleaved_prefix_closure() {
     let heldover = publish_nodes(&mut history.nodes_mut(), [kern(9), kern(10)]);
     let old_address = history
         .nodes_mut()
-        .list(heldover)
+        .node_cursor(heldover)
         .expect("prefix heldover list")
         .testing_node_address(0)
         .expect("prefix heldover address");
@@ -2039,7 +2043,7 @@ fn production_heldover_copies_only_the_interleaved_prefix_closure() {
     assert_ne!(
         history
             .nodes_mut()
-            .span_list(contribution)
+            .span_node_cursor(contribution)
             .expect("copied heldover")
             .testing_node_address(0),
         Some(old_address)

@@ -1,6 +1,6 @@
 //! Math-list node payloads.
 
-use crate::node_arena::PageListId;
+use crate::page_node_arena::PageListId;
 use crate::scaled::Scaled;
 use crate::token::OriginId;
 use std::hash::{Hash, Hasher};

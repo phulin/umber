@@ -6,9 +6,10 @@ mod state_hash;
 use crate::fork_arena::{CheckpointMark, ChunkPool, ForkArena, ForkArenaCounters, ForkArenaError};
 use crate::glue::GlueSpec;
 use crate::node::{Node, NodeTokenList};
-use crate::node_arena::{NodeCursor, NodeCursorIter, PageListId, PageNodeArena};
 use crate::node_region::{NodeCheckpointMark, NodePool, NodeRegionId, PageClosureBuildMark};
 use crate::node_sequence::SemanticSequenceIdentity;
+use crate::node_view::{NodeCursor, NodeCursorIter};
+use crate::page_node_arena::{PageListId, PageMaterialArena};
 use crate::page_node_arena::{PageListSpan, PageMaterialRegion, PageMaterialView};
 use crate::scaled::Scaled;
 use ahash::RandomState;
@@ -447,9 +448,7 @@ impl<'a> PageContributionView<'a> {
 
     #[must_use]
     pub fn to_vec(self) -> Vec<Node> {
-        self.iter()
-            .map(|node| node.to_owned_with(std::convert::identity))
-            .collect()
+        self.iter().map(|node| node.to_owned()).collect()
     }
 }
 
@@ -1070,12 +1069,12 @@ impl PageRegionHistory {
         PageMaterialView::new(&self.pool, &self.current().nodes)
     }
 
-    pub(crate) fn nodes_mut(&mut self) -> PageNodeArena<'_> {
+    pub(crate) fn nodes_mut(&mut self) -> PageMaterialArena<'_> {
         let current = self
             .regions
             .last_mut()
             .expect("page history always has a current region");
-        PageNodeArena::new(&mut self.pool, &mut current.nodes)
+        PageMaterialArena::new(&mut self.pool, &mut current.nodes)
     }
 
     pub(crate) fn builder(&self) -> &PageBuilderState {
@@ -1103,13 +1102,13 @@ impl PageRegionHistory {
             .release_rootless_suffix(&mut self.pool, retained)
     }
 
-    pub(crate) fn parts_mut(&mut self) -> (PageNodeArena<'_>, &mut PageBuilderState) {
+    pub(crate) fn parts_mut(&mut self) -> (PageMaterialArena<'_>, &mut PageBuilderState) {
         let current = self
             .regions
             .last_mut()
             .expect("page history always has a current region");
         (
-            PageNodeArena::new(&mut self.pool, &mut current.nodes),
+            PageMaterialArena::new(&mut self.pool, &mut current.nodes),
             &mut current.builder,
         )
     }
@@ -1527,7 +1526,7 @@ impl PageRegionHistory {
             .regions
             .last_mut()
             .expect("page history always has a current region");
-        let mark = PageNodeArena::new(&mut self.pool, &mut current.nodes)
+        let mark = PageMaterialArena::new(&mut self.pool, &mut current.nodes)
             .begin_closure_build()
             .expect("test output successor boundary");
         current.builder.arm_output_successor_build(mark);
@@ -1607,16 +1606,19 @@ impl PageRegion {
     }
 
     #[cfg(test)]
-    fn nodes_mut<'a>(&'a mut self, pool: &'a mut NodePool) -> PageNodeArena<'a> {
-        PageNodeArena::new(pool, &mut self.nodes)
+    fn nodes_mut<'a>(&'a mut self, pool: &'a mut NodePool) -> PageMaterialArena<'a> {
+        PageMaterialArena::new(pool, &mut self.nodes)
     }
 
     #[cfg(test)]
     fn parts_mut<'a>(
         &'a mut self,
         pool: &'a mut NodePool,
-    ) -> (PageNodeArena<'a>, &'a mut PageBuilderState) {
-        (PageNodeArena::new(pool, &mut self.nodes), &mut self.builder)
+    ) -> (PageMaterialArena<'a>, &'a mut PageBuilderState) {
+        (
+            PageMaterialArena::new(pool, &mut self.nodes),
+            &mut self.builder,
+        )
     }
 
     #[must_use]
@@ -1633,7 +1635,7 @@ impl PageRegion {
         &mut self,
         pool: &mut NodePool,
     ) -> Result<PageRegionCheckpointKey, ForkArenaError> {
-        let mut nodes = PageNodeArena::new(pool, &mut self.nodes);
+        let mut nodes = PageMaterialArena::new(pool, &mut self.nodes);
         let boundary = nodes.seal_boundary()?;
         let node_mark = nodes.checkpoint_mark(boundary)?;
         let builder = self.builder.checkpoint_mark();
@@ -1724,7 +1726,7 @@ impl PageRegion {
             .position(|row| row.key == key)
             .expect("validated page-region checkpoint row remains present");
         let builder = self.builder.begin_checkpoint_candidate(checkpoint.builder);
-        PageNodeArena::new(pool, &mut self.nodes)
+        PageMaterialArena::new(pool, &mut self.nodes)
             .begin_checkpoint_candidate(checkpoint.nodes)
             .expect("complete page-region preflight makes arena fork infallible");
         let later_rows = self.checkpoints.split_off(selected.saturating_add(1));
@@ -1741,10 +1743,10 @@ impl PageRegion {
         pool: &mut NodePool,
         mut tail: AcceptedPageRegionTail,
     ) -> Result<(), ForkArenaError> {
-        let boundary = PageNodeArena::new(pool, &mut self.nodes).seal_boundary()?;
+        let boundary = PageMaterialArena::new(pool, &mut self.nodes).seal_boundary()?;
         self.builder
             .prepare_checkpoint_candidate_rejection(&tail.builder);
-        PageNodeArena::new(pool, &mut self.nodes).reject_checkpoint_candidate(boundary)?;
+        PageMaterialArena::new(pool, &mut self.nodes).reject_checkpoint_candidate(boundary)?;
         self.builder
             .finish_checkpoint_candidate_rejection(tail.builder);
         let selected = self
@@ -1762,7 +1764,7 @@ impl PageRegion {
         pool: &mut NodePool,
         tail: AcceptedPageRegionTail,
     ) -> Result<(), ForkArenaError> {
-        let boundary = PageNodeArena::new(pool, &mut self.nodes).seal_boundary()?;
+        let boundary = PageMaterialArena::new(pool, &mut self.nodes).seal_boundary()?;
         debug_assert!(
             self.checkpoints
                 .iter()
@@ -1770,7 +1772,7 @@ impl PageRegion {
         );
         self.builder
             .prepare_checkpoint_candidate_acceptance(tail.builder);
-        PageNodeArena::new(pool, &mut self.nodes).accept_checkpoint_candidate(boundary)
+        PageMaterialArena::new(pool, &mut self.nodes).accept_checkpoint_candidate(boundary)
     }
 
     pub(crate) fn restore_checkpoint(
@@ -1786,7 +1788,7 @@ impl PageRegion {
             })
             .ok_or(ForkArenaError::InvalidCheckpoint)?;
         self.builder.restore_checkpoint_mark(checkpoint.builder);
-        PageNodeArena::new(pool, &mut self.nodes).restore_checkpoint(checkpoint.nodes)
+        PageMaterialArena::new(pool, &mut self.nodes).restore_checkpoint(checkpoint.nodes)
     }
 
     #[must_use]
@@ -1843,7 +1845,7 @@ impl PageRegion {
             .nodes
             .inherit_durable_transition_counters_from(&self.nodes);
         if PageMaterialView::new(pool, &self.nodes).semantic_identity_enabled() {
-            PageNodeArena::new(pool, &mut current.nodes).enable_semantic_identity();
+            PageMaterialArena::new(pool, &mut current.nodes).enable_semantic_identity();
         }
         let (held_over, copied) = match PageMaterialRegion::copy_closure_between(
             pool,
@@ -1867,7 +1869,7 @@ impl PageRegion {
             .held_over_nodes_copied
             .saturating_add(copied as u64);
         if !held_over.is_empty() {
-            let mut nodes = PageNodeArena::new(pool, &mut current.nodes);
+            let mut nodes = PageMaterialArena::new(pool, &mut current.nodes);
             current
                 .builder
                 .push_current_page_list(&mut nodes, held_over);
@@ -1897,10 +1899,7 @@ impl PageRegion {
             roots.split_discards,
             roots.output_box,
         ] {
-            if PageMaterialView::new(pool, &self.nodes)
-                .span_list(root)
-                .is_err()
-            {
+            if !PageMaterialView::new(pool, &self.nodes).contains(root.list()) {
                 self.counters.cross_region_node_reference_rejections = self
                     .counters
                     .cross_region_node_reference_rejections
@@ -1957,7 +1956,7 @@ impl PageRegion {
             .nodes
             .inherit_durable_transition_counters_from(&self.nodes);
         if PageMaterialView::new(pool, &self.nodes).semantic_identity_enabled() {
-            PageNodeArena::new(pool, &mut current.nodes).enable_semantic_identity();
+            PageMaterialArena::new(pool, &mut current.nodes).enable_semantic_identity();
         }
 
         let mut fallback_build = None;
@@ -1976,7 +1975,7 @@ impl PageRegion {
                     roots.contribution.list(),
                 ) {
                     Ok((contribution, scanned)) => {
-                        let contribution = PageNodeArena::new(pool, &mut current.nodes)
+                        let contribution = PageMaterialArena::new(pool, &mut current.nodes)
                             .admit_span(contribution)?;
                         let roots = PagePayloadRoots {
                             contribution,
@@ -2041,7 +2040,7 @@ impl PageRegion {
                 roots.output_box.list(),
             )?;
             let spans = {
-                let arena = PageNodeArena::new(pool, &mut current.nodes);
+                let arena = PageMaterialArena::new(pool, &mut current.nodes);
                 (
                     arena.admit_span(contribution.0)?,
                     arena.admit_span(current_page.0)?,
@@ -3153,7 +3152,7 @@ impl PageBuilderState {
 
     pub(crate) fn install_output_box(
         &mut self,
-        arena: &PageNodeArena,
+        arena: &PageMaterialArena,
         root: PageListId,
     ) -> Result<(), ForkArenaError> {
         let root = arena.admit_span(root)?;
@@ -3178,7 +3177,7 @@ impl PageBuilderState {
     }
 
     #[cfg(test)]
-    pub(crate) fn memo_parts(&self, arena: &PageNodeArena) -> (Vec<Node>, PageMemoState) {
+    pub(crate) fn memo_parts(&self, arena: &PageMaterialArena) -> (Vec<Node>, PageMemoState) {
         let mut nodes = Vec::with_capacity(
             self.contribution.len()
                 + self.current_page.len()
@@ -3197,7 +3196,7 @@ impl PageBuilderState {
                     .span_node_cursor(root)
                     .expect("memo root belongs to the caller-owned page arena")
                     .iter()
-                    .map(|node| node.to_owned_with(std::convert::identity)),
+                    .map(|node| node.to_owned()),
             );
         }
         if let Some(spec) = &self.last_glue {
@@ -3248,7 +3247,7 @@ impl PageBuilderState {
     #[cfg(test)]
     pub(crate) fn install_memo_parts(
         &mut self,
-        arena: &mut PageNodeArena,
+        arena: &mut PageMaterialArena,
         nodes: Vec<Node>,
         state: PageMemoState,
     ) -> Result<(), crate::MemoValueError> {
@@ -3719,7 +3718,7 @@ impl PageBuilderState {
         self.best_size = Scaled::from_raw(0);
     }
 
-    pub(crate) fn start_new_page(&mut self, arena: &PageNodeArena) {
+    pub(crate) fn start_new_page(&mut self, arena: &PageMaterialArena) {
         self.start_page_after_output(arena);
         // This reset is used by INITEX terminal cleanup, not by §1012's
         // return into a live `build_page` invocation.
@@ -3736,7 +3735,7 @@ impl PageBuilderState {
     /// TeX82 §1012's reset after `fire_up`: the page list and builder
     /// controls are empty, while `page_so_far` remains observable until §991
     /// freezes the next page's specifications.
-    pub(crate) fn start_page_after_output(&mut self, arena: &PageNodeArena) {
+    pub(crate) fn start_page_after_output(&mut self, arena: &PageMaterialArena) {
         self.record_scalars();
         self.advance_progress();
         self.resume_after_output = true;
@@ -3838,7 +3837,7 @@ impl PageBuilderState {
         self.fire_up
     }
 
-    pub(crate) fn push_contribution(&mut self, arena: &mut PageNodeArena, node: Node) {
+    pub(crate) fn push_contribution(&mut self, arena: &mut PageMaterialArena, node: Node) {
         self.record_scalars();
         self.record_page_inverse(PageInverse::Contribution(self.contribution));
         self.allocate_dynamic_node(&node);
@@ -3853,7 +3852,7 @@ impl PageBuilderState {
 
     pub(crate) fn remove_contribution_range(
         &mut self,
-        arena: &mut PageNodeArena,
+        arena: &mut PageMaterialArena,
         range: std::ops::RangeInclusive<usize>,
     ) -> PageNodeCarrier {
         let start = *range.start();
@@ -3886,7 +3885,7 @@ impl PageBuilderState {
         PageNodeCarrier { list: removed }
     }
 
-    pub(crate) fn prepend_contribution(&mut self, arena: &mut PageNodeArena, node: Node) {
+    pub(crate) fn prepend_contribution(&mut self, arena: &mut PageMaterialArena, node: Node) {
         self.record_scalars();
         self.record_page_inverse(PageInverse::Contribution(self.contribution));
         self.allocate_dynamic_node(&node);
@@ -3899,7 +3898,10 @@ impl PageBuilderState {
         self.semantic_roots.contribution = list_identity(self.contribution);
     }
 
-    pub(crate) fn contribution<'a>(&self, arena: &'a PageNodeArena) -> PageContributionView<'a> {
+    pub(crate) fn contribution<'a>(
+        &self,
+        arena: &'a PageMaterialArena,
+    ) -> PageContributionView<'a> {
         PageContributionView {
             nodes: arena
                 .span_node_cursor(self.contribution)
@@ -3909,21 +3911,21 @@ impl PageBuilderState {
 
     pub(crate) fn contribution_front<'a>(
         &self,
-        arena: &'a PageNodeArena,
+        arena: &'a PageMaterialArena,
     ) -> Option<crate::NodeView<'a>> {
         self.contribution(arena).front()
     }
 
     pub(crate) fn contribution_second<'a>(
         &self,
-        arena: &'a PageNodeArena,
+        arena: &'a PageMaterialArena,
     ) -> Option<crate::NodeView<'a>> {
         self.contribution(arena).get(1)
     }
 
     pub(crate) fn pop_contribution_front(
         &mut self,
-        arena: &mut PageNodeArena,
+        arena: &mut PageMaterialArena,
     ) -> Option<PageNodeCarrier> {
         if self.contribution.is_empty() {
             return None;
@@ -3948,7 +3950,11 @@ impl PageBuilderState {
         Some(PageNodeCarrier { list: removed })
     }
 
-    pub(crate) fn prepend_contributions(&mut self, arena: &mut PageNodeArena, nodes: PageListId) {
+    pub(crate) fn prepend_contributions(
+        &mut self,
+        arena: &mut PageMaterialArena,
+        nodes: PageListId,
+    ) {
         if nodes.is_empty() {
             return;
         }
@@ -3969,7 +3975,11 @@ impl PageBuilderState {
         self.semantic_roots.contribution = list_identity(self.contribution);
     }
 
-    pub(crate) fn append_contributions(&mut self, arena: &mut PageNodeArena, nodes: PageListId) {
+    pub(crate) fn append_contributions(
+        &mut self,
+        arena: &mut PageMaterialArena,
+        nodes: PageListId,
+    ) {
         if nodes.is_empty() {
             return;
         }
@@ -3992,7 +4002,7 @@ impl PageBuilderState {
 
     pub(crate) fn append_unique_contributions(
         &mut self,
-        arena: &mut PageNodeArena,
+        arena: &mut PageMaterialArena,
         nodes: crate::page_node_arena::UniquePageList,
     ) {
         let list = nodes.list();
@@ -4016,14 +4026,14 @@ impl PageBuilderState {
         self.semantic_roots.contribution = list_identity(self.contribution);
     }
 
-    pub(crate) fn current_page<'a>(&self, arena: &'a PageNodeArena) -> PageCurrentIter<'a> {
+    pub(crate) fn current_page<'a>(&self, arena: &'a PageMaterialArena) -> PageCurrentIter<'a> {
         arena
             .span_node_cursor(self.current_page)
             .expect("current page root belongs to the live arena")
             .iter()
     }
 
-    pub(crate) fn push_page_discard(&mut self, arena: &mut PageNodeArena, node: Node) {
+    pub(crate) fn push_page_discard(&mut self, arena: &mut PageMaterialArena, node: Node) {
         self.record_scalars();
         self.record_page_inverse(PageInverse::PageDiscards(self.page_discards));
         self.allocate_dynamic_node(&node);
@@ -4038,7 +4048,7 @@ impl PageBuilderState {
 
     pub(crate) fn push_page_discard_carrier(
         &mut self,
-        arena: &mut PageNodeArena,
+        arena: &mut PageMaterialArena,
         carrier: PageNodeCarrier,
     ) {
         self.record_scalars();
@@ -4050,7 +4060,7 @@ impl PageBuilderState {
         self.semantic_roots.page_discards = list_identity(self.page_discards);
     }
 
-    pub(crate) fn take_page_discards(&mut self, arena: &PageNodeArena) -> PageListId {
+    pub(crate) fn take_page_discards(&mut self, arena: &PageMaterialArena) -> PageListId {
         self.record_scalars();
         self.record_page_inverse(PageInverse::PageDiscards(self.page_discards));
         let nodes = std::mem::take(&mut self.page_discards);
@@ -4059,7 +4069,7 @@ impl PageBuilderState {
         nodes.list()
     }
 
-    pub(crate) fn clear_page_discards(&mut self, arena: &PageNodeArena) {
+    pub(crate) fn clear_page_discards(&mut self, arena: &PageMaterialArena) {
         self.record_scalars();
         self.record_page_inverse(PageInverse::PageDiscards(self.page_discards));
         self.release_list_dynamic_usage(arena, self.page_discards);
@@ -4067,7 +4077,7 @@ impl PageBuilderState {
         self.semantic_roots.page_discards = SemanticSequenceIdentity::empty();
     }
 
-    pub(crate) fn set_split_discards(&mut self, arena: &PageNodeArena, nodes: PageListId) {
+    pub(crate) fn set_split_discards(&mut self, arena: &PageMaterialArena, nodes: PageListId) {
         self.record_scalars();
         self.record_page_inverse(PageInverse::SplitDiscards(self.split_discards));
         self.release_list_dynamic_usage(arena, self.split_discards);
@@ -4079,7 +4089,7 @@ impl PageBuilderState {
         self.split_discards = nodes;
     }
 
-    pub(crate) fn take_split_discards(&mut self, arena: &PageNodeArena) -> PageListId {
+    pub(crate) fn take_split_discards(&mut self, arena: &PageMaterialArena) -> PageListId {
         self.record_scalars();
         self.record_page_inverse(PageInverse::SplitDiscards(self.split_discards));
         let nodes = std::mem::take(&mut self.split_discards);
@@ -4088,7 +4098,7 @@ impl PageBuilderState {
         nodes.list()
     }
 
-    pub(crate) fn clear_split_discards(&mut self, arena: &PageNodeArena) {
+    pub(crate) fn clear_split_discards(&mut self, arena: &PageMaterialArena) {
         self.record_scalars();
         self.record_page_inverse(PageInverse::SplitDiscards(self.split_discards));
         self.release_list_dynamic_usage(arena, self.split_discards);
@@ -4098,8 +4108,8 @@ impl PageBuilderState {
 
     pub(crate) fn current_page_tail<'a>(
         &self,
-        arena: &'a PageNodeArena,
-    ) -> Option<crate::node_arena::NodeView<'a>> {
+        arena: &'a PageMaterialArena,
+    ) -> Option<crate::node_view::NodeView<'a>> {
         arena
             .span_node_cursor(self.current_page)
             .expect("current page root belongs to the live arena")
@@ -4110,7 +4120,7 @@ impl PageBuilderState {
         self.current_page.len()
     }
 
-    pub(crate) fn push_current_page(&mut self, arena: &mut PageNodeArena, node: Node) {
+    pub(crate) fn push_current_page(&mut self, arena: &mut PageMaterialArena, node: Node) {
         self.record_scalars();
         self.record_page_inverse(PageInverse::CurrentPage(self.current_page));
         self.allocate_dynamic_node(&node);
@@ -4124,7 +4134,7 @@ impl PageBuilderState {
 
     pub(crate) fn push_current_page_carrier(
         &mut self,
-        arena: &mut PageNodeArena,
+        arena: &mut PageMaterialArena,
         carrier: PageNodeCarrier,
     ) {
         self.record_scalars();
@@ -4135,7 +4145,11 @@ impl PageBuilderState {
             .expect("current page carrier belongs to the live arena");
     }
 
-    pub(crate) fn push_current_page_list(&mut self, arena: &mut PageNodeArena, list: PageListId) {
+    pub(crate) fn push_current_page_list(
+        &mut self,
+        arena: &mut PageMaterialArena,
+        list: PageListId,
+    ) {
         if list.is_empty() {
             return;
         }
@@ -4157,7 +4171,7 @@ impl PageBuilderState {
 
     pub(crate) fn push_current_page_replacement(
         &mut self,
-        arena: &mut PageNodeArena,
+        arena: &mut PageMaterialArena,
         carrier: PageNodeCarrier,
         replacement: Node,
     ) {
@@ -4169,13 +4183,13 @@ impl PageBuilderState {
 
     /// Removes one logical current-page tail.
     #[cfg(any(test, feature = "profiling"))]
-    pub(crate) fn pop_current_page(&mut self, arena: &mut PageNodeArena) -> Option<Node> {
+    pub(crate) fn pop_current_page(&mut self, arena: &mut PageMaterialArena) -> Option<Node> {
         let len = self.current_page.len();
         let node = arena
-            .span_list(self.current_page)
+            .span_node_cursor(self.current_page)
             .ok()?
             .get(len.checked_sub(1)?)?
-            .clone();
+            .to_owned();
         self.record_scalars();
         self.record_page_inverse(PageInverse::CurrentPage(self.current_page));
         self.current_page = arena.slice_span(self.current_page, 0..len - 1).ok()?;
@@ -4241,7 +4255,7 @@ impl PageBuilderState {
 
     pub(crate) fn take_current_page_prefix(
         &mut self,
-        arena: &mut PageNodeArena,
+        arena: &mut PageMaterialArena,
         split_index: usize,
     ) -> (PageListId, PageListId) {
         self.record_scalars();
@@ -4315,7 +4329,7 @@ impl PageBuilderState {
             .expect("page dynamic-memory accounting overflow");
     }
 
-    fn allocate_list_dynamic_usage(&mut self, arena: &PageNodeArena, list: PageListSpan) {
+    fn allocate_list_dynamic_usage(&mut self, arena: &PageMaterialArena, list: PageListSpan) {
         let nodes = arena
             .span_node_cursor(list)
             .expect("page list belongs to the live arena");
@@ -4327,7 +4341,7 @@ impl PageBuilderState {
             .expect("page root accounting overflow");
     }
 
-    fn release_list_dynamic_usage(&mut self, arena: &PageNodeArena, list: PageListSpan) {
+    fn release_list_dynamic_usage(&mut self, arena: &PageMaterialArena, list: PageListSpan) {
         let nodes = arena
             .span_node_cursor(list)
             .expect("page list belongs to the live arena");
@@ -4351,7 +4365,7 @@ impl PageBuilderState {
     }
 
     #[cfg(test)]
-    fn refresh_dynamic_memory_words(&mut self, arena: &PageNodeArena) {
+    fn refresh_dynamic_memory_words(&mut self, arena: &PageMaterialArena) {
         let (tex82, etex) = [
             self.contribution,
             self.current_page,

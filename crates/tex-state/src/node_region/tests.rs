@@ -383,7 +383,7 @@ fn mapped_region_node_copy_is_one_resident_clone_at_required_sizes() {
         let copied_list = destination.list(&pool, copied).expect("copied list");
         let owned = copied_list
             .iter()
-            .map(|node| node.to_owned_with(|list| list))
+            .map(|node| node.to_owned())
             .collect::<Vec<_>>();
         let expected_identity = SemanticSequenceIdentity::from_nodes(owned.iter());
         assert_eq!(

@@ -2,7 +2,8 @@ use tex_arith::WideScaled;
 use tex_state::glue::{GlueSpec, Order};
 #[cfg(test)]
 use tex_state::node::Node;
-use tex_state::node_arena::{DirectNodeView, HorizontalNode, NodeCursor, PageListId};
+use tex_state::node_view::{DirectNodeView, HorizontalNode, NodeCursor};
+use tex_state::page_node_arena::PageListId;
 use tex_state::scaled::Scaled;
 
 use crate::TypesetState;

@@ -5,7 +5,7 @@ use tex_state::CommandContext;
 use crate::{Mode, ModeNest};
 
 pub(crate) struct FinishedAlignment {
-    pub(crate) nodes: tex_state::node_arena::PageListId,
+    pub(crate) nodes: tex_state::page_node_arena::PageListId,
     pub(crate) aux_prev_depth: Option<tex_state::scaled::Scaled>,
     pub(crate) aux_space_factor: Option<i32>,
 }

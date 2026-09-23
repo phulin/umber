@@ -26,14 +26,6 @@ impl MemoryAccounting {
         self.adjust((0, words), (0, words), false);
     }
 
-    pub(crate) fn allocate_nodes(&self, tex82: (usize, usize), etex: (usize, usize)) {
-        self.adjust(tex82, etex, true);
-    }
-
-    pub(crate) fn release_nodes(&self, tex82: (usize, usize), etex: (usize, usize)) {
-        self.adjust(tex82, etex, false);
-    }
-
     #[must_use]
     pub(crate) fn words(&self, etex_node_sizes: bool) -> (usize, usize) {
         let live = self.live.get();
