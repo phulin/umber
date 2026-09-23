@@ -1961,6 +1961,58 @@ fn production_heldover_moves_a_self_contained_successor_envelope() {
 }
 
 #[test]
+fn production_heldover_insertion_copies_content_before_successor_boundary() {
+    // TeX82 §§1018, 1020--1021 keep an insertion's split remainder for the
+    // next page. Its parent can be constructed after the successor mark while
+    // its unchanged content still belongs to the preceding page prefix.
+    let mut history = PageRegionHistory::default();
+    let old_region = history.current().id();
+    let content = publish_nodes(&mut history.nodes_mut(), [kern(201), kern(202)]);
+    history.arm_output_successor_build();
+    let heldover = publish_nodes(
+        &mut history.nodes_mut(),
+        [Node::Ins {
+            class: 17,
+            size: Scaled::from_raw(3),
+            split_top_skip: crate::glue::GlueSpec::ZERO,
+            split_max_depth: Scaled::from_raw(0),
+            floating_penalty: 0,
+            content,
+        }],
+    );
+    {
+        let (mut nodes, builder) = history.parts_mut();
+        builder.prepend_contributions(&mut nodes, heldover);
+    }
+
+    history
+        .prepare_production_shipout()
+        .expect("cross-boundary insertion copies its complete closure");
+    history
+        .commit_prepared_shipout()
+        .expect("copied insertion successor commits");
+
+    assert!(!history.pool.validates_id(old_region));
+    assert!(!history.nodes().contains(content));
+    let contribution = history.builder().payload_roots().contribution;
+    let inserted = list_nodes(&history.nodes_mut(), contribution);
+    let Node::Ins {
+        content: copied_content,
+        ..
+    } = &inserted[0]
+    else {
+        panic!("successor retains the held-over insertion");
+    };
+    assert_eq!(
+        list_nodes(&history.nodes_mut(), *copied_content),
+        [kern(201), kern(202)]
+    );
+    let counters = history.current().counters();
+    assert_eq!(counters.held_over_envelopes_moved, 0);
+    assert_eq!(counters.held_over_nodes_copied, 3);
+}
+
+#[test]
 fn production_heldover_copies_only_the_interleaved_prefix_closure() {
     let mut history = PageRegionHistory::default();
     let heldover = publish_nodes(&mut history.nodes_mut(), [kern(9), kern(10)]);

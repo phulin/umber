@@ -153,6 +153,12 @@ accounting from the same walk. Parity renders that result and owns no event
 projection or event-counting pass.
 
 The tool's one Cargo integration binary is `tests/it.rs`; focused external-boundary suites are submodules under `tests/it/`. `tests/it/command_semantic.rs` owns the generic declarative semantic-minifixture runner. It discovers each fixture's singleton versioned `manifest.json` under `tests/corpus/command-semantic/<domain>/<fixture>/`; every fixture directory is a closed unit containing that manifest, its declared TeX source, and each applicable `expected.<channel>` file, with no domain manifest or shared expected-output tree. The runner validates catalogue ownership and exact provenance, drives tiny fixture bytes through instrumented `MainControl`, and enforces short exact pass or strict-xfail projections without adding Rust case registries or integration binaries. Manifests may select filtered canonical observation families and supply bounded in-memory terminal lines or named inputs, so pausing, read, and input-open cases remain hermetic. They may also select committed command, mode, final-box, and prepared-page artifact boundaries for focused execution evidence. Semantic projections, event counts, and status use the authored-fragment root-EOF boundary. Reference-derived terminal, log, DVI, and effects bytes use a second complete-job execution of the identical canonical driver, profile, source, and host inputs because real pdfTeX has no host-fragment boundary and necessarily enters TeX82 §360. The runner rejects a pair whose observations diverge before their typed termination boundary, preventing the two evidence contracts from becoming competing semantic authorities.
+`tests/it/insertion_split.rs` is the active focused regression for a split
+insertion's page-region succession. It executes the existing declared fixture
+through the real loaded-format path and compares both shipout boundaries plus
+terminal, log, and preamble-normalized DVI bytes against committed TeX82
+evidence. The generic manual runner retains the separate page-artifact hash
+projection and event-count claims.
 
 The command-semantic channel set includes schema-v4 typed diagnostic
 lifecycle evidence beside terminal, log, DVI, and effects. The tool compares

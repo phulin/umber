@@ -177,10 +177,10 @@ impl<T, Lane> ForkArena<T, Lane> {
         }
     }
 
-    /// Chunk-only closure proof used by retained-lineage sharing. Direct child
-    /// floors were folded into metadata at publication, so this never visits
-    /// a node payload or follows the node tree.
-    pub(super) fn preflight_shared_prefix_metadata(
+    /// Chunk-only closure proof used by retained-lineage sharing and unique
+    /// successor adoption. Direct child floors were folded into metadata at
+    /// publication, so this never visits a node payload or follows the tree.
+    pub(crate) fn preflight_shared_prefix_metadata(
         &self,
         pool: &ChunkPool<T>,
         mark: &BatchMark<Lane>,

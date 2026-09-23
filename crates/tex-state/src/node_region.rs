@@ -715,6 +715,13 @@ impl<Role> NodeRegion<Role> {
             &mark.batch,
             &coordinates,
         )?;
+        // Compact node records keep child lists in the paired annex, so
+        // RegionValue's generic walk cannot see them. Publication folded
+        // those children into each node chunk's dependency floor. A held-over
+        // insertion can sit in the build suffix while its content precedes
+        // it; adopting only the suffix would leave that content behind.
+        self.pub_arena
+            .preflight_shared_prefix_metadata(&pool.chunks, &mark.batch, &coordinates)?;
         self.pub_arena.preflight_paired_dependency_floor(
             &pool.chunks,
             &coordinates,

@@ -448,6 +448,20 @@ paired node and annex envelopes. Adoption changes only table/envelope
 metadata, so ownership transfer is O(1) per retained logical or physical block
 and copies or rebrands no payload.
 
+Unique adoption also proves the published node chunks' child dependency floors
+against the successor mark. A split insertion can place its parent in the
+successor suffix while its held-over content remains in the old prefix
+(TeX82 §§1018, 1020--1021); checking the parent root and paired annex alone
+would leave a stale child after the prefix retires. That cross-mark closure
+takes the existing exact-copy fallback, while a self-contained suffix still
+moves without copying. The focused page-region tests prove both routes and old
+region reclamation. The committed split-insertion TeX82 fixture independently
+checks both shipouts and the terminal, log, and DVI streams. Its page-artifact
+hash projection and event count remain separate mismatches: the hashes name
+Umber's serialized page format rather than DVI bytes. The fixture declaration
+predates artifact schema v24, although it already used the current v2 content
+hash domain; the schema change alone does not establish the mismatch's cause.
+
 Prepare proves the ownership shape, records both cursors, and reserves receipt
 capacity; cancel consumes the exact open-build receipt. If a checkpoint keeps
 the predecessor live, a self-contained sealed successor suffix moves into a

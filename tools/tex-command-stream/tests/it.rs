@@ -7,5 +7,7 @@ mod command_semantic;
 mod event_stream_diff;
 #[path = "it/explicit_repository.rs"]
 mod explicit_repository;
+#[path = "it/insertion_split.rs"]
+mod insertion_split;
 #[path = "it/repository_comparison.rs"]
 mod repository_comparison;
