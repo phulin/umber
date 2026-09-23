@@ -189,14 +189,6 @@ fn dvi_disabled_fresh_and_memo_shipouts_both_omit_plans() {
 }
 
 #[test]
-fn live_shipout_has_no_second_dvi_emitter() {
-    let direct = include_str!("../src/shipout/direct.rs");
-    assert!(!direct.contains("DviPagePlanBuilder"));
-    assert!(!direct.contains("mod materialize"));
-    assert_eq!(direct.matches("DviPagePlan::compile_v10").count(), 1);
-}
-
-#[test]
 fn unified_operation_preserves_state_output_and_typed_evidence() {
     let source = br"\count0=7\afterassignment\relax\count1=9\setbox0=\hbox{A}\halign{#\cr B\cr}\write16{receipt}\end";
     let ordinary = support::with_plain_universe(|stores| {
@@ -363,183 +355,32 @@ fn unified_operation_resource_need_is_observation_independent() {
 }
 
 #[test]
-fn receipt_categories_are_append_bounded_consumed_and_closed_before_commit() {
-    let receipt = include_str!("../src/execution_receipt.rs");
-    let settlement = include_str!("../src/main_control/settlement.rs");
-    for method in [
-        "fn push_mutation",
-        "fn push_diagnostic",
-        "fn push_semantic_effect",
-        "fn record_resource",
-        "fn record_world_effect",
-        "fn record_artifact",
-    ] {
-        let body = receipt
-            .split_once(method)
-            .unwrap_or_else(|| panic!("missing receipt append authority {method}"))
-            .1
-            .split_once("\n    }")
-            .expect("bounded receipt method body")
-            .0;
-        assert!(body.contains("if !self.has_capacity()"), "{method}");
-        assert!(
-            body.find("has_capacity").expect("receipt capacity check")
-                < body.find(".push(").expect("receipt vector append"),
-            "{method} must reject before vector growth"
-        );
-    }
-    let projection = receipt
-        .split_once("fn consumed_projection(&self)")
-        .expect("active receipt projection")
-        .1;
-    let projection = projection
-        .chars()
-        .filter(|character| !character.is_whitespace())
-        .collect::<String>();
-    for category in [
-        "self.mutations.len()",
-        "self.resources.len()",
-        "self.effects.semantic.len()",
-        "self.effects.world.len()",
-        "self.artifacts.len()",
-        "self.diagnostics.len()",
-        "self.termination",
-    ] {
-        assert!(
-            projection.contains(category),
-            "unconsumed category {category}"
-        );
-    }
-    let reset = receipt
-        .split_once("pub(crate) fn reset_for_next_operation(&mut self)")
-        .expect("reusable receipt reset")
-        .1;
-    for category in [
-        "self.mutations.clear()",
-        "self.resources.clear()",
-        "self.effects.semantic.clear()",
-        "self.effects.world.clear()",
-        "self.artifacts.clear()",
-        "self.diagnostics.clear()",
-    ] {
-        assert!(reset.contains(category), "unreset category {category}");
-    }
-    assert!(
-        receipt
-            .split_once("pub(crate) fn consume(self)")
-            .expect("terminal receipt consumer")
-            .1
-            .contains("self.consumed_projection()"),
-        "terminal consumption must use the same projection as operation reset"
-    );
-
-    let control = include_str!("../src/main_control.rs");
-    let operation = control
-        .split_once("fn execute_direct_episode(")
-        .expect("direct operation authority")
-        .1
-        .split_once("fn execute_operation(")
-        .expect("operation authority boundary")
-        .0;
-    assert!(
-        operation
-            .find("admit_observed_receipt")
-            .expect("receipt admission")
-            < operation
-                .rfind("commit_direct_operation")
-                .expect("direct operation commit"),
-        "world/artifact/geometry/termination receipt closes before commit"
-    );
-    let failed = settlement
-        .split_once("fn finish_direct_failure(")
-        .expect("failed-operation authority")
-        .1
-        .split_once("\n}\n\nimpl<G> MainControl<G> {")
-        .expect("failed-operation authority boundary")
-        .0;
-    assert!(
-        failed.contains("commit_direct_operation_after_error"),
-        "fatal settlement delegates receipt closure to the shared error seam"
-    );
-    assert!(
-        !failed.contains("self.commit_direct_operation("),
-        "fatal settlement cannot bypass the shared error seam"
-    );
-    let failed_settlement = settlement
-        .split_once("fn commit_direct_operation_after_error(")
-        .expect("shared failed-operation settlement")
-        .1
-        .split_once("\n    pub(super) fn finish_direct_failure(")
-        .expect("shared settlement boundary")
-        .0;
-    assert!(
-        failed_settlement
-            .find("admit_observed_receipt")
-            .expect("failed receipt")
-            < failed_settlement
-                .find("commit_direct_operation")
-                .expect("failed direct commit"),
-        "shared failed receipt closes before its direct operation commits"
-    );
-    assert!(control.contains("pending.consume_into(publish.then_some(observer))"));
-}
-
-#[test]
 fn command_host_facts_are_sampled_only_by_the_consuming_query() {
-    let control = include_str!("../src/main_control.rs");
-    let executor_facts = include_str!("../src/main_control/executor_facts.rs");
-    let command_host = include_str!("../../tex-command/src/host.rs");
-    let ownership_surface = [control, executor_facts].concat();
-    assert!(
-        !ownership_surface.contains("prepare_host_capabilities"),
-        "ordinary operation setup must not prefill executor facts"
-    );
-    for retired in [
-        "set_conditional_state",
-        "set_space_factor",
-        "set_prev_depth",
-        "set_prev_graf",
-        "set_last_node(",
-        "set_last_node_type",
-    ] {
-        assert!(
-            !command_host.contains(retired),
-            "resource capabilities must not retain cold fact writer {retired}"
-        );
+    fn facts(source: &[u8]) -> (u64, u64) {
+        support::with_plain_universe(|stores| {
+            let mut control = etex_session(stores, source);
+            loop {
+                match control.step(stores).expect("host fact probe executes") {
+                    MainControlStep::End | MainControlStep::EndOfInput => break,
+                    MainControlStep::Continue => {}
+                }
+            }
+            let telemetry = control.episode_telemetry();
+            (
+                telemetry.host_fact_queries(),
+                telemetry.effective_tail_traversals(),
+            )
+        })
     }
-    let provider = executor_facts
-        .split_once("impl<G> tex_command::CommandHostFacts<G> for ExecutorHostFacts")
-        .expect("canonical demand provider")
-        .1
-        .split_once("fn effective_tail_facts")
-        .expect("provider boundary")
-        .0;
-    assert_eq!(
-        provider
-            .matches("effective_tail_facts(self.modes, stores)")
-            .count(),
-        2
-    );
-    assert_eq!(provider.matches("record_host_fact_query()").count(), 7);
-    let preparation = executor_facts
-        .split_once("struct OperationPreparation")
-        .expect("operation preparation")
-        .1
-        .split_once("impl<G> OperationPreparation<G>")
-        .expect("preparation boundary")
-        .0;
-    assert!(
-        !executor_facts.contains("OperationResume"),
-        "operation preparation must not retain a scanner resume placeholder"
-    );
-    for cold_fact in ["mode:", "last_node", "pdf_output", "innermost_group"] {
-        assert!(
-            !preparation.contains(cold_fact),
-            "retained cold fact {cold_fact}"
-        );
-    }
-    assert!(control.contains("preparation.record_checked_save_stack_words(checked)"));
-    assert!(control.contains("preparation.take_checked_save_stack_words()"));
+
+    let ordinary = facts(br"\relax\end");
+    let mode_query = facts(br"\ifhmode\else\fi\end");
+    let tail_query = facts(br"\xdef\seen{\the\lastnodetype}\end");
+    assert_eq!(ordinary, (0, 0), "ordinary delivery needs no executor fact");
+    assert!(mode_query.0 > ordinary.0);
+    assert_eq!(mode_query.1, 0, "mode enquiry does not walk the tail");
+    assert!(tail_query.0 > ordinary.0);
+    assert!(tail_query.1 > 0, "lastnodetype reads the live tail");
 }
 
 fn register_mutation_keys(observations: &[CommandObservation]) -> Vec<&str> {
@@ -790,16 +631,6 @@ fn session_ledger_lends_typed_fuel_without_transferring_ownership() {
     leaf_operation(session.fuel_mut());
     leaf_operation(session.fuel_mut());
     assert_eq!(session.burned(), 2);
-}
-
-#[test]
-fn every_processor_borrows_the_singular_fuel_ledger() {
-    let processor = include_str!("../src/../../tex-command/src/processor/mod.rs");
-
-    assert!(processor.contains("fuel: &'episode mut CommandFuel,"));
-    assert_eq!(processor.matches("pub fn new(").count(), 1);
-    assert!(!processor.contains("ProcessorFuel"));
-    assert!(!processor.contains("with_fuel"));
 }
 
 #[test]

@@ -13,9 +13,12 @@ This document preserves the review rationale and proposed sequence. For the
 current testing entry point, use [Testing Infrastructure](testing_infrastructure.md)
 and [Testing Policy](testing_policy.md).
 
-The current testing pass has established the seven-class front door, executable
-script-suite inventory, and aggregate gate verdicts. The executor test split,
-browser/package coverage, and artifact cleanup have separate implementation
+The testing pass established the seven-class front door, executable
+script-suite inventory, and aggregate gate verdicts. The executor test split
+and source-shape pilot are implemented; the bounded discretionary extraction
+and the resource and root-source method grouping are recorded in
+[Main-Control Responsibility Boundaries](main_control_responsibilities.md).
+Browser/package coverage and artifact cleanup have separate implementation
 owners and must be judged against their final merged gates. Bibliography
 selection and status have not been changed by this pass; its migration is
 deferred. The later storage, session, scanner, output, and bibliography sections
@@ -75,13 +78,12 @@ These boundaries are visible in [architecture.md](architecture.md),
 
 ### Findings that should drive the work
 
-**The tests sometimes preserve source spelling instead of a contract.**
-[Executor integration tests](../crates/tex-exec/tests/it.rs) inspect exact module
-declarations, function names, field declarations, constructor counts, and
-comment-delimited source slices. For example,
-`fused_hot_and_typed_cold_dispatch_share_one_interpreter` checks hundreds of
-lines of source shape. Some intended invariants are valuable, but harmless
-renames and extractions should not invalidate behavioral evidence.
+**The tests sometimes preserved source spelling instead of a contract.**
+At the review baseline, [executor integration tests](../crates/tex-exec/tests/it.rs)
+inspected method bodies, field names, constructor counts, and source slices.
+The executor dispositions below replace the remaining four such guards with
+behavioral or compiler-backed evidence. Harmless renames and extractions now
+leave those tests intact.
 
 **A green result needs a clearer meaning.**
 [check-and-test.sh](../scripts/check-and-test.sh) waits for both tests and lint,
@@ -317,6 +319,23 @@ that change. Reuse the existing assertion ledgers where appropriate; do not
 create another permanently maintained ledger for the same property. Do not
 delete reference channels, whole-document cases, or manual tools merely
 because a smaller test shares their input.
+
+### Executor source-shape assertion dispositions
+
+The executor pilot retired checks of private Rust spelling while preserving
+their observable or compiler-enforced contracts:
+
+| Removed assertion                                                                                                             | Active evidence and invariant                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ----------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `live_shipout_has_no_second_dvi_emitter` counted compiler calls in one file.                                                  | `fresh_and_memo_shipouts_share_canonical_artifact_dvi` compares emitted DVI bytes for fresh and memo paths; `dvi_disabled_fresh_and_memo_shipouts_both_omit_plans` checks both disabled paths. The single canonical artifact-to-DVI result is the observable contract.                                                                                                                                                                          |
+| `receipt_categories_are_append_bounded_consumed_and_closed_before_commit` scanned method bodies and comment-delimited slices. | `every_receipt_category_is_bounded_and_consumed` exercises all six append categories at the exact record limit, confirms rejection without growth, and compares terminal consumption with reset. `unified_operation_preserves_state_output_and_typed_evidence`, `observed_pdf_fatal_error_publishes_its_committed_receipt`, and `observed_pdf_dvi_preflight_error_discards_its_uncommitted_receipt` exercise publication and rollback ordering. |
+| `command_host_facts_are_sampled_only_by_the_consuming_query` counted provider calls and field spellings.                      | The test now compares host-query and effective-tail telemetry for ordinary delivery, a mode enquiry, and `\lastnodetype`; `etex_lastnodetype_reads_each_live_mode_tail_without_mutation` checks the returned values in multiple modes. The telemetry verifies that ordinary delivery does not sample executor facts and mode queries do not traverse the tail.                                                                                  |
+| `every_processor_borrows_the_singular_fuel_ledger` counted constructor names and inspected field spelling.                    | `command_fuel_can_only_be_owned_by_a_session_ledger` compiles forbidden construction and field-access probes and requires rejection; `session_ledger_lends_typed_fuel_without_transferring_ownership` checks monotonic borrowing. Fuel abort tests in `resource_replay.rs` exercise cleanup of scanner and operation children.                                                                                                                  |
+
+Private owner placement and the count of constructor names are not public
+contracts. The compile-fail fuel tests remain because they enforce a real
+capability boundary, and the `workspace_selection` source audit remains because
+it detects disabled production or test code that runtime fixtures cannot see.
 
 ### Non-executor source-shape assertion dispositions
 
