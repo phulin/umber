@@ -399,8 +399,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
   external session store.
 - `src/pure_memo/tests.rs`: Collision, eviction, retention-release, and disabled-cache tests.
 - `src/scaled.rs`: Compatibility re-export for shared TeX scaled-point arithmetic.
-- `src/source_map.rs`: Rollback-coupled logical source regions, validated positions/spans, and immutable World/generated backing identities.
-- `src/source_map/tests.rs`: Source-region anchors, validation, overflow, rollback/reuse, and O(1)-mark tests.
+- `src/source_map.rs`: Rollback-coupled logical source regions, validated positions/spans, immutable World/generated backing identities, and an O(1) live registered-span byte charge independent of logical coordinate gaps.
+- `src/source_map/tests.rs`: Source-region anchors, validation, overflow, rollback/reuse, coordinate-independent retention charge, and O(1)-mark tests.
 - `src/source_fragments.rs`: Session-scoped immutable source fragments, editor
   piece tables, demand-selected generation backing, rebound root registration,
   and layout-aware stable-recipe resolution.

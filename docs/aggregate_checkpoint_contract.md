@@ -344,6 +344,13 @@ classification is:
 | Fonts                                             | Immutable accepted loaded-font/index/hash blocks plus a private loaded-font suffix; identifier and expansion changes use candidate overrides with bounded undo marks    | Loaded metrics and recipes are charged once to their accepted block; mutable identifier/expansion values roll back without copying immutable fonts                 |
 | Dependency tracker and execution/identity scalars | Revision/invalidation epochs and run-compressed accepted identity metadata                                                                                              | No changed-at map or per-value identity table is cloned; job/revision counters remain fixed scalar state                                                           |
 
+The source component of the history-budget estimate uses an incrementally
+maintained sum of live registered source-span lengths plus fixed row charges.
+Capture copies that scalar without scanning source rows. It never treats the
+process-wide logical source position as retained bytes: rejected timelines
+leave coordinate gaps, but those gaps own no source payload. The estimate does
+not create another owner or copy backing bytes at each checkpoint.
+
 Only prior and current lineages are mutable authorities. Accepted blocks are
 immutable row storage, not additional generations, and no block registers
 roots or compacts/relocates values. Reads select accepted prefix or current

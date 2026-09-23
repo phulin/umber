@@ -354,6 +354,7 @@ pub(crate) struct SourceMapMark {
     regions: usize,
     generated: usize,
     next_pos: u64,
+    registered_span_bytes: u64,
     identities: IdentityMark,
     reachable_state_identity: Option<SemanticSequenceIdentity>,
 }
@@ -369,7 +370,7 @@ impl SourceMapMark {
                 self.generated
                     .saturating_mul(std::mem::size_of::<GeneratedSource>()),
             )
-            .saturating_add(usize::try_from(self.next_pos).unwrap_or(usize::MAX))
+            .saturating_add(usize::try_from(self.registered_span_bytes).unwrap_or(usize::MAX))
     }
 }
 
@@ -443,6 +444,7 @@ pub(crate) struct SourceMap {
     region_by_source: Arc<AHashMap<SourceId, usize>>,
     generated: Arc<Vec<GeneratedSource>>,
     next_pos: u64,
+    registered_span_bytes: u64,
     forced_next_pos: bool,
     identities: IdentityAllocator,
     reachable_state_identity: Option<SemanticSequenceIdentity>,
@@ -455,6 +457,7 @@ pub(crate) struct AcceptedSourceMapTail {
     registration_roots: Vec<SourceRegistrationRef>,
     generated: Vec<GeneratedSource>,
     next_pos: u64,
+    registered_span_bytes: u64,
     identities: AcceptedIdentityTail,
 }
 
@@ -467,6 +470,7 @@ impl Default for SourceMap {
             region_by_source: Arc::new(AHashMap::new()),
             generated: Arc::new(Vec::new()),
             next_pos: 0,
+            registered_span_bytes: 0,
             forced_next_pos: false,
             identities: IdentityAllocator::new(0),
             reachable_state_identity: None,
@@ -483,6 +487,7 @@ impl Clone for SourceMap {
             region_by_source: Arc::clone(&self.region_by_source),
             generated: Arc::clone(&self.generated),
             next_pos: self.next_pos,
+            registered_span_bytes: self.registered_span_bytes,
             forced_next_pos: self.forced_next_pos,
             identities: self.identities.fork(),
             reachable_state_identity: self.reachable_state_identity,
@@ -598,6 +603,9 @@ impl SourceMap {
             "live source registration is unique"
         );
         self.next_pos = next_pos;
+        // Logical positions are process-global and retain gaps from rejected
+        // timelines. Only registered source spans contribute reachable bytes.
+        self.registered_span_bytes = self.registered_span_bytes.saturating_add(byte_len);
         Ok(SourcePos(start))
     }
 
@@ -764,6 +772,7 @@ impl SourceMap {
             regions: self.region_len(),
             generated: self.generated_len(),
             next_pos: self.next_pos,
+            registered_span_bytes: self.registered_span_bytes,
             identities: self.identities.watermark(),
             reachable_state_identity: self.reachable_state_identity,
         }
@@ -775,6 +784,7 @@ impl SourceMap {
             && mark.generated >= self.accepted_generated_len()
             && mark.generated <= self.generated_len()
             && (mark.next_pos <= self.next_pos || !self.forced_next_pos)
+            && mark.registered_span_bytes <= self.registered_span_bytes
             && self.identities.validate_rollback(mark.identities).is_ok()
     }
 
@@ -802,6 +812,7 @@ impl SourceMap {
         Arc::make_mut(&mut self.regions).truncate(local_regions);
         Arc::make_mut(&mut self.registration_roots).truncate(local_regions);
         Arc::make_mut(&mut self.generated).truncate(mark.generated - generated_base);
+        self.registered_span_bytes = mark.registered_span_bytes;
         if self.forced_next_pos {
             self.next_pos = mark.next_pos;
         }
@@ -846,11 +857,14 @@ impl SourceMap {
             .expect("validated source identity mark remains rewindable");
         self.reachable_state_identity = mark.reachable_state_identity;
         let next_pos = std::mem::replace(&mut self.next_pos, mark.next_pos);
+        let registered_span_bytes =
+            std::mem::replace(&mut self.registered_span_bytes, mark.registered_span_bytes);
         AcceptedSourceMapTail {
             regions,
             registration_roots,
             generated,
             next_pos,
+            registered_span_bytes,
             identities,
         }
     }
@@ -874,6 +888,7 @@ impl SourceMap {
         Arc::make_mut(&mut self.registration_roots).append(&mut tail.registration_roots);
         Arc::make_mut(&mut self.generated).append(&mut tail.generated);
         self.next_pos = tail.next_pos;
+        self.registered_span_bytes = tail.registered_span_bytes;
     }
 
     pub(crate) fn accept_checkpoint_candidate(&mut self, tail: AcceptedSourceMapTail) {
@@ -927,6 +942,7 @@ impl SourceMap {
             region_by_source: Arc::new(AHashMap::new()),
             generated: Arc::new(Vec::new()),
             next_pos: mark.next_pos,
+            registered_span_bytes: mark.registered_span_bytes,
             forced_next_pos: self.forced_next_pos,
             identities,
             reachable_state_identity: mark.reachable_state_identity,

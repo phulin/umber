@@ -25,6 +25,51 @@ fn semantic_root_excludes_logical_position_layout() {
         right.reachable_state_identity_root(),
         "source ids and logical positions are storage layout, not semantics"
     );
+    assert_eq!(
+        left.watermark().checkpoint_retained_bytes(),
+        right.watermark().checkpoint_retained_bytes(),
+        "equal registered source spans retain equal bytes at different origins"
+    );
+}
+
+#[test]
+fn retained_source_bytes_follow_live_registrations_after_rollback() {
+    let mut map = SourceMap::default();
+    let empty_charge = map.watermark().checkpoint_retained_bytes();
+    map.register(SourceId::new(0), generated(b"live"))
+        .expect("live source registers");
+    let live_mark = map.watermark();
+    let row_bytes = std::mem::size_of::<SourceRegion>() + std::mem::size_of::<GeneratedSource>();
+    assert_eq!(
+        live_mark.checkpoint_retained_bytes() - empty_charge,
+        row_bytes + b"live".len()
+    );
+
+    let discarded = map
+        .register(SourceId::new(1), generated(b"discarded"))
+        .expect("discarded source registers");
+    assert_eq!(
+        map.watermark().checkpoint_retained_bytes() - live_mark.checkpoint_retained_bytes(),
+        row_bytes + b"discarded".len()
+    );
+    map.truncate_to(live_mark);
+    assert_eq!(
+        map.watermark().checkpoint_retained_bytes(),
+        live_mark.checkpoint_retained_bytes()
+    );
+
+    let replacement = map
+        .register(SourceId::new(2), generated(b"new"))
+        .expect("replacement source registers");
+    assert!(
+        replacement.0 > discarded.0,
+        "discarded origin stays consumed"
+    );
+    assert_eq!(
+        map.watermark().checkpoint_retained_bytes() - live_mark.checkpoint_retained_bytes(),
+        row_bytes + b"new".len(),
+        "discarded coordinate gaps do not consume retention budget"
+    );
 }
 
 #[test]
@@ -340,22 +385,39 @@ fn checkpoint_candidate_rejects_or_promotes_one_source_suffix() {
     let accepted = map
         .register(SourceId::new(1), generated(b"accepted"))
         .expect("accepted source registers");
+    let accepted_charge = map.watermark().checkpoint_retained_bytes();
 
     let tail = map.begin_checkpoint_candidate(mark);
+    assert_eq!(
+        map.watermark().checkpoint_retained_bytes(),
+        mark.checkpoint_retained_bytes()
+    );
     let rejected = map
-        .register(SourceId::new(1), generated(b"rejected"))
+        .register(SourceId::new(1), generated(b"rejected-short"))
         .expect("candidate source registers");
     map.reject_checkpoint_candidate(mark, tail);
     assert_eq!(map.position(SourceId::new(1), 0), Ok(accepted));
     assert!(map.region_for_position(rejected).is_none());
+    assert_eq!(map.watermark().checkpoint_retained_bytes(), accepted_charge);
 
     let tail = map.begin_checkpoint_candidate(mark);
     let promoted = map
-        .register(SourceId::new(1), generated(b"promoted"))
+        .register(SourceId::new(1), generated(b"promoted-longer"))
         .expect("sibling source registers");
     map.accept_checkpoint_candidate(tail);
     assert_eq!(map.position(SourceId::new(1), 0), Ok(promoted));
     assert!(map.region_for_position(accepted).is_none());
+    assert_eq!(
+        map.watermark().checkpoint_retained_bytes(),
+        mark.checkpoint_retained_bytes()
+            + std::mem::size_of::<SourceRegion>()
+            + std::mem::size_of::<GeneratedSource>()
+            + b"promoted-longer".len()
+    );
+    assert_eq!(
+        map.fork_at(mark).watermark().checkpoint_retained_bytes(),
+        mark.checkpoint_retained_bytes()
+    );
 }
 
 #[test]
