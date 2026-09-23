@@ -67,12 +67,12 @@ tracer worklists, generated document traces, stream alignment, and the
 first-failure locator. Keep diagnosis order in
 `canonical_divergence_workflow.md`.
 
-`repository_simplification_plan.md` records the September 2026 repository
-review, seven test classes and execution lanes, implemented nonbibliography
-passes, their acceptance evidence, and retained boundaries. The generic legacy
-node API remains separately scoped; the arena/paragraph reduction and World
-retention decision are recorded in `state_responsibility_boundaries.md`;
-bibliography migration is deferred.
+`repository_simplification_plan.md` records the first-wave September 2026
+repository review, seven test classes and execution lanes, implemented
+nonbibliography passes, and revision-scoped acceptance evidence. Its retained
+API dispositions are historical after `compatibility_surface_removal.md`
+removed the generic node API, owned paragraph route, and obsolete World hash
+storage. Bibliography migration is deferred.
 
 `pdf_finalization_modules.md` records the implemented private PDF lowering
 boundaries, single object-allocation and publication authority, and the

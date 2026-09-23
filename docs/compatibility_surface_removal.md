@@ -31,6 +31,17 @@ The current owners are:
 | Reference execution and fixture authority                  | `fixturegen::reference` for process execution and publication; `test-support::dvi` for byte comparison; `parity-harness` for conformance composition and triage        | Retire the `refexec` compatibility facade and command only after every script and parity caller has a current owner. Fixture regeneration remains transactional.          |
 | Node/state, artifact/format/output, and host/WASM adapters | `PageMaterialArena`/`NodeRegion` own page material; `NodeView`/`NodeCursor` borrow compact records. Artifact, format, and host output owners use their current schema. | Remove generic `NodeArena`, duplicated page/paragraph ownership, and obsolete adapters with their callers; no import of old Umber-owned data is required.                 |
 
+On combined production `e685e55d8`, the obsolete scanner owned-return methods,
+`MainControl::step`, unused host resolver traits, and the `refexec` facade are
+gone. Their live callers use caller-owned typed delivery, `MainControl::advance`,
+the one ResourceHost admission boundary, and direct fixturegen/parity commands.
+The generic node arena, owned paragraph tape, duplicated World artifact hashes,
+old packed-catalog reader, and old format/PDF acceptance paths are also gone;
+current output and TeX semantics remain under their respective owners. The
+object-safe resource-provider adapter remains because it bridges current host
+policy to borrowed command admission, not because an earlier public API needs
+preserving.
+
 Predictive resource scheduling has two current identities. An engine-facing
 file request carries its exact semantic domain, kind, and normalized name;
 the shared prefetch queue must never infer those facts from a catalogue
@@ -41,6 +52,12 @@ request or establish engine readiness without a typed admission. Browser DTOs
 must reject an incomplete semantic request. Optional prior lookup records
 with an unknown old semantic kind are skipped as hints rather than retyped
 from their coarse catalogue key.
+
+Format `inputClosure` metadata contains authenticated catalogue keys without
+semantic file kinds. The browser resolver schedules them as optional
+catalogue-only cache warming within the shared budget; the worker does not
+inject them as typed session hints or claim VFS readiness or semantic replay
+history. Explicit semantic format hints still use exact file keys.
 
 The reference channels also have distinct current geometry contracts: the
 committed TeX82 microfixture is source-located schema V3; the independently
@@ -64,8 +81,11 @@ still requires a nonempty focused projection and complete declared terminal,
 log, DVI, effects, and diagnostics channel dispositions. The resolved manifest
 identity is computed in test receipts; no second hardcoded hash must be edited
 when a reviewed manifest changes. Under these changed criteria, the manual
-selected run on this branch reports 128 matched and 82 other failures, with no
-known failures or unexpected passes. The prior first-wave 79/131 result used
+selected run on combined production `e685e55d8` reports 128 matched and 82
+other failures, with no known failures or unexpected passes. Its set of 82
+failing case identities is unchanged from the criterion-only pre-node run;
+there is no newly passing or failing case in that integration. The prior
+first-wave 79/131 result used
 the old event-count criterion; the 49-case difference is a criterion change,
 not an engine conformance improvement. The manual tier still fails on real
 projection and reference-channel discrepancies, and routine tests do not

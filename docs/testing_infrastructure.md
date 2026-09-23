@@ -138,23 +138,34 @@ without an executable selected runner; an ignored manual test is not dormant
 when explicitly selected. Bibliography's dormant upstream inventory remains
 separate from this nonbibliography census.
 
-After the frozen null-font identity and split-insertion ownership repairs,
-explicitly selecting
+On combined production `e685e55d8`, explicitly selecting
 `cargo test -q -p tex-command-stream --test it command_semantic::declared_command_semantic_cases_match -- --exact --ignored --nocapture`
-reports `matched=79, executed-known-failure=0, unexpected-pass=0,
-other-failure=131, dormant=0, unselected=0` and exits `FAIL`. The 131 cases
-have 104 event-count, 63 projection, 38 terminal/log content, 5 incomplete
+reports `matched=128, executed-known-failure=0, unexpected-pass=0,
+other-failure=82, dormant=0, unselected=0` and exits `FAIL`. The exact 82
+failing case identities match the pre-node run under the same criteria. Counts
+of Umber's own command events are diagnostics, not oracle assertions;
+projection and declared-channel mismatches still fail. The 49-case difference
+from the first-wave 79/131 count is a change of criterion, not improved engine
+conformance. `main-control/current-font-selection` now matches its independent
+projection and declared channels; `page-output/insertion-split-footnote` still
+has an artifact projection mismatch. The routine gate continues to report the
+210 manual cases as unselected.
+
+The historical first-wave selected run, after the frozen null-font identity
+and split-insertion ownership repairs, used exact self-observed event counts.
+Explicitly selecting
+`cargo test -q -p tex-command-stream --test it command_semantic::declared_command_semantic_cases_match -- --exact --ignored --nocapture`
+reported `matched=79, executed-known-failure=0, unexpected-pass=0,
+other-failure=131, dormant=0, unselected=0` and exited `FAIL`. The 131 cases
+had 104 event-count, 63 projection, 38 terminal/log content, 5 incomplete
 channel, and 4 nonempty-output diagnostics; a case can have more than one
-diagnostic. These results are not strict known failures. The fixture manifests
-retain their reviewed projections and channel contracts. In particular,
-`main-control/current-font-selection` now executes `\the\font` but has an
-Umber event-count drift of 104 versus its 120-event baseline.
-`page-output/insertion-split-footnote` now completes both page shipouts and
-matches the pinned terminal, log, and DVI streams; its page-plan artifact hash
-and event count still differ. Neither case panics in the combined selected
-run. The routine gate still reports these 210 declared cases as unselected;
-the selected manual command is the only claim about their current
-compatibility.
+diagnostic. These were not strict known failures. The fixture manifests
+retained their reviewed projections and channel contracts. In particular,
+`main-control/current-font-selection` executed `\the\font` but had an Umber
+event-count drift of 104 versus its 120-event snapshot.
+`page-output/insertion-split-footnote` completed both page shipouts and
+matched the pinned terminal, log, and DVI streams; its page-plan artifact hash
+and event count differed. Neither case panicked in that selected run.
 
 Set `UMBER_COMMAND_SEMANTIC_CASE=domain/id` with the same manual Cargo command
 to run one exact fixture. The census then counts every other declared fixture
@@ -171,8 +182,8 @@ cargo run-dev -q -p umber --bin umber -- run tests/corpus/command-semantic/main-
 ```
 
 The format construction and loaded run both complete after the frozen
-null-font identity repair. The manual selected gate above still reports its
-event-count drift.
+null-font identity repair. The first-wave manual gate reported an event-count
+drift; the current gate treats that count as diagnostic output.
 
 The `current-font-selection` fixture's original `count:0=1` projection was an
 Umber-authored expectation, not a reference observation. TeX82's frozen
@@ -200,17 +211,17 @@ pinned instrumented pdfTeX oracle, the named fixture acceptance command
 --accept-projection-change main-control/current-font-selection`) proposed
 Umber's `count:0=0` projection. The TeX82 probe above independently confirms
 that value. Only that reviewed projection was accepted: the original 120
-Umber-observed command events remain the manifest baseline, so the current
-104-event run still fails the selected manual test. The event count is an Umber
-observation snapshot, not an independently captured oracle event count.
+Umber-observed command events remained the first-wave manifest baseline. The
+event count was an Umber observation snapshot, not an independently captured
+oracle event count; current selected acceptance does not compare it.
 Named projection acceptance also regenerates that case's complete channel
 block; its proposed 104-event rewrite was reviewed and rejected. The fixture
 source, reference terminal and log bytes, and channel disposition were not
 changed. The active `current_font_selection_matches_oracle_channels_after_format_load`
 test executes the same loaded fixture and requires its reviewed projection and
 oracle-backed terminal, log, effects, status, and other channels to match. It
-allows only a typed event-count mismatch; the selected manual gate continues
-to fail on that count.
+does not compare the self-observed event count; under the current criterion,
+this case also matches in the selected manual gate.
 
 Routine tests read committed fixtures and provisioned local oracles without
 invoking reference TeX. Provision the primary checkout once with

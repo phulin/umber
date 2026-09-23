@@ -1,12 +1,14 @@
 # Repository simplification and testing plan
 
-Status: the bounded nonbibliography review changes are implemented through the
-executor, state, session, scanner, codec, PDF, and browser owners. Recorded
-native, quality, generated WASM/package, and external PDF checks have the
-revision-specific limits below. The local Plain format has been regenerated for schema
-12; default browser distribution deployment remains unpublished. Broader
-storage and paragraph-traversal proposals retain their existing owners;
-bibliography migration is deferred.
+Status: this is the first-wave bounded nonbibliography review and its
+revision-specific validation receipt. A later authorized breaking cleanup
+removed implementation surfaces that this review had retained, including the
+generic `NodeArena<L>`, owned paragraph traversal, obsolete World artifact-hash
+storage, and compatibility aliases. Read [Compatibility Surface Removal](compatibility_surface_removal.md)
+for the current owners and the later corpus criteria; the retained-API
+dispositions below are historical, not current API guidance. The local Plain
+format was regenerated for schema 12; default browser distribution deployment
+remains unpublished. Bibliography migration is deferred.
 Review baseline: `11c7bf7cd8ec78b36337c3ee3a97e38d0dc099e9`.
 
 The objective is to preserve Umber's current behavior while making both the
@@ -25,9 +27,9 @@ below. Shared resource-transition vectors now run against both the native
 session and generated WASM package. The acceptance results below identify the
 selected revision and steps; they do not imply that every optional tier ran.
 
-### Implemented scope and retained boundaries
+### First-wave implemented scope and then-retained boundaries
 
-| Owner                        | Current disposition                                                                                                                                                                                                                                                                                                             | Evidence to keep visible                                                                                                                                                                                                |
+| Owner                        | First-wave disposition                                                                                                                                                                                                                                                                                                          | Evidence to keep visible                                                                                                                                                                                                |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Test selection and reporting | The script-suite inventory, seven behavior classes, combined verdict, and explicit optional-step verdicts are live. Executor, CLI, conformance, expansion, and line-breaking tests are grouped within their original targets. Private spelling guards were replaced with behavior, compile-fail, or narrow structural evidence. | `scripts/check-and-test.sh`, `scripts/check.sh`, `scripts/check-wasm.sh`, `test-support` workspace selection, and the assertion dispositions below.                                                                     |
 | Command and state            | Structured scanner families and their ownership are explicit. Unreachable detached-continuation code is removed. `MainControl`, `World`, `ForkArena`, and `CommandContext` methods are grouped by responsibility without adding a second state or checkpoint owner.                                                             | Existing command fixtures, scanner recovery and resource replay tests, state rollback tests, and [responsibility boundaries](state_responsibility_boundaries.md).                                                       |
@@ -35,17 +37,20 @@ selected revision and steps; they do not imply that every optional tier ran.
 | Nodes and output             | Borrowed node views and compact page reads are separated from the generic legacy `NodeArena<L>`. Artifact codec accepts only version 24 while preserving public aliases and owned/streaming byte identity. PDF lowering has private content, navigation, font, image, and numeric modules under one finalization authority.     | Node checkpoint/borrow tests; old-version rejection and codec identity; PDF semantic tests and the explicit qpdf/Poppler gate.                                                                                          |
 | Browser                      | Rust owns prefetch policy; generated packed-catalog and real package tests cover browser worker resource flow. Standalone catalog-only resolution disables speculation until bindings are installed.                                                                                                                            | Node transport tests, Firefox wasm-bindgen tests, allocator WASM steps, and Chromium package checks. The local Plain image has schema-3 metadata for format schema 12; the default hosted manifest remains unpublished. |
 
-The public legacy node API, semantic and physical diagnostic node channels,
-page/form PDF policies, and browser-specific fetch/cache behavior serve distinct
-contracts. Their coexistence is not evidence of a duplicate production owner.
+At the first-wave review, the public legacy node API, semantic and physical
+diagnostic node channels, page/form PDF policies, and browser-specific
+fetch/cache behavior served distinct contracts. Their coexistence was not
+evidence of a duplicate production owner.
 The caller-backed storage audit removed `ForkArena`'s synchronized live frontier
 and unified the borrowed `ParagraphTape` cursor path. It retained World live
 counts, publication columns and cursors, and the owned and arena-ID paragraph
 paths for the distinct API, lifetime, and diagnostic contracts recorded in
 [State Responsibility Boundaries](state_responsibility_boundaries.md). This is a
-resolved boundary under the current functionality contract, not an unexamined
+resolved boundary under the then-current functionality contract, not an unexamined
 storage rewrite. Classic BibTeX and Biber-compatible migration is separate
-work; this review does not claim its ignored upstream cases execute.
+work; this review does not claim its ignored upstream cases execute. The later
+breaking cleanup removed the generic node API and owned paragraph path while
+preserving the live semantic and physical diagnostic evidence.
 
 ## Assessment
 
