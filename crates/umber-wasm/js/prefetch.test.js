@@ -39,17 +39,24 @@ test("Rust policy adapter keeps request identity at the WASM boundary", () => {
 		dependencyClosure() {
 			return [];
 		}
-		admit(key, bytes) {
-			calls.push(["admit", key, bytes]);
+		dependencyClosureRequest() {
+			return [];
 		}
-		noteReplay(region, requestKey, discardedWork) {
-			calls.push(["replay", region, requestKey, discardedWork]);
+		select() {
+			return { hintKeys: [] };
+		}
+		admitRequest(request, _path, bytes) {
+			calls.push(["admit", request, bytes]);
+		}
+		noteReplayRequest(region, request, discardedWork) {
+			calls.push(["replay", region, request, discardedWork]);
 			return { tier: 1, discardedWorkDelta: 7 };
 		}
 	}
 	const policy = createRustPrefetchPolicy({
 		prefetchLiteralHints: () => [],
 		prefetchSelect: () => ({ hintKeys: [] }),
+		prefetchPolicyVersion: () => "literal-groups-v1",
 		PrefetchPolicySession: FakePrefetchPolicySession,
 	});
 	assert.equal(policy.version, "literal-groups-v1");
@@ -100,27 +107,41 @@ test("Rust policy adapter keeps request identity at the WASM boundary", () => {
 	assert.equal(calls.at(-1)[0], "replay");
 });
 
-test("literal source hints ignore comments, malformed arguments, and dynamic forms", () => {
-	const hints = extractLiteralHints(`
-\\documentclass[11pt]{article}
-% \\usepackage{ignored}
-\\usepackage{amsmath, graphicx}
-\\input{chapters/one}
-\\includegraphics[width=2cm]{figures/plot}
-\\input\\dynamic
-\\input{unterminated
-`);
-	assert.deepEqual(
-		hints.map(({ kind, name }) => ({ kind, name })),
-		[
-			{ kind: "documentclass", name: "article" },
-			{ kind: "package", name: "amsmath" },
-			{ kind: "package", name: "graphicx" },
-			{ kind: "input", name: "chapters/one" },
-			{ kind: "includegraphics", name: "figures/plot" },
-		],
-	);
-	assert.deepEqual(literalHintRequest(hints.at(-1)), {
+test("literal hint helper delegates to complete bindings and otherwise stays empty", () => {
+	const source = "\\includegraphics{figures/plot}";
+	const limits = { maxHints: 2, maxNameBytes: 64 };
+	assert.deepEqual(extractLiteralHints(source, limits), []);
+	assert.deepEqual(extractLiteralHints(source, limits, {}), []);
+	const calls = [];
+	class CompleteSession {
+		enqueue() {}
+		enqueueEscalation() {}
+		enqueueLiteralHints() {}
+		select() {}
+		drain() {}
+		dependencyClosureRequest() {}
+		admitRequest() {}
+		noteReplayRequest() {}
+	}
+	const bindings = {
+		prefetchLiteralHints(input, receivedLimits) {
+			calls.push([input, receivedLimits]);
+			return [
+				{
+					kind: "includegraphics",
+					originalSpelling: "figures/plot",
+					name: "figures/plot",
+					byteOffset: 0,
+				},
+			];
+		},
+		prefetchSelect() {},
+		prefetchPolicyVersion: () => "literal-groups-v1",
+		PrefetchPolicySession: CompleteSession,
+	};
+	const hints = extractLiteralHints(source, limits, bindings);
+	assert.deepEqual(calls, [[source, limits]]);
+	assert.deepEqual(literalHintRequest(hints[0]), {
 		type: "file",
 		domain: "tex",
 		kind: "image",

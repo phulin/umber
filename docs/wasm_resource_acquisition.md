@@ -272,6 +272,13 @@ session.
 Required requests and probes are authoritative. Hints may be absent, incomplete,
 overinclusive, stale, or ignored.
 
+`umber-distribution::PrefetchPolicy` is the browser resolver's prediction
+authority through the generated WASM bindings. A standalone resolver with only
+catalog bindings still resolves required requests and probes, but emits no
+startup or replay hints and ignores speculative closure hints. The standalone
+`extractLiteralHints` helper returns an empty list unless complete WASM policy
+bindings are supplied explicitly. See [Browser Prefetch Policy Ownership](browser_prefetch_policy.md).
+
 A trusted application manifest or format description may hint likely input and
 font resources. The coordinator may begin those transfers concurrently. For a
 validated format input closure, the session authorizes positive file responses

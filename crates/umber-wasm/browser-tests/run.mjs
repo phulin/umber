@@ -152,6 +152,12 @@ async function checkRealBindings(base, root, rootAHash64) {
 		resolver.bindPrefetchPolicy(bindings),
 		bindings.prefetchPolicyVersion(),
 	);
+	const run = await resolver.beginRun({
+		source: "\\input probe.tex",
+		options: { engine: "tex82" },
+	});
+	assert(run.hints.some((hint) => hint.name === "probe.tex"));
+	assert.equal(resolver.metrics.literalPrefetchHints, 1);
 	const resources = await resolver.resolve(
 		[{ kind: "tex", name: "probe.tex" }],
 		{ signal: undefined, admitPrefetch: true },
@@ -166,6 +172,16 @@ async function checkRealBindings(base, root, rootAHash64) {
 		),
 	);
 	assert(resources.some((resource) => resource.name === "hint.tex"));
+	assert(
+		resources.some(
+			(resource) =>
+				resource.name === "hint.tex" && resource.speculative === true,
+		),
+	);
+	resolver.noteAdmitted(resources);
+	assert(resolver.metrics.demandBytes > 0);
+	assert(resolver.metrics.prefetchBytes > 0);
+	await resolver.commitRun();
 	const absent = await resolver.resolve([{ kind: "tex", name: "absent.tex" }]);
 	assert.equal(absent[0].type, "file-unavailable");
 	assert.equal(

@@ -38,6 +38,10 @@ Run authored tests with `node --test crates/umber-wasm/js/*.test.js`.
   WebAssembly boundary.
 - `manifest-resolver.d.ts`: public resolver declarations.
 - `manifest-resolver.test.js`: resolver integrity, concurrency, hint, and cache tests.
+- `prefetch.js` / `prefetch.test.js`: thin Rust prefetch DTO adapter, lookup
+  history, identity, and readiness; the tests inject explicit bindings and no
+  JavaScript TeX scanner exists. Without complete policy bindings the resolver
+  disables speculative fetch while preserving required fetch.
 - `resource-resolver.js` / `resource-resolver.d.ts`: ordered typed provider
   composition with provider-scoped misses, final absence, and cancellation.
 - `resource-resolver.test.js`: precedence, exact-key, failure, cancellation, and

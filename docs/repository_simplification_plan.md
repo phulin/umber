@@ -562,16 +562,15 @@ browser-specific cancellation, transfer, cache, and DOM rules tested at their
 actual boundary. Cross-language validation is not automatically duplicate
 code: independent decoders must reject malformed inputs on both sides.
 
-The browser prefetch fallback deserves a specific ownership decision.
-`prefetch.js` describes the JavaScript implementation as test-only, but
-`manifest-resolver.js` automatically selects it when Rust capabilities are
-absent and maintains its own queue/replay state. First exercise real generated
-WASM catalog/prefetch bindings against deterministic packed fixtures. Then
-make policy selection explicit: production uses the Rust policy, while tests
-inject a fake; preserve required resource acquisition if speculative prefetch
-is unavailable. Retire fallback state only after checking standalone/load-order
-callers and agreeing on the supported behavior. Disabling speculation can
-change performance and telemetry even when compilation output is unchanged.
+The browser prefetch policy now has one Rust owner. `manifest-resolver.js` uses
+the generated WASM policy when complete bindings are available, while Node
+transport tests inject an explicit fake. A catalog-only standalone resolver
+disables speculation and preserves required resource acquisition; binding Rust
+before `beginRun` enables prediction. The JavaScript scanner and queue/replay
+fallback were retired after generated WASM catalog/prefetch coverage landed.
+Disabling speculation can change performance and telemetry even when
+compilation output is unchanged. The exact behavior is recorded in
+[Browser Prefetch Policy Ownership](browser_prefetch_policy.md).
 
 Keep JSON/fake-binding resolver tests for transport and cache behavior. Add
 real packed-catalog batch admission, tampering/mispartition rejection, and

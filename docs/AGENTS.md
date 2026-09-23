@@ -40,6 +40,8 @@ is not one of them, and why no engine crate has a non-empty `default`. Read it
 before adding a feature to any manifest.
 
 `testing_policy.md` gives test design and placement rules.
+`browser_prefetch_policy.md` defines Rust ownership of browser prediction and
+the catalog-only resolver's disabled-speculation behavior.
 `testing_infrastructure.md` is the current front door for the seven behavior
 classes, independent execution lanes, command prerequisites, result meanings,
 fixtures, corpora, and harnesses. Update it when gate facts change.

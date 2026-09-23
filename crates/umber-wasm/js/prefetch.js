@@ -54,25 +54,33 @@ function rustRequestOutput(request) {
 	};
 }
 
-/**
- * Binds the browser transport to the same Rust policy used by native hosts.
- * The JavaScript scanner remains below as a deliberately test-only fallback
- * for fixtures that do not load the WASM module.
- */
+/** Binds browser transport to the policy owned by umber-distribution. */
 export function createRustPrefetchPolicy(bindings) {
 	if (
 		typeof bindings?.prefetchLiteralHints !== "function" ||
 		typeof bindings?.prefetchSelect !== "function" ||
-		typeof bindings?.PrefetchPolicySession !== "function"
+		typeof bindings?.prefetchPolicyVersion !== "function" ||
+		typeof bindings?.PrefetchPolicySession !== "function" ||
+		![
+			"enqueue",
+			"enqueueEscalation",
+			"enqueueLiteralHints",
+			"select",
+			"drain",
+			"dependencyClosureRequest",
+			"admitRequest",
+			"noteReplayRequest",
+		].every(
+			(method) =>
+				typeof bindings.PrefetchPolicySession.prototype?.[method] ===
+				"function",
+		)
 	)
 		return undefined;
 	return Object.freeze({
-		version:
-			typeof bindings.prefetchPolicyVersion === "function"
-				? bindings.prefetchPolicyVersion()
-				: PREFETCH_POLICY_VERSION,
-		literalHints(source) {
-			return bindings.prefetchLiteralHints(source).map((hint) => ({
+		version: bindings.prefetchPolicyVersion(),
+		literalHints(source, limits) {
+			return bindings.prefetchLiteralHints(source, limits).map((hint) => ({
 				...hint,
 				kind:
 					hint.kind === "includegraphics"
@@ -90,6 +98,9 @@ export function createRustPrefetchPolicy(bindings) {
 		createState() {
 			const state = new bindings.PrefetchPolicySession();
 			return Object.freeze({
+				dispose() {
+					state.free?.();
+				},
 				enqueue(requests) {
 					state.enqueue(requests.map((request) => rustRequestInput(request)));
 				},
@@ -103,8 +114,6 @@ export function createRustPrefetchPolicy(bindings) {
 					return state.enqueueLiteralHints(source);
 				},
 				select(required, candidates, budget) {
-					if (typeof state.select !== "function")
-						return bindings.prefetchSelect(required, candidates, budget);
 					return state.select(required, candidates, budget);
 				},
 				drain(limit) {
@@ -114,53 +123,27 @@ export function createRustPrefetchPolicy(bindings) {
 						.filter((request) => request !== undefined);
 				},
 				dependencyClosure(request, tier) {
-					if (typeof state.dependencyClosureRequest === "function")
-						return state
-							.dependencyClosureRequest(rustRequestInput(request), tier)
-							.map(rustRequestOutput)
-							.filter((value) => value !== undefined);
 					return state
-						.dependencyClosure(encodeRequest(request), tier)
+						.dependencyClosureRequest(rustRequestInput(request), tier)
 						.map(rustRequestOutput)
-						.filter((request) => request !== undefined);
+						.filter((value) => value !== undefined);
 				},
 				admit(request, virtualPath, bytes, dependencies = []) {
-					const key = encodeRequest(request);
 					const encodedDependencies = dependencies.map((dependency) =>
 						rustRequestInput(dependency),
 					);
-					if (typeof state.admitRequest === "function") {
-						state.admitRequest(
-							rustRequestInput(request),
-							virtualPath ?? "",
-							bytes,
-							request.kind === "image" ? "image" : undefined,
-							encodedDependencies,
-						);
-						return;
-					}
-					if (typeof state.admitWithClass === "function") {
-						state.admitWithClass(
-							key,
-							virtualPath ?? "",
-							bytes,
-							request.kind === "image" ? "image" : undefined,
-							encodedDependencies,
-						);
-					} else {
-						state.admit(key, virtualPath ?? "", bytes, encodedDependencies);
-					}
+					state.admitRequest(
+						rustRequestInput(request),
+						virtualPath ?? "",
+						bytes,
+						request.kind === "image" ? "image" : undefined,
+						encodedDependencies,
+					);
 				},
 				noteReplay(region, request, discardedWork) {
-					if (typeof state.noteReplayRequest === "function")
-						return state.noteReplayRequest(
-							region,
-							rustRequestInput(request),
-							discardedWork,
-						);
-					return state.noteReplay(
+					return state.noteReplayRequest(
 						region,
-						encodeRequest(request),
+						rustRequestInput(request),
 						discardedWork,
 					);
 				},
@@ -169,12 +152,9 @@ export function createRustPrefetchPolicy(bindings) {
 	});
 }
 
-export function createJavaScriptPrefetchPolicy() {
-	return Object.freeze({
-		version: PREFETCH_POLICY_VERSION,
-		literalHints: (source, limits) => extractLiteralHints(source, limits),
-		select: undefined,
-	});
+/** Compatibility helper: without explicit Rust bindings, speculation is empty. */
+export function extractLiteralHints(source, limits, bindings) {
+	return createRustPrefetchPolicy(bindings)?.literalHints(source, limits) ?? [];
 }
 
 export function makePrefetchIdentity({
@@ -296,9 +276,6 @@ export function prefetchManifestCacheKey(identity) {
 	return stableHex64(identity.canonicalKey);
 }
 
-const DEFAULT_MAX_HINTS = 256;
-const DEFAULT_MAX_NAME_BYTES = 1024;
-
 /**
  * Distinguishes admitted bytes from catalog evidence.  Undefined means that
  * no authoritative semantic answer exists yet (for example, a transport or
@@ -313,80 +290,6 @@ export function classifyReadiness({
 	if (payloadAdmitted) return ResourceReadiness.Ready;
 	if (exists === true) return ResourceReadiness.ExistsNotReady;
 	return undefined;
-}
-
-/**
- * Lexically extracts only literal LaTeX lookup arguments.  This intentionally
- * mirrors the native scanner: comments, malformed delimiters, control
- * sequences, and dynamic arguments are ignored without interpreting TeX.
- */
-export function extractLiteralHints(source, limits = {}) {
-	if (typeof source !== "string") return [];
-	const maxHints = limits.maxHints ?? DEFAULT_MAX_HINTS;
-	const maxNameBytes = limits.maxNameBytes ?? DEFAULT_MAX_NAME_BYTES;
-	if (!Number.isSafeInteger(maxHints) || maxHints <= 0) return [];
-	if (!Number.isSafeInteger(maxNameBytes) || maxNameBytes <= 0) return [];
-	const hints = [];
-	let index = 0;
-	while (index < source.length && hints.length < maxHints) {
-		const slash = source.indexOf("\\", index);
-		if (slash < 0) break;
-		if (inComment(source, slash)) {
-			const newline = source.indexOf("\n", slash);
-			index = newline < 0 ? source.length : newline;
-			continue;
-		}
-		index = slash + 1;
-		if (!/[A-Za-z]/.test(source[index] ?? "")) continue;
-		const commandStart = index;
-		while (/[A-Za-z]/.test(source[index] ?? "")) index += 1;
-		const command = source.slice(commandStart, index);
-		const kind =
-			command === "documentclass"
-				? "documentclass"
-				: command === "usepackage" || command === "RequirePackage"
-					? "package"
-					: command === "input" || command === "include"
-						? "input"
-						: command === "includegraphics"
-							? "includegraphics"
-							: undefined;
-		if (kind === undefined) continue;
-		let cursor = skipHorizontalSpace(source, index);
-		if (
-			(kind === "documentclass" ||
-				kind === "package" ||
-				kind === "includegraphics") &&
-			source[cursor] === "["
-		) {
-			const end = balanced(source, cursor, "[", "]");
-			if (end === undefined) continue;
-			cursor = skipHorizontalSpace(source, end);
-		}
-		const argument = literalArgument(source, cursor, maxNameBytes);
-		if (argument === undefined) continue;
-		for (const spelling of argument.value.split(",")) {
-			const name = spelling.trim();
-			if (
-				name.length === 0 ||
-				new TextEncoder().encode(name).byteLength > maxNameBytes ||
-				[...name].some((character) => {
-					const code = character.codePointAt(0);
-					return code <= 0x1f || code === 0x7f;
-				})
-			)
-				continue;
-			hints.push({
-				kind,
-				originalSpelling: name,
-				name,
-				byteOffset: slash,
-			});
-			if (hints.length >= maxHints) break;
-		}
-		index = argument.end;
-	}
-	return hints;
 }
 
 /** Converts a lexical hint to the distribution-facing typed request. */
@@ -420,63 +323,6 @@ export function typedRequestIdentity(request) {
 	} catch {
 		return JSON.stringify(request);
 	}
-}
-
-function skipHorizontalSpace(source, index) {
-	while (index < source.length && /[ \t\r\n]/.test(source[index])) index += 1;
-	return index;
-}
-
-function balanced(source, start, open, close) {
-	let depth = 0;
-	for (let index = start; index < source.length; index += 1) {
-		if (source[index] === "%" && !isEscaped(source, index)) {
-			const newline = source.indexOf("\n", index);
-			if (newline < 0) return undefined;
-			index = newline;
-			continue;
-		}
-		if (source[index] === open) depth += 1;
-		else if (source[index] === close && --depth === 0) return index + 1;
-		if (depth < 0) return undefined;
-	}
-	return undefined;
-}
-
-function literalArgument(source, start, maxNameBytes) {
-	if (source[start] === "{") {
-		const end = balanced(source, start, "{", "}");
-		if (end === undefined) return undefined;
-		const value = source.slice(start + 1, end - 1);
-		return new TextEncoder().encode(value).byteLength <= maxNameBytes
-			? { value, end }
-			: undefined;
-	}
-	let end = start;
-	while (end < source.length && !/[\s%\\]/.test(source[end])) end += 1;
-	const value = source.slice(start, end);
-	return value.length > 0 &&
-		new TextEncoder().encode(value).byteLength <= maxNameBytes
-		? { value, end }
-		: undefined;
-}
-
-function isEscaped(source, index) {
-	let count = 0;
-	for (
-		let cursor = index - 1;
-		cursor >= 0 && source[cursor] === "\\";
-		cursor -= 1
-	)
-		count += 1;
-	return count % 2 === 1;
-}
-
-function inComment(source, index) {
-	const lineStart = source.lastIndexOf("\n", index - 1) + 1;
-	for (let cursor = lineStart; cursor < index; cursor += 1)
-		if (source[cursor] === "%" && !isEscaped(source, cursor)) return true;
-	return false;
 }
 
 function roleRank(role) {

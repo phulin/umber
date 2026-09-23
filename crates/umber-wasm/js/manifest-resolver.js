@@ -8,12 +8,10 @@ import {
 } from "./manifest-schema.js";
 import { IndexedDbObjectCache } from "./persistent-cache.js";
 import {
-	createJavaScriptPrefetchPolicy,
 	createRustPrefetchPolicy,
 	LookupManifest,
 	literalHintRequest,
 	makePrefetchIdentity,
-	PREFETCH_POLICY_VERSION,
 	prefetchManifestCacheKey,
 	typedRequestIdentity,
 } from "./prefetch.js";
@@ -48,6 +46,7 @@ const SHARED_PREFETCH_BUDGET = Object.freeze({
 	maxFollowupHints: 32,
 	maxFollowupDepth: 1,
 });
+const UNAVAILABLE_PREFETCH_POLICY_VERSION = "unavailable-v1";
 
 // Installed by the external publication tracked in umber2-66p0.27.
 export const TEXLIVE_2026_MANIFEST_URL = undefined;
@@ -150,7 +149,7 @@ export class HttpManifestResolver {
 			maxFiles: options.maxFiles,
 			maxBytes: options.maxBytes,
 			catalog: options.catalog,
-			prefetchPolicyVersion: options.prefetchPolicyVersion,
+			prefetchPolicy: options.prefetchPolicy,
 			rootAHash64: options.manifestAHash64,
 		});
 	}
@@ -210,23 +209,11 @@ export class HttpManifestResolver {
 		}
 		this.objectCache = new Map();
 		this.shardCache = new Map();
-		this.prefetchPolicyVersion =
-			options.prefetchPolicyVersion ?? PREFETCH_POLICY_VERSION;
 		this.prefetchPolicy =
-			options.prefetchPolicy ??
-			createRustPrefetchPolicy(options.catalog) ??
-			createJavaScriptPrefetchPolicy();
+			options.prefetchPolicy ?? createRustPrefetchPolicy(options.catalog);
+		this.prefetchPolicyVersion =
+			this.prefetchPolicy?.version ?? UNAVAILABLE_PREFETCH_POLICY_VERSION;
 		this.prefetchState = undefined;
-		this.prefetchQueue = [];
-		this.prefetchQueued = new Set();
-		this.prefetchAttempted = new Set();
-		this.prefetchAdmittedRequests = new Set();
-		this.prefetchDepths = new Map();
-		this.prefetchScanned = new Set();
-		this.replayMisses = new Map();
-		this.replayRegions = new Map();
-		this.replayRegionRequests = new Map();
-		this.lastDiscardedWork = 0;
 		this.knownDependencies = new Map();
 		this.readiness = new Map();
 		this.prefetchAdmitted = new Map();
@@ -249,12 +236,17 @@ export class HttpManifestResolver {
 
 	/** Installs the production Rust policy after the WASM module is loaded. */
 	bindPrefetchPolicy(bindings) {
+		if (this.currentRun !== undefined)
+			throw new ManifestResolverError(
+				"invalid-state",
+				"prefetch policy cannot change during an active run",
+			);
 		const policy = createRustPrefetchPolicy(bindings);
 		if (policy !== undefined) {
 			this.prefetchPolicy = policy;
 			this.prefetchPolicyVersion = policy.version;
 		}
-		return this.prefetchPolicy.version;
+		return this.prefetchPolicyVersion;
 	}
 
 	async resolve(requests, options) {
@@ -291,19 +283,23 @@ export class HttpManifestResolver {
 						: "required";
 		const required = await this.#select(requests.concat(probes), signal, true);
 		let hinted = { jobs: [], misses: [] };
-		try {
-			hinted = await this.#select(prefetchHints, signal, false);
-		} catch {
-			throwIfAborted(signal);
-			// Speculative index transport is best effort, like speculative objects.
+		if (this.prefetchPolicy !== undefined) {
+			try {
+				hinted = await this.#select(prefetchHints, signal, false);
+			} catch {
+				throwIfAborted(signal);
+				// Speculative index transport is best effort, like speculative objects.
+			}
 		}
 		for (const job of required.jobs.concat(hinted.jobs)) {
+			if (job.request === undefined && this.prefetchPolicy === undefined)
+				continue;
 			const identity =
 				job.request === undefined
 					? typedRequestIdentity(decodeKey(job.manifestKey))
 					: job.key;
 			this.#setReadiness(identity, "exists-not-ready");
-			if (job.request === undefined)
+			if (job.request === undefined && this.prefetchPolicy !== undefined)
 				this.prefetchMetrics.packageGroupCandidates += 1;
 		}
 		const unavailable = required.misses.map(({ type, request }) => ({
@@ -314,7 +310,11 @@ export class HttpManifestResolver {
 			this.#setReadiness(typedRequestIdentity(miss.request), "absent");
 			this.#recordAbsent(miss.request, roleFor(miss.request), miss.manifestKey);
 		}
-		validateJobBudget(required.jobs, this.maxFiles, this.maxBytes);
+		validateJobBudget(
+			required.jobs.filter((job) => job.requested),
+			this.maxFiles,
+			this.maxBytes,
+		);
 		const jobs = this.#selectJobs(required.jobs, hinted.jobs);
 		const groups = groupByObject(jobs);
 		const results = new Map();
@@ -358,7 +358,7 @@ export class HttpManifestResolver {
 										})(),
 										virtualPath: job.entry.virtualPath,
 										bytes,
-										...(admitPrefetch && job.hinted
+										...(admitPrefetch && (job.hinted || !job.requested)
 											? { speculative: true }
 											: {}),
 									}
@@ -414,8 +414,11 @@ export class HttpManifestResolver {
 	}
 
 	#selectJobs(required, hinted) {
-		if (typeof this.prefetchPolicy.select !== "function")
-			return mergeJobs(required, hinted, this.maxFiles, this.maxBytes);
+		if (this.prefetchPolicy === undefined)
+			return mergeSelectedJobs(
+				required.filter((job) => job.requested),
+				[],
+			);
 		// Inline dependency jobs are returned alongside blocking jobs by the
 		// catalogue plan. Their null request index makes them speculative even
 		// though they came from the blocking lookup; keep them under the shared
@@ -423,18 +426,26 @@ export class HttpManifestResolver {
 		const blocking = required.filter((job) => job.requested);
 		const inlineHints = required.filter((job) => !job.requested);
 		const candidates = inlineHints.concat(hinted);
-		const candidate = (job, requiredFlag) => ({
-			key: job.manifestKey,
-			domain:
-				job.request?.domain ??
-				resourceDomain(job.request?.kind ?? decodeKey(job.manifestKey).kind),
-			kind: job.request?.kind ?? decodeKey(job.manifestKey).kind,
-			name: job.request?.name ?? decodeKey(job.manifestKey).name,
-			object: job.entry.object,
-			ahash64: job.entry.ahash64,
-			bytes: job.entry.bytes,
-			required: requiredFlag,
-		});
+		const candidate = (job, requiredFlag) => {
+			const file =
+				job.type === "file"
+					? (job.request ?? decodeKey(job.manifestKey))
+					: undefined;
+			return {
+				key: job.manifestKey,
+				...(file === undefined
+					? {}
+					: {
+							domain: file.domain ?? resourceDomain(file.kind),
+							kind: file.kind,
+							name: file.name,
+						}),
+				object: job.entry.object,
+				ahash64: job.entry.ahash64,
+				bytes: job.entry.bytes,
+				required: requiredFlag,
+			};
+		};
 		const select =
 			this.prefetchState !== undefined &&
 			typeof this.prefetchState.select === "function"
@@ -443,7 +454,11 @@ export class HttpManifestResolver {
 		const selection = select(
 			blocking.map((job) => candidate(job, true)),
 			candidates.map((job) => candidate(job, false)),
-			SHARED_PREFETCH_BUDGET,
+			{
+				...SHARED_PREFETCH_BUDGET,
+				maxFiles: Math.min(SHARED_PREFETCH_BUDGET.maxFiles, this.maxFiles),
+				maxBytes: Math.min(SHARED_PREFETCH_BUDGET.maxBytes, this.maxBytes),
+			},
 		);
 		const allowed = new Set(selection.hintKeys ?? []);
 		const allowedFileKeys = new Set(
@@ -453,25 +468,23 @@ export class HttpManifestResolver {
 		);
 		return mergeSelectedJobs(
 			blocking,
-			candidates.filter(
-				(job) =>
-					(allowedFileKeys.size > 0 &&
-						allowedFileKeys.has(
-							JSON.stringify([
-								job.request?.domain ??
-									resourceDomain(
-										job.request?.kind ?? decodeKey(job.manifestKey).kind,
-									),
-								job.request?.kind ?? decodeKey(job.manifestKey).kind,
-								job.request?.name ?? decodeKey(job.manifestKey).name,
-							]),
-						)) ||
-					allowed.has(job.manifestKey),
-			),
+			candidates.filter((job) => {
+				if (allowed.has(job.manifestKey)) return true;
+				if (job.type !== "file" || allowedFileKeys.size === 0) return false;
+				const request = job.request ?? decodeKey(job.manifestKey);
+				return allowedFileKeys.has(
+					JSON.stringify([
+						request.domain ?? resourceDomain(request.kind),
+						request.kind,
+						request.name,
+					]),
+				);
+			}),
 		);
 	}
 
 	#rememberDependencies(job) {
+		if (this.prefetchState === undefined) return;
 		if (job.type !== "file" || !Array.isArray(job.entry.dependencies)) return;
 		const request = job.request ?? requestFromManifestKey(job.manifestKey);
 		if (request === undefined) return;
@@ -518,7 +531,6 @@ export class HttpManifestResolver {
 					response.bytes,
 					this.knownDependencies.get(identity) ?? [],
 				);
-			this.prefetchAdmittedRequests.add(identity);
 			this.#setReadiness(identity, "ready");
 			if (response.speculative === true) {
 				if (!this.prefetchAdmitted.has(identity)) {
@@ -539,40 +551,11 @@ export class HttpManifestResolver {
 						this.prefetchUsed.add(prefetchIdentity);
 				}
 			}
-			if (
-				this.prefetchState === undefined &&
-				isSmallRuntimeKey(`${response.kind}:${response.name}`) &&
-				response.bytes.byteLength <=
-					SHARED_PREFETCH_BUDGET.maxRuntimeScanBytes &&
-				!this.prefetchScanned.has(identity)
-			) {
-				this.prefetchScanned.add(identity);
-				const depth = this.prefetchDepths.get(identity) ?? 0;
-				if (depth < SHARED_PREFETCH_BUDGET.maxFollowupDepth) {
-					const source = new TextDecoder().decode(response.bytes);
-					const hints = this.prefetchPolicy.literalHints(source, {
-						maxHints: SHARED_PREFETCH_BUDGET.maxFollowupHints,
-						maxNameBytes: 1024,
-					});
-					for (const hint of hints.slice(
-						0,
-						SHARED_PREFETCH_BUDGET.maxFollowupHints,
-					)) {
-						const child = literalHintRequest(hint);
-						if (child !== undefined) this.#enqueuePrefetch(child, depth + 1);
-					}
-				}
-			}
 		}
 	}
 
 	takePrefetchHints(limit = SHARED_PREFETCH_BUDGET.maxFiles) {
-		if (this.prefetchState !== undefined)
-			return this.prefetchState.drain(limit);
-		const output = this.prefetchQueue.splice(0, Math.max(0, limit));
-		for (const request of output)
-			this.prefetchAttempted.add(typedRequestIdentity(request));
-		return output;
+		return this.prefetchState?.drain(limit) ?? [];
 	}
 
 	noteReplay(context, requests = []) {
@@ -583,107 +566,21 @@ export class HttpManifestResolver {
 			!Number.isSafeInteger(context.discardedWork)
 		)
 			return;
-		if (this.prefetchState !== undefined) {
-			for (const request of [...(requests ?? [])].filter(
-				(request) => request?.type === "file",
-			)) {
-				const advice = this.prefetchState.noteReplay(
-					context.region,
-					request,
-					context.discardedWork,
-				);
-				if (advice?.tier > 0) {
-					this.prefetchState.enqueueEscalation(
-						this.prefetchState.dependencyClosure(request, advice.tier),
-						advice.discardedWorkDelta,
-					);
-				}
-			}
-			return;
-		}
-		const delta = Math.max(0, context.discardedWork - this.lastDiscardedWork);
-		this.lastDiscardedWork = Math.max(
-			this.lastDiscardedWork,
-			context.discardedWork,
-		);
-		const regionCount =
-			(this.replayRegions.get(context.region) ?? 0) + (delta > 0 ? 1 : 0);
-		if (delta > 0) this.replayRegions.set(context.region, regionCount);
 		for (const request of [...(requests ?? [])].filter(
 			(request) => request?.type === "file",
 		)) {
-			const identity = typedRequestIdentity(request);
-			const regionRequests =
-				this.replayRegionRequests.get(context.region) ?? new Set();
-			const newRegionRequest = !regionRequests.has(identity);
-			regionRequests.add(identity);
-			this.replayRegionRequests.set(context.region, regionRequests);
-			if (regionCount === 0 && !newRegionRequest) continue;
-			const missKey = `${context.region}\u0000${identity}`;
-			const miss = this.replayMisses.get(missKey) ?? { count: 0, tier: 0 };
-			miss.count += 1;
-			miss.tier =
-				miss.tier > 0
-					? Math.min(3, miss.tier + 1)
-					: miss.count >= 2 || regionCount >= 2 || regionRequests.size >= 2
-						? 1
-						: 0;
-			this.replayMisses.set(missKey, miss);
-			if (miss.tier > 0) {
-				for (const dependency of this.#knownDependencyClosure(
-					request,
-					miss.tier,
-				))
-					this.#enqueuePrefetch(dependency, 0);
+			const advice = this.prefetchState?.noteReplay(
+				context.region,
+				request,
+				context.discardedWork,
+			);
+			if (advice?.tier > 0) {
+				this.prefetchState.enqueueEscalation(
+					this.prefetchState.dependencyClosure(request, advice.tier),
+					advice.discardedWorkDelta,
+				);
 			}
 		}
-	}
-
-	#knownDependencyClosure(request, tier) {
-		const output = [];
-		const seen = new Set([typedRequestIdentity(request)]);
-		let frontier = [request];
-		for (let depth = 0; depth < Math.min(3, Math.max(1, tier)); depth += 1) {
-			const next = [];
-			for (const parent of frontier) {
-				for (const dependency of this.knownDependencies.get(
-					typedRequestIdentity(parent),
-				) ?? []) {
-					const identity = typedRequestIdentity(dependency);
-					if (!seen.has(identity)) {
-						seen.add(identity);
-						output.push(dependency);
-						next.push(dependency);
-					}
-				}
-			}
-			frontier = next;
-		}
-		return output;
-	}
-
-	#enqueuePrefetch(request, depth) {
-		if (this.prefetchState !== undefined) {
-			return this.prefetchState.enqueue([
-				{
-					...request,
-					depth,
-					searchContext: request.searchContext ?? "runtime",
-				},
-			]);
-		}
-		const identity = typedRequestIdentity(request);
-		if (
-			this.prefetchQueued.has(identity) ||
-			this.prefetchAttempted.has(identity) ||
-			this.prefetchAdmittedRequests.has(identity) ||
-			this.prefetchQueue.length >= SHARED_PREFETCH_BUDGET.maxFiles
-		)
-			return false;
-		this.prefetchQueued.add(identity);
-		this.prefetchDepths.set(identity, depth);
-		this.prefetchQueue.push(request);
-		return true;
 	}
 
 	/** Returns the last catalog/payload state observed for a typed request. */
@@ -696,20 +593,11 @@ export class HttpManifestResolver {
 	 * Identity fields deliberately contain execution policy, never source text.
 	 */
 	async beginRun(context = {}) {
+		this.prefetchState?.dispose?.();
 		this.prefetchState = undefined;
 		this.prefetchAdmitted.clear();
 		this.prefetchCountedPaths.clear();
 		this.prefetchUsed.clear();
-		this.prefetchQueue = [];
-		this.prefetchQueued.clear();
-		this.prefetchAttempted.clear();
-		this.prefetchAdmittedRequests.clear();
-		this.prefetchDepths.clear();
-		this.prefetchScanned.clear();
-		this.replayMisses.clear();
-		this.replayRegions.clear();
-		this.replayRegionRequests.clear();
-		this.lastDiscardedWork = 0;
 		this.knownDependencies.clear();
 		this.demandCounted.clear();
 		this.readiness.clear();
@@ -745,27 +633,19 @@ export class HttpManifestResolver {
 			...request,
 			origin: "prior-observed",
 		}));
-		this.prefetchMetrics.startupPrefetchCandidates += priorRequests.length;
+		if (this.prefetchPolicy !== undefined)
+			this.prefetchMetrics.startupPrefetchCandidates += priorRequests.length;
 		const maxHints = Number.isSafeInteger(context.limits?.resolvedFiles)
 			? Math.min(context.limits.resolvedFiles, MAX_RESOLVED_FILES)
 			: DEFAULT_RESOLVED_FILES;
-		let startupHints;
-		if (typeof this.prefetchPolicy.createState === "function") {
+		let startupHints = [];
+		if (this.prefetchPolicy !== undefined) {
 			this.prefetchState = this.prefetchPolicy.createState();
 			this.prefetchState.enqueue(priorRequests);
 			this.prefetchMetrics.literalPrefetchHints +=
 				this.prefetchState.enqueueLiteralHints(context.source ?? "");
 			startupHints = this.prefetchState.drain(maxHints);
-		} else {
-			const literalHints = this.literalPrefetchHints(context.source ?? "");
-			this.prefetchMetrics.literalPrefetchHints += literalHints.length;
-			startupHints = deduplicateTypedRequests([
-				...priorRequests,
-				...literalHints,
-			]).slice(0, maxHints);
 		}
-		for (const request of startupHints)
-			this.prefetchDepths.set(typedRequestIdentity(request), 0);
 		return {
 			identity,
 			hints: startupHints,
@@ -776,6 +656,8 @@ export class HttpManifestResolver {
 	async commitRun() {
 		const run = this.currentRun;
 		this.currentRun = undefined;
+		this.prefetchState?.dispose?.();
+		this.prefetchState = undefined;
 		const usedPaths = new Set(
 			[...this.prefetchAdmitted]
 				.filter(([identity]) => this.prefetchUsed.has(identity))
@@ -806,20 +688,11 @@ export class HttpManifestResolver {
 
 	discardRun() {
 		this.currentRun = undefined;
+		this.prefetchState?.dispose?.();
 		this.prefetchState = undefined;
 		this.prefetchAdmitted.clear();
 		this.prefetchCountedPaths.clear();
 		this.prefetchUsed.clear();
-		this.prefetchQueue = [];
-		this.prefetchQueued.clear();
-		this.prefetchAttempted.clear();
-		this.prefetchAdmittedRequests.clear();
-		this.prefetchDepths.clear();
-		this.prefetchScanned.clear();
-		this.replayMisses.clear();
-		this.replayRegions.clear();
-		this.replayRegionRequests.clear();
-		this.lastDiscardedWork = 0;
 		this.knownDependencies.clear();
 		this.demandCounted.clear();
 	}
@@ -833,8 +706,7 @@ export class HttpManifestResolver {
 	 * session options.  The engine still controls final lookup precedence.
 	 */
 	literalPrefetchHints(source, limits) {
-		return this.prefetchPolicy
-			.literalHints(source, limits)
+		return (this.prefetchPolicy?.literalHints(source, limits) ?? [])
 			.map(literalHintRequest)
 			.filter((request) => request !== undefined);
 	}
@@ -1163,39 +1035,6 @@ export class HttpManifestResolver {
 	}
 }
 
-function mergeJobs(required, hinted, maxFiles, maxBytes) {
-	const jobs = [];
-	const indexes = new Map();
-	const paths = new Set();
-	let bytes = 0;
-	for (const [source, blocking] of [
-		[required, true],
-		[hinted, false],
-	]) {
-		for (const job of source) {
-			const identity = jobIdentity(job);
-			const existing = indexes.get(identity);
-			const requested = job.requested;
-			if (existing !== undefined) {
-				jobs[existing].blocking ||= blocking && requested;
-				jobs[existing].requested ||= requested;
-				continue;
-			}
-			const pathBytes = paths.has(job.entry.virtualPath) ? 0 : job.entry.bytes;
-			if (
-				!blocking &&
-				(jobs.length >= maxFiles || bytes + pathBytes > maxBytes)
-			)
-				continue;
-			indexes.set(identity, jobs.length);
-			jobs.push({ ...job, requested, blocking: blocking && requested });
-			paths.add(job.entry.virtualPath);
-			bytes += pathBytes;
-		}
-	}
-	return jobs;
-}
-
 function mergeSelectedJobs(required, hinted) {
 	const jobs = [];
 	const indexes = new Map();
@@ -1241,21 +1080,6 @@ function groupByObject(jobs) {
 		groups[index].push(job);
 	}
 	return groups;
-}
-
-function deduplicateTypedRequests(requests) {
-	const seen = new Set();
-	return requests.filter((request) => {
-		const identity = typedRequestIdentity(request);
-		if (seen.has(identity)) return false;
-		seen.add(identity);
-		return true;
-	});
-}
-
-function isSmallRuntimeKey(key) {
-	const name = key.split(":", 2)[1] ?? key;
-	return /\.(?:tex|sty|cls|def|ltx)$/i.test(name);
 }
 
 function requestFromManifestKey(key) {

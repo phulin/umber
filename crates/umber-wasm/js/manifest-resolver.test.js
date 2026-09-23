@@ -148,6 +148,51 @@ const catalog = {
 		return { name, ...entry };
 	},
 };
+
+// Transport tests choose their prediction explicitly. The production scanner,
+// reservation ledger, and replay decisions are exercised with generated WASM.
+const testPrefetchPolicy = {
+	version: "test-policy-v1",
+	literalHints(source) {
+		return source === "\\input{plain.tex}"
+			? [{ kind: "input", name: "plain.tex" }]
+			: [];
+	},
+	select(_required, candidates, budget) {
+		return {
+			hintKeys: candidates.slice(0, budget.maxFiles).map(({ key }) => key),
+		};
+	},
+	createState() {
+		const queue = [];
+		return {
+			enqueue(requests) {
+				queue.push(...requests);
+			},
+			enqueueLiteralHints(source) {
+				const hints = testPrefetchPolicy.literalHints(source).map((hint) => ({
+					type: "file",
+					kind: "tex",
+					name: hint.name,
+				}));
+				queue.push(...hints);
+				return hints.length;
+			},
+			select: testPrefetchPolicy.select,
+			drain(limit) {
+				return queue.splice(0, limit);
+			},
+			admit() {},
+			noteReplay() {
+				return { tier: 0 };
+			},
+			dependencyClosure() {
+				return [];
+			},
+			enqueueEscalation() {},
+		};
+	},
+};
 const digest = (bytes) => deterministicAhash64Hex(bytes);
 const jsonBytes = (value) => encoder.encode(`${JSON.stringify(value)}\n`);
 
@@ -323,6 +368,7 @@ function resolverFor(data, options = {}) {
 			fetch,
 			crypto: webcrypto,
 			catalog,
+			prefetchPolicy: testPrefetchPolicy,
 			...options,
 		}),
 		calls,
@@ -743,6 +789,71 @@ test("resolves blocking probes positively or with authoritative absence", async 
 	);
 });
 
+test("catalog-only resolver disables speculation without changing required work", async () => {
+	const data = await fixture();
+	const calls = [];
+	const { resolver } = resolverFor(data, {
+		prefetchPolicy: undefined,
+		maxFiles: 1,
+		calls,
+	});
+	const run = await resolver.beginRun({
+		source: "\\input{hint.tex}",
+		options: { engine: "tex82" },
+	});
+	assert.match(run.identity.searchPolicy, /^unavailable-v1;/);
+	assert.deepEqual(run.hints, []);
+	assert.deepEqual(resolver.literalPrefetchHints("\\input{hint.tex}"), []);
+	resolver.noteReplay({ region: "root", discardedWork: 100 }, [
+		{ type: "file", kind: "tex", name: "plain.tex" },
+	]);
+	assert.deepEqual(resolver.takePrefetchHints(), []);
+	const resources = await resolver.resolve(
+		[{ type: "file", kind: "tex", name: "plain.tex" }],
+		{
+			prefetchHints: [{ type: "file", kind: "tex", name: "hint.tex" }],
+			probes: [{ type: "file", kind: "tex", name: "absent.cfg" }],
+			admitPrefetch: true,
+		},
+	);
+	assert.deepEqual(
+		resources.map(({ type, name }) => ({ type, name })),
+		[
+			{ type: "file-unavailable", name: "absent.cfg" },
+			{ type: "file", name: "plain.tex" },
+		],
+	);
+	resolver.noteAdmitted(resources);
+	assert.equal(
+		resolver.readinessOf({ type: "file", kind: "tex", name: "plain.tex" }),
+		"ready",
+	);
+	assert.equal(
+		resolver.readinessOf({ type: "file", kind: "tex", name: "absent.cfg" }),
+		"absent",
+	);
+	assert.equal(resolver.metrics.startupPrefetchCandidates, 0);
+	assert.equal(resolver.metrics.literalPrefetchHints, 0);
+	assert.equal(resolver.metrics.packageGroupCandidates, 0);
+	assert.equal(resolver.metrics.prefetchBytes, 0);
+	assert.equal(resolver.metrics.demandBytes, data.payloads.plain.byteLength);
+	assert(
+		!calls.some(({ url }) => url.endsWith(data.files["tex:hint.tex"].object)),
+	);
+	assert(
+		!calls.some(({ url }) => url.endsWith(data.files["tfm:cmr10.tfm"].object)),
+	);
+	await resolver.commitRun();
+	const failing = resolverFor(data, {
+		prefetchPolicy: undefined,
+		fetch: async () => response(new Uint8Array(), { status: 503 }),
+	}).resolver;
+	await assert.rejects(
+		failing.resolve([{ type: "file", kind: "tex", name: "plain.tex" }]),
+		(error) => error.code === "object-http",
+	);
+});
+
 test("prefetches dependency closures without returning dependency responses", async () => {
 	const data = await fixture();
 	const requestedObject = data.files["tex:plain.tex"].object;
@@ -982,24 +1093,31 @@ test("cancellation and oversized streamed objects remain bounded", async () => {
 	assert(cancelled);
 });
 
-test("resource budgets include inline dependency payloads before fetching them", async () => {
+test("resource limits keep required payloads separate from optional hints", async () => {
 	const data = await fixture();
-	let fetches = 0;
+	const fetched = [];
 	const { resolver } = resolverFor(data, {
 		maxFiles: 2,
 		fetch: async (url) => {
-			fetches += 1;
+			fetched.push(url.split("/").at(-1));
 			return response(data.objectBytes.get(url.split("/").at(-1)));
 		},
 	});
-	await assert.rejects(
-		resolver.resolve([{ kind: "tex", name: "plain.tex" }]),
-		(error) => error.code === "resource-limit",
+	const downloads = await resolver.resolve([
+		{ kind: "tex", name: "plain.tex" },
+	]);
+	assert.deepEqual(
+		downloads.map(({ name }) => name),
+		["plain.tex"],
+	);
+	assert(fetched.includes(data.files["tex:plain.tex"].object));
+	const optionalObjects = data.files["tex:plain.tex"].dependencies.map(
+		({ object }) => object,
 	);
 	assert.equal(
-		fetches,
-		1,
-		"only the selection shard may precede budget validation",
+		fetched.filter((object) => optionalObjects.includes(object)).length,
+		2,
+		"the optional ceiling is independent of the required payload",
 	);
 });
 

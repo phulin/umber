@@ -20,9 +20,11 @@ export function classifyReadiness(options?: {
 	payloadAdmitted?: boolean;
 	authoritativeAbsent?: boolean;
 }): "ready" | "exists-not-ready" | "absent" | undefined;
+/** Delegates to generated WASM policy bindings, or returns no hints. */
 export function extractLiteralHints(
 	source: string,
 	limits?: { maxHints?: number; maxNameBytes?: number },
+	bindings?: unknown,
 ): readonly {
 	kind: "documentclass" | "package" | "input" | "includegraphics";
 	originalSpelling: string;
