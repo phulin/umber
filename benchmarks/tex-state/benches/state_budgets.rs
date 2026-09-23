@@ -141,7 +141,7 @@ fn page_contribution_queue(c: &mut Criterion) {
                         .expect("queued page contribution remains live");
                     assert_eq!(
                         context.page_carrier_node(&carrier),
-                        &Node::Penalty(index as i32)
+                        tex_state::NodeView::Penalty(index as i32)
                     );
                     context.discard_page_node(carrier);
                 }

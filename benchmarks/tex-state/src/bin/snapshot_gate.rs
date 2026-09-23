@@ -221,14 +221,17 @@ fn hot_state_gate() -> (
                     .expect("queued page contribution remains live");
                 assert_eq!(
                     context.page_carrier_node(&carrier),
-                    &Node::Penalty(index as i32)
+                    tex_state::NodeView::Penalty(index as i32)
                 );
                 context.discard_page_node(carrier);
             }
         });
         drop(transaction);
-        let mark_words =
-            NodeTokenList::new(vec![TokenWord::pack(Token::param(1))].into_boxed_slice());
+        let mark_words = universe
+            .command_context()
+            .expect("page context")
+            .allocate_node_token_list(&[TokenWord::pack(Token::param(1))])
+            .expect("prime immutable mark words before measurement");
         {
             let mut context = universe.command_context().expect("page context");
             context.set_page_mark_class(PageMark::Bot, 32_767, mark_words);
@@ -238,9 +241,12 @@ fn hot_state_gate() -> (
             for _ in 0..WARM_WRITES {
                 black_box(
                     context
-                        .page_mark_class_value(PageMark::Bot, 32_767)
-                        .expect("sparse mark class remains live")
-                        .words()
+                        .node_token_words(
+                            *context
+                                .page_mark_class_value(PageMark::Bot, 32_767)
+                                .expect("sparse mark class remains live"),
+                        )
+                        .expect("registered mark words remain live")
                         .len(),
                 );
                 context.set_page_mark_class(PageMark::Top, 32_767, NodeTokenList::default());
