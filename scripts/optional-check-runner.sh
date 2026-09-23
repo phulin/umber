@@ -84,7 +84,11 @@ optional_check_step_requiring() {
   local status=0
   "$@" || status=$?
   check_ran=$((check_ran + 1))
-  if ((status != 0)); then
+  if ((status == CHECK_EXIT_BLOCKED)); then
+    check_blocked_steps+=("$step")
+    check_blockers+=("$step returned BLOCKED (exit $status)")
+    check_transcript+=("BLOCKED $step (exit $status)")
+  elif ((status != 0)); then
     check_failed_steps+=("$step")
     check_transcript+=("FAILED  $step (exit $status)")
   else
@@ -111,6 +115,9 @@ optional_check_finish() {
     status=$CHECK_EXIT_FAIL
     verdict="FAIL"
     census="$census, ${#check_failed_steps[@]} failed: ${check_failed_steps[*]}"
+    if ((${#check_blocked_steps[@]} > 0)); then
+      census="$census; ${#check_blocked_steps[@]} blocked: ${check_blocked_steps[*]}"
+    fi
   elif ((${#check_blocked_steps[@]} > 0)); then
     status=$CHECK_EXIT_BLOCKED
     verdict="BLOCKED"

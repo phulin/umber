@@ -83,11 +83,11 @@ require_tool() {
     return 0
   fi
   printf 'check.sh: %s is not installed; %s\n' "$name" "$hint" >&2
-  return 1
+  return 4
 }
 
 run_dprint() {
-  require_tool dprint "install it with: npm install --global dprint@0.55.2" || return 1
+  require_tool dprint "install it with: npm install --global dprint@0.55.2" || return 4
   dprint check
 }
 
@@ -95,12 +95,19 @@ run_biome() {
   local biome_cmd=(npx --yes @biomejs/biome@2.4.10)
   if command -v biome >/dev/null 2>&1; then
     biome_cmd=(biome)
+  else
+    require_tool npx "install Node.js/npm or Biome" || return 4
   fi
   "${biome_cmd[@]}" check \
     crates/umber-wasm/js \
     crates/umber-wasm/browser-tests \
     crates/umber-wasm/examples \
     crates/umber-wasm/package.json
+}
+
+run_rustfmt() {
+  require_tool cargo "install the Rust toolchain" || return 4
+  cargo fmt --all --check
 }
 
 run_clippy() {
@@ -111,6 +118,8 @@ run_clippy() {
   # `scripts/check-lint-passes.py` documents and verifies what each one covers.
   # Its own guards are self-tested first, because a coverage check that cannot
   # fail is worth less than no check at all.
+  require_tool python3 "install Python 3" || return 4
+  require_tool cargo "install the Rust toolchain" || return 4
   python3 scripts/test-check-lint-passes.py || return 1
   CARGO_TARGET_DIR="${CLIPPY_TARGET_DIR:-target/clippy}" \
     python3 scripts/check-lint-passes.py
@@ -118,7 +127,7 @@ run_clippy() {
 
 gate dprint run_dprint
 gate biome run_biome
-gate rustfmt cargo fmt --all --check
+gate rustfmt run_rustfmt
 gate clippy run_clippy
 gate node-width-budget scripts/check-node-width-budget.sh
 

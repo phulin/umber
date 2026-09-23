@@ -67,7 +67,8 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   before trusting them.
 - `optional-check-runner.sh`: stateless named-step accounting shared by opt-in
   checks; it runs all selected steps and prints a PASS, PARTIAL, BLOCKED, or
-  FAIL verdict.
+  FAIL verdict. A selected command returning 4 is BLOCKED, and combined
+  failures retain every blocked step in the final summary.
 - `check-tools.sh`, `check-wasm.sh`, `check-hb-shape-fixtures.sh`, and the
   three `check-latex-*.sh` entry points: explicit opt-in checks built on
   `optional-check-runner.sh`. `check-tools.sh profiling-command-tests` compiles
@@ -78,7 +79,13 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   `check-tools.sh copy-attribution` compiles the profiling-only public-copy
   interposer and gates scalar, `Vec`, bounded external-ancestor, reconciliation,
   and exact-binary symbolization behavior. Run one with no arguments for the
-  whole check, or name steps to run exactly those. The LaTeX entry points
+  whole check, or name steps to run exactly those. Its `oracle-contract` step
+  validates pinned regeneration selectors, manifests, and publication behavior
+  without constructing a live oracle; `oracle-regeneration` remains an alias
+  for that selector. `check-wasm.sh` separately selects the WASM-only
+  `tex-dense-prefix` and `tex-dense-arena` unit-test targets and packaged browser
+  integration; browser execution can report BLOCKED when Chrome/Chromium is
+  unavailable. The LaTeX entry points
   delegate to `run-latex-*.sh` so their established implementation options
   remain available.
 - `hooks/`: versioned git hooks installed by `install-hooks.sh` through
@@ -95,7 +102,16 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `check-and-test.sh`: routine combined gate; prebuilds the complete native test
   suite before clippy can start a second cold Cargo workload, then runs the
   tests under the shared 6 GiB process-group guard concurrently with
-  `check.sh`.
+  `check.sh`. It records every preflight, prebuild, native, and quality status;
+  missing required DVI oracles are BLOCKED, while explicit opt-out with absent
+  oracles yields PARTIAL when all other stages pass.
+- `script-suite-inventory.tsv` and `test-script-suite-inventory.py`: discovered
+  script-test index with lane, evidence class, aggregate owner, and prerequisite
+  for each `test-*.sh` and `test-*.py`; the test rejects a new unowned script or
+  an aggregate owner that no longer selects its suite.
+- `test-gate-verdicts.sh`: hermetic mocked-stage contracts for combined and
+  quality gate aggregation, oracle opt-out, prerequisite/command blocking,
+  selected-step partial runs, old/new oracle selectors, and script discovery.
 - `arxiv_corpus.py`: safe exact arXiv archive inventory, identity, verification,
   materialization, and source-derived TeX jobname contract.
 - `test-arxiv-corpus.sh`: hermetic archive/view identity contract, including mutation and extra-file rejection.

@@ -1,0 +1,26 @@
+# path	lane	class	owner	prerequisites
+scripts/test-arxiv-corpus.sh	subsystem	tool-integrity	scripts/check-tools.sh	python3,tar,gzip
+scripts/test-build-initex-format-matrix.sh	manual	format-contract	-	python3
+scripts/test-build-latex-format.sh	manual	format-contract	-	python3
+scripts/test-check-latex-representative-resources.sh	manual	resource-contract	-	python3
+scripts/test-check-lint-passes.py	routine	tool-integrity	scripts/check.sh	python3,cargo
+scripts/test-check-node-width-budget.sh	manual	performance-contract	-	python3,cargo
+scripts/test-copy-attribution.sh	subsystem	performance-contract	scripts/check-tools.sh	cc,rustc,addr2line,python3,cargo
+scripts/test-etex26-extension-primitive-audit.sh	subsystem	oracle-contract	scripts/test-oracle-regeneration.sh	python3
+scripts/test-etex26-trip-observer.sh	manual	oracle-regeneration	-	pinned-oracle,python3
+scripts/test-gate-verdicts.sh	routine	tool-integrity	scripts/check-and-test.sh	bash,python3
+scripts/test-incremental-fuzz.sh	manual	stress	-	cargo
+scripts/test-materialize-texlive-snapshot.py	manual	resource-contract	-	python3
+scripts/test-native-test-assets.py	routine	tool-integrity	scripts/check-and-test.sh	python3
+scripts/test-oracle-regeneration.sh	subsystem	oracle-contract	scripts/check-tools.sh	python3,openssl
+scripts/test-paired-measure.py	manual	performance-contract	-	python3
+scripts/test-project-tex82-trip-command.py	subsystem	oracle-contract	scripts/test-oracle-regeneration.sh	python3
+scripts/test-provision.py	subsystem	resource-contract	scripts/check-tools.sh	python3,cargo
+scripts/test-publish-texlive-r2.sh	routine	publication-contract	scripts/check-and-test.sh	bash,python3
+scripts/test-run-pinned-pdflatex-50m-authority-row.sh	manual	tool-integrity	-	bash,python3
+scripts/test-run-umber-guarded.sh	manual	limit-contract	-	python3
+scripts/test-script-suite-inventory.py	routine	tool-integrity	scripts/test-gate-verdicts.sh	python3
+scripts/test-stepwise-arxiv-census.sh	subsystem	tool-integrity	scripts/check-tools.sh	python3,tar,gzip
+scripts/test-survey-pdftex-arxiv-pdf.sh	manual	oracle-contract	-	python3
+scripts/test-tex82-trip-observer.sh	manual	oracle-regeneration	-	pinned-oracle,python3,cargo
+scripts/test-wasm-browser.sh	subsystem	product-integration	scripts/check-wasm.sh	node,wasm-pack,cargo,Chrome/Chromium
