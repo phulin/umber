@@ -1467,7 +1467,7 @@
       "test_level": "rust-unit",
       "coverage": [
         {
-          "path": "crates/tex-typeset/src/linebreak/tests.rs",
+          "path": "crates/tex-typeset/src/linebreak/tests/analysis.rs",
           "test": "base_whatsit_line_visitation_is_zero_width_and_never_a_breakpoint"
         },
         {

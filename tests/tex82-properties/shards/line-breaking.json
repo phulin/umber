@@ -112,15 +112,15 @@
       "test_level": "rust-unit",
       "coverage": [
         {
-          "path": "crates/tex-typeset/src/linebreak/tests.rs",
+          "path": "crates/tex-typeset/src/linebreak/tests/route_selection.rs",
           "test": "line_break_includes_left_and_right_skip_in_background_widths"
         },
         {
-          "path": "crates/tex-typeset/src/linebreak/tests.rs",
+          "path": "crates/tex-typeset/src/linebreak/tests/tracing.rs",
           "test": "paragraph_prefix_widths_remain_exact_past_i32_max"
         },
         {
-          "path": "crates/tex-typeset/src/linebreak/tests.rs",
+          "path": "crates/tex-typeset/src/linebreak/tests/analysis.rs",
           "test": "positive_emergency_stretch_uses_the_real_tolerance_route"
         }
       ],
@@ -188,19 +188,19 @@
       "test_level": "rust-unit",
       "coverage": [
         {
-          "path": "crates/tex-typeset/src/linebreak/tests.rs",
+          "path": "crates/tex-typeset/src/linebreak/tests/analysis.rs",
           "test": "penalty_boundaries_match_infinite_and_eject_semantics"
         },
         {
-          "path": "crates/tex-typeset/src/linebreak/tests.rs",
+          "path": "crates/tex-typeset/src/linebreak/tests/route_selection.rs",
           "test": "equal_demerits_prefer_later_route_in_same_line_and_fitness_class"
         },
         {
-          "path": "crates/tex-typeset/src/linebreak/tests.rs",
+          "path": "crates/tex-typeset/src/linebreak/tests/route_selection.rs",
           "test": "parshape_repeats_last_line_and_overrides_hanging"
         },
         {
-          "path": "crates/tex-typeset/src/linebreak/tests.rs",
+          "path": "crates/tex-typeset/src/linebreak/tests/shape_and_breaks.rs",
           "test": "hangindent_selects_affected_lines"
         }
       ],
@@ -250,19 +250,19 @@
       "test_level": "rust-unit",
       "coverage": [
         {
-          "path": "crates/tex-typeset/src/linebreak/tests.rs",
+          "path": "crates/tex-typeset/src/linebreak/tests/last_line_fit.rs",
           "test": "breaks_at_legal_glue"
         },
         {
-          "path": "crates/tex-typeset/src/linebreak/tests.rs",
+          "path": "crates/tex-typeset/src/linebreak/tests/shape_and_breaks.rs",
           "test": "discardable_tail_does_not_create_an_empty_final_line"
         },
         {
-          "path": "crates/tex-typeset/src/linebreak/tests.rs",
+          "path": "crates/tex-typeset/src/linebreak/tests/shape_and_breaks.rs",
           "test": "unmet_looseness_retries_after_the_pretolerance_pass"
         },
         {
-          "path": "crates/tex-typeset/src/linebreak/tests.rs",
+          "path": "crates/tex-typeset/src/linebreak/tests/shape_and_breaks.rs",
           "test": "existing_discretionary_is_available_on_the_pretolerance_pass"
         }
       ],
@@ -311,19 +311,19 @@
       "test_level": "rust-unit+semantic-minifixture+integration-diagnostic",
       "coverage": [
         {
-          "path": "crates/tex-typeset/src/linebreak/tests.rs",
+          "path": "crates/tex-typeset/src/linebreak/tests/post_break.rs",
           "test": "chosen_discretionary_transplants_nonempty_pre_and_post_lists"
         },
         {
-          "path": "crates/tex-typeset/src/linebreak/tests.rs",
+          "path": "crates/tex-typeset/src/linebreak/tests/post_break.rs",
           "test": "next_line_discards_all_discardables_but_retains_font_kern"
         },
         {
-          "path": "crates/tex-typeset/src/linebreak/tests.rs",
+          "path": "crates/tex-typeset/src/linebreak/tests/post_break.rs",
           "test": "two_line_penalty_after_combines_club_widow_and_broken_penalties"
         },
         {
-          "path": "crates/tex-typeset/src/linebreak/tests.rs",
+          "path": "crates/tex-typeset/src/linebreak/tests/shape_and_breaks.rs",
           "test": "post_line_break_keeps_migrating_nodes_for_execution_layer"
         },
         {

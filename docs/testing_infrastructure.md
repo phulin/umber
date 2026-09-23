@@ -1061,7 +1061,7 @@ in.
 `tests/corpus/canonical-dvi` is what survives of that retirement: two closed
 case directories whose `source.tex`/`expected.dvi` pairs back the
 canonical-divergence regression tests in
-`crates/umber/tests/it/e2e_conformance.rs`. It is a static copy, deliberately
+`crates/umber/tests/it/e2e_conformance/canonical_dvi.rs`. It is a static copy, deliberately
 outside `scripts/regen-fixtures.sh`'s DVI-area list, because those two tests
 pin a specific past divergence rather than tracking the reference engine.
 

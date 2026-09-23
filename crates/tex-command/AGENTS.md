@@ -480,9 +480,12 @@ collector (see `src/conditionals.rs`).
 - `src/processor/alignment.rs`, `src/processor/alignment/tests.rs`: canonical
   alignment-delivery state and focused stack, brace-depth, template, and omit
   lifecycle tests.
-- `src/processor/expand/tests.rs` and `src/processor/fixtures/`: focused
-  expanded-delivery, primitive, replay, allocation/layout unit tests and
-  bounded source microfixtures.
+- `src/processor/expand/tests.rs` and `src/processor/expand/tests/`: shared
+  expansion-test setup and named delivery, balanced-body, numeric/conditional,
+  expression, font/name, macro, preflight, character-run, protected-replay, and
+  PDF-query families. Existing kernel, nesting, and resident-run modules stay
+  in the same unit-test target; `src/processor/fixtures/` holds bounded source
+  microfixtures.
 - `src/scanners/`: private typed scanner family. `hyphenation.rs` owns TeX82
   §934/§960's `\hyphenation`/`\patterns` scans, which are `get_x_token`
   classification loops rather than `scan_toks` collections and so must never

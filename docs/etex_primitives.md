@@ -181,8 +181,9 @@ family and the compatibility-mode visibility boundary.
   `\tracingifs` is pinned by
   `crates/tex-exec/src/main_control/etex_diagnostic_tracing.rs`'s
   focused fixtures, and `\tracingnesting`'s `file_warning` case by
-  `crates/tex-command/src/processor/expand/tests.rs`'s, against real
-  e-TeX/pdfTeX 1.40.25 output captured with each parameter set in isolation.
+  the `command-semantic/etex-diagnostics/incomplete-source-nesting-warning`
+  fixture, against real e-TeX/pdfTeX 1.40.25 output captured with each
+  parameter set in isolation.
   `\tracingnesting`'s `group_warning`/`if_warning` case, `\tracingassigns`
   coverage of box registers and font selection, and `\tracingifs`'s
   mode-change prefix remain open (`umber2-aqx9`, `umber2-38hs`,
