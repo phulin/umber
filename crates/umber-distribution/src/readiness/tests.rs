@@ -7,17 +7,18 @@ fn identity() -> PrefetchIdentity {
 #[test]
 fn readiness_prioritizes_absence_then_admission() {
     assert_eq!(
-        Readiness::from_evidence(true, true, true),
-        Readiness::Absent
+        Readiness::classify(Some(true), true, true),
+        Some(Readiness::Absent)
     );
     assert_eq!(
-        Readiness::from_evidence(true, true, false),
-        Readiness::Ready
+        Readiness::classify(Some(true), true, false),
+        Some(Readiness::Ready)
     );
     assert_eq!(
-        Readiness::from_evidence(true, false, false),
-        Readiness::ExistsNotReady
+        Readiness::classify(Some(true), false, false),
+        Some(Readiness::ExistsNotReady)
     );
+    assert_eq!(Readiness::classify(None, false, false), None);
 }
 
 #[test]

@@ -599,7 +599,7 @@ fn packed_shards_are_deterministic_roundtrip_and_probe_exact_keys() {
 }
 
 #[test]
-fn packed_schema_two_canonicalizes_tables_and_retains_schema_one_compatibility() {
+fn packed_schema_two_canonicalizes_tables_and_rejects_schema_one() {
     let manifest = Manifest::parse(&fixture().manifest).expect("monolithic fixture");
     let catalog = shard_manifest(&manifest, 0).expect("one packed shard");
     let bytes = pack_shard(&catalog.shards[0]).expect("packed shard");
@@ -641,29 +641,27 @@ fn packed_schema_two_canonicalizes_tables_and_retains_schema_one_compatibility()
         .collect::<Vec<_>>();
     assert!(paths.windows(2).all(|pair| pair[0] < pair[1]));
 
+    ValidatedPackedShard::new(bytes.clone(), &catalog.root, 0).expect("current packed shard");
+
     let mut legacy = bytes.clone();
     legacy[..8].copy_from_slice(b"UMBRPKS1");
-    legacy[8..10].copy_from_slice(&LEGACY_PACKED_SHARD_SCHEMA.to_le_bytes());
-    ValidatedPackedShard::new(legacy, &catalog.root, 0).expect("legacy packed shard");
+    legacy[8..10].copy_from_slice(&1u16.to_le_bytes());
+    assert_eq!(
+        ValidatedPackedShard::new(legacy, &catalog.root, 0)
+            .expect_err("old packed schema")
+            .to_string(),
+        "invalid packed shard header"
+    );
 
     let mut mismatched = bytes;
     mismatched[..8].copy_from_slice(b"UMBRPKS1");
     assert!(ValidatedPackedShard::new(mismatched, &catalog.root, 0).is_err());
 }
 
-fn synthetic_packed_header(
-    packed_schema: u16,
-    total_len: u32,
-    counts: [u32; 5],
-    offsets: [u32; 7],
-) -> Vec<u8> {
+fn synthetic_packed_header(total_len: u32, counts: [u32; 5], offsets: [u32; 7]) -> Vec<u8> {
     let mut bytes = vec![0; total_len as usize];
-    bytes[..8].copy_from_slice(if packed_schema == LEGACY_PACKED_SHARD_SCHEMA {
-        b"UMBRPKS1"
-    } else {
-        b"UMBRPKS2"
-    });
-    bytes[8..10].copy_from_slice(&packed_schema.to_le_bytes());
+    bytes[..8].copy_from_slice(b"UMBRPKS2");
+    bytes[8..10].copy_from_slice(&PACKED_SHARD_SCHEMA.to_le_bytes());
     bytes[12..16].copy_from_slice(&INDEX_SHARD_SCHEMA.to_le_bytes());
     for (offset, value) in [28, 32, 36, 40, 44].into_iter().zip(counts) {
         bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
@@ -692,20 +690,16 @@ fn packed_validator_rejects_wrapped_sections_before_allocating_tables() {
     let root = empty_packed_root();
 
     // The object section ends at 112 + u32::MAX * 16. Narrowing that end to
-    // u32 used to wrap it to 96 and admit a roughly 64-GiB legacy reserve.
-    let legacy = synthetic_packed_header(
-        LEGACY_PACKED_SHARD_SCHEMA,
-        112,
-        [2, 0, u32::MAX, 0, 0],
-        [80, 112, 112, 96, 96, 96, 96],
-    );
-    let error = ValidatedPackedShard::new(legacy, &root, 0).expect_err("wrapped legacy section");
+    // u32 used to wrap it to 96 and admit a roughly 64-GiB reserve.
+    let object_overflow =
+        synthetic_packed_header(112, [2, 0, u32::MAX, 0, 0], [80, 112, 112, 96, 96, 96, 96]);
+    let error =
+        ValidatedPackedShard::new(object_overflow, &root, 0).expect_err("wrapped object section");
     assert_eq!(error.to_string(), "packed shard section is out of bounds");
 
     // Both bucket and record section sizes are multiples of 2^32. Their old
     // narrowed ends returned to offset 80 before a multi-gigabyte hash reserve.
     let canonical = synthetic_packed_header(
-        PACKED_SHARD_SCHEMA,
         80,
         [1 << 31, 1 << 30, 0, 0, 0],
         [80, 80, 80, 80, 80, 80, 80],
@@ -718,7 +712,6 @@ fn packed_validator_rejects_wrapped_sections_before_allocating_tables() {
 #[test]
 fn packed_validator_uses_exact_table_load_arithmetic() {
     let saturated_load = synthetic_packed_header(
-        PACKED_SHARD_SCHEMA,
         80,
         [1 << 31, u32::MAX, 0, 0, 0],
         [80, 80, 48, 48, 48, 48, 48],

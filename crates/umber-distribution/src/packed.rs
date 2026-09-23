@@ -10,9 +10,7 @@ use crate::{
     ShardedManifestRoot,
 };
 
-pub const LEGACY_PACKED_SHARD_SCHEMA: u16 = 1;
 pub const PACKED_SHARD_SCHEMA: u16 = 2;
-const LEGACY_MAGIC: &[u8; 8] = b"UMBRPKS1";
 const MAGIC: &[u8; 8] = b"UMBRPKS2";
 const HEADER_BYTES: usize = 80;
 const BUCKET_BYTES: usize = 16;
@@ -44,7 +42,6 @@ impl Error for PackedShardError {}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Header {
-    packed_schema: u16,
     manifest_schema: u32,
     index: u32,
     distribution_offset: u32,
@@ -170,13 +167,8 @@ impl ValidatedPackedShard {
     }
 
     fn validate_records(&self, shard_bits: u8, key_blob: &str) -> Result<(), PackedShardError> {
-        if self.header.packed_schema == PACKED_SHARD_SCHEMA {
-            self.validate_canonical_object_table()?;
-            self.validate_canonical_path_table()?;
-        } else {
-            self.validate_legacy_object_table()?;
-            self.validate_legacy_path_table()?;
-        }
+        self.validate_object_table()?;
+        self.validate_path_table()?;
         self.validate_dependency_table(key_blob)?;
 
         let mut hashes = validation_vec(self.header.record_count)?;
@@ -214,7 +206,7 @@ impl ValidatedPackedShard {
         self.validate_bucket_table(&hashes)
     }
 
-    fn validate_canonical_object_table(&self) -> Result<(), PackedShardError> {
+    fn validate_object_table(&self) -> Result<(), PackedShardError> {
         let mut previous: Option<(u64, u64)> = None;
         for index in 0..self.header.object_count {
             let value = self.raw_object(index)?;
@@ -238,26 +230,6 @@ impl ValidatedPackedShard {
         Ok(())
     }
 
-    fn validate_legacy_object_table(&self) -> Result<(), PackedShardError> {
-        let mut object_values = validation_vec(self.header.object_count)?;
-        for index in 0..self.header.object_count {
-            let value = self.raw_object(index)?;
-            self.validate_object_length(value.1)?;
-            object_values.push(value);
-        }
-        object_values.sort_unstable();
-        for pair in object_values.windows(2) {
-            if pair[0].0 == pair[1].0 {
-                return Err(PackedShardError::new(if pair[0].1 == pair[1].1 {
-                    "packed object table contains a duplicate"
-                } else {
-                    "packed object digest has conflicting lengths"
-                }));
-            }
-        }
-        Ok(())
-    }
-
     fn validate_object_length(&self, length: u64) -> Result<(), PackedShardError> {
         if length > 128 * 1024 * 1024 {
             return Err(PackedShardError::new("packed object length is invalid"));
@@ -265,7 +237,7 @@ impl ValidatedPackedShard {
         Ok(())
     }
 
-    fn validate_canonical_path_table(&self) -> Result<(), PackedShardError> {
+    fn validate_path_table(&self) -> Result<(), PackedShardError> {
         let mut previous = None;
         for index in 0..self.header.path_count {
             let path = self.path(index)?;
@@ -283,22 +255,6 @@ impl ValidatedPackedShard {
                 }
             }
             previous = Some(path);
-        }
-        Ok(())
-    }
-
-    fn validate_legacy_path_table(&self) -> Result<(), PackedShardError> {
-        let mut path_values = validation_vec(self.header.path_count)?;
-        for index in 0..self.header.path_count {
-            let path = self.path(index)?;
-            Self::validate_path(path)?;
-            path_values.push(path);
-        }
-        path_values.sort_unstable();
-        if path_values.windows(2).any(|pair| pair[0] == pair[1]) {
-            return Err(PackedShardError::new(
-                "packed path table contains a duplicate",
-            ));
         }
         Ok(())
     }
@@ -925,13 +881,10 @@ fn parse_header(bytes: &[u8]) -> Result<Header, PackedShardError> {
     }
     let packed_schema = read_u16(bytes, 8)?;
     let magic = &bytes[..8];
-    let supported = (magic == LEGACY_MAGIC && packed_schema == LEGACY_PACKED_SHARD_SCHEMA)
-        || (magic == MAGIC && packed_schema == PACKED_SHARD_SCHEMA);
-    if !supported {
+    if magic != MAGIC || packed_schema != PACKED_SHARD_SCHEMA {
         return Err(PackedShardError::new("invalid packed shard header"));
     }
     Ok(Header {
-        packed_schema,
         manifest_schema: read_u32(bytes, 12)?,
         index: read_u32(bytes, 16)?,
         distribution_offset: read_u32(bytes, 20)?,

@@ -31,9 +31,10 @@ Those values are not distribution object identities or cache keys.
 
 - Monolithic publisher input schema 2 uses aHash64 object entries.
 - Full root schema 8 and HTML root schema 9 name packed shard payloads.
-- Every newly produced shard is packed schema 2 with magic `UMBRPKS2`.
-  Readers retain explicit schema-1/`UMBRPKS1` compatibility for authenticated
-  roots published before the canonical-table cutover; producers never emit it.
+- Packed shards use schema 2 with magic `UMBRPKS2`. Readers reject other packed
+  schemas at the header boundary, even when the bytes have an authenticated
+  digest in an older root. The writer and reader share the canonical sorted
+  object and path table contract.
 - Font and legacy-mapping records are schema 2 inside the packed payload.
 - Producer format metadata is schema 3 without an input closure and schema 4
   with a schema-1 input closure.
@@ -101,10 +102,9 @@ fixed-section end without narrowing and proves that the end fits the packed
 slice. Validation scratch uses fallible reserves after those bounds are
 established, so malformed counts return a packed-shard error rather than
 requesting an attacker-sized allocation.
-Schema-2 object and path admission compares adjacent borrowed rows directly in
+Object and path admission compares adjacent borrowed rows directly in
 one linear pass, rejecting disorder, duplicates, conflicting object lengths,
 invalid spans, and invalid paths without copying or sorting either table.
-Schema-1 compatibility retains its legacy encounter-order duplicate proof.
 The probe proof unwraps the circular table after one guaranteed empty bucket
 and scans every bucket once; it does not replay a live lookup for every record.
 Successful lookup thereafter borrows already validated key, path, object, and

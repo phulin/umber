@@ -10,7 +10,6 @@ use crate::html::{
 use crate::json::{self, Value};
 
 pub const MANIFEST_SCHEMA: u32 = 2;
-pub const LEGACY_SHARDED_ROOT_SCHEMA: u32 = 5;
 pub const SHARDED_ROOT_SCHEMA: u32 = 8;
 pub const INDEX_SHARD_SCHEMA: u32 = 3;
 pub const MAX_SHARD_BITS: u8 = 16;

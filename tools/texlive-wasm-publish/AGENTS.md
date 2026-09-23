@@ -16,8 +16,8 @@ payloads from the immutable content-addressed base.
 Schema-3 format entries may carry schema-1 input closures. Canonicalize their
 request keys, enforce the shared count/key-size bounds, reject duplicates, and
 verify every key against the complete published file map before writing. Keep
-schema-1 format metadata as the legacy no-closure form; schema-2 format
-metadata requires a closure.
+schema-3 format metadata as the no-closure form; schema-4 format metadata
+requires a schema-1 input closure.
 
 Production TeX lookup objects include every file below `tex/`, TFM metrics,
 and the runtime font areas `afm`, `enc`, `map`, `opentype`, `pk`, `type1`,

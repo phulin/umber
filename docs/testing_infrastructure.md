@@ -1167,7 +1167,7 @@ scripts/build-initex-format-matrix.sh \
 It delegates to the three builders above without overriding their resource
 guards and reports success only after Plain, LaTeX, and pdfLaTeX all pass.
 
-With `--publish-input-closure`, format metadata schema 2 also records the
+With `--publish-input-closure`, format metadata schema 4 also records the
 canonical sorted request keys derived from that already verified trace. The
 production snapshot builder uses this mode for both engines, stages local
 configuration inputs into a pinned auxiliary root, and requires two complete

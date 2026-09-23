@@ -568,7 +568,7 @@ def _packed_shard_files(
     if len(data) < 80:
         raise TexliveError(f"packed shard {index} has an invalid header")
     schema, reserved = struct.unpack_from("<HH", data, 8)
-    if (data[:8], schema) not in ((b"UMBRPKS1", 1), (b"UMBRPKS2", 2)) or reserved != 0:
+    if (data[:8], schema) != (b"UMBRPKS2", 2) or reserved != 0:
         raise TexliveError(f"packed shard {index} has an unsupported schema")
     (
         manifest_schema,

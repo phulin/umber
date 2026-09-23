@@ -52,27 +52,6 @@ impl Readiness {
     }
 
     #[must_use]
-    pub const fn from_evidence(
-        exists: bool,
-        payload_admitted: bool,
-        authoritative_absent: bool,
-    ) -> Self {
-        if authoritative_absent {
-            Self::Absent
-        } else if payload_admitted {
-            Self::Ready
-        } else if exists {
-            Self::ExistsNotReady
-        } else {
-            // Preserve this infallible compatibility helper's historical
-            // result for an unclassified request.  New callers should use
-            // `classify`, which returns `None` instead of misclassifying a
-            // transport or access error as semantic absence.
-            Self::ExistsNotReady
-        }
-    }
-
-    #[must_use]
     pub const fn wire_name(self) -> &'static str {
         match self {
             Self::Ready => "ready",

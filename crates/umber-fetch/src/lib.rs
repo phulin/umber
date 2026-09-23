@@ -12,7 +12,7 @@ pub use fetch::{
     BatchFetchError, FetchCancellation, FetchClient, FetchClientConfig, FetchDiagnostic,
     FetchFailure, FetchRequest, FetchedObject,
 };
-pub use manifest::{ManifestFetchError, fetch_manifest, fetch_manifest_cancellable};
+pub use manifest::ManifestFetchError;
 
 #[cfg(test)]
 mod tests;

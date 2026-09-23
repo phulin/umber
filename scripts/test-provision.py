@@ -584,12 +584,15 @@ def main() -> None:
         legacy_shard = bytearray(shard)
         legacy_shard[:8] = b"UMBRPKS1"
         struct.pack_into("<H", legacy_shard, 8, 1)
-        assert provision.texlive._packed_shard_files(
-            bytes(legacy_shard),
-            distribution="fixture-snapshot",
-            index=0,
-            shard_bits=0,
-        ).keys() == {"tex:from-object.tex", "tex:from-texmf.tex"}
+        expect_texlive_error(
+            lambda: provision.texlive._packed_shard_files(
+                bytes(legacy_shard),
+                distribution="fixture-snapshot",
+                index=0,
+                shard_bits=0,
+            ),
+            "unsupported schema",
+        )
         objects_offset = struct.unpack_from("<I", shard, 56)[0]
         unordered_shard = bytearray(shard)
         first_object = unordered_shard[objects_offset : objects_offset + 16]

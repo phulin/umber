@@ -16,14 +16,13 @@ pub use html::{
 };
 pub use manifest::{
     DependencyHint, FORMAT_INPUT_CLOSURE_SCHEMA, FormatInputClosure, INDEX_SHARD_SCHEMA,
-    LEGACY_SHARDED_ROOT_SCHEMA, MANIFEST_SCHEMA, MAX_FORMAT_INPUTS, MAX_REQUEST_KEY_BYTES,
-    MAX_SHARD_BITS, Manifest, ManifestFile, ManifestFont, ManifestFormat, ManifestParseError,
-    ManifestShard, NamedFormat, ObjectEntry, SHARDED_ROOT_SCHEMA, ShardFile, ShardedManifestRoot,
+    MANIFEST_SCHEMA, MAX_FORMAT_INPUTS, MAX_REQUEST_KEY_BYTES, MAX_SHARD_BITS, Manifest,
+    ManifestFile, ManifestFont, ManifestFormat, ManifestParseError, ManifestShard, NamedFormat,
+    ObjectEntry, SHARDED_ROOT_SCHEMA, ShardFile, ShardedManifestRoot,
 };
 pub use packed::{
-    LEGACY_PACKED_SHARD_SCHEMA, PACKED_SHARD_SCHEMA, PackedDependency, PackedFileRecord,
-    PackedRecord, PackedRecordKind, PackedShardError, ValidatedPackedShard, pack_shard,
-    unpack_shard,
+    PACKED_SHARD_SCHEMA, PackedDependency, PackedFileRecord, PackedRecord, PackedRecordKind,
+    PackedShardError, ValidatedPackedShard, pack_shard, unpack_shard,
 };
 pub use prefetch::{
     LiteralHint, LiteralHintKind, LiteralHintLimits, PrefetchBudget, PrefetchCandidate,

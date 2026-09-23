@@ -1,6 +1,5 @@
 use std::error::Error;
 use std::fmt;
-use std::time::Duration;
 
 use crate::FetchCancellation;
 use crate::downloader::{DownloadFailure, DownloadPolicy, LengthPolicy, VerifiedDownloader};
@@ -34,30 +33,6 @@ impl fmt::Display for ManifestFetchError {
 }
 
 impl Error for ManifestFetchError {}
-
-/// Downloads one bounded HTTPS manifest and verifies the caller's trust pin.
-pub fn fetch_manifest(
-    url: &str,
-    expected_ahash64: &str,
-    timeout: Duration,
-) -> Result<Vec<u8>, ManifestFetchError> {
-    fetch_manifest_cancellable(url, expected_ahash64, timeout, &FetchCancellation::new())
-}
-
-/// Downloads and verifies a manifest while observing cooperative cancellation.
-pub fn fetch_manifest_cancellable(
-    url: &str,
-    expected_ahash64: &str,
-    timeout: Duration,
-    cancellation: &FetchCancellation,
-) -> Result<Vec<u8>, ManifestFetchError> {
-    fetch_manifest_with_downloader(
-        url,
-        expected_ahash64,
-        cancellation,
-        &VerifiedDownloader::new(timeout),
-    )
-}
 
 pub(crate) fn fetch_manifest_with_downloader(
     url: &str,
