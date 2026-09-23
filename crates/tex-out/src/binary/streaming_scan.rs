@@ -4,7 +4,7 @@ use super::*;
 ///
 /// Metadata and effects are retained, but the root list is decoded one direct
 /// child at a time so replay never constructs an owned whole-page node tree.
-pub(crate) struct V10PageDecoder<'a> {
+pub(crate) struct ArtifactPageDecoder<'a> {
     pub(crate) page: PageArtifact,
     pub(crate) root_vertical: bool,
     reader: Reader<'a>,
@@ -12,7 +12,7 @@ pub(crate) struct V10PageDecoder<'a> {
     font_ids: std::collections::BTreeMap<u32, bool>,
 }
 
-impl<'a> V10PageDecoder<'a> {
+impl<'a> ArtifactPageDecoder<'a> {
     pub(crate) fn new(bytes: &'a [u8], limits: ArtifactCodecLimits) -> Result<Self, ParseError> {
         if bytes.len() > limits.max_bytes {
             return Err(ParseError::LimitExceeded {
@@ -70,9 +70,9 @@ impl<'a> V10PageDecoder<'a> {
         })
     }
 
-    pub(crate) fn stream_children(&mut self) -> V10NodeListSlice<'_, 'a> {
+    pub(crate) fn stream_children(&mut self) -> ArtifactNodeListSlice<'_, 'a> {
         let remaining = std::mem::take(&mut self.remaining);
-        V10NodeListSlice {
+        ArtifactNodeListSlice {
             bytes: self.reader.bytes,
             start: self.reader.offset,
             count: remaining,
@@ -84,7 +84,7 @@ impl<'a> V10PageDecoder<'a> {
     }
 }
 
-pub(crate) struct V10NodeListReader<'r, 'a> {
+pub(crate) struct ArtifactNodeListReader<'r, 'a> {
     reader: Reader<'a>,
     remaining: usize,
     depth: usize,
@@ -92,7 +92,7 @@ pub(crate) struct V10NodeListReader<'r, 'a> {
     effects_len: usize,
 }
 
-pub(crate) enum V10StreamNode<'r, 'a> {
+pub(crate) enum ArtifactStreamNode<'r, 'a> {
     Char {
         font_id: u32,
         ch: u32,
@@ -102,7 +102,7 @@ pub(crate) enum V10StreamNode<'r, 'a> {
     Glue {
         spec: GlueSpec,
         kind: GlueKind,
-        leader: V10StreamLeader<'r, 'a>,
+        leader: ArtifactStreamLeader<'r, 'a>,
     },
     Rule {
         width: Option<Scaled>,
@@ -112,14 +112,14 @@ pub(crate) enum V10StreamNode<'r, 'a> {
     Box {
         vertical: bool,
         fields: BoxNode,
-        children: V10NodeListSlice<'r, 'a>,
+        children: ArtifactNodeListSlice<'r, 'a>,
     },
     WhatsitAnchor(u32),
     Math(Scaled),
-    Ignored(Vec<V10NodeListSlice<'r, 'a>>),
+    Ignored(Vec<ArtifactNodeListSlice<'r, 'a>>),
 }
 
-pub(crate) enum V10StreamLeader<'r, 'a> {
+pub(crate) enum ArtifactStreamLeader<'r, 'a> {
     None,
     Rule {
         width: Option<Scaled>,
@@ -129,12 +129,12 @@ pub(crate) enum V10StreamLeader<'r, 'a> {
     Box {
         vertical: bool,
         fields: BoxNode,
-        children: V10NodeListSlice<'r, 'a>,
+        children: ArtifactNodeListSlice<'r, 'a>,
     },
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct V10NodeListSlice<'r, 'a> {
+pub(crate) struct ArtifactNodeListSlice<'r, 'a> {
     bytes: &'a [u8],
     start: usize,
     count: usize,
@@ -144,9 +144,9 @@ pub(crate) struct V10NodeListSlice<'r, 'a> {
     effects_len: usize,
 }
 
-impl<'r, 'a> V10NodeListSlice<'r, 'a> {
-    pub(crate) fn reader(self) -> V10NodeListReader<'r, 'a> {
-        V10NodeListReader {
+impl<'r, 'a> ArtifactNodeListSlice<'r, 'a> {
+    pub(crate) fn reader(self) -> ArtifactNodeListReader<'r, 'a> {
+        ArtifactNodeListReader {
             reader: Reader::new_at(self.bytes, self.limits, self.start),
             remaining: self.count,
             depth: self.depth,
@@ -184,12 +184,12 @@ impl<'r, 'a> V10NodeListSlice<'r, 'a> {
                 ));
             }
             match node {
-                V10StreamNode::Box { children, .. }
-                | V10StreamNode::Glue {
-                    leader: V10StreamLeader::Box { children, .. },
+                ArtifactStreamNode::Box { children, .. }
+                | ArtifactStreamNode::Glue {
+                    leader: ArtifactStreamLeader::Box { children, .. },
                     ..
                 } => readers.push(children.reader()),
-                V10StreamNode::Ignored(children) => {
+                ArtifactStreamNode::Ignored(children) => {
                     readers.extend(children.into_iter().rev().map(Self::reader));
                 }
                 _ => {}
@@ -199,7 +199,7 @@ impl<'r, 'a> V10NodeListSlice<'r, 'a> {
     }
 }
 
-impl<'r, 'a> V10NodeListReader<'r, 'a> {
+impl<'r, 'a> ArtifactNodeListReader<'r, 'a> {
     pub(crate) fn is_empty(&self) -> bool {
         self.remaining == 0
     }
@@ -207,7 +207,7 @@ impl<'r, 'a> V10NodeListReader<'r, 'a> {
     pub(crate) fn next(
         &mut self,
         validate: bool,
-    ) -> Result<Option<V10StreamNode<'r, 'a>>, ParseError> {
+    ) -> Result<Option<ArtifactStreamNode<'r, 'a>>, ParseError> {
         if self.remaining == 0 {
             return Ok(None);
         }
@@ -222,7 +222,7 @@ impl<'r, 'a> V10NodeListReader<'r, 'a> {
                 if validate {
                     validate_streamed_char(self.font_ids, font_id, ch)?;
                 }
-                V10StreamNode::Char { font_id, ch, width }
+                ArtifactStreamNode::Char { font_id, ch, width }
             }
             wire::node::LIG => {
                 let font_id = self.reader.u32()?;
@@ -243,12 +243,12 @@ impl<'r, 'a> V10NodeListReader<'r, 'a> {
                         validate_streamed_char(self.font_ids, font_id, source)?;
                     }
                 }
-                V10StreamNode::Char { font_id, ch, width }
+                ArtifactStreamNode::Char { font_id, ch, width }
             }
             wire::node::KERN => {
                 let amount = self.reader.scaled()?;
                 parse_kern_kind(self.reader.u8()?)?;
-                V10StreamNode::Kern(amount)
+                ArtifactStreamNode::Kern(amount)
             }
             wire::node::MARGIN_KERN => {
                 let amount = self.reader.scaled()?;
@@ -266,14 +266,14 @@ impl<'r, 'a> V10NodeListReader<'r, 'a> {
                 if validate {
                     validate_streamed_char(self.font_ids, font_id, u32::from(ch))?;
                 }
-                V10StreamNode::Kern(amount)
+                ArtifactStreamNode::Kern(amount)
             }
             wire::node::GLUE => {
                 let spec = self.reader.glue_spec()?;
                 let kind = parse_glue_kind(self.reader.u8()?)?;
                 let leader = match self.reader.u8()? {
-                    wire::leader::NONE => V10StreamLeader::None,
-                    wire::leader::RULE => V10StreamLeader::Rule {
+                    wire::leader::NONE => ArtifactStreamLeader::None,
+                    wire::leader::RULE => ArtifactStreamLeader::Rule {
                         width: self.reader.optional_scaled()?,
                         height: self.reader.optional_scaled()?,
                         depth: self.reader.optional_scaled()?,
@@ -282,7 +282,7 @@ impl<'r, 'a> V10NodeListReader<'r, 'a> {
                         let fields = self.reader.box_fields()?.finish(Vec::new());
                         let count = self.reader.collection_len(5)?;
                         let children = self.read_list(count, self.depth + 1)?;
-                        V10StreamLeader::Box {
+                        ArtifactStreamLeader::Box {
                             vertical: tag == wire::leader::VLIST,
                             fields,
                             children,
@@ -295,13 +295,13 @@ impl<'r, 'a> V10NodeListReader<'r, 'a> {
                         });
                     }
                 };
-                V10StreamNode::Glue { spec, kind, leader }
+                ArtifactStreamNode::Glue { spec, kind, leader }
             }
             wire::node::PENALTY => {
                 self.reader.i32()?;
-                V10StreamNode::Ignored(Vec::new())
+                ArtifactStreamNode::Ignored(Vec::new())
             }
-            wire::node::RULE => V10StreamNode::Rule {
+            wire::node::RULE => ArtifactStreamNode::Rule {
                 width: self.reader.optional_scaled()?,
                 height: self.reader.optional_scaled()?,
                 depth: self.reader.optional_scaled()?,
@@ -310,7 +310,7 @@ impl<'r, 'a> V10NodeListReader<'r, 'a> {
                 let fields = self.reader.box_fields()?.finish(Vec::new());
                 let remaining = self.reader.collection_len(5)?;
                 let children = self.read_list(remaining, self.depth + 1)?;
-                V10StreamNode::Box {
+                ArtifactStreamNode::Box {
                     vertical: tag == wire::node::VLIST,
                     fields,
                     children,
@@ -325,10 +325,10 @@ impl<'r, 'a> V10NodeListReader<'r, 'a> {
                         crate::ArtifactValidationError::MissingEffect { effect_index },
                     ));
                 }
-                V10StreamNode::WhatsitAnchor(effect_index)
+                ArtifactStreamNode::WhatsitAnchor(effect_index)
             }
             wire::node::MATH_ON | wire::node::MATH_OFF => {
-                V10StreamNode::Math(self.reader.scaled()?)
+                ArtifactStreamNode::Math(self.reader.scaled()?)
             }
             wire::node::DISC => {
                 parse_disc_kind(self.reader.u8()?)?;
@@ -337,19 +337,19 @@ impl<'r, 'a> V10NodeListReader<'r, 'a> {
                     let remaining = self.reader.collection_len(5)?;
                     children.push(self.read_list(remaining, self.depth + 1)?);
                 }
-                V10StreamNode::Ignored(children)
+                ArtifactStreamNode::Ignored(children)
             }
             wire::node::MARK => {
                 self.reader.u16()?;
                 self.validate_tokens(validate)?;
-                V10StreamNode::Ignored(Vec::new())
+                ArtifactStreamNode::Ignored(Vec::new())
             }
             wire::node::INSERT | wire::node::ADJUST => {
                 if tag == wire::node::INSERT {
                     self.reader.u16()?;
                 }
                 let remaining = self.reader.collection_len(5)?;
-                V10StreamNode::Ignored(vec![self.read_list(remaining, self.depth + 1)?])
+                ArtifactStreamNode::Ignored(vec![self.read_list(remaining, self.depth + 1)?])
             }
             tag => return Err(ParseError::InvalidTag { kind: "node", tag }),
         }))
@@ -359,12 +359,12 @@ impl<'r, 'a> V10NodeListReader<'r, 'a> {
         &mut self,
         count: usize,
         depth: usize,
-    ) -> Result<V10NodeListSlice<'r, 'a>, ParseError> {
+    ) -> Result<ArtifactNodeListSlice<'r, 'a>, ParseError> {
         let start = self.reader.offset;
         for _ in 0..count {
             self.reader.skip_node()?;
         }
-        Ok(V10NodeListSlice {
+        Ok(ArtifactNodeListSlice {
             bytes: self.reader.bytes,
             start,
             count,

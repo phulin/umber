@@ -51,12 +51,10 @@ export class SessionDriver {
 				if (result?.kind === "error") throw diagnosticError(result, phase);
 				validateResourceWait(result, phase);
 				onProgress?.(result);
-				this.#resolver.noteReplay?.(
-					typeof session.resourceReplayContext === "function"
-						? session.resourceReplayContext()
-						: undefined,
-					[...(result.required ?? []), ...(result.probes ?? [])],
-				);
+				this.#resolver.noteReplay?.(session.resourceReplayContext(), [
+					...(result.required ?? []),
+					...(result.probes ?? []),
+				]);
 				const responses = await resolveBatch(
 					this.#resolver,
 					result,
@@ -68,7 +66,7 @@ export class SessionDriver {
 			}
 			throw new SessionDriverError(
 				"attempt-limit",
-				`compile attempt limit ${attemptLimit} reached`,
+				`advance limit ${attemptLimit} reached`,
 			);
 		} catch (error) {
 			if (controller.signal.reason instanceof SessionOperationCancelled) {
@@ -112,10 +110,7 @@ function provideResponses(session, resolver, responses) {
 		const speculative = responses.filter(
 			(response) => response?.speculative === true,
 		);
-		if (
-			speculative.length > 0 &&
-			typeof session.authorizePrefetchResources === "function"
-		) {
+		if (speculative.length > 0) {
 			session.authorizePrefetchResources(speculative);
 		}
 		session.provideResources(responses);
@@ -188,7 +183,7 @@ function validateResourceWait(result, phase) {
 	) {
 		throw new SessionDriverError(
 			"invalid-binding",
-			`${phase === "compile" ? "compileAttempt" : phase} returned an invalid result`,
+			`${phase === "compile" ? "advance" : phase} returned an invalid result`,
 		);
 	}
 }

@@ -17,7 +17,7 @@ acquisition. It does not own TeX format identity or engine validation.
 
 ## File Map
 
-- `src/cache.rs`: one bounded `BlobStore`, `VerifiedBlobSpec`, platform cache discovery, compatibility readers, the locked entry state machine for validation, quarantine, migration, construction, and publication, and the separately invoked complete cache audit.
+- `src/cache.rs`: one bounded `BlobStore`, `VerifiedBlobSpec`, platform cache discovery, the locked entry state machine for validation, quarantine, construction, and publication, and the separately invoked complete cache audit.
 - `src/blob_store_unix.rs`: root-handle-relative Unix authority, anchored cache enumeration for explicit audits, per-key process locks, durable quarantine, and no-clobber publication for every blob.
 - `src/blob_store_unsupported.rs`: fail-closed native persistence boundary for hosts without the required anchored I/O primitives.
 - `src/distribution_client.rs`: store-owning native distribution acquisition façade for verified manifest and object batches.

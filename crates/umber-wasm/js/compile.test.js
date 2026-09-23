@@ -29,7 +29,7 @@ function bindings(results, hooks = {}) {
 			this.resolved.push(...responses);
 		}
 
-		compileAttempt() {
+		advance() {
 			return this.results.shift();
 		}
 

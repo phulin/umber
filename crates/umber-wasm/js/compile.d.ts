@@ -29,6 +29,8 @@ export interface CompilerBindings {
 	) => {
 		addUserFile(path: string, bytes: Uint8Array): void;
 		provideResources(responses: ResourceResponse[]): void;
+		authorizePrefetchResources(responses: ResourceResponse[]): void;
+		resourceReplayContext(): unknown;
 		applyPatch(patch: import("./umber_wasm.js").SourcePatch): void;
 		renderedSourceLocation(
 			page: number,
@@ -47,8 +49,7 @@ export interface CompilerBindings {
 		readonly acceptedInputObservations:
 			| import("./umber_wasm.js").AcceptedInputObservationLedger
 			| undefined;
-		advance?(): import("./umber_wasm.js").AttemptResult;
-		compileAttempt(): import("./umber_wasm.js").AttemptResult;
+		advance(): import("./umber_wasm.js").AttemptResult;
 		dispose(): void;
 	};
 	ProjectSession?: new (
@@ -56,12 +57,13 @@ export interface CompilerBindings {
 	) => {
 		addUserFile(path: string, bytes: Uint8Array): void;
 		provideResources(responses: ResourceResponse[]): void;
+		authorizePrefetchResources(responses: ResourceResponse[]): void;
+		resourceReplayContext(): unknown;
 		cancelPendingPatch(): boolean;
 		readonly acceptedInputObservations:
 			| import("./umber_wasm.js").AcceptedInputObservationLedger
 			| undefined;
-		advance?(): import("./umber_wasm.js").AttemptResult;
-		compileAttempt(): import("./umber_wasm.js").AttemptResult;
+		advance(): import("./umber_wasm.js").AttemptResult;
 		dispose(): void;
 	};
 	EditorSession?: new (
@@ -69,6 +71,10 @@ export interface CompilerBindings {
 	) => {
 		addUserFile(path: string, bytes: Uint8Array): void;
 		provideResources(responses: ResourceResponse[]): void;
+		authorizePrefetchResources(responses: ResourceResponse[]): void;
+		resourceReplayContext(): unknown;
+		renderUpdate(): HtmlRenderUpdate | null;
+		renderResync(): HtmlRenderUpdate | null;
 		applyPatch(patch: import("./umber_wasm.js").SourcePatch): void;
 		renderedSourceLocation(
 			page: number,

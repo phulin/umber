@@ -3,31 +3,6 @@
 use super::*;
 
 #[test]
-#[allow(clippy::disallowed_methods)] // host-side command execution.
-fn removed_html_font_directory_names_the_typed_replacement() {
-    // Any small committed source will do: this asserts an argument-parsing
-    // rejection that never reaches the engine. `dvi`/`page` were retired
-    // into the minifixture corpus, so it names a surviving area.
-    let setup = dvi::DviCaseSetup::new("math", "accents");
-    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
-        .current_dir(setup.run_dir())
-        .args([
-            "run",
-            setup.source_file_name(),
-            "--html",
-            "actual.html",
-            "--html-font-dir",
-            "web-fonts",
-        ])
-        .output()
-        .expect("run removed HTML font option");
-    assert!(!output.status.success());
-    let error = String::from_utf8_lossy(&output.stderr);
-    assert!(error.contains("--html-font-dir was removed"));
-    assert!(error.contains("typed resource resolver API"));
-}
-
-#[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
 fn run_initializes_clock_parameters_from_source_date_epoch() {
     let temp_dir = tempfile::tempdir().expect("create clock temp dir");

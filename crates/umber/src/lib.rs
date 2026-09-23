@@ -1666,7 +1666,7 @@ pub fn write_dvi_from_committed_artifacts<W: std::io::Write>(
 ) -> Result<W, DviBuildError> {
     let mut writer = DviStreamWriter::new(sink);
     for committed in artifacts {
-        let plan = DviPagePlan::compile_v10(committed.bytes())?;
+        let plan = DviPagePlan::compile_artifact(committed.bytes())?;
         writer.write_page_plan(&plan)?;
     }
     Ok(writer.finish()?)
@@ -1684,7 +1684,7 @@ pub fn write_dvi_from_artifacts<G, W: std::io::Write>(
             .world()
             .read_artifact(hash)?
             .ok_or(DviBuildError::MissingArtifact(hash))?;
-        let plan = DviPagePlan::compile_v10(&bytes)?;
+        let plan = DviPagePlan::compile_artifact(&bytes)?;
         writer.write_page_plan(&plan)?;
     }
     Ok(writer.finish()?)

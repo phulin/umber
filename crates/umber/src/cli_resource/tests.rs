@@ -33,7 +33,7 @@ fn local_startup_prefetch_is_visible_to_input() {
     let mut session = NativeCompileSession::new_with_cache(
         &options,
         &FetchCancellation::new(),
-        ObjectCache::new(directory.path().join("cache")),
+        BlobStore::new(directory.path().join("cache")),
     )
     .expect("native session");
     let output = session
@@ -68,7 +68,7 @@ fn local_startup_prefetch_is_visible_to_probe() {
     let mut session = NativeCompileSession::new_with_cache(
         &options,
         &FetchCancellation::new(),
-        ObjectCache::new(directory.path().join("cache")),
+        BlobStore::new(directory.path().join("cache")),
     )
     .expect("native session");
     let output = session
@@ -146,7 +146,7 @@ fn literal_class_and_package_hints_resolve_project_extensions() {
     let mut session = NativeCompileSession::new_with_cache(
         &options,
         &FetchCancellation::new(),
-        ObjectCache::new(directory.path().join("cache")),
+        BlobStore::new(directory.path().join("cache")),
     )
     .expect("native session");
     let batch = match session.session.compile_attempt() {
@@ -293,7 +293,7 @@ fn accepted_native_compile_publishes_lookup_history() {
         expansion_fuel: None,
         execution_steps: None,
     };
-    let cache = ObjectCache::new(directory.path().join("cache"));
+    let cache = BlobStore::new(directory.path().join("cache"));
     let mut session =
         NativeCompileSession::new_with_cache(&options, &FetchCancellation::new(), cache.clone())
             .expect("native session");
@@ -334,7 +334,7 @@ fn native_session_installs_independent_explicit_engine_guards() {
     let session = NativeCompileSession::new_with_cache(
         &options,
         &FetchCancellation::new(),
-        ObjectCache::new(directory.path().join("cache")),
+        BlobStore::new(directory.path().join("cache")),
     )
     .expect("native session");
 
@@ -405,7 +405,7 @@ fn native_session_allows_the_hard_bounded_resource_attempt_count() {
     let session = NativeCompileSession::new_with_cache(
         &options,
         &FetchCancellation::new(),
-        ObjectCache::new(directory.path().join("cache")),
+        BlobStore::new(directory.path().join("cache")),
     )
     .expect("native session");
 
@@ -457,7 +457,7 @@ fn retained_revision_does_not_refetch_resolved_distribution_file() {
         execution_steps: None,
     };
     let cache_root = directory.path().join("cache");
-    let cache = ObjectCache::new(&cache_root);
+    let cache = BlobStore::new(&cache_root);
     let cancellation = FetchCancellation::new();
     let mut session = NativeCompileSession::new_with_cache(&options, &cancellation, cache.clone())
         .expect("session");
@@ -512,7 +512,7 @@ fn bounded_distribution_owner_reuses_verified_state_and_preserves_detection_boun
         expansion_fuel: None,
         execution_steps: None,
     };
-    let cache = ObjectCache::new(directory.path().join("cache"));
+    let cache = BlobStore::new(directory.path().join("cache"));
     let owner = NativeDistributionOwner::with_cache(&options, cache);
 
     let cancellation = FetchCancellation::new();
@@ -559,7 +559,7 @@ fn bounded_distribution_owner_reuses_verified_state_and_preserves_detection_boun
 
     let fresh_owner = NativeDistributionOwner::with_cache(
         &options,
-        ObjectCache::new(directory.path().join("fresh-cache")),
+        BlobStore::new(directory.path().join("fresh-cache")),
     );
     let mut fresh =
         NativeCompileSession::new_with_distribution_owner(&options, &cancellation, &fresh_owner)
@@ -602,7 +602,7 @@ fn verified_owner_retains_touched_packed_shards_and_replays_unseen_keys_offline(
         &[(shard.as_str(), true)],
     );
     let mut resolver = DistributionResolver::new(
-        ObjectCache::new(directory.path().join("cache")),
+        BlobStore::new(directory.path().join("cache")),
         Some(directory.path().to_string_lossy().into_owned()),
         None,
         true,
@@ -740,7 +740,7 @@ fn cancelled_pending_revision_can_be_superseded() {
     let mut session = NativeCompileSession::new_with_cache(
         &options,
         &cancellation,
-        ObjectCache::new(directory.path().join("cache")),
+        BlobStore::new(directory.path().join("cache")),
     )
     .expect("session");
     session.compile(&cancellation).expect("cold compile");
@@ -870,7 +870,7 @@ fn explicit_local_distribution_preserves_typed_pk_key_path_and_digest() {
     std::fs::write(directory.path().join("cmr10.600pk"), bytes).expect("PK fixture");
     let request = tex_fonts::PdfPkFontRequest::new(b"cmr10".to_vec(), 600, b"ljfour".to_vec());
     let mut resolver = DistributionResolver::new(
-        ObjectCache::new(directory.path().join("cache")),
+        BlobStore::new(directory.path().join("cache")),
         None,
         None,
         true,
@@ -989,7 +989,7 @@ fn native_distribution_image_preserves_typed_identity_and_verified_bytes() {
     );
     let project = TempDir::new().expect("isolated project");
     let mut resolver = DistributionResolver::new(
-        ObjectCache::new(directory.path().join("cache")),
+        BlobStore::new(directory.path().join("cache")),
         Some(directory.path().to_string_lossy().into_owned()),
         None,
         true,
@@ -1025,7 +1025,7 @@ fn native_image_resolution_preserves_local_precedence() {
     let project = TempDir::new().expect("isolated project");
     std::fs::write(project.path().join("figure.pdf"), b"local image").expect("local image");
     let mut resolver = DistributionResolver::new(
-        ObjectCache::new(directory.path().join("cache")),
+        BlobStore::new(directory.path().join("cache")),
         Some(directory.path().to_string_lossy().into_owned()),
         None,
         true,
@@ -1067,7 +1067,7 @@ fn native_distribution_non_image_payload_reaches_malformed_image_diagnostic() {
     );
     let project = TempDir::new().expect("isolated project");
     let mut resolver = DistributionResolver::new(
-        ObjectCache::new(directory.path().join("cache")),
+        BlobStore::new(directory.path().join("cache")),
         Some(directory.path().to_string_lossy().into_owned()),
         None,
         true,
@@ -1116,7 +1116,7 @@ fn verified_shard_absence_returns_typed_unavailable() {
     let shard = "{\"schema\":3,\"distribution\":\"absence\",\"index\":0,\"files\":{}}\n";
     write_sharded_root(directory.path(), "absence", 0, &[(shard, true)]);
     let mut resolver = DistributionResolver::new(
-        ObjectCache::new(directory.path().join("cache")),
+        BlobStore::new(directory.path().join("cache")),
         Some(directory.path().to_string_lossy().into_owned()),
         None,
         true,
@@ -1140,7 +1140,7 @@ fn missing_local_shard_diagnostic_names_identity_and_bounds_request_keys() {
     let shard = "{\"schema\":3,\"distribution\":\"missing-shard\",\"index\":0,\"files\":{}}\n";
     let (_, digests) = write_sharded_root(directory.path(), "missing-shard", 0, &[(shard, false)]);
     let mut resolver = DistributionResolver::new(
-        ObjectCache::new(directory.path().join("cache")),
+        BlobStore::new(directory.path().join("cache")),
         Some(directory.path().to_string_lossy().into_owned()),
         None,
         true,
@@ -1224,7 +1224,7 @@ fn distribution_tex_input_uses_web2c_ordered_appended_tex_fallback() {
         "program.pfb",
     );
     let mut resolver = DistributionResolver::new(
-        ObjectCache::new(directory.path().join("cache")),
+        BlobStore::new(directory.path().join("cache")),
         Some(directory.path().to_string_lossy().into_owned()),
         None,
         true,
@@ -1277,7 +1277,7 @@ fn offline_local_distribution_reports_a_missing_object_distinctly_from_a_missing
         &[(shard.as_str(), true)],
     );
     let mut resolver = DistributionResolver::new(
-        ObjectCache::new(directory.path().join("cache")),
+        BlobStore::new(directory.path().join("cache")),
         Some(directory.path().to_string_lossy().into_owned()),
         None,
         true,
@@ -1322,7 +1322,7 @@ fn exact_snapshot_delivers_corpus_tex_tfm_type1_and_vf_requests_offline() {
     );
     let project = TempDir::new().expect("isolated project");
     let mut resolver = DistributionResolver::new(
-        ObjectCache::new(cache.path()),
+        BlobStore::new(cache.path()),
         Some(snapshot.to_string_lossy().into_owned()),
         None,
         true,
@@ -1389,7 +1389,7 @@ fn native_virtual_font_resolution_preserves_typed_identity_and_reuses_cache() {
     ))]);
     let cancellation = FetchCancellation::new();
     let mut cold = DistributionResolver::new(
-        ObjectCache::new(&cache),
+        BlobStore::new(&cache),
         Some(directory.path().to_string_lossy().into_owned()),
         None,
         false,
@@ -1405,7 +1405,7 @@ fn native_virtual_font_resolution_preserves_typed_identity_and_reuses_cache() {
 
     std::fs::remove_file(objects.join(object)).expect("remove distribution VF object");
     let mut warm = DistributionResolver::new(
-        ObjectCache::new(&cache),
+        BlobStore::new(&cache),
         Some(directory.path().to_string_lossy().into_owned()),
         None,
         true,
@@ -1448,7 +1448,7 @@ fn native_shared_catalog_payload_admits_distinct_prefetch_file_kinds() {
         "shared",
     );
     let mut resolver = DistributionResolver::new(
-        ObjectCache::new(directory.path().join("cache")),
+        BlobStore::new(directory.path().join("cache")),
         Some(directory.path().to_string_lossy().into_owned()),
         None,
         true,
@@ -1493,7 +1493,7 @@ fn explicit_local_distribution_resolves_nested_ec_tfm_record() {
     let key = crate::FileRequestKey::new(FileKind::Tfm, "ectt0800.tfm").expect("TFM key");
     let request = FileRequest::new(key.clone(), "ectt0800");
     let mut resolver = DistributionResolver::new(
-        ObjectCache::new(directory.path().join("cache")),
+        BlobStore::new(directory.path().join("cache")),
         Some(directory.path().to_string_lossy().into_owned()),
         None,
         false,
@@ -1549,7 +1549,7 @@ fn verified_schema_v2_root_returns_typed_font_unavailable() {
     let shard = "{\"schema\":3,\"distribution\":\"absence\",\"index\":0,\"files\":{}}\n";
     write_sharded_root(directory.path(), "absence", 0, &[(shard, true)]);
     let mut resolver = DistributionResolver::new(
-        ObjectCache::new(directory.path().join("cache")),
+        BlobStore::new(directory.path().join("cache")),
         Some(directory.path().to_string_lossy().into_owned()),
         None,
         false,
@@ -1589,7 +1589,7 @@ fn generic_pdf_asset_uses_the_snapshot_tex_vocabulary() {
     write_sharded_root(directory.path(), "pdf-assets", 0, &[(&shard, true)]);
     std::fs::write(directory.path().join("objects").join(object), bytes).expect("map object");
     let mut resolver = DistributionResolver::new(
-        ObjectCache::new(directory.path().join("cache")),
+        BlobStore::new(directory.path().join("cache")),
         Some(directory.path().to_string_lossy().into_owned()),
         None,
         false,
@@ -1632,7 +1632,7 @@ fn live_lookup_does_not_hash_an_unrequested_inline_hint() {
     std::fs::write(objects.join(required_object), required_bytes).expect("required object");
     std::fs::write(objects.join(&dependency_object), b"corrupt-unrequested")
         .expect("corrupt dependency object");
-    let cache = ObjectCache::new(directory.path().join("cache"));
+    let cache = BlobStore::new(directory.path().join("cache"));
     let mut resolver = DistributionResolver::new(
         cache.clone(),
         Some(directory.path().to_string_lossy().into_owned()),
@@ -1710,7 +1710,7 @@ fn schema_three_format_closure_does_not_drive_native_live_lookup() {
         "1".repeat(16)
     );
     std::fs::write(directory.path().join("manifest-v8.json"), root).expect("root");
-    let cache = ObjectCache::new(directory.path().join("cache"));
+    let cache = BlobStore::new(directory.path().join("cache"));
     let mut resolver = DistributionResolver::new(
         cache.clone(),
         Some(directory.path().to_string_lossy().into_owned()),
@@ -1788,7 +1788,7 @@ fn distribution_prefetch_does_not_claim_a_locally_shadowed_alias() {
     )
     .expect("local class");
     let mut resolver = DistributionResolver::new(
-        ObjectCache::new(directory.path().join("cache")),
+        BlobStore::new(directory.path().join("cache")),
         Some(directory.path().to_string_lossy().into_owned()),
         None,
         false,
@@ -1823,7 +1823,7 @@ fn mutable_local_precedence_records_project_negative_without_reusing_it() {
         b"distribution",
     );
     let mut resolver = DistributionResolver::new(
-        ObjectCache::new(directory.path().join("cache")),
+        BlobStore::new(directory.path().join("cache")),
         Some(directory.path().to_string_lossy().into_owned()),
         None,
         false,
@@ -1907,7 +1907,7 @@ fn inline_dependency_metadata_waits_for_native_engine_admission() {
     let mut session = NativeCompileSession::new_with_cache(
         &options,
         &cancellation,
-        ObjectCache::new(directory.path().join("cache")),
+        BlobStore::new(directory.path().join("cache")),
     )
     .expect("native session");
     let CompileAttemptResult::NeedResources(batch) = session.session.compile_attempt() else {
@@ -2042,7 +2042,7 @@ fn native_compile_uses_local_file_after_shadowed_distribution_hint() {
     let mut session = NativeCompileSession::new_with_cache(
         &options,
         &cancellation,
-        ObjectCache::new(directory.path().join("cache")),
+        BlobStore::new(directory.path().join("cache")),
     )
     .expect("native session");
 
@@ -2080,7 +2080,7 @@ fn incompatible_format_schema_is_rejected_before_cache_lookup_or_acquisition() {
     std::fs::write(&cached_object, lookup_sentinel).expect("cache lookup sentinel");
 
     let mut resolver = DistributionResolver::new(
-        ObjectCache::new(&cache_root),
+        BlobStore::new(&cache_root),
         Some(directory.path().to_string_lossy().into_owned()),
         None,
         false,
@@ -2211,7 +2211,7 @@ fn loaded_format_replay_retains_admitted_input_bindings() {
             execution_steps: Some(20_000),
         },
         &cancellation,
-        ObjectCache::new(directory.path().join("cache")),
+        BlobStore::new(directory.path().join("cache")),
     )
     .expect("native session");
 
@@ -2277,7 +2277,7 @@ fn loaded_format_replay_retains_admitted_input_bindings() {
             execution_steps: Some(20_000),
         },
         &cancellation,
-        ObjectCache::new(directory.path().join("preloaded-cache")),
+        BlobStore::new(directory.path().join("preloaded-cache")),
     )
     .expect("preloaded native session");
     let preloaded_output = preloaded
@@ -2308,7 +2308,7 @@ fn format_closure_prefetches_followups_after_engine_admission() {
         recipe.format_ident_name = recipe.format_name.clone();
         recipe.distribution_identity = format!("closure-test-{engine:?}").into_bytes();
         let format = crate::format_fixture::construct_format_in_worker(&recipe)
-            .expect("schema-11 format")
+            .expect("schema-12 format")
             .image;
         let format_digest = hex_digest(&format);
         std::fs::write(objects.join(format!("ahash64-v1-{format_digest}")), &format)
@@ -2355,7 +2355,7 @@ fn format_closure_prefetches_followups_after_engine_admission() {
 
         let input = directory.path().join("main.tex");
         std::fs::write(&input, b"\\input closure-00\n").expect("main input");
-        let cache = ObjectCache::new(directory.path().join("cache"));
+        let cache = BlobStore::new(directory.path().join("cache"));
         let cancellation = FetchCancellation::new();
         let mut session = NativeCompileSession::new_with_cache(
             &NativeRunOptions {
@@ -2418,7 +2418,7 @@ fn warm_root_shard_and_object_cache_resolve_offline() {
     );
     let (root, _) = write_sharded_root(directory.path(), "offline", 0, &[(&shard, true)]);
     std::fs::write(directory.path().join("objects").join(object), bytes).expect("file object");
-    let cache = ObjectCache::new(directory.path().join("cache"));
+    let cache = BlobStore::new(directory.path().join("cache"));
     let root_digest = hex_digest(&root);
     cache
         .store_manifest(&root_digest, &root)
@@ -2466,7 +2466,7 @@ fn rejects_tampered_shard_and_observes_cancellation() {
     )
     .expect("tamper shard");
     let mut resolver = DistributionResolver::new(
-        ObjectCache::new(directory.path().join("cache")),
+        BlobStore::new(directory.path().join("cache")),
         Some(directory.path().to_string_lossy().into_owned()),
         None,
         false,

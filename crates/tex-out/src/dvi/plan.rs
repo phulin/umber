@@ -1,7 +1,10 @@
 use crate::{
     ArtifactCodecLimits, BoxNode, FontResource, JobInfo, LeaderPayload, PageArtifact, PageEffect,
     PageNode,
-    binary::{V10NodeListReader, V10NodeListSlice, V10PageDecoder, V10StreamLeader, V10StreamNode},
+    binary::{
+        ArtifactNodeListReader, ArtifactNodeListSlice, ArtifactPageDecoder, ArtifactStreamLeader,
+        ArtifactStreamNode,
+    },
 };
 
 use super::{
@@ -172,7 +175,7 @@ impl DviPagePlanCoEmitter {
         artifact_bytes: &[u8],
     ) -> Result<Option<DviPagePlan>, DviError> {
         if self.replay_required {
-            DviPagePlan::compile_v10(artifact_bytes).map(Some)
+            DviPagePlan::compile_artifact(artifact_bytes).map(Some)
         } else {
             self.builder
                 .map(|builder| builder.finish(fonts))
@@ -410,8 +413,8 @@ impl DviPagePlan {
 
     /// Validates and compiles canonical artifact bytes without materializing the
     /// complete recursive page tree.
-    pub fn compile_v10(bytes: &[u8]) -> Result<Self, DviError> {
-        let mut decoder = V10PageDecoder::new(bytes, ArtifactCodecLimits::default())?;
+    pub fn compile_artifact(bytes: &[u8]) -> Result<Self, DviError> {
+        let mut decoder = ArtifactPageDecoder::new(bytes, ArtifactCodecLimits::default())?;
         let page = decoder.page.clone();
         let (root_vertical, root) = match &page.root {
             PageNode::HList(root) => (false, root.clone()),
@@ -426,7 +429,7 @@ impl DviPagePlan {
         builder.add_fonts(&page.fonts)?;
         let children = decoder.stream_children();
         children.validate_all()?;
-        feed_v10_list(&mut builder, children, &page.effects)?;
+        feed_artifact_list(&mut builder, children, &page.effects)?;
         builder.finish(&page.fonts)
     }
 
@@ -439,13 +442,13 @@ impl DviPagePlan {
     }
 }
 
-fn feed_v10_list(
+fn feed_artifact_list(
     builder: &mut DviPagePlanBuilder,
-    nodes: V10NodeListSlice<'_, '_>,
+    nodes: ArtifactNodeListSlice<'_, '_>,
     effects: &[PageEffect],
 ) -> Result<(), DviError> {
     enum Frame<'r, 'a> {
-        List(V10NodeListReader<'r, 'a>),
+        List(ArtifactNodeListReader<'r, 'a>),
         EndBox,
     }
 
@@ -460,15 +463,15 @@ fn feed_v10_list(
         };
         frames.push(Frame::List(nodes));
         match node {
-            V10StreamNode::Char { font_id, ch, width } => builder.char(font_id, ch, width)?,
-            V10StreamNode::Kern(amount) => builder.kern(amount)?,
-            V10StreamNode::Glue {
+            ArtifactStreamNode::Char { font_id, ch, width } => builder.char(font_id, ch, width)?,
+            ArtifactStreamNode::Kern(amount) => builder.kern(amount)?,
+            ArtifactStreamNode::Glue {
                 spec,
-                leader: V10StreamLeader::None,
+                leader: ArtifactStreamLeader::None,
                 ..
             } => builder.glue(spec)?,
-            V10StreamNode::Glue { spec, kind, leader } => {
-                let leader = materialize_v10_leader(leader)?;
+            ArtifactStreamNode::Glue { spec, kind, leader } => {
+                let leader = materialize_artifact_leader(leader)?;
                 let node = PageNode::Glue {
                     spec,
                     kind,
@@ -478,12 +481,12 @@ fn feed_v10_list(
                 drop_page_node_iterative(node);
                 result?;
             }
-            V10StreamNode::Rule {
+            ArtifactStreamNode::Rule {
                 width,
                 height,
                 depth,
             } => builder.rule(width, height, depth)?,
-            V10StreamNode::Box {
+            ArtifactStreamNode::Box {
                 vertical,
                 fields,
                 children,
@@ -494,11 +497,11 @@ fn feed_v10_list(
                     frames.push(Frame::List(children.reader()));
                 }
             }
-            V10StreamNode::WhatsitAnchor(effect_index) => {
+            ArtifactStreamNode::WhatsitAnchor(effect_index) => {
                 builder.whatsit(effect_index, effects)?;
             }
-            V10StreamNode::Math(amount) => builder.math(amount)?,
-            V10StreamNode::Ignored(_) => {}
+            ArtifactStreamNode::Math(amount) => builder.math(amount)?,
+            ArtifactStreamNode::Ignored(_) => {}
         }
     }
     Ok(())
@@ -540,10 +543,12 @@ fn drop_page_node_iterative(root: PageNode) {
     }
 }
 
-fn materialize_v10_leader(leader: V10StreamLeader<'_, '_>) -> Result<LeaderPayload, DviError> {
+fn materialize_artifact_leader(
+    leader: ArtifactStreamLeader<'_, '_>,
+) -> Result<LeaderPayload, DviError> {
     match leader {
-        V10StreamLeader::None => unreachable!("caller handles absent leaders"),
-        V10StreamLeader::Rule {
+        ArtifactStreamLeader::None => unreachable!("caller handles absent leaders"),
+        ArtifactStreamLeader::Rule {
             width,
             height,
             depth,
@@ -552,12 +557,12 @@ fn materialize_v10_leader(leader: V10StreamLeader<'_, '_>) -> Result<LeaderPaylo
             height,
             depth,
         }),
-        V10StreamLeader::Box {
+        ArtifactStreamLeader::Box {
             vertical,
             fields,
             children,
         } => {
-            let children = materialize_v10_list(children)?;
+            let children = materialize_artifact_list(children)?;
             let box_node = BoxNode { children, ..fields };
             Ok(if vertical {
                 LeaderPayload::VList(box_node)
@@ -568,10 +573,12 @@ fn materialize_v10_leader(leader: V10StreamLeader<'_, '_>) -> Result<LeaderPaylo
     }
 }
 
-fn materialize_v10_list(nodes: V10NodeListSlice<'_, '_>) -> Result<Vec<PageNode>, DviError> {
+fn materialize_artifact_list(
+    nodes: ArtifactNodeListSlice<'_, '_>,
+) -> Result<Vec<PageNode>, DviError> {
     enum Frame<'r, 'a> {
         List {
-            reader: V10NodeListReader<'r, 'a>,
+            reader: ArtifactNodeListReader<'r, 'a>,
             nodes: Vec<PageNode>,
         },
         Box {
@@ -641,18 +648,18 @@ fn materialize_v10_list(nodes: V10NodeListSlice<'_, '_>) -> Result<Vec<PageNode>
                     continue;
                 };
                 let node = match node {
-                    V10StreamNode::Char { font_id, ch, width } => {
+                    ArtifactStreamNode::Char { font_id, ch, width } => {
                         Some(PageNode::Char { font_id, ch, width })
                     }
-                    V10StreamNode::Kern(amount) => Some(PageNode::Kern {
+                    ArtifactStreamNode::Kern(amount) => Some(PageNode::Kern {
                         amount,
                         kind: crate::KernKind::Explicit,
                     }),
-                    V10StreamNode::Glue {
+                    ArtifactStreamNode::Glue {
                         spec,
                         kind,
                         leader:
-                            V10StreamLeader::Box {
+                            ArtifactStreamLeader::Box {
                                 vertical,
                                 fields,
                                 children,
@@ -671,15 +678,15 @@ fn materialize_v10_list(nodes: V10NodeListSlice<'_, '_>) -> Result<Vec<PageNode>
                         });
                         continue;
                     }
-                    V10StreamNode::Glue { spec, kind, leader } => Some(PageNode::Glue {
+                    ArtifactStreamNode::Glue { spec, kind, leader } => Some(PageNode::Glue {
                         spec,
                         kind,
                         leader: match leader {
-                            V10StreamLeader::None => None,
-                            leader => Some(materialize_v10_leader(leader)?),
+                            ArtifactStreamLeader::None => None,
+                            leader => Some(materialize_artifact_leader(leader)?),
                         },
                     }),
-                    V10StreamNode::Rule {
+                    ArtifactStreamNode::Rule {
                         width,
                         height,
                         depth,
@@ -688,7 +695,7 @@ fn materialize_v10_list(nodes: V10NodeListSlice<'_, '_>) -> Result<Vec<PageNode>
                         height,
                         depth,
                     }),
-                    V10StreamNode::Box {
+                    ArtifactStreamNode::Box {
                         vertical,
                         fields,
                         children,
@@ -701,11 +708,11 @@ fn materialize_v10_list(nodes: V10NodeListSlice<'_, '_>) -> Result<Vec<PageNode>
                         });
                         continue;
                     }
-                    V10StreamNode::WhatsitAnchor(effect_index) => {
+                    ArtifactStreamNode::WhatsitAnchor(effect_index) => {
                         Some(PageNode::WhatsitAnchor { effect_index })
                     }
-                    V10StreamNode::Math(amount) => Some(PageNode::MathOn(amount)),
-                    V10StreamNode::Ignored(_) => None,
+                    ArtifactStreamNode::Math(amount) => Some(PageNode::MathOn(amount)),
+                    ArtifactStreamNode::Ignored(_) => None,
                 };
                 if let Some(node) = node {
                     nodes.push(node);

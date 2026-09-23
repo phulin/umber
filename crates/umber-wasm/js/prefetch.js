@@ -152,11 +152,6 @@ export function createRustPrefetchPolicy(bindings) {
 	});
 }
 
-/** Compatibility helper: without explicit Rust bindings, speculation is empty. */
-export function extractLiteralHints(source, limits, bindings) {
-	return createRustPrefetchPolicy(bindings)?.literalHints(source, limits) ?? [];
-}
-
 export function makePrefetchIdentity({
 	engine = "tex82",
 	format = "none",

@@ -46,7 +46,7 @@ fn every_decoder_rejects_all_older_artifact_versions() {
             Err(expected.clone())
         );
         assert!(matches!(
-            crate::binary::V10PageDecoder::new(&bytes, limits),
+            crate::binary::ArtifactPageDecoder::new(&bytes, limits),
             Err(error) if error == expected
         ));
     }
@@ -271,7 +271,7 @@ fn pdftex_kern_kinds_round_trip() {
         artifact
     );
     assert_eq!(
-        crate::dvi::DviPagePlan::compile_v10(&bytes).expect("streamed margin kern plan"),
+        crate::dvi::DviPagePlan::compile_artifact(&bytes).expect("streamed margin kern plan"),
         crate::dvi::DviPagePlan::compile(&artifact).expect("owned margin kern plan")
     );
 }
@@ -378,7 +378,7 @@ fn every_artifact_node_variant_round_trips_through_canonical_events() {
         page
     );
     assert_eq!(
-        crate::dvi::DviPagePlan::compile_v10(&bytes).expect("all variants stream"),
+        crate::dvi::DviPagePlan::compile_artifact(&bytes).expect("all variants stream"),
         crate::dvi::DviPagePlan::compile(&page).expect("all variants compile owned")
     );
 }
@@ -416,7 +416,7 @@ fn owned_and_streaming_cursors_reject_malformed_margin_kern_identically() {
 
     assert_eq!(PageArtifact::from_bytes(&bytes), Err(expected.clone()));
     assert!(matches!(
-        crate::binary::V10PageDecoder::new(&bytes, ArtifactCodecLimits::default()),
+        crate::binary::ArtifactPageDecoder::new(&bytes, ArtifactCodecLimits::default()),
         Err(error) if error == expected
     ));
 }
@@ -463,7 +463,7 @@ fn streamed_validation_preserves_depth_first_error_order_through_ignored_lists()
     let expected = ParseError::Validation(ArtifactValidationError::MissingFont { font_id: 99 });
     assert_eq!(PageArtifact::from_bytes(&bytes), Err(expected.clone()));
     assert_eq!(
-        crate::dvi::DviPagePlan::compile_v10(&bytes),
+        crate::dvi::DviPagePlan::compile_artifact(&bytes),
         Err(crate::dvi::DviError::Artifact {
             message: expected.to_string(),
         })
@@ -478,7 +478,7 @@ fn streamed_v10_builder_is_byte_identical_to_owned_encoding() {
         PageNode::VList(root) => (root, true),
         _ => unreachable!("validated sample root is a box"),
     };
-    let mut builder = crate::V10ArtifactBuilder::new(page.job.clone(), page.counts, root, vertical);
+    let mut builder = crate::ArtifactEmitter::new(page.job.clone(), page.counts, root, vertical);
     for child in &root.children {
         builder.push_node(child).expect("stream child");
     }
@@ -521,7 +521,7 @@ fn streamed_fixed_width_leaves_are_byte_identical_to_owned_encoding() {
         PageNode::VList(root) => root,
         _ => unreachable!("sample root is a vlist"),
     };
-    let mut builder = crate::V10ArtifactBuilder::new(page.job.clone(), page.counts, root, true);
+    let mut builder = crate::ArtifactEmitter::new(page.job.clone(), page.counts, root, true);
     for child in &root.children {
         builder.push_node(child).expect("stream fixed leaf");
     }

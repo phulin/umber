@@ -20,9 +20,12 @@ mod wire;
 
 use primitive::{Reader, Writer};
 pub(crate) use streaming_scan::{
-    V10NodeListReader, V10NodeListSlice, V10PageDecoder, V10StreamLeader, V10StreamNode,
+    ArtifactNodeListReader, ArtifactNodeListSlice, ArtifactPageDecoder, ArtifactStreamLeader,
+    ArtifactStreamNode,
 };
-pub use streaming_writer::{V10ArtifactBuilder, V10DiscWriter, V10NodeListWriter, V10TokenWriter};
+pub use streaming_writer::{
+    ArtifactDiscEmitter, ArtifactEmitter, ArtifactNodeListEmitter, ArtifactTokenEmitter,
+};
 use wire::{
     disc_kind_tag, glue_kind_tag, glue_order_tag, glue_sign_tag, kern_kind_tag, parse_disc_kind,
     parse_glue_kind, parse_glue_order, parse_glue_sign, parse_kern_kind, parse_token_catcode,

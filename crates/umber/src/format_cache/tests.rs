@@ -41,7 +41,7 @@ fn compound_identity(mode: FormatEngineMode) -> FormatCacheIdentity {
 
 fn format() -> Vec<u8> {
     crate::format_fixture::construct_format_in_worker(&crate::FormatRecipe::raw_tex82())
-        .expect("schema-11 format")
+        .expect("schema-12 format")
         .image
 }
 
@@ -55,7 +55,7 @@ fn canonical_key_covers_every_identity_component() {
     );
     assert_eq!(
         original.key().hex(),
-        "5c4e5d432c91c32bacdf76b3420d383ea1187b4edda141c73b2df03644829f8a"
+        "303428a6da520f0ecce95009fc3b87ff4e2bd81bf072bb47c5e7d3b66cc072d6"
     );
 
     let mutations = [
@@ -149,24 +149,17 @@ fn canonical_key_covers_every_identity_component() {
 }
 
 #[test]
-fn legacy_format_layout_is_validated_and_migrated() {
+fn obsolete_format_layout_is_ignored() {
     let temp = TempDir::new().expect("tempdir");
     let cache = FormatCacheStore::new(temp.path());
     let key = identity(FormatEngineMode::Latex);
     let image = format();
-    let legacy = temp.path().join(DIRECTORY).join(cache.name(&key));
-    fs::create_dir_all(legacy.parent().expect("legacy parent")).expect("legacy namespace");
-    fs::write(&legacy, encode_entry(&key, &image)).expect("legacy format entry");
+    let obsolete = temp.path().join(DIRECTORY).join(cache.name(&key));
+    fs::create_dir_all(obsolete.parent().expect("obsolete parent")).expect("obsolete namespace");
+    fs::write(&obsolete, encode_entry(&key, &image)).expect("obsolete format entry");
 
-    assert_eq!(
-        cache
-            .load(&key)
-            .expect("legacy format load")
-            .expect("legacy format hit")
-            .as_bytes(),
-        image
-    );
-    assert!(cache.path(&key).is_file(), "entry migrated to blob store");
+    assert!(cache.load(&key).expect("current format load").is_none());
+    assert!(!cache.path(&key).exists());
 }
 
 #[test]

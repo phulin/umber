@@ -112,7 +112,7 @@ pub struct FormatFixtureIdentity {
 }
 
 impl FormatCacheIdentity {
-    /// Creates an identity pinned to the compatibility contract of this build.
+    /// Creates an identity pinned to the current local format builder.
     #[must_use]
     pub fn current(
         engine_mode: FormatEngineMode,
@@ -132,10 +132,10 @@ impl FormatCacheIdentity {
             format_closure,
             source_lock,
             build_configuration,
-            semantic_contract: FormatFingerprint::sha256(b"legacy-format-cache-cli-v1"),
-            producer_contract: FormatFingerprint::sha256(b"legacy-external-producer-v1"),
+            semantic_contract: FormatFingerprint::sha256(b"pinned-format-cache-cli-v1"),
+            producer_contract: FormatFingerprint::sha256(b"pinned-format-producer-v1"),
             resource_closure: format_closure,
-            generation_guards: FormatFingerprint::sha256(b"legacy-external-guards-v1"),
+            generation_guards: FormatFingerprint::sha256(b"pinned-generation-guards-v1"),
             job_clock,
         }
     }
@@ -280,7 +280,7 @@ pub enum FormatCacheError {
 impl fmt::Display for FormatCacheError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidFormat(message) => write!(f, "invalid schema-11 format image: {message}"),
+            Self::InvalidFormat(message) => write!(f, "invalid schema-12 format image: {message}"),
             Self::FormatTooLarge(bytes) => {
                 write!(
                     f,

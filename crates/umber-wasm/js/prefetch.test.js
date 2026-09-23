@@ -3,8 +3,6 @@ import test from "node:test";
 import {
 	classifyReadiness,
 	createRustPrefetchPolicy,
-	extractLiteralHints,
-	literalHintRequest,
 	ResourceReadiness,
 } from "./prefetch.js";
 
@@ -105,49 +103,6 @@ test("Rust policy adapter keeps request identity at the WASM boundary", () => {
 		{ domain: "tex", kind: "tex", name: "foo.sty" },
 	);
 	assert.equal(calls.at(-1)[0], "replay");
-});
-
-test("literal hint helper delegates to complete bindings and otherwise stays empty", () => {
-	const source = "\\includegraphics{figures/plot}";
-	const limits = { maxHints: 2, maxNameBytes: 64 };
-	assert.deepEqual(extractLiteralHints(source, limits), []);
-	assert.deepEqual(extractLiteralHints(source, limits, {}), []);
-	const calls = [];
-	class CompleteSession {
-		enqueue() {}
-		enqueueEscalation() {}
-		enqueueLiteralHints() {}
-		select() {}
-		drain() {}
-		dependencyClosureRequest() {}
-		admitRequest() {}
-		noteReplayRequest() {}
-	}
-	const bindings = {
-		prefetchLiteralHints(input, receivedLimits) {
-			calls.push([input, receivedLimits]);
-			return [
-				{
-					kind: "includegraphics",
-					originalSpelling: "figures/plot",
-					name: "figures/plot",
-					byteOffset: 0,
-				},
-			];
-		},
-		prefetchSelect() {},
-		prefetchPolicyVersion: () => "literal-groups-v1",
-		PrefetchPolicySession: CompleteSession,
-	};
-	const hints = extractLiteralHints(source, limits, bindings);
-	assert.deepEqual(calls, [[source, limits]]);
-	assert.deepEqual(literalHintRequest(hints[0]), {
-		type: "file",
-		domain: "tex",
-		kind: "image",
-		name: "figures/plot",
-		originalName: "figures/plot",
-	});
 });
 
 test("readiness never turns an unknown transport result into absence", () => {

@@ -596,12 +596,12 @@ fn decode_image(bytes: &[u8]) -> Result<DecodedFormat, FormatError> {
             .ne(REQUIRED_SECTION_KINDS)
     {
         return Err(FormatError::InvalidState(
-            "schema-11 format requires the canonical section set".to_owned(),
+            "schema-12 format requires the canonical section set".to_owned(),
         ));
     }
     let metadata: FormatMetadata = bincode::deserialize(
         &container
-            .section(crate::format_container::TRANSITIONAL_SEMANTIC_SECTION)
+            .section(crate::format_container::UNIVERSE_METADATA_SECTION)
             .expect("required metadata section")
             .bytes,
     )

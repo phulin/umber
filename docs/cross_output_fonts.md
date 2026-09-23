@@ -480,12 +480,9 @@ and PDF fixtures remain byte/structure/rendering gates. Existing explicit
 local/client legacy closures remain valid even when the HTML catalog cannot
 answer the same document.
 
-The production caller migration removes that optional adapter at the WASM
-boundary: `outputs` is required and the former `dvi`/`html` fields report the
-replacement. Native `--html-font-dir`, the directory mapping sidecars, the
-packaged `cm-fonts` helper, and worker `fontResources` are likewise removed;
-their diagnostics point to the authenticated root configuration or the common
-typed provider/request-response surface. The npm runtime inventory contains
+The WASM boundary requires `outputs`. Native CLI and worker resource inputs use
+the current typed providers; unknown options are rejected by their ordinary
+argument validation. The npm runtime inventory contains
 format fixtures but no font programs, encodings, maps, or font catalog. Font
 files retained under repository `assets/` are conformance fixtures only.
 

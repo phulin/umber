@@ -19,8 +19,8 @@ use umber_distribution::{
     Readiness, ResolvedIdentity, ShardedManifestRoot, ValidatedPackedShard, shard_index_for_key,
 };
 use umber_fetch::{
-    DistributionClient, DistributionClientError, FetchCancellation, FetchClientConfig,
-    FetchFailure, FetchRequest, ManifestFetchError, ObjectCache,
+    BlobStore, DistributionClient, DistributionClientError, FetchCancellation, FetchClientConfig,
+    FetchFailure, FetchRequest, ManifestFetchError,
 };
 use umber_hash::{AHash64, HashDomain};
 
@@ -494,7 +494,7 @@ impl<'owner> NativeCompileSession<'owner> {
     fn new_with_cache(
         options: &NativeRunOptions,
         cancellation: &FetchCancellation,
-        cache: ObjectCache,
+        cache: BlobStore,
     ) -> Result<Self, NativeRunError> {
         let owner = Box::leak(Box::new(NativeDistributionOwner::with_cache(
             options, cache,
@@ -1593,20 +1593,20 @@ impl DistributionOwnerIdentity {
 /// detection and offline/source-selection behavior remain in force. Dropping this
 /// owner drops the reusable manifest state.
 pub struct NativeDistributionOwner {
-    cache: ObjectCache,
+    cache: BlobStore,
     identity: DistributionOwnerIdentity,
     verified: Arc<Mutex<VerifiedDistributionState>>,
 }
 
 impl NativeDistributionOwner {
     pub fn from_environment(options: &NativeRunOptions) -> Result<Self, NativeRunError> {
-        let cache = ObjectCache::from_environment()
+        let cache = BlobStore::from_environment()
             .map_err(|error| NativeRunError::Cache(error.to_string()))?;
         Ok(Self::with_cache(options, cache))
     }
 
     #[must_use]
-    pub fn with_cache(options: &NativeRunOptions, cache: ObjectCache) -> Self {
+    pub fn with_cache(options: &NativeRunOptions, cache: BlobStore) -> Self {
         Self {
             cache,
             identity: DistributionOwnerIdentity::from_options(options),
@@ -1688,7 +1688,7 @@ fn admitted_files_for(
 impl DistributionResolver {
     #[cfg(test)]
     fn new(
-        cache: ObjectCache,
+        cache: BlobStore,
         source: Option<String>,
         expected: Option<String>,
         offline: bool,
@@ -1703,7 +1703,7 @@ impl DistributionResolver {
     }
 
     fn with_verified_state(
-        cache: ObjectCache,
+        cache: BlobStore,
         source: Option<String>,
         expected: Option<String>,
         offline: bool,

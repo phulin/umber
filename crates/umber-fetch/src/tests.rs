@@ -66,7 +66,7 @@ fn fetches_then_reuses_verified_object_cache() {
     let bytes = b"fixture object";
     let server = FixtureServer::new(vec![Reply::ok(bytes)]);
     let temp = TempDir::new().expect("cache tempdir");
-    let cache = ObjectCache::new(temp.path());
+    let cache = BlobStore::new(temp.path());
     let fetcher = client(&server, 2, Duration::from_secs(1), 0);
     let requests = vec![request("tex:plain.tex", bytes, 1024)];
 
@@ -243,18 +243,19 @@ fn explicit_cache_verifier_rejects_mutation_without_quarantining() {
 #[test]
 #[allow(
     clippy::disallowed_methods,
-    reason = "the compatibility test writes the previous native cache layout"
+    reason = "the boundary test writes an obsolete native cache layout"
 )]
-fn legacy_object_layout_is_verified_and_migrated() {
+fn obsolete_object_layout_is_ignored() {
     let temp = TempDir::new().expect("cache tempdir");
-    let bytes = b"legacy cached object";
+    let bytes = b"obsolete cached object";
     let digest = hex_digest(bytes);
-    let legacy = temp
+    let obsolete = temp
         .path()
         .join("objects")
         .join(format!("ahash64-v1-{digest}"));
-    std::fs::create_dir_all(legacy.parent().expect("legacy parent")).expect("legacy directory");
-    std::fs::write(&legacy, bytes).expect("legacy object");
+    std::fs::create_dir_all(obsolete.parent().expect("obsolete parent"))
+        .expect("obsolete directory");
+    std::fs::write(&obsolete, bytes).expect("obsolete object");
     let store = BlobStore::new(temp.path());
     let spec = VerifiedBlobSpec::content_addressed(
         "objects",
@@ -264,11 +265,8 @@ fn legacy_object_layout_is_verified_and_migrated() {
     )
     .expect("object specification");
 
-    assert_eq!(
-        store.load(&spec).expect("legacy load"),
-        Some(bytes.to_vec())
-    );
-    assert!(store.entry_path(&spec).is_file(), "entry migrated in place");
+    assert_eq!(store.load(&spec).expect("current load"), None);
+    assert!(!store.entry_path(&spec).exists());
 }
 
 #[test]
@@ -310,7 +308,7 @@ fn returns_typed_404_with_key_and_digest() {
 
     let error = client(&server, 1, Duration::from_secs(1), 2)
         .fetch_batch(
-            &ObjectCache::new(cache_dir.path()),
+            &BlobStore::new(cache_dir.path()),
             &server.base_url,
             &[request],
         )
@@ -339,7 +337,7 @@ fn rejects_corruption_and_truncation_without_caching() {
         },
     ]);
     let temp = TempDir::new().expect("cache tempdir");
-    let cache = ObjectCache::new(temp.path());
+    let cache = BlobStore::new(temp.path());
     let requests = vec![
         request("tex:corrupt.sty", expected, 1024),
         request("tex:truncated.sty", expected, 1024),
@@ -378,7 +376,7 @@ fn refuses_oversized_declaration_before_network_access() {
 
     let error = client(&server, 1, Duration::from_millis(50), 0)
         .fetch_batch(
-            &ObjectCache::new(temp.path()),
+            &BlobStore::new(temp.path()),
             "http://127.0.0.1:1/objects/",
             &[request],
         )
@@ -408,7 +406,7 @@ fn refuses_oversized_content_length_before_reading_body() {
 
     let error = client(&server, 1, Duration::from_secs(1), 0)
         .fetch_batch(
-            &ObjectCache::new(temp.path()),
+            &BlobStore::new(temp.path()),
             &server.base_url,
             &[request("tex:small.sty", bytes, 10)],
         )
@@ -438,7 +436,7 @@ fn retries_timeout_and_succeeds() {
 
     let fetched = client(&server, 1, Duration::from_millis(80), 1)
         .fetch_batch(
-            &ObjectCache::new(temp.path()),
+            &BlobStore::new(temp.path()),
             &server.base_url,
             &[request("tex:retry.sty", bytes, 1024)],
         )
@@ -457,7 +455,7 @@ fn cancellation_after_download_does_not_publish_or_return_bytes() {
         ..Reply::ok(bytes)
     }]);
     let temp = TempDir::new().expect("cache tempdir");
-    let cache = ObjectCache::new(temp.path());
+    let cache = BlobStore::new(temp.path());
     let request = request("tex:cancelled.sty", bytes, 1024);
     let canceller = cancel_after_request(Arc::clone(&server.requests), cancellation.clone());
 
@@ -512,7 +510,7 @@ fn bounds_parallel_batch_downloads() {
     let temp = TempDir::new().expect("cache tempdir");
 
     let fetched = client(&server, 2, Duration::from_secs(1), 0)
-        .fetch_batch(&ObjectCache::new(temp.path()), &server.base_url, &requests)
+        .fetch_batch(&BlobStore::new(temp.path()), &server.base_url, &requests)
         .expect("bounded fetch");
 
     assert_eq!(fetched.len(), 4);
@@ -527,7 +525,7 @@ fn bounds_parallel_batch_downloads() {
 )]
 fn manifest_cache_is_digest_keyed_and_reverified() {
     let temp = TempDir::new().expect("cache tempdir");
-    let cache = ObjectCache::new(temp.path());
+    let cache = BlobStore::new(temp.path());
     let bytes = br#"{"schema":1}"#;
     let digest = hex_digest(bytes);
     cache
@@ -557,7 +555,7 @@ fn manifest_cache_is_digest_keyed_and_reverified() {
 #[test]
 fn manifest_cache_rejects_oversized_entries() {
     let temp = TempDir::new().expect("cache tempdir");
-    let cache = ObjectCache::new(temp.path());
+    let cache = BlobStore::new(temp.path());
     let bytes = vec![0_u8; 32 * 1024 * 1024 + 1];
     let digest = hex_digest(&bytes);
     assert!(cache.store_manifest(&digest, &bytes).is_err());
@@ -572,7 +570,7 @@ fn cache_race_child() {
         return;
     };
     let digest = hex_digest(RACE_BYTES);
-    ObjectCache::new(root)
+    BlobStore::new(root)
         .store_object(&digest, RACE_BYTES.len() as u64, RACE_BYTES)
         .expect("race child stores object");
 }
@@ -598,7 +596,7 @@ fn concurrent_processes_publish_one_verified_cache_object() {
     }
     let digest = hex_digest(RACE_BYTES);
     assert_eq!(
-        ObjectCache::new(temp.path())
+        BlobStore::new(temp.path())
             .load_object(&digest, RACE_BYTES.len() as u64)
             .expect("load raced object"),
         Some(RACE_BYTES.to_vec())

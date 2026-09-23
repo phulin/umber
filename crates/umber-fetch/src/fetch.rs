@@ -13,7 +13,7 @@ use ureq::http::uri::PathAndQuery;
 use crate::downloader::{
     DownloadFailure, DownloadPolicy, LengthPolicy, VerifiedDownloader, parse_transport_url,
 };
-use crate::{CacheError, ObjectCache};
+use crate::{BlobStore, CacheError};
 
 #[derive(Clone, Debug)]
 pub struct FetchClientConfig {
@@ -170,7 +170,7 @@ impl FetchClient {
     /// returned to the caller, though verified objects remain safely cached.
     pub fn fetch_batch(
         &self,
-        cache: &ObjectCache,
+        cache: &BlobStore,
         objects_base_url: &str,
         requests: &[FetchRequest],
     ) -> Result<Vec<FetchedObject>, BatchFetchError> {
@@ -181,7 +181,7 @@ impl FetchClient {
     /// bytes are never published to the cache or returned to the caller.
     pub fn fetch_batch_cancellable(
         &self,
-        cache: &ObjectCache,
+        cache: &BlobStore,
         objects_base_url: &str,
         requests: &[FetchRequest],
         cancellation: &FetchCancellation,
@@ -273,7 +273,7 @@ impl FetchClient {
 
     fn fetch_one(
         &self,
-        cache: &ObjectCache,
+        cache: &BlobStore,
         base_url: &Uri,
         request: &FetchRequest,
         cancellation: &FetchCancellation,

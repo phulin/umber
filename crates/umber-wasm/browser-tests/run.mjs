@@ -292,7 +292,7 @@ async function checkSharedResourceTransitions(base, rootAHash64) {
 			let baseline;
 			let patch;
 			if (testCase.initialAccepted !== undefined) {
-				const accepted = session.compileAttempt();
+				const accepted = session.advance();
 				assert.equal(accepted.kind, "complete", testCase.name);
 				assert(
 					accepted.output.terminal.includes(testCase.initialAccepted.terminal),
@@ -315,7 +315,7 @@ async function checkSharedResourceTransitions(base, rootAHash64) {
 				session.applyPatch(patch);
 			}
 			for (const [index, step] of testCase.steps.entries()) {
-				let attempt = session.compileAttempt();
+				let attempt = session.advance();
 				assertSharedNeed(attempt, step.need, testCase.name, index);
 				if (baseline === undefined) {
 					assert(session.acceptedInputObservations == null);
@@ -337,7 +337,7 @@ async function checkSharedResourceTransitions(base, rootAHash64) {
 					);
 					assert.equal(session.resolvedFileCount, 0);
 					assert.equal(session.attempts, 0);
-					const resumed = session.compileAttempt();
+					const resumed = session.advance();
 					assert.equal(resumed.kind, "complete", testCase.name);
 					assert.deepEqual(
 						resumed.output,
@@ -345,7 +345,7 @@ async function checkSharedResourceTransitions(base, rootAHash64) {
 						`${testCase.name}: cancellation left a stale resource wait`,
 					);
 					session.applyPatch(patch);
-					attempt = session.compileAttempt();
+					attempt = session.advance();
 					assertSharedNeed(attempt, step.need, testCase.name, index);
 					assert.deepEqual(
 						session.acceptedInputObservations,
@@ -404,7 +404,7 @@ async function checkSharedResourceTransitions(base, rootAHash64) {
 				session.provideResources(responses);
 				resolver.noteAdmitted(responses);
 			}
-			const completed = session.compileAttempt();
+			const completed = session.advance();
 			assert.equal(completed.kind, "complete", testCase.name);
 			assert(
 				completed.output.terminal.includes(testCase.terminal),

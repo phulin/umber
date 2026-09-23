@@ -4,6 +4,14 @@ Status: schema-12 cache identity and TeX validation in `umber`, unified verified
 native blob persistence in `umber-fetch`, and pinned LaTeX/pdfLaTeX generation
 integration implemented.
 
+The current cache reads only entries in the verified `blobs-v2` store. An
+older `objects/`, `manifests/`, or `formats-v2/sha256-<key>` directory is not
+an input to the current cache. Missing current entries are ordinary misses;
+the pinned builder can regenerate them from authenticated sources. The
+`format-cache restore|store` CLI remains the current builder interface, while
+the current format decoder accepts only schema 12. Artifact API names are
+unversioned; the separate artifact wire header still requires version 24.
+
 ## Identity contract
 
 A generated format is reusable only when every input that can affect its bytes
@@ -25,10 +33,12 @@ those source encodings; native storage does not infer them from paths,
 environment variables, or modification times.
 
 The key preimage is fixed-width after its domain prefix. It is, in order:
-`umber.format-cache.key\0`, little-endian identity schema `1`, one engine byte
-plus three zero bytes, little-endian format schema (`u32`), ABI (`u64`) and
-lookup (`u64`) fingerprints, four 32-byte identities in the order above, then
-the clock's time, second, day, month, and year as little-endian `i32` values.
+`umber.format-cache.key\0`, little-endian identity schema `2`, one entry-kind
+byte, one engine byte, two zero bytes, little-endian format schema (`u32`), ABI
+(`u64`) and lookup (`u64`) fingerprints, eight 32-byte identities (distribution,
+format closure, source lock, build configuration, semantic contract, producer
+contract, resource closure, and generation guards), then the clock's time,
+second, day, month, and year as little-endian `i32` values.
 The cache key is SHA-256 of that preimage. Any schema or ABI transition creates
 a different namespace without probing or heuristically upgrading old images.
 The public constructor always supplies the current build's schema and
@@ -94,12 +104,12 @@ the pinned TeX Live 2026-03-01 LaTeX and pdfLaTeX tiers.
 
 ## Native entry and validation
 
-`umber::FormatCacheStore` owns the canonical key preimage, legacy format
+`umber::FormatCacheStore` owns the canonical key preimage, current format
 envelope, schema-12 decoder, and construction-evidence policy. It persists that
 opaque envelope through `umber-fetch::BlobStore` under the `formats-v2`
-namespace. New entries live in the shared `blobs-v1` substrate; the former
-`formats-v2/sha256-<key>` layout remains a verified compatibility input and is
-warm-migrated on a hit. The exact schema-12 payload bytes are unchanged.
+logical namespace. Entries live in the shared `blobs-v2` substrate. The old
+directory with the same name is ignored. The exact schema-12 payload bytes are
+unchanged.
 
 The shared native blob storage opens the cache root one component at a time and
 retains root and namespace directory handles. Root components, the namespace,

@@ -19,7 +19,6 @@ import {
 export { ManifestResolverError } from "./manifest-schema.js";
 export {
 	classifyReadiness,
-	extractLiteralHints,
 	LookupManifest,
 	makePrefetchIdentity,
 	PREFETCH_POLICY_VERSION,

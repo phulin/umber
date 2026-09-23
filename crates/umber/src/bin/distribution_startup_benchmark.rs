@@ -15,7 +15,7 @@ use umber::cli_resource::{
 };
 use umber::{EngineMode, OutputCapabilitySet};
 use umber_distribution::{ManifestShard, pack_shard};
-use umber_fetch::{FetchCancellation, ObjectCache};
+use umber_fetch::{BlobStore, FetchCancellation};
 use umber_hash::{AHash64, HashDomain};
 
 const SAMPLES: usize = 5;
@@ -169,7 +169,7 @@ fn parent() -> Result<(), String> {
     // Populate only the synthetic benchmark cache, then freeze its exact byte
     // inventory. Both measured routes start from these same verified bytes.
     let warm_owner =
-        NativeDistributionOwner::with_cache(&options, ObjectCache::new(fixture.cache.clone()));
+        NativeDistributionOwner::with_cache(&options, BlobStore::new(fixture.cache.clone()));
     let (expected_dvi, _) = compile_once(&options, &warm_owner)?;
     drop(warm_owner);
     let cache_before = inventory(&fixture.cache)?;
@@ -208,7 +208,7 @@ fn parent() -> Result<(), String> {
     let cold_elapsed = cold_started.elapsed();
 
     let shared_owner =
-        NativeDistributionOwner::with_cache(&options, ObjectCache::new(fixture.cache.clone()));
+        NativeDistributionOwner::with_cache(&options, BlobStore::new(fixture.cache.clone()));
     let shared_started = Instant::now();
     let mut shared_work = Work::default();
     for _ in 0..SAMPLES {
@@ -271,8 +271,7 @@ fn child(args: &[std::ffi::OsString]) -> Result<(), String> {
             .ok_or_else(|| "manifest digest is not UTF-8".to_owned())?
             .to_owned(),
     );
-    let owner =
-        NativeDistributionOwner::with_cache(&options, ObjectCache::new(PathBuf::from(cache)));
+    let owner = NativeDistributionOwner::with_cache(&options, BlobStore::new(PathBuf::from(cache)));
     let (dvi, telemetry) = compile_once(&options, &owner)?;
     let work = Work::default_with(telemetry);
     print!("CHILD ");

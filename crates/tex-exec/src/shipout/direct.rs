@@ -549,7 +549,7 @@ pub(super) fn compile_dvi_plan(
     emit_dvi: bool,
 ) -> Result<Option<DviPagePlan>, ExecError> {
     emit_dvi
-        .then(|| DviPagePlan::compile_v10(artifact_bytes).map_err(invalid_artifact))
+        .then(|| DviPagePlan::compile_artifact(artifact_bytes).map_err(invalid_artifact))
         .transpose()
 }
 

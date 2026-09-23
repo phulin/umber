@@ -5,9 +5,8 @@ precomputed lookup indexes, runtime-ready frozen node arena, and groupable
 environment base/overlay.
 
 This document is the durable ABI contract for Umber format images. The outer
-container is implemented in `tex-state::format_container`. Schema 11 replaces
-schema 10 to make token-parameter cell presence part of the frozen environment
-vocabulary. Section 1 contains only Universe-level interaction
+container is implemented in `tex-state::format_container`. The current schema
+is 12. Section 1 contains only Universe-level interaction
 mode and permitted PDF configuration. Format-visible environment entries are
 authoritative in kind 528, reachable node graphs are authoritative in kind
 512, and non-node semantic stores are authoritative in their fixed sections.
@@ -27,14 +26,14 @@ or process-local handle. Integers in frozen sections have an explicit `u8`,
 schema change is required to change the meaning or width of any existing
 field.
 
-## Schema-11 container
+## Schema-12 container
 
 The header is exactly 80 bytes:
 
 | Offset | Width | Field                            |
 | -----: | ----: | -------------------------------- |
 |      0 |     8 | magic `UMBRFMT\0`                |
-|      8 |     4 | schema version, currently `11`   |
+|      8 |     4 | schema version, currently `12`   |
 |     12 |     4 | header size, `80`                |
 |     16 |     4 | directory-record size, `40`      |
 |     20 |     4 | section count, `1..=64`          |
@@ -82,8 +81,7 @@ The checksum is FNV-1a-64 over the exact complete file with header bytes
 fingerprints, the directory, alignment padding, and every payload byte. It is
 an accidental-corruption checksum, not an authenticity mechanism.
 
-Section kind 1 retains the historical directory name
-`TransitionalSemanticV9`, but its schema-12 payload is restricted to
+Section kind 1 contains
 Universe-level interaction mode, TeX82 allocation-reporting metadata, and a
 versioned pdfTeX INITEX resource DTO. The reporting record carries
 `str_ptr`/`pool_ptr`, the format-relative `init_str_ptr`/`init_pool_ptr`, the
@@ -471,7 +469,7 @@ flags. A checksum-valid image can still be structurally invalid.
 Frozen lookup indexes use literal bucket arrays, never serialized
 `HashMap` state. A lookup-table header consists of:
 
-| Field         | Type  | Schema-11 configuration              |
+| Field         | Type  | Schema-12 configuration              |
 | ------------- | ----- | ------------------------------------ |
 | algorithm     | `u32` | `1`, FNV-1a-64                       |
 | table version | `u32` | `1`                                  |
@@ -511,7 +509,7 @@ configuration compatibility plus full structural validation are authoritative:
 the decoder verifies bucket bounds, entry uniqueness, one bucket per entry,
 canonical insertion/probe placement, key equality, and the declared maximum
 probe. Deterministic checksum-derived spot checks additionally exercise the
-runtime lookup implementation after validation. Schema 11 selects up to eight
+runtime lookup implementation after validation. Schema 12 selects up to eight
 entries per table from the container checksum using a fixed xorshift64*
 sequence. Those checks are
 supplementary diagnostics and can never make an incompatible fingerprint or
@@ -555,19 +553,17 @@ handles are process-local accelerators and are neither captured nor encoded,
 this optimization does not change schema 12, its ABI fingerprint, or its
 lookup-configuration fingerprint.
 
-## Migration from schemas 9 and 10
+## Unsupported older schemas
 
 Schema 9 was a deterministic semantic reconstruction format whose outer
 envelope had one opaque payload rather than an extensible fixed-width section
 directory and carried no compatibility fingerprints. Schema 10 introduced the
 sectioned frozen-store representation, but it could not distinguish an absent
 token-parameter cell from a present cell containing token-list record 0.
-Schema 11 is therefore a clean boundary: the loader rejects schemas 9 and 10
-with `UnsupportedVersion(9)` and `UnsupportedVersion(10)`. Users regenerate
-format images from source under the schema-12 engine; Umber does not
-reinterpret an old image heuristically.
+The loader accepts only schema 12. Users regenerate older images from source;
+Umber does not reinterpret an old image heuristically.
 
-Schema 11 writes environment cells only to kind 528 and node graphs only to
+Schema 12 writes environment cells only to kind 528 and node graphs only to
 kind 512. Names, token lists, macros, glue, fonts, code tables, and hyphenation
 exist only in authoritative sections 256 through 352 and are never reinterned
 during normal loading. The decoder validates environment references and token
@@ -582,7 +578,7 @@ image rejected: ...`; WASM returns the same message in its compile diagnostic.
 Failures are deterministic and identify the rejected boundary:
 
 - wrong magic means the input is not an Umber format image;
-- any schema other than 11, including schemas 9 and 10, reports the unsupported
+- any schema other than 12 reports the unsupported
   version and must be regenerated rather than upgraded in place;
 - ABI or lookup fingerprint mismatch means the image and runtime implement
   different schema-12 contracts;

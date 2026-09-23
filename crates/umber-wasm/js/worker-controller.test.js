@@ -535,7 +535,7 @@ test("worker runtime selects a compatible manifest format", async () => {
 			receivedOptions = options;
 		}
 		addUserFile() {}
-		compileAttempt() {
+		advance() {
 			return {
 				kind: "complete",
 				output: {
@@ -651,7 +651,7 @@ test("worker runtime resolves an exact application-private typed response before
 	assert.deepEqual(provided, [resource]);
 });
 
-test("removed fontResources option names the typed replacement API", async () => {
+test("worker rejects unknown resolver options", async () => {
 	const Worker = fakeWorker();
 	await assert.rejects(
 		compileInWorker(
@@ -660,14 +660,14 @@ test("removed fontResources option names the typed replacement API", async () =>
 			{
 				manifestUrl: "https://cdn.example.test/manifest.json",
 				manifestAHash64,
-				fontResources: [],
+				unknownSetting: [],
 			},
 			{ Worker },
 		),
 		(error) =>
 			error instanceof WorkerCompileError &&
-			error.code === "removed-option" &&
-			/resourceResponses/.test(error.message),
+			error.code === "invalid-options" &&
+			/unknown resolver option/.test(error.message),
 	);
 	assert.equal(Worker.instances.length, 0);
 });
@@ -681,7 +681,7 @@ test("worker runtime uses injected bindings and returns unique output transfers"
 			return { schemaVersion: 1, revision: 1, observations: [] };
 		}
 		addUserFile() {}
-		compileAttempt() {
+		advance() {
 			this.done = true;
 			return {
 				kind: "complete",

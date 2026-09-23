@@ -450,7 +450,7 @@ fn maximum_depth_canonical_artifact_compiles_with_bounded_frames() {
     let page = page(root);
     let bytes = page.to_bytes().expect("encode maximum-depth artifact");
 
-    crate::dvi::DviPagePlan::compile_v10(&bytes)
+    crate::dvi::DviPagePlan::compile_artifact(&bytes)
         .expect("compile maximum-depth canonical artifact bytes");
 }
 
@@ -465,7 +465,7 @@ fn maximum_depth_nested_leader_dvi_uses_bounded_frames() {
     // construction tree out of the production replay's RSS/stack assertion.
     std::mem::forget(page);
 
-    crate::dvi::DviPagePlan::compile_v10(&bytes)
+    crate::dvi::DviPagePlan::compile_artifact(&bytes)
         .expect("compile maximum-depth nested-leader bytes");
 }
 
@@ -518,7 +518,7 @@ fn nested_leader_geometry_preserves_depth_first_order() {
     let bytes = page.to_bytes().expect("encode nested leader order fixture");
     assert_eq!(
         crate::dvi::DviPagePlan::compile(&page).expect("compile owned nested leaders"),
-        crate::dvi::DviPagePlan::compile_v10(&bytes).expect("replay nested leader bytes")
+        crate::dvi::DviPagePlan::compile_artifact(&bytes).expect("replay nested leader bytes")
     );
 }
 
@@ -556,7 +556,7 @@ fn malformed_nested_leader_font_ids_fail_closed() {
         bytes[offset + 1..offset + 5].copy_from_slice(&invalid_font.to_le_bytes());
     }
     assert_eq!(
-        crate::dvi::DviPagePlan::compile_v10(&bytes),
+        crate::dvi::DviPagePlan::compile_artifact(&bytes),
         Err(crate::dvi::DviError::Artifact {
             message: "truncated page artifact".to_owned(),
         })

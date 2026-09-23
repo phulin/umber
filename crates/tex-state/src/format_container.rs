@@ -19,7 +19,7 @@ const MAX_LOGICAL_SECTION_LEN: usize = 512 * 1024 * 1024;
 const DEFLATE_FLAG: u32 = 1;
 
 /// Transitional Universe-level metadata payload; store data lives elsewhere.
-pub(crate) const TRANSITIONAL_SEMANTIC_SECTION: u32 = 1;
+pub(crate) const UNIVERSE_METADATA_SECTION: u32 = 1;
 
 pub(crate) const ABI_FINGERPRINT: u64 = fingerprint(
     b"umber.format.container.v8;le;header=80;directory=40;refs=relative-or-index;sections=deflate;font-identities=ahash64-v1;font-info-words=u32;names-hash-occupied=u8;string-pool=v2;pool-accounting=canonical-v4;main-memory=aggregate-live-extents;checksum=fnv1a64-zero-field",

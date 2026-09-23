@@ -60,10 +60,7 @@ export async function compile(options, userFiles, resolver, signal, bindings) {
 		addUserFiles(session, userFiles, limits);
 		const result = await driver.drive({
 			phase: "compile",
-			attempt: (current) =>
-				typeof current.advance === "function"
-					? current.advance()
-					: current.compileAttempt(),
+			attempt: (current) => current.advance(),
 			isComplete: (attempt) => attempt?.kind === "complete",
 			signal,
 			attemptLimit: limits.attempts,
@@ -145,7 +142,7 @@ export class EditorCompileFacade {
 	}
 
 	get renderUpdate() {
-		return this.#requireSession().renderUpdate?.() ?? null;
+		return this.#requireSession().renderUpdate();
 	}
 
 	acknowledgeRenderUpdate(revision, digest) {
@@ -153,7 +150,7 @@ export class EditorCompileFacade {
 	}
 
 	renderResync() {
-		return this.#requireSession().renderResync?.() ?? null;
+		return this.#requireSession().renderResync();
 	}
 
 	applyPatch(patch) {

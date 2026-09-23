@@ -504,18 +504,6 @@ impl PrefetchPolicySession {
             .map_err(|error| js_error(&format!("failed to encode prefetch requests: {error}")))
     }
 
-    #[wasm_bindgen(js_name = dependencyClosure)]
-    pub fn dependency_closure(&self, key: &str, tier: u8) -> Result<JsValue, JsValue> {
-        let requests = self
-            .policy
-            .dependency_closure(key, tier)
-            .into_iter()
-            .map(prefetch_request_value)
-            .collect::<Vec<_>>();
-        to_value(&requests)
-            .map_err(|error| js_error(&format!("failed to encode dependency closure: {error}")))
-    }
-
     #[wasm_bindgen(js_name = dependencyClosureRequest)]
     pub fn dependency_closure_request(
         &self,
@@ -537,33 +525,6 @@ impl PrefetchPolicySession {
             .collect::<Vec<_>>();
         to_value(&requests)
             .map_err(|error| js_error(&format!("failed to encode dependency closure: {error}")))
-    }
-
-    #[wasm_bindgen(js_name = admit)]
-    pub fn admit(
-        &mut self,
-        key: &str,
-        virtual_path: &str,
-        bytes: &Uint8Array,
-        dependencies: Option<JsValue>,
-    ) -> Result<(), JsValue> {
-        self.admit_impl(key, virtual_path, bytes, None, dependencies)
-    }
-
-    /// Admission variant that preserves the semantic resource class when a
-    /// file kind aliases a distribution key. This keeps image bytes out of
-    /// the runtime-text scanner even when the image spelling has a `.sty`
-    /// suffix.
-    #[wasm_bindgen(js_name = admitWithClass)]
-    pub fn admit_with_class(
-        &mut self,
-        key: &str,
-        virtual_path: &str,
-        bytes: &Uint8Array,
-        class: Option<String>,
-        dependencies: Option<JsValue>,
-    ) -> Result<(), JsValue> {
-        self.admit_impl(key, virtual_path, bytes, class.as_deref(), dependencies)
     }
 
     #[wasm_bindgen(js_name = admitRequest)]
@@ -594,60 +555,6 @@ impl PrefetchPolicySession {
         self.policy
             .admitted_request_with_class(&request, class, &bytes.to_vec(), dependencies);
         Ok(())
-    }
-
-    fn admit_impl(
-        &mut self,
-        key: &str,
-        virtual_path: &str,
-        bytes: &Uint8Array,
-        class: Option<&str>,
-        dependencies: Option<JsValue>,
-    ) -> Result<(), JsValue> {
-        let dependencies = dependencies
-            .filter(|value| !value.is_undefined() && !value.is_null())
-            .map(|value| {
-                from_value::<Vec<JsPrefetchRequest>>(value).map_err(|error| {
-                    js_error(&format!("invalid admitted prefetch dependencies: {error}"))
-                })
-            })
-            .transpose()?;
-        let dependencies = dependencies
-            .unwrap_or_default()
-            .into_iter()
-            .map(prefetch_request);
-        if let Some(class) = class {
-            self.policy.admitted_with_class(
-                key,
-                prefetch_class(class),
-                &bytes.to_vec(),
-                dependencies,
-            );
-        } else {
-            self.policy
-                .admitted_with_metadata(key, virtual_path, &bytes.to_vec(), dependencies);
-        }
-        Ok(())
-    }
-
-    #[wasm_bindgen(js_name = noteReplay)]
-    pub fn note_replay(
-        &mut self,
-        region: &str,
-        request_key: &str,
-        discarded_work: u64,
-    ) -> Result<JsValue, JsValue> {
-        let Some(region) = umber_distribution::PrefetchRegionKey::new(region.to_owned()) else {
-            return Ok(JsValue::NULL);
-        };
-        let escalation = self.policy.note_replay(region, request_key, discarded_work);
-        escalation.map_or(Ok(JsValue::NULL), |escalation| {
-            to_value(&JsPrefetchEscalation {
-                tier: escalation.tier,
-                discarded_work_delta: escalation.discarded_work_delta,
-            })
-            .map_err(|error| js_error(&format!("failed to encode prefetch escalation: {error}")))
-        })
     }
 
     #[wasm_bindgen(js_name = noteReplayRequest)]
@@ -792,11 +699,6 @@ impl CompilerSession {
         self.session_mut()?
             .authorize_prefetch_files(prefetch_files(&responses));
         Ok(())
-    }
-
-    #[wasm_bindgen(js_name = compileAttempt)]
-    pub fn compile_attempt(&mut self) -> Result<JsAttemptResult, JsValue> {
-        self.advance()
     }
 
     #[wasm_bindgen(js_name = resourceReplayContext)]
@@ -997,11 +899,6 @@ impl EditorSession {
         result::editor_advance_result(attempt, session.status(), session.display_output())
     }
 
-    #[wasm_bindgen(js_name = compileAttempt)]
-    pub fn compile_attempt(&mut self) -> Result<JsEditorAttemptResult, JsValue> {
-        self.advance()
-    }
-
     #[wasm_bindgen(js_name = resourceReplayContext)]
     pub fn resource_replay_context(&self) -> Result<JsValue, JsValue> {
         replay_context_value(self.session_ref()?.resource_replay_context())
@@ -1194,11 +1091,6 @@ impl ProjectSession {
 
     pub fn advance(&mut self) -> Result<JsAttemptResult, JsValue> {
         result::project_attempt_result(self.session_mut()?.compile_attempt())
-    }
-
-    #[wasm_bindgen(js_name = compileAttempt)]
-    pub fn compile_attempt(&mut self) -> Result<JsAttemptResult, JsValue> {
-        self.advance()
     }
 
     #[wasm_bindgen(js_name = resourceReplayContext)]

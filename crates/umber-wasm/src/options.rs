@@ -1,5 +1,5 @@
 use bib_engine::{BibOptionsBuilder, BibliographyMode, OutputFormat, OutputRequest};
-use js_sys::{Date, Reflect};
+use js_sys::Date;
 use serde::de::DeserializeOwned;
 use umber::{
     BibliographyProjectOptions, EngineMode, FeatureSetting, FileContentId, FileKind, FileRequest,
@@ -15,12 +15,10 @@ use wasm_bindgen::JsValue;
 use crate::{js_error, wire};
 
 pub(crate) fn parse_options(value: &JsValue) -> Result<SessionOptions, JsValue> {
-    reject_removed_output_options(value)?;
     session_options(from_js(value.clone())?)
 }
 
 pub(crate) fn parse_project_options(value: &JsValue) -> Result<LatexProjectOptions, JsValue> {
-    reject_removed_output_options(value)?;
     let dto: wire::ProjectSessionOptionsDto = from_js(value.clone())?;
     let tex = session_options(dto.session)?;
     let bibliography = dto.bibliography;
@@ -105,7 +103,6 @@ pub(crate) fn parse_project_options(value: &JsValue) -> Result<LatexProjectOptio
 pub(crate) fn parse_editor_options(
     value: &JsValue,
 ) -> Result<umber::EditorSessionOptions, JsValue> {
-    reject_removed_output_options(value)?;
     let dto: wire::EditorSessionOptionsDto = from_js(value.clone())?;
     Ok(umber::EditorSessionOptions {
         tex: session_options(dto.session)?,
@@ -183,18 +180,6 @@ fn session_options(dto: wire::SessionOptionsDto) -> Result<SessionOptions, JsVal
         Some(wire::FontMappingFallbackDto::Error) => umber::FontMappingFallbackPolicy::Error,
     };
     Ok(options)
-}
-
-fn reject_removed_output_options(value: &JsValue) -> Result<(), JsValue> {
-    for name in ["dvi", "html"] {
-        let field = Reflect::get(value, &JsValue::from_str(name))?;
-        if !field.is_undefined() && !field.is_null() {
-            return Err(js_error(
-                "session options dvi/html were removed; use the nonempty outputs array",
-            ));
-        }
-    }
-    Ok(())
 }
 
 fn fixed_point_limits(

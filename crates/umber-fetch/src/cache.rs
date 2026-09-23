@@ -201,7 +201,7 @@ impl BlobStore {
     }
 
     /// Loads a structurally verified blob and applies caller-owned semantic validation.
-    /// Invalid new entries are quarantined; valid compatibility entries are migrated.
+    /// Invalid entries are quarantined.
     pub fn load_validated(
         &self,
         spec: &VerifiedBlobSpec,
@@ -227,8 +227,8 @@ impl BlobStore {
 
     /// Runs the complete per-key entry transition while holding the sole key lock.
     ///
-    /// Current entries, compatibility migration, semantic quarantine,
-    /// construction, verified encoding, and no-clobber publication all pass
+    /// Current entries, semantic quarantine, construction, verified encoding,
+    /// and no-clobber publication all pass
     /// through this state machine. Read-only misses avoid creating cache paths.
     fn resolve_entry<E>(
         &self,
@@ -241,25 +241,14 @@ impl BlobStore {
         E: From<CacheError>,
     {
         spec.validate().map_err(E::from)?;
-        let mut staged = None;
         let authority = match self.authority(create).map_err(E::from)? {
             Some(authority) => authority,
-            None => {
-                staged = self
-                    .load_legacy(spec)
-                    .map_err(E::from)?
-                    .filter(|bytes| validate(bytes).is_ok());
-                if staged.is_none() {
-                    return Ok(None);
-                }
-                self.authority(true)
-                    .map_err(E::from)?
-                    .expect("creating the blob namespace returns an authority")
-            }
+            None => return Ok(None),
         };
         let name = entry_name(spec);
         let _lock = authority.lock(&name).map_err(E::from)?;
         let mut construct = Some(construct);
+        let mut pending = None;
 
         loop {
             if let Some(bytes) = self.load_locked(&authority, &name, spec).map_err(E::from)? {
@@ -269,14 +258,7 @@ impl BlobStore {
                 authority.quarantine(&name).map_err(E::from)?;
             }
 
-            let legacy = if staged.is_none() {
-                self.load_legacy(spec)
-                    .map_err(E::from)?
-                    .filter(|bytes| validate(bytes).is_ok())
-            } else {
-                None
-            };
-            let candidate = match staged.take().or(legacy) {
+            let candidate = match pending.take() {
                 Some(bytes) => bytes,
                 None if !create => return Ok(None),
                 None => match construct
@@ -305,7 +287,7 @@ impl BlobStore {
             if authority.publish(&name, &encoded).map_err(E::from)? {
                 return Ok(Some(candidate));
             }
-            staged = Some(candidate);
+            pending = Some(candidate);
         }
     }
 
@@ -459,68 +441,7 @@ impl BlobStore {
         };
         Ok(Some(bytes.to_vec()))
     }
-
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "compatibility readers preserve the previous cache layout"
-    )]
-    fn load_legacy(&self, spec: &VerifiedBlobSpec) -> Result<Option<Vec<u8>>, CacheError> {
-        let Some(path) = legacy_path(&self.root, spec) else {
-            return Ok(None);
-        };
-        let mut file = match open_legacy(&path) {
-            Ok(file) => file,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(CacheError::new("read legacy", path, error)),
-        };
-        if file
-            .metadata()
-            .map_err(|error| CacheError::new("inspect legacy", &path, error))?
-            .len()
-            > spec.max_bytes
-        {
-            return Ok(None);
-        }
-        let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes)
-            .map_err(|error| CacheError::new("read legacy", &path, error))?;
-        if verify_payload(spec, &bytes).is_err() {
-            return Ok(None);
-        }
-        Ok(Some(bytes))
-    }
 }
-
-#[cfg(unix)]
-fn open_legacy(path: &Path) -> io::Result<fs::File> {
-    use rustix::fs::{Mode, OFlags};
-
-    let parent = path
-        .parent()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "legacy path has no parent"))?;
-    let parent_type = fs::symlink_metadata(parent)?.file_type();
-    if parent_type.is_symlink() || !parent_type.is_dir() {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "legacy cache namespace is not an owned directory",
-        ));
-    }
-    rustix::fs::open(
-        path,
-        OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
-        Mode::empty(),
-    )
-    .map(fs::File::from)
-    .map_err(io::Error::from)
-}
-
-#[cfg(not(unix))]
-fn open_legacy(path: &Path) -> io::Result<fs::File> {
-    fs::File::open(path)
-}
-
-/// Compatibility name retained while callers migrate to the general store.
-pub type ObjectCache = BlobStore;
 
 impl VerifiedBlobSpec {
     fn without_expected_length(mut self) -> Self {
@@ -704,17 +625,6 @@ fn entry_name(spec: &VerifiedBlobSpec) -> String {
     digest.write([0]);
     digest.write(spec.key.as_bytes());
     format!("ahash64-v1-{}", digest.finish().hex())
-}
-
-fn legacy_path(root: &Path, spec: &VerifiedBlobSpec) -> Option<PathBuf> {
-    match spec.namespace.as_str() {
-        "objects" | "manifests" => Some(
-            root.join(&spec.namespace)
-                .join(format!("ahash64-v1-{}", spec.key)),
-        ),
-        "formats-v2" => Some(root.join("formats-v2").join(&spec.key)),
-        _ => None,
-    }
 }
 
 pub(crate) fn hex_digest(bytes: &[u8]) -> String {

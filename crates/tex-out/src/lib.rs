@@ -44,17 +44,9 @@ mod snapping;
 mod tests;
 
 pub use binary::{
-    ArtifactCodecLimits, CodecLimitKind, ParseError, SerializeError, V10ArtifactBuilder,
-    V10DiscWriter, V10NodeListWriter, V10TokenWriter,
+    ArtifactCodecLimits, ArtifactDiscEmitter, ArtifactEmitter, ArtifactNodeListEmitter,
+    ArtifactTokenEmitter, CodecLimitKind, ParseError, SerializeError,
 };
-/// Version-independent name for the canonical artifact emitter.
-pub type ArtifactEmitter = V10ArtifactBuilder;
-/// Version-independent name for a nested artifact node-list emitter.
-pub type ArtifactNodeListEmitter<'a> = V10NodeListWriter<'a>;
-/// Version-independent name for a discretionary-node emitter.
-pub type ArtifactDiscEmitter<'a, 'b> = V10DiscWriter<'a, 'b>;
-/// Version-independent name for a mark-token emitter.
-pub type ArtifactTokenEmitter<'a> = V10TokenWriter<'a>;
 pub use model::{
     ArtifactValidationError, ArtifactValidationLimits, BoxNode, DEFAULT_BANNER, DiscKind,
     EffectSink, FontResource, FontResourceConstruction, GlueKind, GlueOrder, GlueSetRatio,

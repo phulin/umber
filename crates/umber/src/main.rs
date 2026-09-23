@@ -917,11 +917,6 @@ impl RunCliOptions {
                     };
                     html = Some(PathBuf::from(path));
                 }
-                "--html-font-dir" => {
-                    return Err(CliError::Usage(
-                        "--html-font-dir was removed; configure the authenticated HTML root with --distribution and --distribution-ahash64, or provide application/private fonts through the typed resource resolver API",
-                    ));
-                }
                 "--html-assets" => {
                     if html_assets.is_some() {
                         return Err(CliError::Usage(

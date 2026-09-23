@@ -836,26 +836,7 @@ fn explicit_output_capabilities_cover_every_nonempty_combination() {
 }
 
 #[wasm_bindgen_test]
-fn removed_output_options_name_the_outputs_replacement() {
-    for legacy in ["dvi", "html"] {
-        let value = Object::new();
-        set(&value, "mainPath", &JsValue::from_str("main.tex"));
-        set(
-            &value,
-            legacy,
-            if legacy == "dvi" {
-                JsValue::TRUE
-            } else {
-                Object::new().into()
-            }
-            .as_ref(),
-        );
-        let error = CompilerSession::new(value.unchecked_ref::<JsSessionOptions>())
-            .err()
-            .expect("legacy output option must fail");
-        assert!(string_field(&error, "message").contains("outputs"));
-    }
-
+fn session_requires_explicit_outputs() {
     let missing = Object::new();
     set(&missing, "mainPath", &JsValue::from_str("main.tex"));
     let error = CompilerSession::new(missing.unchecked_ref::<JsSessionOptions>())

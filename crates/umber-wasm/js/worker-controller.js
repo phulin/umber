@@ -245,6 +245,23 @@ function prepareMessage(options, userFiles, resolver, wasmUrl) {
 			"resolver.manifestAHash64 is required",
 		);
 	}
+	const resolverKeys = new Set([
+		"manifestUrl",
+		"manifestAHash64",
+		"persistentCache",
+		"offline",
+		"concurrency",
+		"format",
+		"resourceResponses",
+	]);
+	for (const key of Object.keys(resolver)) {
+		if (!resolverKeys.has(key)) {
+			throw new WorkerCompileError(
+				"invalid-options",
+				`unknown resolver option: ${key}`,
+			);
+		}
+	}
 	if (clonedOptions.format !== undefined && resolver.format !== undefined) {
 		throw new WorkerCompileError(
 			"invalid-options",
@@ -276,12 +293,6 @@ function prepareMessage(options, userFiles, resolver, wasmUrl) {
 		if (!clonedOptions.html || typeof clonedOptions.html !== "object") {
 			throw new WorkerCompileError("invalid-options", "html must be an object");
 		}
-	}
-	if (resolver.fontResources !== undefined) {
-		throw new WorkerCompileError(
-			"removed-option",
-			"resolver.fontResources was removed; use resolver.resourceResponses with complete typed request/response keys, or add a provider through CompositeResourceResolver",
-		);
 	}
 	let resourceResponses;
 	if (resolver.resourceResponses !== undefined) {

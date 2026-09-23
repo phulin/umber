@@ -2,10 +2,10 @@ use super::*;
 
 /// Canonical artifact encoder fed one detached root child at a time.
 ///
-/// This is the fresh-shipout counterpart of [`V10PageDecoder`]: callers may
+/// This is the fresh-shipout counterpart of [`ArtifactPageDecoder`]: callers may
 /// lower, encode, and release each direct page child without retaining a
 /// recursive whole-page `PageArtifact`.
-pub struct V10ArtifactBuilder {
+pub struct ArtifactEmitter {
     job: crate::JobInfo,
     counts: [i32; 10],
     root: Writer,
@@ -14,7 +14,7 @@ pub struct V10ArtifactBuilder {
     limits: ArtifactCodecLimits,
 }
 
-impl V10ArtifactBuilder {
+impl ArtifactEmitter {
     #[must_use]
     pub fn new(job: crate::JobInfo, counts: [i32; 10], root: &BoxNode, vertical: bool) -> Self {
         let limits = ArtifactCodecLimits::default();
@@ -58,7 +58,7 @@ impl V10ArtifactBuilder {
     /// each list completes.
     pub fn push_streamed_node<E>(
         &mut self,
-        write: impl FnOnce(&mut V10NodeListWriter<'_>) -> Result<(), E>,
+        write: impl FnOnce(&mut ArtifactNodeListEmitter<'_>) -> Result<(), E>,
     ) -> Result<(), E>
     where
         E: From<SerializeError>,
@@ -72,13 +72,13 @@ impl V10ArtifactBuilder {
 
     pub fn stream_root_nodes<E>(
         &mut self,
-        write: impl FnOnce(&mut V10NodeListWriter<'_>) -> Result<(), E>,
+        write: impl FnOnce(&mut ArtifactNodeListEmitter<'_>) -> Result<(), E>,
     ) -> Result<u32, E>
     where
         E: From<SerializeError>,
     {
         let count = {
-            let mut nodes = V10NodeListWriter::new(&mut self.root, 1);
+            let mut nodes = ArtifactNodeListEmitter::new(&mut self.root, 1);
             write(&mut nodes)?;
             nodes.count
         };
@@ -141,13 +141,13 @@ impl V10ArtifactBuilder {
 /// The writer is a cursor into the artifact's final byte buffer, not a page
 /// node or event collection. Nested closures serialize immediately and retain
 /// only a byte offset for backpatching their direct-child count.
-pub struct V10NodeListWriter<'a> {
+pub struct ArtifactNodeListEmitter<'a> {
     writer: &'a mut Writer,
     depth: usize,
     count: u32,
 }
 
-impl<'a> V10NodeListWriter<'a> {
+impl<'a> ArtifactNodeListEmitter<'a> {
     fn new(writer: &'a mut Writer, depth: usize) -> Self {
         Self {
             writer,
@@ -186,12 +186,12 @@ impl<'a> V10NodeListWriter<'a> {
 
     fn nested_list<E>(
         &mut self,
-        write: impl FnOnce(&mut V10NodeListWriter<'_>) -> Result<(), E>,
+        write: impl FnOnce(&mut ArtifactNodeListEmitter<'_>) -> Result<(), E>,
     ) -> Result<(), E> {
         let count_offset = self.writer.bytes.len();
         self.writer.u32(0);
         let count = {
-            let mut children = V10NodeListWriter::new(self.writer, self.depth + 1);
+            let mut children = ArtifactNodeListEmitter::new(self.writer, self.depth + 1);
             write(&mut children)?;
             children.count
         };
@@ -287,7 +287,7 @@ impl<'a> V10NodeListWriter<'a> {
         &mut self,
         vertical: bool,
         fields: &BoxNode,
-        children: impl FnOnce(&mut V10NodeListWriter<'_>) -> Result<(), E>,
+        children: impl FnOnce(&mut ArtifactNodeListEmitter<'_>) -> Result<(), E>,
     ) -> Result<(), E>
     where
         E: From<SerializeError>,
@@ -336,7 +336,7 @@ impl<'a> V10NodeListWriter<'a> {
         kind: GlueKind,
         vertical: bool,
         fields: &BoxNode,
-        children: impl FnOnce(&mut V10NodeListWriter<'_>) -> Result<(), E>,
+        children: impl FnOnce(&mut ArtifactNodeListEmitter<'_>) -> Result<(), E>,
     ) -> Result<(), E>
     where
         E: From<SerializeError>,
@@ -357,7 +357,7 @@ impl<'a> V10NodeListWriter<'a> {
     pub fn disc<E>(
         &mut self,
         kind: DiscKind,
-        write: impl FnOnce(&mut V10DiscWriter<'_, '_>) -> Result<(), E>,
+        write: impl FnOnce(&mut ArtifactDiscEmitter<'_, '_>) -> Result<(), E>,
     ) -> Result<(), E>
     where
         E: From<SerializeError>,
@@ -365,7 +365,7 @@ impl<'a> V10NodeListWriter<'a> {
         self.begin_node().map_err(E::from)?;
         self.writer.u8(wire::node::DISC);
         self.writer.u8(disc_kind_tag(kind));
-        let mut disc = V10DiscWriter {
+        let mut disc = ArtifactDiscEmitter {
             nodes: self,
             phase: 0,
         };
@@ -392,7 +392,7 @@ impl<'a> V10NodeListWriter<'a> {
     pub fn mark_stream<E>(
         &mut self,
         class: u16,
-        write: impl FnOnce(&mut V10TokenWriter<'_>) -> Result<(), E>,
+        write: impl FnOnce(&mut ArtifactTokenEmitter<'_>) -> Result<(), E>,
     ) -> Result<(), E>
     where
         E: From<SerializeError>,
@@ -403,7 +403,7 @@ impl<'a> V10NodeListWriter<'a> {
         let count_offset = self.writer.bytes.len();
         self.writer.u32(0);
         let count = {
-            let mut tokens = V10TokenWriter {
+            let mut tokens = ArtifactTokenEmitter {
                 writer: self.writer,
                 count: 0,
             };
@@ -418,7 +418,7 @@ impl<'a> V10NodeListWriter<'a> {
     pub fn insert<E>(
         &mut self,
         class: u16,
-        content: impl FnOnce(&mut V10NodeListWriter<'_>) -> Result<(), E>,
+        content: impl FnOnce(&mut ArtifactNodeListEmitter<'_>) -> Result<(), E>,
     ) -> Result<(), E>
     where
         E: From<SerializeError>,
@@ -431,7 +431,7 @@ impl<'a> V10NodeListWriter<'a> {
 
     pub fn adjust<E>(
         &mut self,
-        content: impl FnOnce(&mut V10NodeListWriter<'_>) -> Result<(), E>,
+        content: impl FnOnce(&mut ArtifactNodeListEmitter<'_>) -> Result<(), E>,
     ) -> Result<(), E>
     where
         E: From<SerializeError>,
@@ -461,12 +461,12 @@ impl<'a> V10NodeListWriter<'a> {
     }
 }
 
-pub struct V10TokenWriter<'a> {
+pub struct ArtifactTokenEmitter<'a> {
     writer: &'a mut Writer,
     count: u32,
 }
 
-impl V10TokenWriter<'_> {
+impl ArtifactTokenEmitter<'_> {
     fn begin(&mut self) -> Result<(), SerializeError> {
         self.count = self
             .count
@@ -506,15 +506,15 @@ impl V10TokenWriter<'_> {
     }
 }
 
-pub struct V10DiscWriter<'a, 'b> {
-    nodes: &'a mut V10NodeListWriter<'b>,
+pub struct ArtifactDiscEmitter<'a, 'b> {
+    nodes: &'a mut ArtifactNodeListEmitter<'b>,
     phase: u8,
 }
 
-impl V10DiscWriter<'_, '_> {
+impl ArtifactDiscEmitter<'_, '_> {
     pub fn pre<E>(
         &mut self,
-        write: impl FnOnce(&mut V10NodeListWriter<'_>) -> Result<(), E>,
+        write: impl FnOnce(&mut ArtifactNodeListEmitter<'_>) -> Result<(), E>,
     ) -> Result<(), E>
     where
         E: From<SerializeError>,
@@ -529,7 +529,7 @@ impl V10DiscWriter<'_, '_> {
 
     pub fn post<E>(
         &mut self,
-        write: impl FnOnce(&mut V10NodeListWriter<'_>) -> Result<(), E>,
+        write: impl FnOnce(&mut ArtifactNodeListEmitter<'_>) -> Result<(), E>,
     ) -> Result<(), E>
     where
         E: From<SerializeError>,
@@ -544,7 +544,7 @@ impl V10DiscWriter<'_, '_> {
 
     pub fn replace<E>(
         &mut self,
-        write: impl FnOnce(&mut V10NodeListWriter<'_>) -> Result<(), E>,
+        write: impl FnOnce(&mut ArtifactNodeListEmitter<'_>) -> Result<(), E>,
     ) -> Result<(), E>
     where
         E: From<SerializeError>,

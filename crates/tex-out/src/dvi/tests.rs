@@ -139,7 +139,7 @@ fn streamed_v10_plans_match_owned_compilation() {
         .iter()
         .map(|page| {
             let bytes = page.to_bytes().expect("serialize v10 page");
-            DviPagePlan::compile_v10(&bytes)
+            DviPagePlan::compile_artifact(&bytes)
         })
         .collect::<Result<Vec<_>, _>>()
         .expect("compile streamed plans");
@@ -171,7 +171,7 @@ fn streamed_schema_12_ligature_source_keeps_decoder_aligned() {
     );
     let owned = DviPagePlan::compile(&page).expect("compile owned ligature page");
     let bytes = page.to_bytes().expect("serialize schema-12 ligature page");
-    let streamed = DviPagePlan::compile_v10(&bytes).expect("compile streamed ligature page");
+    let streamed = DviPagePlan::compile_artifact(&bytes).expect("compile streamed ligature page");
 
     assert_eq!(streamed, owned);
 }
@@ -316,7 +316,7 @@ fn co_emitted_leader_uses_operation_local_streaming_replay() {
         co_emitter
             .finish(&page.fonts, &bytes)
             .expect("finish replayed leader plan"),
-        Some(DviPagePlan::compile_v10(&bytes).expect("stream leader reference"))
+        Some(DviPagePlan::compile_artifact(&bytes).expect("stream leader reference"))
     );
 }
 
