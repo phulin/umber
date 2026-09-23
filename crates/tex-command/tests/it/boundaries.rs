@@ -12,6 +12,20 @@ fn count_outer_validity_entry_calls(source: &str) -> usize {
     .sum()
 }
 
+fn structured_scanner_sources(manifest_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let scanner_dir = manifest_dir.join("src/scanners");
+    let mut paths = vec![scanner_dir.join("structured.rs")];
+    paths.extend(
+        fs::read_dir(scanner_dir.join("structured"))
+            .expect("read structured scanner family")
+            .map(|entry| entry.expect("structured scanner entry").path())
+            .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
+            .filter(|path| path.file_name().is_none_or(|name| name != "tests.rs")),
+    );
+    paths.sort();
+    paths
+}
+
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
 fn crate_production_dependencies_match_the_command_boundary_allowlist() {
@@ -421,8 +435,11 @@ fn resource_capable_scalar_scans_have_one_inline_owned_continuation_surface() {
         .expect("read scalar scanner implementation");
     let font = fs::read_to_string(manifest_dir.join("src/scanners/font.rs"))
         .expect("read font scanner implementation");
-    let structured = fs::read_to_string(manifest_dir.join("src/scanners/structured.rs"))
-        .expect("read structured scanner implementation");
+    let structured = structured_scanner_sources(&manifest_dir)
+        .iter()
+        .map(|path| fs::read_to_string(path).expect("read structured scanner implementation"))
+        .collect::<Vec<_>>()
+        .join("\n");
 
     for forbidden in [
         "pub fn scan_optional_equals(",
@@ -467,7 +484,6 @@ fn resource_capable_scalar_scans_have_one_inline_owned_continuation_surface() {
         "src/scanners/expression.rs",
         "src/scanners/hyphenation.rs",
         "src/scanners/restricted.rs",
-        "src/scanners/structured.rs",
         "src/scanners/token_list.rs",
     ];
     let forbidden_calls = [
@@ -485,13 +501,18 @@ fn resource_capable_scalar_scans_have_one_inline_owned_continuation_surface() {
         ".scan_extended_register_index()",
         ".scan_font_selector()",
     ];
-    for relative in raw_callers {
-        let source = fs::read_to_string(manifest_dir.join(relative))
-            .unwrap_or_else(|error| panic!("failed to read {relative}: {error}"));
+    for path in raw_callers
+        .iter()
+        .map(|relative| manifest_dir.join(relative))
+        .chain(structured_scanner_sources(&manifest_dir))
+    {
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
         for forbidden in forbidden_calls {
             assert!(
                 !source.contains(forbidden),
-                "{relative} bypasses an owned scalar parent through {forbidden}"
+                "{} bypasses an owned scalar parent through {forbidden}",
+                path.display()
             );
         }
     }
@@ -527,13 +548,23 @@ fn scanner_status_lifetimes_have_one_processor_episode_mechanism() {
         "macro_call.rs",
         "conditionals.rs",
         "processor/expand.rs",
-        "scanners/structured.rs",
     ] {
         let source = fs::read_to_string(manifest_dir.join(relative))
             .unwrap_or_else(|error| panic!("read {relative}: {error}"));
         assert!(
             !source.contains(".begin_scanner_status("),
             "{relative} bypasses the processor scanner episode"
+        );
+    }
+    for path in
+        structured_scanner_sources(&test_support::repository_root().join("crates/tex-command"))
+    {
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+        assert!(
+            !source.contains(".begin_scanner_status("),
+            "{} bypasses the processor scanner episode",
+            path.display()
         );
     }
 
@@ -727,7 +758,6 @@ fn expansion_primitives_and_scanners_use_typed_delivery_requests() {
         "src/scanners/font.rs",
         "src/scanners/hyphenation.rs",
         "src/scanners/scalar.rs",
-        "src/scanners/structured.rs",
         "src/scanners/token_list.rs",
         "src/processor/alignment_interception.rs",
         "src/processor/backup.rs",
@@ -762,6 +792,22 @@ fn expansion_primitives_and_scanners_use_typed_delivery_requests() {
             assert!(
                 !executable.contains(call),
                 "{relative} must return a typed request instead of recursively entering delivery through {call}"
+            );
+        }
+    }
+    for path in structured_scanner_sources(&manifest_dir) {
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+        let executable = source
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        for call in forbidden {
+            assert!(
+                !executable.contains(call),
+                "{} must return a typed request instead of recursively entering delivery through {call}",
+                path.display()
             );
         }
     }

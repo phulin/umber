@@ -6,7 +6,6 @@
 //! e-TeX `\unexpanded` family) join the result directly.  In particular, the
 //! contents of such a list neither consume the caller's input nor contribute
 //! to the brace depth of this collection.
-#![allow(dead_code)] // executor scanner callers arrive in the following slice
 
 use tex_state::interner::{ControlSequenceKind, Symbol};
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, ResolvedMeaning};
@@ -32,7 +31,7 @@ use crate::token_collector::{
     TokenCollectorPhase,
 };
 
-#[cfg(test)]
+#[cfg(all(test, feature = "profiling"))]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct CaseShiftPathCounters {
     final_writes: u64,
@@ -41,7 +40,7 @@ struct CaseShiftPathCounters {
     second_traversals: u64,
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "profiling"))]
 thread_local! {
     static CASE_SHIFT_PATH_COUNTERS: std::cell::RefCell<CaseShiftPathCounters> =
         const { std::cell::RefCell::new(CaseShiftPathCounters {
@@ -52,13 +51,13 @@ thread_local! {
         }) };
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "profiling"))]
 fn reset_case_shift_path_counters() {
     CASE_SHIFT_PATH_COUNTERS
         .with(|counters| *counters.borrow_mut() = CaseShiftPathCounters::default());
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "profiling"))]
 fn case_shift_path_counters() -> CaseShiftPathCounters {
     CASE_SHIFT_PATH_COUNTERS.with(|counters| *counters.borrow())
 }
@@ -96,6 +95,7 @@ pub(crate) enum ScanToksMode {
     /// spelling enters its final backed-up input owner.
     CaseShift { uppercase: bool },
     /// Collect a macro parameter text followed by its replacement text.
+    #[cfg(test)] // Direct collector tests; production uses MacroDefinitionFor.
     MacroDefinition { expanded: bool, global: bool },
     /// Production macro definition scan, carrying §479's `warning_index`.
     MacroDefinitionFor {
@@ -373,6 +373,7 @@ impl ScanToksConfig {
                 purpose: ScanToksPurpose::Balanced,
                 status_visibility: ScannerStatusVisibility::Observed,
             },
+            #[cfg(test)]
             ScanToksMode::MacroDefinition { expanded, global } => Self {
                 grammar: ScanToksGrammar::MacroDefinition,
                 destination: ScanToksDestination::Definition { global },
@@ -498,17 +499,6 @@ enum MacroParameterDiagnostic {
 const FILE_ENDED_WITHIN_READ_DIAGNOSTIC: u64 = 0x7265_6164_0000_0486;
 
 impl<G> CommandProcessor<'_, '_, G> {
-    fn allocate_attempt_token_list(
-        &mut self,
-        words: impl IntoIterator<Item = TracedTokenWord>,
-    ) -> Result<AttemptTokenListId, CommandError> {
-        self.command
-            .attempt
-            .arena_mut()
-            .allocate_token_list(words)
-            .map_err(attempt_command_error)
-    }
-
     /// Admits only the destination-specific storage needed by one collector.
     ///
     /// The collector itself is initialized by its caller before this fallible
@@ -719,7 +709,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         ReplayWordTransform::Uppercase | ReplayWordTransform::Lowercase,
                         Token::Char { ch, cat },
                     ) => {
-                        #[cfg(test)]
+                        #[cfg(all(test, feature = "profiling"))]
                         CASE_SHIFT_PATH_COUNTERS.with(|counters| {
                             counters.borrow_mut().table_lookups += 1;
                         });
@@ -746,7 +736,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .push_input_builder_word(*builder, final_word)
                     .map_err(scratch_command_error)?;
                 if transform != ReplayWordTransform::Identity {
-                    #[cfg(test)]
+                    #[cfg(all(test, feature = "profiling"))]
                     CASE_SHIFT_PATH_COUNTERS.with(|counters| {
                         counters.borrow_mut().final_writes += 1;
                     });
@@ -2201,16 +2191,6 @@ pub(crate) fn scratch_command_error(error: crate::execution_scratch::ScratchErro
     }
 }
 
-fn is_parameter(token: Token) -> bool {
-    matches!(
-        token,
-        Token::Char {
-            cat: Catcode::Parameter,
-            ..
-        }
-    )
-}
-
 fn parameter_number(token: Token) -> Option<u8> {
     match token {
         Token::Char {
@@ -2226,26 +2206,6 @@ fn token_char(token: Token) -> Option<char> {
         Token::Char { ch, .. } => Some(ch),
         _ => None,
     }
-}
-
-fn is_begin_group(token: Token) -> bool {
-    matches!(
-        token,
-        Token::Char {
-            cat: Catcode::BeginGroup,
-            ..
-        }
-    )
-}
-
-fn is_end_group(token: Token) -> bool {
-    matches!(
-        token,
-        Token::Char {
-            cat: Catcode::EndGroup,
-            ..
-        }
-    )
 }
 
 /// TeX82 §482's `read_toks`, the `\read`/`\readline` collector.

@@ -44,7 +44,6 @@ pub use attempt::{
 };
 mod command;
 mod conditionals;
-mod continuation;
 pub use conditionals::{ActiveCondition, IncompleteCondition};
 #[cfg(feature = "profiling")]
 mod direct_command_delivery;

@@ -1264,6 +1264,7 @@ crates/tex-command/src/
         mod.rs
         scalar.rs
         structured.rs
+        structured/ (private scan families, result values, and local progress)
         token_list.rs
         font.rs
         hyphenation.rs

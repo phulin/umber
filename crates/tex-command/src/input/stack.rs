@@ -1,5 +1,4 @@
 //! Canonical input-stack replay and retirement mechanics.
-#![allow(dead_code)] // consumed by the ordered raw-delivery implementation issues
 
 use crate::CommandState;
 use tex_state::token::{Catcode, OriginId, Token, TokenWord};
@@ -23,10 +22,7 @@ pub(crate) enum ResidentBoundary {
     InvalidCharacter,
     NeedLine(InputLevelId),
     SourceExhausted(InputLevelId),
-    TokenExhausted {
-        identity: InputLevelId,
-        resident_index: usize,
-    },
+    TokenExhausted { identity: InputLevelId },
     ReplayCompleted(crate::CommandReplayEpisode),
     Empty,
 }
@@ -554,6 +550,7 @@ impl<G> CommandState<G> {
     /// why the retained frame pops here rather than at a `do_endv` call site:
     /// with a non-empty `\everycr`, §799's `begin_token_list(every_cr,
     /// every_cr_text)` buries it and it survives the whole `\noalign` body.
+    #[cfg(test)] // Input retirement tests exercise this one-argument adapter.
     pub(crate) fn retire_exhausted_input(
         &mut self,
         expected: InputLevelId,

@@ -78,10 +78,6 @@ pub(crate) struct MacroArgumentRange<G> {
 }
 
 impl<G> MacroArgumentRange<G> {
-    pub(crate) const fn frame(self) -> ArgumentSetId<G> {
-        self.frame
-    }
-
     pub(crate) const fn len(self) -> u32 {
         self.end - self.start
     }

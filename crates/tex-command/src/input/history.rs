@@ -1274,10 +1274,7 @@ impl<G> crate::CommandState<G> {
             .retire_resident_ordinary_input(resident_index, observer, immediate_write_retirement)
             .map_err(|_| ())?;
         if self.input.levels.len() == resident_index + 1 {
-            return Ok(Some(super::ResidentBoundary::TokenExhausted {
-                identity,
-                resident_index,
-            }));
+            return Ok(Some(super::ResidentBoundary::TokenExhausted { identity }));
         }
         Ok(retirement.map(super::ResidentBoundary::ReplayCompleted))
     }

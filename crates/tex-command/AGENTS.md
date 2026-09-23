@@ -494,7 +494,15 @@ collector (see `src/conditionals.rs`).
   expression scanners and two glue-level conversions, including their
   explicit parenthesis stack, arithmetic recovery, glue-order rules,
   observations, and checkpoint-retry tests.
-  `structured.rs`'s `scan_accent_base` is deliberately a one-command step
+  `structured.rs` retains the public reexports from private
+  `structured/*_values.rs` result modules. `structured/internal_state.rs`
+  holds shared local-progress declarations. `structured/pdf_*.rs`, `math.rs`,
+  `boxes.rs`, `alignment.rs`, `streams_fonts.rs`, `character.rs`, `write.rs`,
+  `definitions.rs`, and `filename.rs` each implement one command-processor
+  scan family. They share the existing processor scanner episode, delivery,
+  error, and checkpoint-replay authority; see
+  `docs/structured_scanner_ownership.md`.
+  `structured/character.rs`'s `scan_accent_base` is deliberately a one-command step
   rather than a loop: TeX82 §1123 runs §1270's `do_assignments` between the
   accent code and §1124's base character, and executing an assignment is the
   executor's, not the scanner's. It replays only §1124's own `else
@@ -524,7 +532,7 @@ collector (see `src/conditionals.rs`).
   destination inference/search, or command redispatch fallback.
   `filename/tests.rs` owns focused expanded filename scanning, termination,
   replay, and registered-source retry tests.
-  `structured.rs`'s `scan_math_field_episode` is TeX82 §1151's `scan_math`,
+  `structured/math.rs`'s `scan_math_field_episode` is TeX82 §1151's `scan_math`,
   a classification and not an absorption: every scalar case ends holding one
   math code, so the field pushes no input level, backs up no token, and never
   redelivers the command that selected it, and `othercases` is the whole
@@ -685,10 +693,6 @@ collector (see `src/conditionals.rs`).
   Validation never mutates the runtime,
   aggregate command roots are not `Clone`, and capture requires quiescent
   execution scratch.
-- `src/continuation.rs` and `src/continuation/`: private handle-free semantic
-  recipe DTOs, dense local indices, recursive validation and budgets, and
-  destination-stamped staging tests. They contain no attempt, scanner,
-  expansion, caller, resource-request, or resume state.
 - `tests/`: external dependency, visibility, and capability-boundary tests.
   Character/input integration coverage binds the exact shared-domain tokenizer
   to the pinned TeX82 fixture and compile-fail gates profile immutability.

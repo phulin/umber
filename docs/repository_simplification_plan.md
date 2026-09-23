@@ -379,6 +379,12 @@ distinct responsibilities but currently share one large file. Keep the
 existing reexports and scanner episode ownership. Follow with semantic
 deduplication only after the move passes its original fixtures.
 
+The extraction now places those families under `scanners/structured/` while
+the existing `CommandProcessor` remains the sole scanning and recovery owner.
+[Structured scanner ownership](structured_scanner_ownership.md) records the
+module boundaries. The old fixture and source-boundary gates remain the
+acceptance evidence for this mechanical step.
+
 Keep one operation authority. Separate command delivery, scanned command
 payloads, semantic application, diagnostic rendering, and commit/rollback
 settlement by their existing ownership seams. A split is successful when a
@@ -396,6 +402,15 @@ the "next integration slice" can be stale. Remove an allowance where the
 implementation is now live; migrate or retire an unused private representation
 only after checking feature and diagnostic consumers. Expansion already lives
 inside `tex-command`; a new expansion crate would reverse that consolidation.
+
+That audit found the detached-continuation implementation unreachable from
+production in both default and all-feature builds. Its module was private, its
+types had no external API, and only its own tests constructed the recipe graph.
+The unused implementation and tests were retired. The macro-call, token-list,
+and input modules now expose their live paths without module-wide dead-code
+allowances; direct-test adapters are test-only, and unused private helpers were
+removed. Any future detached transport must enter through a real production
+caller and receive evidence for that boundary.
 
 ### 3. Separate state storage, semantic state, and host effects
 

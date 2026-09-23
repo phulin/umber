@@ -1,5 +1,4 @@
 //! Dense source and token-list input-level ownership.
-#![allow(dead_code)] // consumed by the ordered raw-delivery implementation issues
 
 use core::marker::PhantomData;
 use std::hash::{Hash, Hasher};
@@ -291,21 +290,6 @@ impl<G> MacroArgumentCursor<G> {
         }
     }
 
-    pub(crate) fn argument_set(&self) -> crate::execution_scratch::ArgumentSetId<G> {
-        self.range.frame()
-    }
-
-    pub(crate) fn token_at(
-        &self,
-        position: usize,
-        scratch: &crate::execution_scratch::ExecutionScratch<G>,
-    ) -> Option<PackedTokenAt> {
-        scratch
-            .admitted_argument_word(self.range, position)
-            .ok()
-            .map(|word| (word.token_word(), word.origin()))
-    }
-
     #[inline(always)]
     pub(crate) fn advance_delivery(
         &mut self,
@@ -454,6 +438,7 @@ impl<G> InputLevel<G> {
         }
     }
 
+    #[cfg(test)] // Macro and input lifecycle tests inspect the resident row.
     pub(crate) fn macro_body(&self) -> Option<&MacroBodyCursor<G>> {
         match self {
             Self::Resident(ResidentTokenRow {
@@ -469,16 +454,6 @@ impl<G> InputLevel<G> {
                     | ResidentTokenStorage::MacroArgument(_),
                 ..
             }) => None,
-        }
-    }
-
-    pub(crate) fn macro_argument(&self) -> Option<&MacroArgumentCursor<G>> {
-        match self {
-            Self::Resident(ResidentTokenRow {
-                storage: ResidentTokenStorage::MacroArgument(argument),
-                ..
-            }) => Some(argument),
-            _ => None,
         }
     }
 
@@ -2045,7 +2020,7 @@ impl<G> ReplayLane<G> {
         Ok(())
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "profiling"))]
     pub(crate) fn input_builder_storage_counts(&self) -> (usize, usize, usize, usize, usize) {
         let owned_entries = self
             .entries
@@ -2141,10 +2116,12 @@ impl<G, I: Iterator<Item = BackedUpToken>> PackedTokenSpanSource<G> for BackedRe
     }
 }
 
+#[cfg(test)] // The direct packed-span admission test uses this slice adapter.
 pub(crate) struct StoredReplaySeed<'a, I> {
     tokens: &'a [Token],
     origins: I,
 }
+#[cfg(test)]
 impl<G, I: Iterator<Item = OriginId>> PackedTokenSpanSource<G> for StoredReplaySeed<'_, I> {
     fn admit(
         mut self,
@@ -2163,6 +2140,7 @@ impl<G, I: Iterator<Item = OriginId>> PackedTokenSpanSource<G> for StoredReplayS
 }
 
 impl PackedTokenSpanHandle<()> {
+    #[cfg(test)]
     pub(crate) fn stored(
         tokens: &[Token],
         origins: impl IntoIterator<Item = OriginId>,
@@ -2190,19 +2168,6 @@ impl PackedTokenSpanHandle<()> {
     ) -> TracedReplaySeed<impl Iterator<Item = TracedTokenWord>> {
         TracedReplaySeed {
             tokens: tokens.into_iter(),
-            ownership: PackedTokenOwnership::Transient,
-        }
-    }
-
-    /// Packs generated tokens that all carry one structural origin without
-    /// forming a temporary strong owner for every position.
-    pub(crate) fn transient_with_shared_origin(
-        tokens: impl IntoIterator<Item = Token>,
-        origin: OriginId,
-    ) -> SemanticReplaySeed<impl Iterator<Item = Token>> {
-        SemanticReplaySeed {
-            tokens: tokens.into_iter(),
-            origin,
             ownership: PackedTokenOwnership::Transient,
         }
     }

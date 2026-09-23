@@ -1,5 +1,4 @@
 //! Private canonical scalar macro-call state machine.
-#![allow(dead_code)] // expansion dispatch is the next ordered integration slice
 use smallvec::SmallVec;
 use tex_state::env::banks::IntParam;
 use tex_state::macro_definition::MacroParameterPattern;
@@ -159,6 +158,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// Explicit command callers retain their opener across synchronous matching.
     /// Ordinary expansion enters with invocation facts; resource failure unwinds
     /// either caller before host-owned checkpoint replay.
+    #[cfg(test)] // Direct scalar-entry tests; production calls macro_call_hot.
     pub(crate) fn macro_call(
         &mut self,
         call: &mut crate::CurrentCommand<G>,
