@@ -159,8 +159,14 @@ const testPrefetchPolicy = {
 			: [];
 	},
 	select(_required, candidates, budget) {
+		const selected = candidates.slice(0, budget.maxFiles);
 		return {
-			hintKeys: candidates.slice(0, budget.maxFiles).map(({ key }) => key),
+			hintFileKeys: selected.flatMap(({ identity }) =>
+				identity.type === "file" ? [identity] : [],
+			),
+			hintCatalogKeys: selected.flatMap(({ identity }) =>
+				identity.type === "catalog" ? [identity.key] : [],
+			),
 		};
 	},
 	createState() {
@@ -705,7 +711,7 @@ test("formats remain inline and download through the verified object cache", asy
 	);
 });
 
-test("schema three format closures return validated positive responses", async () => {
+test("format closure keys warm authenticated catalog objects without typed responses", async () => {
 	const data = await fixture();
 	data.root = {
 		...data.root,
@@ -721,26 +727,17 @@ test("schema three format closures return validated positive responses", async (
 		},
 	};
 	const { resolver, calls } = resolverFor(data);
-	const hints = resolver.formatPrefetchHints("plain");
-	assert.deepEqual(
-		hints.map(({ type, domain, kind, name }) => ({ type, domain, kind, name })),
-		[
-			{ type: "file", domain: "tex", kind: "tex", name: "hint.tex" },
-			{ type: "file", domain: "tex", kind: "tex", name: "plain.tex" },
-		],
-	);
+	resolver.useFormatInputClosure("plain");
+	await resolver.beginRun({ options: { engine: "tex82" } });
 	const downloads = await resolver.resolve(
 		[{ type: "file", kind: "tex", name: "alias.tex" }],
 		{
-			prefetchHints: [
-				...hints,
-				{ type: "file", kind: "tex", name: "absent.cfg" },
-			],
+			admitPrefetch: true,
 		},
 	);
 	assert.deepEqual(
 		downloads.map(({ name }) => name),
-		["alias.tex", "hint.tex", "plain.tex"],
+		["alias.tex"],
 	);
 	assert(
 		calls.some(({ url }) => url.endsWith(data.files["tex:hint.tex"].object)),
@@ -748,26 +745,70 @@ test("schema three format closures return validated positive responses", async (
 	assert(
 		calls.some(({ url }) => url.endsWith(data.files["tex:plain.tex"].object)),
 	);
+	assert.equal(
+		resolver.readinessOf({ type: "file", kind: "tex", name: "hint.tex" }),
+		undefined,
+	);
 });
 
-test("format closure responses fit the speculative resource budget", async () => {
+test("catalog and semantic candidates sharing a transport key stay separate", async () => {
 	const data = await fixture();
-	const { resolver } = resolverFor(data, { maxFiles: 1 });
+	data.root.formats.plain.inputClosure = {
+		schema: 1,
+		keys: ["tex:hint.tex"],
+	};
+	const seen = [];
+	const policy = {
+		...testPrefetchPolicy,
+		select(_required, candidates) {
+			seen.push(candidates.map(({ identity }) => identity));
+			return { hintCatalogKeys: ["tex:hint.tex"], hintFileKeys: [] };
+		},
+		createState() {
+			return { ...testPrefetchPolicy.createState(), select: this.select };
+		},
+	};
+	const { resolver, calls } = resolverFor(data, { prefetchPolicy: policy });
+	resolver.useFormatInputClosure("plain");
+	await resolver.beginRun({ options: { engine: "tex82" } });
+	const image = { type: "file", kind: "image", name: "hint.tex" };
+	const responses = await resolver.resolve([], {
+		prefetchHints: [image],
+		admitPrefetch: true,
+	});
+	assert.deepEqual(seen.at(-1), [
+		{ type: "file", domain: "tex", kind: "image", name: "hint.tex" },
+		{ type: "catalog", key: "tex:hint.tex" },
+	]);
+	assert.deepEqual(responses, []);
+	assert.equal(resolver.readinessOf(image), undefined);
+	assert(
+		calls.some(({ url }) => url.endsWith(data.files["tex:hint.tex"].object)),
+	);
+});
+
+test("format closure cache warming fits the speculative resource budget", async () => {
+	const data = await fixture();
+	data.root.formats.plain.inputClosure = {
+		schema: 1,
+		keys: ["tex:hint.tex", "tex:plain.tex"],
+	};
+	const { resolver, calls } = resolverFor(data, { maxFiles: 1 });
+	resolver.useFormatInputClosure("plain");
+	await resolver.beginRun({ options: { engine: "tex82" } });
 	const downloads = await resolver.resolve(
 		[{ type: "file", kind: "tex", name: "absent.cfg" }],
-		{
-			prefetchHints: [
-				{ type: "file", kind: "tex", name: "hint.tex" },
-				{ type: "file", kind: "tex", name: "plain.tex" },
-			],
-		},
+		{ admitPrefetch: true },
 	);
 	assert.deepEqual(
 		downloads.map(({ type, name }) => ({ type, name })),
-		[
-			{ type: "file-unavailable", name: "absent.cfg" },
-			{ type: "file", name: "hint.tex" },
-		],
+		[{ type: "file-unavailable", name: "absent.cfg" }],
+	);
+	assert(
+		calls.some(({ url }) => url.endsWith(data.files["tex:hint.tex"].object)),
+	);
+	assert(
+		!calls.some(({ url }) => url.endsWith(data.files["tex:plain.tex"].object)),
 	);
 });
 
@@ -862,7 +903,19 @@ test("prefetches dependency closures without returning dependency responses", as
 		data.files["tex:hint.tex"].object,
 	]);
 	const calls = [];
+	const admittedDependencies = [];
 	const { resolver } = resolverFor(data, {
+		prefetchPolicy: {
+			...testPrefetchPolicy,
+			createState() {
+				return {
+					...testPrefetchPolicy.createState(),
+					admit(_request, _path, _bytes, dependencies) {
+						admittedDependencies.push(dependencies);
+					},
+				};
+			},
+		},
 		async fetch(url) {
 			const object = url.split("/").at(-1);
 			calls.push(object);
@@ -872,6 +925,7 @@ test("prefetches dependency closures without returning dependency responses", as
 				: response(bytes);
 		},
 	});
+	await resolver.beginRun({ options: { engine: "tex82" } });
 
 	const downloads = await resolver.resolve([
 		{ kind: "tex", name: "plain.tex" },
@@ -890,6 +944,12 @@ test("prefetches dependency closures without returning dependency responses", as
 	assert.deepEqual(
 		new Set(calls.filter((object) => dependencyObjects.has(object))),
 		dependencyObjects,
+	);
+	resolver.noteAdmitted(downloads);
+	assert.deepEqual(admittedDependencies, [[]]);
+	assert.deepEqual(
+		resolver.currentRun.manifest.records.map(({ requestKey }) => requestKey),
+		["tex:plain.tex"],
 	);
 });
 

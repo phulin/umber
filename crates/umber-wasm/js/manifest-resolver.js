@@ -1,5 +1,4 @@
 import {
-	decodeKey,
 	encodeRequest,
 	fontRequestIdentity,
 	legacyMappingRequestIdentity,
@@ -213,7 +212,8 @@ export class HttpManifestResolver {
 		this.prefetchPolicyVersion =
 			this.prefetchPolicy?.version ?? UNAVAILABLE_PREFETCH_POLICY_VERSION;
 		this.prefetchState = undefined;
-		this.knownDependencies = new Map();
+		this.formatClosureKeys = [];
+		this.pendingFormatClosureKeys = [];
 		this.readiness = new Map();
 		this.prefetchAdmitted = new Map();
 		this.prefetchCountedPaths = new Set();
@@ -284,20 +284,19 @@ export class HttpManifestResolver {
 		let hinted = { jobs: [], misses: [] };
 		if (this.prefetchPolicy !== undefined) {
 			try {
-				hinted = await this.#select(prefetchHints, signal, false);
+				hinted = await this.#select(
+					prefetchHints,
+					signal,
+					false,
+					this.pendingFormatClosureKeys,
+				);
+				this.pendingFormatClosureKeys = [];
 			} catch {
 				throwIfAborted(signal);
 				// Speculative index transport is best effort, like speculative objects.
 			}
 		}
 		for (const job of required.jobs.concat(hinted.jobs)) {
-			if (job.request === undefined && this.prefetchPolicy === undefined)
-				continue;
-			const identity =
-				job.request === undefined
-					? typedRequestIdentity(decodeKey(job.manifestKey))
-					: job.key;
-			this.#setReadiness(identity, "exists-not-ready");
 			if (job.request === undefined && this.prefetchPolicy !== undefined)
 				this.prefetchMetrics.packageGroupCandidates += 1;
 		}
@@ -315,6 +314,10 @@ export class HttpManifestResolver {
 			this.maxBytes,
 		);
 		const jobs = this.#selectJobs(required.jobs, hinted.jobs);
+		for (const job of jobs) {
+			if (job.request !== undefined)
+				this.#setReadiness(job.key, "exists-not-ready");
+		}
 		const groups = groupByObject(jobs);
 		const results = new Map();
 		let next = 0;
@@ -324,12 +327,12 @@ export class HttpManifestResolver {
 				try {
 					const bytes = await this.#object(group[0].entry, signal);
 					for (const job of group) {
-						this.#rememberDependencies(job);
+						// An authenticated catalogue companion warms the object cache.
+						// It has no engine-visible kind or VFS readiness identity.
+						if (job.request === undefined) continue;
 						this.#recordResolved(
 							job,
-							job.request === undefined
-								? "hint"
-								: roleFor(job.request, job.hinted || !job.requested),
+							roleFor(job.request, job.hinted || !job.requested),
 						);
 						results.set(
 							job.key,
@@ -337,8 +340,7 @@ export class HttpManifestResolver {
 								? {
 										type: "file",
 										...(() => {
-											const identity =
-												job.request ?? decodeKey(job.manifestKey);
+											const identity = job.request;
 											const origin =
 												typeof identity.origin === "string"
 													? identity.origin
@@ -404,7 +406,9 @@ export class HttpManifestResolver {
 		throwIfAborted(signal);
 		const admitted = unavailable.concat(
 			jobs.flatMap((job) =>
-				(job.requested || admitPrefetch) && results.has(job.key)
+				job.request !== undefined &&
+				(job.requested || admitPrefetch) &&
+				results.has(job.key)
 					? [results.get(job.key)]
 					: [],
 			),
@@ -426,19 +430,18 @@ export class HttpManifestResolver {
 		const inlineHints = required.filter((job) => !job.requested);
 		const candidates = inlineHints.concat(hinted);
 		const candidate = (job, requiredFlag) => {
-			const file =
-				job.type === "file"
-					? (job.request ?? decodeKey(job.manifestKey))
-					: undefined;
+			const file = job.type === "file" ? job.request : undefined;
 			return {
 				key: job.manifestKey,
-				...(file === undefined
-					? {}
-					: {
-							domain: file.domain ?? resourceDomain(file.kind),
-							kind: file.kind,
-							name: file.name,
-						}),
+				identity:
+					file === undefined
+						? { type: "catalog", key: job.manifestKey }
+						: {
+								type: "file",
+								domain: file.domain ?? resourceDomain(file.kind),
+								kind: file.kind,
+								name: file.name,
+							},
 				object: job.entry.object,
 				ahash64: job.entry.ahash64,
 				bytes: job.entry.bytes,
@@ -459,7 +462,7 @@ export class HttpManifestResolver {
 				maxBytes: Math.min(SHARED_PREFETCH_BUDGET.maxBytes, this.maxBytes),
 			},
 		);
-		const allowed = new Set(selection.hintKeys ?? []);
+		const allowedCatalogKeys = new Set(selection.hintCatalogKeys ?? []);
 		const allowedFileKeys = new Set(
 			(selection.hintFileKeys ?? []).map((key) =>
 				JSON.stringify([key.domain, key.kind, key.name]),
@@ -468,9 +471,9 @@ export class HttpManifestResolver {
 		return mergeSelectedJobs(
 			blocking,
 			candidates.filter((job) => {
-				if (allowed.has(job.manifestKey)) return true;
-				if (job.type !== "file" || allowedFileKeys.size === 0) return false;
-				const request = job.request ?? decodeKey(job.manifestKey);
+				if (job.type !== "file" || job.request === undefined)
+					return allowedCatalogKeys.has(job.manifestKey);
+				const request = job.request;
 				return allowedFileKeys.has(
 					JSON.stringify([
 						request.domain ?? resourceDomain(request.kind),
@@ -480,27 +483,6 @@ export class HttpManifestResolver {
 				);
 			}),
 		);
-	}
-
-	#rememberDependencies(job) {
-		if (this.prefetchState === undefined) return;
-		if (job.type !== "file" || !Array.isArray(job.entry.dependencies)) return;
-		const request = job.request ?? requestFromManifestKey(job.manifestKey);
-		if (request === undefined) return;
-		const identity = typedRequestIdentity(request);
-		const dependencies = this.knownDependencies.get(identity) ?? [];
-		for (const key of job.entry.dependencies) {
-			const dependency = requestFromManifestKey(key);
-			if (
-				dependency !== undefined &&
-				!dependencies.some(
-					(existing) =>
-						typedRequestIdentity(existing) === typedRequestIdentity(dependency),
-				)
-			)
-				dependencies.push(dependency);
-		}
-		this.knownDependencies.set(identity, dependencies);
 	}
 
 	/**
@@ -528,7 +510,7 @@ export class HttpManifestResolver {
 					request,
 					response.virtualPath,
 					response.bytes,
-					this.knownDependencies.get(identity) ?? [],
+					[],
 				);
 			this.#setReadiness(identity, "ready");
 			if (response.speculative === true) {
@@ -597,7 +579,10 @@ export class HttpManifestResolver {
 		this.prefetchAdmitted.clear();
 		this.prefetchCountedPaths.clear();
 		this.prefetchUsed.clear();
-		this.knownDependencies.clear();
+		this.pendingFormatClosureKeys = this.formatClosureKeys.slice(
+			0,
+			SHARED_PREFETCH_BUDGET.maxFiles,
+		);
 		this.demandCounted.clear();
 		this.readiness.clear();
 		for (const key of Object.keys(this.prefetchMetrics))
@@ -692,7 +677,7 @@ export class HttpManifestResolver {
 		this.prefetchAdmitted.clear();
 		this.prefetchCountedPaths.clear();
 		this.prefetchUsed.clear();
-		this.knownDependencies.clear();
+		this.pendingFormatClosureKeys = [];
 		this.demandCounted.clear();
 	}
 
@@ -712,16 +697,7 @@ export class HttpManifestResolver {
 
 	#recordResolved(job, role) {
 		const run = this.currentRun;
-		const request =
-			job.request ??
-			(job.type === "file"
-				? {
-						type: "file",
-						domain: resourceDomain(decodeKey(job.manifestKey).kind),
-						...decodeKey(job.manifestKey),
-						originalName: decodeKey(job.manifestKey).name,
-					}
-				: undefined);
+		const request = job.request;
 		if (
 			run === undefined ||
 			request === undefined ||
@@ -781,7 +757,7 @@ export class HttpManifestResolver {
 		this.readiness.set(identity, state);
 	}
 
-	async #select(requests, signal, blocking) {
+	async #select(requests, signal, blocking, catalogKeys = []) {
 		const descriptors = requests.map((request) => ({
 			request,
 			type:
@@ -798,6 +774,14 @@ export class HttpManifestResolver {
 						: encodeRequest(request),
 			key: typedRequestIdentity(request),
 		}));
+		for (const catalogKey of catalogKeys) {
+			descriptors.push({
+				request: undefined,
+				type: "file",
+				catalogKey,
+				key: `catalog:${catalogKey}`,
+			});
+		}
 		try {
 			const keys = descriptors.map(({ catalogKey }) => catalogKey);
 			const prepared = this.catalogSession.prepareBatch(keys);
@@ -837,19 +821,21 @@ export class HttpManifestResolver {
 						manifestKey: job.manifestKey,
 						entry: job.entry,
 						request: descriptor.request,
-						requested: job.requirement === "required",
+						requested:
+							descriptor.request !== undefined &&
+							job.requirement === "required",
 						hinted: !blocking,
 						type: job.kind,
 					}));
 				}),
 				misses: plan.misses.flatMap((index) =>
-					(
-						descriptorsByCatalogKey.get(descriptors[index].catalogKey) ?? []
-					).map((descriptor) => ({
-						type: descriptor.type,
-						request: descriptor.request,
-						manifestKey: descriptor.catalogKey,
-					})),
+					(descriptorsByCatalogKey.get(descriptors[index].catalogKey) ?? [])
+						.filter((descriptor) => descriptor.request !== undefined)
+						.map((descriptor) => ({
+							type: descriptor.type,
+							request: descriptor.request,
+							manifestKey: descriptor.catalogKey,
+						})),
 				),
 			};
 		} catch (error) {
@@ -918,19 +904,11 @@ export class HttpManifestResolver {
 		}
 	}
 
-	formatPrefetchHints(name) {
-		const closure = this.formatMetadata(name).inputClosure;
-		return (
-			closure?.keys.map((key) => {
-				const decoded = decodeKey(key);
-				return {
-					type: "file",
-					domain: resourceDomain(decoded.kind),
-					...decoded,
-					originalName: decoded.name,
-				};
-			}) ?? []
-		);
+	/** Retains authenticated catalogue-only format seeds for optional cache warming. */
+	useFormatInputClosure(name) {
+		this.formatClosureKeys = [
+			...(this.formatMetadata(name).inputClosure?.keys ?? []),
+		];
 	}
 
 	#object(entry, signal, limits = {}) {
@@ -1079,21 +1057,6 @@ function groupByObject(jobs) {
 		groups[index].push(job);
 	}
 	return groups;
-}
-
-function requestFromManifestKey(key) {
-	try {
-		const decoded = decodeKey(key);
-		return {
-			type: "file",
-			domain: resourceDomain(decoded.kind),
-			...decoded,
-			originalName: decoded.name,
-			searchContext: "distribution",
-		};
-	} catch {
-		return undefined;
-	}
 }
 
 function stableOptionsIdentity(options) {

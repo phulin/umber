@@ -38,10 +38,12 @@ function rustRequestOutput(request) {
 		typeof request.key !== "string" ||
 		typeof request.domain !== "string" ||
 		typeof request.kind !== "string" ||
-		typeof request.name !== "string"
+		typeof request.name !== "string" ||
+		typeof request.origin !== "string"
 	)
-		// A transport key cannot safely recover the semantic request kind.
-		return undefined;
+		throw new TypeError(
+			"Rust prefetch policy returned an invalid semantic request",
+		);
 	return {
 		type: "file",
 		domain: request.domain,
@@ -50,7 +52,7 @@ function rustRequestOutput(request) {
 		originalName: request.originalSpelling ?? request.name,
 		searchContext: request.searchContext ?? "literal",
 		depth: request.depth ?? 0,
-		...(typeof request.origin === "string" ? { origin: request.origin } : {}),
+		origin: request.origin,
 	};
 }
 
@@ -99,7 +101,7 @@ export function createRustPrefetchPolicy(bindings) {
 			const state = new bindings.PrefetchPolicySession();
 			return Object.freeze({
 				dispose() {
-					state.free?.();
+					state.free();
 				},
 				enqueue(requests) {
 					state.enqueue(requests.map((request) => rustRequestInput(request)));
@@ -117,16 +119,12 @@ export function createRustPrefetchPolicy(bindings) {
 					return state.select(required, candidates, budget);
 				},
 				drain(limit) {
-					return state
-						.drain(limit)
-						.map(rustRequestOutput)
-						.filter((request) => request !== undefined);
+					return state.drain(limit).map(rustRequestOutput);
 				},
 				dependencyClosure(request, tier) {
 					return state
 						.dependencyClosureRequest(rustRequestInput(request), tier)
-						.map(rustRequestOutput)
-						.filter((value) => value !== undefined);
+						.map(rustRequestOutput);
 				},
 				admit(request, virtualPath, bytes, dependencies = []) {
 					const encodedDependencies = dependencies.map((dependency) =>

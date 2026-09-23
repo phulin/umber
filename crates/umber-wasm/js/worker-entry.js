@@ -70,13 +70,11 @@ async function prepareSession(message, dependencies) {
 				formatSchema: bindings.formatSchemaVersion(),
 			},
 		);
-		const formatPrefetchHints =
-			manifestResolver.formatPrefetchHints?.(message.resolver.format) ?? [];
+		manifestResolver.useFormatInputClosure(message.resolver.format);
 		options = {
 			...options,
 			format,
 			formatSchema: bindings.formatSchemaVersion(),
-			formatPrefetchHints,
 		};
 	}
 	return { bindings, options, resolver };

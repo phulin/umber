@@ -9,6 +9,7 @@ import {
 test("Rust policy adapter keeps request identity at the WASM boundary", () => {
 	const calls = [];
 	class FakePrefetchPolicySession {
+		free() {}
 		enqueue(requests) {
 			calls.push(["enqueue", requests]);
 		}
@@ -31,6 +32,7 @@ test("Rust policy adapter keeps request identity at the WASM boundary", () => {
 					class: "small-runtime",
 					required: false,
 					depth: 1,
+					origin: "runtime-literal",
 				},
 			];
 		}
@@ -78,6 +80,7 @@ test("Rust policy adapter keeps request identity at the WASM boundary", () => {
 			originalName: "./child.sty",
 			searchContext: "runtime",
 			depth: 1,
+			origin: "runtime-literal",
 		},
 	]);
 	const request = {

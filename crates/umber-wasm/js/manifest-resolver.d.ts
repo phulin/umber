@@ -233,7 +233,7 @@ export class HttpManifestResolver {
 		signal?: AbortSignal,
 	): Promise<Uint8Array>;
 	formatMetadata(name: string): ManifestFormat;
-	formatPrefetchHints(name: string): readonly ResourceRequest[];
+	useFormatInputClosure(name: string): void;
 	beginRun(context?: {
 		source?: string;
 		options?: Record<string, unknown>;

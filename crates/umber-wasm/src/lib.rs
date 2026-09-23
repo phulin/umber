@@ -157,13 +157,21 @@ struct JsPrefetchCandidate {
     bytes: u64,
     #[serde(default)]
     class: Option<String>,
-    #[serde(default)]
-    domain: Option<String>,
-    #[serde(default)]
-    kind: Option<String>,
-    #[serde(default)]
-    name: Option<String>,
+    identity: JsPrefetchCandidateIdentity,
     required: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+enum JsPrefetchCandidateIdentity {
+    File {
+        domain: String,
+        kind: String,
+        name: String,
+    },
+    Catalog {
+        key: String,
+    },
 }
 
 #[derive(Deserialize)]
@@ -180,9 +188,8 @@ struct JsPrefetchBudget {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct JsPrefetchSelection {
-    required_keys: Vec<String>,
-    hint_keys: Vec<String>,
     hint_file_keys: Vec<JsPrefetchFileKey>,
+    hint_catalog_keys: Vec<String>,
     demand_bytes: u64,
     prefetch_bytes: u64,
 }
@@ -199,12 +206,9 @@ struct JsPrefetchFileKey {
 #[serde(rename_all = "camelCase")]
 struct JsPrefetchRequest {
     key: String,
-    #[serde(default)]
-    domain: Option<String>,
-    #[serde(default)]
-    kind: Option<String>,
-    #[serde(default)]
-    name: Option<String>,
+    domain: String,
+    kind: String,
+    name: String,
     original_spelling: String,
     search_context: String,
     #[serde(default)]
@@ -219,19 +223,15 @@ struct JsPrefetchRequest {
 #[serde(rename_all = "camelCase")]
 struct JsPrefetchRequestOutput {
     key: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    domain: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    kind: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    name: Option<String>,
+    domain: String,
+    kind: String,
+    name: String,
     original_spelling: String,
     search_context: String,
     class: String,
     required: bool,
     depth: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    origin: Option<String>,
+    origin: String,
 }
 
 #[derive(Serialize)]
@@ -261,8 +261,8 @@ fn prefetch_class_name(class: umber_distribution::PrefetchClass) -> &'static str
     }
 }
 
-fn prefetch_origin(origin: &str) -> umber_distribution::PrefetchOrigin {
-    match origin {
+fn prefetch_origin(origin: &str) -> Result<umber_distribution::PrefetchOrigin, JsValue> {
+    let origin = match origin {
         "source" => umber_distribution::PrefetchOrigin::Source,
         "explicit" => umber_distribution::PrefetchOrigin::Explicit,
         "prior-observed" => umber_distribution::PrefetchOrigin::PriorObserved,
@@ -271,13 +271,13 @@ fn prefetch_origin(origin: &str) -> umber_distribution::PrefetchOrigin {
         "metadata" => umber_distribution::PrefetchOrigin::Metadata,
         "actual-demand" => umber_distribution::PrefetchOrigin::ActualDemand,
         "replay-escalation" => umber_distribution::PrefetchOrigin::ReplayEscalation,
-        _ => umber_distribution::PrefetchOrigin::Unknown,
-    }
+        _ => return Err(js_error("invalid prefetch origin")),
+    };
+    Ok(origin)
 }
 
-fn prefetch_origin_name(origin: umber_distribution::PrefetchOrigin) -> Option<String> {
+fn prefetch_origin_name(origin: umber_distribution::PrefetchOrigin) -> String {
     let name = match origin {
-        umber_distribution::PrefetchOrigin::Unknown => return None,
         umber_distribution::PrefetchOrigin::Source => "source",
         umber_distribution::PrefetchOrigin::Explicit => "explicit",
         umber_distribution::PrefetchOrigin::PriorObserved => "prior-observed",
@@ -287,50 +287,32 @@ fn prefetch_origin_name(origin: umber_distribution::PrefetchOrigin) -> Option<St
         umber_distribution::PrefetchOrigin::ActualDemand => "actual-demand",
         umber_distribution::PrefetchOrigin::ReplayEscalation => "replay-escalation",
     };
-    Some(name.to_owned())
+    name.to_owned()
 }
 
-fn prefetch_request(request: JsPrefetchRequest) -> umber_distribution::PrefetchRequest {
-    let file_key = request
-        .domain
-        .as_deref()
-        .zip(request.kind.as_deref())
-        .zip(request.name.as_deref())
-        .and_then(|((domain, kind), name)| {
-            umber_distribution::PrefetchFileKey::new(domain, kind, name)
-        });
+fn prefetch_request(
+    request: JsPrefetchRequest,
+) -> Result<umber_distribution::PrefetchRequest, JsValue> {
+    let file_key =
+        umber_distribution::PrefetchFileKey::new(request.domain, request.kind, request.name)
+            .ok_or_else(|| js_error("invalid semantic prefetch file key"))?;
     let class = request.class.as_deref().map_or_else(
         || umber_distribution::PrefetchClass::for_key(&request.key),
         prefetch_class,
     );
-    file_key
-        .map_or_else(
-            || {
-                umber_distribution::PrefetchRequest::new(
-                    request.key.clone(),
-                    request.original_spelling.clone(),
-                    request.search_context.clone(),
-                    request.required,
-                )
-            },
-            |file_key| {
-                umber_distribution::PrefetchRequest::for_file_key(
-                    file_key,
-                    request.key.clone(),
-                    request.original_spelling.clone(),
-                    request.search_context.clone(),
-                    request.required,
-                )
-            },
-        )
-        .with_class(class)
-        .with_depth(request.depth)
-        .with_origin(
-            request
-                .origin
-                .as_deref()
-                .map_or(umber_distribution::PrefetchOrigin::Unknown, prefetch_origin),
-        )
+    Ok(umber_distribution::PrefetchRequest::for_file_key(
+        file_key,
+        request.key,
+        request.original_spelling,
+        request.search_context,
+        request.required,
+    )
+    .with_class(class)
+    .with_depth(request.depth)
+    .with_origin(match request.origin {
+        Some(origin) => prefetch_origin(&origin)?,
+        None => umber_distribution::PrefetchOrigin::Source,
+    }))
 }
 
 fn prefetch_request_value(request: umber_distribution::PrefetchRequest) -> JsPrefetchRequestOutput {
@@ -338,12 +320,9 @@ fn prefetch_request_value(request: umber_distribution::PrefetchRequest) -> JsPre
     let origin = prefetch_origin_name(request.origin());
     JsPrefetchRequestOutput {
         key: request.key,
-        domain: request.file_key.as_ref().map(|key| key.domain.clone()),
-        kind: request.file_key.as_ref().map(|key| key.kind.clone()),
-        name: request
-            .file_key
-            .as_ref()
-            .map(|key| key.normalized_name.clone()),
+        domain: request.file_key.domain,
+        kind: request.file_key.kind,
+        name: request.file_key.normalized_name,
         original_spelling: request.original_spelling,
         search_context: request.search_context,
         class: prefetch_class_name(request.class).to_owned(),
@@ -353,20 +332,27 @@ fn prefetch_request_value(request: umber_distribution::PrefetchRequest) -> JsPre
     }
 }
 
-fn prefetch_candidate(candidate: JsPrefetchCandidate) -> umber_distribution::PrefetchCandidate {
+fn prefetch_candidate(
+    candidate: JsPrefetchCandidate,
+) -> Result<umber_distribution::PrefetchCandidate, JsValue> {
     let class = candidate.class.as_deref().map_or_else(
         || umber_distribution::PrefetchClass::for_key(&candidate.key),
         prefetch_class,
     );
-    let file_key = candidate
-        .domain
-        .as_deref()
-        .zip(candidate.kind.as_deref())
-        .zip(candidate.name.as_deref())
-        .and_then(|((domain, kind), name)| {
-            umber_distribution::PrefetchFileKey::new(domain, kind, name)
-        });
-    umber_distribution::PrefetchCandidate {
+    let identity = match candidate.identity {
+        JsPrefetchCandidateIdentity::File { domain, kind, name } => {
+            let key = umber_distribution::PrefetchFileKey::new(domain, kind, name)
+                .ok_or_else(|| js_error("invalid semantic prefetch candidate key"))?;
+            umber_distribution::PrefetchCandidateIdentity::File(key)
+        }
+        JsPrefetchCandidateIdentity::Catalog { key } => {
+            if key.is_empty() || key != candidate.key {
+                return Err(js_error("invalid catalog prefetch candidate key"));
+            }
+            umber_distribution::PrefetchCandidateIdentity::Catalog(key)
+        }
+    };
+    Ok(umber_distribution::PrefetchCandidate {
         key: candidate.key,
         object: umber_distribution::ObjectEntry {
             object: candidate.object,
@@ -375,8 +361,8 @@ fn prefetch_candidate(candidate: JsPrefetchCandidate) -> umber_distribution::Pre
         },
         class,
         required: candidate.required,
-        file_key,
-    }
+        identity,
+    })
 }
 
 fn prefetch_budget(budget: JsPrefetchBudget) -> umber_distribution::PrefetchBudget {
@@ -397,21 +383,24 @@ fn prefetch_selection_value(
     let hint_file_keys = selection
         .hints
         .iter()
-        .filter_map(|item| item.file_key.as_ref())
+        .filter_map(umber_distribution::PrefetchCandidate::semantic_file_key)
         .map(|key| JsPrefetchFileKey {
             domain: key.domain.clone(),
             kind: key.kind.clone(),
             name: key.normalized_name.clone(),
         })
         .collect();
+    let hint_catalog_keys = selection
+        .hints
+        .iter()
+        .filter_map(|item| match &item.identity {
+            umber_distribution::PrefetchCandidateIdentity::Catalog(key) => Some(key.clone()),
+            umber_distribution::PrefetchCandidateIdentity::File(_) => None,
+        })
+        .collect();
     JsPrefetchSelection {
-        required_keys: selection
-            .required
-            .into_iter()
-            .map(|item| item.key)
-            .collect(),
-        hint_keys: selection.hints.into_iter().map(|item| item.key).collect(),
         hint_file_keys,
+        hint_catalog_keys,
         demand_bytes: selection.demand_bytes,
         prefetch_bytes: selection.prefetch_bytes,
     }
@@ -444,8 +433,12 @@ impl PrefetchPolicySession {
     pub fn enqueue(&mut self, requests: JsValue) -> Result<(), JsValue> {
         let requests = from_value::<Vec<JsPrefetchRequest>>(requests)
             .map_err(|error| js_error(&format!("invalid prefetch requests: {error}")))?;
-        for request in requests {
-            self.policy.enqueue(prefetch_request(request));
+        for request in requests
+            .into_iter()
+            .map(prefetch_request)
+            .collect::<Result<Vec<_>, _>>()?
+        {
+            self.policy.enqueue(request);
         }
         Ok(())
     }
@@ -454,9 +447,12 @@ impl PrefetchPolicySession {
     pub fn enqueue_escalation(&mut self, requests: JsValue, priority: u64) -> Result<(), JsValue> {
         let requests = from_value::<Vec<JsPrefetchRequest>>(requests)
             .map_err(|error| js_error(&format!("invalid prefetch escalation requests: {error}")))?;
-        for request in requests {
-            self.policy
-                .enqueue_with_priority(prefetch_request(request), priority);
+        for request in requests
+            .into_iter()
+            .map(prefetch_request)
+            .collect::<Result<Vec<_>, _>>()?
+        {
+            self.policy.enqueue_with_priority(request, priority);
         }
         Ok(())
     }
@@ -476,11 +472,13 @@ impl PrefetchPolicySession {
         let required = from_value::<Vec<JsPrefetchCandidate>>(required)
             .map_err(|error| js_error(&format!("invalid required prefetch candidates: {error}")))?
             .into_iter()
-            .map(prefetch_candidate);
+            .map(prefetch_candidate)
+            .collect::<Result<Vec<_>, _>>()?;
         let candidates = from_value::<Vec<JsPrefetchCandidate>>(candidates)
             .map_err(|error| js_error(&format!("invalid prefetch candidates: {error}")))?
             .into_iter()
-            .map(prefetch_candidate);
+            .map(prefetch_candidate)
+            .collect::<Result<Vec<_>, _>>()?;
         let budget = from_value::<JsPrefetchBudget>(budget)
             .map_err(|error| js_error(&format!("invalid prefetch budget: {error}")))?;
         if !self.budget_configured {
@@ -512,11 +510,8 @@ impl PrefetchPolicySession {
     ) -> Result<JsValue, JsValue> {
         let request = from_value::<JsPrefetchRequest>(request)
             .map_err(|error| js_error(&format!("invalid dependency request: {error}")))?;
-        let request = prefetch_request(request);
-        let file_key = request
-            .file_key
-            .as_ref()
-            .ok_or_else(|| js_error("dependency request is missing semantic file key"))?;
+        let request = prefetch_request(request)?;
+        let file_key = &request.file_key;
         let requests = self
             .policy
             .dependency_closure_for_file_key(file_key, tier)
@@ -538,7 +533,7 @@ impl PrefetchPolicySession {
     ) -> Result<(), JsValue> {
         let request = from_value::<JsPrefetchRequest>(request)
             .map_err(|error| js_error(&format!("invalid admitted prefetch request: {error}")))?;
-        let request = prefetch_request(request);
+        let request = prefetch_request(request)?;
         let dependencies = dependencies
             .filter(|value| !value.is_undefined() && !value.is_null())
             .map(|value| {
@@ -549,7 +544,8 @@ impl PrefetchPolicySession {
             .transpose()?
             .unwrap_or_default()
             .into_iter()
-            .map(prefetch_request);
+            .map(prefetch_request)
+            .collect::<Result<Vec<_>, _>>()?;
         let class = class.as_deref().map_or(request.class, prefetch_class);
         let _ = virtual_path;
         self.policy
@@ -566,10 +562,8 @@ impl PrefetchPolicySession {
     ) -> Result<JsValue, JsValue> {
         let request = from_value::<JsPrefetchRequest>(request)
             .map_err(|error| js_error(&format!("invalid replay request: {error}")))?;
-        let request = prefetch_request(request);
-        let Some(file_key) = request.file_key.as_ref() else {
-            return Ok(JsValue::NULL);
-        };
+        let request = prefetch_request(request)?;
+        let file_key = &request.file_key;
         let Some(region) = umber_distribution::PrefetchRegionKey::new(region.to_owned()) else {
             return Ok(JsValue::NULL);
         };
@@ -648,16 +642,19 @@ pub fn prefetch_select(
     budget: JsValue,
 ) -> Result<JsValue, JsValue> {
     let required = from_value::<Vec<JsPrefetchCandidate>>(required)
-        .map_err(|error| js_error(&format!("invalid required prefetch candidates: {error}")))?;
+        .map_err(|error| js_error(&format!("invalid required prefetch candidates: {error}")))?
+        .into_iter()
+        .map(prefetch_candidate)
+        .collect::<Result<Vec<_>, _>>()?;
     let candidates = from_value::<Vec<JsPrefetchCandidate>>(candidates)
-        .map_err(|error| js_error(&format!("invalid prefetch candidates: {error}")))?;
+        .map_err(|error| js_error(&format!("invalid prefetch candidates: {error}")))?
+        .into_iter()
+        .map(prefetch_candidate)
+        .collect::<Result<Vec<_>, _>>()?;
     let budget = from_value::<JsPrefetchBudget>(budget)
         .map_err(|error| js_error(&format!("invalid prefetch budget: {error}")))?;
-    let selection = umber_distribution::select_prefetch_group(
-        required.into_iter().map(prefetch_candidate),
-        candidates.into_iter().map(prefetch_candidate),
-        prefetch_budget(budget),
-    );
+    let selection =
+        umber_distribution::select_prefetch_group(required, candidates, prefetch_budget(budget));
     to_value(&prefetch_selection_value(selection))
         .map_err(|error| js_error(&format!("failed to encode prefetch selection: {error}")))
 }

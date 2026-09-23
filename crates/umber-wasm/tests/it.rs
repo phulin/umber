@@ -13,15 +13,94 @@ use umber::{
 };
 use umber_wasm::{
     CompilerSession, EditorSession, JsEditorSessionOptions, JsProjectSessionOptions,
-    JsResourceResponses, JsSessionOptions, JsSourcePatch, ProjectSession,
+    JsResourceResponses, JsSessionOptions, JsSourcePatch, PrefetchPolicySession, ProjectSession,
     accepted_input_observation_schema_version, format_schema_version, package_version,
-    wire_schema_version,
+    prefetch_select, wire_schema_version,
 };
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 use wasm_bindgen_test::*;
 
 wasm_bindgen_test_configure!(run_in_browser);
+
+#[wasm_bindgen_test]
+fn prefetch_binding_rejects_incomplete_requests_without_partial_queue_mutation() {
+    let mut policy = PrefetchPolicySession::new();
+    let valid = serde_json::json!({
+        "key": "tex:valid.tex", "domain": "tex", "kind": "tex", "name": "valid.tex",
+        "originalSpelling": "valid.tex", "searchContext": "source", "required": false,
+        "depth": 0
+    });
+    let missing_kind = serde_json::json!({
+        "key": "tex:invalid.tex", "domain": "tex", "name": "invalid.tex",
+        "originalSpelling": "invalid.tex", "searchContext": "source", "required": false,
+        "depth": 0
+    });
+    let requests =
+        serde_wasm_bindgen::to_value(&vec![valid.clone(), missing_kind]).expect("request fixture");
+    assert!(policy.enqueue(requests).is_err());
+    assert_eq!(
+        Array::from(&policy.drain(2).expect("empty queue")).length(),
+        0
+    );
+
+    let mut unknown_origin = valid;
+    unknown_origin["origin"] = serde_json::json!("unknown");
+    assert!(
+        policy
+            .enqueue(serde_wasm_bindgen::to_value(&vec![unknown_origin]).expect("origin fixture"))
+            .is_err()
+    );
+    assert_eq!(
+        Array::from(&policy.drain(2).expect("empty queue")).length(),
+        0
+    );
+}
+
+#[wasm_bindgen_test]
+fn prefetch_binding_keeps_catalog_and_semantic_hint_identities_separate() {
+    let file = serde_json::json!({
+        "key": "tex:shared.sty", "object": "file-object", "ahash64": "aaaaaaaaaaaaaaaa",
+        "bytes": 1, "required": false,
+        "identity": { "type": "file", "domain": "tex", "kind": "image", "name": "shared.sty" }
+    });
+    let catalog = serde_json::json!({
+        "key": "tex:shared.sty", "object": "catalog-object", "ahash64": "bbbbbbbbbbbbbbbb",
+        "bytes": 1, "required": false,
+        "identity": { "type": "catalog", "key": "tex:shared.sty" }
+    });
+    let budget = serde_json::json!({
+        "maxFiles": 1, "maxBytes": 4, "maxRuntimeBytes": 4, "maxFontBytes": 4,
+        "maxImageBytes": 4, "maxDocumentBytes": 4
+    });
+    let empty = serde_wasm_bindgen::to_value(&Vec::<serde_json::Value>::new()).expect("empty");
+    let budget = serde_wasm_bindgen::to_value(&budget).expect("budget");
+    let file_first = prefetch_select(
+        empty.clone(),
+        serde_wasm_bindgen::to_value(&vec![file.clone(), catalog.clone()]).expect("candidates"),
+        budget.clone(),
+    )
+    .expect("file selection");
+    assert_eq!(Array::from(&field(&file_first, "hintFileKeys")).length(), 1);
+    assert_eq!(
+        Array::from(&field(&file_first, "hintCatalogKeys")).length(),
+        0
+    );
+    let catalog_first = prefetch_select(
+        empty,
+        serde_wasm_bindgen::to_value(&vec![catalog, file]).expect("candidates"),
+        budget,
+    )
+    .expect("catalog selection");
+    assert_eq!(
+        Array::from(&field(&catalog_first, "hintFileKeys")).length(),
+        0
+    );
+    assert_eq!(
+        Array::from(&field(&catalog_first, "hintCatalogKeys")).length(),
+        1
+    );
+}
 
 #[wasm_bindgen_test]
 fn node_token_coordinates_keep_the_same_copy_layout_in_wasm() {
