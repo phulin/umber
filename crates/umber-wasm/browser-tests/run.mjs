@@ -260,7 +260,7 @@ async function checkSharedResourceTransitions(base, rootAHash64) {
 		const resolver = await HttpManifestResolver.create({
 			manifestUrl: `${base}/publication/manifest.json`,
 			manifestAHash64: rootAHash64,
-			catalog: bindings,
+			catalog: { catalogCreateSession: bindings.catalogCreateSession },
 		});
 		assert.equal(resolver.bindPrefetchPolicy({}), "unavailable-v1");
 		await resolver.beginRun({
@@ -306,6 +306,7 @@ async function checkSharedResourceTransitions(base, rootAHash64) {
 					...attempt.prefetchHints,
 				];
 				const acquired = await resolver.resolve(attempt.required, {
+					signal: undefined,
 					probes: attempt.probes,
 					prefetchHints: attempt.prefetchHints,
 					admitPrefetch: true,

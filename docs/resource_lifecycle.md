@@ -55,7 +55,11 @@ The executable cross-host transition cases live in
 [`tests/resource-transition-cases.json`](../tests/resource-transition-cases.json).
 The native public compile session and the generated WASM package session with
 its real HTTP manifest resolver run the same ordered file-request and response
-steps. The bounded cases cover a required positive retry, an authoritative
+steps. The shared browser runner uses the production packed-catalog decoder
+with speculative prefetch policy unavailable, so the manifest's extra
+dependency objects do not change the fixture's response sequence. Separate
+package checks exercise the full Rust prefetch policy and its dependencies.
+The bounded cases cover a required positive retry, an authoritative
 missing probe, an empty speculative response followed by required demand, and
 a conflicting late response that rejects the whole batch before a successful
 retry. They compare typed request roles, accepted terminal markers, and the
