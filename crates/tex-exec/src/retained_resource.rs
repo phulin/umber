@@ -23,32 +23,6 @@ trait ResourceWorldBackend {
     ) -> Result<FileContent, WorldError>;
 }
 
-impl<G> ResourceWorldBackend for Universe<G> {
-    fn with_input_read_state(&mut self, operation: &mut dyn FnMut(&mut dyn InputReadState)) {
-        operation(&mut self.input_open_context());
-    }
-
-    fn read_file(&mut self, path: &Path) -> Result<FileContent, WorldError> {
-        self.world_mut().read_file(path)
-    }
-
-    fn read_same_run_output_file(
-        &mut self,
-        path: &Path,
-    ) -> Result<Option<FileContent>, WorldError> {
-        self.world_mut().read_same_run_output_file(path)
-    }
-
-    fn register_selected_file(
-        &mut self,
-        path: &Path,
-        bytes: Arc<[u8]>,
-    ) -> Result<FileContent, WorldError> {
-        self.input_open_context()
-            .read_supplied_input_file(path, bytes.into())
-    }
-}
-
 impl<G> ResourceWorldBackend for &mut Universe<G> {
     fn with_input_read_state(&mut self, operation: &mut dyn FnMut(&mut dyn InputReadState)) {
         operation(&mut self.input_open_context());
@@ -274,8 +248,8 @@ pub trait ResourceHost {
     fn fulfill(&mut self, world: &mut ResourceWorld<'_>, need: &ResourceNeed) -> ResourceOutcome;
 }
 
-/// Adapter used by ordinary candidate execution. It gives the legacy host
-/// resolver exactly one call through the command episode's narrow input view;
+/// Adapter used by ordinary candidate execution. It gives the current host
+/// policy exactly one call through the command episode's narrow input view;
 /// all payloads and dependency facts are owned before returning to command
 /// processing. A declined or unavailable required input still checks the
 /// exact same-run output namespace, whose precedence is owned by the engine

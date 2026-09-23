@@ -2697,8 +2697,8 @@ impl<'store> Session<'store> {
 
     /// Starts an editor session with no admitted generation.
     ///
-    /// `template` is accepted only as a migration-time configuration marker;
-    /// live runtime state is never retained or cloned from it.
+    /// The caller supplies the reachability store and source directly; no
+    /// mutable runtime template is retained or cloned.
     pub fn start(
         reachability_store: &'store tex_state::ReachabilityStore,
         job_name: impl Into<String>,

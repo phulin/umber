@@ -2,7 +2,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use tex_state::World;
-use tex_state::{FileContent, InputDependencyAccess, InputDependencyOutcome, InputReadState};
+use tex_state::{FileContent, InputDependencyAccess, InputDependencyOutcome};
 
 /// Ordered search can continue past a candidate that is absent, but an
 /// inaccessible candidate must not be reported as an authoritative miss.
@@ -106,32 +106,6 @@ impl TexInputSearchPath {
         }
     }
 
-    /// Resolves and records an input through the narrow World-backed input
-    /// capability. Failed probes are not input records; the successful read is.
-    pub fn read<C: InputReadState + ?Sized>(
-        &self,
-        input: &mut C,
-        name: &str,
-    ) -> Result<FileContent, String> {
-        let name = Path::new(name);
-        let requested = with_default_extension(name, "tex");
-        let mut candidates = search_candidates(&self.user_area, &self.system_areas, &requested);
-        if name.extension().is_some_and(|extension| extension != "tex") {
-            let fallback = append_extension(name, "tex");
-            for candidate in search_candidates(&self.user_area, &self.system_areas, &fallback) {
-                if !candidates.contains(&candidate) {
-                    candidates.push(candidate);
-                }
-            }
-        }
-        read_first(input, candidates)
-    }
-
-    pub fn read_from_world(&self, world: &mut World, name: &str) -> Result<FileContent, String> {
-        self.read_from_world_detailed(world, name)
-            .map_err(|error| error.to_string())
-    }
-
     pub(crate) fn read_from_world_detailed(
         &self,
         world: &mut World,
@@ -222,27 +196,6 @@ impl TexInputSearchPath {
         }
     }
 
-    /// Emulates pdfTeX's restricted `|kpsewhich NAME` pipe without launching
-    /// a process. The existing deterministic search policy resolves `NAME`,
-    /// and the generated input consists only of that resolved path.
-    pub(crate) fn read_restricted_pipe<C: InputReadState + ?Sized>(
-        &self,
-        input: &mut C,
-        name: &str,
-    ) -> Option<Result<String, String>> {
-        let command = name.trim();
-        let requested = command.strip_prefix("|kpsewhich ")?;
-        if requested.is_empty() || requested.chars().any(char::is_whitespace) {
-            return Some(Err(
-                "restricted kpsewhich pipe requires one TeX filename".to_owned()
-            ));
-        }
-        Some(
-            self.read(input, requested)
-                .map(|content| format!("{}\n", content.path().display())),
-        )
-    }
-
     pub(crate) fn read_restricted_pipe_from_resource_world_detailed(
         &self,
         world: &mut crate::ResourceWorld<'_>,
@@ -281,23 +234,6 @@ impl TexFontSearchPath {
         }
     }
 
-    /// Resolves and records a TFM through the narrow World-backed input
-    /// capability. Failed probes are not input records; the successful read is.
-    pub fn read<C: InputReadState + ?Sized>(
-        &self,
-        input: &mut C,
-        path: &Path,
-    ) -> Result<FileContent, String> {
-        let requested = with_default_extension(path, "tfm");
-        let candidates = font_candidates(&self.user_area, &self.system_areas, &requested);
-        read_first(input, candidates)
-    }
-
-    pub fn read_from_world(&self, world: &mut World, path: &Path) -> Result<FileContent, String> {
-        self.read_from_world_detailed(world, path)
-            .map_err(|error| error.to_string())
-    }
-
     pub(crate) fn read_from_world_detailed(
         &self,
         world: &mut World,
@@ -325,24 +261,6 @@ impl TexFontSearchPath {
 
     /// Resolves an output font program by its exact logical map name. Unlike
     /// metric lookup this never appends `.tfm`.
-    pub fn read_program<C: InputReadState + ?Sized>(
-        &self,
-        input: &mut C,
-        path: &Path,
-    ) -> Result<FileContent, String> {
-        let candidates = font_candidates(&self.user_area, &self.system_areas, path);
-        read_first(input, candidates)
-    }
-
-    pub fn read_program_from_world(
-        &self,
-        world: &mut World,
-        path: &Path,
-    ) -> Result<FileContent, String> {
-        self.read_program_from_world_detailed(world, path)
-            .map_err(|error| error.to_string())
-    }
-
     pub(crate) fn read_program_from_world_detailed(
         &self,
         world: &mut World,
@@ -434,20 +352,6 @@ fn font_candidates(user_area: &Path, system_areas: &[PathBuf], requested: &Path)
         return vec![requested.to_owned()];
     }
     search_candidates(user_area, system_areas, requested)
-}
-
-fn read_first<C: InputReadState + ?Sized>(
-    input: &mut C,
-    candidates: Vec<PathBuf>,
-) -> Result<FileContent, String> {
-    let mut failures = Vec::with_capacity(candidates.len());
-    for path in candidates {
-        match input.read_input_file(&path) {
-            Ok(content) => return Ok(content),
-            Err(err) => failures.push(format!("{} ({err})", path.display())),
-        }
-    }
-    Err(failures.join("; "))
 }
 
 pub(crate) fn read_first_world_detailed(

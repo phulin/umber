@@ -1,4 +1,4 @@
-//! Host-resource lookup outcomes shared across engine layers.
+//! Input-world admission for engine-owned resource lookup.
 
 use std::path::Path;
 
@@ -8,7 +8,7 @@ use crate::world::{
 };
 use crate::{FileContent, SharedBytes, Universe};
 
-/// Narrow mutable capability exposed to driver-owned input resolvers.
+/// Narrow mutable capability exposed to admitted resource hosts.
 pub trait InputReadState {
     fn read_input_file(&mut self, path: &Path) -> Result<FileContent, WorldError>;
 
@@ -176,113 +176,5 @@ impl World {
     /// borrowing the whole Universe merely to read or record one input.
     pub(crate) fn input_open_context(&mut self) -> InputOpenContext<'_> {
         InputOpenContext { world: self }
-    }
-}
-
-/// A host resource lookup distinguishes authoritative absence from a request
-/// which can be satisfied before replaying the current operation.
-#[derive(Debug)]
-pub enum ResourceLookup<T> {
-    Available(T),
-    Unavailable,
-    NeedResource(ResourceNeed),
-}
-
-impl<T> ResourceLookup<T> {
-    #[must_use]
-    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> ResourceLookup<U> {
-        match self {
-            Self::Available(value) => ResourceLookup::Available(f(value)),
-            Self::Unavailable => ResourceLookup::Unavailable,
-            Self::NeedResource(need) => ResourceLookup::NeedResource(need),
-        }
-    }
-}
-
-/// Stable identity of one resolver call within an execution attempt.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct ResourceNeed {
-    request_index: u64,
-}
-
-impl ResourceNeed {
-    #[must_use]
-    pub const fn new(request_index: u64) -> Self {
-        Self { request_index }
-    }
-
-    #[must_use]
-    pub const fn request_index(self) -> u64 {
-        self.request_index
-    }
-}
-
-/// Fatal resolver failures remain errors; normal absence and suspension are
-/// represented by [`ResourceLookup`] rather than diagnostic strings.
-pub type ResourceResult<T> = Result<ResourceLookup<T>, String>;
-
-/// Object-safe host boundary for legacy expansion-time input acquisition.
-///
-/// Resolvers return immutable state-owned content. Input-stack construction
-/// remains private to the command-delivery implementation that consumes it.
-pub trait InputResolver {
-    fn open_input(
-        &mut self,
-        input: &mut dyn InputReadState,
-        name: &str,
-        request_index: u64,
-    ) -> ResourceResult<FileContent>;
-
-    fn input_file_size(
-        &mut self,
-        input: &mut dyn InputReadState,
-        name: &str,
-        request_index: u64,
-    ) -> ResourceResult<u64> {
-        self.open_input(input, name, request_index)
-            .map(|lookup| lookup.map(|content| content.bytes().len() as u64))
-    }
-
-    fn input_file_content(
-        &mut self,
-        input: &mut dyn InputReadState,
-        name: &str,
-        request_index: u64,
-    ) -> ResourceResult<FileContent> {
-        self.open_stream_input(input, name, request_index)
-    }
-
-    fn open_stream_input(
-        &mut self,
-        input: &mut dyn InputReadState,
-        name: &str,
-        _request_index: u64,
-    ) -> ResourceResult<FileContent> {
-        Ok(match input.read_input_file(Path::new(name)) {
-            Ok(content) => ResourceLookup::Available(content),
-            Err(_) => ResourceLookup::Unavailable,
-        })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn resource_lookup_mapping_preserves_absence_and_suspension() {
-        assert!(matches!(
-            ResourceLookup::Available(7_u8).map(u16::from),
-            ResourceLookup::Available(7_u16)
-        ));
-        assert!(matches!(
-            ResourceLookup::<u8>::Unavailable.map(u16::from),
-            ResourceLookup::Unavailable
-        ));
-        let need = ResourceNeed::new(19);
-        assert!(matches!(
-            ResourceLookup::<u8>::NeedResource(need).map(u16::from),
-            ResourceLookup::NeedResource(found) if found == need
-        ));
     }
 }

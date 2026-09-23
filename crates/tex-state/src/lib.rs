@@ -64,7 +64,6 @@ pub mod env;
 pub mod epoch;
 pub mod etex_tracing;
 mod expansion_diagnostic;
-mod expansion_recovery;
 pub mod file_framing;
 pub mod font;
 pub mod fork_arena;
@@ -148,7 +147,6 @@ mod session_epoch;
 pub mod world;
 
 pub use expansion_diagnostic::RecoverableExpansionDiagnostic;
-pub use expansion_recovery::ExpansionRecovery;
 pub use font::{
     FontArtifactConstructionRecipe, FontArtifactRecipe, FontStoreCapacityError,
     OpenTypeArtifactRecipe,
@@ -162,10 +160,7 @@ pub use format::{
 pub use generation::{CheckpointOwnerId, GenerationOwner};
 pub use reachability_store::ReachabilityStore;
 pub use read_observation::{ReadRecorder, ReadRecorderBatch, ReadSetRecorder};
-pub use resource::{
-    InputOpenContext, InputOpenState, InputReadState, InputResolver, ResourceLookup, ResourceNeed,
-    ResourceResult,
-};
+pub use resource::{InputOpenContext, InputOpenState, InputReadState};
 pub use retained_generation::{
     RetainedAttachmentKey, RetainedStateAccessError, RetainedStateAdmission,
     RetainedStateCandidateOperation, RetainedStateForkBuild, RetainedStateForkError,

@@ -607,14 +607,6 @@ fn text_accent_in_math_reports_before_scanning_its_character() {
 }
 
 #[test]
-fn resource_lookup_maps_available_values() {
-    match tex_exec::ResourceLookup::Available(21_u8).map(u16::from) {
-        tex_exec::ResourceLookup::Available(value) => assert_eq!(value, 21),
-        _ => panic!("available execution resource must remain available after mapping"),
-    }
-}
-
-#[test]
 fn command_fuel_can_only_be_owned_by_a_session_ledger() {
     let manifest_dir = test_support::repository_root().join("crates/tex-exec");
     let tex_command_dir = manifest_dir.join("../tex-command");

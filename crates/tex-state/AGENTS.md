@@ -113,8 +113,6 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/engine_state.rs`: Read-only execution mode and state projection consumed by expansion-time enquiries.
 - `src/expansion_diagnostic.rs`: Detached recoverable expansion diagnostic
   values shared by command expansion and execution-side presentation.
-- `src/expansion_recovery.rs`: Detached main-control recovery vocabulary that
-  keeps execution independent of the command expansion error tree.
 - `src/env/banks.rs`: Direct contiguous banks, page/index dense banks,
   dense-prefix/paged-overflow register banks, typed parameter ids, and the
   runtime-only per-cell save serial used by direct checkpoint first-touch.
@@ -381,9 +379,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
   It also defines the demand-only physical source-range projection resolved
   from a compact token origin by `CommandContext`.
 - `src/pure_memo.rs`: Optional entry/byte-bounded pure-query caches for pretolerance, page-breaking, and shipout results, bounded eviction telemetry, explicit cache release, and stable output-provenance recipes.
-- `src/resource.rs`: Generic host-resource availability, absence, and stable
-  suspension identities plus the state-owned immutable input-content resolver
-  contract shared across engine layers.
+- `src/resource.rs`: Narrow input-world admission used by current resource
+  hosts to read or register state-owned immutable content.
 - `src/read_observation.rs`: State-owned read-recorder contract, detached
   transactional batches, and deterministic dependency-set recorder.
 - `src/reachability_store.rs`: One caller-owned session-epoch reachability

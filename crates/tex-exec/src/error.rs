@@ -148,7 +148,6 @@ pub enum ExecError {
         site: DiagnosticSite,
         frozen: Option<Box<FrozenDiagnosticEvidence>>,
     },
-    NeedResource(crate::ResolverResourceNeed),
     World(WorldError),
     FontParse(tex_fonts::ParseError),
     PdfFontMap(tex_fonts::PdfFontMapError),
@@ -450,11 +449,6 @@ impl fmt::Display for ExecError {
                 "execution {resource} budget {limit} exceeded at {attempted}"
             ),
             Self::Captured { error, .. } => write!(f, "{error}"),
-            Self::NeedResource(need) => write!(
-                f,
-                "resource request {} requires host resolution",
-                need.request_index()
-            ),
             Self::World(err) => write!(f, "{err}"),
             Self::FontParse(err) => write!(f, "{err}"),
             Self::PdfFontMap(err) => write!(f, "{err}"),
@@ -709,8 +703,7 @@ impl std::error::Error for ExecError {
             Self::PdfFontMap(err) => Some(err),
             Self::Command(err) => Some(err),
             Self::ResourceFailure { failure, .. } => Some(failure),
-            Self::NeedResource(_)
-            | Self::ExecutionAlreadyTerminated
+            Self::ExecutionAlreadyTerminated
             | Self::ResourceReplayRequired
             | Self::ExecutionCancelled
             | Self::CumulativeFuelExceeded { .. }
@@ -809,8 +802,7 @@ impl ExecError {
     pub fn primary_origin(&self) -> Option<OriginId> {
         match self {
             Self::Captured { site, .. } => site.primary_origin(),
-            Self::NeedResource(_)
-            | Self::ExecutionAlreadyTerminated
+            Self::ExecutionAlreadyTerminated
             | Self::ResourceReplayRequired
             | Self::ExecutionCancelled
             | Self::CumulativeFuelExceeded { .. }
@@ -923,7 +915,7 @@ impl ExecError {
     pub(crate) fn capture_command_origin(self, origin: OriginId) -> Self {
         if matches!(
             self,
-            Self::NeedResource(_) | Self::MissingFont { .. } | Self::MissingPdfImage { .. }
+            Self::MissingFont { .. } | Self::MissingPdfImage { .. }
         ) {
             return self;
         }

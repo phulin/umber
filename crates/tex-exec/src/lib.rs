@@ -78,10 +78,7 @@ pub use error::{
     ExecError, FirstRecoverableDiagnostic, FrozenDiagnosticContext, FrozenDiagnosticEvidence,
     FrozenDiagnosticGroup, FrozenDiagnosticOrigin,
 };
-pub use host_api::{
-    FontResolver, FontSource, PdfImagePageBox, PdfImagePageSelection, PdfImageRequest,
-    PdfImageResolver, ResolverResourceNeed, ResourceLookup, ResourceResult,
-};
+pub use host_api::{PdfImagePageBox, PdfImagePageSelection, PdfImageRequest};
 pub use job::{
     BANNER, DetachedFormatDump, DviJobOutput, ETEX26_BANNER, EngineBinaryIdentity, FormatDumpError,
     FormatDumpReceipt, PdfJobFinalizationReport, PreloadedFormat, TEX82_BANNER,

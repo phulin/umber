@@ -5,15 +5,12 @@ use std::sync::Arc;
 use tex_command::{
     CommandProfile, FontResource, PdfImageResource, RegisteredSourceKind, SourceRegistration,
 };
-use tex_exec::{
-    CheckpointSink, EngineBoundary, FontResolver, PdfImageRequest as OutputPdfImageRequest,
-    PdfImageResolver,
-};
+use tex_exec::{CheckpointSink, EngineBoundary, PdfImageRequest as OutputPdfImageRequest};
 use tex_out::dvi::{DviError, DviPagePlan, DviStreamWriter};
 use tex_state::env::banks::IntParam;
 use tex_state::{
-    CommittedArtifact, ContentHash, EffectRecord, FileContent, GenerationBrand, InputResolver,
-    PrintSink, ResourceLookup, ResourceResult, Universe, World, WorldError,
+    CommittedArtifact, ContentHash, EffectRecord, FileContent, GenerationBrand, PrintSink,
+    Universe, World, WorldError,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -294,9 +291,9 @@ pub use virtual_compile::{
 };
 
 pub struct FileSessionResolvers {
-    input: FileInputResolver,
-    font: FileFontResolver,
-    image: FileImageResolver,
+    input: TexInputSearchPath,
+    font: TexFontSearchPath,
+    image: TexInputSearchPath,
 }
 
 impl FileSessionResolvers {
@@ -319,15 +316,10 @@ impl FileSessionResolvers {
         let base_dir = path.parent().unwrap_or_else(|| Path::new(".")).to_owned();
         let input_search = TexInputSearchPath::new(&base_dir, tex_input_areas);
         Self {
-            input: FileInputResolver(input_search.clone()),
-            font: FileFontResolver(TexFontSearchPath::new(base_dir, tex_font_areas)),
-            image: FileImageResolver(input_search),
+            input: input_search.clone(),
+            font: TexFontSearchPath::new(base_dir, tex_font_areas),
+            image: input_search,
         }
-    }
-
-    /// Borrows the input and font resolvers for an incremental editor session.
-    pub fn resolvers(&mut self) -> (&mut dyn InputResolver, &mut dyn FontResolver) {
-        (&mut self.input, &mut self.font)
     }
 }
 
@@ -341,7 +333,6 @@ impl ResourceHost for FileSessionResolvers {
             tex_exec::ResourceNeed::Input { name, .. } => {
                 if let Some(result) = self
                     .input
-                    .0
                     .read_restricted_pipe_from_resource_world_detailed(world, name)
                 {
                     return match result {
@@ -361,9 +352,9 @@ impl ResourceHost for FileSessionResolvers {
                         }
                     };
                 }
-                match self.input.0.read_from_resource_world_detailed(world, name) {
+                match self.input.read_from_resource_world_detailed(world, name) {
                     Ok(content) => {
-                        let role = self.input.0.source_role(&content);
+                        let role = self.input.source_role(&content);
                         ResourceOutcome::Fulfilled(ResourceFulfillment::world_input_with_role(
                             name, content, role,
                         ))
@@ -374,7 +365,6 @@ impl ResourceHost for FileSessionResolvers {
             tex_exec::ResourceNeed::InputProbe { request } => {
                 match self
                     .input
-                    .0
                     .read_probe_from_resource_world_detailed(world, &request.name)
                 {
                     Ok(content) => ResourceOutcome::Fulfilled(
@@ -388,7 +378,7 @@ impl ResourceHost for FileSessionResolvers {
                 if path.extension().is_none() {
                     path.set_extension("tfm");
                 }
-                match self.font.0.read_from_resource_world_detailed(world, &path) {
+                match self.font.read_from_resource_world_detailed(world, &path) {
                     Ok(metrics) => ResourceOutcome::Fulfilled(ResourceFulfillment::Font {
                         request: request.clone(),
                         resource: Box::new(FontResource::Tfm {
@@ -408,7 +398,6 @@ impl ResourceHost for FileSessionResolvers {
             tex_exec::ResourceNeed::PdfImage { request } => {
                 let content = match self
                     .image
-                    .0
                     .read_exact_from_resource_world_detailed(world, &request.name)
                 {
                     Ok(content) => content,
@@ -457,92 +446,6 @@ fn resource_search_outcome(error: crate::input_search::WorldSearchError) -> Reso
             .map(|(_, _, error)| ResourceFailure::from(error.clone()))
             .unwrap_or_else(|| ResourceFailure::message(error.to_string()));
         ResourceOutcome::Failed(failure)
-    }
-}
-
-struct FileInputResolver(TexInputSearchPath);
-
-impl InputResolver for FileInputResolver {
-    fn open_input(
-        &mut self,
-        input: &mut dyn tex_state::InputReadState,
-        name: &str,
-        _request_index: u64,
-    ) -> ResourceResult<FileContent> {
-        if let Some(output) = self.0.read_restricted_pipe(input, name) {
-            return output.and_then(|text| {
-                input
-                    .read_supplied_input_file(Path::new(name), text.into_bytes().into())
-                    .map(ResourceLookup::Available)
-                    .map_err(|error| error.to_string())
-            });
-        }
-        Ok(match self.0.read(input, name) {
-            Ok(content) => ResourceLookup::Available(content),
-            Err(_) => ResourceLookup::Unavailable,
-        })
-    }
-
-    fn input_file_size(
-        &mut self,
-        input: &mut dyn tex_state::InputReadState,
-        name: &str,
-        _request_index: u64,
-    ) -> ResourceResult<u64> {
-        Ok(match self.0.read(input, name) {
-            Ok(content) => {
-                ResourceLookup::Available(u64::try_from(content.bytes().len()).unwrap_or(u64::MAX))
-            }
-            Err(_) => ResourceLookup::Unavailable,
-        })
-    }
-
-    fn open_stream_input(
-        &mut self,
-        input: &mut dyn tex_state::InputReadState,
-        name: &str,
-        _request_index: u64,
-    ) -> ResourceResult<tex_state::FileContent> {
-        Ok(match self.0.read(input, name) {
-            Ok(content) => ResourceLookup::Available(content),
-            Err(_) => ResourceLookup::Unavailable,
-        })
-    }
-}
-
-struct FileFontResolver(TexFontSearchPath);
-
-struct FileImageResolver(TexInputSearchPath);
-
-impl PdfImageResolver for FileImageResolver {
-    fn open_image(
-        &mut self,
-        input: &mut dyn tex_state::InputReadState,
-        request: &OutputPdfImageRequest,
-        _request_index: u64,
-    ) -> tex_exec::ResourceResult<tex_state::PdfExternalImageSource> {
-        let content = match self.0.read(input, &request.name) {
-            Ok(content) => content,
-            Err(_) => return Ok(tex_exec::ResourceLookup::Unavailable),
-        };
-        virtual_compile::parse_image(&content, request).map(tex_exec::ResourceLookup::Available)
-    }
-}
-
-impl FontResolver for FileFontResolver {
-    fn open_font(
-        &mut self,
-        input: &mut dyn tex_state::InputReadState,
-        path: &Path,
-        _request_index: u64,
-    ) -> tex_exec::ResourceResult<tex_exec::FontSource> {
-        Ok(match self.0.read(input, path) {
-            Ok(metrics) => tex_exec::ResourceLookup::Available(tex_exec::FontSource::Tfm {
-                metrics,
-                opentype: None,
-            }),
-            Err(_) => tex_exec::ResourceLookup::Unavailable,
-        })
     }
 }
 

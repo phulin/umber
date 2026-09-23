@@ -20,7 +20,7 @@ fn area_less_input_uses_ordered_system_areas_and_records_resolved_path() {
         );
 
         let content = search
-            .read(&mut universe.input_open_context(), "hyphen")
+            .read_from_world_detailed(universe.world_mut(), "hyphen")
             .expect("resolve hyphen through system area");
 
         assert_eq!(
@@ -47,7 +47,7 @@ fn user_area_wins_before_configured_system_areas() {
         let search = TexInputSearchPath::new("/job", [PathBuf::from("/tree")]);
 
         let content = search
-            .read(&mut universe.input_open_context(), "hyphen.tex")
+            .read_from_world_detailed(universe.world_mut(), "hyphen.tex")
             .expect("resolve local input first");
 
         assert_eq!(content.path(), Path::new("/job/hyphen.tex"));
@@ -79,7 +79,7 @@ fn input_search_metadata_classifies_document_project_and_distribution_sources() 
             ),
         ] {
             let content = search
-                .read(&mut universe.input_open_context(), name)
+                .read_from_world_detailed(universe.world_mut(), name)
                 .expect("classified input resolves");
             assert_eq!(search.source_role(&content), expected);
         }
@@ -97,7 +97,7 @@ fn input_with_non_tex_extension_falls_back_to_appended_tex_extension() {
         let search = TexInputSearchPath::new("/job", [PathBuf::from("/tree")]);
 
         let content = search
-            .read(&mut universe.input_open_context(), "lipsum.ltd")
+            .read_from_world_detailed(universe.world_mut(), "lipsum.ltd")
             .expect("resolve appended tex extension");
 
         assert_eq!(content.path(), Path::new("/tree/lipsum.ltd.tex"));
@@ -118,7 +118,7 @@ fn input_with_non_tex_extension_prefers_the_exact_name() {
         let search = TexInputSearchPath::new("/job", [PathBuf::from("/tree")]);
 
         let content = search
-            .read(&mut universe.input_open_context(), "data.ltd")
+            .read_from_world_detailed(universe.world_mut(), "data.ltd")
             .expect("resolve exact extension first");
 
         assert_eq!(content.path(), Path::new("/tree/data.ltd"));
@@ -136,9 +136,10 @@ fn restricted_kpsewhich_pipe_returns_resolved_path_without_a_process() {
     crate::with_engine_world(world, |universe| {
         let search = TexInputSearchPath::new("/job", [PathBuf::from("/tree")]);
 
+        let mut resource_world = crate::ResourceWorld::new(universe);
         let output = search
-            .read_restricted_pipe(
-                &mut universe.input_open_context(),
+            .read_restricted_pipe_from_resource_world_detailed(
+                &mut resource_world,
                 " |kpsewhich article.cls ",
             )
             .expect("recognize restricted pipe")
@@ -147,13 +148,16 @@ fn restricted_kpsewhich_pipe_returns_resolved_path_without_a_process() {
         assert_eq!(output, "/tree/article.cls\n");
         assert!(
             search
-                .read_restricted_pipe(&mut universe.input_open_context(), "|cat article.cls")
+                .read_restricted_pipe_from_resource_world_detailed(
+                    &mut resource_world,
+                    "|cat article.cls"
+                )
                 .is_none()
         );
         assert!(
             search
-                .read_restricted_pipe(
-                    &mut universe.input_open_context(),
+                .read_restricted_pipe_from_resource_world_detailed(
+                    &mut resource_world,
                     "|kpsewhich article.cls extra",
                 )
                 .expect("recognize malformed restricted pipe")
@@ -173,11 +177,11 @@ fn explicit_area_does_not_fall_through_to_system_areas() {
         let search = TexInputSearchPath::new("/job", [PathBuf::from("/tree")]);
 
         let err = search
-            .read(&mut universe.input_open_context(), "sub/hyphen")
+            .read_from_world_detailed(universe.world_mut(), "sub/hyphen")
             .expect_err("explicit area must stay relative to the user area");
 
-        assert!(err.contains("/job/sub/hyphen.tex"));
-        assert!(!err.contains("/tree/sub/hyphen.tex"));
+        assert!(err.to_string().contains("/job/sub/hyphen.tex"));
+        assert!(!err.to_string().contains("/tree/sub/hyphen.tex"));
         assert!(universe.world().input_records().is_empty());
     })
     .expect("fresh universe");
@@ -193,7 +197,7 @@ fn absolute_input_is_used_without_area_prefixes() {
         let search = TexInputSearchPath::new("/job", [PathBuf::from("/tree")]);
 
         let content = search
-            .read(&mut universe.input_open_context(), "/absolute/input")
+            .read_from_world_detailed(universe.world_mut(), "/absolute/input")
             .expect("resolve absolute input");
 
         assert_eq!(content.path(), Path::new("/absolute/input.tex"));
@@ -217,7 +221,7 @@ fn area_less_font_uses_ordered_font_areas_and_records_resolved_content() {
         );
 
         let content = search
-            .read(&mut universe.input_open_context(), Path::new("cmr10"))
+            .read_from_world_detailed(universe.world_mut(), Path::new("cmr10"))
             .expect("resolve TFM through ordered font areas");
 
         assert_eq!(
@@ -244,7 +248,7 @@ fn principal_input_area_wins_before_configured_font_areas() {
         let search = TexFontSearchPath::new("/job", [PathBuf::from("/texlive")]);
 
         let content = search
-            .read(&mut universe.input_open_context(), Path::new("cmr10.tfm"))
+            .read_from_world_detailed(universe.world_mut(), Path::new("cmr10.tfm"))
             .expect("resolve principal-area TFM first");
 
         assert_eq!(content.path(), Path::new("/job/cmr10.tfm"));
@@ -266,12 +270,12 @@ fn explicit_font_area_does_not_fall_through_to_configured_font_areas() {
         let search = TexFontSearchPath::new("/job", [PathBuf::from("/texlive")]);
 
         let err = search
-            .read(&mut universe.input_open_context(), Path::new("sub/cmr10"))
+            .read_from_world_detailed(universe.world_mut(), Path::new("sub/cmr10"))
             .expect_err("explicit font area must be used as written");
 
-        assert!(err.contains("sub/cmr10.tfm"));
-        assert!(!err.contains("/job/sub/cmr10.tfm"));
-        assert!(!err.contains("/texlive/sub/cmr10.tfm"));
+        assert!(err.to_string().contains("sub/cmr10.tfm"));
+        assert!(!err.to_string().contains("/job/sub/cmr10.tfm"));
+        assert!(!err.to_string().contains("/texlive/sub/cmr10.tfm"));
         assert!(universe.world().input_records().is_empty());
     })
     .expect("fresh universe");
