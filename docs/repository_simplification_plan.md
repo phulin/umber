@@ -406,7 +406,9 @@ inside `tex-command`; a new expansion crate would reverse that consolidation.
 That audit found the detached-continuation implementation unreachable from
 production in both default and all-feature builds. Its module was private, its
 types had no external API, and only its own tests constructed the recipe graph.
-The unused implementation and tests were retired. The macro-call, token-list,
+The unused implementation and its seven prototype-only direct tests were
+retired; active structured-scanner tests retain their original cases and names.
+The macro-call, token-list,
 and input modules now expose their live paths without module-wide dead-code
 allowances; direct-test adapters are test-only, and unused private helpers were
 removed. Any future detached transport must enter through a real production
