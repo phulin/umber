@@ -24,6 +24,9 @@ use tex_command_stream::semantic::*;
 #[path = "command_semantic/census.rs"]
 mod census;
 use census::CompatibilityCensus;
+#[path = "command_semantic/reporting.rs"]
+mod reporting;
+use reporting::{CaseFailure, FailureSummary};
 
 struct HermeticFormats {
     _root: tempfile::TempDir,
@@ -122,22 +125,21 @@ fn declared_command_semantic_cases_match() {
             .map_err(Clone::clone);
         let expectation =
             evaluate_expectation(&declared.case.expected, &actual, &declared.case.expectation);
-        if let Err(error) = &expectation {
-            failures.push(format!("{label}: {error:?}"));
-        }
         // The projection is a focused property claim about one observable.
         // The channel contract is the completeness claim about the rest of
         // the same run, and both have to hold.
         let channel_failures = if let Ok(run) = &run {
             compare_declared_channels(declared, run)
         } else {
-            failures.push(format!(
-                "{label}: execution did not reach the channel contract"
-            ));
             Vec::new()
         };
-        for failure in &channel_failures {
-            failures.push(format!("{label}: {failure:?}"));
+        if let Some(failure) = CaseFailure::from_outcomes(
+            label,
+            run.as_ref().err().map(String::as_str),
+            &expectation,
+            &channel_failures,
+        ) {
+            failures.push(failure);
         }
         census.record(declared, run.is_ok(), &expectation, &channel_failures);
     }
@@ -153,12 +155,17 @@ fn declared_command_semantic_cases_match() {
         );
     }
     println!("command-semantic selected: {census}");
+    let summary = FailureSummary::from_cases(&failures);
     assert!(
         failures.is_empty(),
-        "{} of {} declared cases failed:\n{}",
-        failures.len(),
+        "command-semantic failures: {summary}; selected={} of {} declared cases\n{}",
+        cases.len() - census.unselected(),
         cases.len(),
-        failures.join("\n")
+        failures
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n")
     );
     if selected_case.is_some() {
         return;

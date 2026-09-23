@@ -138,6 +138,18 @@ without an executable selected runner; an ignored manual test is not dormant
 when explicitly selected. Bibliography's dormant upstream inventory remains
 separate from this nonbibliography census.
 
+The selected failure report counts failed _cases_ separately from individual
+discrepancies. Each case has one primary routing category: execution blocked,
+semantic projection, or declared-channel discrepancy. A case with both a
+projection and log difference is one failing case with both details retained;
+the primary category is triage order, not a claim that the first difference
+caused the second. An execution failure records that channels were not reached
+without inventing a second channel mismatch. Channel differences can concern
+exact output compatibility without implying a typesetting error. The
+projection must itself name observable behavior; an internal hash or counter
+is not a semantic oracle. [Semantic Testing](semantic_testing.md) gives that
+assertion boundary.
+
 On combined production `e685e55d8`, explicitly selecting
 `cargo test -q -p tex-command-stream --test it command_semantic::declared_command_semantic_cases_match -- --exact --ignored --nocapture`
 reports `matched=128, executed-known-failure=0, unexpected-pass=0,

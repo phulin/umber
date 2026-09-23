@@ -24,6 +24,26 @@ Test placement should optimize for three things:
    boundary tests under crate-level `tests`, and shared fixture data under the
    workspace `tests/corpus` tree.
 
+Choose an assertion for the question it answers. A semantic test checks a
+specific TeX behavior through an observable result such as page count,
+geometry, terminal status, or output effects. An exact-output compatibility
+test compares a declared terminal, log, DVI, or PDF channel to independent
+reference bytes. An ownership test checks state transfer, rollback, stale
+handles, or allocation budgets inside Umber; it is not a TeX oracle. A
+performance test names its workload, counter, and budget separately from
+correctness. Keep these reasons visible in names and failure messages so a
+reviewer can tell what changed and why it matters.
+
+Do not make an incidental hash, allocator identity, command-event count, or
+cache key a conformance golden merely because it is easy to capture. A
+semantic projection must say what behavior the field represents and where
+the expectation came from. A hash can attest independent input or reference
+bytes, while exact output bytes belong in an explicitly declared channel.
+One terminal formatting mismatch is evidence of an output compatibility
+difference, not by itself proof of a typesetting defect. Do not mark a real
+semantic divergence as expected just to turn a manual suite green. See
+[Semantic Testing](semantic_testing.md) for the command-semantic corpus contract.
+
 ## 2. Test Tiers
 
 The correctness tier is fixture-only and hermetic:
