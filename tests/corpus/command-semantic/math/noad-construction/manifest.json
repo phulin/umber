@@ -1,11 +1,10 @@
 {
-  "channels": {
-  },
+  "channels": {},
   "expected": [
     "command:math_comp:17",
     "command:math_comp:17",
     "command:limit_switch:2",
-    "artifact:f1583b0f7c6e64720eb0b716e07d72d4aa561735a8cbd96aa5f66de540d69927"
+    "page-count:1"
   ],
   "profile": "raw-tex82-loaded",
   "projection": {
@@ -13,8 +12,8 @@
       "limit_switch",
       "math_comp"
     ],
-    "include_artifact_hashes": true,
-    "kind": "execution-boundaries"
+    "kind": "execution-boundaries",
+    "include_page_count": true
   },
   "property_id": "tex82.math.noad-construction",
   "provenance": {

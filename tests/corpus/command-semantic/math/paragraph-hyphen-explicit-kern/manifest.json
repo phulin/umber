@@ -1,9 +1,8 @@
 {
-  "channels": {
-  },
+  "channels": {},
   "expected": [
     "command:leader_ship:99",
-    "artifact:954eced0a9f10ce95982289d7649522c80e5949c9b6bc7955a20de3fa2251c5a"
+    "page-count:1"
   ],
   "font_inputs": {
     "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
@@ -13,8 +12,8 @@
     "command_names": [
       "leader_ship"
     ],
-    "include_artifact_hashes": true,
-    "kind": "execution-boundaries"
+    "kind": "execution-boundaries",
+    "include_page_count": true
   },
   "property_id": "tex82.paragraphs.boundaries",
   "provenance": {

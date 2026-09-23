@@ -1,13 +1,12 @@
 {
-  "channels": {
-  },
+  "channels": {},
   "expected": [
     "command:left_right:30",
     "command:left_right:30",
     "command:mkern:99",
     "command:left_right:31",
     "command:left_right:31",
-    "artifact:344b45aff6f08acb3e9af90a70b199ef60456a4c06631652040a92c820621a69"
+    "page-count:1"
   ],
   "profile": "raw-tex82-loaded",
   "projection": {
@@ -15,8 +14,8 @@
       "left_right",
       "mkern"
     ],
-    "include_artifact_hashes": true,
-    "kind": "execution-boundaries"
+    "kind": "execution-boundaries",
+    "include_page_count": true
   },
   "property_id": "tex82.math.clean-box-delimiters-mu",
   "provenance": {

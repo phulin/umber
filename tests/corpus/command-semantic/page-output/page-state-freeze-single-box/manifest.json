@@ -1,9 +1,8 @@
 {
-  "channels": {
-  },
+  "channels": {},
   "expected": [
     "command:leader_ship:99",
-    "artifact:178b018051ab19874b7f3ae5638f8943f216c32fdd90216625f74fd8434ba809"
+    "page-count:1"
   ],
   "font_inputs": {
     "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
@@ -13,8 +12,8 @@
     "command_names": [
       "leader_ship"
     ],
-    "include_artifact_hashes": true,
-    "kind": "execution-boundaries"
+    "kind": "execution-boundaries",
+    "include_page_count": true
   },
   "property_id": "tex82.page.state-and-freeze",
   "provenance": {

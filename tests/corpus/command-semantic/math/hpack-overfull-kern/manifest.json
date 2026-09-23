@@ -1,9 +1,8 @@
 {
-  "channels": {
-  },
+  "channels": {},
   "expected": [
     "command:leader_ship:99",
-    "artifact:4292d23b1d7aee1707dde59d24f0ce7935e600ad19ad04d3c496665ad21912e5"
+    "page-count:1"
   ],
   "font_inputs": {
     "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
@@ -13,8 +12,8 @@
     "command_names": [
       "leader_ship"
     ],
-    "include_artifact_hashes": true,
-    "kind": "execution-boundaries"
+    "kind": "execution-boundaries",
+    "include_page_count": true
   },
   "property_id": "tex82.boxes.hpack",
   "provenance": {

@@ -257,15 +257,15 @@
           },
           "type": "array"
         },
-        "include_artifact_hashes": {
-          "default": false,
-          "type": "boolean"
-        },
         "include_count_mutations": {
           "default": false,
           "type": "boolean"
         },
         "include_mode_transitions": {
+          "default": false,
+          "type": "boolean"
+        },
+        "include_page_count": {
           "default": false,
           "type": "boolean"
         },

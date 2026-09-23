@@ -1,19 +1,18 @@
 {
-  "channels": {
-  },
+  "channels": {},
   "expected": [
     "command:math_comp:18",
     "command:math_comp:18",
     "command:math_comp:19",
-    "artifact:38ed866f6f608cdc5befa75be570430e34291ba0c76503cd6ff9b10b25d563d8"
+    "page-count:1"
   ],
   "profile": "raw-tex82-loaded",
   "projection": {
     "command_names": [
       "math_comp"
     ],
-    "include_artifact_hashes": true,
-    "kind": "execution-boundaries"
+    "kind": "execution-boundaries",
+    "include_page_count": true
   },
   "property_id": "tex82.math.mlist-first-pass",
   "provenance": {

@@ -1,5 +1,9 @@
 # Docs Guidance
 
+`semantic_testing.md` defines the focused command-minifixture projection
+boundary, independent reference channel authority, and negative controls for
+removing implementation identities from conformance claims.
+
 `command_delivery_kernel.md` specifies frame-owned reader access, the shared
 raw/expanded fetching kernel, observation specialization, and validation.
 

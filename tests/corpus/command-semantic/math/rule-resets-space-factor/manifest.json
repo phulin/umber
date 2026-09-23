@@ -1,6 +1,5 @@
 {
-  "channels": {
-  },
+  "channels": {},
   "expected": [
     "command:leader_ship:99",
     "box:0/0:hlist",
@@ -19,7 +18,7 @@
     "box:0/0/12:glue",
     "box:0/0/13:char",
     "box:0/0/14:glue",
-    "artifact:c4ab3a25a2344b93c7179ea5fea87224656da8894b9bbed009cf62ea484deb1b"
+    "page-count:1"
   ],
   "font_inputs": {
     "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
@@ -32,9 +31,9 @@
     "command_names": [
       "leader_ship"
     ],
-    "include_artifact_hashes": true,
     "kind": "execution-boundaries",
-    "node_depth": 2
+    "node_depth": 2,
+    "include_page_count": true
   },
   "property_id": "tex82.lists.direct-material-and-groups",
   "provenance": {

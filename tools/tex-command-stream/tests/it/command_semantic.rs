@@ -723,7 +723,7 @@ fn raw_tex82_loaded_reapplies_declared_job_tfm() {
         "projection": {
             "kind": "execution-boundaries",
             "command_names": ["leader_ship"],
-            "include_artifact_hashes": true
+            "include_page_count": true
         },
         "expected": [],
         "expectation": {"kind": "pass"},
@@ -1063,7 +1063,7 @@ fn state_projection_emits_only_requested_final_counts() {
         box_registers: Vec::new(),
         node_depth: None,
         include_mode_transitions: false,
-        include_artifact_hashes: false,
+        include_page_count: false,
         terminal_checks: Vec::new(),
     };
 
@@ -1101,7 +1101,7 @@ fn fatal_termination_precedes_every_projection_kinds_own_output() {
         box_registers: Vec::new(),
         node_depth: None,
         include_mode_transitions: false,
-        include_artifact_hashes: false,
+        include_page_count: false,
         terminal_checks: Vec::new(),
     };
 

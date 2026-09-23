@@ -1,6 +1,5 @@
 {
-  "channels": {
-  },
+  "channels": {},
   "expected": [
     "command:leader_ship:99",
     "box:10/0:vlist",
@@ -16,7 +15,7 @@
     "box:11/0/0:hlist",
     "box:11/0/0/0:char",
     "box:11/0/1:mark",
-    "artifact:69cd92a91c336901236a75f8a7c1b2c0024646db4b2bafb1d870d6dd5ed580dc"
+    "page-count:1"
   ],
   "font_inputs": {
     "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
@@ -30,9 +29,9 @@
     "command_names": [
       "leader_ship"
     ],
-    "include_artifact_hashes": true,
     "kind": "execution-boundaries",
-    "node_depth": 2
+    "node_depth": 2,
+    "include_page_count": true
   },
   "property_id": "tex82.boxes.vsplit-kernel",
   "provenance": {

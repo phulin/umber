@@ -1,20 +1,19 @@
 {
-  "channels": {
-  },
+  "channels": {},
   "expected": [
     "command:math_comp:20",
     "command:math_comp:20",
     "command:math_comp:23",
     "command:math_comp:21",
-    "artifact:a6124f6199a181a670ddd37f9efd41de2b5dce0be536d7a787f659432b4ee94f"
+    "page-count:1"
   ],
   "profile": "raw-tex82-loaded",
   "projection": {
     "command_names": [
       "math_comp"
     ],
-    "include_artifact_hashes": true,
-    "kind": "execution-boundaries"
+    "kind": "execution-boundaries",
+    "include_page_count": true
   },
   "property_id": "tex82.math.mlist-second-pass",
   "provenance": {

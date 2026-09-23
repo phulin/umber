@@ -1,6 +1,5 @@
 {
-  "channels": {
-  },
+  "channels": {},
   "expected": [
     "command:mkern:99",
     "command:mkern:99",
@@ -9,16 +8,16 @@
     "mode:math",
     "mode:horizontal",
     "mode:vertical",
-    "artifact:9e2d7112a9462de7ca8bde0f3f7d9f02ec3eee501cb42096fab3a2772969c3a0"
+    "page-count:1"
   ],
   "profile": "raw-tex82-loaded",
   "projection": {
     "command_names": [
       "mkern"
     ],
-    "include_artifact_hashes": true,
     "include_mode_transitions": true,
-    "kind": "execution-boundaries"
+    "kind": "execution-boundaries",
+    "include_page_count": true
   },
   "property_id": "tex82.math.entry-and-display-setup",
   "provenance": {

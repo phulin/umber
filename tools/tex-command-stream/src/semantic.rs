@@ -177,7 +177,7 @@ pub struct Projection {
     #[serde(default)]
     pub include_mode_transitions: bool,
     #[serde(default)]
-    pub include_artifact_hashes: bool,
+    pub include_page_count: bool,
     #[serde(default)]
     pub terminal_checks: Vec<String>,
 }
@@ -943,7 +943,7 @@ pub fn validate_case(
     let has_execution_selector = !case.projection.command_names.is_empty()
         || !case.projection.box_registers.is_empty()
         || case.projection.include_mode_transitions
-        || case.projection.include_artifact_hashes;
+        || case.projection.include_page_count;
     if case.projection.kind == ProjectionKind::ExecutionBoundaries {
         if !has_execution_selector {
             return Err(format!(
@@ -1945,12 +1945,8 @@ pub fn execution_boundaries(run: &SemanticRun, projection: &Projection) -> Vec<S
                 .map(|mode| format!("mode:{}", mode_name(*mode))),
         );
     }
-    if projection.include_artifact_hashes {
-        output.extend(
-            run.artifacts
-                .iter()
-                .map(|artifact| format!("artifact:{}", artifact.hex())),
-        );
+    if projection.include_page_count {
+        output.push(format!("page-count:{}", run.artifacts.len()));
     }
     output
 }
@@ -2088,13 +2084,22 @@ pub fn observation_projection(run: &SemanticRun, projection: &Projection) -> Vec
                     CommandDeliveryBoundary::Raw => "raw",
                     CommandDeliveryBoundary::Expanded => "expanded",
                 };
+                let operand = if record.command == "call" {
+                    // TeX stores the definition's address in cur_chr. Its
+                    // value says nothing about the invocation or expansion.
+                    String::new()
+                } else {
+                    format!(
+                        ":{}",
+                        record
+                            .command_operand
+                            .map_or_else(|| "-".into(), |operand| operand.to_string())
+                    )
+                };
                 Some(format!(
-                    "command:{boundary}:{}:{}:{}",
+                    "command:{boundary}:{}:{}{operand}",
                     observed_token_text(&record.spelling),
                     record.command,
-                    record
-                        .command_operand
-                        .map_or_else(|| "-".into(), |operand| operand.to_string())
                 ))
             }
             CommandObservation::Input(record)

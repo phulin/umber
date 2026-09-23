@@ -1,20 +1,19 @@
 {
-  "channels": {
-  },
+  "channels": {},
   "expected": [
     "command:leader_ship:99",
     "command:leader_ship:100",
     "command:leader_ship:101",
     "command:leader_ship:102",
-    "artifact:5072757fd4fbe81b4e43b38277c4b4c1955c9a32d0b75e889e75d286b71c4a25"
+    "page-count:1"
   ],
   "profile": "raw-tex82-loaded",
   "projection": {
     "command_names": [
       "leader_ship"
     ],
-    "include_artifact_hashes": true,
-    "kind": "execution-boundaries"
+    "kind": "execution-boundaries",
+    "include_page_count": true
   },
   "property_id": "tex82.shipout.hlist-traversal",
   "provenance": {

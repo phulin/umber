@@ -1,6 +1,5 @@
 {
-  "channels": {
-  },
+  "channels": {},
   "expected": [
     "command:radical:0",
     "command:radical:0",
@@ -8,7 +7,7 @@
     "command:math_style:4",
     "command:math_comp:17",
     "command:limit_switch:1",
-    "artifact:63228c82bb3e594405e2892b08bb290a64be6af7dd40f1364c0c04ee40d00c31"
+    "page-count:1"
   ],
   "profile": "raw-tex82-loaded",
   "projection": {
@@ -19,8 +18,8 @@
       "math_style",
       "radical"
     ],
-    "include_artifact_hashes": true,
-    "kind": "execution-boundaries"
+    "kind": "execution-boundaries",
+    "include_page_count": true
   },
   "property_id": "tex82.math.radicals-accents-styles-limits",
   "provenance": {

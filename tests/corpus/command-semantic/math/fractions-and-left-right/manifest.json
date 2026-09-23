@@ -1,6 +1,5 @@
 {
-  "channels": {
-  },
+  "channels": {},
   "expected": [
     "command:left_right:30",
     "command:left_right:30",
@@ -9,7 +8,7 @@
     "command:above:1",
     "command:mkern:99",
     "command:left_right:31",
-    "artifact:4dccf6936f0a300e7c7d3bee3680b2ba8c3cff0c4fe0cb50226b976ed08875f3"
+    "page-count:1"
   ],
   "profile": "raw-tex82-loaded",
   "projection": {
@@ -18,8 +17,8 @@
       "left_right",
       "mkern"
     ],
-    "include_artifact_hashes": true,
-    "kind": "execution-boundaries"
+    "kind": "execution-boundaries",
+    "include_page_count": true
   },
   "property_id": "tex82.math.fractions-and-left-right",
   "provenance": {

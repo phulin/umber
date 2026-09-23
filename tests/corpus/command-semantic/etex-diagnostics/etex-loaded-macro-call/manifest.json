@@ -14,16 +14,20 @@
   "projection": {
     "kind": "observations",
     "kinds": [
-      "command"
+      "command",
+      "macro"
     ],
     "commands": [
-      "call"
+      "call",
+      "relax"
     ],
     "count_registers": []
   },
   "expected": [
-    "command:raw:cs:formatmacro:call:249985"
+    "command:raw:cs:formatmacro:call",
+    "macro:activate:formatmacro:0:",
+    "command:raw:cs:relax:relax:256",
+    "command:expanded:cs:relax:relax:256"
   ],
-  "channels": {
-  }
+  "channels": {}
 }

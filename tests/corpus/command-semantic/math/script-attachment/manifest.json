@@ -1,21 +1,20 @@
 {
-  "channels": {
-  },
+  "channels": {},
   "expected": [
     "command:mkern:99",
     "command:mkern:99",
     "command:mkern:99",
     "command:mkern:99",
     "command:mkern:99",
-    "artifact:e77d675e24417405905617ebe83d568edc8f3f701debf63557cbfb9f84725153"
+    "page-count:1"
   ],
   "profile": "raw-tex82-loaded",
   "projection": {
     "command_names": [
       "mkern"
     ],
-    "include_artifact_hashes": true,
-    "kind": "execution-boundaries"
+    "kind": "execution-boundaries",
+    "include_page_count": true
   },
   "property_id": "tex82.math.script-attachment",
   "provenance": {

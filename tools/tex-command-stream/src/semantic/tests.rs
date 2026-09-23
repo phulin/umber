@@ -3,9 +3,155 @@
 //! a reject case so a rule that cannot fail is not actually enforced.
 
 use super::{
-    Case, CaseManifestV2, MAX_SOURCE_BYTES, MAX_SOURCE_LINES, input_targets,
+    Case, CaseManifestV2, ChannelContract, CommandDeliveryBoundary, CommandObservation,
+    MAX_SOURCE_BYTES, MAX_SOURCE_LINES, Projection, SemanticRun, StreamChannel, StreamDisposition,
+    channels::compare, evaluate_expectation, input_targets, project,
     validate_completion_observations, validate_no_format_loading, validate_source_dimensions,
 };
+
+fn empty_run() -> SemanticRun {
+    SemanticRun {
+        observations: Vec::new(),
+        diagnostic_root_name: "probe.tex".into(),
+        diagnostic_root_bytes: std::sync::Arc::from(&b""[..]),
+        counts: [0; super::COUNT_SLOTS],
+        box_outlines: Default::default(),
+        mode_transitions: Vec::new(),
+        artifacts: Vec::new(),
+        dvi: Vec::new(),
+        fatal: None,
+        terminal: Vec::new(),
+        log: Vec::new(),
+        pending_effects: Vec::new(),
+        effect_artifacts: Vec::new(),
+        complete_job_channel_streams: None,
+    }
+}
+
+#[test]
+fn page_count_is_semantic_and_equal_counts_do_not_hide_changed_dvi() {
+    let projection: Projection =
+        serde_json::from_str(r#"{"kind":"execution-boundaries","include_page_count":true}"#)
+            .unwrap();
+    let mut run = empty_run();
+    assert_eq!(project(&run, &projection), ["page-count:0"]);
+    run.artifacts
+        .push(tex_state::ContentHash::from_bytes(b"first page"));
+    assert_eq!(project(&run, &projection), ["page-count:1"]);
+    assert!(
+        evaluate_expectation(
+            &["page-count:0".into()],
+            &Ok(project(&run, &projection)),
+            &super::Expectation::Pass,
+        )
+        .is_err()
+    );
+
+    let reference = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/corpus/command-semantic/page-output/single-glyph/expected.dvi"
+    ));
+    let parsed = tex_out::dvi::disasm::DviFile::parse(reference).unwrap();
+    assert_eq!(parsed.pages.len(), 1);
+    let mut changed = reference.to_vec();
+    changed[parsed.post_offset + 24] ^= 1; // postamble maximum page width
+    assert_eq!(
+        tex_out::dvi::disasm::DviFile::parse(&changed)
+            .unwrap()
+            .pages
+            .len(),
+        1
+    );
+    let captured = super::CapturedChannels {
+        events: 0,
+        status: "clean".into(),
+        streams: [Vec::new(), Vec::new(), changed, Vec::new(), Vec::new()],
+    };
+    let contract = ChannelContract {
+        status: "clean".into(),
+        terminal: StreamDisposition::Empty,
+        log: StreamDisposition::Empty,
+        dvi: StreamDisposition::File,
+        effects: StreamDisposition::Empty,
+        diagnostics: StreamDisposition::Empty,
+    };
+    let failures = compare(&captured, &contract, &|channel| {
+        (channel == StreamChannel::Dvi).then(|| reference.to_vec())
+    });
+    assert!(failures.iter().any(|failure| matches!(
+        failure,
+        super::ChannelFailure::Content { channel: "dvi", .. }
+    )));
+}
+
+fn command(name: &str, operand: Option<i64>, expanded: bool) -> CommandObservation {
+    CommandObservation::Command(tex_command::CommandDeliveryRecord {
+        boundary: if expanded {
+            CommandDeliveryBoundary::Expanded
+        } else {
+            CommandDeliveryBoundary::Raw
+        },
+        spelling: tex_command::ObservedToken::ControlSequence(name.into()),
+        command: if name == "probe" { "call" } else { "relax" }.into(),
+        command_operand: operand,
+        semantic_operand: None,
+        provenance: tex_command::CommandProvenance {
+            input_level: 0,
+            position: 0,
+            delivery_sequence: 0,
+            has_origin: false,
+            origin: tex_state::token::OriginId::UNKNOWN,
+            source_range: None,
+            source_location: None,
+        },
+    })
+}
+
+#[test]
+fn macro_projection_ignores_definition_address_but_requires_expansion_order() {
+    let projection: Projection = serde_json::from_str(
+        r#"{"kind":"observations","kinds":["command","macro"],"commands":["call","relax"]}"#,
+    )
+    .unwrap();
+    let activation = CommandObservation::Macro(tex_command::MacroRecord::Activation {
+        control_sequence: "probe".into(),
+        argument_count: 0,
+        token_count: 0,
+    });
+    let mut run = empty_run();
+    run.observations = vec![
+        command("probe", Some(249_984), false),
+        activation.clone(),
+        command("relax", Some(256), true),
+    ];
+    let expected = [
+        "command:raw:cs:probe:call".to_owned(),
+        "macro:activate:probe:0:".to_owned(),
+        "command:expanded:cs:relax:relax:256".to_owned(),
+    ];
+    assert_eq!(project(&run, &projection), expected);
+    run.observations[0] = command("probe", Some(9_999_999), false);
+    assert_eq!(project(&run, &projection), expected);
+    run.observations.swap(1, 2);
+    assert!(
+        evaluate_expectation(
+            &expected,
+            &Ok(project(&run, &projection)),
+            &super::Expectation::Pass
+        )
+        .is_err()
+    );
+    run.observations.swap(1, 2);
+    run.observations.pop();
+    assert!(
+        evaluate_expectation(
+            &expected,
+            &Ok(project(&run, &projection)),
+            &super::Expectation::Pass
+        )
+        .is_err()
+    );
+}
 
 fn effect(kind: tex_command::ObservationEffectKind) -> tex_command::CommandObservation {
     tex_command::CommandObservation::Effect(tex_command::EffectRecord {

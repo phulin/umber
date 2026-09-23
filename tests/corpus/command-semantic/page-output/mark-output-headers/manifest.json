@@ -1,6 +1,5 @@
 {
-  "channels": {
-  },
+  "channels": {},
   "expected": [
     "command:leader_ship:99",
     "command:leader_ship:99",
@@ -8,9 +7,7 @@
     "command:leader_ship:99",
     "command:leader_ship:99",
     "command:leader_ship:99",
-    "artifact:124214966a0c3a3d56bf1a17f696e32aff0b517894109739406ef9e2759cf5cf",
-    "artifact:5f7da4be6b8c383978affcc478906538eee58895adab74cdba4f6c6f0b58218a",
-    "artifact:a379896e7eb1efb788be4272ce0950d7c02c6193690fe14548fbd751bc4dc4db"
+    "page-count:3"
   ],
   "font_inputs": {
     "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
@@ -20,8 +17,8 @@
     "command_names": [
       "leader_ship"
     ],
-    "include_artifact_hashes": true,
-    "kind": "execution-boundaries"
+    "kind": "execution-boundaries",
+    "include_page_count": true
   },
   "property_id": "tex82.output.fire-up-packaging",
   "provenance": {

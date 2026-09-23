@@ -1,12 +1,11 @@
 {
-  "channels": {
-  },
+  "channels": {},
   "expected": [
     "token-list:complete:macro_replacement:char:letter:65",
     "command:raw:cs:csname:cs_name:0",
     "command:raw:cs:endcsname:end_cs_name:0",
     "command:expanded:cs:endcsname:end_cs_name:0",
-    "command:raw:cs:made:call:249984",
+    "command:raw:cs:made:call",
     "macro:activate:made:0:"
   ],
   "profile": "raw-tex82-loaded",
