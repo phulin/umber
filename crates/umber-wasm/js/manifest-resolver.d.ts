@@ -185,7 +185,7 @@ export interface FormatCompatibility {
 }
 
 export interface TexLiveManifest {
-	schema: 2 | 3 | 4;
+	schema: 8 | 9;
 	distribution: string;
 	objectsBaseUrl: string;
 	shardBits: number;
