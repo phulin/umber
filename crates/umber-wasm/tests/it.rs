@@ -5,7 +5,7 @@ use bib_engine::{
     FileRequestKey, ProjectWorkspace, ResolvedFile, VfsLimits, VirtualPath,
 };
 use js_sys::{Array, Date, Object, Reflect, Uint8Array};
-use tex_state::{Universe, World};
+use tex_state::World;
 use umber::{
     CompileAttemptResult, EditorCompileSession as NativeEditorSession, EditorSessionOptions,
     EditorStabilizationAttempt, EngineMode, FixedPointLimits, ResourceRequest, ResourceResponse,
@@ -418,7 +418,8 @@ fn persistent_wasm_classic_caches_evict_maximum_charge_jobs() {
                     "ENTRY {{ title }} {{ }} {{ }} FUNCTION {{ main{index} }} {{ \"{}\" write$ }} READ EXECUTE {{ main{index} }}",
                     "x".repeat(96),
                 )
-                .into_bytes(),
+                .into_bytes()
+                .into(),
                 expected_digest: None,
             })
             .expect("style");
@@ -429,7 +430,8 @@ fn persistent_wasm_classic_caches_evict_maximum_charge_jobs() {
                     .expect("database key"),
                 virtual_path: format!("/texlive/bib/{database_name}"),
                 bytes: format!("@book{{entry{index}, title = \"{}\"}}", "y".repeat(64),)
-                    .into_bytes(),
+                    .into_bytes()
+                    .into(),
                 expected_digest: None,
             })
             .expect("database");
@@ -471,19 +473,19 @@ fn persistent_wasm_classic_caches_evict_maximum_charge_jobs() {
 fn fixed_math_artifact_schema_round_trips_in_wasm() {
     use tex_arith::Scaled;
     use tex_out::{
-        BoxNode, ContentHash, FontResource, FontResourceConstruction, GlueOrder, GlueSetRatio,
-        GlueSign, JobInfo, MathGlyph, MathGlyphSelection, MathOutputEvent, MathRule, MathStart,
+        BoxNode, FontResource, FontResourceConstruction, GlueOrder, GlueSetRatio, GlueSign,
+        JobInfo, MathGlyph, MathGlyphSelection, MathOutputEvent, MathRule, MathStart,
         OpenTypeFontResource, PageNode, UnvalidatedPageArtifact,
     };
 
     let sp = Scaled::from_raw;
-    let instance = tex_fonts::FontInstanceIdentity::from_bytes([3; 32]);
+    let instance = tex_fonts::FontInstanceIdentity::from_bytes([3; 8]);
     let artifact = UnvalidatedPageArtifact {
         job: JobInfo::default(),
         fonts: vec![FontResource {
             font_id: 1,
             name: "math".to_owned(),
-            tfm_content_hash: ContentHash::from_bytes(b"math.tfm"),
+            tfm_content_hash: tex_fonts::font_content_hash(b"math.tfm"),
             tfm_checksum: 0,
             design_size: sp(655_360),
             at_size: sp(655_360),
@@ -552,7 +554,7 @@ fn fixed_math_artifact_schema_round_trips_in_wasm() {
     .expect("valid math artifact");
 
     let bytes = artifact.to_bytes().expect("serialize in wasm");
-    assert_eq!(bytes[4], 23);
+    assert_eq!(bytes[4], 24);
     assert_eq!(
         tex_out::PageArtifact::from_bytes(&bytes).expect("parse in wasm"),
         artifact
@@ -895,6 +897,11 @@ fn pdftex_return_value_reports_invalid_object_recovery() {
 fn pdftex_ximage_enquiries_survive_binary_resource_retry() {
     let session_options = options("main.tex");
     set(&session_options, "engine", &JsValue::from_str("pdftex"));
+    set(
+        &session_options,
+        "outputs",
+        &Array::of1(&JsValue::from_str("pdf")),
+    );
     let mut session = CompilerSession::new(session_options.unchecked_ref::<JsSessionOptions>())
         .expect("pdfTeX session");
     session
@@ -923,7 +930,12 @@ fn pdftex_ximage_enquiries_survive_binary_resource_retry() {
     provide_file(&mut session, &request, "/texlive/figure.png", &png).expect("provide PNG");
 
     let complete = session.compile_attempt().expect("complete retry");
-    assert_eq!(string_field(complete.as_ref(), "kind"), "complete");
+    assert_eq!(
+        string_field(complete.as_ref(), "kind"),
+        "complete",
+        "{}",
+        string_field(&field(complete.as_ref(), "diagnostic"), "message")
+    );
     let terminal = field(&field(complete.as_ref(), "output"), "terminal")
         .as_string()
         .expect("terminal text");
@@ -977,11 +989,11 @@ async fn generated_html_projects_exact_geometry_at_firefox_zoom_levels() {
             .expect("provide retained WOFF2 batch");
         complete = session.advance().expect("resume HTML compile");
     }
-    assert_eq!(request_count, 2);
     if string_field(complete.as_ref(), "kind") != "complete" {
         let diagnostic = field(complete.as_ref(), "diagnostic");
         panic!("{}", string_field(&diagnostic, "message"));
     }
+    assert_eq!(request_count, 2);
     let output = field(complete.as_ref(), "output");
     assert_eq!(Uint8Array::new(&field(&output, "dvi")).length(), 0);
     let html = field(&output, "html");
@@ -1014,7 +1026,10 @@ async fn generated_html_projects_exact_geometry_at_firefox_zoom_levels() {
     let diagnostic_after = field(retention_after.as_ref(), "diagnosticBytes")
         .as_f64()
         .expect("numeric diagnostic bytes");
-    assert!(diagnostic_after > diagnostic_before);
+    assert_eq!(
+        diagnostic_after, diagnostic_before,
+        "rendered query must not grow the accepted diagnostic snapshot"
+    );
     assert!(
         session
             .rendered_source_location(1, event, Some(2), output_id.clone(), 1)
@@ -1269,6 +1284,58 @@ fn html_font_bindings_distinguish_idempotent_duplicates_from_conflicts() {
 }
 
 #[wasm_bindgen_test]
+fn font_mapping_ahash64_wire_identity_uses_canonical_hex_byte_order() {
+    let tfm = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
+    let digest = umber_hash::AHash64::for_bytes(umber_hash::HashDomain::DistributionContent, tfm);
+    assert_ne!(digest.to_le_bytes(), digest.value().to_be_bytes());
+
+    let compile_with_mapping = |tfm_ahash64: &str| -> JsValue {
+        let session_options = options("main.tex");
+        set(
+            &session_options,
+            "outputs",
+            &Array::of1(&JsValue::from_str("html")),
+        );
+        let mut session =
+            CompilerSession::new(session_options.unchecked_ref()).expect("HTML session");
+        session
+            .add_user_file("cmr10.tfm", &bytes(tfm))
+            .expect("add TFM");
+        session
+            .add_user_file(
+                "main.tex",
+                &bytes(b"\\font\\tenrm=cmr10\\relax\\tenrm\\shipout\\hbox{A}\\end"),
+            )
+            .expect("add source");
+        let missing = session.advance().expect("font request");
+        let request: Object = Array::from(&field(missing.as_ref(), "required"))
+            .get(0)
+            .unchecked_into();
+        let response = html_font_response(&request);
+        let mapping: Object = field(response.as_ref(), "legacyMapping").unchecked_into();
+        set(&mapping, "tfmAhash64", &JsValue::from_str(tfm_ahash64));
+        session
+            .provide_resources(resource_responses(&Array::of1(&response)))
+            .expect("valid response shape");
+        session
+            .advance()
+            .expect("compile with supplied mapping")
+            .into()
+    };
+
+    let valid = compile_with_mapping(&digest.hex());
+    assert_eq!(string_field(&valid, "kind"), "complete");
+
+    let reversed = format!("{:016x}", digest.value().swap_bytes());
+    let invalid = compile_with_mapping(&reversed);
+    assert_eq!(string_field(&invalid, "kind"), "error");
+    assert!(
+        string_field(&field(&invalid, "diagnostic"), "message")
+            .contains("wrong TFM mapping identity")
+    );
+}
+
+#[wasm_bindgen_test]
 fn resource_batches_use_rust_limits() {
     let request = Object::new();
     set(&request, "type", &JsValue::from_str("file"));
@@ -1342,13 +1409,26 @@ fn schema_twelve_formats_load_and_legacy_plain_asset_is_explicitly_unavailable()
             .contains(&format!("format_schema {EXPECTED_FORMAT_SCHEMA}")),
         "reproducible source lock must match the runtime schema"
     );
-    assert!(include_str!("../browser-tests/fixture.js").contains("umber2-66p0.27"));
+    let metadata: serde_json::Value =
+        serde_json::from_str(include_str!("../assets/plain-format.json"))
+            .expect("parse packaged Plain-format metadata");
+    assert_eq!(metadata["schema"].as_u64(), Some(0));
+    assert!(
+        metadata["unavailable"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("umber2-66p0.27"))
+    );
     assert_format_error(legacy_format, "unsupported Umber format version 11");
 
     let source = b"\\shipout\\hbox{}\\end";
-    let mut initialized = Universe::with_world(World::memory());
-    prepare_run_stores(&mut initialized);
-    let minimal_format = initialized.dump_format().expect("dump schema-12 format");
+    let minimal_format = umber::with_engine_world(World::memory(), |initialized| {
+        prepare_run_stores(initialized);
+        initialized
+            .capture_format_image()
+            .expect("capture schema-12 format")
+            .into_bytes()
+    })
+    .expect("fresh format universe");
     let mut format_initialized = session_with_format("main.tex", &minimal_format);
     format_initialized
         .add_user_file("main.tex", &bytes(source))
@@ -1391,9 +1471,14 @@ fn schema_twelve_formats_load_and_legacy_plain_asset_is_explicitly_unavailable()
 
 #[wasm_bindgen_test]
 fn formatted_session_survives_multiple_resource_retries() {
-    let mut initialized = Universe::with_world(World::memory());
-    prepare_run_stores(&mut initialized);
-    let format = initialized.dump_format().expect("dump schema-12 format");
+    let format = umber::with_engine_world(World::memory(), |initialized| {
+        prepare_run_stores(initialized);
+        initialized
+            .capture_format_image()
+            .expect("capture schema-12 format")
+            .into_bytes()
+    })
+    .expect("fresh format universe");
     let mut session = session_with_format("main.tex", &format);
     session
         .add_user_file("main.tex", &bytes(b"\\input first \\end"))
@@ -1466,12 +1551,72 @@ fn persistent_session_applies_revision_checked_patches() {
 }
 
 #[wasm_bindgen_test]
-fn rendered_queries_track_length_changes_before_a_reused_page() {
+fn rendered_queries_track_length_changes_across_pages() {
     let original =
         "\\font\\tenrm=cmr10\\relax\\tenrm %a\n\\shipout\\hbox{\\char65}\\shipout\\hbox{B}\\end";
     let fixture = rendered_query_fixture(original);
     assert_current_rendered_query(&fixture);
-    remint_and_assert_deleted_rendered_query(fixture);
+    remove_and_assert_missing_rendered_query(fixture);
+}
+
+#[wasm_bindgen_test]
+fn rendered_query_on_a_reused_page_tracks_its_source() {
+    // This overwritten definition is the native changed-prefix convergence
+    // fixture; the following paragraph is its matching checkpoint.
+    let original = "A\\par\n\\def\\unused{X}\\def\\unused{Z}\nB\\par\n\\font\\tenrm=cmr10\\relax\\tenrm\\shipout\\hbox{Y}\\end";
+    let mut session = initial_rendered_query_session(original);
+    let x = original.find("{X}").expect("overwritten definition") + 1;
+    let hash = session
+        .accepted_content_hash()
+        .expect("content hash")
+        .expect("accepted hash");
+    session
+        .apply_patch(source_patch(2, 1, &hash, x, x + 1, "WIDE").unchecked_ref())
+        .expect("changed-prefix patch");
+    let edited = session.advance().expect("edited revision");
+    assert_eq!(string_field(edited.as_ref(), "kind"), "complete");
+    let reuse = session
+        .reuse_metrics()
+        .expect("reuse metrics")
+        .expect("accepted metrics");
+    assert!(
+        field(reuse.as_ref(), "pagesReused")
+            .as_f64()
+            .unwrap_or_default()
+            > 0.0,
+        "{}",
+        js_sys::JSON::stringify(reuse.as_ref())
+            .expect("serialize metrics")
+            .as_string()
+            .expect("metrics string")
+    );
+    let output = field(edited.as_ref(), "output");
+    let html = String::from_utf8(Uint8Array::new(&field(&output, "html")).to_vec())
+        .expect("rendered HTML");
+    let y = html.find("data-umber-codes=\"0x59").expect("Y text run");
+    let event = rendered_text_event(&html, b'Y');
+    let page_prefix = "data-umber-page=\"";
+    let page_start = html[..y].rfind(page_prefix).expect("Y page") + page_prefix.len();
+    let page_end = page_start + html[page_start..].find('"').expect("page end");
+    let page = html[page_start..page_end]
+        .parse::<u32>()
+        .expect("page number");
+    let pages_retyped = field(reuse.as_ref(), "pagesRetyped")
+        .as_f64()
+        .expect("retyped page count");
+    assert!(
+        f64::from(page) > pages_retyped,
+        "queried page must be in the reused suffix"
+    );
+    let location = session
+        .rendered_source_location(page, event, Some(0), rendered_output_id(&html), 2)
+        .expect("reused page query")
+        .expect("source location");
+    assert_eq!(string_field(location.as_ref(), "kind"), "current");
+    assert_eq!(
+        field(location.as_ref(), "start").as_f64(),
+        Some((original.find("{Y}").expect("suffix glyph") + 1) as f64)
+    );
 }
 
 #[wasm_bindgen_test]
@@ -1584,7 +1729,12 @@ fn initial_rendered_query_session(original: &str) -> CompilerSession {
         .expect("add source");
     provide_requested_html_font(&mut session);
     let initial = session.advance().expect("initial compile");
-    assert_eq!(string_field(initial.as_ref(), "kind"), "complete");
+    assert_eq!(
+        string_field(initial.as_ref(), "kind"),
+        "complete",
+        "{}",
+        string_field(&field(initial.as_ref(), "diagnostic"), "message")
+    );
     session
 }
 
@@ -1622,16 +1772,6 @@ fn apply_length_changing_rendered_query_patch(
         .expect("length-changing patch");
     let third = session.advance().expect("third revision");
     assert_eq!(string_field(third.as_ref(), "kind"), "complete");
-    let reuse = session
-        .reuse_metrics()
-        .expect("reuse metrics getter")
-        .expect("reuse metrics");
-    assert!(
-        field(reuse.as_ref(), "pagesReused")
-            .as_f64()
-            .unwrap_or_default()
-            > 0.0
-    );
     let third_output = field(third.as_ref(), "output");
     let third_html = String::from_utf8(Uint8Array::new(&field(&third_output, "html")).to_vec())
         .expect("third HTML");
@@ -1661,38 +1801,35 @@ fn assert_current_rendered_query(fixture: &RenderedQueryFixture) {
     );
 }
 
-fn remint_and_assert_deleted_rendered_query(mut fixture: RenderedQueryFixture) {
-    let line_start = fixture
+fn remove_and_assert_missing_rendered_query(mut fixture: RenderedQueryFixture) {
+    let b_shipout = fixture
         .revision_three
-        .find("\\shipout\\hbox{\\char65}")
-        .expect("char line");
-    let line_end = fixture.revision_three[line_start..]
         .find("\\shipout\\hbox{B}")
-        .map(|offset| line_start + offset)
         .expect("second shipout");
-    let replacement = &fixture.revision_three[line_start..line_end];
     let third_hash = fixture
         .session
         .accepted_content_hash()
         .expect("content hash")
         .expect("accepted revision");
-    let remint = source_patch(4, 3, &third_hash, line_start, line_end, replacement);
+    let replacement = source_patch(
+        4,
+        3,
+        &third_hash,
+        b_shipout,
+        b_shipout + "\\shipout\\hbox{B}".len(),
+        "",
+    );
     fixture
         .session
-        .apply_patch(remint.unchecked_ref::<JsSourcePatch>())
-        .expect("equivalent remint patch");
+        .apply_patch(replacement.unchecked_ref::<JsSourcePatch>())
+        .expect("remove rendered page");
     let fourth = fixture.session.advance().expect("fourth revision");
     assert_eq!(string_field(fourth.as_ref(), "kind"), "complete");
-    let deleted = fixture
+    let missing = fixture
         .session
         .rendered_source_location(2, fixture.b_event, Some(0), fixture.output_id, 4)
-        .expect("deleted query")
-        .expect("deleted result");
-    assert_eq!(string_field(deleted.as_ref(), "kind"), "deleted");
-    assert_eq!(
-        field(deleted.as_ref(), "mintedRevision").as_f64(),
-        Some(1.0)
-    );
+        .expect("removed page query");
+    assert!(missing.is_none(), "removed page must not map a stale event");
 }
 
 fn session(main_path: &str) -> CompilerSession {
@@ -1704,7 +1841,7 @@ fn native_stabilize(
     source: &[u8],
     limits: FixedPointLimits,
 ) -> Result<Box<TexFixedPointOutput>, TexFixedPointError> {
-    let mut session = NativeEditorSession::new(EditorSessionOptions {
+    let mut session = NativeEditorSession::new_standalone(EditorSessionOptions {
         tex: SessionOptions {
             engine: EngineMode::Tex82,
             ..SessionOptions::default()
@@ -1918,7 +2055,9 @@ fn legacy_font_mapping() -> Object {
     set(
         &mapping,
         "tfmAhash64",
-        &JsValue::from_str(&tex_state::ContentHash::from_bytes(tfm).hex()),
+        &JsValue::from_str(
+            &umber_hash::AHash64::for_bytes(umber_hash::HashDomain::DistributionContent, tfm).hex(),
+        ),
     );
     let encoding = Array::new_with_length(256);
     for code in 32_u8..=126 {

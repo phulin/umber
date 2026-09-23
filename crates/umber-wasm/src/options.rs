@@ -494,21 +494,9 @@ fn parse_digest(value: &str) -> Result<[u8; 32], JsValue> {
 }
 
 fn parse_ahash64(value: &str) -> Result<[u8; 8], JsValue> {
-    if value.len() != 16 {
-        return Err(js_error(
-            "aHash64 digest must contain 16 hexadecimal characters",
-        ));
-    }
-    let mut digest = [0_u8; 8];
-    for (index, pair) in value.as_bytes().as_chunks::<2>().0.iter().enumerate() {
-        let nibble = |byte| match byte {
-            b'0'..=b'9' => Ok(byte - b'0'),
-            b'a'..=b'f' => Ok(byte - b'a' + 10),
-            _ => Err(js_error("aHash64 digest must use lowercase hex")),
-        };
-        digest[index] = (nibble(pair[0])? << 4) | nibble(pair[1])?;
-    }
-    Ok(digest)
+    umber_hash::AHash64::parse_hex(value)
+        .map(umber_hash::AHash64::to_le_bytes)
+        .map_err(|_| js_error("aHash64 digest must contain 16 lowercase hexadecimal characters"))
 }
 
 fn from_js<T: DeserializeOwned>(value: JsValue) -> Result<T, JsValue> {

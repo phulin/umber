@@ -11,6 +11,18 @@ Do not add `web-sys` merely to fetch. Large byte payloads cross as
 untrusted TeX lookup names: resolve a validated manifest key, then fetch only
 the manifest's validated content-addressed object name.
 
+The wire's aHash64 strings use canonical numeric hexadecimal text. Internal
+font and PK identities store that number as little-endian bytes, so
+`src/options.rs` must parse the number before converting it to bytes. Decoding
+hexadecimal pairs directly reverses the identity and rejects valid HTML font
+mapping responses. Keep the non-palindromic canonical/reversed-response
+wasm-bindgen test in `tests/it.rs` when changing this boundary.
+
+The current rendered-source resolver returns no location for an event whose
+page was removed. Its `Deleted` result variant has no producing path yet;
+browser tests must assert the observed missing result rather than claiming a
+deleted-status contract.
+
 ## Directory map
 
 - `src/lib.rs`: exported persistent `CompilerSession`, low-level `advance`/`provideResources`/`applyPatch` boundary, revision metrics, and TypeScript surface.
