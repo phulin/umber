@@ -471,22 +471,26 @@ impl EngineMode {
     }
 
     /// Restores driver-owned primitive implementations after a format load.
-    pub fn install_after_format<G>(self, stores: &mut Universe<G>) {
+    pub fn install_after_format<G>(
+        self,
+        stores: &mut Universe<G>,
+    ) -> Result<(), tex_state::FormatError> {
         match self {
             Self::Tex82 => {
+                tex_exec::register_unexpandable_primitives(stores)?;
                 tex_command::register_tex82_expandable_primitives(stores);
-                tex_exec::register_unexpandable_primitives(stores);
             }
             Self::ETex => {
+                tex_exec::register_unexpandable_primitives(stores)?;
                 tex_command::register_tex82_expandable_primitives(stores);
                 tex_command::register_etex_expandable_primitives(stores);
-                tex_exec::register_unexpandable_primitives(stores);
                 tex_exec::register_etex_unexpandable_primitives(stores);
             }
-            Self::PdfTex => install_pdftex_format_primitives(stores),
-            Self::Latex => install_latex_format_primitives(stores),
-            Self::PdfLatex => install_pdflatex_format_primitives(stores),
+            Self::PdfTex => install_pdftex_format_primitives(stores)?,
+            Self::Latex => install_latex_format_primitives(stores)?,
+            Self::PdfLatex => install_pdflatex_format_primitives(stores)?,
         }
+        Ok(())
     }
 
     /// Whether this compatibility contract uses LaTeX's byte-oriented UTF-8 input layer.

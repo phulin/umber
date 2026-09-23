@@ -49,7 +49,8 @@ const IDENTITY_DOMAIN: &[u8] = b"umber.loaded-format-fixture.v2\0";
 // produced by that exact construction episode; accepting an entry from an
 // older producer would bypass the current engine entirely.
 // Version 21 rechecks protected terminals after every expansion restart.
-const PRODUCER_CONTRACT_VERSION: u32 = 21;
+// Version 22 requires the frozen nullfont identifier in every TeX format.
+const PRODUCER_CONTRACT_VERSION: u32 = 22;
 // Version 2 carries the producing source identity on geometry observations.
 const COMMAND_OBSERVATION_SCHEMA_VERSION: u32 = 2;
 
@@ -468,7 +469,10 @@ impl LoadedFormatFixture {
                 let staging = destination.stage(image.into_detached())?;
                 destination
                     .materialize(staging, |universe| {
-                        recipe.engine.install_after_format(universe);
+                        recipe
+                            .engine
+                            .install_after_format(universe)
+                            .map_err(|error| FormatFixtureError::Format(error.to_string()))?;
                         if let Some(mode) = interaction_mode {
                             universe.set_interaction_mode(mode);
                         }

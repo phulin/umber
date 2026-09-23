@@ -1969,7 +1969,7 @@ fn initialize_candidate_runtime<G: 'static>(
         return Err(error);
     }
     if materialized_job_start {
-        register_materialized_primitives(universe, candidate.profile, candidate.compatibility);
+        register_materialized_primitives(universe, candidate.profile, candidate.compatibility)?;
         validate_materialized_font_policy(universe, candidate.required_font_layout_policy)?;
     }
     for (path, bytes) in &candidate.registered_inputs {
@@ -2343,9 +2343,9 @@ fn register_materialized_primitives<G>(
     universe: &mut Universe<G>,
     profile: CommandProfile,
     compatibility: CommandCompatibility,
-) {
+) -> Result<(), SessionError> {
+    tex_exec::register_unexpandable_primitives(universe).map_err(SessionError::Format)?;
     tex_command::register_tex82_expandable_primitives(universe);
-    tex_exec::register_unexpandable_primitives(universe);
     if profile.capabilities().supports_etex() {
         tex_command::register_etex_expandable_primitives(universe);
         tex_exec::register_etex_unexpandable_primitives(universe);
@@ -2357,6 +2357,7 @@ fn register_materialized_primitives<G>(
     if compatibility == CommandCompatibility::Latex {
         tex_command::register_latex_expandable_primitives(universe);
     }
+    Ok(())
 }
 
 fn validate_materialized_font_policy<G>(

@@ -848,24 +848,33 @@ pub fn prepare_pdftex_run_stores<G>(stores: &mut Universe<G>) {
 }
 
 /// Restores driver-selected pdfTeX meanings after loading a format image.
-pub fn install_pdftex_format_primitives<G>(stores: &mut Universe<G>) {
+pub fn install_pdftex_format_primitives<G>(
+    stores: &mut Universe<G>,
+) -> Result<(), tex_state::FormatError> {
+    tex_exec::register_unexpandable_primitives(stores)?;
     tex_command::register_tex82_expandable_primitives(stores);
     tex_command::register_etex_expandable_primitives(stores);
-    tex_exec::register_unexpandable_primitives(stores);
     tex_exec::register_etex_unexpandable_primitives(stores);
     pdftex::register_pdftex_layer(stores);
     stores.enable_pdf_output();
+    Ok(())
 }
 
-fn register_tex_format_primitives<G>(stores: &mut Universe<G>) {
+fn register_tex_format_primitives<G>(
+    stores: &mut Universe<G>,
+) -> Result<(), tex_state::FormatError> {
+    tex_exec::register_unexpandable_primitives(stores)?;
     tex_command::register_tex82_expandable_primitives(stores);
-    tex_exec::register_unexpandable_primitives(stores);
+    Ok(())
 }
 
-fn register_etex_format_primitives<G>(stores: &mut Universe<G>) {
-    register_tex_format_primitives(stores);
+fn register_etex_format_primitives<G>(
+    stores: &mut Universe<G>,
+) -> Result<(), tex_state::FormatError> {
+    register_tex_format_primitives(stores)?;
     tex_command::register_etex_expandable_primitives(stores);
     tex_exec::register_etex_unexpandable_primitives(stores);
+    Ok(())
 }
 
 fn install_latex_compatibility_layer<G>(stores: &mut Universe<G>) {
@@ -908,9 +917,12 @@ fn install_plain_catcodes<G>(stores: &mut Universe<G>) {
 }
 
 /// Reconstructs the driver-selected LaTeX primitive registry after loading a format image.
-pub fn install_latex_format_primitives<G>(stores: &mut Universe<G>) {
-    register_etex_format_primitives(stores);
+pub fn install_latex_format_primitives<G>(
+    stores: &mut Universe<G>,
+) -> Result<(), tex_state::FormatError> {
+    register_etex_format_primitives(stores)?;
     tex_command::register_latex_expandable_primitives(stores);
+    Ok(())
 }
 
 /// Installs the primitive/state setup used by supported LaTeX-DVI runs.
@@ -929,9 +941,12 @@ pub fn prepare_pdflatex_run_stores<G>(stores: &mut Universe<G>) {
 }
 
 /// Reconstructs the composed pdfTeX and LaTeX primitive registry after format load.
-pub fn install_pdflatex_format_primitives<G>(stores: &mut Universe<G>) {
-    install_pdftex_format_primitives(stores);
+pub fn install_pdflatex_format_primitives<G>(
+    stores: &mut Universe<G>,
+) -> Result<(), tex_state::FormatError> {
+    install_pdftex_format_primitives(stores)?;
     tex_command::register_latex_expandable_primitives(stores);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1041,7 +1056,9 @@ mod primitive_mode_tests {
                 .expect("initialized usage")
                 .detach_engine_usage_statistics()
                 .control_sequences;
-            EngineMode::Tex82.install_after_format(stores);
+            EngineMode::Tex82
+                .install_after_format(stores)
+                .expect("valid format activation");
             assert_eq!(
                 stores
                     .command_context()
@@ -1057,11 +1074,12 @@ mod primitive_mode_tests {
     #[test]
     fn latex_format_restores_frozen_base_primitives_without_rebinding_live_names() {
         with_stores(|stores| {
+            tex_exec::install_unexpandable_primitives(stores);
             install_plain_catcodes(stores);
             let relax = stores.intern("relax");
             stores.set_meaning(relax, Meaning::ExpandablePrimitive(ExpandablePrimitive::Fi));
 
-            install_latex_format_primitives(stores);
+            install_latex_format_primitives(stores).expect("valid format activation");
 
             assert_eq!(
                 stores.meaning(relax),
@@ -1170,7 +1188,9 @@ mod primitive_mode_tests {
             World::default(),
             image,
             |loaded| {
-                EngineMode::ETex.install_after_format(loaded);
+                EngineMode::ETex
+                    .install_after_format(loaded)
+                    .expect("valid format activation");
                 assert_eq!(token_list_text(loaded, TokParam::ERR_HELP), "help-format");
                 assert_eq!(token_list_text(loaded, TokParam::EVERY_EOF), "eof-format");
             },
@@ -1302,7 +1322,8 @@ mod primitive_mode_tests {
                 image,
                 |loaded| {
                     assert_eq!(loaded.primitive_meaning(primitive), None);
-                    mode.install_after_format(loaded);
+                    mode.install_after_format(loaded)
+                        .expect("valid format activation");
 
                     let symbol = loaded.intern(primitive).expect("test symbol interning");
                     assert_eq!(
@@ -2411,7 +2432,8 @@ mod tests {
                     world,
                     loaded_format,
                     |stores| {
-                        mode.install_after_format(stores);
+                        mode.install_after_format(stores)
+                            .expect("valid format activation");
                         exercise(stores, mode);
                     },
                 )

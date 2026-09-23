@@ -3712,6 +3712,7 @@ fn virtual_format_registry_preserves_live_meanings_and_profile_distinctions() {
         EngineMode::PdfLatex,
     ] {
         crate::with_engine_world(World::memory(), |stores| {
+            engine.prepare_initex(stores);
             let names = ["iftrue", "ifdefined", "pdfprimitive"];
             for name in names {
                 let symbol = stores.intern(name).expect("shadow symbol");
@@ -3724,7 +3725,9 @@ fn virtual_format_registry_preserves_live_meanings_and_profile_distinctions() {
                     .expect("shadow primitive");
             }
 
-            engine.install_after_format(stores);
+            engine
+                .install_after_format(stores)
+                .expect("valid format activation");
 
             for name in names {
                 let symbol = stores.intern(name).expect("restored symbol");

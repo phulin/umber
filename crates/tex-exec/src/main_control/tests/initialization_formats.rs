@@ -81,6 +81,7 @@ fn restored_profile_registration_preserves_format_parameters_except_clock() {
     crate::test_harness::with_world_universe(
         tex_state::World::memory_with_clock(clock),
         |stores| {
+            crate::install_unexpandable_primitives(stores);
             let pages_attr = allocate_tokens(
                 stores,
                 &[Token::Char {
@@ -115,7 +116,7 @@ fn restored_profile_registration_preserves_format_parameters_except_clock() {
             });
 
             tex_command::register_tex82_expandable_primitives(stores);
-            crate::register_unexpandable_primitives(stores);
+            crate::register_unexpandable_primitives(stores).expect("valid format activation");
             tex_command::register_etex_expandable_primitives(stores);
             crate::register_etex_unexpandable_primitives(stores);
             tex_command::register_pdftex_expandable_primitives(stores);
@@ -271,7 +272,7 @@ fn loaded_format_everyjob_preserves_number_signs_and_internal_operands() {
                 "dumped everyjob token list must survive format materialization"
             ));
             tex_command::register_tex82_expandable_primitives(stores);
-            crate::register_unexpandable_primitives(stores);
+            crate::register_unexpandable_primitives(stores).expect("valid format activation");
             let mut control = MainControl::with_profile(CommandProfile::TEX82);
             control.set_preloaded_format(crate::PreloadedFormat {
                 dump_name: "signs".to_owned(),

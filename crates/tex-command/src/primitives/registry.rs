@@ -25,7 +25,22 @@ pub fn install_tex82_unexpandable_primitives<G>(universe: &mut Universe<G>) {
 }
 
 /// Registers TeX82's enum-backed primitive meanings without shadowing a format.
-pub fn register_tex82_unexpandable_primitives<G>(universe: &mut Universe<G>) {
+pub fn register_tex82_unexpandable_primitives<G>(
+    universe: &mut Universe<G>,
+) -> Result<(), tex_state::FormatError> {
+    let nullfont_identifier = universe
+        .command_context()
+        .map_err(|_| {
+            tex_state::FormatError::InvalidState(
+                "loaded TeX state has no command context".to_owned(),
+            )
+        })?
+        .font_identifier_symbol(tex_state::font::NULL_FONT);
+    if nullfont_identifier.is_none() {
+        return Err(tex_state::FormatError::InvalidState(
+            "loaded TeX format has no nullfont identifier".to_owned(),
+        ));
+    }
     configure_generated(
         universe,
         false,
@@ -39,6 +54,7 @@ pub fn register_tex82_unexpandable_primitives<G>(universe: &mut Universe<G>) {
     configure_specials(universe, false, PrimitiveProfile::Tex82, |name| {
         !matches!(name, "relax" | "nullfont")
     });
+    Ok(())
 }
 
 /// Installs e-TeX's enum-backed unexpandable primitive meanings.
@@ -219,17 +235,18 @@ fn configure_nullfont<G>(universe: &mut Universe<G>, install: bool, meaning: Mea
     if install {
         universe.install_primitive_meaning("nullfont", meaning);
     }
-    let mut context = universe
-        .command_context()
-        .expect("nullfont installation requires a live engine state");
-    if context
-        .font_identifier_symbol(tex_state::font::NULL_FONT)
-        .is_none()
-    {
+    if install {
+        let mut context = universe
+            .command_context()
+            .expect("nullfont installation requires a live engine state");
+        if context
+            .font_identifier_symbol(tex_state::font::NULL_FONT)
+            .is_some()
+        {
+            return;
+        }
         // TeX82 §§415/552-553 initialize font_id_base+null_font to the
-        // inaccessible frozen_null_font slot. Formats created before that
-        // sidecar existed need the same fixed identity on restoration, while
-        // a serialized nonempty font_id_text must retain its own identity.
+        // inaccessible frozen_null_font slot during fresh initialization.
         let frozen = context.intern_internal_control_sequence("nullfont");
         context
             .assign_resolved_meaning(

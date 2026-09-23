@@ -109,7 +109,10 @@ fn inspect_loaded<R>(
         world,
         image.into_detached(),
         |universe| {
-            recipe.engine.install_after_format(universe);
+            recipe
+                .engine
+                .install_after_format(universe)
+                .expect("valid format activation");
             if let Some(mode) = interaction_mode {
                 universe.set_interaction_mode(mode);
             }
@@ -248,15 +251,15 @@ fn recipe_identity_invalidates_every_fixture_input_class() {
 }
 
 #[test]
-fn producer_contract_twenty_one_rejects_old_protected_expansion_formats() {
+fn producer_contract_twenty_two_rejects_formats_without_nullfont_identity() {
     let recipe = FormatRecipe::raw_tex82();
-    let stale = producer_contract(20, &recipe.format_name, &recipe.format_ident_name);
+    let stale = producer_contract(21, &recipe.format_name, &recipe.format_ident_name);
     let current = producer_contract(
         PRODUCER_CONTRACT_VERSION,
         &recipe.format_name,
         &recipe.format_ident_name,
     );
-    assert_eq!(PRODUCER_CONTRACT_VERSION, 21);
+    assert_eq!(PRODUCER_CONTRACT_VERSION, 22);
     assert_ne!(current, stale);
 }
 

@@ -7,8 +7,10 @@ pub fn install_unexpandable_primitives<G>(stores: &mut Universe<G>) {
 }
 
 /// Reconstructs TeX82's primitive registry without shadowing format meanings.
-pub fn register_unexpandable_primitives<G>(stores: &mut Universe<G>) {
-    tex_command::register_tex82_unexpandable_primitives(stores);
+pub fn register_unexpandable_primitives<G>(
+    stores: &mut Universe<G>,
+) -> Result<(), tex_state::FormatError> {
+    tex_command::register_tex82_unexpandable_primitives(stores)
 }
 
 /// Installs the complete e-TeX non-expandable catalogue layer.

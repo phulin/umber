@@ -186,7 +186,9 @@ pub(super) fn assert_format_image_contract(format: &[u8], engine: EngineMode) {
                     None,
                     "primitive registry is runtime state and must not be serialized"
                 );
-                engine.install_after_format(loaded);
+                engine
+                    .install_after_format(loaded)
+                    .expect("valid format activation");
                 assert!(
                     loaded.primitive_meaning("relax").is_some(),
                     "format loading reconstructs the selected engine registry"

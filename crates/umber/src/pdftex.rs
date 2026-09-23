@@ -1915,7 +1915,8 @@ mod tests {
                 format,
                 |loaded| {
                     let loaded = &mut PdftexTestStores(loaded);
-                    crate::install_pdftex_format_primitives(loaded);
+                    crate::install_pdftex_format_primitives(loaded)
+                        .expect("valid format activation");
                     let output = run_pdf_memory(
                         concat!(
                             "\\message{seed=\\the\\pdfrandomseed}",
@@ -2135,7 +2136,7 @@ mod tests {
                 format,
                 |loaded| {
                     let loaded = &mut PdftexTestStores(loaded);
-                    crate::install_pdftex_format_primitives(loaded);
+                    crate::install_pdftex_format_primitives(loaded).expect("valid format activation");
 
                     let output = run_pdf_memory(
                         concat!(

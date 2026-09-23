@@ -299,6 +299,12 @@ mutable runtime parameter row. That aggregate must fit the same profile's
 20,000- or 8,000,000-word `font_info` capacity.
 Row zero retains TeX.web §§552--556's seven zero parameters, empty character
 set, zero checksum and sizes, hyphen character 45, and skew character -1.
+The lower-level state codec can round-trip a generic Universe before TeX
+primitives are installed. Production TeX activation additionally requires a
+present `nullfont` identifier. Fresh primitive setup creates its frozen
+identity; loading an image without one returns a format-state error before
+primitive registration changes the state. A present serialized identifier is
+preserved.
 Dump/load preserves allocation order and every immutable loaded-TFM field plus
 the mutable font banks; a decoded image outside the same bound is rejected.
 

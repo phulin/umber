@@ -102,6 +102,13 @@ all exercise source initialization and report any failure normally. Format
 generation uses the accepted bounded 500,000,000 cumulative-fuel budget for
 the pinned TeX Live 2026-03-01 LaTeX and pdfLaTeX tiers.
 
+Fixture producer contract 22 invalidates cached TeX images made before the
+frozen `nullfont` identifier became a required loaded-runtime invariant. The
+builder regenerates them from its pinned inputs; an image supplied directly to
+a production loaded session is rejected before primitive registration if that
+identifier is absent. Generic lower-level Universe images remain valid state
+codec inputs.
+
 ## Native entry and validation
 
 `umber::FormatCacheStore` owns the canonical key preimage, current format

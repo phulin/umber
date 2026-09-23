@@ -39,7 +39,7 @@ fn nullfont_identifier_is_a_distinct_frozen_control_sequence() {
 }
 
 #[test]
-fn format_registration_only_repairs_a_missing_nullfont_identifier() {
+fn format_registration_preserves_a_present_nullfont_identifier() {
     crate::test_harness::with_universe(|universe| {
         install_tex82_unexpandable_primitives(universe);
         let frozen = universe
@@ -48,7 +48,7 @@ fn format_registration_only_repairs_a_missing_nullfont_identifier() {
             .font_identifier_symbol(tex_state::font::NULL_FONT)
             .expect("fresh frozen identity");
 
-        register_tex82_unexpandable_primitives(universe);
+        register_tex82_unexpandable_primitives(universe).expect("valid format activation");
         assert_eq!(
             universe
                 .command_context()
@@ -64,7 +64,7 @@ fn format_registration_only_repairs_a_missing_nullfont_identifier() {
             context.set_font_identifier_symbol(tex_state::font::NULL_FONT, selected);
             selected
         };
-        register_tex82_unexpandable_primitives(universe);
+        register_tex82_unexpandable_primitives(universe).expect("valid format activation");
         assert_eq!(
             universe
                 .command_context()
@@ -98,7 +98,7 @@ fn fresh_nullfont_identifier_survives_format_bytes_and_registration() {
                 .expect("loaded context")
                 .font_identifier_symbol(tex_state::font::NULL_FONT)
                 .expect("serialized nullfont identifier");
-            register_tex82_unexpandable_primitives(universe);
+            register_tex82_unexpandable_primitives(universe).expect("valid format activation");
             let context = universe.command_context().expect("registered context");
             assert_eq!(
                 context.font_identifier_symbol(tex_state::font::NULL_FONT),
@@ -118,9 +118,9 @@ fn fresh_nullfont_identifier_survives_format_bytes_and_registration() {
 }
 
 #[test]
-fn older_format_without_nullfont_sidecar_is_repaired_on_registration() {
-    // Before the frozen-id installation, format images could contain the
-    // canonical NULL_FONT payload but no font_id_base+null_font sidecar.
+fn incomplete_format_is_rejected_before_primitive_registration() {
+    // A generic state image may be captured before TeX primitive installation.
+    // It is not a valid production TeX format until the nullfont id is present.
     let image = crate::test_harness::with_universe(|universe| {
         assert_eq!(
             universe
@@ -129,10 +129,12 @@ fn older_format_without_nullfont_sidecar_is_repaired_on_registration() {
                 .font_identifier_symbol(tex_state::font::NULL_FONT),
             None
         );
-        universe.capture_format_image().expect("old-style format")
+        universe
+            .capture_format_image()
+            .expect("generic state image")
     });
     let image = tex_state::DetachedFormatImage::try_from_bytes(image.into_bytes())
-        .expect("serialized old-style format");
+        .expect("serialized generic state image");
     tex_state::with_materialized_format(
         format_budget(),
         tex_state::World::memory(),
@@ -145,28 +147,20 @@ fn older_format_without_nullfont_sidecar_is_repaired_on_registration() {
                     .font_identifier_symbol(tex_state::font::NULL_FONT),
                 None
             );
-            register_tex82_unexpandable_primitives(universe);
-            let frozen = universe
-                .command_context()
-                .expect("repaired context")
-                .font_identifier_symbol(tex_state::font::NULL_FONT)
-                .expect("repaired frozen identity");
-            register_tex82_unexpandable_primitives(universe);
-            let context = universe.command_context().expect("second registration");
+            assert_eq!(universe.primitive_meaning("relax"), None);
+            let error = register_tex82_unexpandable_primitives(universe)
+                .expect_err("incomplete TeX format must be rejected");
+            assert!(matches!(error, tex_state::FormatError::InvalidState(_)));
+            assert!(error.to_string().contains("nullfont identifier"));
+            let context = universe.command_context().expect("rejected context");
             assert_eq!(
                 context.font_identifier_symbol(tex_state::font::NULL_FONT),
-                Some(frozen),
-                "repeat format registration is idempotent"
+                None,
+                "rejection does not heal the missing identifier"
             );
-            assert_eq!(
-                context.control_sequence_kind(frozen),
-                ControlSequenceKind::Internal
-            );
-            assert_eq!(
-                context.meaning(frozen),
-                ResolvedMeaning::Static(Meaning::Font(tex_state::font::NULL_FONT))
-            );
+            drop(context);
+            assert_eq!(universe.primitive_meaning("relax"), None);
         },
     )
-    .expect("materialize old-style format");
+    .expect("materialize generic state image");
 }
