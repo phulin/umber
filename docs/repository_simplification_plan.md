@@ -709,8 +709,8 @@ libtest-discovered inventory stage (40 ignored host tests in 18 suite rows),
 and all four quality gates. These are historical scoped results, not a verdict
 for the later frozen performance revision or the final repaired tree. The
 local Plain image now has schema-3 metadata for format schema 12; publication
-of a default hosted distribution is a separate operation. The current
-integrated gate verdict must be recorded at its exact tested revision.
+of a default hosted distribution is a separate operation. The later integrated
+gate verdict is recorded below at its exact tested revision.
 
 The [frozen performance and corpus comparison](repository_simplification_performance.md)
 uses the original production code and integrated `1f32318e0` revision. It
@@ -722,3 +722,36 @@ failures on both sides; the final revision removes two baseline panics but does
 not pass the corpus. The snapshot-budget benchmark could not compile on
 either frozen side, and its root-byte estimate includes a logical-coordinate
 charge. Those are explicit evidence limits, not passing budget checks.
+
+The follow-up repair at `ae6f86fad` updated the snapshot benchmark to the
+resident node APIs and changed `SourceMap`'s root-byte estimate to charge live
+registered source spans instead of the process-wide logical position.
+`scripts/check-snapshot-budgets.sh` then met every existing warmed zero-allocation
+and coarse-generation lifecycle assertion. A bounded prefix edit-restart probe
+with two warmups, no memo layers, and cold DVI validation reported four
+checkpoint roots, one retained generation, no candidate generation or
+protected overage, and `checkpoint_root_bytes=2495081` at 6, 12, and 24 edits.
+That is a flat charged-root estimate for this workload, not an RSS plateau or
+a comparable wall-time measurement; the probes overlapped other builds.
+
+At `78bd325dd`, the documented `cargo bench --manifest-path
+benchmarks/tex-state/Cargo.toml --bench state_budgets --no-run` compiled the
+Criterion benchmark and its package bins. The resident page-node destination
+gate kept zero allocations, moves, and copies at 1 and 4,096 nodes; the PDF
+checkpoint gate kept zero capture/restore allocations with exact 1-byte and
+64-MiB retained payloads. `scripts/check-and-test.sh` passed all seven stages
+with no blocked stage or coverage reduction; `scripts/check.sh` passed all four
+quality gates. The script-suite inventory passed with 26 discovered `test-*`
+suites. The snapshot budget command remains an explicit extended performance
+gate documented in [Testing Infrastructure](testing_infrastructure.md), not a
+routine `test-*` script.
+
+The full platform checks ran at `ae6f86fad`: `scripts/check-wasm.sh` passed all
+nine selected steps, including Firefox bindings, both WASM-only dense suites,
+the schema-12 default Plain format, packaged browser flow, and npm packing.
+`scripts/check-pdf-external.sh --ci` passed 17 qpdf structural cases (11
+committed, 6 generated) with pinned qpdf 12.3.2 and 15 Poppler render/extraction
+attestations with pinned Poppler 25.08.0. Only two benchmark-only source files
+differ between that platform-tested revision and `78bd325dd`; production
+source is identical. The platform checks do not validate those benchmark
+adapters, which the focused benchmark commands above cover.
