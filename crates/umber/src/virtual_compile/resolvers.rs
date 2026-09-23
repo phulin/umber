@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
 use tex_exec::{
-    PdfImageRequest, ResourceFailure, ResourceFulfillment, ResourceHost, ResourceNeed,
-    ResourceOutcome, ResourceWorld,
+    ResourceFailure, ResourceFulfillment, ResourceHost, ResourceNeed, ResourceOutcome,
+    ResourceWorld,
 };
 use tex_fonts::{
     AcceptedFontContainers, FontFeaturePolicy, FontLayoutPolicy, FontMappingFallbackPolicy,
@@ -21,6 +21,8 @@ use super::{
     CompileError, FileKind, FileRequest, FileRequestKey, FontResponseFingerprint, VirtualPath,
 };
 use umber_vfs::{FileOrigin, ResourceLedger, VfsSnapshot};
+
+use crate::pdf_import::PdfImageSourceKey;
 pub(super) struct VirtualRunResolvers<'a> {
     input: VirtualFileResolver<'a>,
     font: VirtualFontResolver<'a>,
@@ -178,7 +180,7 @@ impl ResourceHost for VirtualRunResolvers<'_> {
                 .with_input_read_state(|input| {
                     self.image.open_command_image(
                         input,
-                        &output_image_request(request),
+                        &PdfImageSourceKey::from_request(request, request.resolution),
                         request_index,
                     )
                 })
@@ -244,39 +246,16 @@ fn is_package_class_path(path: &Path) -> bool {
         .is_some_and(|extension| matches!(extension, "sty" | "cls"))
 }
 
-fn output_image_request(request: &tex_command::PdfImageRequest) -> PdfImageRequest {
-    PdfImageRequest {
-        name: request.name.clone(),
-        page: match &request.page {
-            tex_command::PdfImagePageSelection::Number(page) => {
-                tex_exec::PdfImagePageSelection::Number(u32::try_from(*page).unwrap_or_default())
-            }
-            tex_command::PdfImagePageSelection::Named(name) => {
-                tex_exec::PdfImagePageSelection::Named(name.clone())
-            }
-        },
-        color_space_object: request.color_space_object,
-        page_box: match request.page_box {
-            tex_command::PdfImagePageBox::Crop => tex_exec::PdfImagePageBox::Crop,
-            tex_command::PdfImagePageBox::Media => tex_exec::PdfImagePageBox::Media,
-            tex_command::PdfImagePageBox::Bleed => tex_exec::PdfImagePageBox::Bleed,
-            tex_command::PdfImagePageBox::Trim => tex_exec::PdfImagePageBox::Trim,
-            tex_command::PdfImagePageBox::Art => tex_exec::PdfImagePageBox::Art,
-        },
-        resolution: request.resolution,
-    }
-}
-
 struct VirtualImageResolver<'a> {
     files: VirtualFileResolver<'a>,
-    cache: HashMap<PdfImageRequest, PdfExternalImageSource>,
+    cache: HashMap<PdfImageSourceKey, PdfExternalImageSource>,
 }
 
 impl VirtualImageResolver<'_> {
     fn open_command_image(
         &mut self,
         input: &mut dyn InputReadState,
-        request: &PdfImageRequest,
+        request: &PdfImageSourceKey,
         request_index: u64,
     ) -> HostResult<tex_command::PdfImageResource> {
         if let Some(source) = self.cache.get(request) {
@@ -312,7 +291,7 @@ impl VirtualImageResolver<'_> {
 
 pub(crate) fn parse_image(
     content: &FileContent,
-    request: &PdfImageRequest,
+    request: &PdfImageSourceKey,
 ) -> Result<PdfExternalImageSource, String> {
     let bytes = content.bytes();
     if bytes.starts_with(b"%PDF-") {
@@ -359,7 +338,7 @@ pub(crate) fn parse_image(
     } else {
         return Err("image type is not PDF, PNG, or JPEG".to_owned());
     };
-    if request.page != tex_exec::PdfImagePageSelection::Number(1) {
+    if request.page != tex_command::PdfImagePageSelection::Number(1) {
         return Err("raster images have only page 1".to_owned());
     }
     let (x_resolution, y_resolution) = match metadata.format {
@@ -379,7 +358,7 @@ pub(crate) fn parse_image(
 
 fn parse_pdf_image(
     content: &FileContent,
-    request: &PdfImageRequest,
+    request: &PdfImageSourceKey,
 ) -> Result<PdfExternalImageSource, String> {
     let inspected = crate::pdf_import::inspect_pdf_page(
         content.shared_bytes(),
@@ -966,8 +945,8 @@ impl VirtualFontResolver<'_> {
 #[cfg(test)]
 mod tests {
     use super::{
-        FileOpenIntent, HostLookup, VirtualFileResolver, effective_raster_resolution,
-        parse_pdf_image, pixels_to_scaled, png_resolution,
+        FileOpenIntent, HostLookup, PdfImageSourceKey, VirtualFileResolver,
+        effective_raster_resolution, parse_pdf_image, pixels_to_scaled, png_resolution,
     };
     use crate::{
         CompileAttemptResult, EngineMode, FileKind, ResolvedFile, ResourceRequest,
@@ -976,7 +955,7 @@ mod tests {
     use test_support::pdf_fixture::{
         Dictionary as FixtureDictionary, ValidPdfFixture, array, name, reference,
     };
-    use tex_exec::{PdfImagePageBox, PdfImageRequest};
+    use tex_command::{PdfImagePageBox, PdfImagePageSelection};
     use tex_state::{PdfExternalImageMetadata, World};
     use umber_vfs::{ProjectWorkspace, VfsLimits};
 
@@ -1157,10 +1136,9 @@ mod tests {
         let acquired_bytes = content.shared_bytes();
         let source = parse_pdf_image(
             &content,
-            &PdfImageRequest {
+            &PdfImageSourceKey {
                 name: "rotated.pdf".to_owned(),
-                page: tex_exec::PdfImagePageSelection::Number(1),
-                color_space_object: 0,
+                page: PdfImagePageSelection::Number(1),
                 page_box: PdfImagePageBox::Media,
                 resolution: 0,
             },
@@ -1227,10 +1205,9 @@ mod tests {
         let content = world.read_file("decimal.pdf").expect("read decimal PDF");
         let source = parse_pdf_image(
             &content,
-            &PdfImageRequest {
+            &PdfImageSourceKey {
                 name: "decimal.pdf".to_owned(),
-                page: tex_exec::PdfImagePageSelection::Number(1),
-                color_space_object: 0,
+                page: PdfImagePageSelection::Number(1),
                 page_box: PdfImagePageBox::Media,
                 resolution: 0,
             },

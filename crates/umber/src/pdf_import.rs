@@ -9,10 +9,31 @@ use hayro_syntax::page::Page;
 use hayro_syntax::reader::{Reader, ReaderExt};
 use hayro_syntax::{Pdf, PdfVersion};
 use tex_arith::{Scaled, parse_pdf_real};
-use tex_exec::PdfImagePageBox;
+use tex_command::{PdfImagePageBox, PdfImagePageSelection};
 
 #[cfg(test)]
 mod tests;
+
+/// The host facts that determine one parsed image source. Command dimensions,
+/// attribute tokens, and output color-space selection are applied later.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct PdfImageSourceKey {
+    pub(crate) name: String,
+    pub(crate) page: PdfImagePageSelection,
+    pub(crate) page_box: PdfImagePageBox,
+    pub(crate) resolution: u32,
+}
+
+impl PdfImageSourceKey {
+    pub(crate) fn from_request(request: &tex_command::PdfImageRequest, resolution: u32) -> Self {
+        Self {
+            name: request.name.clone(),
+            page: request.page.clone(),
+            page_box: request.page_box,
+            resolution,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct InspectedPdfPage {
@@ -28,7 +49,7 @@ pub(crate) struct InspectedPdfPage {
 
 pub(crate) fn inspect_pdf_page(
     bytes: tex_state::SharedBytes,
-    selection: &tex_exec::PdfImagePageSelection,
+    selection: &PdfImagePageSelection,
     page_box: PdfImagePageBox,
 ) -> Result<InspectedPdfPage, String> {
     let source_bytes = bytes.clone();
@@ -64,13 +85,10 @@ pub(crate) fn inspect_pdf_page(
     })
 }
 
-fn selected_page_number(
-    pdf: &Pdf,
-    selection: &tex_exec::PdfImagePageSelection,
-) -> Result<u32, String> {
+fn selected_page_number(pdf: &Pdf, selection: &PdfImagePageSelection) -> Result<u32, String> {
     match selection {
-        tex_exec::PdfImagePageSelection::Number(page) => Ok(*page),
-        tex_exec::PdfImagePageSelection::Named(name) => named_destination_page(pdf, name),
+        PdfImagePageSelection::Number(page) => Ok(u32::try_from(*page).unwrap_or_default()),
+        PdfImagePageSelection::Named(name) => named_destination_page(pdf, name),
     }
 }
 

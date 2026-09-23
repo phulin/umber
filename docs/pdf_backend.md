@@ -421,7 +421,13 @@ JPEG sources lower to typed image XObjects; alpha is a separately reserved
 soft mask. Included PDF pages lower to form XObjects with selected-page-box
 translation, recursively remapped inherited resources, and typed transparency
 group references. Repeated references reuse the registered object. The
-serializer uses `pdf_writer`'s typed image, form, resources, page, and content
+host parses a command request through a private resource key consisting of its
+filename, selected page, page box, and raster resolution. Width, height, depth,
+attribute tokens, and the output color-space object stay with the command and
+do not duplicate parsed source ownership. Page selectors and page-box values
+remain the command scanner's authoritative types; the host checks page-number
+validity when inspecting a PDF. The serializer uses `pdf_writer`'s typed image,
+form, resources, page, and content
 builders; imported dictionaries are converted to the detached typed value
 model before serialization. The lightweight input parser is `hayro-syntax`;
 the test-only observation boundary is specified separately in

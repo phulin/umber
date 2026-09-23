@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tex_command::{
     CommandProfile, FontResource, PdfImageResource, RegisteredSourceKind, SourceRegistration,
 };
-use tex_exec::{CheckpointSink, EngineBoundary, PdfImageRequest as OutputPdfImageRequest};
+use tex_exec::{CheckpointSink, EngineBoundary};
 use tex_out::dvi::{DviError, DviPagePlan, DviStreamWriter};
 use tex_state::env::banks::IntParam;
 use tex_state::{
@@ -403,29 +403,8 @@ impl ResourceHost for FileSessionResolvers {
                     Ok(content) => content,
                     Err(error) => return resource_search_outcome(error),
                 };
-                let legacy = OutputPdfImageRequest {
-                    name: request.name.clone(),
-                    page: match &request.page {
-                        tex_command::PdfImagePageSelection::Number(page) => {
-                            tex_exec::PdfImagePageSelection::Number(
-                                u32::try_from(*page).unwrap_or_default(),
-                            )
-                        }
-                        tex_command::PdfImagePageSelection::Named(name) => {
-                            tex_exec::PdfImagePageSelection::Named(name.clone())
-                        }
-                    },
-                    color_space_object: request.color_space_object,
-                    page_box: match request.page_box {
-                        tex_command::PdfImagePageBox::Crop => tex_exec::PdfImagePageBox::Crop,
-                        tex_command::PdfImagePageBox::Media => tex_exec::PdfImagePageBox::Media,
-                        tex_command::PdfImagePageBox::Bleed => tex_exec::PdfImagePageBox::Bleed,
-                        tex_command::PdfImagePageBox::Trim => tex_exec::PdfImagePageBox::Trim,
-                        tex_command::PdfImagePageBox::Art => tex_exec::PdfImagePageBox::Art,
-                    },
-                    resolution: 0,
-                };
-                let resource = virtual_compile::parse_image(&content, &legacy)
+                let source_key = pdf_import::PdfImageSourceKey::from_request(request, 0);
+                let resource = virtual_compile::parse_image(&content, &source_key)
                     .map(PdfImageResource::Available)
                     .unwrap_or_else(PdfImageResource::Invalid);
                 ResourceOutcome::Fulfilled(ResourceFulfillment::PdfImage {

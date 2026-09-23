@@ -358,6 +358,27 @@ fn external_image_payload_keeps_the_acquired_shared_owner() {
         .expect("allocated image is last");
     assert!(crate::SharedBytes::ptr_eq(&queried.shared_bytes(), &bytes));
     assert!(crate::SharedBytes::ptr_eq(&last.shared_bytes(), &bytes));
+
+    let recolored = state
+        .allocate_external_image(
+            PdfExternalImageSource {
+                identity: record.identity(),
+                metadata: record.metadata(),
+                natural_width: Scaled::from_raw(1),
+                natural_height: Scaled::from_raw(1),
+                bytes: bytes.clone(),
+            },
+            record.dimensions(),
+            17,
+            Vec::new(),
+        )
+        .expect("same parsed source can select a different output color space");
+    assert_eq!(record.color_space_object(), 0);
+    assert_eq!(recolored.color_space_object(), 17);
+    assert!(crate::SharedBytes::ptr_eq(
+        &recolored.shared_bytes(),
+        &bytes
+    ));
 }
 
 #[test]

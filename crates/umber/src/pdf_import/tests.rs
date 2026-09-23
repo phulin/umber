@@ -2,6 +2,36 @@ use test_support::pdf_fixture::{Dictionary, ValidPdfFixture, array, name, refere
 
 use super::*;
 
+#[test]
+fn parsed_source_key_excludes_output_only_color_selection() {
+    let mut request = tex_command::PdfImageRequest {
+        name: "figure.png".to_owned(),
+        width: None,
+        height: None,
+        depth: None,
+        page: PdfImagePageSelection::Number(1),
+        color_space_object: 0,
+        page_box: PdfImagePageBox::Crop,
+        page_box_explicit: false,
+        resolution: 72,
+        attr: None,
+    };
+    let original = PdfImageSourceKey::from_request(&request, request.resolution);
+    request.color_space_object = 17;
+    assert_eq!(
+        original,
+        PdfImageSourceKey::from_request(&request, request.resolution),
+        "output color selection must not duplicate parsed image bytes"
+    );
+    assert_ne!(
+        original,
+        PdfImageSourceKey::from_request(&request, 144),
+        "raster resolution changes natural dimensions"
+    );
+    request.page = PdfImagePageSelection::Number(2);
+    assert_ne!(original, PdfImageSourceKey::from_request(&request, 72));
+}
+
 fn named_destination_pdf(name_tree: bool) -> Vec<u8> {
     let mut document = ValidPdfFixture::new("1.7").expect("create named-destination PDF");
     let catalog = if name_tree {
@@ -95,7 +125,7 @@ fn named_destination_selects_page_from_legacy_dictionary_and_name_tree() {
     for name_tree in [false, true] {
         let inspected = inspect_pdf_page(
             named_destination_pdf(name_tree).into(),
-            &tex_exec::PdfImagePageSelection::Named(b"chapter".to_vec()),
+            &PdfImagePageSelection::Named(b"chapter".to_vec()),
             PdfImagePageBox::Media,
         )
         .expect("resolve named destination");
@@ -138,7 +168,7 @@ fn page_box_inspection_preserves_decimal_source_numbers() {
         .expect("trailer");
     let inspected = inspect_pdf_page(
         document.finish().expect("serialize PDF").into(),
-        &tex_exec::PdfImagePageSelection::Number(1),
+        &PdfImagePageSelection::Number(1),
         PdfImagePageBox::Media,
     )
     .expect("inspect decimal page box");
@@ -153,7 +183,7 @@ fn page_box_inspection_preserves_decimal_source_numbers() {
 fn page_box_clamps_each_coordinate_before_ordering() {
     let inspected = inspect_pdf_page(
         single_page_pdf(b"[-1200000000.25 10.0000000001 -2.5 -0]").into(),
-        &tex_exec::PdfImagePageSelection::Number(1),
+        &PdfImagePageSelection::Number(1),
         PdfImagePageBox::Media,
     )
     .expect("inspect clamped page box");
@@ -179,7 +209,7 @@ fn clamped_huge_page_box_fails_checked_scaled_conversion() {
     huge.extend_from_slice(b" 0 1 1]");
     let inspected = inspect_pdf_page(
         single_page_pdf(&huge).into(),
-        &tex_exec::PdfImagePageSelection::Number(1),
+        &PdfImagePageSelection::Number(1),
         PdfImagePageBox::Media,
     )
     .expect("valid huge page box syntax");
@@ -192,7 +222,7 @@ fn malformed_page_box_numbers_are_rejected_at_admission() {
     for media_box in [b"[0 0 1e-3 1]".as_slice(), b"[0 0 NaN 1]", b"[0 0 1junk 1]"] {
         let error = inspect_pdf_page(
             single_page_pdf(media_box).into(),
-            &tex_exec::PdfImagePageSelection::Number(1),
+            &PdfImagePageSelection::Number(1),
             PdfImagePageBox::Media,
         )
         .expect_err("malformed page box must fail");
@@ -207,7 +237,7 @@ fn malformed_page_box_numbers_are_rejected_at_admission() {
 fn missing_named_destination_is_not_treated_as_page_zero() {
     let error = inspect_pdf_page(
         named_destination_pdf(true).into(),
-        &tex_exec::PdfImagePageSelection::Named(b"missing".to_vec()),
+        &PdfImagePageSelection::Named(b"missing".to_vec()),
         PdfImagePageBox::Media,
     )
     .expect_err("missing destination must fail");
