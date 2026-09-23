@@ -124,19 +124,23 @@ without an executable selected runner; an ignored manual test is not dormant
 when explicitly selected. Bibliography's dormant upstream inventory remains
 separate from this nonbibliography census.
 
-After the frozen null-font identity repair, explicitly selecting
+After the frozen null-font identity and split-insertion ownership repairs,
+explicitly selecting
 `cargo test -q -p tex-command-stream --test it command_semantic::declared_command_semantic_cases_match -- --exact --ignored --nocapture`
 reports `matched=79, executed-known-failure=0, unexpected-pass=0,
 other-failure=131, dormant=0, unselected=0` and exits `FAIL`. The 131 cases
-have 103 event-count, 63 projection, 38 terminal/log content, 6 incomplete
+have 104 event-count, 63 projection, 38 terminal/log content, 5 incomplete
 channel, and 4 nonempty-output diagnostics; a case can have more than one
 diagnostic. These results are not strict known failures. The fixture manifests
 retain their reviewed projections and channel contracts. In particular,
 `main-control/current-font-selection` now executes `\the\font` but has an
-Umber event-count drift of 104 versus its 120-event baseline, and
-`page-output/insertion-split-footnote` still panics on a page-arena range. The
-routine gate still reports these 210 declared cases as unselected; the
-selected manual command is the only claim about their current compatibility.
+Umber event-count drift of 104 versus its 120-event baseline.
+`page-output/insertion-split-footnote` now completes both page shipouts and
+matches the pinned terminal, log, and DVI streams; its page-plan artifact hash
+and event count still differ. Neither case panics in the combined selected
+run. The routine gate still reports these 210 declared cases as unselected;
+the selected manual command is the only claim about their current
+compatibility.
 
 Set `UMBER_COMMAND_SEMANTIC_CASE=domain/id` with the same manual Cargo command
 to run one exact fixture. The census then counts every other declared fixture
