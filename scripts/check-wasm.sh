@@ -19,7 +19,7 @@ cd "$repo_root"
 source "$repo_root/scripts/optional-check-runner.sh"
 
 OPTIONAL_CHECK_ARGS="$*" optional_check_begin check-wasm.sh \
-  wasm-check biome node-unit wasm-bindgen browser-package npm-pack
+  wasm-check biome node-unit wasm-bindgen dense-prefix-wasm dense-arena-wasm default-format browser-package npm-pack
 
 biome_check() {
   local biome_cmd=(npx --yes @biomejs/biome@2.4.10)
@@ -33,6 +33,15 @@ biome_check() {
     crates/umber-wasm/package.json
 }
 
+wasm_check() {
+  local log="target/check-wasm-cargo-check.log"
+  mkdir -p target
+  cargo check -p umber-wasm --target wasm32-unknown-unknown >"$log" 2>&1 || {
+    cat "$log" >&2
+    return 1
+  }
+}
+
 node_unit() {
   node --test crates/umber-wasm/js/*.test.js
 }
@@ -44,16 +53,22 @@ npm_pack() {
   )
 }
 
-optional_check_step wasm-check cargo check -p umber-wasm --target wasm32-unknown-unknown
+optional_check_step wasm-check wasm_check
 optional_check_step_requiring npx biome biome_check
 optional_check_step_requiring node node-unit node_unit
 optional_check_step_requiring "wasm-pack firefox" wasm-bindgen \
   wasm-pack test --headless --firefox crates/umber-wasm
+optional_check_step_requiring wasm-pack dense-prefix-wasm \
+  wasm-pack test --node crates/tex-dense-prefix
+optional_check_step_requiring wasm-pack dense-arena-wasm \
+  wasm-pack test --node crates/tex-dense-arena
+optional_check_step_requiring node default-format \
+  node crates/umber-wasm/browser-tests/check-default-format.mjs crates/umber-wasm/assets/plain-format.json
 # Both of these consume `target/umber-wasm-package`, which
 # `scripts/build-wasm-package.sh` builds with wasm-pack, so an absent wasm-pack
 # blocks them rather than failing them: nothing was measured either way, and
 # calling that a failure would bury the one real signal in noise.
-optional_check_step_requiring "node wasm-pack" browser-package scripts/test-wasm-browser.sh
+optional_check_step_requiring "cargo node wasm-pack" browser-package scripts/test-wasm-browser.sh
 optional_check_step_requiring "npm wasm-pack" npm-pack npm_pack
 
 optional_check_finish

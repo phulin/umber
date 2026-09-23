@@ -36,7 +36,7 @@ the manifest's validated content-addressed object name.
 - `assets/cmu-serif-500-roman.woff2` / `assets/CMU-OFL.txt`: repository-only
   conformance fixtures and license; the npm runtime inventory excludes both.
 - `js/`: authored ES modules and Node acceptance tests, including the unified resource facade and optional application-manifest file/font resolver.
-- `browser-tests/`: dependency-free local HTTP and headless-Chrome package integration fixture.
+- `browser-tests/`: dependency-free local HTTP and headless-Chrome package integration fixture; `generate-fixture.mjs` supplies two tiny content-addressed TeX payloads to the production publisher, `run.mjs` tests generated packed shards and the shipped worker against real WASM, and `check-default-format.mjs` reports the separately unpublished Plain-format asset.
 - `browser-tests/node-project.mjs`: packaged Node TeX-bibliography-TeX acceptance test.
 - `browser-tests/html-prototype.html`: two-engine line-baseline, shaping, negative-coordinate, rule, and fixed OpenType-math SVG projection prototype.
 - `examples/`: minimal Plain and LaTeX-DVI module-worker browser examples
