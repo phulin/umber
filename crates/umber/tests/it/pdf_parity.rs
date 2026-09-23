@@ -245,7 +245,8 @@ fn assert_committed_case(declaration: PdfParityCase) -> PdfParityCaseSummary {
         "unexpected raster header for pdf/{case}"
     );
     let expected_attestation = format!(
-        "pdf-render-v1\nrenderer pdftoppm version 25.08.0\narguments -r 72 -gray -singlefile\ncomparison exact-gray-pixels\nreference-pdf-sha256 {}\number-pdf-sha256 {}\npgm-sha256 {}\n",
+        "pdf-render-v1\nrenderer {}\narguments -r 72 -gray -singlefile\ncomparison exact-gray-pixels\nreference-pdf-sha256 {}\number-pdf-sha256 {}\npgm-sha256 {}\n",
+        attested_tool_version(&render, "renderer"),
         digest(&reference),
         digest(&expected_umber),
         digest(&raster),
@@ -620,14 +621,30 @@ fn check_embedded_font_case(case: &str) {
     }
 
     let raster = read_binary_fixture("pdf", case, "pgm");
+    let attestation = read_fixture("pdf", case, "render");
     let expected_attestation = format!(
-        "pdf-render-v2\nrenderer pdftoppm version 25.08.0\narguments -r 72 -gray -singlefile\ncomparison max-gray-delta 2\nextractor pdftotext version 25.08.0\nextraction exact-utf8\nreference-pdf-sha256 {}\number-pdf-sha256 {}\npgm-sha256 {}\nextract-sha256 {}\n",
+        "pdf-render-v2\nrenderer {}\narguments -r 72 -gray -singlefile\ncomparison max-gray-delta 2\nextractor {}\nextraction exact-utf8\nreference-pdf-sha256 {}\number-pdf-sha256 {}\npgm-sha256 {}\nextract-sha256 {}\n",
+        attested_tool_version(&attestation, "renderer"),
+        attested_tool_version(&attestation, "extractor"),
         digest(&reference),
         digest(&expected_umber),
         digest(&raster),
         digest(&expected_extract),
     );
-    assert_eq!(read_fixture("pdf", case, "render"), expected_attestation);
+    assert_eq!(attestation, expected_attestation);
+}
+
+fn attested_tool_version<'a>(attestation: &'a str, tool: &str) -> &'a str {
+    let prefix = format!("{tool} ");
+    let mut versions = attestation
+        .lines()
+        .filter_map(|line| line.strip_prefix(&prefix));
+    let version = versions
+        .next()
+        .expect("attestation records tool provenance");
+    assert!(!version.is_empty(), "attested tool version is empty");
+    assert!(versions.next().is_none(), "duplicate tool provenance");
+    version
 }
 
 fn assert_pdf_bytes_eq(case: &str, actual: &[u8], expected: &[u8]) {

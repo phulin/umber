@@ -13,8 +13,6 @@ use crate::cohort_transaction::CohortCase;
 use crate::fixture_transaction::{Mode, run_staged_cohort};
 
 const PDFTEX_VERSION: &str = "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)";
-const RENDERER_VERSION: &str = "pdftoppm version 25.08.0";
-const EXTRACTOR_VERSION: &str = "pdftotext version 25.08.0";
 const RENDERER_ARGS: &[&str] = &["-r", "72", "-gray", "-singlefile"];
 
 pub(super) fn regenerate_area() -> Result<()> {
@@ -52,40 +50,38 @@ pub(super) fn regenerate_area() -> Result<()> {
 
 pub(super) fn check_raster_attestations() -> Result<()> {
     let renderer = locate_tool("UMBER_PDF_RENDERER", "pdftoppm")?;
-    require_version(&renderer, "-v", RENDERER_VERSION)?;
     let extractor = locate_tool("UMBER_PDF_EXTRACTOR", "pdftotext")?;
-    require_version(&extractor, "-v", EXTRACTOR_VERSION)?;
+    eprintln!("PDF renderer: {}", tool_version(&renderer, "-v")?);
+    eprintln!("PDF extractor: {}", tool_version(&extractor, "-v")?);
     let temp = TempDir::new().context("failed to create PDF raster gate directory")?;
 
-    for case in corpus_cases("pdf") {
+    let cases = corpus_cases("pdf");
+    if cases.is_empty() {
+        bail!("no .tex cases found for area pdf");
+    }
+    for case in cases {
         let name = case.name();
         let fixture_root = corpus_root().join("pdf").join(name);
-        let pdf = fixture_root.join("expected.umber.pdf");
-        let expected_pgm = fixture_root.join("expected.pgm");
-        if !pdf.is_file() || !expected_pgm.is_file() {
-            continue;
+        let reference_pdf = fixture_root.join("expected.ref.pdf");
+        let umber_pdf = fixture_root.join("expected.umber.pdf");
+        if !reference_pdf.is_file() || !umber_pdf.is_file() {
+            bail!("pdf/{name} is missing a committed reference or Umber PDF");
         }
-        let actual = render(&renderer, &pdf, temp.path().join(name))?;
-        let expected = fs::read(&expected_pgm)
-            .with_context(|| format!("failed to read {}", expected_pgm.display()))?;
+        let reference = render(&renderer, &reference_pdf, temp.path().join(format!("ref-{name}")))?;
+        let actual = render(&renderer, &umber_pdf, temp.path().join(format!("umber-{name}")))?;
         let font_case = name.starts_with("embedded_") || name.starts_with("pk_bitmap_");
         let matches = if font_case {
-            pixels_within(&expected, &actual, 2)
+            pixels_within(&reference, &actual, 2)
         } else {
-            expected == actual
+            reference == actual
         };
         if !matches {
-            bail!("rendered Umber pixels differ from the attested raster for pdf/{name}");
+            bail!("rendered Umber pixels differ from the reference PDF for pdf/{name}");
         }
-        if font_case {
-            let expected_extract = fixture_root.join("expected.extract");
-            let expected = fs::read(&expected_extract)
-                .with_context(|| format!("failed to read {}", expected_extract.display()))?;
-            if extract(&extractor, &pdf)? != expected {
-                bail!("extracted Umber text differs from the attestation for pdf/{name}");
-            }
+        if extract(&extractor, &reference_pdf)? != extract(&extractor, &umber_pdf)? {
+            bail!("extracted Umber text differs from the reference PDF for pdf/{name}");
         }
-        eprintln!("Poppler attestation passed: pdf/{name}");
+        eprintln!("PDF reference render and extraction passed: pdf/{name}");
     }
     Ok(())
 }
@@ -121,9 +117,9 @@ fn regenerate_case_into(case: &str, output_root: &Path) -> Result<()> {
     let pdftex = locate_tool("UMBER_REF_PDFTEX", "pdftex")?;
     require_version(&pdftex, "--version", PDFTEX_VERSION)?;
     let renderer = locate_tool("UMBER_PDF_RENDERER", "pdftoppm")?;
-    require_version(&renderer, "-v", RENDERER_VERSION)?;
     let extractor = locate_tool("UMBER_PDF_EXTRACTOR", "pdftotext")?;
-    require_version(&extractor, "-v", EXTRACTOR_VERSION)?;
+    let renderer_version = tool_version(&renderer, "-v")?;
+    let extractor_version = tool_version(&extractor, "-v")?;
 
     let temp = TempDir::new().context("failed to create PDF fixture temp directory")?;
     let source_name = format!("{case}.tex");
@@ -197,7 +193,7 @@ fn regenerate_case_into(case: &str, output_root: &Path) -> Result<()> {
     let attestation = if font_case {
         write_fixture(output_root, "extract", &reference_text)?;
         format!(
-            "pdf-render-v2\nrenderer {RENDERER_VERSION}\narguments {}\ncomparison max-gray-delta 2\nextractor {EXTRACTOR_VERSION}\nextraction exact-utf8\nreference-pdf-sha256 {}\number-pdf-sha256 {}\npgm-sha256 {}\nextract-sha256 {}\n",
+            "pdf-render-v2\nrenderer {renderer_version}\narguments {}\ncomparison max-gray-delta 2\nextractor {extractor_version}\nextraction exact-utf8\nreference-pdf-sha256 {}\number-pdf-sha256 {}\npgm-sha256 {}\nextract-sha256 {}\n",
             RENDERER_ARGS.join(" "),
             digest(&reference_bytes),
             digest(&umber_bytes),
@@ -206,7 +202,7 @@ fn regenerate_case_into(case: &str, output_root: &Path) -> Result<()> {
         )
     } else {
         format!(
-            "pdf-render-v1\nrenderer {RENDERER_VERSION}\narguments {}\ncomparison exact-gray-pixels\nreference-pdf-sha256 {}\number-pdf-sha256 {}\npgm-sha256 {}\n",
+            "pdf-render-v1\nrenderer {renderer_version}\narguments {}\ncomparison exact-gray-pixels\nreference-pdf-sha256 {}\number-pdf-sha256 {}\npgm-sha256 {}\n",
             RENDERER_ARGS.join(" "),
             digest(&reference_bytes),
             digest(&umber_bytes),
@@ -251,6 +247,14 @@ fn locate_tool(variable: &str, fallback: &str) -> Result<PathBuf> {
 }
 
 fn require_version(tool: &Path, argument: &str, expected: &str) -> Result<()> {
+    let actual = tool_version(tool, argument)?;
+    if !actual.contains(expected) {
+        bail!("{} must report {expected:?}; got {actual:?}", tool.display());
+    }
+    Ok(())
+}
+
+fn tool_version(tool: &Path, argument: &str) -> Result<String> {
     let output = Command::new(tool)
         .arg(argument)
         .output()
@@ -260,14 +264,14 @@ fn require_version(tool: &Path, argument: &str, expected: &str) -> Result<()> {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    if !output.status.success() || !combined.lines().any(|line| line.contains(expected)) {
-        bail!(
-            "{} must report {expected:?}; got {:?}",
-            tool.display(),
-            combined.lines().next().unwrap_or("")
-        );
+    if !output.status.success() {
+        bail!("{} could not report its version", tool.display());
     }
-    Ok(())
+    combined
+        .lines()
+        .find(|line| !line.is_empty())
+        .map(str::to_owned)
+        .with_context(|| format!("{} reported an empty version", tool.display()))
 }
 
 fn render(renderer: &Path, pdf: &Path, prefix: PathBuf) -> Result<Vec<u8>> {
@@ -276,9 +280,9 @@ fn render(renderer: &Path, pdf: &Path, prefix: PathBuf) -> Result<Vec<u8>> {
         .arg(pdf)
         .arg(&prefix)
         .status()
-        .context("failed to run pinned PDF renderer")?;
+        .context("failed to run PDF renderer")?;
     if !status.success() {
-        bail!("pinned PDF renderer failed for {}", pdf.display());
+        bail!("PDF renderer failed for {}", pdf.display());
     }
     fs::read(prefix.with_extension("pgm")).context("renderer did not write PGM output")
 }
@@ -288,9 +292,9 @@ fn extract(extractor: &Path, pdf: &Path) -> Result<Vec<u8>> {
         .arg(pdf)
         .arg("-")
         .output()
-        .context("failed to run pinned PDF text extractor")?;
+        .context("failed to run PDF text extractor")?;
     if !output.status.success() {
-        bail!("pinned PDF extractor failed for {}", pdf.display());
+        bail!("PDF text extractor failed for {}", pdf.display());
     }
     Ok(output.stdout)
 }

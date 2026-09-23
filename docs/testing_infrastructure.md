@@ -970,8 +970,9 @@ boundary.
 
 `scripts/regen-fixtures.sh` is the sole live-reference rewrite path. It builds
 `tools/fixturegen` for text/native and PDF fixture updates and `tools/refexec`
-for DVI fixture updates. Its `--area pdf` mode requires pdfTeX 1.40.29 and
-Poppler `pdftoppm` 25.08.0; its `--area fonts` mode owns the explicit live
+for DVI fixture updates. Its `--area pdf` mode requires the authenticated
+pdfTeX 1.40.29 reference producer and records the selected Poppler tool
+versions; its `--area fonts` mode owns the explicit live
 `tftopl` cross-check and does not rewrite fixtures.
 
 Its `--oracle tex82 --profile initex-eight-bit` and `--oracle etex26
@@ -1238,23 +1239,27 @@ Regenerate it only with `scripts/regen-fixtures.sh --area pdf` or
 
 Regeneration resolves object references and removes only byte-layout and
 volatile metadata differences before comparing structure. It then renders
-both PDFs with pinned Poppler and requires exact dimensions and pixels. The
+both PDFs with the same selected Poppler tool and requires exact dimensions
+and pixels for ordinary cases, with the established two-gray-level tolerance
+for font cases. The
 ordinary cargo test invokes neither external tool: it rebuilds the exact Umber
 bytes, normalizes the committed reference and current output, and verifies the
 SHA-256 chain connecting both committed PDFs to the equal raster.
 
-The independent host-tool gate is versioned as
-`scripts/check-pdf-external.sh`. Its qpdf 12.3.2 matrix uses focused native CLI
+The independent host-tool gate is
+`scripts/check-pdf-external.sh`. Its qpdf matrix uses focused native CLI
 jobs to produce temporary object-compression, raster, alpha, and DCT artifacts,
 then checks those alongside representative classic trailers, imported PDF,
 Type 1/TrueType/PK/subset/tagged fonts, annotations,
-forms, and navigation actions. Separately, Poppler 25.08.0 re-renders every
-committed Umber PDF and compares it with the pinned PGM (exactly for ordinary
-cases and with gray-value delta two for font cases); font extraction must also
-match the committed UTF-8 bytes. Run `scripts/check-pdf-external.sh --local`
-for development. A missing tool produces an explicit skip only in this mode;
-an installed tool with the wrong version still fails. CI and release jobs must
-install the pinned qpdf and Poppler versions and run
+forms, and navigation actions. Separately, the selected Poppler renderer and
+extractor process each committed reference/Umber PDF pair with the same tool
+versions. Pixels must match exactly for ordinary cases, within gray-value
+delta two for font cases, and extracted text must match exactly in all cases.
+The gate records tool versions as provenance and the native suite verifies
+the frozen PGM/text attestation content hashes. Run
+`scripts/check-pdf-external.sh --local` for development. A missing tool
+produces an explicit skip only in this mode; an installed tool that fails the
+actual validation also fails. CI and release jobs run
 `scripts/check-pdf-external.sh --ci`, where missing tools and every validator
 warning are fatal. `UMBER_PDF_VALIDATOR`, `UMBER_PDF_RENDERER`, and
 `UMBER_PDF_EXTRACTOR` may select explicit executable paths.

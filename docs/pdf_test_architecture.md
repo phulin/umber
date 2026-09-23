@@ -218,14 +218,20 @@ The explicit validator gate must include at least:
 - graph edges: `annotations_running`, `form_xobjects`, and
   `navigation_structures`.
 
-The implemented command is `scripts/check-pdf-external.sh`. It pins qpdf
-12.3.2 and Poppler 25.08.0, fails on any validator warning in `--ci` mode, and
-may explicitly skip for a missing tool only in nongating `--local` mode. Its
+The implemented command is `scripts/check-pdf-external.sh`. It records the
+available qpdf and Poppler versions, fails on any validator warning in `--ci`
+mode, and may explicitly skip for a missing tool only in nongating `--local`
+mode. Its
 focused native CLI invocations export temporary xref/object-stream and
 raster/alpha/DCT artifacts for qpdf without adding an external process to the
-Rust tests. Poppler rendering and extraction remain separate comparisons
-against the committed attestations rather than being folded into qpdf
-validation. CI and release invocation is
+Rust tests. Every PDF case commits both independently produced reference bytes
+and Umber bytes. The external gate renders and extracts those two files with
+the same available tools, comparing exact pixels except for the established
+two-gray-level font tolerance and exact text in every case. The native suite
+separately proves current Umber output still matches the committed Umber bytes
+and checks the frozen attestation's PDF/raster/text content hashes; its recorded
+Poppler version is provenance, not an acceptance pin. The pdfTeX reference
+producer remains version-qualified during fixture regeneration. CI and release invocation is
 `scripts/check-pdf-external.sh --ci`; local invocation is the same command with
 `--local`.
 
@@ -249,8 +255,8 @@ corpus correction made during the epic is the separately reviewed
 `object_dictionaries` fixture repair required by the strict external validator.
 The final gates are the focused `tex-out`, `test-support`, and `umber` native
 tests, the default native test suite, `scripts/check.sh`,
-`scripts/check-wasm.sh`, and `scripts/check-pdf-external.sh --ci` where the
-pinned qpdf and Poppler tools are available.
+`scripts/check-wasm.sh`, and `scripts/check-pdf-external.sh --ci` where qpdf
+and Poppler tools are available.
 
 ## Consolidation accounting
 

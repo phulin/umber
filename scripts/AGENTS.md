@@ -134,7 +134,7 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `trip-observer-common.sh`: generated-output namespace selection, atomic
   sealed-artifact replacement, and cold-oracle progress heartbeats shared by
   the TeX82/e-TeX observers and their hermetic watchdog/ownership self-test.
-- `check-pdf-external.sh`: opt-in pinned qpdf structural validation plus pinned Poppler raster/text attestation over the representative PDF matrix; `--ci` makes missing tools fatal.
+- `check-pdf-external.sh`: opt-in qpdf structural validation plus same-tool Poppler render/text comparison of the committed reference and Umber PDF pairs; `--ci` makes missing tools fatal and the gate records tool versions as provenance.
 - `run-stepwise-arxiv-census.sh`: stable entry point for the serial guarded arXiv census.
 - `stepwise-arxiv-census.py`: single-pass, row-atomic, resumable arXiv census runner and offline evidence verifier.
 - `test-stepwise-arxiv-census.sh`: hermetic single-pass, failure-attribution, resume, and verify-only census contract test.

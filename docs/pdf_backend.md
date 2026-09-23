@@ -520,7 +520,7 @@ references, and compares the normalized catalog/page/resource/content graph.
 It must not discard drawing operators, geometry, font selection, resource
 names, page order, or stream bytes after decompression.
 
-Rendering uses Poppler `pdftoppm` 25.08.0 at 72 dpi in grayscale mode. The
+Rendering uses Poppler `pdftoppm` at 72 dpi in grayscale mode. The
 regenerator requires exact PGM equality for ordinary fixtures. Embedded-font
 and PK fixtures use a maximum gray-value delta of two for independent font
 rasterizers and additionally require exact UTF-8 extraction. The committed
@@ -533,9 +533,10 @@ bytes, repeat structural normalization against the committed pdfTeX PDF, and
 verify the raster attestation chain without launching pdfTeX or Poppler. A
 structural mismatch cannot be blessed by a visually similar page. Tests also
 run the complete committed DVI corpus byte-for-byte. The
-opt-in `scripts/check-pdf-external.sh --ci` gate adds qpdf 12.3.2 structural
+opt-in `scripts/check-pdf-external.sh --ci` gate adds qpdf structural
 validation of the committed and generated representative matrix and live
-Poppler 25.08.0 render/extraction comparison; neither external consumer runs
+same-tool Poppler render/extraction comparison of each committed reference
+and Umber PDF; neither external consumer runs
 in `cargo test --tests`. The
 `object_dictionaries` case composes reserved, referenced, immediate, and stream
 objects with catalog, open-action, names, info, trailer, and trailer-ID input.

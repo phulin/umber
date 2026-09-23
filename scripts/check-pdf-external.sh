@@ -41,25 +41,13 @@ required_tool() {
   printf 'PDF external gate: SKIP %s checks (tool is missing; --local mode)\n' "$fallback" >&2
 }
 
-require_version() {
-  local tool="$1"
-  local argument="$2"
-  local expected="$3"
-  local output
-  output="$("$tool" "$argument" 2>&1)" || {
-    printf 'PDF external gate: could not query %s version\n' "$tool" >&2
-    exit 1
-  }
-  if ! grep -Fq "$expected" <<<"$output"; then
-    printf 'PDF external gate: %s must report %q; got %q\n' \
-      "$tool" "$expected" "${output%%$'\n'*}" >&2
-    exit 1
-  fi
-}
-
 qpdf="$(required_tool UMBER_PDF_VALIDATOR qpdf)"
 if [[ -n "$qpdf" ]]; then
-  require_version "$qpdf" --version 'qpdf version 12.3.2'
+  qpdf_version="$("$qpdf" --version 2>&1)" || {
+    printf 'PDF external gate: could not query %s version\n' "$qpdf" >&2
+    exit 1
+  }
+  printf 'PDF external gate: validator %s\n' "${qpdf_version%%$'\n'*}" >&2
   artifact_dir="$(mktemp -d)"
   trap 'rm -rf "$artifact_dir"' EXIT
 
