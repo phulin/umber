@@ -59,12 +59,16 @@ steps. The shared browser runner uses the production packed-catalog decoder
 with speculative prefetch policy unavailable, so the manifest's extra
 dependency objects do not change the fixture's response sequence. Separate
 package checks exercise the full Rust prefetch policy and its dependencies.
-The bounded cases cover a required positive retry, an authoritative
-missing probe, an empty speculative response followed by required demand, and
-a conflicting late response that rejects the whole batch before a successful
-retry. They compare typed request roles, accepted terminal markers, and the
-absence of accepted observations before completion. Native file lookup and
-browser fetch, cache, worker, and cancellation policy retain their own tests;
+The bounded cases cover a required positive retry, an authoritative missing
+probe, an empty speculative response followed by required demand, a conflicting
+late response that rejects the whole batch, and cancellation of an unaccepted
+resource-waiting source patch. The public sessions expose
+`cancel_pending_patch` and `cancelPendingPatch` for that last transition:
+cancellation retains the accepted revision, output,
+source identity, and input observations; the same next-revision patch can then
+request its resource again and complete. The cases compare typed request roles,
+candidate privacy, and accepted terminal markers. Native file lookup and
+browser fetch, cache, worker, and abort-signal policy retain their own tests;
 those host operations do not share a state machine fixture.
 
 ## Canonical vocabulary

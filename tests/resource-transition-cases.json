@@ -45,6 +45,25 @@
         }
       ],
       "terminal": "CONTRACT-DRAINED"
+    },
+    {
+      "name": "cancel-pending-resource-patch",
+      "initialAccepted": {
+        "source": "\\message{CONTRACT-BASE} \\end",
+        "terminal": "CONTRACT-BASE"
+      },
+      "source": "\\input probe.tex \\message{CONTRACT-AFTER-CANCEL} \\end",
+      "initialHints": [],
+      "steps": [
+        {
+          "need": { "required": ["probe.tex"], "probes": [], "prefetchHints": [] },
+          "cancelBeforeResponses": true,
+          "responses": [
+            { "name": "probe.tex", "outcome": "file", "bytes": "\\message{PACKED-CATALOG-RESOURCE}\\relax" }
+          ]
+        }
+      ],
+      "terminal": "CONTRACT-AFTER-CANCEL"
     }
   ]
 }

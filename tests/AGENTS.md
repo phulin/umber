@@ -3,7 +3,8 @@
 `resource-transition-cases.json` contains the small native/browser compile
 session transition contract: ordered typed needs, positive and authoritative
 negative admission, an empty speculative drain, rejected mixed admission, and
-accepted terminal markers. The native public-session integration test and the
+source-patch cancellation with an accepted baseline and fresh retry. The native
+public-session integration test and the
 generated WASM package browser gate consume the same cases.
 
 `tests/corpus` holds committed inputs and expected reference outputs for

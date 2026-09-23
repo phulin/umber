@@ -243,6 +243,7 @@ async function checkSharedResourceTransitions(base, rootAHash64) {
 	assert.equal(fixture.schema, 1);
 	const expectedNames = [
 		"authoritative-missing-probe",
+		"cancel-pending-resource-patch",
 		"empty-speculation-then-demand",
 		"required-positive-retry",
 	];
@@ -257,6 +258,11 @@ async function checkSharedResourceTransitions(base, rootAHash64) {
 	const encoder = new TextEncoder();
 	const decoder = new TextDecoder();
 	for (const testCase of fixture.cases) {
+		assert.equal(
+			testCase.steps.filter((step) => step.cancelBeforeResponses).length,
+			Number(testCase.initialAccepted !== undefined),
+			`${testCase.name}: cancellation requires exactly one accepted baseline`,
+		);
 		const resolver = await HttpManifestResolver.create({
 			manifestUrl: `${base}/publication/manifest.json`,
 			manifestAHash64: rootAHash64,
@@ -279,27 +285,73 @@ async function checkSharedResourceTransitions(base, rootAHash64) {
 			})),
 		});
 		try {
-			session.addUserFile("main.tex", encoder.encode(testCase.source));
-			for (const [index, step] of testCase.steps.entries()) {
-				const attempt = session.compileAttempt();
-				assert.equal(
-					attempt.kind,
-					"need-resources",
-					`${testCase.name} step ${index}`,
+			session.addUserFile(
+				"main.tex",
+				encoder.encode(testCase.initialAccepted?.source ?? testCase.source),
+			);
+			let baseline;
+			let patch;
+			if (testCase.initialAccepted !== undefined) {
+				const accepted = session.compileAttempt();
+				assert.equal(accepted.kind, "complete", testCase.name);
+				assert(
+					accepted.output.terminal.includes(testCase.initialAccepted.terminal),
+					testCase.name,
 				);
-				for (const role of ["required", "probes", "prefetchHints"]) {
+				baseline = {
+					output: accepted.output,
+					revision: session.revision,
+					hash: session.contentHash,
+					observations: session.acceptedInputObservations,
+				};
+				patch = {
+					nextRevision: baseline.revision + 1,
+					baseRevision: baseline.revision,
+					expectedHash: baseline.hash,
+					start: 0,
+					end: encoder.encode(testCase.initialAccepted.source).length,
+					replacement: testCase.source,
+				};
+				session.applyPatch(patch);
+			}
+			for (const [index, step] of testCase.steps.entries()) {
+				let attempt = session.compileAttempt();
+				assertSharedNeed(attempt, step.need, testCase.name, index);
+				if (baseline === undefined) {
+					assert(session.acceptedInputObservations == null);
+				} else {
 					assert.deepEqual(
-						attempt[role].map((request) => {
-							assert.equal(request.type, "file");
-							assert.equal(request.domain, "tex");
-							assert.equal(request.kind, "tex");
-							return request.name;
-						}),
-						step.need[role],
-						`${testCase.name} step ${index} ${role}`,
+						session.acceptedInputObservations,
+						baseline.observations,
 					);
 				}
-				assert(session.acceptedInputObservations == null);
+				if (step.cancelBeforeResponses) {
+					assert(baseline && patch);
+					assert.equal(session.cancelPendingPatch(), true);
+					assert.equal(session.cancelPendingPatch(), false);
+					assert.equal(session.revision, baseline.revision);
+					assert.equal(session.contentHash, baseline.hash);
+					assert.deepEqual(
+						session.acceptedInputObservations,
+						baseline.observations,
+					);
+					assert.equal(session.resolvedFileCount, 0);
+					assert.equal(session.attempts, 0);
+					const resumed = session.compileAttempt();
+					assert.equal(resumed.kind, "complete", testCase.name);
+					assert.deepEqual(
+						resumed.output,
+						baseline.output,
+						`${testCase.name}: cancellation left a stale resource wait`,
+					);
+					session.applyPatch(patch);
+					attempt = session.compileAttempt();
+					assertSharedNeed(attempt, step.need, testCase.name, index);
+					assert.deepEqual(
+						session.acceptedInputObservations,
+						baseline.observations,
+					);
+				}
 				const requests = [
 					...attempt.required,
 					...attempt.probes,
@@ -359,10 +411,29 @@ async function checkSharedResourceTransitions(base, rootAHash64) {
 				testCase.name,
 			);
 			assert(session.acceptedInputObservations, testCase.name);
+			if (baseline !== undefined) {
+				assert.equal(session.revision, baseline.revision + 1);
+			}
 			await resolver.commitRun();
 		} finally {
 			resolver.discardRun();
 			session.dispose();
 		}
+	}
+}
+
+function assertSharedNeed(attempt, expected, name, index) {
+	assert.equal(attempt.kind, "need-resources", `${name} step ${index}`);
+	for (const role of ["required", "probes", "prefetchHints"]) {
+		assert.deepEqual(
+			attempt[role].map((request) => {
+				assert.equal(request.type, "file");
+				assert.equal(request.domain, "tex");
+				assert.equal(request.kind, "tex");
+				return request.name;
+			}),
+			expected[role],
+			`${name} step ${index} ${role}`,
+		);
 	}
 }

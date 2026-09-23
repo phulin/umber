@@ -534,15 +534,16 @@ collapsed into one generic session state machine without proof of equivalence.
 
 The shared [resource-transition cases](../tests/resource-transition-cases.json)
 now drive the public native `VirtualCompileSession` and the generated WASM
-package session with its real HTTP manifest resolver. Three cases cover a
-required positive retry, authoritative absence from a blocking probe, and an
-empty speculative response followed by required demand. The positive case
-also rejects a conflicting late response without admitting part of its batch.
-Both runners compare ordered typed request roles, candidate privacy, and
-accepted terminal observations. The browser shared-case runner uses the real
+package session with its real HTTP manifest resolver. Four cases cover a
+required positive retry, authoritative absence from a blocking probe, an
+empty speculative response followed by required demand, and cancellation of a
+resource-waiting source patch followed by the same revision's successful retry.
+The positive case also rejects a conflicting late response without admitting
+part of its batch. Both runners compare ordered typed request roles, candidate
+privacy, and accepted terminal observations. The browser shared-case runner uses the real
 packed-catalog decoder with speculation disabled for its catalog-only resolver;
 separate package tests exercise the full Rust prefetch policy. Native file
-lookup and browser fetch, cache, worker, and cancellation behavior keep their
+lookup and browser fetch, cache, worker, and abort-signal behavior keep their
 host-specific tests. [Resource Lifecycle](resource_lifecycle.md) records the
 bounded common contract.
 

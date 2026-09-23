@@ -3,7 +3,8 @@ use std::collections::BTreeSet;
 use serde::Deserialize;
 use umber::{
     CompileAttemptResult, FileKind, FileRequest, FileRequestKey, NeedResources, ResolvedFile,
-    ResourceDomain, ResourceRequest, ResourceResponse, SessionOptions, VirtualCompileSession,
+    ResourceDomain, ResourceRequest, ResourceResponse, RevisionId, SessionOptions, SourcePatch,
+    VirtualCompileSession,
 };
 
 #[derive(Deserialize)]
@@ -17,9 +18,18 @@ struct Fixture {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Case {
     name: String,
+    #[serde(default)]
+    initial_accepted: Option<InitialAccepted>,
     source: String,
     initial_hints: Vec<String>,
     steps: Vec<Step>,
+    terminal: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InitialAccepted {
+    source: String,
     terminal: String,
 }
 
@@ -28,6 +38,8 @@ struct Case {
 struct Step {
     need: ExpectedNeed,
     responses: Vec<ExpectedResponse>,
+    #[serde(default)]
+    cancel_before_responses: bool,
     #[serde(default)]
     reject_late_conflict: bool,
 }
@@ -67,10 +79,20 @@ fn native_resource_transitions_follow_shared_cases() {
             "required-positive-retry",
             "authoritative-missing-probe",
             "empty-speculation-then-demand",
+            "cancel-pending-resource-patch",
         ])
     );
 
     for case in fixture.cases {
+        assert_eq!(
+            case.steps
+                .iter()
+                .filter(|step| step.cancel_before_responses)
+                .count(),
+            usize::from(case.initial_accepted.is_some()),
+            "{}: cancellation requires exactly one accepted baseline",
+            case.name
+        );
         let hints = case
             .initial_hints
             .iter()
@@ -81,20 +103,91 @@ fn native_resource_transitions_follow_shared_cases() {
             ..SessionOptions::default()
         })
         .expect("native compile session");
+        let initial_source = case
+            .initial_accepted
+            .as_ref()
+            .map_or(case.source.as_str(), |accepted| accepted.source.as_str());
         session
-            .add_user_file("main.tex", case.source.into_bytes())
+            .add_user_file("main.tex", initial_source.as_bytes().to_vec())
             .expect("authored source");
+        let baseline = case.initial_accepted.as_ref().map(|accepted| {
+            let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
+                panic!("{}: baseline must be accepted", case.name);
+            };
+            assert!(String::from_utf8_lossy(&output.terminal).contains(&accepted.terminal));
+            let revision = session.revision().expect("accepted baseline revision");
+            let hash = session.content_hash().expect("accepted baseline hash");
+            let observations = session
+                .accepted_input_observations()
+                .expect("accepted baseline observations");
+            (output, revision, hash, observations)
+        });
+        if let (Some(accepted), Some((_, revision, hash, _))) = (&case.initial_accepted, &baseline)
+        {
+            session
+                .apply_patch(SourcePatch {
+                    next_revision: RevisionId::new(revision.raw() + 1),
+                    base_revision: *revision,
+                    expected_hash: *hash,
+                    range: 0..accepted.source.len(),
+                    replacement: case.source.clone(),
+                })
+                .expect("resource-waiting patch");
+        }
 
         for (index, step) in case.steps.iter().enumerate() {
-            let CompileAttemptResult::NeedResources(need) = session.compile_attempt() else {
+            let CompileAttemptResult::NeedResources(mut need) = session.compile_attempt() else {
                 panic!("{} step {index}: expected resource need", case.name);
             };
             assert_need(&need, &step.need, &case.name, index);
-            assert!(
-                session.accepted_input_observations().is_none(),
+            assert_eq!(
+                session.accepted_input_observations(),
+                baseline
+                    .as_ref()
+                    .map(|(_, _, _, observations)| observations.clone()),
                 "{} step {index}: candidate was published",
                 case.name
             );
+            if step.cancel_before_responses {
+                let (accepted_output, revision, hash, observations) = baseline
+                    .as_ref()
+                    .expect("cancellation needs accepted baseline");
+                assert!(session.cancel_pending_patch(), "{}", case.name);
+                assert!(!session.cancel_pending_patch(), "{}", case.name);
+                assert_eq!(session.revision(), Some(*revision));
+                assert_eq!(session.content_hash(), Some(*hash));
+                assert_eq!(
+                    session.accepted_input_observations(),
+                    Some(observations.clone())
+                );
+                assert_eq!(session.resolved_file_count(), 0);
+                assert_eq!(session.attempts(), 0);
+                assert_eq!(
+                    session.compile_attempt(),
+                    CompileAttemptResult::Complete(accepted_output.clone()),
+                    "{}: cancellation left a stale resource wait",
+                    case.name
+                );
+                let accepted = case.initial_accepted.as_ref().expect("accepted source");
+                session
+                    .apply_patch(SourcePatch {
+                        next_revision: RevisionId::new(revision.raw() + 1),
+                        base_revision: *revision,
+                        expected_hash: *hash,
+                        range: 0..accepted.source.len(),
+                        replacement: case.source.clone(),
+                    })
+                    .expect("retry same revision after cancellation");
+                let CompileAttemptResult::NeedResources(retried) = session.compile_attempt() else {
+                    panic!("{}: retried revision must request its resource", case.name);
+                };
+                assert_need(&retried, &step.need, &case.name, index);
+                assert_eq!(
+                    session.accepted_input_observations(),
+                    Some(observations.clone())
+                );
+                need = retried;
+            }
             let responses = step
                 .responses
                 .iter()
@@ -137,6 +230,12 @@ fn native_resource_transitions_follow_shared_cases() {
             "{}",
             case.name
         );
+        if let Some((_, revision, _, _)) = baseline {
+            assert_eq!(
+                session.revision(),
+                Some(RevisionId::new(revision.raw() + 1))
+            );
+        }
     }
 }
 
