@@ -62,6 +62,7 @@ pdflatex_expected_receipt="${tmp_root}/pdflatex-expected.inputs"
   printf '18\t%s\n' "${fixture_repo}/tests/latex/pdftexconfig.tex"
 } | LC_ALL=C sort > "$pdflatex_expected_receipt"
 invocations="${tmp_root}/run-invocations.jsonl"
+captured_build_configuration="${tmp_root}/build-configuration.txt"
 
 cat > "${tmp_root}/bin/cargo" <<'EOF'
 #!/usr/bin/env bash
@@ -95,6 +96,10 @@ import struct
 import sys
 
 arguments = sys.argv[1:]
+if arguments[:2] in (["format-cache", "restore"], ["format-cache", "store"]):
+    Path(os.environ["UMBER_TEST_BUILD_CONFIGURATION"]).write_bytes(
+        Path(arguments[arguments.index("--build-configuration") + 1]).read_bytes()
+    )
 if arguments[:2] == ["format-cache", "restore"]:
     print("miss")
     raise SystemExit(0)
@@ -165,12 +170,19 @@ XDG_CACHE_HOME="${tmp_root}/cache" \
 UMBER_OFFLINE=1 \
 UMBER_TEST_INPUT_RECEIPT="$expected_receipt" \
 UMBER_TEST_INVOCATIONS="$invocations" \
+UMBER_TEST_BUILD_CONFIGURATION="$captured_build_configuration" \
   "$builder" \
     --texmf-dist "${fixture_repo}/texmf-dist" \
     --distribution "${fixture_repo}/distribution" \
     --distribution-ahash64 "$distribution_ahash64" \
     --output-dir "${fixture_repo}/output" \
     --force >/dev/null
+
+grep -Fx 'schema=2' "$captured_build_configuration" >/dev/null
+grep -Fx "producer-sha256=$(sha256_file "${fixture_repo}/target/release/umber")" \
+  "$captured_build_configuration" >/dev/null
+grep -Fx "builder-sha256=$(sha256_file "$builder")" \
+  "$captured_build_configuration" >/dev/null
 
 python3 - "$invocations" "${fixture_repo}/distribution" "$distribution_ahash64" <<'PY'
 import json
@@ -198,6 +210,7 @@ XDG_CACHE_HOME="${tmp_root}/cache" \
 UMBER_OFFLINE=1 \
 UMBER_TEST_INPUT_RECEIPT="$pdflatex_expected_receipt" \
 UMBER_TEST_INVOCATIONS="$invocations" \
+UMBER_TEST_BUILD_CONFIGURATION="$captured_build_configuration" \
   "$builder" \
     --engine pdflatex \
     --texmf-dist "${fixture_repo}/texmf-dist" \

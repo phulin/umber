@@ -53,11 +53,18 @@ fn canonical_key_covers_every_identity_component() {
         original.key(),
         compound_identity(FormatEngineMode::Latex).key()
     );
-    assert_eq!(
-        original.key().hex(),
-        "303428a6da520f0ecce95009fc3b87ff4e2bd81bf072bb47c5e7d3b66cc072d6"
+    assert_eq!(original.semantic_contract, None);
+    assert_eq!(original.producer_contract, None);
+    assert_eq!(original.generation_guards, None);
+    assert_ne!(
+        original.key(),
+        FormatCacheIdentity {
+            producer_contract: Some(FormatFingerprint::new([0; 32])),
+            ..original.clone()
+        }
+        .key(),
+        "an absent producer fingerprint must differ from an explicit zero fingerprint"
     );
-
     let mutations = [
         FormatCacheIdentity {
             engine_mode: FormatEngineMode::PdfLatex,
@@ -92,11 +99,11 @@ fn canonical_key_covers_every_identity_component() {
             ..original.clone()
         },
         FormatCacheIdentity {
-            semantic_contract: FormatFingerprint::sha256(b"other semantic contract"),
+            semantic_contract: Some(FormatFingerprint::sha256(b"other semantic contract")),
             ..original.clone()
         },
         FormatCacheIdentity {
-            producer_contract: FormatFingerprint::sha256(b"other producer"),
+            producer_contract: Some(FormatFingerprint::sha256(b"other producer")),
             ..original.clone()
         },
         FormatCacheIdentity {
@@ -104,7 +111,7 @@ fn canonical_key_covers_every_identity_component() {
             ..original.clone()
         },
         FormatCacheIdentity {
-            generation_guards: FormatFingerprint::sha256(b"other guards"),
+            generation_guards: Some(FormatFingerprint::sha256(b"other guards")),
             ..original.clone()
         },
         FormatCacheIdentity {

@@ -13,7 +13,7 @@ use umber_fetch::{BlobStore, CacheError, VerifiedBlobSpec};
 
 const DIRECTORY: &str = "formats-v2";
 const KEY_DOMAIN: &[u8] = b"umber.format-cache.key\0";
-const KEY_SCHEMA: u32 = 2;
+const KEY_SCHEMA: u32 = 3;
 const ENTRY_MAGIC: [u8; 8] = *b"UMBRFCHE";
 const ENTRY_SCHEMA: u32 = 1;
 const ENTRY_HEADER_LEN: usize = 56;
@@ -82,10 +82,10 @@ pub struct FormatCacheIdentity {
     format_closure: FormatFingerprint,
     source_lock: FormatFingerprint,
     build_configuration: FormatFingerprint,
-    semantic_contract: FormatFingerprint,
-    producer_contract: FormatFingerprint,
+    semantic_contract: Option<FormatFingerprint>,
+    producer_contract: Option<FormatFingerprint>,
     resource_closure: FormatFingerprint,
-    generation_guards: FormatFingerprint,
+    generation_guards: Option<FormatFingerprint>,
     job_clock: FormatCacheClock,
 }
 
@@ -112,7 +112,7 @@ pub struct FormatFixtureIdentity {
 }
 
 impl FormatCacheIdentity {
-    /// Creates an identity pinned to the current local format builder.
+    /// Creates an image-only identity from the CLI builder's actual inputs.
     #[must_use]
     pub fn current(
         engine_mode: FormatEngineMode,
@@ -132,10 +132,10 @@ impl FormatCacheIdentity {
             format_closure,
             source_lock,
             build_configuration,
-            semantic_contract: FormatFingerprint::sha256(b"pinned-format-cache-cli-v1"),
-            producer_contract: FormatFingerprint::sha256(b"pinned-format-producer-v1"),
+            semantic_contract: None,
+            producer_contract: None,
             resource_closure: format_closure,
-            generation_guards: FormatFingerprint::sha256(b"pinned-generation-guards-v1"),
+            generation_guards: None,
             job_clock,
         }
     }
@@ -153,10 +153,10 @@ impl FormatCacheIdentity {
             format_closure: fixture.format_closure,
             source_lock: fixture.source_lock,
             build_configuration: fixture.build_configuration,
-            semantic_contract: fixture.semantic_contract,
-            producer_contract: fixture.producer_contract,
+            semantic_contract: Some(fixture.semantic_contract),
+            producer_contract: Some(fixture.producer_contract),
             resource_closure: fixture.resource_closure,
-            generation_guards: fixture.generation_guards,
+            generation_guards: Some(fixture.generation_guards),
             job_clock: fixture.job_clock,
         }
     }
@@ -178,13 +178,14 @@ impl FormatCacheIdentity {
             self.format_closure,
             self.source_lock,
             self.build_configuration,
-            self.semantic_contract,
-            self.producer_contract,
-            self.resource_closure,
-            self.generation_guards,
         ] {
             bytes.extend_from_slice(&fingerprint.bytes());
         }
+        for fingerprint in [self.semantic_contract, self.producer_contract] {
+            append_optional_fingerprint(&mut bytes, fingerprint);
+        }
+        bytes.extend_from_slice(&self.resource_closure.bytes());
+        append_optional_fingerprint(&mut bytes, self.generation_guards);
         for value in [
             self.job_clock.time,
             self.job_clock.second,
@@ -201,6 +202,16 @@ impl FormatCacheIdentity {
     #[must_use]
     pub fn key(&self) -> FormatFingerprint {
         FormatFingerprint::sha256(&self.canonical_bytes())
+    }
+}
+
+fn append_optional_fingerprint(bytes: &mut Vec<u8>, fingerprint: Option<FormatFingerprint>) {
+    match fingerprint {
+        None => bytes.push(0),
+        Some(fingerprint) => {
+            bytes.push(1);
+            bytes.extend_from_slice(&fingerprint.bytes());
+        }
     }
 }
 

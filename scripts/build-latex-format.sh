@@ -303,7 +303,9 @@ package_id="$(cargo pkgid -p umber)"
 engine_version="${package_id##*#}"
 build_configuration="${tmp_root}/build-configuration.txt"
 {
-  printf 'schema=1\nprofile=release\nfeatures=default\npackage=umber@%s\n' "$engine_version"
+  printf 'schema=2\nprofile=release\nfeatures=default\npackage=umber@%s\n' "$engine_version"
+  printf 'producer-sha256=%s\n' "$(sha256 "$umber_bin")"
+  printf 'builder-sha256=%s\n' "$(sha256 "${repo_root}/scripts/build-latex-format.sh")"
   rustc -Vv
 } > "$build_configuration"
 cache_args=(

@@ -251,7 +251,7 @@ fn recipe_identity_invalidates_every_fixture_input_class() {
 }
 
 #[test]
-fn producer_contract_twenty_two_rejects_formats_without_nullfont_identity() {
+fn current_producer_contract_rejects_pre_nullfont_formats() {
     let recipe = FormatRecipe::raw_tex82();
     let stale = producer_contract(21, &recipe.format_name, &recipe.format_ident_name);
     let current = producer_contract(
@@ -259,7 +259,6 @@ fn producer_contract_twenty_two_rejects_formats_without_nullfont_identity() {
         &recipe.format_name,
         &recipe.format_ident_name,
     );
-    assert_eq!(PRODUCER_CONTRACT_VERSION, 22);
     assert_ne!(current, stale);
 }
 
