@@ -2,11 +2,11 @@
 
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
 
+use crate::AlignmentDeliveryEvent;
 use crate::command::{CurrentCommand, HotCommand};
 use crate::error::CommandError;
 use crate::input::{InputLevel, RetirementBehavior, TokenBehavior};
 use crate::observation::{AlignmentRecord, CommandObservation};
-use crate::{AlignmentDelivery, AlignmentDeliveryEvent};
 
 use super::CommandProcessor;
 use super::alignment::CELL_ALIGN_STATE;
@@ -29,7 +29,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// caller (`scan_alignment_delivery_step`) needs `Completed` surfaced so
     /// it can report `ColdOperation::ReplayCompleted` exactly as ordinary
     /// (non-alignment) `scan_step` already does via
-    /// `get_x_token_with_replay_completion`.
+    /// `get_x_token_with_replay_completion_into`.
     ///
     /// `main_loop_active` reports whether `main_control` is parked at TeX82
     /// §1034's `main_loop_lookahead` rather than at §1030's `big_switch`. An
@@ -40,38 +40,6 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// It also selects the alignment-specific expanded entry. The alignment
     /// entry preserves the `end_template` boundary that closes a cell's
     /// ⟨v_j⟩ template instead of folding it into ordinary command delivery.
-    pub fn get_x_alignment_delivery(
-        &mut self,
-        main_loop_active: bool,
-    ) -> Result<Option<AlignmentDelivery<G>>, CommandError> {
-        let mut destination = None;
-        let delivery = self.get_x_alignment_delivery_into(main_loop_active, &mut destination)?;
-        Ok(match delivery {
-            super::DeliveryStatus::End => None,
-            super::DeliveryStatus::Command => Some(AlignmentDelivery::Command(
-                destination.expect("command status initializes destination"),
-            )),
-            super::DeliveryStatus::ReplayCompleted(episode) => {
-                Some(AlignmentDelivery::Completed(episode))
-            }
-            super::DeliveryStatus::AlignmentEndTemplate => Some(AlignmentDelivery::Event(
-                AlignmentDeliveryEvent::EndTemplate(
-                    destination.expect("alignment status initializes destination"),
-                ),
-            )),
-            super::DeliveryStatus::AlignmentClosingBrace => Some(AlignmentDelivery::Event(
-                AlignmentDeliveryEvent::ClosingBrace(
-                    destination.expect("alignment status initializes destination"),
-                ),
-            )),
-            super::DeliveryStatus::PendingExpanded => {
-                unreachable!("alignment delivery commits terminal observations")
-            }
-            super::DeliveryStatus::CharacterRun | super::DeliveryStatus::CharacterRunBoundary => {
-                unreachable!("alignment delivery never selects main-loop character runs")
-            }
-        })
-    }
     /// Delivers active-cell input into caller-provided command storage.
     pub fn get_x_alignment_delivery_into(
         &mut self,

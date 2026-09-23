@@ -171,6 +171,7 @@ fn migrated_production_delivery_callers_own_their_command_destinations() {
         ".get_x_token_with_replay_completion(",
         ".get_x_or_protected_with_replay_completion(",
         ".get_x_alignment_delivery(",
+        ".get_x_token_preserving_undefined()",
         ".next_non_blank_x_token()",
         ".next_non_blank_non_relax_x_token()",
     ];
@@ -203,22 +204,6 @@ fn migrated_production_delivery_callers_own_their_command_destinations() {
             }
         }
     }
-
-    // The diagnostic-only undefined-preserving convenience remains a distinct
-    // cold host boundary. It is not part of ordinary command delivery and may
-    // not spread into another production caller. The diagnostic-only behavior
-    // itself is pinned behaviorally by tex-exec's
-    // `diagnostic_expand_step_preserves_undefined_for_the_diagnostic_host`;
-    // this ledger only guards against the convenience spreading.
-    let main_control = fs::read_to_string(repository.join("crates/tex-exec/src/main_control.rs"))
-        .expect("read main-control implementation");
-    assert_eq!(
-        main_control
-            .matches(".get_x_token_preserving_undefined()")
-            .count(),
-        1,
-        "only the diagnostic expansion path may retain the undefined-preserving convenience"
-    );
 }
 
 #[test]

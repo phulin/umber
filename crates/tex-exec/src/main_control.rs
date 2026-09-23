@@ -3783,7 +3783,7 @@ impl<G> MainControl<G> {
         self.restore_first_recoverable_after_retry(&mut diagnostic_effects);
         if !host_preparation.has_delivery() {
             self.ensure_primitive_handles(stores);
-            let (command, cursor, source_provenance) = {
+            let (status, destination, cursor, source_provenance) = {
                 let mut context = stores.command_context().expect("live generation");
                 let mut host_facts = ExecutorHostFacts {
                     modes: &self.modes,
@@ -3813,19 +3813,23 @@ impl<G> MainControl<G> {
                         &mut context,
                     )
                 };
-                let command = processor
-                    .get_x_token_preserving_undefined()
+                let mut destination = None;
+                let status = processor
+                    .get_x_token_preserving_undefined_into(&mut destination)
                     .map_err(command_error);
                 let cursor = processor.delivery_cursor();
-                let source_provenance = command
-                    .as_ref()
-                    .ok()
-                    .and_then(Option::as_ref)
-                    .and_then(|command| processor.source_provenance(command));
-                (command, cursor, source_provenance)
+                let source_provenance =
+                    if matches!(status, Ok(tex_command::DeliveryStatus::Command)) {
+                        destination
+                            .as_ref()
+                            .and_then(|command| processor.source_provenance(command))
+                    } else {
+                        None
+                    };
+                (status, destination, cursor, source_provenance)
             };
-            let command = match command {
-                Ok(command) => command,
+            let status = match status {
+                Ok(status) => status,
                 Err(error) => {
                     let result = self.finish_resource_preflight_failure(
                         stores,
@@ -3851,9 +3855,16 @@ impl<G> MainControl<G> {
                     };
                 }
             };
-            let Some(command) = command else {
-                self.commit_direct_operation(stores, operation_mark, &mut diagnostic_effects);
-                return Ok(DiagnosticStepResult::Progress(DiagnosticStep::EndOfInput));
+            let command = match status {
+                tex_command::DeliveryStatus::Command => {
+                    destination.expect("command status filled diagnostic caller slot")
+                }
+                tex_command::DeliveryStatus::End => {
+                    debug_assert!(destination.is_none());
+                    self.commit_direct_operation(stores, operation_mark, &mut diagnostic_effects);
+                    return Ok(DiagnosticStepResult::Progress(DiagnosticStep::EndOfInput));
+                }
+                _ => unreachable!("diagnostic expanded delivery returns command or end"),
             };
             if !tex_command::exceeds_max_non_prefixed_command(static_meaning(command.meaning())) {
                 let step = DiagnosticStep::Token {

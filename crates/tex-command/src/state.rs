@@ -577,19 +577,6 @@ pub(crate) struct ReplayCompletionFence {
     owner: InputLevelId,
 }
 
-/// One expanded delivery from the episode-aware command boundary.
-///
-/// A completed stored episode is delivered on its own, after command-owned
-/// retirement (and its observation/provenance effects) but before any token
-/// from the enclosing input level is fetched.  This lets a stomach consumer
-/// finalize its isolated mode or group without peeking at, or backing up,
-/// parent source.
-#[derive(Debug)]
-pub enum CommandReplayDelivery<G> {
-    Command(crate::CurrentCommand<G>),
-    Completed(CommandReplayEpisode),
-}
-
 impl<G> CommandState<G> {
     fn validate_group_payloads(
         &self,

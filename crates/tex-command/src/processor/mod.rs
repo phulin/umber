@@ -35,9 +35,9 @@ use crate::observation::CommandObserver;
 
 pub(crate) use alignment::CELL_ALIGN_STATE;
 pub use alignment::{
-    AlignmentCellDelimiter, AlignmentCellTemplates, AlignmentDelivery, AlignmentDeliveryEvent,
-    AlignmentIdentity, AlignmentLifecycleError, AlignmentPreamble, AlignmentRequest,
-    AlignmentRequestResult, FinishedAlignmentCell, PreparedAlignmentCellTemplates,
+    AlignmentCellDelimiter, AlignmentCellTemplates, AlignmentDeliveryEvent, AlignmentIdentity,
+    AlignmentLifecycleError, AlignmentPreamble, AlignmentRequest, AlignmentRequestResult,
+    FinishedAlignmentCell, PreparedAlignmentCellTemplates,
 };
 pub(crate) use alignment::{AlignmentDeliveryAdjustment, AlignmentDeliveryState};
 pub use expand_render::{

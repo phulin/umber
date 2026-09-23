@@ -133,11 +133,11 @@ pub use observation::{
     parameter_mutation_key_for_dialect,
 };
 pub use processor::{
-    AlignmentCellDelimiter, AlignmentCellTemplates, AlignmentDelivery, AlignmentDeliveryEvent,
-    AlignmentIdentity, AlignmentLifecycleError, AlignmentLookahead, AlignmentPreamble,
-    AlignmentRequest, AlignmentRequestResult, CharacterRunAdmission, CharacterRunFallback,
-    CommandDeliveryCursor, CommandProcessor, DeliveryStatus, FinishedAlignmentCell,
-    MainCharacterConsumer, MainCharacterInput, PreparedAlignmentCellTemplates, PrintCommand,
+    AlignmentCellDelimiter, AlignmentCellTemplates, AlignmentDeliveryEvent, AlignmentIdentity,
+    AlignmentLifecycleError, AlignmentLookahead, AlignmentPreamble, AlignmentRequest,
+    AlignmentRequestResult, CharacterRunAdmission, CharacterRunFallback, CommandDeliveryCursor,
+    CommandProcessor, DeliveryStatus, FinishedAlignmentCell, MainCharacterConsumer,
+    MainCharacterInput, PreparedAlignmentCellTemplates, PrintCommand,
     append_character_command_text, append_command_token_text, append_print_cmd_chr_text,
     append_print_esc_text, character_command_text, command_token_text, print_cmd_chr_text,
     print_esc_text,
@@ -175,9 +175,9 @@ pub use snapshot::{
     PreparedCommandReplayRestore, PreparedCommandRestore, TransientCommandSnapshot,
 };
 pub use state::{
-    CommandGroupError, CommandGroupExit, CommandReplayDelivery, CommandReplayEpisode,
-    CommandSemanticDiagnostic, CommandStackUsage, CommandState, DiagnosticContextCoordinate,
-    RunawayPrelude, StaleDiagnosticContext, UnknownRegisteredSource,
+    CommandGroupError, CommandGroupExit, CommandReplayEpisode, CommandSemanticDiagnostic,
+    CommandStackUsage, CommandState, DiagnosticContextCoordinate, RunawayPrelude,
+    StaleDiagnosticContext, UnknownRegisteredSource,
 };
 pub use tex_state::SourceId;
 pub use tex_state::token::Catcode;

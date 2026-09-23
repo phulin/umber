@@ -9,7 +9,6 @@ use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, ResolvedMeaning};
 use tex_state::token::{Catcode, Token, TracedTokenWord};
 
-use crate::CommandReplayDelivery;
 use crate::command::{CurrentCommand, HotCommand};
 use crate::error::CommandError;
 
@@ -84,25 +83,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 _ => unreachable!("compact raw delivery has no character or expanded event"),
             }
         }
-    }
-    /// Delivers one raw command or an executor-owned stored-episode
-    /// completion. This is the raw counterpart of
-    /// [`Self::get_x_token_with_replay_completion`].
-    pub fn get_next_with_replay_completion(
-        &mut self,
-    ) -> Result<Option<CommandReplayDelivery<G>>, CommandError> {
-        let mut destination = None;
-        let delivery = self.get_next_with_replay_completion_into(&mut destination)?;
-        Ok(match delivery {
-            super::DeliveryStatus::End => None,
-            super::DeliveryStatus::Command => Some(CommandReplayDelivery::Command(
-                destination.expect("command status initializes destination"),
-            )),
-            super::DeliveryStatus::ReplayCompleted(episode) => {
-                Some(CommandReplayDelivery::Completed(episode))
-            }
-            _ => unreachable!("raw replay-aware delivery has no expanded event"),
-        })
     }
     /// Delivers raw replay-aware input into caller-provided command storage.
     pub fn get_next_with_replay_completion_into(

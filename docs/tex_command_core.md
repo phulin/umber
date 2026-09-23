@@ -89,7 +89,7 @@ The replay seam also retains the executor-side mode projection and obtains
 observable general-text effects (currently `\\message`) through the typed
 structured scanner. Alignment lifecycle state crosses it only as
 `AlignmentRequest`; active-cell delivery uses
-`CommandProcessor::get_x_alignment_delivery`, and an intercepted delimiter is
+`CommandProcessor::get_x_alignment_delivery_into`, and an intercepted delimiter is
 returned to that same processor episode for v-template installation. Thus
 replay does not turn alignment, mode changes, or effects into a second source
 consumer.
@@ -442,13 +442,13 @@ are cloned by command snapshots.
 restart preamble scanning, begin/install/finish a selected cell,
 suspend/resume an outer alignment, and finish the alignment. `CommandState` applies those
 structural requests without receiving a token. Expanded delivery uses
-`CommandProcessor::get_x_alignment_delivery`; an intercepted delimiter is an
+`CommandProcessor::get_x_alignment_delivery_into`; an intercepted delimiter is an
 opaque `AlignmentDeliveryEvent::EndTemplate`, which is handed back to
 `begin_alignment_v_template`. Thus the executor never reclassifies a tab,
 `\span`, or `\cr`, while `off_save` recovery and group policy remain
 executor-owned after the typed event has been delivered.
 
-`get_x_alignment_delivery` also surfaces `AlignmentDelivery::Completed` for
+`get_x_alignment_delivery_into` also surfaces `DeliveryStatus::ReplayCompleted` for
 an executor-owned replay episode (a `\mathchoice` branch or a discretionary
 part) that retires while a cell's own content is being
 delivered -- for example plain.tex's `\vphantom`/`\mathpalette` building a
@@ -461,7 +461,7 @@ substitutions, a trailing operand scan with no lookahead of its own), so the
 next real token the cascade finds can belong to the _enclosing_ cell/field
 context rather than the episode. `scan_alignment_delivery_step` reports this
 as `ColdOperation::ReplayCompleted`, exactly like ordinary `scan_step` already
-does via `get_x_token_with_replay_completion`, rather than risking that
+does via `get_x_token_with_replay_completion_into`, rather than risking that
 enclosing token being misattributed to the just-retired episode.
 
 For TeX82 §§1064, 1066, and 1131 `off_save`, the executor chooses only the
@@ -4693,7 +4693,7 @@ both of the tests those entries then pass hold:
   a raw and an expanded delivery for each of its letters.
 
 Both of main control's fetch sites honor the label: ordinary `scan_step` and
-the alignment cell's `get_x_alignment_delivery`. An alignment cell body is
+the alignment cell's `get_x_alignment_delivery_into`. An alignment cell body is
 ordinary `main_control` material, and neither of that path's recovery
 predicates can fire for the three commands §1038 accepts raw.
 
@@ -4810,7 +4810,7 @@ signature, and the two are not interchangeable.
 `dispatch_main_control_command` owns that label, and every main-control step
 runs through it whatever fetched the command: `scan_step`'s own `get_x_token`,
 §1038's `main_loop_lookahead`, or an alignment cell's
-`get_x_alignment_delivery`. It collects §1211's prefixes and loops; a case that
+`get_x_alignment_delivery_into`. It collects §1211's prefixes and loops; a case that
 reswitches assigns the command it fetched and continues, re-entering prefix
 collection exactly as tex.web's case re-enters through `prefix`.
 

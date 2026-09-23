@@ -926,16 +926,14 @@ fn scalar_and_surface_alignment_handoffs_consume_coordinate_freshness() {
                 &mut fuel,
                 &mut diagnostic_effects,
             );
-            let delimiter = match processor
-                .get_next_with_replay_completion()
-                .expect("scalar delimiter delivery")
-                .expect("scalar delimiter command")
-            {
-                crate::CommandReplayDelivery::Command(delimiter) => delimiter,
-                crate::CommandReplayDelivery::Completed(_) => {
-                    panic!("scalar control expects a command")
-                }
-            };
+            let mut destination = None;
+            assert_eq!(
+                processor
+                    .get_next_with_replay_completion_into(&mut destination)
+                    .expect("scalar delimiter delivery"),
+                DeliveryStatus::Command
+            );
+            let delimiter = destination.expect("scalar delimiter filled caller slot");
             assert!(matches!(
                 delimiter.alignment_adjustment(),
                 super::AlignmentDeliveryAdjustment::Delimiter(_)
@@ -977,16 +975,14 @@ fn scalar_and_surface_alignment_handoffs_consume_coordinate_freshness() {
             &mut fuel,
             &mut diagnostic_effects,
         );
-        let event = match processor
-            .get_x_alignment_delivery(false)
-            .expect("surface delimiter delivery")
-            .expect("surface delimiter event")
-        {
-            crate::AlignmentDelivery::Event(event) => event,
-            crate::AlignmentDelivery::Command(_) | crate::AlignmentDelivery::Completed(_) => {
-                panic!("surface control expects an alignment event")
-            }
-        };
+        let mut destination = None;
+        let status = processor
+            .get_x_alignment_delivery_into(false, &mut destination)
+            .expect("surface delimiter delivery");
+        assert_eq!(status, crate::DeliveryStatus::AlignmentEndTemplate);
+        let event = crate::AlignmentDeliveryEvent::EndTemplate(
+            destination.expect("surface delimiter initializes caller slot"),
+        );
         let stale_event = match &event {
             crate::AlignmentDeliveryEvent::EndTemplate(delimiter) => {
                 crate::AlignmentDeliveryEvent::EndTemplate(delimiter.copy_for_backup())

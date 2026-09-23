@@ -11,7 +11,7 @@ use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 use crate::command::{CommandClass, DeliveryStamp, HotCommand};
 use crate::execution_scratch::ArgumentSetId;
 use crate::input::{InputLevelId, ResidentBoundary};
-use crate::{CommandError, CommandReplayDelivery, CurrentCommand};
+use crate::{CommandError, CurrentCommand};
 
 use super::expand_render::format_pdf_date;
 use super::{
@@ -93,13 +93,6 @@ enum ReadSite {
     Resident,
     Source(Option<u32>),
     Synthetic,
-}
-
-fn static_meaning<G>(meaning: &ResolvedMeaning<G>) -> Option<Meaning> {
-    match meaning {
-        ResolvedMeaning::Static(meaning) => Some(*meaning),
-        ResolvedMeaning::Macro { .. } => None,
-    }
 }
 
 /// The one decision TeX.web §380 makes after raw delivery has resolved the
@@ -1374,16 +1367,11 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     /// Delivers one expanded command to a diagnostic host while preserving
     /// TeX82 §370's undefined command instead of consuming it after recovery.
-    pub fn get_x_token_preserving_undefined(
+    pub fn get_x_token_preserving_undefined_into(
         &mut self,
-    ) -> Result<Option<CurrentCommand<G>>, CommandError> {
-        let mut destination = None;
-        let result = self.expanded_next_preserving_undefined(&mut destination)?;
-        match result {
-            DeliveryStatus::End => Ok(None),
-            DeliveryStatus::Command => Ok(destination),
-            _ => unreachable!("ordinary expanded delivery returns only commands"),
-        }
+        destination: &mut Option<CurrentCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        self.expanded_next_preserving_undefined(destination)
     }
 
     /// TeX.web §381's `x_token` entered with `cur_cmd`/`cur_chr` already set.
@@ -1522,45 +1510,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.back_input_saved(settled)
     }
 
-    /// TeX82 §404's `<Get the next non-blank non-relax non-call token>`:
-    /// `repeat get_x_token until (cur_cmd<>spacer)and(cur_cmd<>relax)`.
-    ///
-    /// This is the shared spelling of that module, used by §403's
-    /// `scan_left_brace`, §1078, §1084, §1151's `scan_math`, §1160's
-    /// non-radical `scan_delimiter`, §1211's `prefixed_command`, §1226 and
-    /// §1270's `scan_optional_equals`. It differs from §406's
-    /// `<Get the next non-blank non-call token>` only by also skipping
-    /// `\relax`, and the two are not interchangeable: §1160 classifies the
-    /// token it stops on, so a `\relax` that reached it as a command rather
-    /// than as a skipped filler would scan as an invalid delimiter.
-    pub fn next_non_blank_non_relax_x_token(
-        &mut self,
-    ) -> Result<Option<CurrentCommand<G>>, CommandError> {
-        let mut destination = None;
-        loop {
-            match self.get_x_token_into(&mut destination)? {
-                DeliveryStatus::End => return Ok(None),
-                DeliveryStatus::Command => {}
-                _ => unreachable!("ordinary expanded delivery returns only commands"),
-            }
-            let command = destination
-                .as_ref()
-                .expect("command status initializes destination");
-            if !matches!(
-                static_meaning(command.meaning_ref()),
-                Some(
-                    Meaning::CharToken {
-                        cat: Catcode::Space,
-                        ..
-                    } | Meaning::Relax
-                )
-            ) {
-                return Ok(destination);
-            }
-            destination = None;
-        }
-    }
-
     /// TeX82 §404's expanded nonblank/non-relax fetch for scanners that can
     /// classify the terminal command directly from the compact delivery.
     ///
@@ -1607,37 +1556,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 return Ok(DeliveryStatus::Command);
             }
             destination.take();
-        }
-    }
-
-    /// TeX82 §406's `<Get the next non-blank non-call token>`:
-    /// `repeat get_x_token until cur_cmd<>spacer`.
-    ///
-    /// Unlike §404's similarly named helper, this preserves `\relax`. The
-    /// returned command is the exact expanded delivery that stopped the
-    /// loop: callers such as §1045's `\ignorespaces` dispatch it in place
-    /// without backing it up or rebuilding its provenance.
-    pub fn next_non_blank_x_token(&mut self) -> Result<Option<CurrentCommand<G>>, CommandError> {
-        let mut destination = None;
-        loop {
-            match self.get_x_token_into(&mut destination)? {
-                DeliveryStatus::End => return Ok(None),
-                DeliveryStatus::Command => {}
-                _ => unreachable!("ordinary expanded delivery returns only commands"),
-            }
-            let command = destination
-                .as_ref()
-                .expect("command status initializes destination");
-            if !matches!(
-                static_meaning(command.meaning_ref()),
-                Some(Meaning::CharToken {
-                    cat: Catcode::Space,
-                    ..
-                })
-            ) {
-                return Ok(destination);
-            }
-            destination = None;
         }
     }
 
@@ -1719,30 +1637,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.back_input(command)
     }
 
-    /// Delivers one expanded command or the completion of an executor-owned
-    /// stored replay episode.
-    ///
-    /// Completion is published after the command machine has retired and
-    /// observed the exact stored level, but before it resumes the enclosing
-    /// source.  Callers must finish the corresponding isolated execution
-    /// lifecycle before requesting another delivery.
-    pub fn get_x_token_with_replay_completion(
-        &mut self,
-    ) -> Result<Option<CommandReplayDelivery<G>>, CommandError> {
-        let mut destination = None;
-        let result = self.get_x_token_with_replay_completion_into(&mut destination)?;
-        Ok(match result {
-            DeliveryStatus::End => None,
-            DeliveryStatus::Command => Some(CommandReplayDelivery::Command(
-                destination.expect("command status initializes destination"),
-            )),
-            DeliveryStatus::ReplayCompleted(episode) => {
-                Some(CommandReplayDelivery::Completed(episode))
-            }
-            _ => unreachable!("ordinary replay-aware delivery has no alignment event"),
-        })
-    }
-
     /// Delivers replay-aware expanded input into caller-provided storage.
     pub fn get_x_token_with_replay_completion_into(
         &mut self,
@@ -1800,23 +1694,6 @@ impl<G> CommandProcessor<'_, '_, G> {
     ///
     /// `char_num` is deliberately *not* in the raw set: §1038 accepts it only
     /// after `x_token`, because `\char` can be reached by expansion.
-    pub fn main_loop_lookahead(
-        &mut self,
-    ) -> Result<Option<CommandReplayDelivery<G>>, CommandError> {
-        let mut destination = None;
-        let result = self.main_loop_lookahead_into(&mut destination)?;
-        Ok(match result {
-            DeliveryStatus::End => None,
-            DeliveryStatus::Command => Some(CommandReplayDelivery::Command(
-                destination.expect("command status initializes destination"),
-            )),
-            DeliveryStatus::ReplayCompleted(episode) => {
-                Some(CommandReplayDelivery::Completed(episode))
-            }
-            _ => unreachable!("main-loop lookahead has no alignment event"),
-        })
-    }
-
     /// Delivers main-loop lookahead into caller-provided command storage.
     pub fn main_loop_lookahead_into(
         &mut self,
