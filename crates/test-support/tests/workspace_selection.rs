@@ -230,33 +230,9 @@ fn current_format_schema_receipts_cover_every_release_surface() {
         },
         HistoricalSchema10Use {
             path: "docs/frozen_format.md",
-            marker: "schema 10 to make token-parameter cell presence",
-            expected_count: 1,
-            reason: "schema-11 migration rationale",
-        },
-        HistoricalSchema10Use {
-            path: "docs/frozen_format.md",
-            marker: "## Migration from schemas 9 and 10",
-            expected_count: 1,
-            reason: "frozen-format migration heading",
-        },
-        HistoricalSchema10Use {
-            path: "docs/frozen_format.md",
             marker: "Schema 10 introduced the",
             expected_count: 1,
             reason: "frozen-format schema history",
-        },
-        HistoricalSchema10Use {
-            path: "docs/frozen_format.md",
-            marker: "Schema 11 is therefore a clean boundary: the loader rejects schemas 9 and 10",
-            expected_count: 1,
-            reason: "frozen-format migration policy",
-        },
-        HistoricalSchema10Use {
-            path: "docs/frozen_format.md",
-            marker: "any schema other than 11, including schemas 9 and 10",
-            expected_count: 1,
-            reason: "frozen-format compatibility failure",
         },
         HistoricalSchema10Use {
             path: "docs/frozen_format.md",
