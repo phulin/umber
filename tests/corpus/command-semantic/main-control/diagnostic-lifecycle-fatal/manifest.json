@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 38,
     "status": "fatal:emergency-stop(End of file on the terminal!)"
   },
   "expected": [

@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 453
   },
   "expected": [
     "effect:shipout:dvi:1",

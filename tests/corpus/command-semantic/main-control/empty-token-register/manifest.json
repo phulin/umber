@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 38,
     "log": {
       "kind": "file"
     },

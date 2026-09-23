@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 34
   },
   "expected": [
     "command:raw:char:letter:110:letter:110",

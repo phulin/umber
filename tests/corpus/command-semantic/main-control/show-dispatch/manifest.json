@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 28
   },
   "expected": [
     "effect:terminate:engine:none",

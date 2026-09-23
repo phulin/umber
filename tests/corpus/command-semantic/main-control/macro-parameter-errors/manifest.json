@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 186
   },
   "expected": [
     "terminal-check:! Parameters must be numbered consecutively.=true",

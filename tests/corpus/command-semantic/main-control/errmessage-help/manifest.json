@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 109
   },
   "expected": [
     "terminal-check:user help=true",

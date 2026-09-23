@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 301
   },
   "expected": [
     "terminal-check:meaning-skip=\\skip3=true",

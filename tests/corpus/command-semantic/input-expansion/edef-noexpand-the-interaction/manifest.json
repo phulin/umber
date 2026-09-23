@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 137
   },
   "expected": [
     "mutation:catcode:123:left_brace:local",

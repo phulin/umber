@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 24
   },
   "expected": [
     "terminal-check:You can't use `\\badness' in vertical mode.=true",

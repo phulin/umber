@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 37
   },
   "expected": [
     "terminal-check:\\end occurred when \\ifnum on line 3 was incomplete=true",

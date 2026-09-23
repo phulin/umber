@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 52
   },
   "expected": [
     "mutation:meaning:line:macro-end-match,char:letter:97,char:letter:108,char:letter:112,char:letter:104,char:letter:97,char:spacer:32:local",

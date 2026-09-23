@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 203
   },
   "expected": [
     "alignment:recovery:1"

@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 523
   },
   "expected": [
     "terminal-check:Missing } inserted=true",

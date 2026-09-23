@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 103
   },
   "expected": [
     "condition:push:ifnum:evaluating:-",

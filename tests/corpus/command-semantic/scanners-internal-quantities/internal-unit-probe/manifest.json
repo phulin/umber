@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 85
   },
   "expected": [
     "scanner:integer:2:-",

@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 604
   },
   "expected": [
     "box:1/0:vlist",

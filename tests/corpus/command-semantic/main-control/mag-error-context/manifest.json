@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 105
   },
   "expected": [
     "terminal-check:Illegal magnification has been changed to 1000 (32769).=true",

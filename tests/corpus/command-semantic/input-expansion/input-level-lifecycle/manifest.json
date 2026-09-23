@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 40
   },
   "expected": [
     "input:backup:backup",

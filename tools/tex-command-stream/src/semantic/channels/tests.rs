@@ -2,7 +2,6 @@ use super::*;
 
 fn contract() -> ChannelContract {
     ChannelContract {
-        events: 3,
         status: "clean".into(),
         terminal: StreamDisposition::Empty,
         log: StreamDisposition::Empty,
@@ -88,16 +87,10 @@ fn a_matching_run_reports_nothing() {
 }
 
 #[test]
-fn an_event_count_change_is_reported() {
+fn an_umber_observation_count_change_does_not_fail_oracle_channels() {
     let mut run = captured();
     run.events = 4;
-    assert_eq!(
-        compare(&run, &contract(), &no_files),
-        vec![ChannelFailure::EventCount {
-            declared: 3,
-            observed: 4
-        }]
-    );
+    assert_eq!(compare(&run, &contract(), &no_files), Vec::new());
 }
 
 #[test]

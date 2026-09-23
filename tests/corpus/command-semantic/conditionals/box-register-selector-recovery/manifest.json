@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 114
   },
   "expected": [
     "predicate:ifhbox:integer=256:true",

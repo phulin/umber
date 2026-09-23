@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 115
   },
   "expected": [
     "command:raw:cs:errorstopmode:set_interaction:3",

@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 301,
     "log": {
       "kind": "file"
     },

@@ -77,11 +77,6 @@
             }
           ]
         },
-        "events": {
-          "format": "uint",
-          "minimum": 0,
-          "type": "integer"
-        },
         "log": {
           "anyOf": [
             {
@@ -110,9 +105,6 @@
           ]
         }
       },
-      "required": [
-        "events"
-      ],
       "type": "object"
     },
     "ChannelMismatch": {

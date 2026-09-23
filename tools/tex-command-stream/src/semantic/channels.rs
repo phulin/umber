@@ -28,8 +28,9 @@ use super::{SemanticRun, valid_bug_id};
 
 /// The stream channels, in the order a report prints them.
 ///
-/// `events` and `status` are scalars rather than streams and are declared
-/// inline in the manifest, so they are not part of this list.
+/// `status` is a scalar rather than a stream and is declared inline in the
+/// manifest, so it is not part of this list. The Umber observation count is
+/// reported for diagnosis, not compared with an oracle-derived value.
 pub const STREAM_CHANNELS: [StreamChannel; 5] = [
     StreamChannel::Terminal,
     StreamChannel::Log,
@@ -76,9 +77,9 @@ impl StreamChannel {
 /// Everything one completed run emitted.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct CapturedChannels {
-    /// Ordered committed observations. Counted rather than committed: the
+    /// Ordered committed observations, reported for diagnosis only. The
     /// canonical event stream has an oracle-backed home in the `tex82`
-    /// fixtures, and duplicating it here would commit an Umber self-golden.
+    /// fixtures; its count is not an independent corpus expectation.
     pub events: usize,
     /// `clean`, or `fatal:<label>` when the job ended through §81 `jump_out`.
     pub status: String,
@@ -444,8 +445,6 @@ pub struct ChannelMismatch {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ChannelContract {
-    /// Exact number of committed observations the run must produce.
-    pub events: usize,
     /// Exact terminal status: `clean`, or `fatal:<label>`.
     pub status: String,
     pub terminal: StreamDisposition,
@@ -519,8 +518,6 @@ pub fn validate_xfail_diagnostics_disposition(
 /// One way a run failed to match its declared channel contract.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ChannelFailure {
-    /// The observation count moved.
-    EventCount { declared: usize, observed: usize },
     /// The terminal status moved.
     Status { declared: String, observed: String },
     /// A channel declared `empty` produced output.
@@ -585,12 +582,6 @@ pub fn compare(
     committed: &dyn Fn(StreamChannel) -> Option<Vec<u8>>,
 ) -> Vec<ChannelFailure> {
     let mut failures = Vec::new();
-    if captured.events != contract.events {
-        failures.push(ChannelFailure::EventCount {
-            declared: contract.events,
-            observed: captured.events,
-        });
-    }
     if captured.status != contract.status {
         failures.push(ChannelFailure::Status {
             declared: contract.status.clone(),

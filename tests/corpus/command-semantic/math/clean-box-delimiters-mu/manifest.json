@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 106
   },
   "expected": [
     "command:left_right:30",

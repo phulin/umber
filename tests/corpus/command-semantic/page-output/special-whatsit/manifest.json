@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 90
   },
   "expected": [
     "command:extension:3",

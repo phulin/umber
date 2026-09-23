@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 345
   },
   "expected": [
     "artifact:94bb73500b42716b671f2a5e97f29f213dca0cfb5c22b4d8eb0755877279d116"

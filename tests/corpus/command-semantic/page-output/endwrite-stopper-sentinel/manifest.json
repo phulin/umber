@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 208
   },
   "expected": [
     "terminal-check:MEANING=[undefined]=true",

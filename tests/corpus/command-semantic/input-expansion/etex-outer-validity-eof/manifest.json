@@ -30,7 +30,6 @@
     "scanner-status:skipping>normal"
   ],
   "channels": {
-    "events": 53,
     "terminal": {
       "kind": "file"
     },

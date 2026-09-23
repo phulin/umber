@@ -308,7 +308,6 @@ pub struct MismatchFingerprint {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ChannelContractV2 {
-    pub events: usize,
     #[serde(default)]
     pub status: Option<String>,
     #[serde(default)]
@@ -333,7 +332,6 @@ impl CaseManifestV2 {
             }
         };
         let channels = self.channels.map(|channels| ChannelContract {
-            events: channels.events,
             status: channels.status.unwrap_or_else(|| "clean".to_owned()),
             terminal: channels
                 .terminal
@@ -569,7 +567,7 @@ pub fn validate_channels(case: &Case, fixture_dir: &Path) -> Result<(), String> 
         }
         return Err(format!(
             "case {} declares no channel contract; every case must declare \
-             events, status, terminal, log, dvi, and effects",
+             status, terminal, log, dvi, effects, and diagnostics",
             case.id
         ));
     };

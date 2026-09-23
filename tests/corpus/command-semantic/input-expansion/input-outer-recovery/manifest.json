@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 77
   },
   "expected": [
     "recovery:backup:char:other_char:61",

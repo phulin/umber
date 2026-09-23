@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 1108
   },
   "expected": [
     "terminal-check:! Bad space factor (0).=true",

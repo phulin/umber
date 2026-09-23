@@ -35,7 +35,6 @@
     "input:stop:terminal"
   ],
   "channels": {
-    "events": 44
   },
   "terminal_lines": [
     "R"

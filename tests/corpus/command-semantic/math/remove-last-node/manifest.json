@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 57
   },
   "expected": [
     "command:raw:cs:unskip:remove_item:10",

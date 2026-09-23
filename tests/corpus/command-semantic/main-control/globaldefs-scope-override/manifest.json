@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 242
   },
   "expected": [
     "terminal-check:g=1,3,4,0=true"

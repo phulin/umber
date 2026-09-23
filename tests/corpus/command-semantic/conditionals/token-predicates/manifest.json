@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 477
   },
   "expected": [
     "predicate:if:-:true",

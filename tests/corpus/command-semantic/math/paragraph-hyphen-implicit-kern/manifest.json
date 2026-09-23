@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 689
   },
   "expected": [
     "command:leader_ship:99",

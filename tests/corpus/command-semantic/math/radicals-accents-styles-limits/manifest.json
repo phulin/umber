@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 110
   },
   "expected": [
     "command:radical:0",

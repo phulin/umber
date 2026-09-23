@@ -3,7 +3,6 @@
     "effects": {
       "kind": "file"
     },
-    "events": 136,
     "log": {
       "kind": "file"
     }

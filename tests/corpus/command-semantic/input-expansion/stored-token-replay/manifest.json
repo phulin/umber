@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 94
   },
   "expected": [
     "macro:activate:b:0:",

@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 144
   },
   "expected": [
     "alignment:state_change:-999999",

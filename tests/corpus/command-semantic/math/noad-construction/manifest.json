@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 76
   },
   "expected": [
     "command:math_comp:17",

@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 30
   },
   "expected": [
     "terminal-check:l.2 \\show\\errorstopmode=true",

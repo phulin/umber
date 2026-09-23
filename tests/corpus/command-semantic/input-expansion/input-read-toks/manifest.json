@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 46
   },
   "expected": [
     "scanner-status:normal>defining",

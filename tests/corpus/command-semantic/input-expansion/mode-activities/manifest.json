@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 5
   },
   "expected": [
     "count:0=0"

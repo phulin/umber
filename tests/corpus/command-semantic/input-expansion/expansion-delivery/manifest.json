@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 14
   },
   "expected": [
     "command:raw:cs:^^@:undefined_cs:-268435455",

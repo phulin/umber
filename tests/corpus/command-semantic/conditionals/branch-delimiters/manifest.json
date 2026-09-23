@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 147
   },
   "expected": [
     "branch:ifcase:evaluating:or",

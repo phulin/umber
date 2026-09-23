@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 146
   },
   "expected": [
     "effect:open:stream:3:deferred.tex",

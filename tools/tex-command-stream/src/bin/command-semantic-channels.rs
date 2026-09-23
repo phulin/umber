@@ -551,7 +551,6 @@ struct CasePlan {
 }
 
 struct ChannelsPlan {
-    events: usize,
     status: String,
     /// In [`STREAM_CHANNELS`] order.
     channels: [ChannelPlan; 5],
@@ -619,7 +618,6 @@ fn plan_case(
         .unwrap_or_else(|_| panic!("STREAM_CHANNELS has exactly 5 entries"));
 
     Ok(ChannelsPlan {
-        events: captured.events,
         status: captured.status.clone(),
         channels,
     })
@@ -880,7 +878,6 @@ fn write_channel_files(fixture_dir: &Path, plan: &CasePlan) -> Result<(), String
 impl ChannelsPlan {
     fn value(&self) -> serde_json::Value {
         let mut fields = serde_json::Map::new();
-        fields.insert("events".to_owned(), self.events.into());
         if self.status != "clean" {
             fields.insert("status".to_owned(), self.status.clone().into());
         }
@@ -993,7 +990,7 @@ mod tests {
                 "  },\n",
                 "  \"projection\": { \"kind\": \"predicate-outcomes\" },\n",
                 "  \"expected\": [\"old\"],\n",
-                "  \"channels\": { \"events\": 1 }\n",
+                "  \"channels\": {}\n",
                 "}\n",
             ),
         )
@@ -1011,7 +1008,6 @@ mod tests {
         let plan = CasePlan {
             expected: Some(vec!["new".to_owned()]),
             channels: Some(ChannelsPlan {
-                events: 2,
                 status: "clean".to_owned(),
                 channels: std::array::from_fn(|_| ChannelPlan::Empty),
             }),
@@ -1028,6 +1024,6 @@ mod tests {
         assert!(authority.contains("\"old\""));
         let manifest = fs::read_to_string(candidate.join("manifest.json")).expect("manifest");
         assert!(manifest.contains("\"new\""));
-        assert!(manifest.contains("\"events\": 2"));
+        assert!(manifest.contains("\"channels\": {}"));
     }
 }

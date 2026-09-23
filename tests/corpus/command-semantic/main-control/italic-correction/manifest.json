@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 135
   },
   "expected": [
     "command:raw:cs:/:ital_corr:0",

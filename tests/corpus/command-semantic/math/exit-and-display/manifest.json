@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 88
   },
   "expected": [
     "command:mkern:99",

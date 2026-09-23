@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 145
   },
   "expected": [
     "terminal-check:! Bad number (-1).=true",

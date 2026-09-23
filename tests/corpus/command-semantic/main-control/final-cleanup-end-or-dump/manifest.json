@@ -19,6 +19,5 @@
     "terminal-check:performed only by INITEX=true"
   ],
   "channels": {
-    "events": 5
   }
 }

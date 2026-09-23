@@ -1,6 +1,5 @@
 {
   "channels": {
-    "events": 663
   },
   "expected": [
     "terminal-check:! Bad \\prevgraf (-1).=true",

@@ -24,7 +24,7 @@ its expectation record pins the first differing index, mismatch kind, expected
 value, and actual value. The runner rejects an XPASS and any different failure;
 it uses no ignored or panic-expected test.
 
-`tests/corpus/command-semantic/manifest.schema.json` is the version-1 data
+`tests/corpus/command-semantic/manifest.schema.json` is the version-2 data
 schema. New property domains add their own `<domain>/manifest.json` and tiny
 sources without editing a Rust case registry or adding another Cargo integration
 binary. The runtime validator also rejects unknown manifest fields, duplicate
