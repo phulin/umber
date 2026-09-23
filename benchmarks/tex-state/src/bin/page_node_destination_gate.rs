@@ -59,9 +59,7 @@ fn construct(arena: &mut PageMaterialArena<'_>, nodes: usize) {
     arena.open_active_list(&mut builder).expect("open builder");
     for penalty in 0..nodes {
         arena
-            .construct_active_list(&mut builder, |slot| {
-                *slot = Some(Node::Penalty(penalty as i32));
-            })
+            .push_active_list(&mut builder, Node::Penalty(penalty as i32))
             .expect("construct resident node");
     }
     let list = arena

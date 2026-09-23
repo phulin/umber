@@ -7,7 +7,7 @@ use tex_state::measurement::{
 use tex_state::scaled::Scaled;
 use tex_state::{
     ContentHash, PdfExternalImageDimensions, PdfExternalImageMetadata, PdfExternalImageSource,
-    PdfRasterColorSpace, PdfRasterFormat, PdfRasterImageMetadata, with_universe,
+    PdfRasterColorSpace, PdfRasterFormat, PdfRasterImageMetadata, SharedBytes, with_universe,
 };
 use tex_state_benchmarks::engine_budget;
 
@@ -36,7 +36,7 @@ fn main() {
                         }),
                         natural_width: Scaled::from_raw(1),
                         natural_height: Scaled::from_raw(1),
-                        bytes: vec![3; payload_bytes],
+                        bytes: SharedBytes::from_vec(vec![3; payload_bytes]),
                     },
                     PdfExternalImageDimensions {
                         width: Scaled::from_raw(1),
@@ -44,6 +44,7 @@ fn main() {
                         depth: Scaled::from_raw(0),
                     },
                     0,
+                    Vec::new(),
                 )
                 .expect("PDF benchmark image");
 
