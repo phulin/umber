@@ -756,7 +756,6 @@ impl<Role> NodeRegion<Role> {
     /// by closure sealing. Production callers may invoke this only after the
     /// PageBuilder, ModeList, operation journal, and checkpoint owner have
     /// removed every root created after `mark`.
-    #[allow(dead_code)] // Production carriers currently retain the compatibility receipt.
     pub(crate) fn consumed_closure_roots_receipt(
         &self,
         mark: &ClosureBuildMark<Role>,
@@ -773,7 +772,6 @@ impl<Role> NodeRegion<Role> {
 
     /// Preflights and detaches one self-contained recursive closure suffix.
     /// Any failure leaves all chunk envelopes attached to this region.
-    #[allow(dead_code)] // Production carriers currently retain the compatibility receipt.
     #[allow(clippy::result_large_err)] // Failure returns the sole move-only build authority.
     pub(crate) fn seal_closure(
         &mut self,
@@ -854,7 +852,6 @@ impl<Role> NodeRegion<Role> {
     }
 
     /// Returns a transient transfer loan to the exact construction suffix.
-    #[allow(dead_code)] // Production carriers currently retain the compatibility receipt.
     #[allow(clippy::result_large_err)] // Failure returns the move-only closure loan without allocation.
     pub(crate) fn rollback_closure(
         &mut self,
@@ -952,7 +949,6 @@ impl<Role> NodeRegion<Role> {
 pub struct ClosureBuildMark<Role> {
     region: NodeRegionId,
     serial: u64,
-    #[allow(dead_code)] // Read by closure sealing once the production carrier cutover lands.
     batch: BatchMark<PageMaterialLane>,
     annex_batch: BatchMark<NodeAnnexLane>,
     rollback: crate::fork_arena::OperationMark<PageMaterialLane>,
@@ -976,7 +972,6 @@ pub type PageClosureBuildMark = ClosureBuildMark<PageRole>;
 /// Consumed proof that no owner-local root outside the closure names its
 /// suffix. It is intentionally neither clonable nor constructible from raw
 /// coordinates.
-#[allow(dead_code)] // Production carriers currently retain the compatibility receipt.
 pub(crate) struct ConsumedClosureRootsReceipt<Role> {
     region: NodeRegionId,
     serial: u64,
@@ -986,20 +981,17 @@ pub(crate) struct ConsumedClosureRootsReceipt<Role> {
 /// Move-only detached closure suffix. Payload addresses remain stable while
 /// this loan is transferred or rolled back.
 #[must_use = "a detached closure loan must be transferred or rolled back"]
-#[allow(dead_code)] // Production carriers currently retain the compatibility receipt.
 pub(crate) struct SealedNodeClosure<Role> {
     source: NodeRegionId,
     root: RegionRoot<Role>,
     batch: NodeEnvelopeBatch,
 }
 
-#[allow(dead_code)] // Production carriers currently retain the compatibility receipt.
 pub(crate) struct SealedNodeClosureError<Role> {
     pub(crate) error: ForkArenaError,
     pub(crate) closure: SealedNodeClosure<Role>,
 }
 
-#[allow(dead_code)] // Production carriers currently retain the compatibility receipt.
 impl<Role> SealedNodeClosureError<Role> {
     pub(crate) fn into_parts(self) -> (ForkArenaError, SealedNodeClosure<Role>) {
         (self.error, self.closure)
@@ -1007,13 +999,11 @@ impl<Role> SealedNodeClosureError<Role> {
 }
 
 /// Failed seal with the original move-only construction authority restored.
-#[allow(dead_code)] // Production carriers currently retain the compatibility receipt.
 pub(crate) struct ClosureSealError<Role> {
     pub(crate) error: ForkArenaError,
     pub(crate) mark: ClosureBuildMark<Role>,
 }
 
-#[allow(dead_code)] // Production carriers currently retain the compatibility receipt.
 impl<Role> ClosureSealError<Role> {
     pub(crate) fn into_parts(self) -> (ForkArenaError, ClosureBuildMark<Role>) {
         (self.error, self.mark)
@@ -1135,7 +1125,6 @@ impl<Role> OwnedNodeClosure<Role> {
 
 /// Commits a detached construction suffix into a destination region. Failed
 /// destination validation returns the move-only suffix loan unchanged.
-#[allow(dead_code)] // Production carriers currently retain the compatibility receipt.
 #[allow(clippy::result_large_err)] // Failure returns the move-only closure loan without allocation.
 pub(crate) fn transfer_sealed_closure_into<Source, Destination>(
     pool: &mut NodePool,
@@ -1367,7 +1356,6 @@ pub(crate) fn copy_region_root_into<Source, Destination>(
 
 /// Explicit bounded structural-copy fallback. The reason is observed but
 /// never used as liveness authority or to select another representation.
-#[allow(dead_code)] // The current production carrier path has no structural fallback call.
 pub(crate) fn structural_copy_fallback<Source, Destination>(
     pool: &mut NodePool,
     source: &NodeRegion<Source>,
