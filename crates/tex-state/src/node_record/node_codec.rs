@@ -1061,10 +1061,7 @@ impl NodeRecord<PageMaterialLane> {
             }),
             NodeKind::Lig if subtype == 0 && flags & !3 == 0 => {
                 let payload =
-                    annex.resolve_fixed_shared(key_from_record::<LigaturePayload>(self))?;
-                if payload.len() != 12 {
-                    return None;
-                }
+                    annex.resolve_fixed_array::<LigaturePayload, 12>(key_from_record(self))?;
                 let mut cursor = 0;
                 let font = decode_font(&payload, &mut cursor)?;
                 let ch = char::from_u32(*payload.get(cursor)?)?;
@@ -1131,10 +1128,7 @@ impl NodeRecord<PageMaterialLane> {
                     }),
                     leader @ (2 | 3) if flags == leader => {
                         let payload = annex
-                            .resolve_fixed_shared(key_from_record::<LeaderBoxPayload>(self))?;
-                        if payload.len() != 32 {
-                            return None;
-                        }
+                            .resolve_fixed_array::<LeaderBoxPayload, 32>(key_from_record(self))?;
                         let spec = decode_glue(payload[..4].try_into().ok()?)?;
                         let boxed = decode_box_payload(&payload[4..])?;
                         Some(Node::Glue {
@@ -1165,7 +1159,7 @@ impl NodeRecord<PageMaterialLane> {
                 })
             }
             NodeKind::HList | NodeKind::VList if subtype == 0 && flags == 0 => {
-                let payload = annex.resolve_fixed_shared(key_from_record::<BoxPayload>(self))?;
+                let payload = annex.resolve_fixed_array::<BoxPayload, 28>(key_from_record(self))?;
                 let boxed = decode_box_payload(&payload)?;
                 Some(if kind == NodeKind::HList {
                     Node::HList(boxed)
@@ -1174,8 +1168,9 @@ impl NodeRecord<PageMaterialLane> {
                 })
             }
             NodeKind::Unset if subtype == 0 => {
-                let payload = annex.resolve_fixed_shared(key_from_record::<UnsetPayload>(self))?;
-                if payload.len() != 15 || flags & !0x1f_ffff != 0 {
+                let payload =
+                    annex.resolve_fixed_array::<UnsetPayload, 15>(key_from_record(self))?;
+                if flags & !0x1f_ffff != 0 {
                     return None;
                 }
                 let mut cursor = 0;
@@ -1199,10 +1194,8 @@ impl NodeRecord<PageMaterialLane> {
                 })))
             }
             NodeKind::Disc if flags <= u8::MAX as u32 => {
-                let payload = annex.resolve_fixed_shared(key_from_record::<DiscPayload>(self))?;
-                if payload.len() != 30 {
-                    return None;
-                }
+                let payload =
+                    annex.resolve_fixed_array::<DiscPayload, 30>(key_from_record(self))?;
                 let mut cursor = 0;
                 Some(Node::Disc {
                     kind: decode_disc_kind(subtype)?,
@@ -1220,10 +1213,7 @@ impl NodeRecord<PageMaterialLane> {
             }
             NodeKind::Ins if subtype == 0 && flags <= u16::MAX as u32 => {
                 let payload =
-                    annex.resolve_fixed_shared(key_from_record::<InsertionPayload>(self))?;
-                if payload.len() != 17 {
-                    return None;
-                }
+                    annex.resolve_fixed_array::<InsertionPayload, 17>(key_from_record(self))?;
                 let mut cursor = 0;
                 let content = decode_page_list(&payload, &mut cursor)?;
                 let split_top_skip = decode_glue(take_words(&payload, &mut cursor)?)?;
@@ -1260,10 +1250,7 @@ impl NodeRecord<PageMaterialLane> {
             }
             NodeKind::MathNoad if subtype == 0 && flags == 0 => {
                 let payload =
-                    annex.resolve_fixed_shared(key_from_record::<MathNoadPayload>(self))?;
-                if payload.len() != 36 {
-                    return None;
-                }
+                    annex.resolve_fixed_array::<MathNoadPayload, 36>(key_from_record(self))?;
                 let mut cursor = 0;
                 Some(Node::MathNoad(MathNoad {
                     kind: decode_noad_kind(&payload, &mut cursor)?,
@@ -1274,10 +1261,7 @@ impl NodeRecord<PageMaterialLane> {
             }
             NodeKind::FractionNoad if subtype == 0 && flags & !7 == 0 => {
                 let payload =
-                    annex.resolve_fixed_shared(key_from_record::<FractionPayload>(self))?;
-                if payload.len() != 23 {
-                    return None;
-                }
+                    annex.resolve_fixed_array::<FractionPayload, 23>(key_from_record(self))?;
                 let mut cursor = 0;
                 let numerator = decode_page_list(&payload, &mut cursor)?;
                 let denominator = decode_page_list(&payload, &mut cursor)?;
@@ -1301,10 +1285,7 @@ impl NodeRecord<PageMaterialLane> {
             }
             NodeKind::MathChoice if subtype == 0 && flags == 0 => {
                 let payload =
-                    annex.resolve_fixed_shared(key_from_record::<MathChoicePayload>(self))?;
-                if payload.len() != 40 {
-                    return None;
-                }
+                    annex.resolve_fixed_array::<MathChoicePayload, 40>(key_from_record(self))?;
                 let mut cursor = 0;
                 Some(Node::MathChoice(MathChoice {
                     display: decode_page_list(&payload, &mut cursor)?,
@@ -1314,10 +1295,8 @@ impl NodeRecord<PageMaterialLane> {
                 }))
             }
             NodeKind::MathList if subtype == 0 && flags <= 1 => {
-                let payload = annex.resolve_fixed_shared(key_from_record::<ListPayload>(self))?;
-                if payload.len() != 10 {
-                    return None;
-                }
+                let payload =
+                    annex.resolve_fixed_array::<ListPayload, 10>(key_from_record(self))?;
                 let mut cursor = 0;
                 Some(Node::MathList(MathListNode {
                     display: flags == 1,
@@ -1330,10 +1309,8 @@ impl NodeRecord<PageMaterialLane> {
                 Some(Node::Nonscript)
             }
             NodeKind::Adjust if subtype == 0 && flags <= 1 => {
-                let payload = annex.resolve_fixed_shared(key_from_record::<ListPayload>(self))?;
-                if payload.len() != 10 {
-                    return None;
-                }
+                let payload =
+                    annex.resolve_fixed_array::<ListPayload, 10>(key_from_record(self))?;
                 let mut cursor = 0;
                 Some(Node::Adjust(AdjustNode {
                     content: decode_page_list(&payload, &mut cursor)?,

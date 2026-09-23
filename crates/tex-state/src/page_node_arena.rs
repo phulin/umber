@@ -2177,7 +2177,10 @@ impl<'a> PageMaterialArena<'a> {
 
     #[must_use]
     pub fn contains(&self, list: PageListId) -> bool {
-        self.list(list).is_ok()
+        self.region
+            .pub_arena
+            .validated_list(&self.pool.chunks, list.coordinate())
+            .is_ok_and(|view| page_list_is_decodable(view, self.annex_view()))
     }
 
     #[must_use]
@@ -2284,6 +2287,16 @@ fn materialize_page_list(
         #[cfg(any(test, feature = "testing"))]
         traversal_counters,
     })
+}
+
+/// Checks the admitted root and every compact record without collecting nodes.
+fn page_list_is_decodable(
+    view: ArenaListView<'_, PageMaterialNode, PageMaterialLane>,
+    annex: NodeAnnexView<'_>,
+) -> bool {
+    let mut valid = true;
+    view.for_each(|record| valid &= record.decode_owned(annex).is_some());
+    valid
 }
 
 /// Read-only admitted access used by retained history and format capture.
@@ -2413,7 +2426,16 @@ impl<'a> PageMaterialView<'a> {
 
     #[must_use]
     pub fn contains(&self, list: PageListId) -> bool {
-        self.list(list).is_ok()
+        self.state
+            .region
+            .pub_arena
+            .validated_list(&self.pool.chunks, list.coordinate())
+            .is_ok_and(|view| {
+                page_list_is_decodable(
+                    view,
+                    NodeAnnexView::new(&self.pool.annex_chunks, &self.state.region.annex_arena),
+                )
+            })
     }
 
     #[must_use]

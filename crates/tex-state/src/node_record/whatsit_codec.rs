@@ -481,8 +481,9 @@ pub(super) fn decode_whatsit_value(
     let zero_tail = |start: usize| words[start..].iter().all(|word| *word == 0);
     let value = match subtype {
         0 if flags == 0 => {
-            let payload = annex.resolve_fixed_shared(key_from_record::<OpenOutPayload>(record))?;
-            if payload.len() != 8 || payload[7] >= 16 {
+            let payload =
+                annex.resolve_fixed_array::<OpenOutPayload, 8>(key_from_record(record))?;
+            if payload[7] >= 16 {
                 return None;
             }
             let path = detach_bytes(
@@ -502,10 +503,8 @@ pub(super) fn decode_whatsit_value(
             tokens: NodeTokenKey::from_coordinates(words[..6].try_into().ok()?),
         },
         3 if flags == 0 => {
-            let payload = annex.resolve_fixed_shared(key_from_record::<SpecialPayload>(record))?;
-            if payload.len() != 14 {
-                return None;
-            }
+            let payload =
+                annex.resolve_fixed_array::<SpecialPayload, 14>(key_from_record(record))?;
             Whatsit::Special {
                 class: String::from_utf8(detach_bytes(
                     annex,
@@ -520,10 +519,7 @@ pub(super) fn decode_whatsit_value(
         }
         4 if flags == 0 => {
             let payload =
-                annex.resolve_fixed_shared(key_from_record::<DeferredSpecialPayload>(record))?;
-            if payload.len() != 13 {
-                return None;
-            }
+                annex.resolve_fixed_array::<DeferredSpecialPayload, 13>(key_from_record(record))?;
             Whatsit::DeferredSpecial {
                 class: String::from_utf8(detach_bytes(
                     annex,
@@ -563,10 +559,7 @@ pub(super) fn decode_whatsit_value(
         15 if flags == 0 && words.iter().all(|word| *word == 0) => Whatsit::PdfRestore,
         16 if flags == 0 => {
             let payload =
-                annex.resolve_fixed_shared(key_from_record::<PdfColorStackPayload>(record))?;
-            if payload.len() != 10 {
-                return None;
-            }
+                annex.resolve_fixed_array::<PdfColorStackPayload, 10>(key_from_record(record))?;
             let present = decode_bool(payload[2])?;
             let key = AnnexKey::<ByteSpan>::from_words(payload[3..].try_into().ok()?);
             let bytes = || detach_bytes(annex, key);
@@ -615,8 +608,8 @@ pub(super) fn decode_whatsit_value(
         }
         23 => {
             let payload =
-                annex.resolve_fixed_shared(key_from_record::<PdfDestinationPayload>(record))?;
-            if payload.len() != 12 || flags >> 8 != 0 {
+                annex.resolve_fixed_array::<PdfDestinationPayload, 12>(key_from_record(record))?;
+            if flags >> 8 != 0 {
                 return None;
             }
             let identifier = decode_identifier(payload[0], payload[1..7].try_into().ok()?)?;
@@ -631,10 +624,7 @@ pub(super) fn decode_whatsit_value(
         }
         24 if flags & !0xf == 0 => {
             let payload =
-                annex.resolve_fixed_shared(key_from_record::<PdfThreadPayload>(record))?;
-            if payload.len() != 16 {
-                return None;
-            }
+                annex.resolve_fixed_array::<PdfThreadPayload, 16>(key_from_record(record))?;
             Whatsit::PdfThread(Box::new(PdfThreadNode {
                 identifier: decode_identifier(payload[0], payload[1..7].try_into().ok()?)?,
                 dimensions: decode_pdf_dimensions(payload[7..10].try_into().ok()?, flags & 7)?,

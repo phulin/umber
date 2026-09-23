@@ -3,7 +3,8 @@ use super::{
 };
 use crate::fork_arena::ForkArenaError;
 use crate::glue::Order;
-use crate::node::{BoxLr, BoxNode, BoxNodeFields, Node, Sign};
+use crate::node::{BoxLr, BoxNode, BoxNodeFields, Node, NodeKind, Sign};
+use crate::node_record::NodeRecord;
 use crate::node_region::NodePool;
 use crate::node_sequence::SemanticSequenceIdentity;
 use crate::scaled::{GlueSetRatio, Scaled};
@@ -48,6 +49,76 @@ fn boxed(children: PageListId) -> PageMaterialNode {
         glue_order: Order::Normal,
         children,
     }))
+}
+
+#[test]
+fn contains_checks_records_without_materializing_an_ordinary_list() {
+    const ALLOCATION_OWNER: usize = 15;
+    page_arena!(arena, pool, state, 32);
+    let child = arena.publish_owned(penalties(&[3, 4])).expect("child list");
+    let root = arena.publish_owned([boxed(child)]).expect("box root");
+    let long = arena
+        .publish_owned(penalties(&(0..4_096).collect::<Vec<_>>()))
+        .expect("long list");
+
+    let before = thread_measurement(ALLOCATION_OWNER);
+    {
+        let _scope = scope(ALLOCATION_OWNER);
+        assert!(arena.contains(root));
+        assert!(arena.contains(long));
+    }
+    let after = thread_measurement(ALLOCATION_OWNER);
+    assert_eq!(
+        AllocationMeasurement {
+            calls: after.calls.saturating_sub(before.calls),
+            requested_bytes: after.requested_bytes.saturating_sub(before.requested_bytes),
+        },
+        AllocationMeasurement::default()
+    );
+
+    let view = super::PageMaterialView::new(&pool, &state);
+    assert!(view.contains(root));
+    assert!(view.contains(long));
+}
+
+#[test]
+fn contains_rejects_stale_foreign_and_malformed_compact_roots() {
+    page_arena!(arena, pool, state, 32);
+    let accepted = arena.publish_owned(penalties(&[1])).expect("live list");
+    let mark = arena.operation_mark();
+    let stale = arena.publish_owned(penalties(&[2])).expect("suffix list");
+    arena.restore_operation(mark).expect("restore suffix");
+    assert!(arena.contains(accepted));
+    assert!(!arena.contains(stale));
+
+    let malformed = arena
+        .publish_owned([Node::Lig {
+            font: crate::font::NULL_FONT,
+            ch: 'f',
+            orig: vec!['f'],
+            left_hit: false,
+            right_hit: false,
+            origins: vec![],
+        }])
+        .expect("variable-payload root");
+    arena
+        .region
+        .pub_arena
+        .with_single_value_mut(&mut arena.pool.chunks, malformed.coordinate(), |record| {
+            *record = NodeRecord::new(NodeKind::Lig, 0, 0, [0; 7]);
+        })
+        .expect("test-only corruption");
+    assert!(!arena.contains(malformed));
+
+    let view = super::PageMaterialView::new(&pool, &state);
+    assert!(view.contains(accepted));
+    assert!(!view.contains(stale));
+    assert!(!view.contains(malformed));
+
+    page_arena!(other, other_pool, other_state, 32);
+    let foreign = other.publish_owned(penalties(&[9])).expect("foreign root");
+    assert!(!view.contains(foreign));
+    assert!(!other.contains(accepted));
 }
 
 #[test]

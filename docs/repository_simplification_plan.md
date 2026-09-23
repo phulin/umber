@@ -396,6 +396,17 @@ Do not assume a commented prototype is the production storage representation.
 The compatibility module still has production and public consumers; its
 comment and dead-code allowance are insufficient deletion evidence.
 
+The bounded node-view pass keeps the public `NodeArena` and cold
+`list`/`span_list` APIs. It removes unused private page aliases and moves the
+borrowed `NodeView` and `NodeCursor` projections behind public reexports in
+`node_arena`. Output-box kind and dimension queries now use a borrowed cursor.
+Page-list membership checks admit the compact root and validate each record
+without collecting an owned list. The existing decoder reads fixed-size annex
+payloads into stack arrays, so ordinary box, penalty, and math records avoid
+allocation during this check. Ligature source and variable-byte whatsit
+decoding still allocate; the membership check shares their cold decoder so
+malformed-record rejection follows the same rules.
+
 Decompose `world.rs` around resource/input records, effect publication,
 artifact/provenance values, and host services. Keep its transactional boundary
 explicit; do not turn every piece into a separately checkpointed service.

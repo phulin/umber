@@ -2039,8 +2039,8 @@ impl<'a, G> CommandContext<'a, G> {
         if index == u16::from(u8::MAX) {
             let root = self.page.output_box();
             if !root.is_empty() {
-                let list = self.page_nodes.list(root).ok()?;
-                return match (list.len(), list.get(0).map(crate::NodeView::from)) {
+                let list = self.page_nodes.node_cursor(root).ok()?;
+                return match (list.len(), list.get(0)) {
                     (1, Some(crate::NodeView::HList(_))) => Some(CommandBoxKind::Horizontal),
                     (1, Some(crate::NodeView::VList(_))) => Some(CommandBoxKind::Vertical),
                     _ => None,
@@ -2109,8 +2109,8 @@ impl<'a, G> CommandContext<'a, G> {
         if index == u16::from(u8::MAX) {
             let root = self.page.output_box();
             if !root.is_empty() {
-                let list = self.page_nodes.list(root).ok()?;
-                let node = match (list.len(), list.get(0).map(crate::NodeView::from)) {
+                let list = self.page_nodes.node_cursor(root).ok()?;
+                let node = match (list.len(), list.get(0)) {
                     (1, Some(crate::NodeView::HList(node) | crate::NodeView::VList(node))) => node,
                     _ => return None,
                 };

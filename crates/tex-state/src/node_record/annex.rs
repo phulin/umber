@@ -447,6 +447,7 @@ impl<'a> NodeAnnexView<'a> {
         Some(view)
     }
 
+    #[cfg(test)]
     pub(crate) fn resolve_fixed_shared<Kind>(self, key: AnnexKey<Kind>) -> Option<Vec<u32>> {
         self.detach_span(key)
     }
