@@ -194,6 +194,10 @@ impl HtmlFontAssets for BrokenFont {
         web.ahash64 = AHash64::for_bytes(HashDomain::HtmlResource, &web.woff2).to_le_bytes();
         Ok(web)
     }
+
+    fn realized_opentype(&self, _font: &FontResource) -> Option<&tex_fonts::OpenTypeFont> {
+        None
+    }
 }
 
 impl HtmlFontAssets for Resolver {
@@ -213,6 +217,10 @@ impl HtmlFontAssets for Resolver {
             embeddable: true,
         })
     }
+
+    fn realized_opentype(&self, _font: &FontResource) -> Option<&tex_fonts::OpenTypeFont> {
+        None
+    }
 }
 
 struct SingleScalarResolver;
@@ -222,6 +230,10 @@ impl HtmlFontAssets for SingleScalarResolver {
         let mut web = Resolver { missing_b: false }.font_asset(font)?;
         web.encoding[usize::from(b'B')] = Some("B".to_owned());
         Ok(web)
+    }
+
+    fn realized_opentype(&self, _font: &FontResource) -> Option<&tex_fonts::OpenTypeFont> {
+        None
     }
 }
 
@@ -246,6 +258,10 @@ impl HtmlFontAssets for OrderedResolver {
             embeddable: true,
         })
     }
+
+    fn realized_opentype(&self, _font: &FontResource) -> Option<&tex_fonts::OpenTypeFont> {
+        None
+    }
 }
 
 struct CountingResolver {
@@ -256,6 +272,10 @@ impl HtmlFontAssets for CountingResolver {
     fn font_asset(&self, font: &FontResource) -> Result<HtmlFontAsset, String> {
         self.calls.set(self.calls.get() + 1);
         OrderedResolver.font_asset(font)
+    }
+
+    fn realized_opentype(&self, _font: &FontResource) -> Option<&tex_fonts::OpenTypeFont> {
+        None
     }
 }
 
@@ -273,6 +293,10 @@ impl HtmlFontAssets for MathResolver {
             provenance: "STIX Two Math under the SIL OFL".to_owned(),
             embeddable: true,
         })
+    }
+
+    fn realized_opentype(&self, _font: &FontResource) -> Option<&tex_fonts::OpenTypeFont> {
+        None
     }
 }
 

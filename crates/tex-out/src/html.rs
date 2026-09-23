@@ -62,11 +62,9 @@ pub trait HtmlFontAssets {
     fn font_asset(&self, font: &FontResource) -> Result<HtmlFontAsset, String>;
 
     /// Returns the validated program selected during layout when the output
-    /// closure retains it. The default keeps existing resolver implementations
-    /// source-compatible; their asset is decoded once during validation.
-    fn realized_opentype(&self, _font: &FontResource) -> Option<&tex_fonts::OpenTypeFont> {
-        None
-    }
+    /// closure retains it. Return `None` only when the selected asset must be
+    /// decoded during validation.
+    fn realized_opentype(&self, font: &FontResource) -> Option<&tex_fonts::OpenTypeFont>;
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
