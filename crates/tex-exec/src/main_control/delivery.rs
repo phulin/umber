@@ -1932,15 +1932,7 @@ pub(super) fn scan_code_table_assignment<G>(
     primitive: UnexpandablePrimitive,
     global: bool,
 ) -> Result<(), ExecError> {
-    let status =
-        processor.scan_restricted_integer_into(RestrictedIntegerClass::CharacterCode, scalar);
-    let character = take_operation_scalar!(scalar, status, take_restricted).value;
-    let character =
-        char::from_u32(character as u32).expect("scan_char_num returns a valid character");
-    let status = processor.scan_optional_equals_into(scalar);
-    let _ = take_operation_scalar!(scalar, status, take_boolean);
-    let status = processor.scan_integer_into(scalar);
-    let value = take_operation_scalar!(scalar, status, take_integer).value;
+    let (character, value) = scan_code_table_operands(processor, scalar)?;
     complete_cold_scan!(
         cold,
         ColdOperation::CodeTable {
@@ -1950,6 +1942,25 @@ pub(super) fn scan_code_table_assignment<G>(
             global,
         }
     )
+}
+
+/// TeX82 §1230's shared `def_code` operand order for every code table.
+/// The hot `\catcode` path and the other cold table paths must consume the
+/// character selector, optional equals, and signed value identically.
+pub(super) fn scan_code_table_operands<G>(
+    processor: &mut CommandProcessor<'_, '_, G>,
+    scalar: &mut tex_command::ScalarScanFrame,
+) -> Result<(char, i32), ExecError> {
+    let status =
+        processor.scan_restricted_integer_into(RestrictedIntegerClass::CharacterCode, scalar);
+    let character = take_operation_scalar!(scalar, status, take_restricted).value;
+    let character =
+        char::from_u32(character as u32).expect("scan_char_num returns a valid character");
+    let status = processor.scan_optional_equals_into(scalar);
+    let _ = take_operation_scalar!(scalar, status, take_boolean);
+    let status = processor.scan_integer_into(scalar);
+    let value = take_operation_scalar!(scalar, status, take_integer).value;
+    Ok((character, value))
 }
 
 pub(super) fn scan_pdf_font_code_assignment<G>(

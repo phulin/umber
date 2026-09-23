@@ -131,15 +131,7 @@ pub(super) fn scan_catcode_assignment<G>(
     scalar: &mut tex_command::ScalarScanFrame,
     global: bool,
 ) -> Result<HotOperation<G>, ExecError> {
-    let status =
-        processor.scan_restricted_integer_into(RestrictedIntegerClass::CharacterCode, scalar);
-    let character = take_operation_scalar!(scalar, status, take_restricted).value;
-    let character =
-        char::from_u32(character as u32).expect("scan_char_num returns a valid character");
-    let status = processor.scan_optional_equals_into(scalar);
-    let _ = take_operation_scalar!(scalar, status, take_boolean);
-    let status = processor.scan_integer_into(scalar);
-    let value = take_operation_scalar!(scalar, status, take_integer).value;
+    let (character, value) = scan_code_table_operands(processor, scalar)?;
     Ok(HotOperation::CatCode {
         character,
         value,
@@ -306,19 +298,8 @@ fn apply_catcode<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     command: &mut CommandMachine<'_, '_, G>,
 ) -> Result<ReplayStep, ExecError> {
-    let mut value = raw_value;
-    if !(0..=15).contains(&value) {
-        let context = command.state.output_open_context(stores);
-        let mut report = stores.print_err("Invalid code (");
-        report
-            .print_int(value)
-            .print("), should be in the range 0..")
-            .print_int(15)
-            .help(&["I changed this one to zero."])
-            .context(context);
-        report.error().defer_recovery(command.diagnostic_effects)?;
-        value = 0;
-    }
+    let value =
+        recover_code_table_value(UnexpandablePrimitive::CatCode, raw_value, stores, command)?;
     let catcode = catcode_from_value(value)?;
     let old = stores.catcode(character);
     let committed = AssignmentCommitter::new(stores, command.diagnostic_effects)

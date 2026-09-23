@@ -27,3 +27,14 @@ replay, and completion. `command_episode.rs` owns admitted command and typed
 cold payload state; `settlement.rs` owns commit and rollback. Moving methods
 across these private files must preserve the same `MainControl` methods,
 resource errors, and observable terminal, effect, and artifact ordering.
+
+TeX82 code-table assignments scan their character selector, optional equals,
+and signed value through one operand helper in `delivery.rs`. Hot `\catcode`
+and the cold `\lccode`, `\uccode`, `\sfcode`, `\mathcode`, and `\delcode`
+paths then share the value bounds and invalid-code zero recovery in
+`code_table.rs`. Their distinct committers remain responsible for scoped
+mutation, tracing, and ordered publication. The committed command-semantic
+`etex-def-code-profile` case checks delivery of all six commands; the TeX82
+`command-transitions-v1` fixture checks the command, terminal, log, and effect
+channels of the wider assignment sequence. Focused executor tests cover local
+recovery and later global writes without changing the reference fixtures.

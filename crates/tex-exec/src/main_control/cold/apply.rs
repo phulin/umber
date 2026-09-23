@@ -1054,34 +1054,12 @@ pub(in crate::main_control) fn apply<G>(
             value,
             global,
         } => {
-            let mut value = *value;
             // TeX82 §§1230--1234's `def_code` reports an invalid table
             // value after scanning it, substitutes zero, and commits the
             // assignment. In particular, this is not an operation failure:
             // rolling the command snapshot back would reread the operand and
             // lose ownership of the following input.
-            let maximum = match primitive {
-                UnexpandablePrimitive::CatCode => 15,
-                UnexpandablePrimitive::LcCode | UnexpandablePrimitive::UcCode => 255,
-                UnexpandablePrimitive::SfCode => 32_767,
-                UnexpandablePrimitive::MathCode => 32_768,
-                UnexpandablePrimitive::DelCode => 0xFF_FFFF,
-                _ => unreachable!("only code-table primitives are scanned"),
-            };
-            let valid = (0..=maximum).contains(&value)
-                || (*primitive == UnexpandablePrimitive::DelCode && value == -1);
-            if !valid {
-                let context = command.state.output_open_context(&**stores);
-                let mut report = stores.print_err("Invalid code (");
-                report
-                    .print_int(value)
-                    .print("), should be in the range 0..")
-                    .print_int(maximum)
-                    .help(&["I changed this one to zero."])
-                    .context(context);
-                report.error().defer_recovery(command.diagnostic_effects)?;
-                value = 0;
-            }
+            let value = recover_code_table_value(*primitive, *value, stores, command)?;
             match primitive {
                 UnexpandablePrimitive::CatCode => {
                     unreachable!("measured catcode assignments are owned by hot_apply")

@@ -38,6 +38,11 @@ Command operands are scanned by `tex-command` into typed request and result valu
   expansion, alignment interception, and general operand scanning. Ordinary
   scanner helpers keep their typed results local and publish only completed
   cold leaves; a resource miss unwinds the attempt for full-checkpoint replay.
+  TeX82 code-table assignments share one selector/equal/value operand scan
+  between the hot catcode and cold table paths.
+- `src/main_control/code_table.rs`: the shared TeX82 code-table value bounds,
+  diagnostic, and zero-substitution rule. It returns a scanned value to the
+  existing hot or cold assignment committer; it owns no command or table state.
 - `src/main_control/command_episode.rs`: the singular stationary
   `CommandEpisode`, admitted command and delivery cursor, adjacent
   caller-owned typed cold slot, and borrow-typed hot/cold execution episodes.

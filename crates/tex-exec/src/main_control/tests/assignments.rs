@@ -1448,6 +1448,52 @@ fn etex_identical_local_code_reassignment_is_a_save_stack_noop() {
     });
 }
 #[test]
+fn code_table_invalid_values_recover_before_scoped_commit() {
+    // TeX82 §1230 substitutes zero after consuming the bad value. Both the
+    // fused catcode path and the cold lccode path must publish that local
+    // assignment, restore it at group exit, then accept a global write.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\def\aftercat{\message{AFTER-CATCODE}}
+                \def\afterlc{\message{AFTER-LCCODE}}
+                \catcode63=12 \lccode65=65
+                {\afterassignment\aftercat\catcode63=16
+                 \afterassignment\afterlc\lccode65=256
+                 \ifnum\catcode63=0 \global\count0=1\fi
+                 \ifnum\lccode65=0 \global\count1=1\fi}
+                \ifnum\catcode63=12 \global\count2=1\fi
+                \ifnum\lccode65=65 \global\count3=1\fi
+                \global\catcode63=13 \global\lccode65=122 \end",
+        );
+        run_to_end(&mut control, stores);
+
+        assert_eq!(stores.count(0).expect("catcode recovery flag"), 1);
+        assert_eq!(stores.count(1).expect("lccode recovery flag"), 1);
+        assert_eq!(stores.count(2).expect("catcode restore flag"), 1);
+        assert_eq!(stores.count(3).expect("lccode restore flag"), 1);
+        assert_eq!(stores.catcode('?'), Catcode::Active);
+        assert_eq!(admitted!(stores, |context| context.lccode('A')), 122);
+        let terminal = terminal_text(stores);
+        let log = pending_sink_text(stores, false);
+        for output in [&terminal, &log] {
+            let positions = [
+                "Invalid code (16), should be in the range 0..15",
+                "AFTER-CATCODE",
+                "Invalid code (256), should be in the range 0..255",
+                "AFTER-LCCODE",
+            ]
+            .map(|message| {
+                output
+                    .find(message)
+                    .unwrap_or_else(|| panic!("missing {message:?} in {output:?}"))
+            });
+            assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
+        }
+    });
+}
+#[test]
 fn etex_zero_glue_parameter_reassignment_uses_canonical_pointer_identity() {
     // e-TeX §277 suppresses a local `eq_define` when both its type and
     // halfword identity are unchanged. TeX82 §1237 traps a scanned zero glue

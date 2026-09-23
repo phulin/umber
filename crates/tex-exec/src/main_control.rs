@@ -101,6 +101,7 @@ macro_rules! complete_cold_scan {
     }};
 }
 
+mod code_table;
 mod cold;
 mod command_episode;
 mod delivery;
@@ -110,6 +111,8 @@ mod hot_apply;
 mod resources;
 mod root_source;
 mod settlement;
+
+use code_table::recover_code_table_value;
 
 use cold::*;
 use command_episode::*;
@@ -6889,6 +6892,10 @@ impl<G> MainControl<G> {
         let observing = self.operation_observations.is_some();
         let mut assignment_receipts = observing.then(Vec::new);
         let fires_afterassignment = operation.fires_afterassignment();
+        let invalid_catcode = matches!(
+            operation,
+            hot_apply::HotOperation::CatCode { value, .. } if !(0..=15).contains(value)
+        );
         // TeX82 §1211's measured definition, let, and catcode arms reach
         // §1269's `done` label without an intervening host transition. Retain
         // the episode's authoritative borrow through semantic apply, evidence
@@ -6933,7 +6940,10 @@ impl<G> MainControl<G> {
         // before another command is delivered. Capture the page facts
         // from this existing admission rather than opening another
         // command context after the callback closes.
-        if result.is_err() || !fires_afterassignment {
+        // Invalid catcodes emit a diagnostic host effect before substituting
+        // zero. Their mutation still uses the hot committer, but effect
+        // observation and afterassignment must settle after this admission.
+        if result.is_err() || !fires_afterassignment || invalid_catcode {
             return HotApplyAdmission {
                 result,
                 main_loop_active: None,
