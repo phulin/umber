@@ -192,8 +192,9 @@ stream, or an unbounded log into the artifact.
 
 Gating channels are compared in semantic diagnostic order: canonical schema-v1
 command events (including manifest/header identity), transcript, log, then
-normalized DVI. The identity-separated schema-v2 geometry stream is compared
-and counted independently as advisory diagnostics. Complete TeX82 §638
+normalized DVI. The identity-separated TeX82 schema-v3 or e-TRIP schema-v2
+geometry stream is compared and counted independently as advisory diagnostics.
+Complete TeX82 §638
 shipout memory-usage records are likewise counted independently as advisory;
 memory-like arbitrary text and every neighboring diagnostic remain byte-exact.
 For e-TRIP only, the separately documented terminal engine-usage projection is

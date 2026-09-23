@@ -40,7 +40,8 @@ pub struct TripTriageChannels<'a> {
     pub initialization_events: Option<&'a [u8]>,
     /// Canonical schema-v1 JSONL. `None` is itself a meaningful mismatch.
     pub command_events: Option<&'a [u8]>,
-    /// Canonical schema-v2 or schema-v3 geometry JSONL, kept identity-separate from v1.
+    /// Current e-TRIP schema-v2 or TeX82 schema-v3 geometry JSONL, kept
+    /// identity-separate from command schema v1.
     pub geometry_events: Option<&'a [u8]>,
     pub transcript: &'a [u8],
     pub log: &'a [u8],
@@ -1670,7 +1671,7 @@ mod tests {
     }
 
     #[test]
-    fn schema_two_geometry_remains_compatible() {
+    fn current_etrip_schema_two_geometry_compares() {
         let temp = tempfile::tempdir().expect("temp");
         let command = events(1);
         let geometry = geometry_events(117);

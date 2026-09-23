@@ -534,7 +534,7 @@ fn geometry_round_trips_with_scaled_point_units() {
 }
 
 #[test]
-fn schema_v3_geometry_round_trips_source_provenance_and_accepts_legacy_v2_shape() {
+fn geometry_round_trips_located_v3_and_current_positionless_etrip_v2_shape() {
     let attributed = GeometryEvent::Hpack {
         width_sp: 1,
         height_sp: 2,
@@ -553,7 +553,7 @@ fn schema_v3_geometry_round_trips_source_provenance_and_accepts_legacy_v2_shape(
         serde_json::from_str::<GeometryEvent>(
             r#"{"transition":"hpack","width_sp":1,"height_sp":2,"depth_sp":3}"#,
         )
-        .expect("decode legacy v2 geometry"),
+        .expect("decode e-TRIP v2 geometry"),
         GeometryEvent::Hpack {
             width_sp: 1,
             height_sp: 2,

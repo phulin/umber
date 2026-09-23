@@ -24,31 +24,34 @@ schema-v1, schema-v2, and schema-v3 canonical JSON bytes, identities,
 normalization rules, validation precedence, comparison keys, and report text
 remain unchanged.
 
-## Geometry schema v2 compatibility
+## Geometry schemas for TeX82 and e-TRIP
 
 Schema v1 is immutable and remains the format of all committed command fixtures. Schema v2 adds a detached `geometry` semantic event with three transitions: `hpack` and `vpack` contain finalized `width_sp`, `height_sp`, and `depth_sp`; `shipout` contains final `page_width_sp` and `page_height_sp`. Every value is a signed TeX scaled point (1/65536 pt). No node, pointer, memory, glue-ratio, selector, or output-driver identity is observable.
 
 Schema version participates in both manifest and stream domain hashes. The
 established v1 observer and decoder remain byte-for-byte compatible and do not
-accept geometry records. The TeX82 geometry profile selects the v2 header
-before emitting the detached `GeometryEvent` contract, while Umber observation
-is separately opt-in through schema-v2 stream selection. Existing v1
+accept geometry records. The current TeX82 geometry profile selects the v3
+header and source-located `GeometryEvent` contract; Umber selects that schema
+from the committed reference header. Existing v1
 observers, fixtures, JSON, headers, and identities remain byte-for-byte
 unchanged.
 
-The reference profile is a separately built writable executable and runs only
+The TeX82 reference profile is a separately built writable executable and runs only
 `tests/tex82-oracle/geometry.tex`. Its committed
-`geometry-expected.jsonl` projection is a standalone canonical schema-v2 stream
+`geometry-expected.jsonl` projection is a standalone canonical schema-v3 stream
 that pins event order and signed scaled-point values. The microfixture covers
 an explicit hbox and vbox, a font-independent paragraph line packed to
 `\hsize`, an explicit shipment, and the end-of-job page-builder shipment. The
 hooks observe the single finalized seams from tex.web §§633, 668, and 664:
 `hpack`, `vpackage`, then `ship_out`. The native differential tracer replays
-this source with schema-v2 observation enabled and compares only the same
+this source with schema-v3 observation enabled and compares only the same
 detached geometry projection. It reports and counts dimension and page-total
 mutations as advisory, non-gating `geometry_mismatch` diagnostics with both
 signed scaled-point records. Geometry equality never changes conformance
 acceptance; command-v1 and ordinary output channels retain their gates.
+The distinct e-TeX 2.6 e-TRIP reference instrument still emits current
+schema-v2 positionless geometry; its generated e-TRIP channel is not the
+committed TeX82 microfixture.
 
 No Gentle or other full document is part of this differential fixture. To run
 the exhaustive full-document diagnostic manually after its local prerequisites
@@ -62,7 +65,7 @@ cargo run -q -p tex-command-stream --bin tex-command-stream -- --repository . \
 ```
 
 That manual run retains the generated-document registry's schema-v1 command
-stream and the committed schema-v2 geometry microfixture. Do not copy Gentle,
+stream and the committed schema-v3 geometry microfixture. Do not copy Gentle,
 its generated trace, or any projection derived from it into the committed
 native-test registry.
 
