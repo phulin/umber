@@ -32,7 +32,7 @@ fn empty_run() -> SemanticRun {
 fn page_count_is_semantic_and_equal_counts_do_not_hide_changed_dvi() {
     let projection: Projection =
         serde_json::from_str(r#"{"kind":"execution-boundaries","include_page_count":true}"#)
-            .unwrap();
+            .expect("page-count projection");
     let mut run = empty_run();
     assert_eq!(project(&run, &projection), ["page-count:0"]);
     run.artifacts
@@ -51,13 +51,13 @@ fn page_count_is_semantic_and_equal_counts_do_not_hide_changed_dvi() {
         env!("CARGO_MANIFEST_DIR"),
         "/../../tests/corpus/command-semantic/page-output/single-glyph/expected.dvi"
     ));
-    let parsed = tex_out::dvi::disasm::DviFile::parse(reference).unwrap();
+    let parsed = tex_out::dvi::disasm::DviFile::parse(reference).expect("reference DVI");
     assert_eq!(parsed.pages.len(), 1);
     let mut changed = reference.to_vec();
     changed[parsed.post_offset + 24] ^= 1; // postamble maximum page width
     assert_eq!(
         tex_out::dvi::disasm::DviFile::parse(&changed)
-            .unwrap()
+            .expect("mutated DVI retains page framing")
             .pages
             .len(),
         1
@@ -112,7 +112,7 @@ fn macro_projection_ignores_definition_address_but_requires_expansion_order() {
     let projection: Projection = serde_json::from_str(
         r#"{"kind":"observations","kinds":["command","macro"],"commands":["call","relax"]}"#,
     )
-    .unwrap();
+    .expect("macro invocation projection");
     let activation = CommandObservation::Macro(tex_command::MacroRecord::Activation {
         control_sequence: "probe".into(),
         argument_count: 0,
@@ -157,7 +157,7 @@ fn macro_projection_ignores_definition_address_but_requires_expansion_order() {
 fn terminal_checks_use_complete_job_stream_and_detect_changed_result() {
     let projection: Projection =
         serde_json::from_str(r#"{"kind":"terminal-checks","terminal_checks":["final cleanup"]}"#)
-            .unwrap();
+            .expect("terminal phrase projection");
     let mut run = empty_run();
     run.terminal = b"fragment without the phrase".to_vec();
     run.complete_job_channel_streams = Some([
@@ -169,7 +169,9 @@ fn terminal_checks_use_complete_job_stream_and_detect_changed_result() {
     ]);
     let expected = ["terminal-check:final cleanup=true".to_owned()];
     assert_eq!(project(&run, &projection), expected);
-    run.complete_job_channel_streams.as_mut().unwrap()[0] = b"root closed".to_vec();
+    run.complete_job_channel_streams
+        .as_mut()
+        .expect("complete terminal stream")[0] = b"root closed".to_vec();
     assert!(
         evaluate_expectation(
             &expected,
@@ -211,7 +213,8 @@ fn completion_pair_rejects_semantic_drift_before_fragment_termination() {
     let fragment = [effect(tex_command::ObservationEffectKind::Message)];
     let complete = [effect(tex_command::ObservationEffectKind::Input)];
 
-    let error = validate_completion_observations(&fragment, &complete).unwrap_err();
+    let error = validate_completion_observations(&fragment, &complete)
+        .expect_err("early semantic drift must fail");
     assert!(error.contains("before the fragment root-EOF boundary at index 0"));
     assert!(error.contains("fragment=Effect("));
     assert!(error.contains("complete=Effect("));
