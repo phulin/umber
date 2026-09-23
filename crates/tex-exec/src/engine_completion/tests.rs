@@ -111,6 +111,79 @@ fn partial_execution_cannot_detach_or_latch_terminal_state() {
 }
 
 #[test]
+fn fatal_state_without_a_runner_terminal_step_cannot_mint_a_receipt() {
+    crate::test_harness::with_nonstop_plain_universe(|universe| {
+        let mut control = MainControl::tex82_initex(universe);
+        let ledger = OutputLedger::default();
+        let guessed_step = control.succumb(tex_command::FatalError::confusion("probe"));
+        control.mark_ended();
+        assert!(matches!(
+            ledger.terminal_receipt(&control, universe, guessed_step),
+            Err(EngineCompletionError::TerminalRevisionUnavailable)
+        ));
+    });
+}
+
+#[test]
+fn fatal_jump_out_detaches_only_committed_output_after_an_active_alignment() {
+    crate::test_harness::with_nonstop_plain_universe(|universe| {
+        universe
+            .begin_retained_session()
+            .expect("test execution retains host effects");
+        let mut control = MainControl::tex82_initex(universe);
+        control.begin_job(universe, "fatal-completion.tex");
+        let source = br"\shipout\hbox{}\catcode`\#=6 \catcode`\&=4
+\def\a{\span}\def\b{\a\a}\def\c{\b\b}\def\d{\c\c}
+\def\e{\d\d}\def\f{\e\e}\def\g{\f\f}\def\h{\g\g}\def\i{\h\h}
+\setbox0=\vbox{\halign{#&&#\cr\relax\i\relax\cr}}
+\global\count0=1\end";
+        let source = control
+            .command_mut()
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(source.as_slice()),
+            ))
+            .expect("source registers");
+        control
+            .command_mut()
+            .open_registered_source(source)
+            .expect("source opens");
+        let mut ledger = OutputLedger::default();
+        let mut checkpoints = Vec::new();
+        let cancellation = crate::Cancellation::new();
+        let terminal = loop {
+            match crate::CanonicalStepRunner::new(&mut control, universe, &mut ledger)
+                .step_completing_fatal(&mut checkpoints, &cancellation)
+            {
+                crate::CanonicalStepResult::Completed(step) => break step,
+                crate::CanonicalStepResult::Progress(_)
+                | crate::CanonicalStepResult::Committed(_) => {}
+                other => panic!("unexpected fatal completion step: {other:?}"),
+            }
+        };
+        assert_eq!(
+            control.fatal_error(),
+            Some(tex_command::FatalError::confusion("256 spans"))
+        );
+        assert_eq!(universe.count(0).expect("count register"), 0);
+        assert!(!control.terminal_is_quiescent(universe));
+        let receipt = ledger
+            .terminal_receipt(&control, universe, terminal)
+            .expect("fatal jump_out arms its terminal receipt");
+        let completion = ledger
+            .close_revision(
+                &mut control,
+                universe,
+                &receipt,
+                EngineCompletionDemand::without_pdf(),
+                0,
+            )
+            .expect("fatal completion detaches committed output");
+        assert_eq!(completion.pages().len(), 1);
+    });
+}
+
+#[test]
 fn completion_aligns_effect_artifact_dvi_and_pdf_rows() {
     let completion = capture(
         br"\pdfoutput=1\shipout\hbox{\openout3=completion-aligned.tex\relax}\end",

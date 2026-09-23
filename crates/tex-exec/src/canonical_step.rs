@@ -292,7 +292,7 @@ impl OutputLedger {
     ) -> Result<TerminalRevisionReceipt, crate::EngineCompletionError> {
         if self.terminal_closed
             || self.terminal_step != Some(step)
-            || !control.terminal_is_quiescent(universe)
+            || !control.terminal_revision_is_ready(universe, step)
         {
             return Err(crate::EngineCompletionError::TerminalRevisionUnavailable);
         }
@@ -344,7 +344,7 @@ impl OutputLedger {
         if self.terminal_closed
             || self.terminal_step != Some(receipt.step)
             || self.suspension_serial != receipt.suspension_serial
-            || !control.terminal_is_quiescent(universe)
+            || !control.terminal_revision_is_ready(universe, receipt.step)
         {
             return Err(crate::EngineCompletionError::TerminalRevisionUnavailable);
         }

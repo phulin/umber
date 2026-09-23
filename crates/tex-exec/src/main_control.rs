@@ -1418,6 +1418,21 @@ impl<G> MainControl<G> {
             .is_pending()
     }
 
+    /// TeX82 §§81, 93's fatal `jump_out` discards active procedure frames.
+    /// Only the canonical runner can mark the resulting `End` as terminal;
+    /// ordinary completion still requires the full named-boundary check.
+    pub(crate) fn terminal_revision_is_ready(
+        &self,
+        stores: &mut Universe<G>,
+        step: MainControlStep,
+    ) -> bool {
+        if self.ended && self.fatal.is_some() && step == MainControlStep::End {
+            true
+        } else {
+            self.terminal_is_quiescent(stores)
+        }
+    }
+
     pub(crate) fn mark_ended(&mut self) {
         self.ended = true;
     }

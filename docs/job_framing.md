@@ -168,6 +168,15 @@ the existing typed fatal terminal state. Structured in-memory runs return the
 same result, while the string convenience helpers continue to return the
 selected terminal projection for every semantically completed run.
 
+TeX82 §§81 and 93 transfer a fatal job directly to `end_of_TEX`, abandoning
+active scanner and alignment frames. The retained-session output ledger must
+therefore accept its runner-minted fatal `End` as a terminal receipt even when
+ordinary named-boundary quiescence is impossible. The exception applies only
+after the executor has recorded both fatal and terminal state; an incomplete
+ordinary run cannot claim it. The same rule guards receipt and detachment, and
+detachment still validates committed effects and pages. A fatal run neither
+resumes abandoned frames nor publishes their uncommitted output.
+
 ## Why the banner names the selected engine
 
 Byte-for-byte comparison against pinned reference engines is the whole point
