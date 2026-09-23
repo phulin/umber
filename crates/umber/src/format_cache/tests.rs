@@ -280,7 +280,7 @@ fn compound_entry_is_atomic_and_rejects_missing_corrupt_and_cross_key_evidence()
             cache.store(&key, &image),
             Err(FormatCacheError::WrongEntryKind)
         ),
-        "legacy store must not publish an evidence-aware key"
+        "image-only store must not publish an evidence-aware key"
     );
     assert!(matches!(
         cache.load(&key),
