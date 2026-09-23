@@ -43,6 +43,12 @@ All production mutation of live TeX state should pass through `Universe` or simi
   reconstructing the context. Page-material allocation/copy counters remain
   observable through this boundary so retained-range zero-copy gates are not
   inferred from a separate arena owner.
+- `src/command_context/pdf_commands.rs`: PDF ledger, form, font-resource,
+  color-stack, and navigation projections of the same admitted command borrow.
+- `src/command_context/page_material.rs`: Borrowed page-material construction,
+  range, traversal, and shipout-scratch projections of that command borrow.
+- `src/command_context/page_builder.rs`: Page-builder dimensions, contributions,
+  discard lists, insertions, and marks of that same borrow.
 - `src/dependency.rs`: Region-scoped dependency keys with scope-free `CellId` environment identity, typed recorder lifecycle and first-reason poison barrier, detached observations, changed-at validation, conservative page/PDF family clocks, registered World-backed mutation keys, semantic backdating, and opaque cross-Universe memo validation stamps.
 - `src/dependency/tests.rs`: Dependency mutation matrix, generic tracked-region lifecycle and journal-write records, deterministic ordering, rollback failure closure, and handle-independent observation tests.
 - `src/diagnostic.rs`: tex.web §245's shared `begin_diagnostic`/`end_diagnostic` print channel, which every `\tracing*` parameter's text is routed through.
@@ -162,6 +168,13 @@ All production mutation of live TeX state should pass through `Universe` or simi
   settlement. Generated region values initialize their final resident slot
   before identity and direct-child dependency completion; rejection truncates
   that exact unpublished reservation.
+- `src/fork_arena/checkpoint_lifecycle.rs`: Sealed checkpoint marks, exact
+  candidate settlement, accepted-prefix release, and borrowed suffix visits
+  on the existing arena lane.
+- `src/fork_arena/batch_transfer.rs`: Exclusive batch closure, detachment,
+  reattachment, adoption, and promotion of the existing arena lane.
+- `src/fork_arena/whole_region_transfer.rs`: Whole-region closure proofs,
+  coordinate validation, and exact suffix detachment for that same lane.
 - `src/format.rs` and `src/format/tests.rs`: Consuming destination-stamped
   format staging, detached-count-sized initial generation construction,
   decoded-row draining into final owners, and infallible atomic publication
@@ -439,6 +452,12 @@ All production mutation of live TeX state should pass through `Universe` or simi
   input/path cursors and scalar printer offsets, reusable detached-prior
   effect/input/artifact journals for candidate settlement, and
   field/key-specific allocation-independent dependency projections.
+- `src/world/input_dependencies.rs`: Input-dependency records and their
+  rollback journal on the same `World` owner.
+- `src/world/effect_publication.rs`: Effect journal access, publication
+  identities, and pending page-effect intervals on that owner.
+- `src/world/checkpoint_lifecycle.rs`: The one `WorldSnapshot` capture,
+  rollback, fork, and candidate settlement implementation on `World`.
 - `src/world/tests.rs`: Focused detached effect, owned artifact/provenance,
   input cloning, fixed stream-mark capture, repeated candidate settlement,
   detached-buffer and payload-address reuse, snapshot rollback, and

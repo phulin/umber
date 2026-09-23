@@ -54,6 +54,10 @@ describe the testing front door. The artifact codec cleanup and bounded node
 view pass are implemented; other downstream and bibliography sections remain
 proposals until implemented.
 
+`state_responsibility_boundaries.md` maps the `World`, `ForkArena`, and
+`CommandContext` method groups onto their unchanged storage and checkpoint
+owners for the state organization pass.
+
 `tooling_surface_inventory.md` records the owner-approved disposition of
 reference/parity commands, one-time fixture migrations, benchmark and trace
 rows, prototypes, fuzz tiers, and their scripts for `umber2-vgjr.18`; absence
