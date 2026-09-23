@@ -231,7 +231,7 @@ Command operands are scanned by `tex-command` into typed request and result valu
   to `tex-command`.
 - `src/job.rs` and `src/job_output.rs`: TeX job framing, terminal continuation, final cleanup, and lazy DVI/transcript output. See `docs/job_framing.md`.
 - `src/page_builder.rs`, `src/splitting.rs`, `src/vertical.rs`, `src/packing_params.rs`, and `src/pack_report.rs`: page accounting, vertical splitting/contribution, packing snapshots, and box diagnostics.
-- `src/host_api.rs`, `src/retained_resource.rs`, and `src/session_api.rs`: host resource contracts, retained fulfillment, execution budgets, cancellation, and interrupts.
+- `src/retained_resource.rs` and `src/session_api.rs`: host resource contracts, retained fulfillment, execution budgets, cancellation, and interrupts. PDF image requests are defined by `tex-command` and passed through this host boundary directly.
 - `src/interpreter.rs`: session-lived canonical command-state ownership,
   generation-typed processor facades borrowing one stable call-local admitted
   context in place, and assertion-bearing interpreter lifecycle accounting

@@ -20,7 +20,6 @@ mod error_report;
 mod execution_receipt;
 mod font_support;
 mod geometry;
-mod host_api;
 mod interpreter;
 mod job;
 mod job_output;
@@ -78,7 +77,6 @@ pub use error::{
     ExecError, FirstRecoverableDiagnostic, FrozenDiagnosticContext, FrozenDiagnosticEvidence,
     FrozenDiagnosticGroup, FrozenDiagnosticOrigin,
 };
-pub use host_api::{PdfImagePageBox, PdfImagePageSelection, PdfImageRequest};
 pub use job::{
     BANNER, DetachedFormatDump, DviJobOutput, ETEX26_BANNER, EngineBinaryIdentity, FormatDumpError,
     FormatDumpReceipt, PdfJobFinalizationReport, PreloadedFormat, TEX82_BANNER,

@@ -631,7 +631,6 @@ def _packed_shard_files(
         raise TexliveError(f"packed shard {index} distribution mismatch")
 
     objects: list[tuple[str, int]] = []
-    seen_digests: dict[str, int] = {}
     previous_digest: str | None = None
     for object_index in range(object_count):
         digest, length = struct.unpack_from(
@@ -640,13 +639,10 @@ def _packed_shard_files(
         digest_text = f"{digest:016x}"
         if length > 128 * 1024 * 1024:
             raise TexliveError(f"packed shard {index} object length is invalid")
-        if schema == 2 and previous_digest is not None and previous_digest >= digest_text:
+        if previous_digest is not None and previous_digest >= digest_text:
             raise TexliveError(
                 f"packed shard {index} object table is not strictly sorted"
             )
-        if digest_text in seen_digests:
-            raise TexliveError(f"packed shard {index} object table is not deduplicated")
-        seen_digests[digest_text] = length
         objects.append((digest_text, length))
         previous_digest = digest_text
 
@@ -661,8 +657,7 @@ def _packed_shard_files(
         except UnicodeDecodeError as error:
             raise TexliveError(f"packed shard {index} path is not UTF-8") from error
         if (
-            path in paths
-            or (schema == 2 and previous_path is not None and previous_path >= path)
+            (previous_path is not None and previous_path >= path)
             or not path.startswith("/texlive/")
         ):
             raise TexliveError(f"packed shard {index} path table is invalid")
