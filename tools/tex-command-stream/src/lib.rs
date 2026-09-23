@@ -1539,7 +1539,20 @@ mod tests {
                 diagnostic_effects,
             );
             let mut delivered = Vec::new();
-            while let Some(current) = processor.get_x_token().expect("nested input replays") {
+            loop {
+                let mut destination = None;
+                match processor
+                    .get_x_token_into(&mut destination)
+                    .expect("nested input replays")
+                {
+                    tex_command::DeliveryStatus::Command => {}
+                    tex_command::DeliveryStatus::End => {
+                        assert!(destination.is_none());
+                        break;
+                    }
+                    status => panic!("unexpected expanded delivery status: {status:?}"),
+                }
+                let current = destination.expect("expanded delivery filled caller slot");
                 if let Token::Char { ch, .. } = current.spelling().semantic_token() {
                     delivered.push((ch, current.delivery_stamp().input_level()));
                 }
@@ -1577,10 +1590,15 @@ mod tests {
                     None,
                     &mut diagnostic_effects,
                 );
-                assert!(matches!(
+                let mut destination = None;
+                assert_eq!(
                     processor
-                        .get_x_token()
-                        .expect("root starts")
+                        .get_x_token_into(&mut destination)
+                        .expect("root starts"),
+                    tex_command::DeliveryStatus::Command
+                );
+                assert!(matches!(
+                    destination
                         .expect("root character")
                         .spelling()
                         .semantic_token(),

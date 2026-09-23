@@ -19,14 +19,8 @@ fn sequential_resident_reads_advance_once_in_optimized_delivery() {
             &mut diagnostic_effects,
         );
 
-        let first = processor
-            .get_next()
-            .expect("first resident delivery")
-            .expect("first resident command");
-        let second = processor
-            .get_next()
-            .expect("second resident delivery")
-            .expect("second resident command");
+        let first = crate::test_harness::expect_raw_command(&mut processor);
+        let second = crate::test_harness::expect_raw_command(&mut processor);
         assert_eq!(first.spelling().semantic_token(), letter('A'));
         assert_eq!(second.spelling().semantic_token(), letter('B'));
         assert_eq!(first.origin(), OriginId::UNKNOWN);
@@ -73,14 +67,8 @@ fn sequential_macro_body_reads_advance_once_in_optimized_delivery() {
             &mut diagnostic_effects,
         );
 
-        let first = processor
-            .get_x_token()
-            .expect("first macro-body delivery")
-            .expect("first macro-body command");
-        let second = processor
-            .get_x_token()
-            .expect("second macro-body delivery")
-            .expect("second macro-body command");
+        let first = crate::test_harness::expect_expanded_command(&mut processor);
+        let second = crate::test_harness::expect_expanded_command(&mut processor);
         assert_eq!(first.spelling().semantic_token(), letter('A'));
         assert_eq!(second.spelling().semantic_token(), letter('B'));
         assert_eq!(first.origin(), OriginId::UNKNOWN);

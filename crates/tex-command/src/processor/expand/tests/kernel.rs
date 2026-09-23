@@ -141,20 +141,14 @@ fn attaching_observer_between_deliveries_selects_the_new_episode() {
             &mut effects,
         );
         assert_eq!(
-            processor
-                .get_x_token()
-                .expect("A")
-                .expect("command")
+            crate::test_harness::expect_expanded_command(&mut processor)
                 .spelling()
                 .semantic_token(),
             letter('A')
         );
         let mut processor = processor.with_observer(&mut observer);
         for expected in ['B', 'C'] {
-            let current = processor
-                .get_x_token()
-                .expect("observed token")
-                .expect("command");
+            let current = crate::test_harness::expect_expanded_command(&mut processor);
             assert_eq!(current.spelling().semantic_token(), letter(expected));
         }
         assert_eq!(processor.fuel.burned(), 3);
@@ -212,7 +206,7 @@ fn resumed_replacement_reads_the_live_meaning_after_backup() {
             &mut fuel,
             &mut effects,
         );
-        let first = processor.get_x_token().expect("first").expect("command");
+        let first = crate::test_harness::expect_expanded_command(&mut processor);
         assert_eq!(first.meaning(), Meaning::CharGiven('A'));
         processor.back_input(first).expect("backup");
         processor
@@ -224,14 +218,11 @@ fn resumed_replacement_reads_the_live_meaning_after_backup() {
             )
             .expect("new live meaning");
         for _ in 0..2 {
-            let next = processor.get_x_token().expect("resumed").expect("command");
+            let next = crate::test_harness::expect_expanded_command(&mut processor);
             assert_eq!(next.meaning(), Meaning::CharGiven('B'));
         }
         assert_eq!(
-            processor
-                .get_x_token()
-                .expect("parent")
-                .expect("command")
+            crate::test_harness::expect_expanded_command(&mut processor)
                 .spelling()
                 .semantic_token(),
             letter('Z')

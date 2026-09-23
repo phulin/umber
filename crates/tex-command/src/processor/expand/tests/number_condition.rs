@@ -125,7 +125,20 @@ fn number_reports_a_genuinely_missing_operand_and_preserves_the_token() {
             &mut diagnostic_effects,
         );
         let mut output = String::new();
-        while let Some(command) = processor.get_x_token().expect("missing-number recovery") {
+        loop {
+            let mut destination = None;
+            match processor
+                .get_x_token_into(&mut destination)
+                .expect("missing-number recovery")
+            {
+                crate::DeliveryStatus::Command => {}
+                crate::DeliveryStatus::End => {
+                    assert!(destination.is_none());
+                    break;
+                }
+                status => panic!("unexpected expanded delivery status: {status:?}"),
+            }
+            let command = destination.expect("expanded delivery filled caller slot");
             match command.meaning() {
                 tex_state::meaning::ResolvedMeaning::Static(Meaning::CharToken { ch, .. }) => {
                     output.push(ch);
@@ -540,7 +553,20 @@ fn low_fuel_nested_if_controls_balance_their_inline_frames() {
             &mut diagnostic_effects,
         );
         let mut output = Vec::new();
-        while let Some(command) = processor.get_x_token().expect("low-fuel delivery") {
+        loop {
+            let mut destination = None;
+            match processor
+                .get_x_token_into(&mut destination)
+                .expect("low-fuel delivery")
+            {
+                crate::DeliveryStatus::Command => {}
+                crate::DeliveryStatus::End => {
+                    assert!(destination.is_none());
+                    break;
+                }
+                status => panic!("unexpected expanded delivery status: {status:?}"),
+            }
+            let command = destination.expect("expanded delivery filled caller slot");
             match command.meaning() {
                 tex_state::meaning::ResolvedMeaning::Static(meaning) => {
                     output.push(meaning);

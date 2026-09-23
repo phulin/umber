@@ -35,10 +35,7 @@ fn parameterless_macro_expands_from_a_generation_typed_definition() {
             &mut diagnostic_effects,
         );
 
-        let expanded = processor
-            .get_x_token()
-            .expect("macro expansion")
-            .expect("replacement command");
+        let expanded = crate::test_harness::expect_expanded_command(&mut processor);
         assert_eq!(expanded.spelling().semantic_token(), replacement);
         assert_eq!(
             expanded.meaning(),
@@ -47,7 +44,14 @@ fn parameterless_macro_expands_from_a_generation_typed_definition() {
                 cat: Catcode::Letter,
             }
         );
-        assert!(processor.get_x_token().expect("end").is_none());
+        {
+            let mut destination = None;
+            assert_eq!(
+                processor.get_x_token_into(&mut destination).expect("end"),
+                crate::DeliveryStatus::End
+            );
+            assert!(destination.is_none());
+        };
     });
 }
 
@@ -89,10 +93,7 @@ fn active_character_unexpandable_result_preserves_origin_and_backs_up_once() {
         )
         .with_observer(&mut observer);
 
-        let source_command = processor
-            .get_next()
-            .expect("source delivery")
-            .expect("source command");
+        let source_command = crate::test_harness::expect_raw_command(&mut processor);
         let origin = source_command.origin();
         assert_ne!(origin, OriginId::UNKNOWN);
         let fuel_before_treatment = processor.fuel.burned();
@@ -101,10 +102,7 @@ fn active_character_unexpandable_result_preserves_origin_and_backs_up_once() {
             .expect("active-character treatment");
         assert_eq!(processor.fuel.burned(), fuel_before_treatment);
 
-        let backed_up = processor
-            .get_next()
-            .expect("backed-up active character")
-            .expect("active character command");
+        let backed_up = crate::test_harness::expect_raw_command(&mut processor);
         assert_eq!(
             backed_up.spelling().semantic_token(),
             Token::Char {
@@ -193,10 +191,7 @@ fn active_character_empty_macro_retires_replay_before_settling_next_command() {
         processor
             .treat_as_active_character('~', OriginId::UNKNOWN)
             .expect("empty active macro treatment");
-        let backed_up = processor
-            .get_next()
-            .expect("backed-up next command")
-            .expect("settled command");
+        let backed_up = crate::test_harness::expect_raw_command(&mut processor);
         assert_eq!(
             backed_up.spelling().semantic_token(),
             Token::Char {
@@ -204,7 +199,16 @@ fn active_character_empty_macro_retires_replay_before_settling_next_command() {
                 cat: Catcode::Letter,
             }
         );
-        assert!(processor.get_next().expect("end of input").is_none());
+        {
+            let mut destination = None;
+            assert_eq!(
+                processor
+                    .get_next_into(&mut destination)
+                    .expect("end of input"),
+                crate::DeliveryStatus::End
+            );
+            assert!(destination.is_none());
+        };
     });
 }
 
@@ -245,10 +249,7 @@ fn one_hundred_macros_materialize_only_the_final_command() {
             &mut diagnostic_effects,
         );
 
-        let delivered = processor
-            .get_x_token()
-            .expect("expanded chain")
-            .expect("terminal command");
+        let delivered = crate::test_harness::expect_expanded_command(&mut processor);
         let after = crate::command::command_ownership_counters();
         assert_eq!(delivered.spelling().semantic_token(), terminal);
         assert_eq!(

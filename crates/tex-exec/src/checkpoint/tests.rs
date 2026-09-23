@@ -402,12 +402,15 @@ fn retained_checkpoint_restores_command_tokens_and_scalar_mode_state() {
             None,
             &mut diagnostic_effects,
         );
+        let mut destination = None;
         assert_eq!(
             processor
-                .get_next()
-                .expect("restored command delivery")
-                .expect("restored command token")
-                .meaning(),
+                .get_next_into(&mut destination)
+                .expect("restored command delivery"),
+            tex_command::DeliveryStatus::Command
+        );
+        assert_eq!(
+            destination.expect("restored command token").meaning(),
             ResolvedMeaning::Static(Meaning::CharToken {
                 ch: 'c',
                 cat: Catcode::Other,

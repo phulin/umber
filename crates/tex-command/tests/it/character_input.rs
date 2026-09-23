@@ -36,12 +36,13 @@ fn external_command_boundary_delivers_registered_source_characters() {
             &mut diagnostic_effects,
         );
 
+        let mut destination = None;
         assert_eq!(
-            processor
-                .get_next()
-                .expect("delivery")
-                .expect("command")
-                .meaning(),
+            processor.get_next_into(&mut destination).expect("delivery"),
+            tex_command::DeliveryStatus::Command
+        );
+        assert_eq!(
+            destination.expect("command").meaning(),
             ResolvedMeaning::Static(Meaning::CharToken {
                 ch: 'A',
                 cat: Catcode::Letter,

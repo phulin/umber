@@ -147,10 +147,7 @@ fn unobserved_parameterless_macro_activates_directly_and_elides_empty_body_row()
             &mut diagnostic_effects,
         );
 
-        let delivered = processor
-            .get_x_token()
-            .expect("expanded delivery")
-            .expect("terminal command");
+        let delivered = crate::test_harness::expect_expanded_command(&mut processor);
         let after = super::macro_activation_counters();
         assert_eq!(delivered.spelling().semantic_token(), terminal);
         assert_eq!(after.simple - before.simple, 1);
@@ -204,19 +201,13 @@ fn outer_macro_matching_returns_to_ordinary_delivery() {
         );
 
         assert_eq!(
-            processor
-                .get_x_token()
-                .expect("outer macro matching")
-                .expect("matched argument")
+            crate::test_harness::expect_expanded_command(&mut processor)
                 .spelling()
                 .semantic_token(),
             argument
         );
         assert_eq!(
-            processor
-                .get_x_token()
-                .expect("following ordinary token")
-                .expect("ordinary command")
+            crate::test_harness::expect_expanded_command(&mut processor)
                 .spelling()
                 .semantic_token(),
             following
@@ -244,10 +235,7 @@ fn observed_parameterless_macro_keeps_exceptional_activation_semantics() {
             &mut diagnostic_effects,
         )
         .with_observer(&mut observer);
-        let mut call = processor
-            .get_next()
-            .expect("macro delivery")
-            .expect("macro command");
+        let mut call = crate::test_harness::expect_raw_command(&mut processor);
 
         assert_eq!(processor.macro_call(&mut call), Ok(true));
         let after = super::macro_activation_counters();
@@ -348,10 +336,7 @@ fn empty_delimited_argument_reuses_its_direct_destination_for_the_next_argument(
             &mut fuel,
             &mut diagnostic_effects,
         );
-        let mut call = processor
-            .get_next()
-            .expect("macro delivery")
-            .expect("macro command");
+        let mut call = crate::test_harness::expect_raw_command(&mut processor);
 
         assert_eq!(processor.macro_call(&mut call), Ok(true));
         let arguments = processor
@@ -421,10 +406,7 @@ fn undelimited_argument_keeps_brace_alias_as_one_control_sequence_token() {
             &mut fuel,
             &mut diagnostic_effects,
         );
-        let mut call = processor
-            .get_next()
-            .expect("macro delivery")
-            .expect("macro command");
+        let mut call = crate::test_harness::expect_raw_command(&mut processor);
 
         assert_eq!(processor.macro_call(&mut call), Ok(true));
         assert_eq!(
@@ -437,19 +419,13 @@ fn undelimited_argument_keeps_brace_alias_as_one_control_sequence_token() {
             "each raw argument command is classified once"
         );
         assert_eq!(
-            processor
-                .get_x_token()
-                .expect("argument replay delivery")
-                .expect("argument replay command")
+            crate::test_harness::expect_expanded_command(&mut processor)
                 .spelling()
                 .semantic_token(),
             Token::Cs(opening.symbol())
         );
         assert_eq!(
-            processor
-                .get_next()
-                .expect("following source command delivery")
-                .expect("following source command")
+            crate::test_harness::expect_raw_command(&mut processor)
                 .spelling()
                 .semantic_token(),
             letter('x'),
@@ -577,10 +553,7 @@ fn literal_prefix_only_macros_use_no_argument_scratch() {
                 &mut fuel,
                 &mut diagnostic_effects,
             );
-            let mut call = processor
-                .get_next()
-                .expect("macro delivery")
-                .expect("macro command");
+            let mut call = crate::test_harness::expect_raw_command(&mut processor);
 
             let activates = expected;
             assert_eq!(processor.command.scratch.retained_slot_len(), 0);
@@ -625,10 +598,7 @@ fn failed_macro_call_keeps_the_resident_definition_owner() {
             &mut fuel,
             &mut diagnostic_effects,
         );
-        let mut call = processor
-            .get_next()
-            .expect("macro delivery")
-            .expect("macro command");
+        let mut call = crate::test_harness::expect_raw_command(&mut processor);
         let owners_before = match call.meaning_ref() {
             tex_state::meaning::ResolvedMeaning::Macro { definition, .. } => {
                 definition.semantic_owner_count()
@@ -790,10 +760,7 @@ fn nested_macro_argument_consumes_plain_body_words_as_one_span() {
         );
 
         for expected in ['a', 'b', 'c'] {
-            let command = processor
-                .get_x_token()
-                .expect("nested expansion")
-                .expect("argument token");
+            let command = crate::test_harness::expect_expanded_command(&mut processor);
             assert_eq!(command.spelling().semantic_token(), letter(expected));
         }
         let (body_words, body_advances, _, body_writes, ..) =
@@ -862,10 +829,7 @@ fn nested_macro_argument_reader_counts_loaded_words_not_exhaustion() {
         processor.command.profile_reset_macro_kernel_counters();
 
         for expected in ['a', 'b', 'c'] {
-            let command = processor
-                .get_x_token()
-                .expect("nested expansion")
-                .expect("argument token");
+            let command = crate::test_harness::expect_expanded_command(&mut processor);
             assert_eq!(command.spelling().semantic_token(), letter(expected));
         }
         let (_, _, _, _, argument_words, argument_advances, argument_writes) =
@@ -1400,10 +1364,7 @@ fn parameter_escape_distinguishes_substitution_from_a_literal_hash() {
             },
         ] {
             assert_eq!(
-                processor
-                    .get_x_token()
-                    .expect("replacement delivery")
-                    .expect("replacement command")
+                crate::test_harness::expect_expanded_command(&mut processor)
                     .spelling()
                     .semantic_token(),
                 expected
@@ -1647,10 +1608,7 @@ fn paragraph_fact_preserves_long_and_non_long_token_semantics() {
         );
         assert_eq!(processor.command.scratch.frame_len(), 0);
         assert_eq!(
-            processor
-                .get_next()
-                .expect("backed-up paragraph delivery")
-                .expect("backed-up paragraph command")
+            crate::test_harness::expect_raw_command(&mut processor)
                 .spelling()
                 .semantic_token(),
             paragraph
@@ -1680,10 +1638,7 @@ fn extra_right_brace_recovery_keeps_inserted_paragraph_ahead_of_backed_closer() 
             &mut fuel,
             &mut diagnostic_effects,
         );
-        let mut call = processor
-            .get_next()
-            .expect("macro delivery")
-            .expect("macro command");
+        let mut call = crate::test_harness::expect_raw_command(&mut processor);
 
         assert_eq!(
             processor.macro_call(&mut call),
@@ -1691,10 +1646,7 @@ fn extra_right_brace_recovery_keeps_inserted_paragraph_ahead_of_backed_closer() 
         );
         for expected in [paragraph, closer] {
             assert_eq!(
-                processor
-                    .get_next()
-                    .expect("recovery delivery")
-                    .expect("recovery command")
+                crate::test_harness::expect_raw_command(&mut processor)
                     .spelling()
                     .semantic_token(),
                 expected
@@ -1937,17 +1889,18 @@ fn mixed_one_64_and_4096_token_arguments_use_one_fused_settlement_without_copies
                     &mut fuel,
                     &mut diagnostic_effects,
                 );
-                let mut call = processor
-                    .get_next()
-                    .expect("warm macro delivery")
-                    .expect("warm macro command");
+                let mut call = crate::test_harness::expect_raw_command(&mut processor);
                 assert_eq!(processor.macro_call(&mut call), Ok(true));
-                assert!(
-                    processor
-                        .get_x_token()
-                        .expect("warm replacement retirement")
-                        .is_none()
-                );
+                {
+                    let mut destination = None;
+                    assert_eq!(
+                        processor
+                            .get_x_token_into(&mut destination)
+                            .expect("warm replacement retirement"),
+                        crate::DeliveryStatus::End
+                    );
+                    assert!(destination.is_none());
+                };
             }
             assert_eq!(command.scratch.frame_len(), 0);
 
@@ -1965,10 +1918,7 @@ fn mixed_one_64_and_4096_token_arguments_use_one_fused_settlement_without_copies
                 &mut fuel,
                 &mut diagnostic_effects,
             );
-            let mut call = processor
-                .get_next()
-                .expect("measured macro delivery")
-                .expect("measured macro command");
+            let mut call = crate::test_harness::expect_raw_command(&mut processor);
             processor
                 .command
                 .profile_reset_token_collector_path_counters();
@@ -2085,10 +2035,7 @@ fn direct_macro_prefix_diagnostics_match_delivered_command_diagnostics() {
                 processor
             };
             let before = crate::command::command_ownership_counters();
-            let delivered = processor
-                .get_x_token()
-                .expect("recover prefix mismatch")
-                .expect("terminal");
+            let delivered = crate::test_harness::expect_expanded_command(&mut processor);
             assert_eq!(delivered.spelling().semantic_token(), letter('z'));
             let writes = crate::command::command_ownership_counters().resolved_writes
                 - before.resolved_writes;

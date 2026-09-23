@@ -445,10 +445,7 @@ fn processor_episode_borrows_generation_and_delivers_one_current_command() {
             &mut diagnostic_effects,
         );
 
-        let delivered = processor
-            .get_x_token()
-            .expect("expanded delivery")
-            .expect("one token");
+        let delivered = crate::test_harness::expect_expanded_command(&mut processor);
         assert_eq!(delivered.spelling().semantic_token(), token);
         assert_eq!(
             delivered.meaning(),
@@ -457,7 +454,14 @@ fn processor_episode_borrows_generation_and_delivers_one_current_command() {
                 cat: Catcode::Letter,
             }
         );
-        assert!(processor.get_x_token().expect("end").is_none());
+        {
+            let mut destination = None;
+            assert_eq!(
+                processor.get_x_token_into(&mut destination).expect("end"),
+                crate::DeliveryStatus::End
+            );
+            assert!(destination.is_none());
+        };
     });
 }
 
@@ -495,10 +499,7 @@ fn unobserved_resident_delivery_leaves_sequence_metadata_untouched() {
         );
         for token in tokens {
             assert_eq!(
-                processor
-                    .get_token()
-                    .expect("unobserved raw delivery")
-                    .expect("resident command")
+                crate::test_harness::expect_token_command(&mut processor)
                     .spelling()
                     .semantic_token(),
                 token
@@ -537,19 +538,13 @@ fn direct_source_delivery_uses_one_explicit_freshness_authority() {
             &mut diagnostic_effects,
         );
 
-        let first = processor
-            .get_token()
-            .expect("first source delivery")
-            .expect("first source command");
+        let first = crate::test_harness::expect_token_command(&mut processor);
         assert!(matches!(
             processor.delivery_authority,
             super::DeliveryAuthority::Explicit(_)
         ));
         let stale = first.copy_for_backup();
-        let second = processor
-            .get_token()
-            .expect("second source delivery")
-            .expect("second source command");
+        let second = crate::test_harness::expect_token_command(&mut processor);
         assert_ne!(first.delivery_stamp(), second.delivery_stamp());
         assert!(matches!(
             processor.delivery_authority,
@@ -654,15 +649,9 @@ fn saved_futurelet_and_post_next_deliveries_keep_exact_backup_freshness() {
             &mut diagnostic_effects,
         );
 
-        let first = processor
-            .get_token()
-            .expect("first raw delivery")
-            .expect("first command");
+        let first = crate::test_harness::expect_token_command(&mut processor);
         let saved_first = first.copy_for_backup();
-        let second = processor
-            .get_token()
-            .expect("second raw delivery")
-            .expect("second command");
+        let second = crate::test_harness::expect_token_command(&mut processor);
         assert_eq!(
             processor.back_input(first),
             Err(crate::CommandError::StaleDelivery),
@@ -676,19 +665,13 @@ fn saved_futurelet_and_post_next_deliveries_keep_exact_backup_freshness() {
             .back_input_saved(saved_first)
             .expect("TeX82 §326 saved first token backs up without freshness");
         assert_eq!(
-            processor
-                .get_token()
-                .expect("saved first replay")
-                .expect("saved first command")
+            crate::test_harness::expect_token_command(&mut processor)
                 .spelling()
                 .semantic_token(),
             first_token
         );
         assert_eq!(
-            processor
-                .get_token()
-                .expect("fresh second replay")
-                .expect("fresh second command")
+            crate::test_harness::expect_token_command(&mut processor)
                 .spelling()
                 .semantic_token(),
             second_token
@@ -718,10 +701,7 @@ fn cursor_resume_rejects_delivery_until_retained_command_is_readmitted() {
                 &mut fuel,
                 &mut diagnostic_effects,
             );
-            let delivered = processor
-                .get_token()
-                .expect("raw delivery")
-                .expect("resident command");
+            let delivered = crate::test_harness::expect_token_command(&mut processor);
             let cursor = processor.delivery_cursor();
             (delivered, cursor)
         };
@@ -781,10 +761,7 @@ fn resident_stopper_stamp_retires_exact_level_and_invalidates_freshness() {
             &mut diagnostic_effects,
         );
 
-        let stopper = processor
-            .get_token()
-            .expect("stopper delivery")
-            .expect("resident stopper");
+        let stopper = crate::test_harness::expect_token_command(&mut processor);
         let stale = stopper.copy_for_backup();
         processor
             .retire_delivery_level(stopper.delivery_stamp())
@@ -1070,10 +1047,7 @@ fn alignment_journal_attempts_follow_literal_braces_and_skip_delimiters() {
                 &mut diagnostic_effects,
             );
             for expected in [ordinary, begin, ordinary, end, tab] {
-                let delivered = processor
-                    .get_next()
-                    .expect("raw delivery")
-                    .expect("measured token");
+                let delivered = crate::test_harness::expect_raw_command(&mut processor);
                 assert_eq!(delivered.spelling().semantic_token(), expected);
             }
         }
@@ -1149,10 +1123,7 @@ fn alignment_journal_attempts_follow_literal_braces_and_skip_delimiters() {
                 &mut fuel,
                 &mut diagnostic_effects,
             );
-            let delivered = processor
-                .get_next()
-                .expect("intercepted delimiter delivery")
-                .expect("retained end-template command");
+            let delivered = crate::test_harness::expect_raw_command(&mut processor);
             assert_ne!(delivered.spelling().semantic_token(), tab);
             assert_eq!(
                 processor.command.alignment.align_state,
@@ -1232,10 +1203,7 @@ fn ordinary_raw_delivery_bypasses_out_parameter_interception() {
                 &mut diagnostic_effects,
             );
             assert_eq!(
-                processor
-                    .get_next()
-                    .expect("first source delivery")
-                    .expect("first source token")
+                crate::test_harness::expect_raw_command(&mut processor)
                     .spelling()
                     .semantic_token(),
                 Token::Char {
@@ -1251,10 +1219,7 @@ fn ordinary_raw_delivery_bypasses_out_parameter_interception() {
                 .command
                 .profile_reset_input_source_context_counters();
             assert_eq!(
-                processor
-                    .get_next()
-                    .expect("resident source delivery")
-                    .expect("resident source token")
+                crate::test_harness::expect_raw_command(&mut processor)
                     .spelling()
                     .semantic_token(),
                 Token::Char {
@@ -1292,15 +1257,14 @@ fn ordinary_raw_delivery_bypasses_out_parameter_interception() {
             &mut diagnostic_effects,
         );
         assert_eq!(
-            processor
-                .get_next()
-                .expect("stored delivery")
-                .expect("stored token")
+            crate::test_harness::expect_raw_command(&mut processor)
                 .spelling()
                 .semantic_token(),
             ordinary
         );
-        assert!(processor.get_next().is_err());
+        let mut destination = None;
+        assert!(processor.get_next_into(&mut destination).is_err());
+        assert!(destination.is_none());
         assert_eq!(
             processor.command.profile_raw_delivery_path_counters(),
             (0, 1, 0, 1)
@@ -1684,10 +1648,7 @@ fn direct_source_command_captures_its_physical_line_before_retirement() {
         );
 
         loop {
-            let delivered = processor
-                .get_next()
-                .expect("raw delivery")
-                .expect("second-line character");
+            let delivered = crate::test_harness::expect_raw_command(&mut processor);
             if delivered.spelling().semantic_token()
                 == (Token::Char {
                     ch: 'X',
@@ -1728,12 +1689,16 @@ fn empty_direct_source_registers_provenance_before_observed_retirement() {
                 &mut diagnostic_effects,
             )
             .with_observer(&mut observer);
-            assert!(
-                processor
-                    .get_next()
-                    .expect("empty source retirement")
-                    .is_none()
-            );
+            {
+                let mut destination = None;
+                assert_eq!(
+                    processor
+                        .get_next_into(&mut destination)
+                        .expect("empty source retirement"),
+                    crate::DeliveryStatus::End
+                );
+                assert!(destination.is_none());
+            };
         }
 
         let origin = context.source_range_origin(source, 0, 0);
@@ -1798,12 +1763,16 @@ fn forced_eof_before_production_acquisition_registers_source_before_retirement()
                 &mut diagnostic_effects,
             )
             .with_observer(&mut observer);
-            assert!(
-                processor
-                    .get_next()
-                    .expect("forced source retirement")
-                    .is_none()
-            );
+            {
+                let mut destination = None;
+                assert_eq!(
+                    processor
+                        .get_next_into(&mut destination)
+                        .expect("forced source retirement"),
+                    crate::DeliveryStatus::End
+                );
+                assert!(destination.is_none());
+            };
         }
 
         let origin = context.source_range_origin(source, 0, 6);
@@ -1859,10 +1828,7 @@ fn failed_source_map_registration_does_not_mark_cursor_registered() {
                 &mut diagnostic_effects,
             );
             assert_eq!(
-                processor
-                    .get_next()
-                    .expect("delivery tolerates diagnostic registration failure")
-                    .expect("source token")
+                crate::test_harness::expect_raw_command(&mut processor)
                     .spelling()
                     .semantic_token(),
                 Token::Char {
@@ -1888,12 +1854,16 @@ fn failed_source_map_registration_does_not_mark_cursor_registered() {
                 &mut fuel,
                 &mut diagnostic_effects,
             );
-            assert!(
-                processor
-                    .get_next()
-                    .expect("source retirement retries registration")
-                    .is_none()
-            );
+            {
+                let mut destination = None;
+                assert_eq!(
+                    processor
+                        .get_next_into(&mut destination)
+                        .expect("source retirement retries registration"),
+                    crate::DeliveryStatus::End
+                );
+                assert!(destination.is_none());
+            };
         }
         let after_retirement = crate::input::source_registration_counters();
         assert_eq!(after_retirement.calls - after_acquisition.calls, 1);
@@ -1927,10 +1897,7 @@ fn warmed_source_token_transition_performs_no_registration_checks_or_calls() {
         );
 
         assert_eq!(
-            processor
-                .get_next()
-                .expect("first source delivery")
-                .expect("first source token")
+            crate::test_harness::expect_raw_command(&mut processor)
                 .spelling()
                 .semantic_token(),
             Token::Char {
@@ -1942,10 +1909,7 @@ fn warmed_source_token_transition_performs_no_registration_checks_or_calls() {
         assert_eq!(after_acquisition.calls - before_acquisition.calls, 1);
 
         assert_eq!(
-            processor
-                .get_next()
-                .expect("warmed source delivery")
-                .expect("second source token")
+            crate::test_harness::expect_raw_command(&mut processor)
                 .spelling()
                 .semantic_token(),
             Token::Char {
@@ -1956,7 +1920,20 @@ fn warmed_source_token_transition_performs_no_registration_checks_or_calls() {
         let after_warmed_token = crate::input::source_registration_counters();
         assert_eq!(after_warmed_token, after_acquisition);
 
-        while processor.get_next().expect("source retirement").is_some() {}
+        loop {
+            let mut destination = None;
+            match processor
+                .get_next_into(&mut destination)
+                .expect("source retirement")
+            {
+                crate::DeliveryStatus::Command => assert!(destination.is_some()),
+                crate::DeliveryStatus::End => {
+                    assert!(destination.is_none());
+                    break;
+                }
+                status => panic!("unexpected raw delivery status: {status:?}"),
+            }
+        }
         let after_retirement = crate::input::source_registration_counters();
         assert_eq!(after_retirement.calls, after_acquisition.calls);
         assert!(after_retirement.checks > after_warmed_token.checks);
@@ -2011,10 +1988,7 @@ fn failed_replacement_registration_retries_at_next_physical_acquisition() {
 
         for expected in ['a', 'b'] {
             assert_eq!(
-                processor
-                    .get_next()
-                    .expect("replacement delivery")
-                    .expect("replacement token")
+                crate::test_harness::expect_raw_command(&mut processor)
                     .spelling()
                     .semantic_token(),
                 Token::Char {
@@ -2027,10 +2001,7 @@ fn failed_replacement_registration_retries_at_next_physical_acquisition() {
         assert_eq!(after_replacement.calls - before.calls, 2);
 
         assert_eq!(
-            processor
-                .get_next()
-                .expect("next physical line")
-                .expect("next physical token")
+            crate::test_harness::expect_raw_command(&mut processor)
                 .spelling()
                 .semantic_token(),
             Token::Char {
@@ -2068,10 +2039,7 @@ fn input_top_transition_refills_only_at_line_boundary_and_backup_clears_direct_s
             &mut diagnostic_effects,
         );
 
-        let first = processor
-            .get_next()
-            .expect("first delivery")
-            .expect("first character");
+        let first = crate::test_harness::expect_raw_command(&mut processor);
         assert_eq!(
             first.spelling().semantic_token(),
             Token::Char {
@@ -2092,10 +2060,7 @@ fn input_top_transition_refills_only_at_line_boundary_and_backup_clears_direct_s
             _ => panic!("the source remains active"),
         };
 
-        let second = processor
-            .get_next()
-            .expect("second delivery")
-            .expect("second character");
+        let second = crate::test_harness::expect_raw_command(&mut processor);
         assert_eq!(
             second.spelling().semantic_token(),
             Token::Char {
@@ -2119,10 +2084,7 @@ fn input_top_transition_refills_only_at_line_boundary_and_backup_clears_direct_s
         assert_eq!(second_line_number, first_line_number);
 
         processor.back_input(second).expect("backup");
-        let replayed = processor
-            .get_next()
-            .expect("backup delivery")
-            .expect("backed-up character");
+        let replayed = crate::test_harness::expect_raw_command(&mut processor);
         assert_eq!(processor.source_provenance(&replayed), second_provenance);
         assert_eq!(replayed.direct_source_line_number(), None);
         assert_eq!(processor.command.input.current_file_line_number(), 1);
@@ -2154,10 +2116,7 @@ fn direct_source_control_sequences_preserve_creation_policy_after_compact_delive
             &mut diagnostic_effects,
         );
 
-        let forbidden = processor
-            .get_next()
-            .expect("forbidden-creation delivery")
-            .expect("first control sequence");
+        let forbidden = crate::test_harness::expect_raw_command(&mut processor);
         assert!(
             forbidden
                 .spelling()
@@ -2166,10 +2125,7 @@ fn direct_source_control_sequences_preserve_creation_policy_after_compact_delive
         );
         assert_eq!(forbidden.control_sequence(), None);
 
-        let allowed = processor
-            .get_token()
-            .expect("allowed-creation delivery")
-            .expect("second control sequence");
+        let allowed = crate::test_harness::expect_token_command(&mut processor);
         assert!(matches!(allowed.spelling().semantic_token(), Token::Cs(_)));
         assert!(allowed.control_sequence().is_some());
         assert_eq!(allowed.meaning(), Meaning::Undefined);
@@ -2211,12 +2167,10 @@ fn assert_warmed_single_character_control_sequence_is_allocation_free<G>(
     );
 
     let first = if create_control_sequences {
-        processor.get_token()
+        crate::test_harness::expect_token_command(&mut processor)
     } else {
-        processor.get_next()
-    }
-    .expect("warm delivery")
-    .expect("first control sequence");
+        crate::test_harness::expect_raw_command(&mut processor)
+    };
     assert_eq!(first.spelling().semantic_token(), Token::Cs(expected));
     drop(first);
 
@@ -2225,13 +2179,11 @@ fn assert_warmed_single_character_control_sequence_is_allocation_free<G>(
     let second = {
         let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
         if create_control_sequences {
-            processor.get_token()
+            crate::test_harness::expect_token_command(&mut processor)
         } else {
-            processor.get_next()
+            crate::test_harness::expect_raw_command(&mut processor)
         }
-    }
-    .expect("measured delivery")
-    .expect("second control sequence");
+    };
     let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
 
     assert_eq!(second.spelling().semantic_token(), Token::Cs(expected));
@@ -2271,28 +2223,16 @@ fn assert_superscript_control_word_identity(profile: crate::CommandProfile, sour
             &mut diagnostic_effects,
         );
 
-        let transformed_mutable = processor
-            .get_token()
-            .expect("mutable transformed delivery")
-            .expect("transformed control word")
+        let transformed_mutable = crate::test_harness::expect_token_command(&mut processor)
             .spelling()
             .semantic_token();
-        let literal_mutable = processor
-            .get_token()
-            .expect("mutable literal delivery")
-            .expect("literal control word")
+        let literal_mutable = crate::test_harness::expect_token_command(&mut processor)
             .spelling()
             .semantic_token();
-        let transformed_readonly = processor
-            .get_next()
-            .expect("readonly transformed delivery")
-            .expect("transformed control word")
+        let transformed_readonly = crate::test_harness::expect_raw_command(&mut processor)
             .spelling()
             .semantic_token();
-        let literal_readonly = processor
-            .get_next()
-            .expect("readonly literal delivery")
-            .expect("literal control word")
+        let literal_readonly = crate::test_harness::expect_raw_command(&mut processor)
             .spelling()
             .semantic_token();
 
@@ -2349,12 +2289,10 @@ fn assert_warmed_control_word_delivery_allocates_zero(create: bool) {
 
         let deliver = |processor: &mut crate::CommandProcessor<'_, '_, _>| {
             let delivered = if create {
-                processor.get_token()
+                crate::test_harness::expect_token_command(processor)
             } else {
-                processor.get_next()
-            }
-            .expect("source delivery")
-            .expect("control word");
+                crate::test_harness::expect_raw_command(processor)
+            };
             assert_eq!(delivered.spelling().semantic_token(), expected);
         };
         for _ in 0..WARMUP_DELIVERIES {
@@ -2455,10 +2393,7 @@ fn warmed_stored_raw_delivery_allocates_zero_heap() {
             &mut diagnostic_effects,
         );
         assert_eq!(
-            processor
-                .get_next()
-                .expect("warm delivery")
-                .expect("stored token")
+            crate::test_harness::expect_raw_command(&mut processor)
                 .spelling()
                 .semantic_token(),
             token
@@ -2468,10 +2403,7 @@ fn warmed_stored_raw_delivery_allocates_zero_heap() {
         let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
         let delivered = {
             let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
-            processor
-                .get_next()
-                .expect("measured delivery")
-                .expect("stored token")
+            crate::test_harness::expect_raw_command(&mut processor)
         };
         let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
         assert_eq!(delivered.spelling().semantic_token(), token);

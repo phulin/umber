@@ -5,8 +5,8 @@ use std::sync::Arc;
 use stats_alloc::{INSTRUMENTED_SYSTEM, Region, Stats, StatsAlloc};
 use tex_command::{
     AlignmentIdentity, CommandFuelLedger, CommandHostCapabilities, CommandHostContext,
-    CommandObservation, CommandObserver, CommandProcessor, CommandState, PrintCommand,
-    RegisteredSourceKind, SourceRegistration, append_print_cmd_chr_text,
+    CommandObservation, CommandObserver, CommandProcessor, CommandState, DeliveryStatus,
+    PrintCommand, RegisteredSourceKind, SourceRegistration, append_print_cmd_chr_text,
     install_tex82_expandable_primitives, install_tex82_unexpandable_primitives,
 };
 use tex_state::env::AssignmentScope;
@@ -17,6 +17,19 @@ use tex_state::{TokenListId, Universe};
 
 #[global_allocator]
 static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
+
+macro_rules! delivered_command {
+    ($processor:expr, $method:ident) => {{
+        let mut destination = None;
+        assert_eq!(
+            $processor
+                .$method(&mut destination)
+                .expect("allocation workload delivery"),
+            DeliveryStatus::Command
+        );
+        destination.expect("allocation workload delivery filled caller slot")
+    }};
+}
 
 const OPERATIONS: usize = 64;
 const PERTURBATION_BYTES: usize = 64;
@@ -204,21 +217,13 @@ fn run_one<G>(
     };
     match workload {
         Workload::SingleTokenBackup => {
-            let command = processor
-                .get_next()
-                .expect("backup token delivers")
-                .expect("backup token is present");
+            let command = delivered_command!(processor, get_next_into);
             processor
                 .back_input(command)
                 .expect("single token backs up");
         }
         Workload::MacroArgumentMatching => {
-            black_box(
-                processor
-                    .get_x_token()
-                    .expect("macro arguments match")
-                    .expect("macro replacement is present"),
-            );
+            black_box(delivered_command!(processor, get_x_token_into));
         }
         Workload::ScanToksAbsorption => {
             black_box(
@@ -255,10 +260,7 @@ fn run_one<G>(
                 .expect("alignment preamble scans");
         }
         Workload::TwoTokenOffSaveRecovery => {
-            let command = processor
-                .get_next()
-                .expect("off-save command delivers")
-                .expect("off-save command is present");
+            let command = delivered_command!(processor, get_next_into);
             processor
                 .recover_off_save(
                     command,
@@ -276,18 +278,24 @@ fn run_one<G>(
                 .expect("two-token off-save recovery installs");
         }
         Workload::RenderedTokenInstallation => {
-            black_box(
-                processor
-                    .get_x_token()
-                    .expect("rendered expansion succeeds")
-                    .expect("rendered expansion produces a token"),
-            );
+            black_box(delivered_command!(processor, get_x_token_into));
         }
-        Workload::TokenListIteration => {
-            while let Some(command) = processor.get_token().expect("token list iterates") {
-                black_box(command);
-            }
-        }
+        Workload::TokenListIteration => loop {
+            let mut destination = None;
+            match processor
+                .get_token_into(&mut destination)
+                .expect("token list iterates")
+            {
+                DeliveryStatus::Command => {
+                    black_box(destination.expect("caller slot filled"));
+                }
+                DeliveryStatus::End => {
+                    assert!(destination.is_none());
+                    break;
+                }
+                status => panic!("unexpected token delivery status: {status:?}"),
+            };
+        },
         Workload::ShiftCase => processor.shift_case(true).expect("case shift completes"),
         Workload::MacroDefinition => {
             black_box(
@@ -312,12 +320,7 @@ fn run_one<G>(
         }
         Workload::InlineControlSequenceTokenization
         | Workload::SpilledControlSequenceTokenization => {
-            black_box(
-                processor
-                    .get_token()
-                    .expect("control sequence tokenizes")
-                    .expect("control sequence is present"),
-            );
+            black_box(delivered_command!(processor, get_token_into));
         }
         Workload::CommandTextRendering => unreachable!("rendering has its own case"),
     }
@@ -460,34 +463,18 @@ fn processor_case<G>(universe: &mut Universe<G>, workload: Workload) -> Processo
             &mut case.diagnostic_effects,
         );
         for _ in 0..48 {
-            black_box(
-                processor
-                    .get_x_token()
-                    .expect("macro warmup succeeds")
-                    .expect("macro warmup token is present"),
-            );
+            black_box(delivered_command!(processor, get_x_token_into));
         }
         for _ in 0..2 {
-            let replay_warmup = processor
-                .get_next()
-                .expect("macro replay warmup delivers")
-                .expect("macro replay warmup is present");
+            let replay_warmup = delivered_command!(processor, get_next_into);
             processor
                 .back_input(replay_warmup)
                 .expect("macro replay warmup backs up");
             for _ in 0..16 {
-                black_box(
-                    processor
-                        .get_x_token()
-                        .expect("macro replay warmup succeeds")
-                        .expect("macro replay warmup token is present"),
-                );
+                black_box(delivered_command!(processor, get_x_token_into));
             }
         }
-        let pending = processor
-            .get_next()
-            .expect("warmed macro call delivers")
-            .expect("warmed macro call is present");
+        let pending = delivered_command!(processor, get_next_into);
         processor
             .back_input(pending)
             .expect("warmed macro call backs up");
@@ -556,17 +543,15 @@ fn rendering_case<G>(universe: &mut Universe<G>) -> RenderingCase<G> {
     let mut fuel = CommandFuelLedger::default();
     let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
     let mut context = universe.command_context().expect("command context");
-    let current = CommandProcessor::new(
+    let mut processor = CommandProcessor::new(
         &mut command,
         &mut context,
         CommandHostContext::new(&mut capabilities),
         fuel.fuel_mut(),
         None,
         &mut diagnostic_effects,
-    )
-    .get_next()
-    .expect("rendering command delivers")
-    .expect("rendering command is present");
+    );
+    let current = delivered_command!(processor, get_next_into);
     RenderingCase {
         command: PrintCommand::from_current(&current),
         text: String::with_capacity(32),

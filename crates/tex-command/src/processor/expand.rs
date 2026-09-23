@@ -1170,21 +1170,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
     }
 
-    /// Delivers one ordinary expanded command through TeX.web's `get_x_token`.
-    ///
-    /// This thin canonical entry point enters the ordinary expanded loop.
-    /// Expansion mutates canonical command state and restarts in that loop;
-    /// it never returns a push-bearing dispatch result or enters a second
-    /// interpreter.
-    pub fn get_x_token(&mut self) -> Result<Option<CurrentCommand<G>>, CommandError> {
-        let mut destination = None;
-        match self.get_x_token_into(&mut destination)? {
-            DeliveryStatus::End => Ok(None),
-            DeliveryStatus::Command => Ok(destination),
-            _ => unreachable!("ordinary expanded delivery returns only commands"),
-        }
-    }
-
     /// Delivers one expanded command directly into caller-provided storage.
     pub fn get_x_token_into(
         &mut self,

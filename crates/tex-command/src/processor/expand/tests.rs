@@ -135,7 +135,20 @@ fn collect_expanded_meanings<G>(
         &mut diagnostic_effects,
     );
     let mut output = Vec::new();
-    while let Some(command) = processor.get_x_token().expect("expanded delivery") {
+    loop {
+        let mut destination = None;
+        match processor
+            .get_x_token_into(&mut destination)
+            .expect("expanded delivery")
+        {
+            crate::DeliveryStatus::Command => {}
+            crate::DeliveryStatus::End => {
+                assert!(destination.is_none());
+                break;
+            }
+            status => panic!("unexpected expanded delivery status: {status:?}"),
+        }
+        let command = destination.expect("expanded delivery filled caller slot");
         match command.meaning() {
             tex_state::meaning::ResolvedMeaning::Static(meaning) => {
                 output.push(meaning);

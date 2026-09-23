@@ -113,12 +113,21 @@ fn check(family: Family, depth: usize, parent_depth: u32, should_overflow: bool,
         let mut output = String::new();
         let mut failure = None;
         loop {
-            match processor.get_x_token() {
-                Ok(Some(command)) => match command.spelling().semantic_token() {
+            let mut destination = None;
+            match processor.get_x_token_into(&mut destination) {
+                Ok(crate::DeliveryStatus::Command) => match destination
+                    .expect("expanded delivery filled caller slot")
+                    .spelling()
+                    .semantic_token()
+                {
                     Token::Char { ch, .. } => output.push(ch),
                     token => panic!("unexpected terminal spelling {token:?}"),
                 },
-                Ok(None) => break,
+                Ok(crate::DeliveryStatus::End) => {
+                    assert!(destination.is_none());
+                    break;
+                }
+                Ok(status) => panic!("unexpected expanded delivery status: {status:?}"),
                 Err(error) => {
                     failure = Some(error);
                     break;
@@ -240,17 +249,21 @@ fn sequential_macro_delivery_does_not_consume_recursive_expansion_capacity() {
         processor.expansion_depth = EXPANSION_DEPTH_LIMIT - 1;
         for _ in 0..10_001 {
             assert_eq!(
-                processor
-                    .get_x_token()
-                    .expect("iterative macro")
-                    .expect("macro character")
+                crate::test_harness::expect_expanded_command(&mut processor)
                     .spelling()
                     .semantic_token(),
                 letter('A')
             );
             assert_eq!(processor.expansion_depth, EXPANSION_DEPTH_LIMIT - 1);
         }
-        assert!(processor.get_x_token().expect("end").is_none());
+        {
+            let mut destination = None;
+            assert_eq!(
+                processor.get_x_token_into(&mut destination).expect("end"),
+                crate::DeliveryStatus::End
+            );
+            assert!(destination.is_none());
+        };
     });
 }
 

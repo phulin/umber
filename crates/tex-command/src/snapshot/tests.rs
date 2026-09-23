@@ -298,11 +298,7 @@ fn rollback_restores_replay_lane_coordinates_after_candidate_admission() {
             &mut effects,
         );
         assert_eq!(
-            processor
-                .get_next()
-                .expect("restored replay delivers")
-                .expect("restored replay is present")
-                .spelling(),
+            crate::test_harness::expect_raw_command(&mut processor).spelling(),
             word('a')
         );
     });
@@ -340,11 +336,7 @@ fn rollback_restores_a_mutated_input_frame_cursor() {
                 &mut effects,
             );
             assert_eq!(
-                processor
-                    .get_next()
-                    .expect("candidate delivery")
-                    .expect("candidate token")
-                    .spelling(),
+                crate::test_harness::expect_raw_command(&mut processor).spelling(),
                 word('a')
             );
         }
@@ -361,11 +353,7 @@ fn rollback_restores_a_mutated_input_frame_cursor() {
             &mut effects,
         );
         assert_eq!(
-            processor
-                .get_next()
-                .expect("restored delivery")
-                .expect("restored token")
-                .spelling(),
+            crate::test_harness::expect_raw_command(&mut processor).spelling(),
             word('a')
         );
     });
@@ -419,11 +407,7 @@ fn popping_a_checkpoint_descendant_captures_the_newly_exposed_parent() {
                 &mut effects,
             );
             assert_eq!(
-                processor
-                    .get_next()
-                    .expect("parent delivery")
-                    .expect("parent token")
-                    .spelling(),
+                crate::test_harness::expect_raw_command(&mut processor).spelling(),
                 word('a')
             );
         }
@@ -449,19 +433,11 @@ fn popping_a_checkpoint_descendant_captures_the_newly_exposed_parent() {
                 &mut effects,
             );
             assert_eq!(
-                processor
-                    .get_next()
-                    .expect("child delivery")
-                    .expect("child token")
-                    .spelling(),
+                crate::test_harness::expect_raw_command(&mut processor).spelling(),
                 word('x')
             );
             assert_eq!(
-                processor
-                    .get_next()
-                    .expect("exposed parent delivery")
-                    .expect("parent token")
-                    .spelling(),
+                crate::test_harness::expect_raw_command(&mut processor).spelling(),
                 word('b')
             );
         }
@@ -479,19 +455,11 @@ fn popping_a_checkpoint_descendant_captures_the_newly_exposed_parent() {
             &mut effects,
         );
         assert_eq!(
-            processor
-                .get_next()
-                .expect("restored child delivery")
-                .expect("restored child token")
-                .spelling(),
+            crate::test_harness::expect_raw_command(&mut processor).spelling(),
             word('x')
         );
         assert_eq!(
-            processor
-                .get_next()
-                .expect("restored parent delivery")
-                .expect("restored parent token")
-                .spelling(),
+            crate::test_harness::expect_raw_command(&mut processor).spelling(),
             word('b')
         );
     });
@@ -668,10 +636,7 @@ fn nested_source_pop_and_snapshot_restore_keep_authoritative_line_exact() {
                 &mut fuel,
                 &mut diagnostic_effects,
             );
-            let first = processor
-                .get_next()
-                .expect("parent delivery")
-                .expect("parent character");
+            let first = crate::test_harness::expect_raw_command(&mut processor);
             assert_eq!(
                 first.spelling().semantic_token(),
                 Token::Char {
@@ -702,10 +667,7 @@ fn nested_source_pop_and_snapshot_restore_keep_authoritative_line_exact() {
                 &mut fuel,
                 &mut diagnostic_effects,
             );
-            let resumed_parent = processor
-                .get_next()
-                .expect("nested EOF resumes parent")
-                .expect("parent second token");
+            let resumed_parent = crate::test_harness::expect_raw_command(&mut processor);
             assert_eq!(
                 resumed_parent.spelling().semantic_token(),
                 Token::Char {
@@ -728,10 +690,7 @@ fn nested_source_pop_and_snapshot_restore_keep_authoritative_line_exact() {
             &mut fuel,
             &mut diagnostic_effects,
         );
-        let replayed = processor
-            .get_next()
-            .expect("restored parent delivery")
-            .expect("restored second token");
+        let replayed = crate::test_harness::expect_raw_command(&mut processor);
         assert_eq!(
             replayed.spelling().semantic_token(),
             Token::Char {
@@ -776,10 +735,7 @@ fn source_checkpoint_captures_exposed_lexer_and_cold_transition_moves_owner() {
                 &mut fuel,
                 &mut diagnostic_effects,
             );
-            let first = processor
-                .get_next()
-                .expect("source delivery")
-                .expect("source token");
+            let first = crate::test_harness::expect_raw_command(&mut processor);
             assert_eq!(
                 first.spelling().semantic_token(),
                 Token::Char {
@@ -866,18 +822,16 @@ fn source_owner_swap_candidate_reject_redoes_prior_and_accept_promotes_current()
         macro_rules! deliver {
             ($command:expr) => {{
                 let mut context = universe.command_context().expect("command context");
-                crate::test_harness::processor(
+                let mut processor = crate::test_harness::processor(
                     $command,
                     &mut context,
                     &mut capabilities,
                     &mut fuel,
                     &mut diagnostic_effects,
-                )
-                .get_next()
-                .expect("source delivery")
-                .expect("source token")
-                .spelling()
-                .semantic_token()
+                );
+                crate::test_harness::expect_raw_command(&mut processor)
+                    .spelling()
+                    .semantic_token()
             }};
         }
 

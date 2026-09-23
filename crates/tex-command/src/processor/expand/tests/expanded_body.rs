@@ -373,10 +373,7 @@ fn expanded_unterminated_body_recovers_at_end_and_exposes_collected_text() {
             &mut fuel,
             &mut diagnostic_effects,
         );
-        let recovered = processor
-            .get_x_token()
-            .expect("unterminated delivery")
-            .expect("runaway recovery exposes the collected body");
+        let recovered = crate::test_harness::expect_expanded_command(&mut processor);
         assert_eq!(
             recovered.meaning(),
             Meaning::CharToken {
@@ -384,12 +381,16 @@ fn expanded_unterminated_body_recovers_at_end_and_exposes_collected_text() {
                 cat: Catcode::Letter,
             }
         );
-        assert!(
-            processor
-                .get_x_token()
-                .expect("terminal delivery after recovered body")
-                .is_none()
-        );
+        {
+            let mut destination = None;
+            assert_eq!(
+                processor
+                    .get_x_token_into(&mut destination)
+                    .expect("terminal delivery after recovered body"),
+                crate::DeliveryStatus::End
+            );
+            assert!(destination.is_none());
+        };
         drop(processor);
         let diagnostics = command.take_semantic_diagnostics();
         assert!(matches!(

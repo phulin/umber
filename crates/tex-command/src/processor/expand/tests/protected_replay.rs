@@ -224,16 +224,20 @@ fn csname_relaxes_an_already_interned_undefined_name() {
             &mut diagnostic_effects,
         );
 
-        let expanded = processor
-            .get_x_token()
-            .expect("csname expansion")
-            .expect("named control sequence");
+        let expanded = crate::test_harness::expect_expanded_command(&mut processor);
         assert_eq!(
             expanded.spelling().semantic_token(),
             Token::Cs(latent.symbol())
         );
         assert_eq!(expanded.meaning(), Meaning::Relax);
-        assert!(processor.get_x_token().expect("end").is_none());
+        {
+            let mut destination = None;
+            assert_eq!(
+                processor.get_x_token_into(&mut destination).expect("end"),
+                crate::DeliveryStatus::End
+            );
+            assert!(destination.is_none());
+        };
     });
 }
 

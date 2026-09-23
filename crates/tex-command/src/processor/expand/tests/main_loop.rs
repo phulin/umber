@@ -91,10 +91,7 @@ fn main_loop_character_run_lexes_a_resident_source_prefix_once() {
             &mut diagnostic_effects,
         );
 
-        let first = processor
-            .get_next()
-            .expect("source line acquisition")
-            .expect("first source token");
+        let first = crate::test_harness::expect_raw_command(&mut processor);
         assert_eq!(
             first.spelling().semantic_token(),
             Token::Char {
@@ -186,10 +183,7 @@ fn main_loop_source_step_settles_zero_prefix_without_reopening_source() {
             &mut fuel,
             &mut diagnostic_effects,
         );
-        processor
-            .get_next()
-            .expect("source line acquisition")
-            .expect("first source token");
+        crate::test_harness::expect_raw_command(&mut processor);
         processor
             .command
             .profile_reset_input_source_context_counters();
@@ -242,10 +236,7 @@ fn main_loop_source_step_sends_utf8_boundary_to_scalar_tokenizer() {
         );
 
         assert_eq!(
-            processor
-                .get_next()
-                .expect("source line acquisition")
-                .expect("first source token")
+            crate::test_harness::expect_raw_command(&mut processor)
                 .spelling()
                 .semantic_token(),
             Token::Char {
@@ -310,10 +301,7 @@ fn main_loop_source_step_sends_superscript_boundary_to_scalar_tokenizer() {
         );
 
         assert_eq!(
-            processor
-                .get_next()
-                .expect("source line acquisition")
-                .expect("first source token")
+            crate::test_harness::expect_raw_command(&mut processor)
                 .spelling()
                 .semantic_token(),
             Token::Char {
@@ -378,10 +366,7 @@ fn main_loop_source_step_uses_live_catcode_at_run_boundary() {
         );
 
         assert_eq!(
-            processor
-                .get_next()
-                .expect("source line acquisition")
-                .expect("first source token")
+            crate::test_harness::expect_raw_command(&mut processor)
                 .spelling()
                 .semantic_token(),
             Token::Char {
@@ -652,18 +637,12 @@ fn noexpand_suppresses_exactly_one_expandable_delivery() {
         );
         let persistent_mode = processor.command.delivery_mode;
 
-        let suppressed = processor
-            .get_x_token()
-            .expect("suppressed delivery")
-            .expect("suppressed command");
+        let suppressed = crate::test_harness::expect_expanded_command(&mut processor);
         assert_eq!(suppressed.spelling().semantic_token(), macro_token);
         assert_eq!(suppressed.meaning(), Meaning::Relax);
         assert_eq!(processor.command.delivery_mode, persistent_mode);
         assert_eq!(
-            processor
-                .get_x_token()
-                .expect("second delivery")
-                .expect("replacement")
+            crate::test_harness::expect_expanded_command(&mut processor)
                 .spelling()
                 .semantic_token(),
             replacement

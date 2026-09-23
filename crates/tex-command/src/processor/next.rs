@@ -21,15 +21,6 @@ use crate::observation::{
 };
 
 impl<G> CommandProcessor<'_, '_, G> {
-    /// Delivers one unexpanded raw command through canonical `get_next`.
-    pub fn get_next(&mut self) -> Result<Option<CurrentCommand<G>>, CommandError> {
-        let mut destination = None;
-        match self.get_next_into(&mut destination)? {
-            super::DeliveryStatus::End => Ok(None),
-            super::DeliveryStatus::Command => Ok(destination),
-            _ => unreachable!("ordinary raw delivery returns only commands"),
-        }
-    }
     /// Delivers one raw command directly into caller-provided final storage.
     pub fn get_next_into(
         &mut self,
@@ -171,16 +162,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .undo_delivery(command.alignment_adjustment());
         }
         Ok(destination)
-    }
-    /// Delivers one raw token for consumers which canonically permit a new
-    /// source control-sequence spelling.
-    pub fn get_token(&mut self) -> Result<Option<CurrentCommand<G>>, CommandError> {
-        let mut destination = None;
-        match self.get_token_into(&mut destination)? {
-            super::DeliveryStatus::End => Ok(None),
-            super::DeliveryStatus::Command => Ok(destination),
-            _ => unreachable!("ordinary token delivery returns only commands"),
-        }
     }
     /// Delivers one raw token directly into caller-provided final storage.
     pub fn get_token_into(

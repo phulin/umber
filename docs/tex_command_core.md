@@ -2757,21 +2757,12 @@ implemented as a semantic execution mode.
 
 ## 17. Expanded command delivery
 
-There is one ordinary loop:
-
-```rust
-fn get_x_token(&mut self) -> Result<Option<CurrentCommand>, CommandError> {
-    loop {
-        let Some(command) = self.get_next()? else {
-            return Ok(None);
-        };
-        if !command.meaning.command.is_expandable() {
-            return Ok(Some(command));
-        }
-        self.expand(command)?;
-    }
-}
-```
+There is one ordinary expanded-delivery loop. `get_x_token_into` writes a
+completed command into the caller's slot and returns `DeliveryStatus::Command`;
+`DeliveryStatus::End` leaves that slot empty. Expansion updates canonical
+command state and restarts the loop, while alignment transitions settle before
+the completed command is published. Raw `get_next_into` and source-token
+`get_token_into` use the same destination-directed result contract.
 
 The promoted scalar implementation uses a const-specialized entry into the same
 destination-directed fetch-and-inspect state machine, so resident advancement

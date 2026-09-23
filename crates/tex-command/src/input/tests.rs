@@ -167,7 +167,9 @@ fn source_advance_invalidates_a_diagnostic_coordinate() {
             &mut fuel,
             &mut diagnostic_effects,
         );
-        assert!(processor.get_next().expect("source delivers").is_some());
+        {
+            let _command = crate::test_harness::expect_raw_command(&mut processor);
+        };
         drop(processor);
         drop(context);
         let stores = universe.command_context().expect("diagnostic context");
@@ -208,18 +210,12 @@ fn push_pop_aba_and_context_scalars_reject_old_coordinates() {
             &mut fuel,
             &mut diagnostic_effects,
         );
-        assert!(
-            processor
-                .get_next()
-                .expect("nested token delivers")
-                .is_some()
-        );
-        assert!(
-            processor
-                .get_next()
-                .expect("nested level retires")
-                .is_some()
-        );
+        {
+            let _command = crate::test_harness::expect_raw_command(&mut processor);
+        };
+        {
+            let _command = crate::test_harness::expect_raw_command(&mut processor);
+        };
         drop(processor);
         drop(context);
         let stores = universe.command_context().expect("diagnostic context");
@@ -327,11 +323,7 @@ fn registered_source_delivers_through_the_generation_typed_processor() {
         );
 
         assert!(matches!(
-            processor
-                .get_next()
-                .expect("delivery")
-                .expect("first command")
-                .meaning(),
+            crate::test_harness::expect_raw_command(&mut processor).meaning(),
             tex_state::ResolvedMeaning::Static(Meaning::CharToken { ch: 'A', .. })
         ));
     });
@@ -360,11 +352,7 @@ fn transient_replay_preserves_authored_token_categories() {
             &mut diagnostic_effects,
         );
         assert_eq!(
-            processor
-                .get_next()
-                .expect("delivery")
-                .expect("command")
-                .meaning(),
+            crate::test_harness::expect_raw_command(&mut processor).meaning(),
             Meaning::CharToken {
                 ch: 'x',
                 cat: tex_state::token::Catcode::Letter,
@@ -405,14 +393,19 @@ fn invalid_source_character_is_reported_once_and_delivery_restarts() {
                 &mut diagnostic_effects,
             );
             assert!(matches!(
-                processor
-                    .get_next()
-                    .expect("delivery restarts")
-                    .expect("following command")
-                    .meaning(),
+                crate::test_harness::expect_raw_command(&mut processor).meaning(),
                 tex_state::ResolvedMeaning::Static(Meaning::CharToken { ch: 'A', .. })
             ));
-            assert!(processor.get_next().expect("source retirement").is_none());
+            {
+                let mut destination = None;
+                assert_eq!(
+                    processor
+                        .get_next_into(&mut destination)
+                        .expect("source retirement"),
+                    crate::DeliveryStatus::End
+                );
+                assert!(destination.is_none());
+            };
         }
 
         let diagnostics = command.take_semantic_diagnostics();

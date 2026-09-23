@@ -40,10 +40,7 @@ fn signs_before_parentheses_leave_the_invalid_factor_for_recovery() {
                 crate::InternalValue::Integer(0)
             ));
             assert_eq!(
-                processor
-                    .get_x_token()
-                    .expect("remaining factor")
-                    .expect("parenthesis")
+                crate::test_harness::expect_expanded_command(&mut processor)
                     .spelling()
                     .semantic_token(),
                 other('('),

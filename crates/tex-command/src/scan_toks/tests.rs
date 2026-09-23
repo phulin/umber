@@ -46,19 +46,13 @@ fn case_shift_one_64_and_4096_write_once_without_copy_or_warmed_allocation() {
                 );
                 processor.shift_case(true).expect("warm case shift");
                 for _ in 0..body_len {
-                    let shifted = processor
-                        .get_token()
-                        .expect("warm shifted delivery")
-                        .expect("warm shifted token");
+                    let shifted = crate::test_harness::expect_token_command(&mut processor);
                     assert_eq!(
                         shifted.spelling().semantic_token(),
                         token('A', Catcode::Letter)
                     );
                 }
-                let opening = processor
-                    .get_token()
-                    .expect("next opening delivery")
-                    .expect("next opening token");
+                let opening = crate::test_harness::expect_token_command(&mut processor);
                 assert_eq!(
                     opening.spelling().semantic_token(),
                     token('{', Catcode::BeginGroup)
@@ -113,19 +107,13 @@ fn case_shift_one_64_and_4096_write_once_without_copy_or_warmed_allocation() {
                     &mut diagnostic_effects,
                 );
                 for _ in 0..body_len {
-                    let shifted = processor
-                        .get_token()
-                        .expect("measured shifted delivery")
-                        .expect("measured shifted token");
+                    let shifted = crate::test_harness::expect_token_command(&mut processor);
                     assert_eq!(
                         shifted.spelling().semantic_token(),
                         token('A', Catcode::Letter)
                     );
                 }
-                let sentinel = processor
-                    .get_token()
-                    .expect("sentinel delivery")
-                    .expect("sentinel token");
+                let sentinel = crate::test_harness::expect_token_command(&mut processor);
                 assert_eq!(
                     sentinel.spelling().semantic_token(),
                     token('q', Catcode::Letter)
@@ -179,10 +167,7 @@ fn case_shift_empty_and_nested_groups_replay_the_final_span_directly() {
         let mut shifted = Vec::new();
         for _ in 0..4 {
             shifted.push(
-                processor
-                    .get_token()
-                    .expect("shifted delivery")
-                    .expect("shifted token")
+                crate::test_harness::expect_token_command(&mut processor)
                     .spelling()
                     .semantic_token(),
             );

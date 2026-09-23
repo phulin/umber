@@ -19,6 +19,19 @@ use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 #[global_allocator]
 static GLOBAL: HotCoreAllocator = HotCoreAllocator;
 
+macro_rules! delivered_command {
+    ($processor:expr, $method:ident) => {{
+        let mut destination = None;
+        assert_eq!(
+            $processor
+                .$method(&mut destination)
+                .expect("benchmark delivery"),
+            DeliveryStatus::Command
+        );
+        destination.expect("benchmark delivery filled caller slot")
+    }};
+}
+
 fn main() {
     assert!(std::mem::size_of::<tex_state::DefinitionRef<()>>() <= 8);
     assert!(std::mem::size_of::<tex_state::ResolvedMeaning<()>>() <= 24);
@@ -273,7 +286,7 @@ fn source_known_creating_delivery() {
         );
         let start = Instant::now();
         for _ in 0..OPERATIONS {
-            let delivered = processor.get_token().unwrap().unwrap();
+            let delivered = delivered_command!(processor, get_token_into);
             assert_eq!(delivered.control_sequence(), Some(symbol.symbol()));
             black_box(delivered);
         }
@@ -305,7 +318,7 @@ fn source_known_probe_delivery() {
         );
         let start = Instant::now();
         for _ in 0..OPERATIONS {
-            let delivered = processor.get_next().unwrap().unwrap();
+            let delivered = delivered_command!(processor, get_next_into);
             assert_eq!(delivered.control_sequence(), Some(symbol.symbol()));
             black_box(delivered);
         }
@@ -336,7 +349,7 @@ fn source_new_creating_delivery() {
         );
         let start = Instant::now();
         for _ in 0..OPERATIONS {
-            let delivered = processor.get_token().unwrap().unwrap();
+            let delivered = delivered_command!(processor, get_token_into);
             assert!(delivered.control_sequence().is_some());
             black_box(delivered);
         }
@@ -367,7 +380,7 @@ fn source_unknown_probe_delivery() {
         );
         let start = Instant::now();
         for _ in 0..OPERATIONS {
-            let delivered = processor.get_next().unwrap().unwrap();
+            let delivered = delivered_command!(processor, get_next_into);
             assert!(
                 delivered
                     .spelling()
@@ -412,7 +425,7 @@ fn stored_control_sequence_delivery() {
         measure_zero("stored_control_sequence_delivery_1m", || {
             let start = Instant::now();
             for _ in 0..OPERATIONS {
-                let delivered = processor.get_token().unwrap().unwrap();
+                let delivered = delivered_command!(processor, get_token_into);
                 assert_eq!(delivered.control_sequence(), Some(symbol.symbol()));
                 black_box(delivered);
             }
@@ -498,17 +511,17 @@ fn warmed_backup_push_pop_throughput() {
             &mut fuel,
             &mut diagnostic_effects,
         );
-        let mut delivered = processor.get_next().unwrap().unwrap();
+        let mut delivered = delivered_command!(processor, get_next_into);
         for _ in 0..4_096 {
             processor.back_input(delivered).unwrap();
-            delivered = processor.get_next().unwrap().unwrap();
+            delivered = delivered_command!(processor, get_next_into);
         }
         let mut elapsed = Duration::ZERO;
         measure_zero("warmed_backup_push_pop_1m", || {
             let start = Instant::now();
             for _ in 0..OPERATIONS {
                 processor.back_input(delivered).unwrap();
-                delivered = processor.get_next().unwrap().unwrap();
+                delivered = delivered_command!(processor, get_next_into);
             }
             elapsed = start.elapsed();
             black_box(&delivered);
@@ -544,7 +557,7 @@ fn warmed_keyword_mismatch_throughput() {
             };
             assert!(!scanned.value);
             for _ in 0..9 {
-                black_box(processor.get_x_token().unwrap().unwrap());
+                black_box(delivered_command!(processor, get_x_token_into));
             }
         };
         run(&mut processor);
@@ -1101,10 +1114,10 @@ fn ordinary_source_delivery() {
             &mut diagnostic_effects,
         );
         for _ in 0..3 {
-            assert_char(processor.get_next().unwrap().unwrap(), 's');
+            assert_char(delivered_command!(processor, get_next_into), 's');
         }
         measure_zero("ordinary_source_delivery", || {
-            assert_char(processor.get_next().unwrap().unwrap(), 's');
+            assert_char(delivered_command!(processor, get_next_into), 's');
         });
     });
 }
@@ -1125,14 +1138,14 @@ fn packed_backup_and_replay() {
             &mut diagnostic_effects,
         );
         for _ in 0..2 {
-            let delivered = processor.get_next().unwrap().unwrap();
+            let delivered = delivered_command!(processor, get_next_into);
             processor.back_input(delivered).unwrap();
-            assert_char(processor.get_next().unwrap().unwrap(), 'b');
+            assert_char(delivered_command!(processor, get_next_into), 'b');
         }
-        let delivered = processor.get_next().unwrap().unwrap();
+        let delivered = delivered_command!(processor, get_next_into);
         measure_zero("packed_backup_and_replay", || {
             processor.back_input(delivered).unwrap();
-            assert_char(processor.get_next().unwrap().unwrap(), 'b');
+            assert_char(delivered_command!(processor, get_next_into), 'b');
         });
     });
 }
@@ -1387,21 +1400,21 @@ fn macro_argument_matching() {
             &mut diagnostic_effects,
         );
         for _ in 0..48 {
-            black_box(processor.get_x_token().unwrap().unwrap());
+            black_box(delivered_command!(processor, get_x_token_into));
         }
         for _ in 0..2 {
-            let replay_warmup = processor.get_next().unwrap().unwrap();
+            let replay_warmup = delivered_command!(processor, get_next_into);
             processor.back_input(replay_warmup).unwrap();
-            assert_char(processor.get_x_token().unwrap().unwrap(), 'a');
+            assert_char(delivered_command!(processor, get_x_token_into), 'a');
             for _ in 0..15 {
-                black_box(processor.get_x_token().unwrap().unwrap());
+                black_box(delivered_command!(processor, get_x_token_into));
             }
         }
-        let pending = processor.get_next().unwrap().unwrap();
+        let pending = delivered_command!(processor, get_next_into);
         processor.back_input(pending).unwrap();
         let match_word_reads = processor.macro_argument_match_word_reads();
         measure_zero("macro_matching_replay_expansion", || {
-            assert_char(processor.get_x_token().unwrap().unwrap(), 'a');
+            assert_char(delivered_command!(processor, get_x_token_into), 'a');
         });
         assert_eq!(
             processor.macro_argument_match_word_reads(),
@@ -1476,20 +1489,8 @@ fn macro_argument_append() {
             &mut fuel,
             &mut diagnostic_effects,
         );
-        assert_char(
-            warm_processor
-                .get_x_token()
-                .expect("warm argument append")
-                .expect("warm replacement marker"),
-            'z',
-        );
-        assert_char(
-            warm_processor
-                .get_x_token()
-                .expect("warm argument retirement")
-                .expect("warm separator"),
-            's',
-        );
+        assert_char(delivered_command!(warm_processor, get_x_token_into), 'z');
+        assert_char(delivered_command!(warm_processor, get_x_token_into), 's');
         drop(warm_processor);
         let work_before = fuel.work();
         let mut processor = processor(
@@ -1502,13 +1503,7 @@ fn macro_argument_append() {
         let mut elapsed = Duration::ZERO;
         measure_zero("macro_argument_append_1000002", || {
             let start = Instant::now();
-            assert_char(
-                processor
-                    .get_x_token()
-                    .expect("measured argument append")
-                    .expect("measured replacement marker"),
-                'z',
-            );
+            assert_char(delivered_command!(processor, get_x_token_into), 'z');
             elapsed = start.elapsed();
         });
         drop(processor);

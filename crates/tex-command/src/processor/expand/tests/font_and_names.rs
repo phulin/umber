@@ -238,10 +238,7 @@ fn ifcsname_collects_in_the_shared_delivery_lane() {
             &mut diagnostic_effects,
         );
         let ownership_before = crate::command::command_ownership_counters();
-        let result = processor
-            .get_x_token()
-            .expect("ifcsname delivery")
-            .expect("selected branch");
+        let result = crate::test_harness::expect_expanded_command(&mut processor);
         let ownership_after = crate::command::command_ownership_counters();
         assert_eq!(
             result.spelling().semantic_token(),
@@ -307,10 +304,7 @@ fn csname_chardef_uses_missing_endcsname_recovery() {
             &mut diagnostic_effects,
         );
 
-        let result = processor
-            .get_x_token()
-            .expect("csname recovery")
-            .expect("recovered control sequence");
+        let result = crate::test_harness::expect_expanded_command(&mut processor);
         assert_eq!(
             result.spelling().semantic_token(),
             Token::Cs(empty.symbol())
@@ -395,10 +389,7 @@ fn ifcsname_chardef_uses_missing_endcsname_recovery() {
             &mut diagnostic_effects,
         );
 
-        let result = processor
-            .get_x_token()
-            .expect("ifcsname recovery")
-            .expect("selected branch");
+        let result = crate::test_harness::expect_expanded_command(&mut processor);
         assert_eq!(
             result.spelling().semantic_token(),
             Token::Char {
