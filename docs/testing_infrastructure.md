@@ -59,6 +59,20 @@ run through `scripts/check-tools.sh`. The same selection suite rejects dormant
 targets. These guards prove discovery and source authority, not individual
 behavioral coverage.
 
+### Route a failed result
+
+| Failed lane or symptom               | Next command and evidence                                                                                                                                                                                                                                                                                     | Responsible boundary                                                                                                     |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Native test or combined native stage | Rerun the named test with `cargo test -q --tests -p <crate> <case> -- --nocapture`; inspect its fixture, first error, and the combined stage verdict.                                                                                                                                                         | The owning Rust crate and its committed fixture contract.                                                                |
+| Formatting or lint                   | Run `scripts/check.sh <gate>` and inspect that gate's diagnostics; use `scripts/check.sh` for the full authoritative verdict.                                                                                                                                                                                 | The named formatter or clippy feature pass, not an ad hoc lint invocation.                                               |
+| WASM, browser, or package step       | Run `scripts/check-wasm.sh <step>`; inspect the step verdict and its generated package/browser log. A missing tool or asset is `BLOCKED`, not a behavior pass.                                                                                                                                                | The Rust binding, authored JavaScript, browser worker, or publication asset named by the step.                           |
+| Oracle or exact-channel divergence   | Select the case with `UMBER_COMMAND_SEMANTIC_CASE=domain/id` on the manual command below, compare its committed channels, then follow [Canonical Divergence Working Contract](canonical_divergence_workflow.md) and [Command Core Diagnostics](command_core_diagnostics.md) to the first semantic difference. | The pinned reference capture and the earliest divergent engine layer; do not bless an Umber output as a new expectation. |
+| Missing pinned local asset           | Run `python3 scripts/provision.py worktree .` in the primary checkout or `python3 scripts/provision.py worktree <worktree>` for a linked checkout; inspect `tests/native-test-assets.lock` and the provisioner's SHA-256 error.                                                                               | Asset provisioning and its lock, before interpreting a test as engine behavior.                                          |
+
+The [Repository Simplification Performance Evidence](repository_simplification_performance.md)
+records a frozen quiet-host baseline/final comparison. Its unavailable
+snapshot-budget benchmark is an evidence gap, not a successful gate.
+
 `scripts/check-and-test.sh` builds the native suite before running its test
 binaries under a 30-minute/6-GiB process-group guard concurrently with
 `scripts/check.sh`. Those limits prevent runaway work; they are not a warmed
@@ -251,25 +265,23 @@ fixture's result. `npm-pack` checks the package inventory after construction.
 
 The shared [resource-transition cases](../tests/resource-transition-cases.json)
 run in the native `umber` integration target and the generated WASM package's
-`browser-package` step. Three ordered cases check required positive retry,
+`browser-package` step. Four ordered cases check required positive retry,
 authoritative missing probe, empty speculative response followed by demand,
-and atomic rejection of a conflicting late response. The browser runner uses
+cancellation while a resource patch is pending, and atomic rejection of a
+conflicting late response. The browser runner uses
 the real packed-catalog decoder with a catalog-only resolver so speculation
 does not add responses to the common vectors. Separate package checks use the
 full Rust prefetch policy. Native filesystem lookup and browser fetch, cache,
 worker, and cancellation behavior retain their own tests. The shared contract
 is explained in [Resource Lifecycle](resource_lifecycle.md).
 
-At the September 2026 integrated revision `f22424e2d`, the combined native
-gate passed all six stages and its quality gate passed all four gates. All
-nine WASM steps ran: eight passed and `default-format` was `BLOCKED` because
-the Plain-format metadata declared schema 0 unavailable at that revision. The
-generated browser package passed independently; its three shared resource
-cases, catalog-only path, and full Rust prefetch path ran on the real package.
-The pinned external PDF gate passed 15 qpdf/Poppler cases. These are results
-for that revision and selection, not a claim about every optional tier. See
+The local Plain-format metadata now declares schema 3 and format schema 12,
+and the named `default-format` step can validate the tracked image. A hosted
+default distribution remains unpublished. The final integrated native,
+quality, WASM, and external PDF verdicts are recorded in
 [Repository Simplification and Testing Plan](repository_simplification_plan.md)
-for the acceptance evidence and artifact identity.
+at the revision on which they actually ran; earlier blocked-format receipts
+do not describe current local asset availability.
 
 ### Declarative Command Semantic Minifixtures
 

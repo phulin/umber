@@ -32,6 +32,12 @@ not as chronological release receipts in `docs/`.
 paired runner in `scripts/paired-measure.py`, its JSON/JSONL receipt contract,
 inner-metric scope, and release-versus-structural evidence lanes.
 
+`repository_simplification_performance.md` interprets the frozen original-to-
+integrated nonbibliography comparison. Its machine-readable companion
+`repository_simplification_measurements.json` retains exact trial, output,
+counter, and case-status evidence, including unavailable gates and measurement
+limits.
+
 `native_batch_kernel.md` records the independently audited direct mutable batch
 ceiling, the first production-owned canonical-tokenizer/output seam, its typed
 fallback boundary, and the staged single-engine migration that deletes each
