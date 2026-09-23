@@ -153,6 +153,38 @@ fn macro_projection_ignores_definition_address_but_requires_expansion_order() {
     );
 }
 
+#[test]
+fn terminal_checks_use_complete_job_stream_and_detect_changed_result() {
+    let projection: Projection =
+        serde_json::from_str(r#"{"kind":"terminal-checks","terminal_checks":["final cleanup"]}"#)
+            .unwrap();
+    let mut run = empty_run();
+    run.terminal = b"fragment without the phrase".to_vec();
+    run.complete_job_channel_streams = Some([
+        b"root closed; final cleanup".to_vec(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    ]);
+    let expected = ["terminal-check:final cleanup=true".to_owned()];
+    assert_eq!(project(&run, &projection), expected);
+    run.complete_job_channel_streams.as_mut().unwrap()[0] = b"root closed".to_vec();
+    assert!(
+        evaluate_expectation(
+            &expected,
+            &Ok(project(&run, &projection)),
+            &super::Expectation::Pass,
+        )
+        .is_err()
+    );
+    run.complete_job_channel_streams = None;
+    assert_eq!(
+        project(&run, &projection),
+        ["terminal-check:final cleanup=false"]
+    );
+}
+
 fn effect(kind: tex_command::ObservationEffectKind) -> tex_command::CommandObservation {
     tex_command::CommandObservation::Effect(tex_command::EffectRecord {
         kind,

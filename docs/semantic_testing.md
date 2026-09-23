@@ -27,6 +27,11 @@ hashes. The harness separately runs the complete TeX job, validates the
 fragment prefix against it, and compares that complete job's DVI channel;
 equal page counts alone never establish output parity.
 
+A terminal phrase predicate reads the complete-job terminal stream, the same
+stream compared to the committed reference terminal file. Final cleanup can
+print after the root-EOF fragment stops. Command, macro, box, and mode
+observations remain claims about the focused fragment.
+
 Macro-call observations likewise must not expose the allocator address of a
 definition as a command operand. Project the stable call spelling and macro
 activation, then the body expansion's observable command/order or result.

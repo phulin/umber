@@ -2330,7 +2330,15 @@ pub fn terminal_check_results(output: &str, checks: &[String]) -> Vec<String> {
 }
 
 pub fn terminal_check_projection(run: &SemanticRun, projection: &Projection) -> Vec<String> {
-    terminal_check_results(&captured_terminal_text(run), &projection.terminal_checks)
+    // The committed terminal contract belongs to the complete TeX job.
+    // Command observations still describe the root-EOF fragment, but a
+    // terminal phrase may be printed by §1333 final cleanup after that
+    // fragment boundary. STREAM_CHANNELS[0] is Terminal.
+    let terminal = run.complete_job_channel_streams.as_ref().map_or_else(
+        || captured_terminal_text(run),
+        |streams| String::from_utf8_lossy(&streams[0]).into_owned(),
+    );
+    terminal_check_results(&terminal, &projection.terminal_checks)
 }
 
 /// Projects one completed run.
