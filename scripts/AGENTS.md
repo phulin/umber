@@ -127,6 +127,12 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   compiler-free deterministic verification mode.
 - `test-survey-pdftex-arxiv-pdf.sh`: hermetic reference-survey selection,
   source/jobname/side-file, outcome, resume, and verify-only contract test.
+- `run-arxiv-dvi-cohort.py`: serial, resumable full-source DVI qualification
+  and exact Umber comparison over the verified PDF survey; it preserves the
+  archive-derived jobname, records both reference output identities, and stops
+  at the first Umber divergence.
+- `test-run-arxiv-dvi-cohort.py`: hermetic qualification, row status, exact
+  comparator, resume, and artifact-integrity contract test.
 - `test-run-umber-guarded.sh`: forced-timeout, progress-stall, and RSS-limit self-test proving the shared Umber watchdog kills and reaps descendants.
 - `test-check-node-width-budget.sh`: hermetic host/toolchain qualification,
   supported comparison, unsupported-host, and malformed baseline coverage for

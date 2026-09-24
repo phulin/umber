@@ -18,6 +18,7 @@ scripts/test-project-tex82-trip-command.py	subsystem	oracle-contract	scripts/tes
 scripts/test-provision.py	subsystem	resource-contract	scripts/check-tools.sh	python3,cargo
 scripts/test-publish-texlive-r2.sh	routine	publication-contract	scripts/check-and-test.sh	bash,python3
 scripts/test-run-pinned-pdflatex-50m-authority-row.sh	manual	tool-integrity	-	bash,python3
+scripts/test-run-arxiv-dvi-cohort.py	manual	oracle-contract	-	python3
 scripts/test-run-umber-guarded.sh	manual	limit-contract	-	python3
 scripts/test-script-suite-inventory.py	routine	tool-integrity	scripts/test-gate-verdicts.sh	python3
 scripts/test-selected-rust-suites.py	routine	tool-integrity	scripts/test-gate-verdicts.sh	python3
