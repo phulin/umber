@@ -361,28 +361,28 @@ cargo test -q -p tex-command-stream --test it command_semantic
 ```
 
 Schema, inventory, route, and bounded command-behavior checks remain in that
-routine selection. The two full exact-comparison checks are temporarily a
-manual parity tier while `umber2-alfh.11` owns the terminal-EOF divergence:
+routine selection. The full exact-comparison checks are an explicit manual
+parity tier:
 
 ```bash
 cargo test -q -p tex-command-stream --test it command_semantic -- --ignored
 ```
 
-That command is expected to fail until the tracked semantic defect is fixed;
-it preserves the exact fixture path without making known parity work a routine
-cutover gate.
+The declared-case comparison now matches all 210 cases. Its latest measured
+revision and exact scope are recorded above; being ignored does not mean a
+test is expected to fail.
 
-The Umber integration binary applies the same classification to currently
-failing transcript/DVI corpus, pdfLaTeX compatibility, Gentle, and focused
-loaded-TRIP assertions during the command-core cutover. Their bodies and
-assets remain available through the explicit manual path:
+The Umber integration binary also has a manual tier for transcript/DVI corpus,
+pdfLaTeX compatibility, full-document conformance, and focused loaded-TRIP
+assertions. Their bodies and assets remain available through the explicit
+manual path:
 
 ```bash
 cargo test -q -p umber --test it -- --ignored
 ```
 
-Each such test carries an `ignore` reason naming the manual
-compatibility/parity tier. Passing command-only smoke, restart, replay,
+Each such test carries an `ignore` reason naming its manual tier. Passing
+command-only smoke, restart, replay,
 serialization, resource, and end-to-end assertions remain routine.
 
 The one Cargo integration binary discovers independent fixture directories under
@@ -1580,6 +1580,14 @@ actually fails on a real regression.
 The [command-core diagnostic tools](command_core_diagnostics.md) document the differential tracer, full-document trace generation, worklist accounting, stream alignment, and first-failure locator. For diagnosis order and oracle authority, follow the [Canonical Divergence Working Contract](canonical_divergence_workflow.md).
 
 ## TRIP Corpus
+
+The explicit TRIP, e-TRIP, and canonical Gentle gates all passed at
+`dac5a4edd` on 2026-09-24. Each selected one full-document test against its
+existing local oracle; no reference artifacts or acceptance rules changed.
+These results are separate from the 210-case semantic corpus and from the
+routine native gate. Their logs are retained under each assigned worktree's
+`target/parity-wave/`: slot 1 `trip-canonical.log`, slot 2
+`etrip-current.log`, and slot 3 `gentle-canonical.log`.
 
 The original Knuth TeX82 TRIP and e-TeX V2 e-TRIP workloads are end-to-end DVI
 conformance tests governed by the

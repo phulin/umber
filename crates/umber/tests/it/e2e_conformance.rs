@@ -143,7 +143,7 @@ fn e2e_conformance_story() {
 }
 
 #[test]
-#[ignore = "manual compatibility/parity tier: not a cutover closure gate"]
+#[ignore = "manual full-document Gentle parity and provenance tier"]
 fn e2e_conformance_gentle() {
     assets::with_gate("gentle", |gate| run_plain_fixture_case("gentle.tex", gate));
 }
@@ -172,14 +172,9 @@ fn run_plain_fixture_case_canonical(document: &str, gate: &GateAssets) {
     .unwrap_or_else(|error| panic!("{error:#}"));
 }
 
-/// Protects `umber2-johp`'s first canonical/reference byte-identical DVI
-/// milestone (commit 5eed4dc3): the canonical `tex-command`
-/// architecture's DVI for `story.tex` must remain byte-identical to real
-/// pdfTeX's output after only the same preamble-comment normalization the
-/// legacy `e2e_conformance_story` test above already tolerates. Kept
-/// alongside (not replacing) the legacy test while the `umber2-johp`
-/// migration is in progress; both reach the same registered `story` gate
-/// through `assets::with_gate`, so neither can skip silently.
+/// Compares Story DVI with real pdfTeX after preamble-comment normalization.
+/// Both Story tests use the same loaded-format engine; the other test also
+/// checks the macro-invocation provenance budget.
 #[test]
 fn e2e_conformance_story_canonical() {
     assets::with_gate("story", |gate| {
@@ -191,7 +186,7 @@ fn e2e_conformance_story_canonical() {
 /// shared conformance comparator permits only the variable preamble comment;
 /// every remaining byte, including list-setting geometry, must match.
 #[test]
-#[ignore = "manual compatibility/parity tier: not a cutover closure gate"]
+#[ignore = "manual full-document Gentle DVI parity tier"]
 fn e2e_conformance_gentle_canonical() {
     assets::with_gate("gentle", |gate| {
         run_plain_fixture_case_canonical("gentle.tex", gate);
@@ -199,7 +194,7 @@ fn e2e_conformance_gentle_canonical() {
 }
 
 #[test]
-#[ignore = "manual direct canonical TRIP parity; xfail front: umber2-johp.568"]
+#[ignore = "manual full-document TRIP parity tier"]
 fn e2e_conformance_trip_canonical() {
     assets::with_gate("trip", |gate| {
         run_two_phase_fixture(TripEngineProfile::Tex82, "trip.tex", "trip.tex", gate);
