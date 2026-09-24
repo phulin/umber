@@ -106,6 +106,17 @@ for source in tests/latex/article.tex tests/latex/report.tex tests/latex/book.te
       env SOURCE_DATE_EPOCH="$source_date_epoch" FORCE_SOURCE_DATE=1 \
         "$reference_latex" -interaction=batchmode document.tex >/dev/null
     ) || fail "reference LaTeX failed for ${case_name}, pass ${pass}"
+    prior_generated="${umber_dir}/prior-generated.index"
+    : > "$prior_generated"
+    for extension in aux toc lof lot out; do
+      auxiliary="${umber_dir}/document.${extension}"
+      [[ -e "$auxiliary" || -L "$auxiliary" ]] || continue
+      [[ -f "$auxiliary" && ! -L "$auxiliary" ]] || \
+        fail "unsafe prior-pass auxiliary: $auxiliary"
+      printf 'tex:document.%s\t%s\t%s\n' "$extension" \
+        "$($publisher --file-ahash64 "$auxiliary")" \
+        "$(wc -c < "$auxiliary" | tr -d ' ')" >> "$prior_generated"
+    done
     (
       cd "$umber_dir"
       env SOURCE_DATE_EPOCH="$source_date_epoch" TEXINPUTS="$texinputs" TEXFONTS="$texfonts" \
@@ -122,7 +133,7 @@ for source in tests/latex/article.tex tests/latex/report.tex tests/latex/book.te
       --authorized "$expected_runtime" \
       --main-bytes "$main_bytes" \
       --main-ahash64 "$main_ahash64" \
-      --workdir "$umber_dir" \
+      --prior-generated "$prior_generated" \
       --used-out "${umber_dir}/document-runtime.inputs" || \
       fail "unlocked runtime input for ${case_name}, pass ${pass}"
     cat "${umber_dir}/document-runtime.inputs" >> "$actual_runtime"

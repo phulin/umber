@@ -17,7 +17,7 @@ def verify(
     receipt: Path,
     authorized: dict[str, admissions.Identity],
     main: admissions.Identity,
-    workdir: Path,
+    prior_generated: dict[str, admissions.Identity],
 ) -> list[tuple[str, admissions.Identity]]:
     observed_main, files = admissions.read_receipt(receipt)
     if observed_main != main:
@@ -33,8 +33,9 @@ def verify(
             if observed != authorized[key]:
                 raise ValueError(f"{receipt}: consumed {key} differs from locked runtime identity")
             runtime.append((key, observed))
-        elif key in GENERATED_KEYS and (workdir / key.removeprefix("tex:")).is_file():
-            continue
+        elif key in prior_generated:
+            if observed != prior_generated[key]:
+                raise ValueError(f"{receipt}: consumed {key} differs from prior-pass generated output")
         else:
             raise ValueError(f"{receipt}: consumed {key} is outside the locked runtime closure")
     return runtime
@@ -46,16 +47,19 @@ def main() -> int:
     parser.add_argument("--authorized", type=Path, required=True)
     parser.add_argument("--main-bytes", required=True)
     parser.add_argument("--main-ahash64", required=True)
-    parser.add_argument("--workdir", type=Path, required=True)
+    parser.add_argument("--prior-generated", type=Path, required=True)
     parser.add_argument("--used-out", type=Path, required=True)
     args = parser.parse_args()
     try:
         main_identity = admissions.identity(args.main_bytes, args.main_ahash64)
+        prior_generated = admissions.read_authorized(args.prior_generated)
+        if not prior_generated.keys() <= GENERATED_KEYS:
+            raise ValueError("prior-pass generated index has an unauthorized key")
         used = verify(
             args.receipt,
             admissions.read_authorized(args.authorized),
             main_identity,
-            args.workdir,
+            prior_generated,
         )
         args.used_out.write_text(
             "".join(f"{key}\t{value[1]}\t{value[0]}\n" for key, value in used)

@@ -284,16 +284,15 @@ corpus_receipt="${tmp_root}/corpus.inputs"
   printf 'file\tadmitted\ttex:unused.sty\t10\tffffffffffffffff\n'
   printf 'file\tused\ttfm:cmr10.tfm\t1296\tffffffffffffffff\n'
 } > "$corpus_receipt"
-corpus_workdir="${tmp_root}/corpus"
-mkdir -p "$corpus_workdir"
-printf 'auxiliary' > "$corpus_workdir/document.aux"
+prior_generated="${tmp_root}/prior-generated.index"
+printf 'tex:document.aux\tffffffffffffffff\t8\n' > "$prior_generated"
 corpus_used="${tmp_root}/corpus-used.index"
 corpus_verifier="${fixture_repo}/scripts/verify-latex-corpus-inputs.py"
 corpus_args=(
   --authorized "$corpus_index"
   --main-bytes 21
   --main-ahash64 ffffffffffffffff
-  --workdir "$corpus_workdir"
+  --prior-generated "$prior_generated"
   --used-out "$corpus_used"
 )
 python3 "$corpus_verifier" --receipt "$corpus_receipt" "${corpus_args[@]}"
@@ -304,6 +303,20 @@ sed 's/file\tadmitted\ttex:unused/file\tused\ttex:unused/' \
   "$corpus_receipt" > "$corpus_extra"
 expect_failure 'consumed tex:unused.sty is outside the locked runtime closure' \
   python3 "$corpus_verifier" --receipt "$corpus_extra" "${corpus_args[@]}"
+
+empty_prior_generated="${tmp_root}/empty-prior-generated.index"
+: > "$empty_prior_generated"
+expect_failure 'consumed tex:document.aux is outside the locked runtime closure' \
+  python3 "$corpus_verifier" --receipt "$corpus_receipt" \
+    --authorized "$corpus_index" --main-bytes 21 --main-ahash64 ffffffffffffffff \
+    --prior-generated "$empty_prior_generated" --used-out "$corpus_used"
+
+wrong_prior_generated="${tmp_root}/wrong-prior-generated.index"
+printf 'tex:document.aux\tffffffffffffffff\t9\n' > "$wrong_prior_generated"
+expect_failure 'consumed tex:document.aux differs from prior-pass generated output' \
+  python3 "$corpus_verifier" --receipt "$corpus_receipt" \
+    --authorized "$corpus_index" --main-bytes 21 --main-ahash64 ffffffffffffffff \
+    --prior-generated "$wrong_prior_generated" --used-out "$corpus_used"
 
 corpus_wrong_tfm="${tmp_root}/corpus-wrong-tfm.inputs"
 sed 's/tfm:cmr10.tfm\t1296\t/tfm:cmr10.tfm\t1297\t/' \

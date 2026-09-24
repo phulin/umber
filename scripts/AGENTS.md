@@ -165,7 +165,10 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   shared semantic receipt; `verify-latex-format-inputs.py` binds consumed
   construction inputs to the SHA-verified format source closure, and
   `verify-latex-corpus-inputs.py` binds consumed format-loaded inputs to the
-  pinned base-corpus runtime closure without physical source paths.
+  pinned base-corpus runtime closure without physical source paths. Generated
+  auxiliary reads within one run are excluded from the CLI's external admission
+  receipt; subsequent passes attest previously generated auxiliaries by their
+  pre-run content identities.
 - `check-latex-representative-resources.sh` and its test: cold, isolated,
   offline source-profile and loaded-format prefetch smokes over the exact
   pdfLaTeX construction/runtime locks, with a machine-readable identity
