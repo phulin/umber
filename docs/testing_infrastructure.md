@@ -1477,7 +1477,7 @@ integration tests:
 
 ```bash
 cargo test -p umber --test it e2e_conformance_story -- --nocapture
-cargo test -p umber --test it e2e_conformance_gentle -- --nocapture
+cargo test -p umber --test it e2e_conformance_gentle -- --ignored --nocapture
 ```
 
 Populate the external inputs and all Story, Gentle, TRIP, and e-TRIP DVI oracles with
@@ -1486,10 +1486,10 @@ gitignored licensing-sensitive derivatives and are not repository fixtures.
 
 The shared `parity-harness` library stages inputs, calls the Cargo test's in-process Umber
 runner, and byte-compares its normalized DVI with the local `tests/corpus/e2e`
-oracle. Each document names a manifest-pinned
-`format_source`; the harness stages that source, the document, hyphenation
-input, and required TFMs, then feeds Umber a wrapper that inputs the format
-source before the document through the ordinary input path.
+oracle. Each document names a manifest-pinned `format_source`; the harness
+stages that source, the document, hyphenation input, and required TFMs. The
+runner prepares the Plain format through the persistent format provider and
+loads each document as a fresh job.
 
 The Story and Gentle callbacks also scan fixed-width provenance records after
 execution, print invocation count, macro-attributed retained bytes,
@@ -1497,10 +1497,9 @@ bytes-per-invocation, and total provenance retention, and fail above the same
 64-byte per-invocation budget as `state_budgets`. This scan is outside macro
 expansion and therefore does not require profiling-only hot-path counters.
 
-This follows TeX82's ordinary `start_input` stack behavior (sections 23 and
-29). Format dumping is a terminal INITEX cleanup operation (sections 46, 50,
-and 51), not a way to continue into the document. The pinned modern
-`plain.tex` contains no `\\dump`, so it can be loaded directly.
+Format construction terminates with `\\dump`; the document runs in a
+separate loaded job. The provider owns construction, image validation, and
+fresh job state.
 
 On fixture-hash drift, Umber failure, or mismatch, the harness writes a triage
 bundle under `target/conformance-triage/<doc-name>/` with byte context,
@@ -1532,7 +1531,7 @@ above for what an absent oracle does.
 
 ```bash
 cargo test -p umber --test it e2e_conformance_story_canonical -- --nocapture
-cargo test -p umber --test it e2e_conformance::e2e_conformance_gentle_canonical -- --exact --nocapture
+cargo test -p umber --test it e2e_conformance::e2e_conformance_gentle_canonical -- --exact --ignored --nocapture
 ```
 
 The Gentle oracle is the existing 263424-byte real-pdfTeX artifact, SHA-256
@@ -1563,14 +1562,9 @@ debug-build cost tracked separately in `umber2-johp.74`; the whole gate adds
 on the order of 2 seconds to `cargo test -p umber --test it`'s wall time
 alongside the other e2e cases.
 
-On a mismatch it fails through the exact same `parity_harness::compare_dvi_files`
-byte-identity contract as the legacy test, reporting the divergent page and
-DVI opcode and writing a triage bundle under
-`target/conformance-triage/story.tex/`. This was verified directly: temporarily
-corrupting one assembled byte before the DVI comparison made
-`e2e_conformance_story_canonical` fail with an exact byte/page/opcode mismatch
-while `e2e_conformance_story` (legacy) kept passing; reverting the corruption
-restored both to green. See the diagnosis order in
+On a mismatch, `parity_harness::compare_dvi_files` reports the divergent page
+and DVI opcode and writes a triage bundle under
+`target/conformance-triage/story.tex/`. See the diagnosis order in
 [Canonical Divergence Working Contract](canonical_divergence_workflow.md#2-diagnosis-order)
 for the differential-tracer/first-failure-locator recipe to use once this gate
 actually fails on a real regression.
