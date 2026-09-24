@@ -24,7 +24,7 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `src/format_cache.rs`: TeX-specific generated-format identity, schema and engine validation, opaque construction-evidence policy, and the current-layout adapter over `umber-fetch::BlobStore`; obsolete cache layouts are ignored.
 - `src/format_cache/tests.rs`: format identity, validation, compatibility, recovery, and cross-process concurrency coverage.
 - `src/format_cache_cli.rs`: pinned LaTeX/pdfLaTeX generated-format cache identity, validated restore, and atomic publication CLI adapter.
-- `src/format_fixture.rs`: generic content-addressed format recipes, fresh loaded-universe reconstruction, typed resource fulfillment, and the raw TeX82 loaded-fixture first slice.
+- `src/format_fixture.rs`: generic content-addressed format recipes, fresh loaded-universe reconstruction, typed resource fulfillment, the registered root source identity returned with loaded runs, and the raw TeX82 loaded-fixture first slice.
 - `src/format_worker.rs`: explicit production/libtest earliest-entry launcher contract, stable-executable per-child authenticated recipe/result protocol, and killable native wall/RSS-supervised format-construction process.
 - `src/prepared_format.rs`: universal native persistent prepared-format provider, explicit job request including job-local provenance demand, compatibility validation, and provider-owned fresh-memory World boundary.
 - `src/prepared_format/tests.rs`: persistent provider preparation, cache recovery, compatibility, guard, and fresh-job isolation coverage.

@@ -220,6 +220,13 @@ Recoverable reports live once in the canonical semantic-diagnostic queue and
 transfer to the executor as one owner; resource resolution, dependency
 observation, semantic barriers, and snapshots have no parallel expansion
 ledger.
+The last §342 file diagnostic coordinate is a journaled command scalar:
+checkpoint rollback restores the file, line, and column that a later fatal
+report may need after its source frame retires. A candidate from a raw source
+read lives only in the current `CommandProcessor` fetch, is cleared on the
+next fetch, and is discarded when §789 intercepts an alignment delimiter.
+The source row continues to own the actual immutable token backing; §363
+replacement does not transfer that byte provenance to the original file.
 One stack-branded `OperationHostPreparation` remains stationary from host
 preparation through delivery preflight, transaction classification, semantic
 application, and save-stack settlement. One `CommandContext` is admitted at

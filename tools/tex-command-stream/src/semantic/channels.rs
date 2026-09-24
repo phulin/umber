@@ -166,28 +166,12 @@ impl CapturedChannels {
 /// outcome is retained as the closing record.
 #[must_use]
 pub fn portable_diagnostic_channel(run: &SemanticRun) -> Vec<u8> {
-    let root_id = run
-        .observations
-        .iter()
-        .find_map(|observation| match observation {
-            tex_command::CommandObservation::Command(record) => record
-                .provenance
-                .source_location
-                .map(tex_command::SourceLocation::source),
-            tex_command::CommandObservation::DiagnosticLifecycle(
-                tex_command::DiagnosticLifecycleRecord::Report { location, .. },
-            ) => Some(location.source()),
-            _ => None,
-        });
-    let Some(root_id) = root_id else {
-        return Vec::new();
-    };
     let mut translator = tex_observe::LiveSessionTranslator::for_root(
         SchemaVersion::V4,
         "terminal",
         tex_observe::LiveSource {
             name: run.diagnostic_root_name.clone(),
-            source: root_id,
+            source: run.diagnostic_root_id,
             bytes: Arc::clone(&run.diagnostic_root_bytes).into(),
         },
     );

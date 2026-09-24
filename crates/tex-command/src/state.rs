@@ -79,9 +79,9 @@ pub struct CommandStateRoots<G> {
     /// ordinary command snapshot makes a failed aggregate operation restore
     /// the queue together with the input transition that produced it.
     pub(crate) semantic_diagnostics: Vec<CommandSemanticDiagnostic>,
-    /// Most recent direct source spelling, retained only for typed diagnostic
-    /// attribution. It never affects command semantics or rendered context.
-    pub(crate) last_diagnostic_location: Option<crate::SourceLocation>,
+    /// Last source command that reached TeX82 §342's `get_next` exit. An
+    /// intercepted alignment delimiter never replaces this report site.
+    pub(crate) last_diagnostic_location: Option<crate::DiagnosticLocation>,
     /// TeX82 §§280--282 `insert_token` payloads paired with the exact state
     /// save level that owns them. Frames and words are generation-branded by
     /// this aggregate root; no payload registry or per-value owner exists.
@@ -1081,8 +1081,19 @@ impl<G> CommandState<G> {
 
     /// Most recent direct source location committed by command delivery.
     #[must_use]
-    pub fn last_diagnostic_location(&self) -> Option<crate::SourceLocation> {
+    pub fn last_diagnostic_location(&self) -> Option<crate::DiagnosticLocation> {
         self.last_diagnostic_location
+    }
+
+    pub(crate) fn set_last_diagnostic_location(
+        &mut self,
+        location: Option<crate::DiagnosticLocation>,
+    ) {
+        if self.last_diagnostic_location != location {
+            self.timeline
+                .record_last_diagnostic_location(self.last_diagnostic_location);
+            self.last_diagnostic_location = location;
+        }
     }
 
     /// Resets the focused active-source delivery counters.

@@ -177,6 +177,39 @@ fn snapshot_restores_compact_alignment_phase_undo() {
 }
 
 #[test]
+fn snapshot_restores_committed_diagnostic_site_and_future_identity() {
+    // §342's last committed file command remains observable after §71 EOF,
+    // so rollback must restore its report site together with input state.
+    crate::test_harness::with_universe(|universe| {
+        let mut command = crate::CommandState::default();
+        let source = command
+            .register_source(crate::SourceRegistration::new(
+                crate::RegisteredSourceKind::Generated,
+                &b"A\nB"[..],
+            ))
+            .expect("source registration");
+        command
+            .open_registered_source(source)
+            .expect("source opening");
+        let first = crate::DiagnosticLocation::new(source, 1, 0);
+        let second = crate::DiagnosticLocation::new(source, 2, 0);
+        command.set_last_diagnostic_location(Some(first));
+        let identity = super::bounded_command_identity(&command.roots);
+        let snapshot = command
+            .snapshot(universe)
+            .expect("diagnostic site snapshots");
+
+        command.set_last_diagnostic_location(Some(second));
+        assert_ne!(super::bounded_command_identity(&command.roots), identity);
+        command
+            .rollback(&snapshot, universe)
+            .expect("diagnostic site rolls back");
+        assert_eq!(command.last_diagnostic_location(), Some(first));
+        assert_eq!(super::bounded_command_identity(&command.roots), identity);
+    });
+}
+
+#[test]
 fn invalid_summary_cursor_leaves_live_command_state_unchanged() {
     crate::test_harness::with_universe(|universe| {
         let mut command = crate::CommandState::default();

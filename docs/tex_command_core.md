@@ -3928,6 +3928,20 @@ The command core records recoverable-error, warning, and fatal reports with a
 stable diagnostic name, typed canonical arguments, and the source location of
 the direct command that selected the report. The session owner appends one
 terminal outcome carrying TeX82 §76 history and completed/aborted state.
+For this typed report, tex.web §342 remembers the file name, line, and byte
+column only when `get_next` exits. §789 alignment delimiters restart that
+reader before its exit, so they leave the preceding command's report site
+intact. §363 `\pausing` replaces the line buffer while keeping the file name
+and line; the typed coordinate follows the replacement buffer's column even
+when that column exceeds the immutable file line's length. Token provenance
+still points to the actual replacement backing. This coordinate is journaled
+with command state so a checkpoint restores the site later §71 terminal EOF
+may report. The in-flight candidate belongs only to the current processor
+fetch and never enters a checkpoint or command identity. The schema v4 wire
+shape and terminal/log rendering are unchanged.
+The command-semantic channel carries the registered root source identity from
+the session or loaded-format runner. It does not infer that identity from the
+first delivered token, which may already belong to a replacement backing.
 `tex-observe` admits those records only for schema v4, so v1-v3 event streams
 and their identity preimages cannot acquire an extra event. Terminal and log
 comparisons continue to own exact context, help, and message rendering.

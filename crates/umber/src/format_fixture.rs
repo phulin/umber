@@ -492,7 +492,7 @@ impl LoadedFormatFixture {
                         session.set_fuel_limit(guards.command_fuel)?;
                         let source = tex_command::SourceRegistration::new(source_kind, source)
                             .with_name(format!("./{source_name}"));
-                        match config.completion {
+                        let root_source = match config.completion {
                             tex_exec::RootCompletionPolicy::RequireTeXEnd => session
                                 .register_retained_root_with_invocation(
                                     source_name,
@@ -520,7 +520,11 @@ impl LoadedFormatFixture {
                             &config.projection,
                             config.completion,
                         )?;
-                        Ok(LoadedFormatRun { result, projection })
+                        Ok(LoadedFormatRun {
+                            result,
+                            projection,
+                            root_source,
+                        })
                     })
                     .map_err(|error| {
                         tex_state::FormatError::InvalidState(format!(
@@ -857,6 +861,8 @@ fn push_detached_node_children<G>(
 pub struct LoadedFormatRun {
     pub result: RunResult,
     pub projection: LoadedFormatProjection,
+    /// Exact source ID returned when this job registered its root file.
+    pub root_source: tex_state::SourceId,
 }
 
 /// Ensures one recipe image exists in the validated content-addressed cache.

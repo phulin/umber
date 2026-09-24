@@ -108,11 +108,11 @@ pub use host::{
 };
 pub use input::{
     BorrowedSourceCharacterRun, CONTROL_SEQUENCE_NAME_INLINE_CAPACITY, CatcodeQueries,
-    ControlSequenceName, InvalidSourceCharacter, LexerState, LineTerminator, MalformedUnicodeRange,
-    PhysicalLine, RegisteredSourceKind, SourceCharacter, SourceControlSequenceKind,
-    SourceFramingPolicy, SourceLocation, SourceNameClass, SourceProvenance, SourceRange,
-    SourceRegistration, SourceRegistrationError, SourceRole, SourceScalarRange, SourceStepQueries,
-    SourceToken, SourceTokenizationStep,
+    ControlSequenceName, DiagnosticLocation, InvalidSourceCharacter, LexerState, LineTerminator,
+    MalformedUnicodeRange, PhysicalLine, RegisteredSourceKind, SourceCharacter,
+    SourceControlSequenceKind, SourceFramingPolicy, SourceLocation, SourceNameClass,
+    SourceProvenance, SourceRange, SourceRegistration, SourceRegistrationError, SourceRole,
+    SourceScalarRange, SourceStepQueries, SourceToken, SourceTokenizationStep,
 };
 #[cfg(feature = "profiling")]
 pub use input::{

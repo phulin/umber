@@ -145,13 +145,7 @@ pub(crate) fn translate_observation(
                     severity: diagnostic_severity(severity),
                     diagnostic: diagnostic.into(),
                     arguments: arguments.into_iter().map(diagnostic_argument).collect(),
-                    location: source_location(
-                        location,
-                        source,
-                        source_id,
-                        source_bytes,
-                        source_line_starts,
-                    ),
+                    location: diagnostic_location(location, source, source_id),
                 },
                 DiagnosticLifecycleRecord::Outcome { history, outcome } => {
                     DiagnosticLifecycleEvent::Outcome {
@@ -313,6 +307,21 @@ pub(crate) fn source_location(
         source: source.into(),
         line: u32::try_from(line_index).ok()?,
         byte: u32::try_from(byte.checked_sub(line_start)?).ok()?,
+    })
+}
+
+fn diagnostic_location(
+    location: tex_command::DiagnosticLocation,
+    source: &str,
+    source_id: Option<SourceId>,
+) -> Option<SourceLocation> {
+    if Some(location.source()) != source_id {
+        return None;
+    }
+    Some(SourceLocation {
+        source: source.into(),
+        line: u32::try_from(location.line()).ok()?,
+        byte: u32::try_from(location.byte()).ok()?,
     })
 }
 

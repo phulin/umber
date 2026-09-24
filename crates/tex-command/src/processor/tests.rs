@@ -2011,6 +2011,191 @@ fn failed_replacement_registration_retries_at_next_physical_acquisition() {
 }
 
 #[test]
+fn pausing_replacement_keeps_file_diagnostic_columns_without_rehoming_token_bytes() {
+    // tex.web §§363/342: replacement changes the current buffer, not the
+    // file's name or line. A longer replacement can have a column beyond the
+    // immutable file line; a shorter one must not keep the old column.
+    for (file_line, replacement, last, column) in [("A", "LONGER", 'R', 5), ("LONGER", "B", 'B', 0)]
+    {
+        crate::test_harness::with_universe(|universe| {
+            universe.set_interaction_mode(tex_state::InteractionMode::ErrorStop);
+            for line in ["", replacement] {
+                universe
+                    .world_mut()
+                    .push_memory_terminal_line(line)
+                    .expect("pausing response");
+            }
+            universe
+                .assign_int_param(
+                    tex_state::env::banks::IntParam::PAUSING,
+                    1,
+                    tex_state::env::AssignmentScope::Global,
+                )
+                .expect("enable pausing");
+            let mut command = CommandState::default();
+            let file = format!("X\n{file_line}");
+            let source = command
+                .register_source(crate::SourceRegistration::new(
+                    crate::RegisteredSourceKind::Generated,
+                    file.into_bytes(),
+                ))
+                .expect("source registration");
+            command
+                .open_registered_source(source)
+                .expect("source opening");
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut fuel = crate::CommandFuelLedger::default();
+            let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut context = universe.command_context().expect("command context");
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut effects,
+            );
+            for _ in 0..16 {
+                let delivered = crate::test_harness::expect_raw_command(&mut processor);
+                if delivered.spelling().semantic_token()
+                    == (Token::Char {
+                        ch: last,
+                        cat: Catcode::Letter,
+                    })
+                {
+                    let token_source = processor
+                        .source_provenance(&delivered)
+                        .expect("replacement retains its own token backing")
+                        .location()
+                        .source();
+                    assert_ne!(token_source, source);
+                    assert_eq!(
+                        processor.command.last_diagnostic_location(),
+                        Some(crate::DiagnosticLocation::new(source, 2, column))
+                    );
+                    return;
+                }
+            }
+            panic!("replacement's final letter was not delivered");
+        });
+    }
+}
+
+#[test]
+fn alignment_delimiter_does_not_commit_a_diagnostic_command_site() {
+    // tex.web §§789/342: `get_next` restarts through the v-template after
+    // intercepting `&`; the diagnostic hook at its exit never sees that tab.
+    for (text, commands_before_tab, expected_column) in [("abc&", 3, 2), ("abc   &", 4, 3)] {
+        crate::test_harness::with_universe(|universe| {
+            universe
+                .assign_code(
+                    tex_state::env::CodeTableKind::Catcode,
+                    '&',
+                    i64::from(Catcode::AlignmentTab as u8),
+                    tex_state::env::AssignmentScope::Global,
+                )
+                .expect("alignment tab catcode");
+            let template = universe
+                .command_context()
+                .expect("template context")
+                .allocate_token_list(&[])
+                .expect("empty v-template");
+            let mut command = CommandState::default();
+            let alignment = AlignmentIdentity::new(1);
+            command.begin_alignment(alignment);
+            command
+                .begin_prepared_alignment_cell(
+                    alignment,
+                    crate::PreparedAlignmentCellTemplates {
+                        u_template: None,
+                        v_template: template,
+                    },
+                )
+                .expect("active cell");
+            command
+                .install_alignment_omit_cell_template(alignment)
+                .expect("omit cell template");
+            let source = command
+                .register_source(crate::SourceRegistration::new(
+                    crate::RegisteredSourceKind::Generated,
+                    text.as_bytes(),
+                ))
+                .expect("source registration");
+            command
+                .open_registered_source(source)
+                .expect("source opening");
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut fuel = crate::CommandFuelLedger::default();
+            let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut context = universe.command_context().expect("command context");
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut effects,
+            );
+            for _ in 0..commands_before_tab {
+                crate::test_harness::expect_raw_command(&mut processor);
+            }
+            let expected = Some(crate::DiagnosticLocation::new(source, 1, expected_column));
+            assert_eq!(processor.command.last_diagnostic_location(), expected);
+            crate::test_harness::expect_raw_command(&mut processor);
+            assert_eq!(processor.command.last_diagnostic_location(), expected);
+        });
+    }
+}
+
+#[test]
+fn terminal_raw_delivery_preserves_last_file_diagnostic_site() {
+    // §342's observer requires `name>17`; §71 terminal input has name 0.
+    crate::test_harness::with_universe(|universe| {
+        let mut command = CommandState::default();
+        let file = command
+            .register_source(crate::SourceRegistration::new(
+                crate::RegisteredSourceKind::Generated,
+                &b"A"[..],
+            ))
+            .expect("file registration");
+        command.open_registered_source(file).expect("file opening");
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+        {
+            let mut context = universe.command_context().expect("file context");
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut effects,
+            );
+            crate::test_harness::expect_raw_command(&mut processor);
+        }
+        let site = command.last_diagnostic_location();
+        assert_eq!(site, Some(crate::DiagnosticLocation::new(file, 1, 0)));
+        let terminal = command
+            .register_source(crate::SourceRegistration::new(
+                crate::RegisteredSourceKind::Generated,
+                &b"B"[..],
+            ))
+            .expect("terminal registration");
+        command
+            .open_registered_source_as(terminal, crate::SourceNameClass::Terminal)
+            .expect("terminal opening");
+        let mut context = universe.command_context().expect("terminal context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut effects,
+        );
+        crate::test_harness::expect_raw_command(&mut processor);
+        assert_eq!(processor.command.last_diagnostic_location(), site);
+    });
+}
+
+#[test]
 fn input_top_transition_refills_only_at_line_boundary_and_backup_clears_direct_source() {
     crate::test_harness::with_universe(|universe| {
         let mut command = CommandState::default();

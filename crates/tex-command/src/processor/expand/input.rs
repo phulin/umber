@@ -5,7 +5,7 @@ use super::ResidentStorageKind;
 use super::{InputFrameTransition, ReadSite, ResidentColdOutcome, ResidentWord};
 use crate::input::{
     InputLevel, ResidentBoundary, ResidentSourceAdvance, ResidentSourceCharacterRun,
-    ResidentSourceTop, SourceLocation, SourceNameClass,
+    ResidentSourceTop, SourceNameClass,
 };
 use crate::observation::{CommandObservation, InputReason, InputRecord, InputTransition};
 use crate::processor::end_input::{RetirementHandoff, SourceExhaustionStatus};
@@ -84,7 +84,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .line
                     .as_ref()
                     .map(|line| u32::try_from(line.physical.number()).unwrap_or(u32::MAX));
-                command_state.last_diagnostic_location = Some(location);
+                self.pending_diagnostic_location = top.diagnostic_location(location);
                 #[cfg(test)]
                 {
                     command_state.raw_delivery_path_counters.source_direct = command_state
@@ -199,16 +199,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 top.commit_character_run(1)
                     .map_err(|()| CommandError::input_invariant())?;
-                let line = top
-                    .slot
-                    .cursor
-                    .line
-                    .as_ref()
-                    .expect("a scalar fallback retains its line");
-                command_state.last_diagnostic_location = Some(SourceLocation::new(
-                    line.physical.source,
-                    line.cursor.byte_cursor.saturating_sub(1),
-                ));
+                if let Some(location) = top.current_diagnostic_location() {
+                    command_state.set_last_diagnostic_location(Some(location));
+                }
                 #[cfg(feature = "profiling")]
                 fuel.record_raw_run(false, crate::fuel::RawDeliveryKind::Source, 1);
                 return Ok(Some(1));
@@ -225,16 +218,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 fuel.charge_run(count)?;
                 top.commit_character_run(usize::try_from(count).expect("u32 fits usize"))
                     .map_err(|()| CommandError::input_invariant())?;
-                let line = top
-                    .slot
-                    .cursor
-                    .line
-                    .as_ref()
-                    .expect("a committed source run retains its line");
-                command_state.last_diagnostic_location = Some(SourceLocation::new(
-                    line.physical.source,
-                    line.cursor.byte_cursor.saturating_sub(1),
-                ));
+                if let Some(location) = top.current_diagnostic_location() {
+                    command_state.set_last_diagnostic_location(Some(location));
+                }
                 #[cfg(feature = "profiling")]
                 fuel.record_raw_run(false, crate::fuel::RawDeliveryKind::Source, count);
                 return Ok(Some(count));
@@ -257,32 +243,18 @@ impl<G> CommandProcessor<'_, '_, G> {
         match run {
             ResidentSourceCharacterRun::Unavailable => Ok(None),
             ResidentSourceCharacterRun::Consumed { count } => {
-                let line = top
-                    .slot
-                    .cursor
-                    .line
-                    .as_ref()
-                    .expect("a consumed source run retains its line");
-                command_state.last_diagnostic_location = Some(SourceLocation::new(
-                    line.physical.source,
-                    line.cursor.byte_cursor.saturating_sub(1),
-                ));
+                if let Some(location) = top.current_diagnostic_location() {
+                    command_state.set_last_diagnostic_location(Some(location));
+                }
                 #[cfg(feature = "profiling")]
                 fuel.record_raw_run(false, crate::fuel::RawDeliveryKind::Source, count);
                 Ok(Some(count))
             }
             ResidentSourceCharacterRun::Failed { count, error } => {
                 if count != 0 {
-                    let line = top
-                        .slot
-                        .cursor
-                        .line
-                        .as_ref()
-                        .expect("a consumed source prefix retains its line");
-                    command_state.last_diagnostic_location = Some(SourceLocation::new(
-                        line.physical.source,
-                        line.cursor.byte_cursor.saturating_sub(1),
-                    ));
+                    if let Some(location) = top.current_diagnostic_location() {
+                        command_state.set_last_diagnostic_location(Some(location));
+                    }
                     #[cfg(feature = "profiling")]
                     fuel.record_raw_run(false, crate::fuel::RawDeliveryKind::Source, count);
                 }

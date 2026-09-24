@@ -12,6 +12,7 @@ use super::{
 fn empty_run() -> SemanticRun {
     SemanticRun {
         observations: Vec::new(),
+        diagnostic_root_id: tex_state::SourceId::new(0),
         diagnostic_root_name: "probe.tex".into(),
         diagnostic_root_bytes: std::sync::Arc::from(&b""[..]),
         counts: [0; super::COUNT_SLOTS],

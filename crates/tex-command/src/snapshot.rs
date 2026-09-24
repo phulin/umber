@@ -49,6 +49,13 @@ fn bounded_command_identity<G>(roots: &CommandStateRoots<G>) -> u64 {
     feed(u64::from(roots.alignment.completed_preamble.is_some()));
     feed(roots.replay_completions.len() as u64);
     feed(roots.semantic_diagnostics.len() as u64);
+    if let Some(location) = roots.last_diagnostic_location {
+        feed(u64::from(location.source().raw()) + 1);
+        feed(location.line());
+        feed(location.byte());
+    } else {
+        feed(0);
+    }
     feed(roots.group_payloads.len() as u64);
     feed(roots.aftergroup_payloads.len() as u64);
     feed(u64::from(roots.afterassignment.is_some()));
@@ -159,6 +166,7 @@ enum CommandRootUndo<G> {
     NextInputLevelIdentity(u64),
     NextSourceIdentity(u64),
     RetainedFileLineNumber(i32),
+    LastDiagnosticLocation(Option<crate::DiagnosticLocation>),
     ForceEof(bool),
 }
 
@@ -174,6 +182,7 @@ enum CommandScalarSlot {
     NextInputLevelIdentity,
     NextSourceIdentity,
     RetainedFileLineNumber,
+    LastDiagnosticLocation,
     ForceEof,
 }
 
@@ -197,6 +206,9 @@ impl<G> CommandRootUndo<G> {
             }
             Self::RetainedFileLineNumber(value) => {
                 std::mem::swap(value, &mut roots.input.retained_file_line_number);
+            }
+            Self::LastDiagnosticLocation(value) => {
+                std::mem::swap(value, &mut roots.last_diagnostic_location);
             }
             Self::ForceEof(value) => std::mem::swap(value, &mut roots.input.force_eof),
         }
@@ -668,6 +680,16 @@ impl<G> CommandTimeline<G> {
         self.record_scalar(
             CommandScalarSlot::RetainedFileLineNumber,
             CommandRootUndo::RetainedFileLineNumber(old),
+        );
+    }
+
+    pub(crate) fn record_last_diagnostic_location(
+        &mut self,
+        old: Option<crate::DiagnosticLocation>,
+    ) {
+        self.record_scalar(
+            CommandScalarSlot::LastDiagnosticLocation,
+            CommandRootUndo::LastDiagnosticLocation(old),
         );
     }
 

@@ -230,6 +230,32 @@ impl BorrowedSourceCharacterRun<'_> {
 }
 
 impl<G> ResidentSourceTop<'_, G> {
+    /// File position remembered by the §342 diagnostic observer. Terminal
+    /// and `\read` levels have `name<=17`, so they leave its prior site alone.
+    pub(crate) fn diagnostic_location(
+        &self,
+        location: super::SourceLocation,
+    ) -> Option<super::DiagnosticLocation> {
+        let line = self.slot.cursor.line.as_ref()?;
+        let source = match self.slot.name_class {
+            super::SourceNameClass::File | super::SourceNameClass::Scantokens(_) => {
+                self.slot.cursor.backing.id
+            }
+            super::SourceNameClass::Terminal | super::SourceNameClass::ReadStream(_) => {
+                return None;
+            }
+        };
+        Some(line.diagnostic_location(source, location))
+    }
+
+    pub(crate) fn current_diagnostic_location(&self) -> Option<super::DiagnosticLocation> {
+        let line = self.slot.cursor.line.as_ref()?;
+        self.diagnostic_location(super::SourceLocation::new(
+            line.physical.source,
+            line.cursor.byte_cursor.saturating_sub(1),
+        ))
+    }
+
     #[inline(always)]
     pub(crate) fn force_eof(&self, requested: bool) -> bool {
         requested && self.slot.name_class == super::SourceNameClass::File

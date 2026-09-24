@@ -404,6 +404,9 @@ impl CommandObserver for Recorder {
 
 pub struct SemanticRun {
     pub observations: Vec<CommandObservation>,
+    /// Exact registered root identity, independent of the first token's
+    /// backing when §363 replaces its file line before tokenization.
+    pub diagnostic_root_id: tex_state::SourceId,
     /// Root source needed to turn engine byte provenance into the same
     /// manifest-named line/column used by the reference diagnostic stream.
     pub diagnostic_root_name: String,
@@ -1382,7 +1385,7 @@ fn execute_fresh_with_completion(
         let root =
             SourceRegistration::new(RegisteredSourceKind::Generated, Arc::<[u8]>::from(source))
                 .with_name(format!("./{}", case.source));
-        control
+        let diagnostic_root_id = control
             .register_root_source(root)
             .map_err(|error| format!("source registration: {error:?}"))?;
         // §537's file opening belongs after the job banner and transcript
@@ -1466,6 +1469,7 @@ fn execute_fresh_with_completion(
                         capture_runtime_channels(universe);
                     return Ok(SemanticRun {
                         observations: recorder.0,
+                        diagnostic_root_id,
                         diagnostic_root_name: case.source.clone(),
                         diagnostic_root_bytes: Arc::from(source),
                         counts,
@@ -1656,7 +1660,11 @@ fn execute_loaded_format(
         tex_exec::RootCompletionPolicy::StopAtRootEof => provider.run_fragment(&fixture, job),
     }
     .map_err(|error| format!("loaded {format_label} run: {error}"))?;
-    let umber::LoadedFormatRun { result, projection } = loaded;
+    let umber::LoadedFormatRun {
+        result,
+        projection,
+        root_source: diagnostic_root_id,
+    } = loaded;
     recorder.committed(CommandObservation::DiagnosticLifecycle(
         tex_command::DiagnosticLifecycleRecord::terminal(result.history, result.fatal.is_some()),
     ));
@@ -1709,6 +1717,7 @@ fn execute_loaded_format(
     );
     Ok(SemanticRun {
         observations: recorder.0,
+        diagnostic_root_id,
         diagnostic_root_name: case.source.clone(),
         diagnostic_root_bytes: Arc::from(source),
         counts,

@@ -45,8 +45,8 @@ pub(crate) use stack::{
 };
 
 pub use lines::{
-    LineTerminator, PhysicalLine, SourceCharacter, SourceLocation, SourceProvenance, SourceRange,
-    SourceScalarRange,
+    DiagnosticLocation, LineTerminator, PhysicalLine, SourceCharacter, SourceLocation,
+    SourceProvenance, SourceRange, SourceScalarRange,
 };
 pub use source::{
     MalformedUnicodeRange, RegisteredSourceKind, SourceFramingPolicy, SourceNameClass,

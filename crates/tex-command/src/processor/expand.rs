@@ -293,6 +293,17 @@ impl<G> CommandProcessor<'_, '_, G> {
         let suppresses_expandable_control_sequence =
             command.suppresses_expandable_control_sequence();
         let outer = command.is_outer();
+        // The diagnostic observer in tex.web §342 remembers a source position
+        // only at `get_next` exit. §789 can consume a delimiter and restart
+        // before that exit; any diagnostic during settlement still sees the
+        // selected token, but the restarted v-template must retain the last
+        // command that actually exited.
+        let previous_diagnostic_location = self.command.last_diagnostic_location;
+        if command.is_direct_source_delivery()
+            && let Some(location) = self.pending_diagnostic_location.take()
+        {
+            self.command.set_last_diagnostic_location(Some(location));
+        }
         self.command.roots.alignment.account_literal_brace(
             &mut self.command.timeline,
             command,
@@ -301,7 +312,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         if OBSERVED {
             self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
         }
-        if OBSERVED
+        let settlement = if OBSERVED
             || self
                 .command
                 .delivery_mode
@@ -311,9 +322,18 @@ impl<G> CommandProcessor<'_, '_, G> {
                 command,
                 suppresses_expandable_control_sequence,
                 outer,
-            )?;
+            )
+        } else {
+            Ok(())
+        };
+        if matches!(
+            command.alignment_adjustment(),
+            super::AlignmentDeliveryAdjustment::Delimiter(_)
+        ) {
+            self.command
+                .set_last_diagnostic_location(previous_diagnostic_location);
         }
-        Ok(())
+        settlement
     }
 
     #[inline(always)]
@@ -417,6 +437,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         create_control_sequences: bool,
     ) -> Result<ResidentColdOutcome, CommandError> {
+        self.pending_diagnostic_location = None;
         self.charge_command_action()?;
         loop {
             let selected = self.read_resident_word();

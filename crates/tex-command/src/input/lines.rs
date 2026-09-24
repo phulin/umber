@@ -87,6 +87,50 @@ pub struct SourceLocation {
     byte: u64,
 }
 
+/// TeX82's file `name`, `line`, and column at a committed `get_next` exit.
+///
+/// This is distinct from [`SourceLocation`], which addresses immutable token
+/// bytes. §363 can replace a file line with terminal input of a different
+/// length while leaving the file identity and line number unchanged.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct DiagnosticLocation {
+    source: SourceId,
+    line: u64,
+    byte: u32,
+}
+
+impl DiagnosticLocation {
+    /// Constructs the file cursor retained at one committed command exit.
+    #[must_use]
+    pub const fn new(source: SourceId, line: u64, byte: u64) -> Self {
+        Self {
+            source,
+            line,
+            byte: if byte > u32::MAX as u64 {
+                u32::MAX
+            } else {
+                byte as u32
+            },
+        }
+    }
+
+    #[must_use]
+    pub const fn source(self) -> SourceId {
+        self.source
+    }
+
+    #[must_use]
+    pub const fn line(self) -> u64 {
+        self.line
+    }
+
+    /// Zero-based byte column in TeX's current, possibly replaced line.
+    #[must_use]
+    pub const fn byte(self) -> u64 {
+        self.byte as u64
+    }
+}
+
 impl SourceLocation {
     /// Constructs one exact physical source location.
     #[must_use]
@@ -456,6 +500,21 @@ impl std::hash::Hash for SourceLineState {
 }
 
 impl SourceLineState {
+    pub(crate) fn diagnostic_location(
+        &self,
+        source: SourceId,
+        location: SourceLocation,
+    ) -> DiagnosticLocation {
+        debug_assert_eq!(location.source(), self.physical.source);
+        DiagnosticLocation::new(
+            source,
+            self.physical.number,
+            location
+                .byte()
+                .saturating_sub(self.physical.content.start()),
+        )
+    }
+
     pub(crate) fn rehome_offsets(&mut self, map: super::source::SourceOffsetMap) {
         self.physical.rehome_offsets(map);
         self.retained_end = map.map(self.retained_end);

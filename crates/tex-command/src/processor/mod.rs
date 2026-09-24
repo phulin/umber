@@ -240,6 +240,9 @@ pub struct CommandProcessor<'episode, 'admission, G> {
     /// value affect input semantics.
     immediate_write_retirement: Option<InputLevelId>,
     pending_file_warning_context: Option<(InputLevelId, String)>,
+    /// Candidate for this raw fetch only. Every fetch clears it, and only a
+    /// settled §342 command can publish it to the journaled command root.
+    pending_diagnostic_location: Option<crate::DiagnosticLocation>,
     /// Sole freshness authority for the processor episode. A fresh processor
     /// starts unavailable; ordinary resident delivery enters `Resident` once
     /// and leaves it there across sequential cursor advances.
@@ -716,6 +719,7 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
             diagnostic_effects,
             immediate_write_retirement: None,
             pending_file_warning_context: None,
+            pending_diagnostic_location: None,
             delivery_authority: DeliveryAuthority::Unavailable,
             last_integer_terminator: None,
             next_delivery_sequence: 0,

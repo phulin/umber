@@ -36,6 +36,7 @@ fn run_with_printable_sink_writes(committed: bool) -> SemanticRun {
     ];
     SemanticRun {
         observations: Vec::new(),
+        diagnostic_root_id: tex_state::SourceId::new(0),
         diagnostic_root_name: "./test.tex".into(),
         diagnostic_root_bytes: Arc::from(&b""[..]),
         counts: [0; super::super::COUNT_SLOTS],
@@ -75,6 +76,52 @@ fn channel_capture_preserves_terminal_log_and_shared_sink_routing() {
         assert_eq!(captured.stream(StreamChannel::Terminal), b"terminal|both|");
         assert_eq!(captured.stream(StreamChannel::Log), b"log-only|both|");
     }
+}
+
+#[test]
+fn diagnostic_channel_uses_registered_root_after_generated_first_command() {
+    let root = tex_state::SourceId::new(17);
+    let generated = tex_state::SourceId::new(18);
+    let mut run = run_with_printable_sink_writes(true);
+    run.diagnostic_root_id = root;
+    run.diagnostic_root_name = "root.tex".into();
+    run.diagnostic_root_bytes = Arc::from(&b"A\nB"[..]);
+    run.observations = vec![
+        tex_command::CommandObservation::Command(tex_command::CommandDeliveryRecord {
+            boundary: tex_command::CommandDeliveryBoundary::Raw,
+            spelling: tex_command::ObservedToken::Character {
+                character: 'Z',
+                catcode: tex_state::token::Catcode::Letter,
+            },
+            command: "letter".into(),
+            command_operand: Some(90),
+            semantic_operand: None,
+            provenance: tex_command::CommandProvenance {
+                input_level: 0,
+                position: 0,
+                delivery_sequence: 0,
+                has_origin: false,
+                origin: tex_state::token::OriginId::UNKNOWN,
+                source_range: None,
+                source_location: Some(tex_command::SourceLocation::new(generated, 0)),
+            },
+        }),
+        tex_command::CommandObservation::DiagnosticLifecycle(
+            tex_command::DiagnosticLifecycleRecord::Report {
+                class: tex_command::DiagnosticClass::Fatal,
+                severity: "fatal",
+                diagnostic: "emergency-stop",
+                arguments: Vec::new(),
+                location: tex_command::DiagnosticLocation::new(root, 2, 10),
+            },
+        ),
+    ];
+    let channel = String::from_utf8(portable_diagnostic_channel(&run))
+        .expect("portable diagnostic JSON lines");
+    assert!(
+        channel.contains("\"location\":{\"source\":\"root.tex\",\"line\":2,\"byte\":10}"),
+        "{channel}"
+    );
 }
 
 #[test]

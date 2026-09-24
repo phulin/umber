@@ -12,7 +12,10 @@ use crate::command::{CommandIdentity, CurrentCommand};
 use crate::profile::CommandProfile;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
-use crate::{DeliveryStamp, SourceLocation, SourceNameClass, SourceProvenance, SourceRange};
+use crate::{
+    DeliveryStamp, DiagnosticLocation, SourceLocation, SourceNameClass, SourceProvenance,
+    SourceRange,
+};
 
 pub mod canonical_names;
 mod primitive_identity;
@@ -822,7 +825,7 @@ pub enum DiagnosticLifecycleRecord {
         severity: &'static str,
         diagnostic: &'static str,
         arguments: Vec<DiagnosticArgument>,
-        location: SourceLocation,
+        location: DiagnosticLocation,
     },
     Outcome {
         history: DiagnosticHistory,

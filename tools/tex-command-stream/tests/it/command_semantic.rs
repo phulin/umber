@@ -982,6 +982,7 @@ fn state_projection_emits_only_requested_final_counts() {
     counts[2] = 7;
     let run = SemanticRun {
         observations: Vec::new(),
+        diagnostic_root_id: tex_state::SourceId::new(0),
         diagnostic_root_name: "./test.tex".into(),
         diagnostic_root_bytes: std::sync::Arc::from(&b""[..]),
         counts,
@@ -1020,6 +1021,7 @@ fn fatal_termination_precedes_every_projection_kinds_own_output() {
     counts[2] = 7;
     let run = SemanticRun {
         observations: Vec::new(),
+        diagnostic_root_id: tex_state::SourceId::new(0),
         diagnostic_root_name: "./test.tex".into(),
         diagnostic_root_bytes: std::sync::Arc::from(&b""[..]),
         counts,

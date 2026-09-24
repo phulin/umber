@@ -164,7 +164,9 @@ collector (see `src/conditionals.rs`).
   boundary. Macro chains remain iterative; failure unwinds for host replay.
 - `src/processor/expand/input.rs`: source reads, borrowed source-character
   admission, and cold line/retirement/recovery transitions. Reads return token
-  facts without constructing commands or publishing backup authority.
+  facts without constructing commands or publishing backup authority. Source
+  reads stage a file diagnostic coordinate; settled raw delivery publishes it
+  only when §342 reaches a command exit.
 - `src/processor/expand/consume.rs`: one dense meaning resolution, ordinary
   macro activation from invocation facts, and boundary-only materialization.
   One read/interpret loop publishes terminal commands directly. Matching's local
@@ -256,7 +258,8 @@ collector (see `src/conditionals.rs`).
   owns no framing-event queue or snapshot cursor.
 - `src/input/lines.rs`, `src/input/lines/tests.rs`: exact physical-line
   splitting, TeX line normalization, byte/scalar cursor and range accounting,
-  and focused line-contract tests. TeX82 §363 lends a valid normalized UTF-8
+  typed file diagnostic columns distinct from immutable token locations, and
+  focused line-contract tests. TeX82 §363 lends a valid normalized UTF-8
   slice from the resident backing directly through `firm_up_the_line`; only an
   invalid exact-byte display projection or a genuine terminal replacement
   materializes ownership, and the latter remains the source slot's sole
