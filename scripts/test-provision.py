@@ -481,7 +481,6 @@ def main() -> None:
         )
         format_lock.write_text(
             "distribution fixture-runtime\n"
-            "distribution_ahash64 0123456789abcdef\n"
             "format_schema 12\n"
             "source_date_epoch 1\n"
             + "".join(
@@ -535,7 +534,7 @@ def main() -> None:
             fake_pdftex.read_bytes()
         ).hexdigest()
         assert receipt["source"]["distribution"] == "fixture-runtime"
-        assert receipt["source"]["distributionAhash64"] == "0123456789abcdef"
+        assert "distributionAhash64" not in receipt["source"]
         assert receipt["source"]["lockSha256"] == hashlib.sha256(
             format_lock.read_bytes()
         ).hexdigest()

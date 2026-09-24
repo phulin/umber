@@ -10,12 +10,20 @@ mkdir -p "${fixture_repo}/scripts" "${fixture_repo}/tests/latex" \
   "${fixture_repo}/distribution" "${fixture_repo}/bin"
 cp "$checker" "${fixture_repo}/scripts/"
 cp "${repo_root}/scripts/run-umber-guarded.py" "${fixture_repo}/scripts/"
-printf '{}\n' > "${fixture_repo}/distribution/manifest-v3.json"
+cp "${repo_root}/scripts/texlive.py" "${fixture_repo}/scripts/"
+printf '{"schema":8}\n' > "${fixture_repo}/distribution/manifest.json"
+distribution_ahash64="$(python3 - "${fixture_repo}/scripts" "${fixture_repo}/distribution/manifest.json" <<'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import texlive
+print(texlive.ahash64_file(Path(sys.argv[2])))
+PY
+)"
 printf 'format fixture\n' > "${fixture_repo}/pdflatex.fmt"
 
 cat > "${fixture_repo}/tests/latex-source.lock" <<'EOF'
 distribution fixture
-distribution_ahash64 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 format_schema 11
 source_date_epoch 1
 source tex/base.tex 1 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -49,15 +57,24 @@ chmod +x "${fixture_repo}/bin/umber"
 
 invocations="${tmp_root}/invocations.jsonl"
 receipt="${tmp_root}/receipt.txt"
+if "${fixture_repo}/scripts/check-latex-representative-resources.sh" \
+    --distribution "${fixture_repo}/distribution" \
+    --distribution-ahash64 0000000000000000 \
+    --format "${fixture_repo}/pdflatex.fmt" \
+    --umber "${fixture_repo}/bin/umber" > "${tmp_root}/failure.log" 2>&1; then
+  printf '%s\n' 'expected root digest mismatch' >&2
+  exit 1
+fi
+grep -F 'distribution root digest mismatch' "${tmp_root}/failure.log" >/dev/null
 UMBER_TEST_INVOCATIONS="$invocations" \
   "${fixture_repo}/scripts/check-latex-representative-resources.sh" \
     --distribution "${fixture_repo}/distribution" \
-    --distribution-ahash64 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+    --distribution-ahash64 "$distribution_ahash64" \
     --format "${fixture_repo}/pdflatex.fmt" \
     --umber "${fixture_repo}/bin/umber" \
     --receipt "$receipt" >/dev/null
 
-python3 - "$invocations" "$receipt" "${fixture_repo}/pdflatex.fmt" <<'PY'
+python3 - "$invocations" "$receipt" "${fixture_repo}/pdflatex.fmt" "$distribution_ahash64" <<'PY'
 import hashlib
 import json
 from pathlib import Path
@@ -88,6 +105,7 @@ assert receipt["source_smoke"] == receipt["loaded_smoke"] == "pass"
 format_bytes = Path(sys.argv[3]).read_bytes()
 assert receipt["format_sha256"] == hashlib.sha256(format_bytes).hexdigest()
 assert receipt["format_bytes"] == str(len(format_bytes))
+assert receipt["distribution_root_ahash64"] == sys.argv[4]
 PY
 
 printf '%s\n' 'check-latex-representative-resources tests: PASS'

@@ -39,7 +39,6 @@ pdftexconfig_sha256="$(sha256_file "${fixture_repo}/tests/latex/pdftexconfig.tex
 
 cat > "${fixture_repo}/tests/latex-source.lock" <<EOF
 distribution fixture
-distribution_ahash64 ${distribution_ahash64}
 format_schema 12
 source_date_epoch 1
 source tex/latex-dev/base/latex.ltx 6 ${source_sha256}
@@ -156,8 +155,15 @@ expect_failure '--distribution-ahash64 must be 16 lowercase hexadecimal characte
   "$builder" \
     --distribution "${fixture_repo}/distribution" \
     --distribution-ahash64 BAD
-expect_failure 'distribution aHash64 does not match the source lock' \
+printf 'distribution_ahash64 %s\n' "$distribution_ahash64" >> "${fixture_repo}/tests/latex-source.lock"
+expect_failure 'source lock must not pin a packaging root digest' \
   "$builder" \
+    --distribution "${fixture_repo}/distribution" \
+    --distribution-ahash64 "$distribution_ahash64"
+sed '$d' "${fixture_repo}/tests/latex-source.lock" > "${tmp_root}/source-lock"
+mv "${tmp_root}/source-lock" "${fixture_repo}/tests/latex-source.lock"
+expect_failure 'distribution root digest mismatch' \
+  env PATH="${tmp_root}/bin:${PATH}" "$builder" \
     --distribution "${fixture_repo}/distribution" \
     --distribution-ahash64 0000000000000000
 expect_failure 'distribution path is not a local file or directory' \

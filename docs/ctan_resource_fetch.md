@@ -358,8 +358,8 @@ mutating objects.
 After public verification succeeds, rotate the release pins in the same
 change: set `scripts/texlive.py`'s `DEFAULT_ROOT_AHASH64`, update the native
 CLI's default distribution hash alongside `DEFAULT_DISTRIBUTION_URL`, and
-replace `tests/latex-source.lock`'s `distribution_ahash64` after regenerating
-the format and clean-reference receipts that bind that lock. Browser
+regenerate the format and clean-reference receipts against the published
+runtime and unchanged exact source lock. Browser
 deployments receive the same manifest URL and root aHash64 through their
 resolver options. The minimal full-runtime publication does not require
 rebuilding the separate HTML profile; a full browser release additionally

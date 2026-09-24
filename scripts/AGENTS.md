@@ -23,8 +23,9 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   TeX Live program and release-runtime sources, reference oracles, execution
   mirrors, and publisher snapshots; primary provisioning also builds a
   recorder-audited clean pdfTeX format from the exact locked Umber pdfLaTeX
-  source closure, while snapshot publication stages the complete locked
-  format-construction closure as the highest-precedence runtime root. Primary
+  source closure. Snapshot publication first publishes that verified closure
+  as an authenticated format-construction bootstrap, then stages it as the
+  highest-precedence root of the complete locked runtime. Primary
   worktree setup accepts `--runtime-source PATH` to stage the conformance lock
   from an explicitly selected, independently authenticated release-runtime
   root when the hosted snapshot root is not yet published.

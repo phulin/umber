@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 texmf_dist="${UMBER_TEXMF_DIST:-${repo_root}/third_party/texlive-20260301-texmf/texmf-dist}"
 format_distribution="${UMBER_LATEX_FORMAT_DISTRIBUTION:-${repo_root}/target/texlive-snapshot}"
-format_distribution_ahash64="${UMBER_LATEX_FORMAT_DISTRIBUTION_AHASH64:-$(awk '$1 == "distribution_ahash64" { print $2 }' "${repo_root}/tests/latex-source.lock")}"
+format_distribution_ahash64="${UMBER_LATEX_FORMAT_DISTRIBUTION_AHASH64:-}"
 runtime_lock="${repo_root}/tests/latex-runtime.lock"
 output_dir="${repo_root}/target/latex-wasm"
 format_output=""

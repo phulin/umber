@@ -7,7 +7,7 @@ latex_builder="${UMBER_LATEX_FORMAT_BUILDER:-${repo_root}/scripts/build-latex-fo
 plain_texmf_dist="${UMBER_PLAIN_TEXMF_DIST:-/usr/local/texlive/2025/texmf-dist}"
 latex_texmf_dist="${UMBER_TEXMF_DIST:-${repo_root}/target/texlive-snapshot/texmf-dist}"
 latex_distribution="${UMBER_LATEX_FORMAT_DISTRIBUTION:-${repo_root}/target/texlive-snapshot}"
-latex_distribution_ahash64="${UMBER_LATEX_FORMAT_DISTRIBUTION_AHASH64:-$(awk '$1 == "distribution_ahash64" { print $2 }' "${repo_root}/tests/latex-source.lock")}"
+latex_distribution_ahash64="${UMBER_LATEX_FORMAT_DISTRIBUTION_AHASH64:-}"
 output_root="${repo_root}/target/initex-format-matrix"
 
 usage() {

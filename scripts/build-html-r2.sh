@@ -5,7 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 texmf_dist="${UMBER_TEXMF_DIST:-${repo_root}/third_party/texlive-2026/texmf-dist}"
 snapshot_lock="${repo_root}/tests/texlive-snapshot.lock"
 format_distribution="${UMBER_LATEX_FORMAT_DISTRIBUTION:-${repo_root}/target/texlive-snapshot}"
-format_distribution_ahash64="${UMBER_LATEX_FORMAT_DISTRIBUTION_AHASH64:-$(awk '$1 == "distribution_ahash64" { print $2 }' "${repo_root}/tests/latex-source.lock")}"
+format_distribution_ahash64="${UMBER_LATEX_FORMAT_DISTRIBUTION_AHASH64:-}"
 output_dir="${repo_root}/target/html-r2"
 objects_base_url="https://assets.umber.ink/html/umber-html-mvp-v1/objects/"
 shard_bits=4

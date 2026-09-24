@@ -440,26 +440,14 @@ def build_snapshot(args: argparse.Namespace, repo_root: Path) -> None:
             f"format source distribution {format_source_distribution or '<missing>'} "
             f"differs from snapshot distribution {distribution}"
         )
-    format_distribution_ahash64 = next(
-        (
-            fields[1]
-            for raw_line in (repo_root / "tests/latex-source.lock").read_text().splitlines()
-            if (fields := raw_line.split())[:1] == ["distribution_ahash64"]
-            and len(fields) == 2
-        ),
-        "",
-    )
-    if not texlive.valid_digest(format_distribution_ahash64, 16):
+    if (args.format_distribution is None) != (args.format_distribution_ahash64 is None):
         raise ProvisionError(
-            "format source lock has no published distribution aHash64; see umber2-66p0.27"
+            "--format-distribution and --format-distribution-ahash64 must be supplied together"
         )
-    if args.format_distribution_ahash64 is not None:
-        format_distribution_ahash64 = args.format_distribution_ahash64
-    if not texlive.valid_digest(format_distribution_ahash64, 16):
+    if args.format_distribution_ahash64 is not None and not texlive.valid_digest(
+        args.format_distribution_ahash64, 16
+    ):
         raise ProvisionError("invalid format distribution aHash64")
-    format_distribution = (
-        args.format_distribution or repo_root / "target/texlive-snapshot"
-    ).resolve()
     package_database = args.package_database
     if not args.without_package_database:
         package_database = package_database or texmf_dist.parent / "tlpkg/texlive.tlpdb"
@@ -481,32 +469,6 @@ def build_snapshot(args: argparse.Namespace, repo_root: Path) -> None:
     environment = os.environ.copy()
     with tempfile.TemporaryDirectory(prefix="umber-texlive-snapshot.") as raw_temporary:
         temporary = Path(raw_temporary)
-        format_root = temporary / "formats"
-        for engine in ("latex", "pdflatex"):
-            _run(
-                [
-                    str(repo_root / "scripts/build-latex-format.sh"),
-                    "--engine",
-                    engine,
-                    "--publish-input-closure",
-                    "--texmf-dist",
-                    str(texmf_dist),
-                    "--distribution",
-                    str(format_distribution),
-                    "--distribution-ahash64",
-                    format_distribution_ahash64,
-                    "--output-dir",
-                    str(format_root / engine),
-                ],
-                repo_root,
-                environment,
-            )
-        format_input_root = temporary / "format-construction-inputs"
-        _stage_format_input_root(repo_root, texmf_dist, format_input_root)
-        generated_root = temporary / "generated-runtime"
-        generated_map = generated_root / "fonts/map/pdftex/updmap/pdftex.map"
-        generated_map.parent.mkdir(parents=True)
-        shutil.copyfile(pdftex_map, generated_map)
         _run(
             ["cargo", "build", "-q", "--release", "--manifest-path", "tools/texlive-wasm-publish/Cargo.toml"],
             repo_root,
@@ -528,6 +490,78 @@ def build_snapshot(args: argparse.Namespace, repo_root: Path) -> None:
             raise ProvisionError(
                 f"texmf-dist tree differs from lock: expected {expected_tree}, got {actual_tree}"
             )
+        format_input_root = temporary / "format-construction-inputs"
+        _stage_format_input_root(repo_root, texmf_dist, format_input_root)
+        format_input_tree = tree_hash(format_input_root)
+        if args.format_distribution is not None:
+            format_distribution = args.format_distribution.resolve()
+            format_distribution_ahash64 = args.format_distribution_ahash64
+        else:
+            format_distribution = (
+                args.bootstrap_output_dir
+                or args.output_dir.with_name(args.output_dir.name + "-bootstrap")
+            ).resolve()
+            bootstrap_config = {
+                "schema": 8,
+                "distribution": distribution,
+                "objectsBaseUrl": args.objects_base_url,
+                "shardBits": 0,
+                "roots": [{
+                    "name": "format-construction-inputs",
+                    "path": str(format_input_root),
+                    "treeAhash64": format_input_tree,
+                }],
+                "formats": [],
+            }
+            bootstrap_config_path = temporary / "bootstrap-publish.json"
+            bootstrap_config_path.write_text(
+                json.dumps(bootstrap_config, indent=2) + "\n", encoding="utf-8"
+            )
+            if format_distribution.exists():
+                expected_bootstrap = temporary / "expected-bootstrap"
+                _run([str(publisher), str(bootstrap_config_path), str(expected_bootstrap)], repo_root)
+                _run([str(publisher), "--verify-sharded", str(format_distribution)], repo_root)
+                if (
+                    (format_distribution / "manifest.json").read_bytes()
+                    != (expected_bootstrap / "manifest.json").read_bytes()
+                ):
+                    raise ProvisionError(
+                        f"existing bootstrap root differs from locked source closure: {format_distribution}"
+                    )
+            else:
+                _run([str(publisher), str(bootstrap_config_path), str(format_distribution)], repo_root)
+            format_distribution_ahash64 = subprocess.run(
+                [str(publisher), "--file-ahash64", str(format_distribution / "manifest.json")],
+                cwd=repo_root,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+        assert format_distribution_ahash64 is not None
+        format_root = temporary / "formats"
+        for engine in ("latex", "pdflatex"):
+            _run(
+                [
+                    str(repo_root / "scripts/build-latex-format.sh"),
+                    "--engine",
+                    engine,
+                    "--publish-input-closure",
+                    "--texmf-dist",
+                    str(texmf_dist),
+                    "--distribution",
+                    str(format_distribution),
+                    "--distribution-ahash64",
+                    format_distribution_ahash64,
+                    "--output-dir",
+                    str(format_root / engine),
+                ],
+                repo_root,
+                environment,
+            )
+        generated_root = temporary / "generated-runtime"
+        generated_map = generated_root / "fonts/map/pdftex/updmap/pdftex.map"
+        generated_map.parent.mkdir(parents=True)
+        shutil.copyfile(pdftex_map, generated_map)
         config = {
             "schema": 8,
             "distribution": distribution,
@@ -537,7 +571,7 @@ def build_snapshot(args: argparse.Namespace, repo_root: Path) -> None:
                 {
                     "name": "format-construction-inputs",
                     "path": str(format_input_root),
-                    "treeAhash64": tree_hash(format_input_root),
+                    "treeAhash64": format_input_tree,
                 },
                 {"name": "texlive-runtime", "path": str(texmf_dist), "treeAhash64": actual_tree},
                 {"name": "texlive-generated-runtime", "path": str(generated_root), "treeAhash64": tree_hash(generated_root)},
@@ -626,6 +660,7 @@ def parse_args(arguments: list[str] | None = None) -> argparse.Namespace:
     snapshot.add_argument("--without-package-database", action="store_true")
     snapshot.add_argument("--format-distribution", type=Path)
     snapshot.add_argument("--format-distribution-ahash64")
+    snapshot.add_argument("--bootstrap-output-dir", type=Path)
     snapshot.add_argument("--output-dir", type=Path, default=Path("target/texlive-snapshot"))
     snapshot.add_argument("--objects-base-url", default="https://example.invalid/umber/texlive/objects/")
     snapshot.add_argument("--shard-bits", type=int, choices=range(17), default=12)

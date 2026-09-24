@@ -97,7 +97,7 @@ TeX Live lookup roots:
 ```sh
 scripts/build-latex-format.sh \
   --distribution target/texlive-snapshot \
-  --distribution-sha256 61b8d665e492662b18c8beb70ab8cd8a8f73d9bd7e4d9aeb2f958ea8613f8883
+  --distribution-ahash64 EXPECTED_ROOT_AHASH64
 TEXINPUTS=/usr/local/texlive/2026/texmf-dist/tex/latex/base:/usr/local/texlive/2026/texmf-dist/tex/latex/l3kernel:/usr/local/texlive/2026/texmf-dist/tex/latex/l3backend \
 TEXFONTS=/usr/local/texlive/2026/texmf-dist/fonts/tfm/public/cm \
   cargo run-dev -p umber -- run --latex document.tex \
@@ -108,9 +108,9 @@ TEXFONTS=/usr/local/texlive/2026/texmf-dist/fonts/tfm/public/cm \
 Umber-generated image. The output is DVI, never PDF. Repeat the command when a
 document needs multiple AUX/TOC passes.
 
-The pinned builder first probes the validated generated-format cache. A hit
-atomically restores `latex.fmt` without opening or initializing the source
-kernel. A miss verifies and prefetches the complete locked input closure,
+The pinned builder verifies the complete locked source closure and then probes
+the validated generated-format cache. A hit atomically restores `latex.fmt`
+without initializing the source kernel. A miss prefetches that closure,
 performs one clean generation, validates the cache decode, and atomically
 publishes the cache entry. Use `--force` to execute that regeneration path even
 on a hit, or `--check` to regenerate and compare the valid cache plus existing
@@ -135,9 +135,9 @@ admissions do not expand that source closure. Neither host paths nor
 distribution transport locations are part of this identity.
 
 The explicit distribution must be a local authenticated mirror. Its root
-digest is also pinned in `tests/latex-source.lock`. Every engine invocation
-uses that same resolved path and digest with offline acquisition, independently
-of generated-format cache identity. Materialize and recheck the required
+digest is supplied and checked at build time; `tests/latex-source.lock` pins
+the exact source bytes independently of packaging. Every engine invocation
+uses the resolved path and digest with offline acquisition. Materialize and recheck the required
 selection as described in [Sharded Distribution Manifest](distribution_manifest.md)
 before running the builder.
 
@@ -191,7 +191,7 @@ source closure plus its explicitly locked PDF configuration inputs:
 scripts/build-latex-format.sh \
   --engine pdflatex \
   --distribution target/texlive-snapshot \
-  --distribution-sha256 61b8d665e492662b18c8beb70ab8cd8a8f73d9bd7e4d9aeb2f958ea8613f8883
+  --distribution-ahash64 EXPECTED_ROOT_AHASH64
 TEXINPUTS=/usr/local/texlive/2026/texmf-dist/tex/latex/base:/usr/local/texlive/2026/texmf-dist/tex/latex/l3kernel:/usr/local/texlive/2026/texmf-dist/tex/latex/l3backend \
 TEXFONTS=/usr/local/texlive/2026/texmf-dist/fonts/tfm/public/cm \
   cargo run-dev -p umber -- run --pdflatex document.tex \
@@ -206,9 +206,9 @@ identity.
 
 The full TeX Live snapshot builder invokes both modes with
 `--publish-input-closure`. That opt-in upgrades the generated format metadata
-to schema 2 and records the exact canonical request-key closure verified from
+to schema 4 and records the exact canonical request-key closure verified from
 `tests/latex-source.lock`: 61 common keys for LaTeX and three additional keys
-for pdfLaTeX. The schema-3 distribution root carries those sorted, bounded
+for pdfLaTeX. The schema-8 distribution root carries those sorted, bounded
 closures beside each format. This producer contract does not itself change
 runtime retry or prefetch behavior.
 

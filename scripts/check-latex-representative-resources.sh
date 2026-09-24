@@ -43,13 +43,30 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -n "$distribution" && -d "$distribution" ]] || fail 'missing --distribution directory'
-[[ "$distribution_ahash64" =~ ^[0-9a-f]{64}$ ]] || fail 'invalid --distribution-ahash64'
+[[ "$distribution_ahash64" =~ ^[0-9a-f]{16}$ ]] || fail 'invalid --distribution-ahash64'
 [[ -n "$format" && -f "$format" ]] || fail 'missing --format file'
 [[ -x "$umber_bin" ]] || fail "missing Umber executable: $umber_bin"
 [[ -x "$guard" ]] || fail "missing Umber guard: $guard"
 [[ -f "$source_lock" && -f "$runtime_lock" ]] || fail 'missing representative resource lock'
 
 distribution="$(realpath "$distribution")"
+root_manifest=""
+for root_name in manifest-v9.json manifest-v8.json manifest.json; do
+  if [[ -f "$distribution/$root_name" ]]; then
+    root_manifest="$distribution/$root_name"
+    break
+  fi
+done
+[[ -n "$root_manifest" ]] || fail 'distribution has no root manifest'
+actual_root_ahash64="$(python3 - "$repo_root/scripts" "$root_manifest" <<'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import texlive
+print(texlive.ahash64_file(Path(sys.argv[2])))
+PY
+)"
+[[ "$actual_root_ahash64" == "$distribution_ahash64" ]] || fail 'distribution root digest mismatch'
 format="$(realpath "$format")"
 umber_bin="$(realpath "$umber_bin")"
 if [[ -n "$receipt" ]]; then
@@ -153,7 +170,7 @@ format_bytes="$(wc -c < "$format" | tr -d ' ')"
 if [[ -n "$receipt" ]]; then
   {
     printf 'schema=1\n'
-    printf 'distribution_root_sha256=%s\n' "$distribution_ahash64"
+    printf 'distribution_root_ahash64=%s\n' "$distribution_ahash64"
     printf 'source_lock_sha256=%s\n' "$source_lock_sha256"
     printf 'runtime_lock_sha256=%s\n' "$runtime_lock_sha256"
     printf 'format_sha256=%s\n' "$format_sha256"
@@ -164,5 +181,5 @@ if [[ -n "$receipt" ]]; then
     printf 'loaded_smoke=pass\n'
   } > "$receipt"
 fi
-printf 'pdfLaTeX representative resource smoke: PASS source_keys=%s loaded_keys=%s root_sha256=%s\n' \
+printf 'pdfLaTeX representative resource smoke: PASS source_keys=%s loaded_keys=%s root_ahash64=%s\n' \
   "$((${#source_keys[@]} + ${#runtime_keys[@]}))" "${#runtime_keys[@]}" "$distribution_ahash64"

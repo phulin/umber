@@ -133,16 +133,13 @@ sha256() {
 [[ -f "$lock_file" ]] || fail "missing source lock: $lock_file"
 
 distribution="$(awk '$1 == "distribution" { print $2 }' "$lock_file")"
-locked_distribution_ahash64="$(awk '$1 == "distribution_ahash64" { print $2 }' "$lock_file")"
 format_schema="$(awk '$1 == "format_schema" { print $2 }' "$lock_file")"
 source_date_epoch="$(awk '$1 == "source_date_epoch" { print $2 }' "$lock_file")"
-[[ -n "$distribution" && -n "$locked_distribution_ahash64" && \
-  -n "$format_schema" && -n "$source_date_epoch" ]] || \
+[[ -n "$distribution" && -n "$format_schema" && -n "$source_date_epoch" ]] || \
   fail "source lock is missing required metadata"
-[[ "$locked_distribution_ahash64" =~ ^[0-9a-f]{16}$ ]] || \
-  fail "source lock has an invalid distribution aHash64"
-[[ "$distribution_ahash64" == "$locked_distribution_ahash64" ]] || \
-  fail "distribution aHash64 does not match the source lock: expected $locked_distribution_ahash64, got $distribution_ahash64"
+if awk '$1 == "distribution_ahash64" { found = 1 } END { exit !found }' "$lock_file"; then
+  fail "source lock must not pin a packaging root digest"
+fi
 
 if [[ -d "$distribution_path" ]]; then
   distribution_path="$(cd "$distribution_path" && pwd -P)"
@@ -163,7 +160,8 @@ else
   fail "distribution path is not a local file or directory: $distribution_path"
 fi
 cd "$repo_root"
-cargo build -q --release --manifest-path tools/texlive-wasm-publish/Cargo.toml
+cargo build -q --release --manifest-path tools/texlive-wasm-publish/Cargo.toml > "${repo_root}/target/latex-format-publisher-build.log" 2>&1 || \
+  fail "publisher build failed; see target/latex-format-publisher-build.log"
 publisher="${CARGO_TARGET_DIR:-${repo_root}/tools/texlive-wasm-publish/target}/release/texlive-wasm-publish"
 [[ -x "$publisher" ]] || fail "publisher was not built at $publisher"
 actual_distribution_ahash64="$($publisher --file-ahash64 "$distribution_manifest")"
@@ -256,9 +254,11 @@ prefetch_args=()
 while IFS= read -r request_key; do
   prefetch_args+=(--prefetch-input "$request_key")
 done < "$closure_index"
+prefetch_source_closure
 
 cd "$repo_root"
-cargo build --release -p umber
+cargo build --release -p umber > "${repo_root}/target/latex-format-umber-build.log" 2>&1 || \
+  fail "Umber build failed; see target/latex-format-umber-build.log"
 umber_bin="${CARGO_TARGET_DIR:-${repo_root}/target}/release/umber"
 [[ -x "$umber_bin" ]] || fail "Umber binary was not built at $umber_bin"
 [[ -x "$guard" ]] || fail "missing shared Umber watchdog: $guard"
@@ -332,7 +332,6 @@ fi
 
 generated=0
 if [[ "$cache_state" == miss || "$force_regeneration" -eq 1 || "$check_only" -eq 1 ]]; then
-  prefetch_source_closure
   build_one "${tmp_root}/first"
   format_file="${tmp_root}/first/${format_name}.fmt"
   generated=1

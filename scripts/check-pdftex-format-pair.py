@@ -12,6 +12,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import texlive
+
 
 class PairingError(Exception):
     """The two formats cannot be accepted as one LaTeX program pair."""
@@ -152,6 +154,11 @@ def main(arguments: list[str] | None = None) -> int:
     umber = canonical(args.umber or target / "debug/umber", "Umber binary")
     distribution = canonical(args.distribution, "distribution", directory=True)
     distribution_manifest = find_manifest(distribution)
+    actual_distribution_ahash64 = texlive.ahash64_bytes(
+        distribution_manifest.read_bytes()
+    )
+    if actual_distribution_ahash64 != args.distribution_ahash64:
+        raise PairingError("distribution root digest differs from --distribution-ahash64")
     root = json.loads(distribution_manifest.read_text(encoding="utf-8"))
     format_record = root.get("formats", {}).get("pdflatex")
     if not isinstance(format_record, dict):
@@ -164,6 +171,16 @@ def main(arguments: list[str] | None = None) -> int:
     else:
         umber_format = args.umber_format
     umber_format = canonical(umber_format, "Umber format")
+    format_bytes = umber_format.read_bytes()
+    format_ahash64 = format_record.get("ahash64")
+    if (
+        not isinstance(format_ahash64, str)
+        or not texlive.valid_digest(format_ahash64, 16)
+        or format_record.get("object") != f"ahash64-v1-{format_ahash64}"
+        or format_record.get("bytes") != len(format_bytes)
+        or texlive.ahash64_bytes(format_bytes) != format_ahash64
+    ):
+        raise PairingError("Umber format bytes differ from the authenticated distribution record")
     texmf_dist = canonical(
         args.texmf_dist
         or repository / "third_party/texlive-20260301-texmf/texmf-dist",
@@ -176,24 +193,23 @@ def main(arguments: list[str] | None = None) -> int:
         for line in lock.read_text(encoding="utf-8").splitlines()
         if len(fields := line.split()) == 2
     }
+    if "distribution_ahash64" in lock_metadata:
+        raise PairingError("source lock must not pin a packaging root digest")
     receipt = json.loads(reference_receipt.read_text(encoding="utf-8"))
     if receipt.get("format", {}).get("sha256") != sha256(reference_format):
         raise PairingError("clean pdfTeX format differs from its receipt")
     if receipt.get("source", {}).get("lockSha256") != sha256(lock):
         raise PairingError("clean pdfTeX format receipt names a different source lock")
-    for key, receipt_key in (
-        ("distribution", "distribution"),
-        ("distribution_ahash64", "distributionAhash64"),
-    ):
+    for key, receipt_key in (("distribution", "distribution"),):
         if receipt.get("source", {}).get(receipt_key) != lock_metadata.get(key):
             raise PairingError(f"clean pdfTeX receipt disagrees on {key}")
     if (
-        format_record.get("sourceDistribution")
-        != lock_metadata.get("distribution")
-        or format_record.get("sourceManifestAhash64")
-        != lock_metadata.get("distribution_ahash64")
+        format_record.get("sourceDistribution") != lock_metadata.get("distribution")
     ):
         raise PairingError("Umber format record names a different source distribution")
+    construction_digest = format_record.get("sourceManifestAhash64")
+    if not isinstance(construction_digest, str) or not texlive.valid_digest(construction_digest, 16):
+        raise PairingError("Umber format record has no authenticated construction root")
 
     output = (args.output_dir or target / "pdftex-format-pair").resolve()
     if output.exists():

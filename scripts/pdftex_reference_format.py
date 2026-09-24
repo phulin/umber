@@ -45,9 +45,12 @@ def format_lock_records(
         fields = raw_line.split()
         if not fields or fields[0].startswith("#"):
             continue
+        if fields[0] == "distribution_ahash64":
+            raise ReferenceFormatError(
+                f"{lock}:{number}: source lock must not pin a packaging root digest"
+            )
         if fields[0] in {
             "distribution",
-            "distribution_ahash64",
             "source_date_epoch",
         }:
             if len(fields) != 2 or fields[0] in metadata:
@@ -78,7 +81,7 @@ def format_lock_records(
                 "sha256": identity.digest,
             }
         )
-    required = {"distribution", "distribution_ahash64", "source_date_epoch"}
+    required = {"distribution", "source_date_epoch"}
     if metadata.keys() < required:
         raise ReferenceFormatError(f"{lock}: missing format metadata")
     if not records:
@@ -278,7 +281,6 @@ def build(
             },
             "source": {
                 "distribution": metadata["distribution"],
-                "distributionAhash64": metadata["distribution_ahash64"],
                 "sourceDateEpoch": int(source_date_epoch),
                 "lockSha256": sha256_file(repo_root / "tests/latex-source.lock"),
                 "records": records,

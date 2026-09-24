@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 texmf_dist="${UMBER_TEXMF_DIST:-${repo_root}/third_party/texlive-20260301-texmf/texmf-dist}"
 format_distribution="${UMBER_LATEX_FORMAT_DISTRIBUTION:-${repo_root}/target/texlive-snapshot}"
-format_distribution_ahash64="${UMBER_LATEX_FORMAT_DISTRIBUTION_AHASH64:-$(awk '$1 == "distribution_ahash64" { print $2 }' "${repo_root}/tests/latex-source.lock")}"
+format_distribution_ahash64="${UMBER_LATEX_FORMAT_DISTRIBUTION_AHASH64:-}"
 reference_latex="${UMBER_REF_LATEX:-$(command -v latex || true)}"
 source_date_epoch="$(awk '$1 == "source_date_epoch" { print $2 }' "${repo_root}/tests/latex-source.lock")"
 runtime_lock="${repo_root}/tests/latex-runtime.lock"
@@ -31,8 +31,10 @@ scripts/build-latex-format.sh \
   --texmf-dist "$texmf_dist" \
   --distribution "$format_distribution" \
   --distribution-ahash64 "$format_distribution_ahash64"
-cargo build --release -p umber
-cargo build -p parity-harness --features reference-tools
+cargo build --release -p umber > target/latex-corpus-umber-build.log 2>&1 || \
+  fail 'Umber build failed; see target/latex-corpus-umber-build.log'
+cargo build -p parity-harness --features reference-tools > target/latex-corpus-harness-build.log 2>&1 || \
+  fail 'parity harness build failed; see target/latex-corpus-harness-build.log'
 
 umber_bin="${CARGO_TARGET_DIR:-${repo_root}/target}/release/umber"
 parity_harness_bin="${CARGO_TARGET_DIR:-${repo_root}/target}/debug/parity-harness"
