@@ -49,13 +49,9 @@ fn bounded_command_identity<G>(roots: &CommandStateRoots<G>) -> u64 {
     feed(u64::from(roots.alignment.completed_preamble.is_some()));
     feed(roots.replay_completions.len() as u64);
     feed(roots.semantic_diagnostics.len() as u64);
-    if let Some(location) = roots.last_diagnostic_location {
-        feed(u64::from(location.source().raw()) + 1);
-        feed(location.line());
-        feed(location.byte());
-    } else {
-        feed(0);
-    }
+    // The last §342 report site is journaled for rollback, but is source
+    // provenance. Editor rebinds give equal future states different SourceIds
+    // (and edits may move their line/column), so it cannot gate convergence.
     feed(roots.group_payloads.len() as u64);
     feed(roots.aftergroup_payloads.len() as u64);
     feed(u64::from(roots.afterassignment.is_some()));

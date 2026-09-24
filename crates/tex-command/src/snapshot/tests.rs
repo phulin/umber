@@ -177,7 +177,7 @@ fn snapshot_restores_compact_alignment_phase_undo() {
 }
 
 #[test]
-fn snapshot_restores_committed_diagnostic_site_and_future_identity() {
+fn snapshot_restores_committed_diagnostic_site_without_changing_future_identity() {
     // §342's last committed file command remains observable after §71 EOF,
     // so rollback must restore its report site together with input state.
     crate::test_harness::with_universe(|universe| {
@@ -200,7 +200,7 @@ fn snapshot_restores_committed_diagnostic_site_and_future_identity() {
             .expect("diagnostic site snapshots");
 
         command.set_last_diagnostic_location(Some(second));
-        assert_ne!(super::bounded_command_identity(&command.roots), identity);
+        assert_eq!(super::bounded_command_identity(&command.roots), identity);
         command
             .rollback(&snapshot, universe)
             .expect("diagnostic site rolls back");

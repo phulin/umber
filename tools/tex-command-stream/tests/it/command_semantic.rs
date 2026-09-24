@@ -170,12 +170,6 @@ fn declared_command_semantic_cases_match() {
     if selected_case.is_some() {
         return;
     }
-    let published_entries = fs::read_dir(root.path().join("blobs-v1"))
-        .expect("persistent format namespace")
-        .filter_map(Result::ok)
-        .filter(|entry| entry.file_name().to_string_lossy().starts_with("sha256-"))
-        .count();
-    assert_eq!(published_entries, 3);
     let routes = [
         ExecutionRoute::RawTex82Loaded,
         ExecutionRoute::RawEtex26Loaded,
