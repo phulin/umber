@@ -123,6 +123,24 @@ impl<K: Clone + Ord, V: Eq> ResourceLifecycle<K, V> {
         }
     }
 
+    /// Authorizes one blocking request at a cold command site without
+    /// cancelling unrelated outstanding requests in the current batch.
+    pub fn authorize_blocking(&mut self, key: K, intent: RequestIntent) {
+        assert!(intent.is_blocking(), "a synchronous request must block");
+        match self.states.entry(key) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(AdmissionState::Outstanding(intent));
+            }
+            std::collections::btree_map::Entry::Occupied(mut entry) => {
+                if let AdmissionState::Outstanding(existing) = entry.get()
+                    && intent > *existing
+                {
+                    entry.insert(AdmissionState::Outstanding(intent));
+                }
+            }
+        }
+    }
+
     pub fn admit(&mut self, key: K, value: V) -> Result<bool, AdmissionError<K>> {
         match self.states.get(&key) {
             Some(AdmissionState::Outstanding(_)) => {
@@ -279,6 +297,22 @@ mod tests {
         assert_eq!(
             lifecycle.admit("key", 2),
             Err(AdmissionError::BindingConflict("key"))
+        );
+    }
+
+    #[test]
+    fn synchronous_blocking_authorization_preserves_other_outstanding_requests() {
+        let mut lifecycle = ResourceLifecycle::<&str, u8>::default();
+        lifecycle.begin_batch(["pending"], [], ["hint"]);
+        lifecycle.authorize_blocking("new", RequestIntent::Required);
+        lifecycle.authorize_blocking("hint", RequestIntent::Probe);
+        assert_eq!(
+            lifecycle.outstanding().collect::<Vec<_>>(),
+            vec![
+                (&"hint", RequestIntent::Probe),
+                (&"new", RequestIntent::Required),
+                (&"pending", RequestIntent::Required),
+            ]
         );
     }
 }

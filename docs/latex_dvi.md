@@ -125,13 +125,14 @@ file. Each subsequent sorted record is
 file accepted by the engine's typed resource transaction. The records include
 both local and authenticated-distribution files. A `used` file has a present
 semantic dependency in the accepted engine run, including files that were
-prefetched before TeX read them. An `admitted` file was accepted but never
-observed by the accepted run. The digest is the portable aHash64
+staged before TeX read them. An `admitted` file was accepted but never
+observed by the accepted run. Host-staged predictions that TeX never requests
+are omitted. The digest is the portable aHash64
 distribution-content identity. Repeated identical admissions collapse to one
 record; conflicting bytes for one logical request fail receipt construction.
 The builder requires every used key, length, and digest to belong to the locked
 source closure and checks the entry file separately. Unused speculative
-admissions do not expand that source closure. Neither host paths nor
+admissions or staged predictions do not expand that source closure. Neither host paths nor
 distribution transport locations are part of this identity.
 
 The explicit distribution must be a local authenticated mirror. Its root

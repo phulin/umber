@@ -166,8 +166,21 @@ The cache is one verified blob store under the platform cache directory
 retain their digest identities, while the store supplies one per-key lock,
 quarantine, bounded read, digest envelope, and no-clobber atomic publication
 protocol. Cache loss is a performance event only; Rust re-verifies every blob.
-Compatibility readers verify and warm-migrate the former `objects`,
-`manifests`, and `formats-v2` layouts.
+
+Native speculative file hints warm this verified host cache and feed bounded
+dependency discovery. They do not register file bindings or input bytes in the
+engine. A later required read or blocking existence probe resolves through the
+same local-first chain and crosses the typed VFS admission boundary then. This
+keeps optional predictions from occupying the VFS file and byte limits needed
+by actual execution. A staged hint is not an input-admission receipt entry;
+the receipt records it only if a later blocking request admits the file.
+The native compile host may answer that blocking request synchronously at the
+command provider boundary. It validates the answer in a candidate-local VFS
+clone before the command sees it, then publishes the clone and input records
+only after the candidate drive succeeds or suspends normally. A failed drive
+discards those admissions with its candidate. The generated-output transaction
+starts from the resulting VFS state after command execution, preserving one
+resource owner and the existing generated-file rollback boundary.
 
 ### 5. Networking stays out of engine crates
 

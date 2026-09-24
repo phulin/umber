@@ -5,8 +5,9 @@ use tex_content::SharedBytes;
 
 use crate::storage::{DistributionPath, JobPath, WorkspaceStorage};
 use crate::{
-    AdmissionError, FileContentId, FileOrigin, GeneratedTransaction, ResourceLifecycle,
-    VfsLimitError, VfsLimitKind, VfsLimits, VfsSnapshot, VirtualFile, VirtualPath,
+    AdmissionError, FileContentId, FileOrigin, GeneratedTransaction, RequestIntent,
+    ResourceLifecycle, VfsLimitError, VfsLimitKind, VfsLimits, VfsSnapshot, VirtualFile,
+    VirtualPath,
 };
 
 #[cfg(test)]
@@ -477,6 +478,37 @@ pub struct ResourceLedger {
     required_at_batch_start: usize,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum BindingCopyError {
+    IncompatibleLimits,
+    MissingPriorBinding(FileRequestKey),
+    ChangedPriorBinding(FileRequestKey),
+}
+
+impl fmt::Display for BindingCopyError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::IncompatibleLimits => f.write_str("resource workspaces have different limits"),
+            Self::MissingPriorBinding(key) => {
+                write!(
+                    f,
+                    "candidate lost the prior resource binding for {}",
+                    key.name()
+                )
+            }
+            Self::ChangedPriorBinding(key) => {
+                write!(
+                    f,
+                    "candidate changed the prior resource binding for {}",
+                    key.name()
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for BindingCopyError {}
+
 impl ResourceLedger {
     /// Returns the canonical path immutably selected for a typed request.
     #[must_use]
@@ -608,6 +640,51 @@ impl ProjectWorkspace {
     /// and prefetched bytes.
     pub fn authorize_prefetch_hints(&mut self, requests: impl IntoIterator<Item = FileRequestKey>) {
         self.ledger.lifecycle.authorize_hints(requests);
+    }
+
+    /// Opens a blocking admission slot for a resource answered synchronously
+    /// by the command provider. The caller still provisions through the same
+    /// checked VFS boundary before the command may observe the answer.
+    pub fn authorize_blocking_file(&mut self, request: FileRequestKey, intent: RequestIntent) {
+        self.ledger.lifecycle.authorize_blocking(request, intent);
+    }
+
+    /// Copies only checked resolved bindings from a candidate VFS. The
+    /// receiver keeps its own user source and accepted generated-file layers,
+    /// so speculative source edits cannot leak into an accepted workspace.
+    pub fn copy_resolved_bindings_from(&mut self, source: &Self) -> Result<(), BindingCopyError> {
+        if self.limits != source.limits {
+            return Err(BindingCopyError::IncompatibleLimits);
+        }
+        for (key, old_path) in self.ledger.lifecycle.admitted_entries() {
+            let Some(new_path) = source.ledger.lifecycle.admitted(key) else {
+                return Err(BindingCopyError::MissingPriorBinding(key.clone()));
+            };
+            let old_file = self
+                .storage
+                .resolved()
+                .get(old_path)
+                .expect("prior resolved binding has bytes");
+            let new_file = source
+                .storage
+                .resolved()
+                .get(new_path)
+                .expect("candidate resolved binding has bytes");
+            if old_path != new_path || old_file.content_id() != new_file.content_id() {
+                return Err(BindingCopyError::ChangedPriorBinding(key.clone()));
+            }
+        }
+        for key in self.ledger.lifecycle.unavailable_keys() {
+            if !source.ledger.lifecycle.is_unavailable(key) {
+                return Err(BindingCopyError::MissingPriorBinding(key.clone()));
+            }
+        }
+        self.storage.copy_resolved_from(&source.storage);
+        self.ledger.lifecycle = source.ledger.lifecycle.clone();
+        self.ledger.known_exists = source.ledger.known_exists.clone();
+        self.ledger.resolved_bytes = source.ledger.resolved_bytes;
+        self.ledger.required_at_batch_start = source.ledger.required_at_batch_start;
+        Ok(())
     }
 
     #[must_use]

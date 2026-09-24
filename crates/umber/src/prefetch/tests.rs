@@ -114,7 +114,7 @@ fn planner_scans_only_after_admission_and_keeps_spelling() {
     let startup = planner.drain_followups();
     assert_eq!(startup.len(), 1);
     assert!(planner.drain_followups().is_empty());
-    planner.admit_file(&root, br#"\input{child.tex}"#);
+    planner.observe_verified_file(&root, br#"\input{child.tex}"#);
     let closure = planner.drain_followups();
     assert_eq!(closure.len(), 1);
     let ResourceRequest::File(child) = &closure[0] else {
@@ -140,7 +140,7 @@ fn planner_scans_admitted_font_definition_for_typed_metrics() {
         vec![ResourceRequest::File(definition.clone())]
     );
 
-    planner.admit_file(
+    planner.observe_verified_file(
         &definition,
         br#"
 \DeclareFontShape{OT1}{ptm}{m}{n}{<-> ptmr7t}
@@ -199,7 +199,7 @@ fn planner_admission_queues_authenticated_dependency_hints() {
         FileRequestKey::new(FileKind::TexInput, "companion.sty").expect("key"),
         "./companion.sty",
     );
-    planner.admit_file_with_metadata(
+    planner.observe_verified_file_with_metadata(
         &root,
         "/texlive/root.sty",
         br#"% no literal child"#,
@@ -222,7 +222,7 @@ fn planner_drains_admitted_literals_before_metadata_peers() {
         FileRequestKey::new(FileKind::TexInput, "companion.sty").expect("key"),
         "companion.sty",
     );
-    planner.admit_file_with_metadata(
+    planner.observe_verified_file_with_metadata(
         &root,
         "/texlive/root.sty",
         br#"\input{literal-child.tex}"#,
@@ -268,7 +268,7 @@ fn native_prefetch_conversion_preserves_literal_depth() {
         panic!("expected native root request");
     };
     assert_eq!(root_request.key(), root.key());
-    planner.admit_file(&root, br#"\input{literal-child.tex}"#);
+    planner.observe_verified_file(&root, br#"\input{literal-child.tex}"#);
     let drained_child = planner.drain_followups();
     let [ResourceRequest::File(child)] = drained_child.as_slice() else {
         panic!("expected native literal child request");
@@ -285,7 +285,7 @@ fn native_prefetch_conversion_preserves_literal_depth() {
         FileRequestKey::new(FileKind::TexInput, "literal-grandchild.tex").expect("grandchild key"),
         "literal-grandchild.tex",
     );
-    planner.admit_file(child, br#"\input{literal-grandchild.tex}"#);
+    planner.observe_verified_file(child, br#"\input{literal-grandchild.tex}"#);
     assert_eq!(
         planner.drain_followups(),
         vec![ResourceRequest::File(grandchild.clone())]
@@ -316,12 +316,12 @@ fn native_metadata_child_is_a_leaf_at_admission() {
         FileRequestKey::new(FileKind::TexInput, "metadata-grandchild.sty").expect("grandchild key"),
         "metadata-grandchild.sty",
     );
-    planner.admit_file_with_metadata(&root, "/tex/root.sty", b"root", [child.clone()]);
+    planner.observe_verified_file_with_metadata(&root, "/tex/root.sty", b"root", [child.clone()]);
     assert_eq!(
         planner.drain_followups(),
         vec![ResourceRequest::File(child.clone())]
     );
-    planner.admit_file_with_metadata(
+    planner.observe_verified_file_with_metadata(
         &child,
         "/tex/metadata-child.sty",
         b"child",
@@ -348,7 +348,7 @@ fn native_deferred_metadata_child_remains_a_leaf_after_phase_renewal() {
         FileRequestKey::new(FileKind::TexInput, "deferred-grandchild.sty").expect("grandchild key"),
         "deferred-grandchild.sty",
     );
-    planner.admit_file_with_metadata(&root, "/tex/root.sty", b"root", [child.clone()]);
+    planner.observe_verified_file_with_metadata(&root, "/tex/root.sty", b"root", [child.clone()]);
     let drained_batch = planner.drain_followups();
     let [ResourceRequest::File(drained)] = drained_batch.as_slice() else {
         panic!("expected metadata child");
@@ -359,7 +359,12 @@ fn native_deferred_metadata_child_remains_a_leaf_after_phase_renewal() {
         planner.drain_followups(),
         vec![ResourceRequest::File(child.clone())]
     );
-    planner.admit_file_with_metadata(&child, "/tex/deferred-metadata.sty", b"child", [grandchild]);
+    planner.observe_verified_file_with_metadata(
+        &child,
+        "/tex/deferred-metadata.sty",
+        b"child",
+        [grandchild],
+    );
     assert!(planner.drain_followups().is_empty());
     for _ in 0..4 {
         planner.begin_phase();
@@ -385,7 +390,7 @@ fn native_actual_demand_promotes_a_guessed_metadata_parent_to_root() {
         FileRequestKey::new(FileKind::TexInput, "promoted-grandchild.sty").expect("grandchild key"),
         "promoted-grandchild.sty",
     );
-    planner.admit_file_with_metadata(&root, "/tex/root.sty", b"root", [child.clone()]);
+    planner.observe_verified_file_with_metadata(&root, "/tex/root.sty", b"root", [child.clone()]);
     assert_eq!(
         planner.drain_followups(),
         vec![ResourceRequest::File(child.clone())]
@@ -400,7 +405,7 @@ fn native_actual_demand_promotes_a_guessed_metadata_parent_to_root() {
             .origin,
         PrefetchOrigin::ActualDemand
     );
-    planner.admit_file_with_metadata(
+    planner.observe_verified_file_with_metadata(
         &child,
         "/tex/promoted-child.sty",
         b"child",
@@ -421,14 +426,14 @@ fn planner_resets_replay_and_admission_state_for_new_context() {
     );
     planner.enqueue_escalation([root.clone()]);
     assert_eq!(planner.drain_followups().len(), 1);
-    planner.admit_file(&root, br#"\input{old-child.tex}"#);
+    planner.observe_verified_file(&root, br#"\input{old-child.tex}"#);
     assert_eq!(planner.drain_followups().len(), 1);
     planner.reset_for_context("\\input{new-root.sty}");
     let startup = planner.drain_followups();
     assert!(startup.iter().any(|request| {
         matches!(request, ResourceRequest::File(file) if file.key().name() == "new-root.sty")
     }));
-    planner.admit_file(&root, br#"\input{new-child.tex}"#);
+    planner.observe_verified_file(&root, br#"\input{new-child.tex}"#);
     let closure = planner.drain_followups();
     assert!(closure.iter().any(|request| {
         matches!(request, ResourceRequest::File(file) if file.key().name() == "new-child.tex")
@@ -490,8 +495,8 @@ fn opt_in_diagnostics_are_bounded_at_planner_seams() {
         })
         .expect("literal package hint");
     planner.note_catalog_result(&request, true);
-    planner.admit_file(&request, b"% runtime text");
-    planner.admit_file(&request, b"% already resident");
+    planner.observe_verified_file(&request, b"% runtime text");
+    planner.observe_verified_file(&request, b"% already resident");
 
     for index in 0..(MAX_PREFETCH_DIAGNOSTIC_DECISIONS + 4) {
         let name = format!("diagnostic-{index}.tex");

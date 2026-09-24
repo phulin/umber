@@ -89,6 +89,68 @@ fn user_registration_rejects_distribution_paths_before_storage() {
 }
 
 #[test]
+fn resource_copy_preserves_accepted_user_source() {
+    let mut accepted = ProjectWorkspace::new(VfsLimits::default()).expect("workspace");
+    let main = VirtualPath::user("main.tex").expect("main path");
+    accepted
+        .register_user(main.clone(), b"accepted".to_vec())
+        .expect("accepted root");
+    let mut candidate = accepted.clone();
+    candidate
+        .register_user(main.clone(), b"candidate".to_vec())
+        .expect("candidate root");
+    let request = key(FileKind::TexInput, "remote.tex");
+    candidate.authorize_blocking_file(request.clone(), RequestIntent::Required);
+    candidate
+        .provision(response(
+            FileKind::TexInput,
+            "remote.tex",
+            "/texlive/remote.tex",
+            b"remote",
+        ))
+        .expect("candidate remote");
+
+    accepted
+        .copy_resolved_bindings_from(&candidate)
+        .expect("resource-only copy");
+    assert_eq!(
+        accepted
+            .snapshot()
+            .get(&main)
+            .expect("root lookup")
+            .expect("root")
+            .bytes(),
+        b"accepted"
+    );
+    assert_eq!(accepted.get(&request).expect("resource").bytes(), b"remote");
+
+    let mut missing = accepted.clone();
+    missing.clear();
+    assert_eq!(
+        accepted.copy_resolved_bindings_from(&missing),
+        Err(BindingCopyError::MissingPriorBinding(request.clone()))
+    );
+    let mut changed = accepted.clone();
+    changed.clear();
+    changed
+        .preload(response(
+            FileKind::TexInput,
+            "remote.tex",
+            "/texlive/remote.tex",
+            b"changed",
+        ))
+        .expect("different candidate binding");
+    assert_eq!(
+        accepted.copy_resolved_bindings_from(&changed),
+        Err(BindingCopyError::ChangedPriorBinding(request.clone()))
+    );
+    assert_eq!(
+        accepted.get(&request).expect("unchanged resource").bytes(),
+        b"remote"
+    );
+}
+
+#[test]
 fn resolved_registration_and_clear_are_reflected_in_vfs_snapshots() {
     let mut registry = ProjectWorkspace::new(VfsLimits::default()).expect("registry");
     let user = VirtualPath::user("main.tex").expect("user path");

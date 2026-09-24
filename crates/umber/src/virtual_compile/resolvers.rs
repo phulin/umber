@@ -1,5 +1,7 @@
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
+use std::rc::Rc;
 
 use tex_exec::{
     ResourceFailure, ResourceFulfillment, ResourceHost, ResourceNeed, ResourceOutcome,
@@ -17,17 +19,29 @@ use tex_state::{
 };
 
 use super::path::RequestedFile;
+use super::synchronous::SynchronousAdmission;
 use super::{
-    CompileError, FileKind, FileRequest, FileRequestKey, FontResponseFingerprint, VirtualPath,
+    CompileError, FileKind, FileRequest, FileRequestKey, FontResponseFingerprint, ResolvedFile,
+    VirtualPath,
 };
-use umber_vfs::{FileOrigin, ResourceLedger, VfsSnapshot};
+use umber_vfs::{FileOrigin, ProjectWorkspace, ResourceLedger, VfsSnapshot};
 
 use crate::pdf_import::PdfImageSourceKey;
+
+type ResolverFinish = (
+    Vec<FileRequest>,
+    Vec<FileRequest>,
+    Vec<FontRequest>,
+    Option<CompileError>,
+    Option<(ProjectWorkspace, Vec<(FileRequest, ResolvedFile)>)>,
+);
+
 pub(super) struct VirtualRunResolvers<'a> {
     input: VirtualFileResolver<'a>,
     font: VirtualFontResolver<'a>,
     image: VirtualImageResolver<'a>,
     request_index: u64,
+    synchronous: Option<Rc<RefCell<SynchronousAdmission<'a>>>>,
 }
 
 enum HostLookup<T> {
@@ -62,6 +76,7 @@ struct VirtualFileResolver<'a> {
     probes: Vec<(u64, FileRequest)>,
     seen: BTreeSet<FileRequestKey>,
     fatal: Option<CompileError>,
+    synchronous: Option<Rc<RefCell<SynchronousAdmission<'a>>>>,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -77,32 +92,29 @@ impl<'a> VirtualRunResolvers<'a> {
         resolved_fonts: &'a BTreeMap<FontRequestKey, OpenTypeFont>,
         unavailable_fonts: &'a BTreeSet<FontRequestKey>,
         policy: FontResolutionPolicy<'a>,
+        synchronous: Option<SynchronousAdmission<'a>>,
     ) -> Self {
+        let synchronous = synchronous.map(|admission| Rc::new(RefCell::new(admission)));
         Self {
-            input: VirtualFileResolver::from_ledger(snapshot, ledger),
+            input: VirtualFileResolver::from_ledger(snapshot, ledger, synchronous.clone()),
             font: VirtualFontResolver::new(
                 snapshot,
                 ledger,
                 resolved_fonts,
                 unavailable_fonts,
                 policy,
+                synchronous.clone(),
             ),
             image: VirtualImageResolver {
-                files: VirtualFileResolver::from_ledger(snapshot, ledger),
+                files: VirtualFileResolver::from_ledger(snapshot, ledger, synchronous.clone()),
                 cache: HashMap::new(),
             },
             request_index: 0,
+            synchronous,
         }
     }
 
-    pub(super) fn finish(
-        self,
-    ) -> (
-        Vec<FileRequest>,
-        Vec<FileRequest>,
-        Vec<FontRequest>,
-        Option<CompileError>,
-    ) {
+    pub(super) fn finish(self) -> ResolverFinish {
         let mut misses = self.input.misses;
         misses.extend(self.font.files.misses);
         misses.extend(self.image.files.misses);
@@ -132,6 +144,10 @@ impl<'a> VirtualRunResolvers<'a> {
                 .fatal
                 .or(self.font.files.fatal)
                 .or(self.image.files.fatal),
+            self.synchronous.map(|admission| {
+                let admission = admission.borrow();
+                (admission.workspace.clone(), admission.admitted.clone())
+            }),
         )
     }
 }
@@ -151,7 +167,11 @@ impl ResourceHost for VirtualRunResolvers<'_> {
                 })
                 .map(|lookup| {
                     lookup.map(|content| {
-                        let role = virtual_source_role(self.input.snapshot, &content);
+                        let role = virtual_source_role(
+                            self.input.snapshot,
+                            self.input.synchronous.as_ref(),
+                            &content,
+                        );
                         ResourceFulfillment::world_input_with_role(name, content, role)
                     })
                 }),
@@ -217,7 +237,11 @@ impl ResourceHost for VirtualRunResolvers<'_> {
     }
 }
 
-fn virtual_source_role(snapshot: &VfsSnapshot, content: &FileContent) -> tex_command::SourceRole {
+fn virtual_source_role(
+    snapshot: &VfsSnapshot,
+    synchronous: Option<&Rc<RefCell<SynchronousAdmission<'_>>>>,
+    content: &FileContent,
+) -> tex_command::SourceRole {
     let Some(path) = content.path().to_str() else {
         return tex_command::SourceRole::GeneratedInput;
     };
@@ -226,10 +250,25 @@ fn virtual_source_role(snapshot: &VfsSnapshot, content: &FileContent) -> tex_com
     } else {
         umber_vfs::VirtualPath::user(path).ok()
     };
-    let origin = virtual_path
-        .as_ref()
-        .and_then(|path| snapshot.get(path).ok().flatten())
-        .map(umber_vfs::VirtualFile::origin);
+    let origin = virtual_path.as_ref().and_then(|path| {
+        snapshot
+            .get(path)
+            .ok()
+            .flatten()
+            .map(|file| file.origin().clone())
+            .or_else(|| {
+                synchronous.and_then(|admission| {
+                    admission
+                        .borrow()
+                        .workspace
+                        .snapshot()
+                        .get(path)
+                        .ok()
+                        .flatten()
+                        .map(|file| file.origin().clone())
+                })
+            })
+    });
     match origin {
         Some(FileOrigin::Resolved(_)) => tex_command::SourceRole::DistributionPackageClass,
         Some(FileOrigin::Generated) | None => tex_command::SourceRole::GeneratedInput,
@@ -540,7 +579,11 @@ fn raster_points_to_scaled(points: f64) -> Scaled {
 }
 
 impl<'a> VirtualFileResolver<'a> {
-    fn from_ledger(snapshot: &'a VfsSnapshot, ledger: &'a ResourceLedger) -> Self {
+    fn from_ledger(
+        snapshot: &'a VfsSnapshot,
+        ledger: &'a ResourceLedger,
+        synchronous: Option<Rc<RefCell<SynchronousAdmission<'a>>>>,
+    ) -> Self {
         Self {
             snapshot,
             ledger,
@@ -548,6 +591,7 @@ impl<'a> VirtualFileResolver<'a> {
             probes: Vec::new(),
             seen: BTreeSet::new(),
             fatal: None,
+            synchronous,
         }
     }
 
@@ -660,6 +704,20 @@ impl<'a> VirtualFileResolver<'a> {
                     return Ok(HostLookup::Unavailable);
                 }
                 let request = FileRequest::new(key.clone(), original_name);
+                if let Some(synchronous) = &self.synchronous {
+                    let answer = synchronous
+                        .borrow_mut()
+                        .resolve(&request, intent == FileOpenIntent::Probe)?;
+                    if let Some(path) = &missing_user_path {
+                        self.record_missing(input, path, intent)?;
+                    }
+                    return match answer {
+                        Some(file) => self
+                            .read_snapshot(input, &file, intent)
+                            .map(HostLookup::Available),
+                        None => Ok(HostLookup::Unavailable),
+                    };
+                }
                 if self.seen.insert(key.clone()) {
                     if intent == FileOpenIntent::Probe {
                         self.probes.push((request_index, request));
@@ -800,9 +858,10 @@ impl<'a> VirtualFontResolver<'a> {
         resolved_fonts: &'a BTreeMap<FontRequestKey, OpenTypeFont>,
         unavailable_fonts: &'a BTreeSet<FontRequestKey>,
         policy: FontResolutionPolicy<'a>,
+        synchronous: Option<Rc<RefCell<SynchronousAdmission<'a>>>>,
     ) -> Self {
         Self {
-            files: VirtualFileResolver::from_ledger(snapshot, ledger),
+            files: VirtualFileResolver::from_ledger(snapshot, ledger, synchronous),
             resolved_fonts,
             unavailable_fonts,
             accepted_font_containers: policy.accepted_containers,
@@ -986,7 +1045,8 @@ mod tests {
     fn required_lookup_promotes_an_earlier_probe_without_changing_its_order() {
         let workspace = ProjectWorkspace::new(VfsLimits::default()).expect("empty workspace");
         let snapshot = workspace.snapshot();
-        let mut resolver = VirtualFileResolver::from_ledger(&snapshot, workspace.resource_ledger());
+        let mut resolver =
+            VirtualFileResolver::from_ledger(&snapshot, workspace.resource_ledger(), None);
         crate::with_engine_world(World::memory(), |stores| {
             assert!(matches!(
                 resolver

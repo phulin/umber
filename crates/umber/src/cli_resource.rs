@@ -775,11 +775,97 @@ impl<'owner> NativeCompileSession<'owner> {
             }
             let compile_attempt_started = Instant::now();
             let execution_before = self.session.compile_telemetry().execution;
-            let attempt = self.session.compile_attempt();
+            let mut synchronous_admitted = Vec::new();
+            let mut synchronous_error = None;
+            let attempt = {
+                let distribution = &mut self.distribution;
+                let local = &self.local;
+                let telemetry = &mut self.host_telemetry.resolver;
+                let prefetch = &mut self.prefetch;
+                self.session
+                    .compile_attempt_with_file_provider(&mut |request, probe| {
+                        if cancellation.is_cancelled() {
+                            synchronous_error = Some(NativeRunError::Cancelled);
+                            return Err("native resource acquisition was cancelled".to_owned());
+                        }
+                        let resource = ResourceRequest::File(request.clone());
+                        prefetch.begin_phase();
+                        prefetch.note_actual_demand(&resource);
+                        let single = if probe {
+                            NeedResources {
+                                required: Vec::new(),
+                                probes: vec![resource],
+                                prefetch_hints: Vec::new(),
+                            }
+                        } else {
+                            NeedResources {
+                                required: vec![resource],
+                                probes: Vec::new(),
+                                prefetch_hints: Vec::new(),
+                            }
+                        };
+                        let resolved = distribution.resolve_batch_with_catalog(
+                            local,
+                            &single,
+                            cancellation,
+                            telemetry,
+                            prefetch,
+                            &mut |_| {},
+                        );
+                        let resolved = match resolved {
+                            Ok(resolved) => resolved,
+                            Err(error) => {
+                                let message = error.to_string();
+                                synchronous_error = Some(error);
+                                return Err(message);
+                            }
+                        };
+                        let answer = resolved
+                            .responses
+                            .iter()
+                            .find(|answer| match answer {
+                                ResourceResponse::File(file) => file.request == *request.key(),
+                                ResourceResponse::FileUnavailable(key) => key == request.key(),
+                                _ => false,
+                            })
+                            .cloned()
+                            .ok_or_else(|| {
+                                "native provider omitted a blocking file answer".to_owned()
+                            })?;
+                        for (request, file) in
+                            resolved.admitted_files.iter().chain(&resolved.staged_files)
+                        {
+                            let dependencies =
+                                distribution.dependencies_for([request.key().clone()]);
+                            prefetch.observe_verified_file_with_metadata(
+                                request,
+                                &file.virtual_path,
+                                file.bytes.as_ref(),
+                                dependencies,
+                            );
+                        }
+                        synchronous_admitted.extend(resolved.admitted_files);
+                        Ok(answer)
+                    })
+            };
+            if let Some(error) = synchronous_error {
+                self.session.discard_suspended_candidate();
+                self.distribution.reset_lookup_manifest();
+                return Err(error);
+            }
             self.host_telemetry.compile_attempt_time = self
                 .host_telemetry
                 .compile_attempt_time
                 .saturating_add(compile_attempt_started.elapsed());
+            if !matches!(attempt, CompileAttemptResult::Error(_))
+                && !synchronous_admitted.is_empty()
+            {
+                self.distribution
+                    .note_engine_admitted(&mut self.host_telemetry.resolver, &synchronous_admitted);
+                if let Some(admissions) = &mut self.input_admissions {
+                    admissions.record_files(&synchronous_admitted)?;
+                }
+            }
             match attempt {
                 CompileAttemptResult::Complete(output) => {
                     self.account_prefetch_usage();
@@ -895,8 +981,6 @@ impl<'owner> NativeCompileSession<'owner> {
                     let provision_started = Instant::now();
                     self.session
                         .note_resource_exists(resolved.catalog_exists.clone());
-                    self.session
-                        .authorize_prefetch_files(resolved.prefetch_requests.clone());
                     if let Err(error) = self.session.provide_resources(resolved.responses.clone()) {
                         self.prefetch
                             .retire_unadmitted_prefetch(&batch.prefetch_hints, &[]);
@@ -906,23 +990,27 @@ impl<'owner> NativeCompileSession<'owner> {
                         self.distribution.reset_lookup_manifest();
                         return Err(NativeRunError::Compile(error.to_string()));
                     }
-                    self.prefetch.retire_unadmitted_prefetch(
-                        &batch.prefetch_hints,
+                    let planned_files = resolved
+                        .admitted_files
+                        .iter()
+                        .chain(&resolved.staged_files)
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    self.prefetch
+                        .retire_unadmitted_prefetch(&batch.prefetch_hints, &planned_files);
+                    self.prefetch
+                        .retire_unadmitted_prefetch(&actual_file_requests, &planned_files);
+                    self.distribution.note_engine_admitted(
+                        &mut self.host_telemetry.resolver,
                         &resolved.admitted_files,
                     );
-                    self.prefetch.retire_unadmitted_prefetch(
-                        &actual_file_requests,
-                        &resolved.admitted_files,
-                    );
-                    self.distribution
-                        .note_engine_admitted(&mut self.host_telemetry.resolver, &resolved);
                     if let Some(admissions) = &mut self.input_admissions {
                         admissions.record_files(&resolved.admitted_files)?;
                     }
-                    for (request, file) in &resolved.admitted_files {
+                    for (request, file) in &planned_files {
                         let dependencies =
                             self.distribution.dependencies_for([request.key().clone()]);
-                        self.prefetch.admit_file_with_metadata(
+                        self.prefetch.observe_verified_file_with_metadata(
                             request,
                             &file.virtual_path,
                             file.bytes.as_ref(),
@@ -966,24 +1054,28 @@ impl<'owner> NativeCompileSession<'owner> {
             )?;
             self.session
                 .note_resource_exists(resolved.catalog_exists.clone());
-            self.session
-                .authorize_prefetch_files(resolved.prefetch_requests.clone());
             // Even an empty speculative response is acknowledged once.  This
             // is what lets a false-positive hint terminate without becoming a
             // startup retry loop; it never claims that the payload is ready.
             self.session
                 .provide_resources(resolved.responses.clone())
                 .map_err(|error| NativeRunError::Compile(error.to_string()))?;
+            let planned_files = resolved
+                .admitted_files
+                .iter()
+                .chain(&resolved.staged_files)
+                .cloned()
+                .collect::<Vec<_>>();
             self.prefetch
-                .retire_unadmitted_prefetch(&hints, &resolved.admitted_files);
+                .retire_unadmitted_prefetch(&hints, &planned_files);
             self.distribution
-                .note_engine_admitted(&mut self.host_telemetry.resolver, &resolved);
+                .note_engine_admitted(&mut self.host_telemetry.resolver, &resolved.admitted_files);
             if let Some(admissions) = &mut self.input_admissions {
                 admissions.record_files(&resolved.admitted_files)?;
             }
-            for (request, file) in &resolved.admitted_files {
+            for (request, file) in &planned_files {
                 let dependencies = self.distribution.dependencies_for([request.key().clone()]);
-                self.prefetch.admit_file_with_metadata(
+                self.prefetch.observe_verified_file_with_metadata(
                     request,
                     &file.virtual_path,
                     file.bytes.as_ref(),
@@ -1683,9 +1775,9 @@ struct ResolvedDistributionBatch {
     /// host calls the planner with these only after `provide_resources` has
     /// committed the bytes to the engine VFS.
     admitted_files: Vec<(FileRequest, ResolvedFile)>,
-    /// File requests that were discovered inside an authenticated package
-    /// closure rather than in the engine's original hint batch.
-    prefetch_requests: Vec<FileRequest>,
+    /// Verified optional payloads retained only for this host planning wave.
+    /// The engine admits one only if it later issues a blocking request.
+    staged_files: Vec<(FileRequest, ResolvedFile)>,
     /// Catalog-positive requests whose payloads are about to be admitted.
     catalog_exists: Vec<FileRequestKey>,
 }
@@ -1698,8 +1790,8 @@ struct DistributionResolver {
     verified: Arc<Mutex<VerifiedDistributionState>>,
     lookup_manifest: Option<LookupManifest>,
     project_revision: Option<String>,
-    prefetch_admitted: BTreeMap<FileRequestKey, (u64, String)>,
-    prefetch_counted_paths: BTreeSet<String>,
+    prefetch_staged: BTreeMap<FileRequestKey, (u64, String)>,
+    staged_counted_paths: BTreeSet<String>,
     prefetch_used: BTreeSet<FileRequestKey>,
     readiness: BTreeMap<FileRequestKey, Readiness>,
     known_dependencies: BTreeMap<FileRequestKey, Vec<FileRequest>>,
@@ -1759,8 +1851,8 @@ impl DistributionResolver {
             verified,
             lookup_manifest: None,
             project_revision: None,
-            prefetch_admitted: BTreeMap::new(),
-            prefetch_counted_paths: BTreeSet::new(),
+            prefetch_staged: BTreeMap::new(),
+            staged_counted_paths: BTreeSet::new(),
             prefetch_used: BTreeSet::new(),
             readiness: BTreeMap::new(),
             known_dependencies: BTreeMap::new(),
@@ -1772,8 +1864,8 @@ impl DistributionResolver {
     }
 
     fn reset_lookup_manifest(&mut self) {
-        self.prefetch_admitted.clear();
-        self.prefetch_counted_paths.clear();
+        self.prefetch_staged.clear();
+        self.staged_counted_paths.clear();
         self.prefetch_used.clear();
         self.known_dependencies.clear();
         let Some(current) = &self.lookup_manifest else {
@@ -1786,44 +1878,46 @@ impl DistributionResolver {
         self.project_revision = Some(revision);
     }
 
-    fn note_prefetch_admitted(&mut self, request: &FileRequest, file: &ResolvedFile) {
-        if self.prefetch_admitted.contains_key(request.key()) {
+    fn note_prefetch_staged(
+        &mut self,
+        telemetry: &mut ResolverTelemetry,
+        request: &FileRequest,
+        file: &ResolvedFile,
+    ) {
+        if self.prefetch_staged.contains_key(request.key()) {
             return;
         }
-        self.prefetch_admitted.insert(
+        self.prefetch_staged.insert(
             request.key().clone(),
             (file.bytes.len() as u64, file.virtual_path.clone()),
         );
+        if self.staged_counted_paths.insert(file.virtual_path.clone()) {
+            telemetry.prefetch_bytes = telemetry
+                .prefetch_bytes
+                .saturating_add(file.bytes.len() as u64);
+        }
     }
 
-    fn admit_local_prefetch(
+    fn stage_local_prefetch(
         &mut self,
         telemetry: &mut ResolverTelemetry,
         request: FileRequest,
         file: ResolvedFile,
-        responses: &mut Vec<ResourceResponse>,
-        prefetch_requests: &mut Vec<FileRequest>,
+        staged_files: &mut Vec<(FileRequest, ResolvedFile)>,
     ) {
         self.record_request_readiness(telemetry, request.key(), Readiness::ExistsNotReady);
         self.record_file_resolved(&request, LookupRole::Hint, "local", &file, None);
-        self.note_prefetch_admitted(&request, &file);
-        prefetch_requests.push(request);
-        responses.push(ResourceResponse::File(file));
+        self.note_prefetch_staged(telemetry, &request, &file);
+        staged_files.push((request, file));
     }
 
     fn note_engine_admitted(
         &mut self,
         telemetry: &mut ResolverTelemetry,
-        batch: &ResolvedDistributionBatch,
+        admitted: &[(FileRequest, ResolvedFile)],
     ) {
-        for (request, file) in &batch.admitted_files {
+        for (request, _) in admitted {
             self.record_request_readiness(telemetry, request.key(), Readiness::Ready);
-            if let Some((bytes, virtual_path)) = self.prefetch_admitted.get(request.key())
-                && self.prefetch_counted_paths.insert(virtual_path.clone())
-            {
-                debug_assert_eq!(*bytes, file.bytes.len() as u64);
-                telemetry.prefetch_bytes = telemetry.prefetch_bytes.saturating_add(*bytes);
-            }
         }
     }
 
@@ -1860,7 +1954,7 @@ impl DistributionResolver {
 
     fn unused_prefetch_bytes(&self) -> u64 {
         let mut paths = BTreeSet::new();
-        self.prefetch_admitted
+        self.prefetch_staged
             .iter()
             .filter_map(|(key, (bytes, path))| {
                 (!self.prefetch_used.contains(key) && paths.insert(path.clone())).then_some(*bytes)
@@ -1870,7 +1964,7 @@ impl DistributionResolver {
 
     fn account_prefetch_paths(&mut self, paths: impl IntoIterator<Item = String>) {
         for path in paths {
-            for (key, (_, virtual_path)) in &self.prefetch_admitted {
+            for (key, (_, virtual_path)) in &self.prefetch_staged {
                 if virtual_path == &path {
                     self.prefetch_used.insert(key.clone());
                 }
@@ -2150,7 +2244,7 @@ impl DistributionResolver {
     ) -> Result<ResolvedDistributionBatch, NativeRunError> {
         check_cancelled(cancellation)?;
         let mut responses = Vec::new();
-        let mut prefetch_requests = Vec::new();
+        let mut staged_files = Vec::new();
         let mut local_prefetch = Vec::<(FileRequest, ResolvedFile)>::new();
         let mut catalog_exists = BTreeSet::new();
         let mut unresolved = Vec::new();
@@ -2271,13 +2365,7 @@ impl DistributionResolver {
                 if semantic_file_key(request.key())
                     .is_some_and(|key| selected_keys.contains(&key.identity()))
                 {
-                    self.admit_local_prefetch(
-                        telemetry,
-                        request,
-                        file,
-                        &mut responses,
-                        &mut prefetch_requests,
-                    );
+                    self.stage_local_prefetch(telemetry, request, file, &mut staged_files);
                 }
             }
             for request in &batch.prefetch_hints {
@@ -2304,7 +2392,7 @@ impl DistributionResolver {
                         }),
                 ),
                 responses,
-                prefetch_requests,
+                staged_files,
                 catalog_exists: catalog_exists.into_iter().collect(),
             });
         }
@@ -2586,13 +2674,7 @@ impl DistributionResolver {
             if semantic_file_key(request.key())
                 .is_some_and(|key| selected_semantic_keys.contains(&key.identity()))
             {
-                self.admit_local_prefetch(
-                    telemetry,
-                    request,
-                    file,
-                    &mut responses,
-                    &mut prefetch_requests,
-                );
+                self.stage_local_prefetch(telemetry, request, file, &mut staged_files);
             }
         }
         for (key, entry) in &hints {
@@ -2669,11 +2751,10 @@ impl DistributionResolver {
                                 .filter_map(|request| match request {
                                     ResourceRequest::File(request) => Some(request.clone()),
                                     ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => None,
-                                })
-                                .chain(prefetch_requests.iter().cloned()),
+                                }),
                         ),
                         responses,
-                        prefetch_requests,
+                        staged_files,
                         catalog_exists: catalog_exists.into_iter().collect(),
                     });
                 }
@@ -2755,12 +2836,8 @@ impl DistributionResolver {
                     &file,
                     Some(&entry.object),
                 );
-                self.note_prefetch_admitted(&request, &file);
-                // Every speculative response is authorized through the same VFS
-                // seam. Dependency-discovered files and explicit hints therefore
-                // share one closure queue and one admission callback.
-                prefetch_requests.push(key.clone());
-                responses.push(ResourceResponse::File(file));
+                self.note_prefetch_staged(telemetry, &request, &file);
+                staged_files.push((key, file));
             }
         }
         drop(hints);
@@ -2780,11 +2857,10 @@ impl DistributionResolver {
                     .filter_map(|request| match request {
                         ResourceRequest::File(request) => Some(request.clone()),
                         ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => None,
-                    })
-                    .chain(prefetch_requests.iter().cloned()),
+                    }),
             ),
             responses,
-            prefetch_requests,
+            staged_files,
             catalog_exists: catalog_exists.into_iter().collect(),
         })
     }

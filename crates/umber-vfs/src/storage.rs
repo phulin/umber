@@ -176,6 +176,10 @@ impl WorkspaceStorage {
         Arc::make_mut(&mut self.generation).resolved = Arc::default();
     }
 
+    pub(crate) fn copy_resolved_from(&mut self, source: &Self) {
+        Arc::make_mut(&mut self.generation).resolved = Arc::clone(&source.generation.resolved);
+    }
+
     pub(crate) fn publish_generated(&mut self, generated: Arc<GeneratedFiles>) {
         Arc::make_mut(&mut self.generation).accepted_generated = generated;
     }

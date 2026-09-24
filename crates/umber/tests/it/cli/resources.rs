@@ -343,7 +343,7 @@ fn input_receipt_records_semantic_local_inputs_and_tfm() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary distribution and CLI execution.
-fn input_receipt_distinguishes_consumed_remote_from_unused_remote_prefetch() {
+fn input_receipt_excludes_staged_remote_prefetch() {
     let temp_dir = tempfile::tempdir().expect("create receipt fixture");
     let source = temp_dir.path().join("main.tex");
     let local = temp_dir.path().join("local.tex");
@@ -404,15 +404,13 @@ fn input_receipt_distinguishes_consumed_remote_from_unused_remote_prefetch() {
     );
     let actual = fs::read_to_string(receipt).expect("read receipt");
     let expected = format!(
-        "umber-input-admissions-v1\nmain\t{}\t{}\nfile\tused\ttex:local.tex\t{}\t{}\nfile\tused\ttex:remote.tex\t{}\t{}\nfile\tadmitted\ttex:unused.tex\t{}\t{}\n",
+        "umber-input-admissions-v1\nmain\t{}\t{}\nfile\tused\ttex:local.tex\t{}\t{}\nfile\tused\ttex:remote.tex\t{}\t{}\n",
         main_bytes.len(),
         hex_ahash64(main_bytes),
         local_bytes.len(),
         hex_ahash64(local_bytes),
         remote_bytes.len(),
         hex_ahash64(remote_bytes),
-        unused_bytes.len(),
-        hex_ahash64(unused_bytes),
     );
     assert_eq!(actual, expected);
 }

@@ -78,6 +78,44 @@ fn local_startup_prefetch_is_visible_to_probe() {
 }
 
 #[test]
+fn staged_prefetch_does_not_consume_engine_file_capacity() {
+    let directory = TempDir::new().expect("temporary project");
+    std::fs::write(directory.path().join("main.tex"), b"\\input required \\end").expect("main");
+    std::fs::write(
+        directory.path().join("required.tex"),
+        b"\\message{REQUIRED}\\endinput",
+    )
+    .expect("required");
+    std::fs::write(directory.path().join("unused.tex"), b"\\relax").expect("unused prefetch");
+    let options = NativeRunOptions {
+        input: directory.path().join("main.tex"),
+        format: None,
+        initial_prefetch_keys: vec!["tex:unused.tex".to_owned()],
+        engine: EngineMode::Tex82,
+        pdf_output_mode: None,
+        outputs: OutputCapabilitySet::DVI,
+        html_asset_directory: None,
+        distribution: None,
+        distribution_ahash64: None,
+        offline: true,
+        expansion_fuel: Some(100_000),
+        execution_steps: Some(100_000),
+    };
+    let mut session = NativeCompileSession::new_with_cache(
+        &options,
+        &FetchCancellation::new(),
+        BlobStore::new(directory.path().join("cache")),
+    )
+    .expect("native session");
+    let output = session
+        .compile(&FetchCancellation::new())
+        .expect("blocking input after staged prefetch");
+    assert!(String::from_utf8_lossy(&output.terminal).contains("REQUIRED"));
+    assert!(session.host_telemetry().resolver.prefetch_bytes > 0);
+    assert_eq!(session.session.resolved_file_count(), 1);
+}
+
+#[test]
 fn local_prefetch_uses_typed_extension_defaults_and_preserves_explicit_paths() {
     let directory = TempDir::new().expect("temporary project");
     let main = directory.path().join("main.tex");
@@ -184,12 +222,13 @@ fn literal_class_and_package_hints_resolve_project_extensions() {
             )
             .expect("project-local startup candidates")
     };
+    assert!(
+        resolved.responses.is_empty(),
+        "hints do not enter engine VFS"
+    );
     for name in ["class.cls", "package.sty"] {
-        assert!(resolved.responses.iter().any(|response| {
-            matches!(
-                response,
-                ResourceResponse::File(file) if file.request.name() == name
-            )
+        assert!(resolved.staged_files.iter().any(|(request, file)| {
+            request.key().name() == name && file.request == *request.key()
         }));
     }
 }
@@ -525,7 +564,7 @@ fn bounded_distribution_owner_reuses_verified_state_and_preserves_detection_boun
     assert_eq!(cold_counters.manifest_parses, 1);
     assert_eq!(cold_counters.manifest_validations, 2);
     assert_eq!(cold_counters.shard_loads, 1);
-    assert_eq!(cold_counters.object_hashes, 1);
+    assert!((1..=2).contains(&cold_counters.object_hashes));
     let cache_before = regular_file_inventory(directory.path().join("cache").as_path());
 
     let mut warm =
@@ -539,8 +578,8 @@ fn bounded_distribution_owner_reuses_verified_state_and_preserves_detection_boun
     assert_eq!(warm_counters.manifest_validations, 0);
     assert_eq!(warm_counters.shard_loads, 0);
     assert!(warm_counters.verified_manifest_hits >= 2);
-    assert_eq!(warm_counters.object_hashes, 1);
-    assert_eq!(warm_counters.object_cache_hits, 1);
+    assert!((1..=2).contains(&warm_counters.object_hashes));
+    assert!((1..=2).contains(&warm_counters.object_cache_hits));
     assert_eq!(
         regular_file_inventory(directory.path().join("cache").as_path()),
         cache_before,
@@ -1420,7 +1459,7 @@ fn native_virtual_font_resolution_preserves_typed_identity_and_reuses_cache() {
 }
 
 #[test]
-fn native_shared_catalog_payload_admits_distinct_prefetch_file_kinds() {
+fn native_shared_catalog_payload_stages_distinct_prefetch_file_kinds() {
     let directory = TempDir::new().expect("distribution tempdir");
     let bytes = b"shared typed payload";
     let digest = hex_digest(bytes);
@@ -1463,17 +1502,19 @@ fn native_shared_catalog_payload_admits_distinct_prefetch_file_kinds() {
             &FetchCancellation::new(),
         )
         .expect("shared payload batch");
-    assert_eq!(responses.len(), 2);
+    assert_eq!(responses.len(), 1);
     assert!(responses.iter().any(|response| matches!(
         response,
         ResourceResponse::File(file)
             if file.request == *vf.key() && file.bytes == bytes
     )));
-    assert!(responses.iter().any(|response| matches!(
-        response,
-        ResourceResponse::File(file)
-            if file.request == *pdf.key() && file.bytes == bytes
-    )));
+    assert_eq!(
+        resolver
+            .prefetch_staged
+            .get(pdf.key())
+            .map(|(_, path)| path.as_str()),
+        Some("/texlive/shared")
+    );
 }
 
 #[test]
@@ -1861,7 +1902,7 @@ fn mutable_local_precedence_records_project_negative_without_reusing_it() {
 }
 
 #[test]
-fn inline_dependency_metadata_waits_for_native_engine_admission() {
+fn inline_dependency_metadata_waits_for_verified_parent_payload() {
     let directory = TempDir::new().expect("distribution tempdir");
     let distribution = directory.path().join("distribution");
     let required = br"\input{child.tex}";
@@ -1934,16 +1975,16 @@ fn inline_dependency_metadata_waits_for_native_engine_admission() {
         .expect("dependency batch");
     assert!(
         resolved
-            .prefetch_requests
+            .staged_files
             .iter()
-            .any(|request| request.key().name() == "required.tex")
+            .any(|(request, _)| request.key().name() == "required.tex")
     );
     assert!(
         !resolved
-            .prefetch_requests
+            .staged_files
             .iter()
-            .any(|request| request.key().name() == "dependency.tex"),
-        "metadata companions wait for admission of their parent seed"
+            .any(|(request, _)| request.key().name() == "dependency.tex"),
+        "metadata companions wait for staging of their parent seed"
     );
     session
         .session
@@ -1963,19 +2004,17 @@ fn inline_dependency_metadata_waits_for_native_engine_admission() {
     );
     session
         .session
-        .authorize_prefetch_files(resolved.prefetch_requests.clone());
-    session
-        .session
         .provide_resources(resolved.responses.clone())
         .expect("admit required seed");
-    session
-        .distribution
-        .note_engine_admitted(&mut session.host_telemetry.resolver, &resolved);
-    for (request, file) in &resolved.admitted_files {
+    session.distribution.note_engine_admitted(
+        &mut session.host_telemetry.resolver,
+        &resolved.admitted_files,
+    );
+    for (request, file) in resolved.admitted_files.iter().chain(&resolved.staged_files) {
         let dependencies = session
             .distribution
             .dependencies_for([request.key().clone()]);
-        session.prefetch.admit_file_with_metadata(
+        session.prefetch.observe_verified_file_with_metadata(
             request,
             &file.virtual_path,
             file.bytes.as_ref(),

@@ -188,8 +188,9 @@ engine. The baseline sources, in order, are:
    `includegraphics` hints resolved through the canonical resolver, plus
    bounded literal `DeclareFontShape` TFM hints for direct or statically scaled
    font names;
-3. authenticated dependency metadata attached to an admitted seed, which the
-   planner may enqueue only after that seed is engine-readable; and
+3. authenticated dependency metadata attached to a verified seed, which the
+   planner may enqueue after native host staging or engine admission according
+   to the host's resource boundary; and
 4. a bounded escalation of the demanded resource and relevant small group
    after repeated expensive replay in the same region.
 

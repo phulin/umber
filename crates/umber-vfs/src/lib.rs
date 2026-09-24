@@ -15,9 +15,9 @@ pub use file::{FileContentId, FileOrigin, PathBindingId, VirtualFile};
 pub use lifecycle::{AdmissionError, AdmissionState, RequestIntent, ResourceLifecycle};
 pub use limits::{VfsLimitError, VfsLimitKind, VfsLimits};
 pub use resource::{
-    FileKind, FileRequest, FileRequestBatch, FileRequestKey, ProjectWorkspace, ProvisionError,
-    ProvisionOutcome, RequestKeyError, ResolvedFile, ResourceDomain, ResourceLedger,
-    ResourceReadiness, RetryError, UserRegistrationError,
+    BindingCopyError, FileKind, FileRequest, FileRequestBatch, FileRequestKey, ProjectWorkspace,
+    ProvisionError, ProvisionOutcome, RequestKeyError, ResolvedFile, ResourceDomain,
+    ResourceLedger, ResourceReadiness, RetryError, UserRegistrationError,
 };
 pub use snapshot::{SnapshotError, SnapshotRetention, VfsSnapshot, VirtualRoot};
 pub use storage::StorageIdentity;

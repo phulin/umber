@@ -24,12 +24,14 @@ mod path;
 mod pdf_resources;
 mod publication;
 mod resolvers;
+mod synchronous;
 pub use pdf_resources::{CachedLocalTfm, CachedVirtualFont, PdfVirtualFontResources};
 pub(crate) use pdf_resources::{detached_pk_request, resolved_font_map_lines};
 pub(crate) use resolvers::parse_image;
 
 use path::{RequestedFile, user_path_for_key};
 use resolvers::{FontResolutionPolicy, VirtualRunResolvers};
+use synchronous::{BlockingFileProvider, SynchronousAdmission};
 use umber_vfs::{
     AdmissionError, FileContentId, FileOrigin, FileRequestBatch, ProjectWorkspace, ProvisionError,
     ResourceLifecycle, TransactionError, UserRegistrationError, VirtualRoot,
@@ -2150,6 +2152,20 @@ impl<'store> VirtualCompileSession<'store> {
     }
 
     pub fn compile_attempt(&mut self) -> CompileAttemptResult {
+        self.compile_attempt_inner(None)
+    }
+
+    pub(crate) fn compile_attempt_with_file_provider(
+        &mut self,
+        provider: &mut BlockingFileProvider<'_>,
+    ) -> CompileAttemptResult {
+        self.compile_attempt_inner(Some(provider))
+    }
+
+    fn compile_attempt_inner(
+        &mut self,
+        provider: Option<&mut BlockingFileProvider<'_>>,
+    ) -> CompileAttemptResult {
         if self.pending_patch.is_none()
             && let Some(output) = &self.accepted_output
         {
@@ -2188,7 +2204,7 @@ impl<'store> VirtualCompileSession<'store> {
         self.startup_prefetch_generation = None;
         self.attempts += 1;
         self.attempts_without_progress += 1;
-        match self.run_attempt() {
+        match self.run_attempt(provider) {
             Ok(result) => result,
             Err(error) => {
                 self.candidate = None;
@@ -2201,7 +2217,10 @@ impl<'store> VirtualCompileSession<'store> {
     }
 
     #[allow(clippy::disallowed_methods)] // Process telemetry; TeX state never observes it.
-    fn run_attempt(&mut self) -> Result<CompileAttemptResult, CompileError> {
+    fn run_attempt(
+        &mut self,
+        provider: Option<&mut BlockingFileProvider<'_>>,
+    ) -> Result<CompileAttemptResult, CompileError> {
         #[cfg(not(target_arch = "wasm32"))]
         let candidate_restore_started = Instant::now();
         let existing_candidate = self.candidate.take();
@@ -2231,9 +2250,8 @@ impl<'store> VirtualCompileSession<'store> {
         #[cfg(not(target_arch = "wasm32"))]
         let vfs_stage_started = Instant::now();
         let candidate_workspace = pending_workspace.clone();
-        let (resource_ledger, mut generated_transaction) =
-            pending_workspace.begin_generated_with_ledger();
-        let snapshot = generated_transaction.snapshot();
+        let resource_ledger = pending_workspace.resource_ledger();
+        let snapshot = pending_workspace.snapshot();
 
         let mut retained = if let Some(candidate) = existing_candidate {
             candidate
@@ -2348,7 +2366,6 @@ impl<'store> VirtualCompileSession<'store> {
         if self.initial_prefetch_hints.is_some() {
             let prefetch_hints = self.take_prefetch_hints(&[], &[]);
             if !prefetch_hints.is_empty() {
-                generated_transaction.discard();
                 check_resource_batch_limit(&[], &[], &prefetch_hints, self.limits.resolved_files)?;
                 self.resources
                     .workspace
@@ -2391,6 +2408,15 @@ impl<'store> VirtualCompileSession<'store> {
                 fallback: self.font_mapping_fallback,
                 font_responses: &font_responses,
             },
+            provider.map(|provider| {
+                SynchronousAdmission::new(
+                    pending_workspace.clone(),
+                    self.limits
+                        .cached_file_bytes
+                        .saturating_sub(self.resources.font_cached_bytes),
+                    provider,
+                )
+            }),
         );
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -2411,7 +2437,7 @@ impl<'store> VirtualCompileSession<'store> {
         };
         #[cfg(not(target_arch = "wasm32"))]
         let request_extraction_started = Instant::now();
-        let (file_misses, file_probes, font_misses, fatal) = resolvers.finish();
+        let (file_misses, file_probes, font_misses, fatal, synchronous) = resolvers.finish();
 
         if !file_misses.is_empty() || !file_probes.is_empty() || !font_misses.is_empty() {
             let _suspension = match &drive {
@@ -2423,7 +2449,11 @@ impl<'store> VirtualCompileSession<'store> {
                     return Err(compile_error_from_session(error, Some(&retained.execution)));
                 }
             };
-            generated_transaction.discard();
+            self.publish_synchronous_admissions(
+                &mut pending_workspace,
+                &mut retained,
+                synchronous,
+            )?;
             for request in &font_misses {
                 self.font_requests
                     .entry(request.key.clone())
@@ -2501,21 +2531,19 @@ impl<'store> VirtualCompileSession<'store> {
             }));
         }
         if let Some(fatal) = fatal {
-            generated_transaction.discard();
             return Err(fatal);
         }
         match drive {
             Ok(tex_incr::RevisionCandidateResult::Complete) => {}
             Ok(tex_incr::RevisionCandidateResult::AwaitingResources(_)) => {
-                generated_transaction.discard();
                 return Err(CompileError::NoProgress);
             }
             Err(error) => {
                 let error = compile_error_from_session(&error, Some(&retained.execution));
-                generated_transaction.discard();
                 return Err(error);
             }
         }
+        self.publish_synchronous_admissions(&mut pending_workspace, &mut retained, synchronous)?;
         if self.outputs.contains(OutputCapability::Pdf) {
             #[cfg(not(target_arch = "wasm32"))]
             let pdf_request_extraction_started = Instant::now();
@@ -2564,7 +2592,6 @@ impl<'store> VirtualCompileSession<'store> {
                     .map(ResourceRequestKey::PkFont),
             );
             if !discovery.required.is_empty() || !discovery.probes.is_empty() {
-                generated_transaction.discard();
                 let required = discovery.required;
                 let probes = discovery.probes;
                 check_resource_batch_limit(&required, &probes, &[], self.limits.resolved_files)?;
@@ -2628,7 +2655,6 @@ impl<'store> VirtualCompileSession<'store> {
                 self.accepted_font_containers,
             )?;
             if !required.is_empty() {
-                generated_transaction.discard();
                 for request in &required {
                     let ResourceRequest::Font(request) = request else {
                         unreachable!("HTML paint discovery emits only font resources")
@@ -2676,9 +2702,56 @@ impl<'store> VirtualCompileSession<'store> {
         }
         .into_prepared()
         .map_err(|error| compile_error_from_session(&error, None))?;
+        let mut generated_transaction = pending_workspace.begin_generated();
         let publication = self.prepare_publication(&execution, &mut generated_transaction)?;
         generated_transaction.accept().map_err(map_transaction)?;
         self.accept_publication(execution, pending_workspace, publication)
+    }
+
+    fn publish_synchronous_admissions(
+        &mut self,
+        pending_workspace: &mut ProjectWorkspace,
+        retained: &mut RetainedCandidate<'_>,
+        synchronous: Option<(ProjectWorkspace, Vec<(FileRequest, ResolvedFile)>)>,
+    ) -> Result<(), CompileError> {
+        let Some((workspace, admitted)) = synchronous else {
+            return Ok(());
+        };
+        let attempted = workspace
+            .resolved_bytes()
+            .checked_add(self.resources.font_cached_bytes)
+            .ok_or(CompileError::LimitExceeded {
+                resource: "cached resource bytes",
+                limit: self.limits.cached_file_bytes,
+                attempted: usize::MAX,
+            })?;
+        check_limit(
+            "cached resource bytes",
+            attempted,
+            self.limits.cached_file_bytes,
+        )?;
+        let files = admitted
+            .iter()
+            .filter_map(|(request, _)| workspace.get(request.key()))
+            .map(|file| (file.path().as_path().to_owned(), file.shared_bytes()))
+            .collect::<Vec<_>>();
+        match &mut retained.execution {
+            RetainedExecution::Initial { session, .. } => session
+                .register_input_files(files)
+                .map_err(|error| CompileError::Incremental(error.to_string()))?,
+            RetainedExecution::Pending(_) => self
+                .incremental
+                .as_mut()
+                .expect("pending candidate has an accepted session")
+                .register_input_files(files)
+                .map_err(|error| CompileError::Incremental(error.to_string()))?,
+        }
+        self.resources
+            .workspace
+            .copy_resolved_bindings_from(&workspace)
+            .map_err(|error| CompileError::World(error.to_string()))?;
+        *pending_workspace = workspace;
+        Ok(())
     }
 
     fn resource_is_bound(&self, key: &ResourceRequestKey) -> bool {

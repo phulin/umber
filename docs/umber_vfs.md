@@ -394,6 +394,12 @@ identical duplicate registrations as no-ops, and exposes
 typed unexpected-request, kind, path, digest, conflict, path-conflict, limit,
 and no-progress failures. The combined compile session retains the existing
 `NeedResources` required/probe/prefetch model around this file-only boundary.
+A synchronous native command provider may authorize one required read or
+blocking probe in a candidate-local workspace and provision its answer through
+the same checks before the command observes it. When that candidate succeeds
+or suspends, resource-only transfer verifies every prior positive and negative
+binding, then copies its resolved layer without publishing candidate user edits
+or generated files. Failed candidates leave accepted source and output intact.
 Both positive and negative answers to outstanding required or probe keys count
 as retry progress. Resolvers suppress new requests for negative keys and report the
 ordinary domain-level missing-file result instead.

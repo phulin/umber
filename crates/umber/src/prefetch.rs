@@ -378,14 +378,14 @@ impl PrefetchPlanner {
             .unwrap_or(DiscoveryContext::ROOT)
     }
 
-    /// Feeds the policy only after the caller has successfully admitted the
-    /// verified payload to the engine VFS. The returned values are bounded
-    /// lexical follow-ups, never semantic resource answers.
-    pub fn admit_file(&mut self, request: &FileRequest, bytes: &[u8]) {
-        self.admit_file_with_metadata(request, "", bytes, std::iter::empty());
+    /// Feeds the prediction policy after a host has verified a payload or the
+    /// engine has admitted a demanded file. This records planner readiness,
+    /// not engine VFS readiness. Follow-ups are bounded lexical predictions.
+    pub fn observe_verified_file(&mut self, request: &FileRequest, bytes: &[u8]) {
+        self.observe_verified_file_with_metadata(request, "", bytes, std::iter::empty());
     }
 
-    pub fn admit_file_with_metadata(
+    pub fn observe_verified_file_with_metadata(
         &mut self,
         request: &FileRequest,
         _virtual_path: &str,

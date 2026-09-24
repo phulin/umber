@@ -56,6 +56,192 @@ fn session(main: &str) -> VirtualCompileSession<'static> {
     session
 }
 
+fn synchronous_file(request: &FileRequest, bytes: &[u8]) -> ResourceResponse {
+    ResourceResponse::File(ResolvedFile {
+        request: request.key().clone(),
+        virtual_path: format!("/texlive/tex/{}", request.key().name()),
+        bytes: bytes.to_vec().into(),
+        expected_digest: Some(FileContentId::for_bytes(bytes)),
+    })
+}
+
+#[test]
+fn synchronous_file_provider_admits_a_required_read_without_replay() {
+    let mut session = session("\\input child \\end");
+    let mut calls = 0;
+    let result = session.compile_attempt_with_file_provider(&mut |request, probe| {
+        assert!(!probe);
+        assert_eq!(request.key().name(), "child.tex");
+        calls += 1;
+        Ok(synchronous_file(
+            request,
+            b"\\message{SYNC-CHILD}\\endinput",
+        ))
+    });
+    let CompileAttemptResult::Complete(output) = result else {
+        panic!("synchronous required read must complete");
+    };
+    assert_eq!(calls, 1);
+    assert!(String::from_utf8_lossy(&output.terminal).contains("SYNC-CHILD"));
+    assert_eq!(session.resolved_file_count(), 1);
+    let key = FileRequestKey::new(FileKind::TexInput, "child.tex").expect("key");
+    assert!(session.workspace().get(&key).is_some());
+}
+
+#[test]
+fn synchronous_file_provider_binds_an_authoritative_missing_probe() {
+    let mut session =
+        session("\\openin0=missing.tex \\ifeof0 \\message{MISSING} \\fi \\closein0 \\end");
+    let result = session.compile_attempt_with_file_provider(&mut |request, probe| {
+        assert!(probe);
+        assert_eq!(request.key().name(), "missing.tex");
+        Ok(ResourceResponse::FileUnavailable(request.key().clone()))
+    });
+    let CompileAttemptResult::Complete(output) = result else {
+        panic!("synchronous absent probe must complete");
+    };
+    assert!(String::from_utf8_lossy(&output.terminal).contains("MISSING"));
+    let key = FileRequestKey::new(FileKind::TexInput, "missing.tex").expect("key");
+    assert!(session.workspace().is_unavailable(&key));
+}
+
+#[test]
+fn synchronous_provider_preserves_same_run_generated_input_precedence() {
+    let mut session = session(
+        "\\immediate\\openout1=child.tex \\immediate\\write1{\\string\\message{GENERATED}}\\immediate\\closeout1 \\input child.tex \\end",
+    );
+    let result = session.compile_attempt_with_file_provider(&mut |_, _| {
+        panic!("same-run generated input must precede host acquisition")
+    });
+    let CompileAttemptResult::Complete(output) = result else {
+        panic!("same-run generated input should complete");
+    };
+    assert!(String::from_utf8_lossy(&output.terminal).contains("GENERATED"));
+    assert_eq!(session.resolved_file_count(), 0);
+}
+
+#[test]
+fn synchronous_file_provider_rejects_bad_answers_without_publication() {
+    let mut wrong_key = session("\\input child \\end");
+    assert!(matches!(
+        wrong_key.compile_attempt_with_file_provider(&mut |request, _| {
+            let mut answer = synchronous_file(request, b"\\relax");
+            if let ResourceResponse::File(file) = &mut answer {
+                file.request = FileRequestKey::new(FileKind::TexInput, "wrong.tex").expect("key");
+            }
+            Ok(answer)
+        }),
+        CompileAttemptResult::Error(_)
+    ));
+    assert_eq!(wrong_key.resolved_file_count(), 0);
+
+    let mut wrong_digest = session("\\input child \\end");
+    assert!(matches!(
+        wrong_digest.compile_attempt_with_file_provider(&mut |request, _| {
+            let mut answer = synchronous_file(request, b"\\relax");
+            if let ResourceResponse::File(file) = &mut answer {
+                file.expected_digest = Some(FileContentId::for_bytes(b"different"));
+            }
+            Ok(answer)
+        }),
+        CompileAttemptResult::Error(_)
+    ));
+    assert_eq!(wrong_digest.resolved_file_count(), 0);
+
+    let limits = SessionLimits {
+        resolved_files: 1,
+        ..SessionLimits::default()
+    };
+    let mut overflow = VirtualCompileSession::new(SessionOptions {
+        limits,
+        font_layout_policy: tex_fonts::FontLayoutPolicy::ClassicTfmExact,
+        ..SessionOptions::default()
+    })
+    .expect("limited session");
+    overflow
+        .add_user_file("main.tex", b"\\input first \\input second \\end".to_vec())
+        .expect("main");
+    assert!(matches!(
+        overflow.compile_attempt_with_file_provider(&mut |request, _| {
+            Ok(synchronous_file(request, b"\\relax"))
+        }),
+        CompileAttemptResult::Error(_)
+    ));
+    assert_eq!(overflow.resolved_file_count(), 0);
+
+    let limits = SessionLimits {
+        one_file_bytes: 18,
+        ..SessionLimits::default()
+    };
+    let mut oversized = VirtualCompileSession::new(SessionOptions {
+        limits,
+        font_layout_policy: tex_fonts::FontLayoutPolicy::ClassicTfmExact,
+        ..SessionOptions::default()
+    })
+    .expect("limited session");
+    oversized
+        .add_user_file("main.tex", b"\\input child \\end".to_vec())
+        .expect("main");
+    assert!(matches!(
+        oversized.compile_attempt_with_file_provider(&mut |request, _| {
+            Ok(synchronous_file(request, b"1234567890123456789"))
+        }),
+        CompileAttemptResult::Error(_)
+    ));
+    assert_eq!(oversized.resolved_file_count(), 0);
+}
+
+#[test]
+fn synchronous_resource_does_not_publish_failed_patch_source() {
+    let source = "\\message{ACCEPTED}\\end";
+    let mut session = VirtualCompileSession::new(SessionOptions {
+        limits: SessionLimits {
+            output_bytes: 4096,
+            ..SessionLimits::default()
+        },
+        font_layout_policy: tex_fonts::FontLayoutPolicy::ClassicTfmExact,
+        ..SessionOptions::default()
+    })
+    .expect("session");
+    session
+        .add_user_file("main.tex", source.as_bytes().to_vec())
+        .expect("main");
+    let CompileAttemptResult::Complete(accepted) = session.compile_attempt() else {
+        panic!("initial revision completes");
+    };
+    let replacement = format!(
+        "\\input remote \\immediate\\openout1=large.aux \\immediate\\write1{{{}}} \\immediate\\closeout1 \\end",
+        "x".repeat(8192)
+    );
+    session
+        .apply_patch(SourcePatch {
+            next_revision: RevisionId::new(2),
+            base_revision: RevisionId::new(1),
+            expected_hash: session.content_hash().expect("accepted hash"),
+            range: 0..source.len(),
+            replacement,
+        })
+        .expect("patch");
+    assert!(matches!(
+        session.compile_attempt_with_file_provider(&mut |request, _| {
+            Ok(synchronous_file(request, b"\\relax"))
+        }),
+        CompileAttemptResult::Error(CompileError::LimitExceeded { limit: 4096, .. })
+    ));
+    assert_eq!(session.accepted_output.as_ref(), Some(&accepted));
+    assert_eq!(session.revision(), Some(RevisionId::new(1)));
+    let main = session
+        .resources
+        .workspace
+        .snapshot()
+        .get(&session.main_path)
+        .expect("root lookup")
+        .expect("accepted root")
+        .bytes()
+        .to_vec();
+    assert_eq!(main, source.as_bytes());
+}
+
 fn construct_test_format(mode: EngineMode, source: &str) -> tex_state::DetachedFormatImage {
     crate::with_engine_world(World::memory(), |stores| {
         mode.prepare_initex(stores);

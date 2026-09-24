@@ -28,7 +28,7 @@ impl ContentRecord {
 }
 
 /// Records files only after the typed VFS transaction accepts their payloads.
-/// A prefetch is a real admission, even if no later TeX command opens it.
+/// Host-staged predictions enter this receipt only if later demanded.
 pub(super) struct InputAdmissions {
     main: ContentRecord,
     files: BTreeMap<FileRequestKey, (ContentRecord, BTreeSet<String>)>,
