@@ -275,13 +275,23 @@ staging directory followed by one atomic primary-tree replacement. Repeating
 the action verifies and reuses the installed inputs; `--offline` permits only
 already authenticated cached inputs.
 
-Format construction during publication is independently bound to an existing
-verified local distribution. The snapshot command defaults that authority
-to `target/texlive-snapshot` and the root digest committed in
-`tests/latex-source.lock`; `--format-distribution` and
-`--format-distribution-ahash64` select another explicit prior mirror. Every
-builder engine runs offline against that path, so publication cannot bootstrap
-from a hosted default or an unlabelled warm cache.
+Format construction starts with a local source-closure snapshot. The publisher
+stages exactly the SHA-256-locked LaTeX and pdfLaTeX inputs as its first root,
+publishes that small root without a format, and verifies its aHash64. Both
+format builders then run offline against this authenticated root. The full
+snapshot uses the same staged closure ahead of the independently tree-pinned
+TeX Live runtime, and the publisher verifies that every format input identity
+matches the resulting runtime winner. This ordering breaks the format/root
+cycle while preserving byte-level source and runtime authority. The format
+metadata records its construction root; the final root has a separate digest
+because it additionally names the formats and complete runtime.
+
+`tests/latex-source.lock` owns the exact input bytes and distribution name.
+It does not pin the root digest of a particular packaging run. The bootstrap
+root, final root, and any deployment pin are computed and verified at their
+own boundaries. An explicit `--format-distribution` with matching
+`--format-distribution-ahash64` may select an independently verified local
+construction root instead of generating the source-closure root.
 
 New full snapshots and focused LaTeX bundles default to the measured 12-bit
 packed partition. The policy changes only root and shard identities: exact
