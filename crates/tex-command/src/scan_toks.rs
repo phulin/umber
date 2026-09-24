@@ -2586,16 +2586,15 @@ impl<G> CommandProcessor<'_, '_, G> {
                 "job aborted, file error in nonstop mode",
             )));
         }
-        let prompt = if *prompt_number < 0 {
-            String::new()
+        let source = if *prompt_number < 0 {
+            CommandLineSource::Terminal { prompt: "" }
         } else {
-            let prompt = format!("\n\\{}=", self.state.resolve(target));
             *prompt_number = -1;
-            prompt
+            CommandLineSource::ReadTarget { target }
         };
         let line = self
             .state
-            .input_ln(CommandLineSource::Terminal { prompt: &prompt })
+            .input_ln(source)
             .ok_or_else(|| CommandError::input_invariant())?;
         Ok((line, false, crate::input::SourceNameClass::Terminal))
     }

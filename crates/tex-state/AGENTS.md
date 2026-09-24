@@ -21,7 +21,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/checkpoint.rs` and `src/checkpoint/tests.rs`: Move-only coarse-owner
   checkpoints, bounded cursor tuples, mutation-free restore planning, and the
   owner/state/root/truncation/release ordering barrier.
-- `src/command_context.rs`: Already-admitted session/generation borrow for
+- `src/command_context.rs` and `src/command_context/tests.rs`: Already-admitted session/generation borrow and focused terminal prompt printing tests for
   direct command and execution work. Its small, safe-reference-only run
   view borrows the session epoch, retained-generation stores, durable box/form
   owners, operation scratch, admitted dense core, and checked page-region

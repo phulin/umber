@@ -30,11 +30,23 @@ use crate::world::{InputDependency, JobClock, WorldError};
 mod page_builder;
 mod page_material;
 mod pdf_commands;
+#[cfg(test)]
+mod tests;
 
 /// The two line sources reachable by command delivery.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CommandLineSource<'a> {
-    Terminal { prompt: &'a str },
+    Terminal {
+        prompt: &'a str,
+    },
+    /// TeX82 §363: `print_ln`, the buffered file line, then `prompt_input("=>")`.
+    PausedFileLine {
+        line: &'a str,
+    },
+    /// TeX82 §484: `print_ln`, `sprint_cs`, then `prompt_input("=")`.
+    ReadTarget {
+        target: Symbol,
+    },
     Stream(crate::world::StreamSlot),
 }
 
@@ -3187,14 +3199,22 @@ impl<'a, G> CommandContext<'a, G> {
                 if !prompt.is_empty() {
                     self.printer().print(prompt);
                 }
-                let line = self.resident.world.read_terminal_line().ok().flatten()?;
-                self.resident.world.echo_terminal_input(&line);
-                Some(line)
+            }
+            CommandLineSource::PausedFileLine { line } => {
+                self.printer().print_ln().print(line).print("=>");
+            }
+            CommandLineSource::ReadTarget { target } => {
+                let kind = self.control_sequence_kind(target);
+                let name = self.resolve(target).to_owned();
+                self.printer().print_ln().sprint_cs(kind, &name).print("=");
             }
             CommandLineSource::Stream(slot) => {
-                self.resident.world.read_stream_line(slot).ok().flatten()
+                return self.resident.world.read_stream_line(slot).ok().flatten();
             }
         }
+        let line = self.resident.world.read_terminal_line().ok().flatten()?;
+        self.resident.world.echo_terminal_input(&line);
+        Some(line)
     }
 
     pub fn record_warning_history(&mut self) {

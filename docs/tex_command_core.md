@@ -1957,6 +1957,15 @@ node and update the head. Rejected probes restore the copied head, so the
 authoritative line remains singular and there is no parallel mutable
 character-index representation.
 
+Terminal line acquisition retains the distinct print operations in tex.web
+§§71, 363, and 484. A paused file line prints `print_ln`, then its buffered
+characters, then `=>`; the first terminal `\read` prompt prints `print_ln`,
+`sprint_cs` for the target, then `=`. Later reads and other terminal prompts
+print only their prompt text. The line break is an operation, not a character
+embedded in prompt text: printing an embedded LF would render `^^J` when
+`\newlinechar` does not select it. The same terminal input path then performs
+§71's echo routing and input acquisition for every prompt form.
+
 Ordinary delivery reads the semantic top index once and matches the
 authoritative `InputLevel` row directly. It constructs no universal top enum
 and performs no second row discrimination. The selected source, stored-token,

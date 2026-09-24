@@ -944,10 +944,9 @@ impl<G> crate::SourceStepQueries for LiveSourceQueries<'_, '_, G> {
         {
             return None;
         }
-        let prompt = format!("\n{line}=>");
         let replacement = self
             .state
-            .input_ln(tex_state::CommandLineSource::Terminal { prompt: &prompt })?;
+            .input_ln(tex_state::CommandLineSource::PausedFileLine { line })?;
         if replacement.is_empty() {
             return None;
         }
