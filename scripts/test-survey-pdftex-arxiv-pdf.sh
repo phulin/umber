@@ -31,6 +31,10 @@ test "${TEXFONTS+x}" != x
 test "$TFMFONTS" = "$FAKE_RUNTIME/fonts/tfm//"
 test "$TEXMFCNF" = "$FAKE_RUNTIME/web2c"
 test "${TEXFONTMAPS+x}" != x
+test "${T1FONTS+x}" != x
+test "${ENCFONTS+x}" != x
+test "${PKFONTS+x}" != x
+test "${OSFONTDIR+x}" != x
 test "$TEXFORMATS" = "$FAKE_FORMAT_DIR"
 test "$TEXMFLOCAL" != /ambient/texmf
 input=$argument
@@ -86,7 +90,8 @@ done
 run_survey() {
   FAKE_PDFTEX_COUNT="$work/count" FAKE_RUNTIME="$work/runtime" \
   FAKE_FORMAT_DIR="$work" TEXINPUTS=/ambient/texmf \
-  TEXMFLOCAL=/ambient/texmf \
+  TEXMFLOCAL=/ambient/texmf T1FONTS=/ambient/type1 \
+  ENCFONTS=/ambient/enc PKFONTS=/ambient/pk OSFONTDIR=/ambient/fonts \
     "$root/scripts/survey-pdftex-arxiv-pdf.py" \
     --source-lock "$work/source.lock.tsv" \
     --archives "$work/archives" \

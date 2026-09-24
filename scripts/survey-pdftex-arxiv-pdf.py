@@ -250,7 +250,9 @@ def reference_environment(
     """Use the locked format's dev-first TeX search profile without ambient trees."""
     environment = {
         key: value for key, value in os.environ.items()
-        if not key.startswith(("TEX", "TFMF")) and key != "VARTEXFONTS"
+        if (not key.startswith(("TEX", "TFMF"))
+            and not key.endswith("FONTS")
+            and key != "OSFONTDIR")
     }
     directories = {
         "TEXMFVAR": "texmf-var", "TEXMFCONFIG": "texmf-config",
