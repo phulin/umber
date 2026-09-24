@@ -6,12 +6,15 @@ from __future__ import annotations
 import hashlib
 import http.server
 import importlib.util
+import io
 import json
+import shutil
 import struct
 import subprocess
 import tarfile
 import tempfile
 import threading
+from contextlib import redirect_stderr
 from pathlib import Path
 
 MODULE_PATH = Path(__file__).with_name("provision.py")
@@ -140,6 +143,20 @@ def expect_texlive_error(action, fragment: str) -> None:
 def main() -> None:
     snapshot_defaults = provision.parse_args(["snapshot", "--texmf-dist", "/fixture"])
     assert snapshot_defaults.shard_bits == 12
+    with provision.snapshot_workspace() as finished_workspace:
+        assert finished_workspace.is_dir()
+    assert not finished_workspace.exists()
+    failure_notice = io.StringIO()
+    with redirect_stderr(failure_notice):
+        try:
+            with provision.snapshot_workspace() as failed_workspace:
+                raise ValueError("retain failed snapshot inputs")
+        except ValueError:
+            assert failed_workspace.is_dir()
+            shutil.rmtree(failed_workspace)
+        else:
+            raise AssertionError("expected snapshot workspace failure")
+    assert "failed snapshot workspace" in failure_notice.getvalue()
     with tempfile.TemporaryDirectory() as raw_directory:
         root = Path(raw_directory)
         subprocess.run(["git", "init", "-q", str(root)], check=True)

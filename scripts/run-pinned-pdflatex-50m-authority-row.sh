@@ -20,7 +20,7 @@ source_date_epoch=$9
 expansion_fuel_cap=50000000
 execution_steps_cap=100000000
 
-for file in "$binary" "$source_root/$input" "$format" "$distribution/manifest-v8.json" "$prefetch_keys"; do
+for file in "$binary" "$source_root/$input" "$format" "$distribution/manifest.json" "$prefetch_keys"; do
   if [[ ! -f $file ]]; then
     printf 'authority input is not a regular file: %s\n' "$file" >&2
     exit 2
@@ -28,6 +28,19 @@ for file in "$binary" "$source_root/$input" "$format" "$distribution/manifest-v8
 done
 if [[ ! $distribution_ahash64 =~ ^[0-9a-f]{16}$ ]]; then
   printf '%s\n' 'DISTRIBUTION_AHASH64 must be exactly 16 lowercase hexadecimal digits' >&2
+  exit 2
+fi
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+actual_root_ahash64=$(python3 - "$script_dir" "$distribution/manifest.json" <<'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import texlive
+print(texlive.ahash64_file(Path(sys.argv[2])))
+PY
+)
+if [[ $actual_root_ahash64 != "$distribution_ahash64" ]]; then
+  printf '%s\n' 'distribution root digest mismatch' >&2
   exit 2
 fi
 if [[ ! $source_date_epoch =~ ^[0-9]+$ ]]; then
@@ -83,7 +96,7 @@ receipt_tmp="$output/authority.receipt.tmp"
   printf 'binary_sha256=%s\n' "$(sha256_file "$binary")"
   printf 'input_sha256=%s\n' "$(sha256_file "$source_root/$input")"
   printf 'format_sha256=%s\n' "$(sha256_file "$format")"
-  printf 'distribution_root_sha256=%s\n' "$(sha256_file "$distribution/manifest-v8.json")"
+  printf 'distribution_root_sha256=%s\n' "$(sha256_file "$distribution/manifest.json")"
   printf 'prefetch_keys_sha256=%s\n' "$(sha256_file "$prefetch_keys")"
 } > "$receipt_tmp"
 mv "$receipt_tmp" "$output/authority.receipt"

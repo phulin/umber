@@ -12,6 +12,8 @@ import sys
 import tempfile
 import urllib.error
 import urllib.request
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import pdftex_reference_format
@@ -420,6 +422,19 @@ def provision_oracles(
         _run(command, repo_root, environment)
 
 
+@contextmanager
+def snapshot_workspace() -> Iterator[Path]:
+    """Retain source, trace, and publisher inputs when staging fails."""
+    temporary = Path(tempfile.mkdtemp(prefix="umber-texlive-snapshot."))
+    try:
+        yield temporary
+    except Exception:
+        print(f"provision.py: failed snapshot workspace: {temporary}", file=sys.stderr)
+        raise
+    else:
+        shutil.rmtree(temporary)
+
+
 def build_snapshot(args: argparse.Namespace, repo_root: Path) -> None:
     texmf_dist = args.texmf_dist.resolve()
     if not texmf_dist.is_dir():
@@ -467,8 +482,7 @@ def build_snapshot(args: argparse.Namespace, repo_root: Path) -> None:
     if not args.objects_base_url.startswith("https://") or not args.objects_base_url.endswith("/"):
         raise ProvisionError("objects base URL must use HTTPS and end with /")
     environment = os.environ.copy()
-    with tempfile.TemporaryDirectory(prefix="umber-texlive-snapshot.") as raw_temporary:
-        temporary = Path(raw_temporary)
+    with snapshot_workspace() as temporary:
         _run(
             ["cargo", "build", "-q", "--release", "--manifest-path", "tools/texlive-wasm-publish/Cargo.toml"],
             repo_root,

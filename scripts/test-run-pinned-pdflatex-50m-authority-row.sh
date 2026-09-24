@@ -8,7 +8,15 @@ trap 'rm -rf "$tmp_root"' EXIT
 mkdir -p "$tmp_root/source" "$tmp_root/distribution/objects"
 printf '%s\n' '\\end' > "$tmp_root/source/main.tex"
 printf '%s\n' format > "$tmp_root/pdflatex.fmt"
-printf '%s\n' '{"schema":8}' > "$tmp_root/distribution/manifest-v8.json"
+printf '%s\n' '{"schema":8}' > "$tmp_root/distribution/manifest.json"
+distribution_ahash64=$(python3 - "$root/scripts" "$tmp_root/distribution/manifest.json" <<'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import texlive
+print(texlive.ahash64_file(Path(sys.argv[2])))
+PY
+)
 printf '%s\n' 'tex:first.sty' 'tfm:second.tfm' > "$tmp_root/prefetch.keys"
 
 fake="$tmp_root/fake-umber"
@@ -24,7 +32,7 @@ set +e
 FAKE_UMBER_ARGV="$capture" \
   "$root/scripts/run-pinned-pdflatex-50m-authority-row.sh" \
   "$fake" "$tmp_root/source" main.tex "$tmp_root/pdflatex.fmt" \
-  "$tmp_root/distribution" 0123456789abcdef "$tmp_root/prefetch.keys" \
+  "$tmp_root/distribution" "$distribution_ahash64" "$tmp_root/prefetch.keys" \
   "$tmp_root/output" 1787080434
 status=$?
 set -e
