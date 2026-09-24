@@ -818,26 +818,36 @@ uses `pdflatex-dev` with the paired format and the pinned runtime
 configuration for font maps and Type1 lookup. This tier must not invoke Umber,
 inspect an Umber PDF, or patch a paper.
 
-The first full-source DVI run on `ed68f61a2` stopped after four rows:
-three were reference-DVI-ineligible, then `2607.09696` compiled with the
-reference but failed in Umber before producing DVI. The failure is
-`resolved files requires 513, exceeding limit 512`; no DVI comparison has
-passed yet, and the remaining 90 declared-pdfLaTeX rows are unvisited.
-The run and its verified prefix are in `target/parity-wave/arxiv-dvi/`.
+A complete reference-DVI qualification on 2026-09-24 examined all 94
+pdfLaTeX-declared archives with the same clean engine, paired format, runtime,
+source jobnames, and guards. Seventeen produced valid DVI, and all seventeen
+also belong to the 87 PDF successes. The other 77 failed reference DVI
+compilation. The independent capture is
+`target/parity-wave/arxiv-reference-dvi-v2/`; its row identities and output
+hashes were reverified without compiler launches. This establishes the DVI
+candidate set, not Umber parity.
+
+The native resource fix at `d11d82cbf` keeps speculative files in the host
+cache and admits only demanded reads and probes into the engine's checked
+resource budget. It also resolves available native inputs at the requesting
+command, avoiding a restart of the document for every package. The full
+native and quality gate passed all seven stages with the existing limits.
+
+The subsequent full-source run matched DVI for `2607.09696` (4 pages) and
+`2607.00102` (17 pages). The next eligible paper, `2607.09012`, completed
+15 pages but first differed at DVI byte 14809 on page 3. Its comparison
+reports `right2 != down3` near the first theorem's destination; the cause
+has not yet been established. The serial runner stopped there as designed:
+16 of 94 rows recorded, including 12 reference-DVI failures and one
+reference-PDF failure. The other 14 DVI-qualified papers remain untested
+with this binary. The capture and reverified receipts are in
+`target/parity-wave/arxiv-dvi-demand-admission/`.
+
 The authenticated schema-8 runtime root is `513498046b9743e2`, paired Umber
 pdfLaTeX format `a7467396cc8ee0bb` (990985 bytes). Both the format's semantic
 source verification and the clean-reference format-pair gate passed.
-The same production tree passed all seven combined native/quality stages.
-
-A separate clean-reference recorder run on the failing paper completed with
-201 unique input records. Umber's resource telemetry reproduces the binding
-limit after large speculative batches. `PrefetchPolicy::begin_phase` renews
-optional reservations on each engine demand, while the VFS binding limit
-covers the retained job-wide positive and negative records. This identifies
-resource admission and retention as the next diagnosis boundary; it does not
-establish a TeX semantic or DVI mismatch. Increasing the limit would not
-resolve whether optional prefetch can prevent a demanded read. The captured
-failure and guards remain unchanged.
+The original speculative-loading failure is preserved in
+`target/parity-wave/arxiv-dvi/`; its 512-binding limit was not increased.
 
 The separate Umber LaTeX format also rebuilt and passed source verification
 (963030 bytes, aHash64 `5c89f9ae0a4cf390`), but the base multi-pass LaTeX
