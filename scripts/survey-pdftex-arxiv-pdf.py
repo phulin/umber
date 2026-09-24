@@ -222,11 +222,56 @@ def first_failure(log: str, stdout: str, stderr: str, status: int) -> dict[str, 
     }
 
 
+def pdf_completion(log: str, jobname: str) -> tuple[int, int] | None:
+    """Read TeX's bounded completion line, including max_print_line wraps."""
+    prefix = "Output written on "
+    start = log.rfind(prefix)
+    if start < 0:
+        return None
+    completion = log[start:start + 4096].split("\nTranscript written on ", 1)[0]
+    completion = completion.replace("\r\n", "").replace("\n", "")
+    match = re.match(
+        rf"Output written on {re.escape(jobname)}\.pdf \((\d+) pages?, (\d+) bytes\)\.",
+        completion,
+    )
+    return (int(match.group(1)), int(match.group(2))) if match else None
+
+
 def address_space_limiter(max_rss_mib: int):
     def apply_limit() -> None:
         limit = max_rss_mib * 1024 * 1024
         resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
     return apply_limit
+
+
+def reference_environment(
+    runtime_root: Path, run: Path, format_path: Path,
+) -> dict[str, str]:
+    """Use the locked format's dev-first TeX search profile without ambient trees."""
+    environment = {
+        key: value for key, value in os.environ.items()
+        if not key.startswith(("TEX", "TFMF")) and key != "VARTEXFONTS"
+    }
+    directories = {
+        "TEXMFVAR": "texmf-var", "TEXMFCONFIG": "texmf-config",
+        "TEXMFHOME": "texmf-home", "TEXMFSYSVAR": "texmf-sysvar",
+        "TEXMFSYSCONFIG": "texmf-sysconfig", "TEXMFLOCAL": "texmf-local",
+        "TEXMFCACHE": "texmf-cache", "VARTEXFONTS": "texmf-var/fonts",
+    }
+    for key, name in directories.items():
+        path = run / name
+        path.mkdir(parents=True, exist_ok=True)
+        environment[key] = str(path)
+    environment.update({
+        "TEXMFCNF": str(runtime_root / "web2c"),
+        "TEXMFROOT": str(runtime_root.parent),
+        "TEXMFDIST": str(runtime_root),
+        "TEXFORMATS": str(format_path.parent),
+        "TFMFONTS": f"{runtime_root}/fonts/tfm//",
+        "SOURCE_DATE_EPOCH": SOURCE_DATE_EPOCH,
+        "FORCE_SOURCE_DATE": "1",
+    })
+    return environment
 
 
 def run_row(
@@ -243,8 +288,6 @@ def run_row(
     materialize(row["archive"], source)
     verify_view(row["archive"], source)
     shutil.copytree(source, run)
-    for name in ("texmf-var", "texmf-config", "texmf-home", "texmf-sysvar", "texmf-sysconfig"):
-        (run / name).mkdir()
 
     entrypoint = str(row["entrypoint"])
     jobname = source_jobname(entrypoint)
@@ -254,22 +297,11 @@ def run_row(
     command = [
         "/usr/bin/time", "-v", "-o", str(time_path),
         "timeout", "-k", f"{TERM_GRACE_SECONDS}s", f"{arguments.timeout_seconds}s",
-        str(arguments.oracle), f"--fmt={arguments.format}", "--output-format=pdf",
+        str(arguments.oracle), "-progname=pdflatex-dev",
+        f"--fmt={arguments.format}", "--output-format=pdf",
         "--interaction=nonstopmode", "--halt-on-error", entrypoint,
     ]
-    environment = os.environ.copy()
-    environment.update({
-        "TEXMFCNF": str(arguments.runtime_root / "web2c"),
-        "TEXMFROOT": str(arguments.runtime_root.parent),
-        "TEXMFDIST": str(arguments.runtime_root),
-        "TEXMFVAR": str(run / "texmf-var"),
-        "TEXMFCONFIG": str(run / "texmf-config"),
-        "TEXMFHOME": str(run / "texmf-home"),
-        "TEXMFSYSVAR": str(run / "texmf-sysvar"),
-        "TEXMFSYSCONFIG": str(run / "texmf-sysconfig"),
-        "SOURCE_DATE_EPOCH": SOURCE_DATE_EPOCH,
-        "FORCE_SOURCE_DATE": "1",
-    })
+    environment = reference_environment(arguments.runtime_root, run, arguments.format)
     with stdout_path.open("wb") as stdout, stderr_path.open("wb") as stderr:
         completed = subprocess.run(
             command, cwd=run, env=environment, stdout=stdout, stderr=stderr,
@@ -281,24 +313,18 @@ def run_row(
     log_text = log_path.read_text(errors="replace") if log_path.exists() else ""
     stdout_text = stdout_path.read_text(errors="replace")
     stderr_text = stderr_path.read_text(errors="replace")
-    completion = re.search(
-        rf"Output written on {re.escape(jobname)}\.pdf \((\d+) pages?, (\d+) bytes\)\.",
-        log_text,
-    )
-    # TeX wraps long completion lines at max_print_line, so a successful exit
-    # plus the source-jobname PDF is the authoritative production criterion.
-    # The completion record is used only for optional page-count evidence.
-    success = completed.returncode == 0 and pdf_path.is_file()
+    completion = pdf_completion(log_text, jobname)
+    success = (completed.returncode == 0 and pdf_path.is_file() and completion is not None
+               and completion[0] > 0 and completion[1] == pdf_path.stat().st_size)
     pdf = file_identity(pdf_path, arguments.results) if pdf_path.is_file() else None
     if pdf is not None and completion is not None:
-        pdf["pages"] = int(completion.group(1))
-        pdf["reported_bytes"] = int(completion.group(2))
+        pdf["pages"], pdf["reported_bytes"] = completion
     failure = None if success else first_failure(log_text, stdout_text, stderr_text, completed.returncode)
     if not success and completed.returncode == 0:
         failure = {
-            "kind": "missing-authoritative-pdf",
+            "kind": "unverified-pdf-completion",
             "channel": "process",
-            "line": "oracle exited successfully without a PDF completion record",
+            "line": "oracle exited successfully without a positive, byte-accurate PDF completion record",
             "context": [],
         }
     result = {
@@ -376,6 +402,7 @@ def metadata_for(
             "term_grace_seconds": TERM_GRACE_SECONDS,
             "parallel_workers": arguments.workers,
             "jobname_policy": "entrypoint basename without .tex; no --jobname argument",
+            "reference_lookup_profile": "pdflatex-dev; archive-root cwd; pinned texmf.cnf dev-first and full-font paths; explicit runtime TFM path; isolated TEXMF variables; ambient TeX path overrides cleared",
             "working_directory_policy": "fresh exact archive root copied to the issue-local row run directory",
             "side_file_policy": "archive side files preserved; generated side files remain in the row run directory",
         },
@@ -425,7 +452,8 @@ def verify_results(
         command = row.get("command", [])
         if any(str(item).startswith("--jobname") for item in command):
             fail(f"survey row overrides the source-derived jobname: {row_id}")
-        if "--output-format=pdf" not in command or command[-1] != expected["entrypoint"]:
+        if ("--output-format=pdf" not in command or "-progname=pdflatex-dev" not in command
+                or command[-1] != expected["entrypoint"]):
             fail(f"survey row command differs: {row_id}")
         expected_cwd = (Path("rows") / row_id.replace("/", "_") / "run").as_posix()
         if row.get("working_directory") != expected_cwd:
@@ -435,10 +463,13 @@ def verify_results(
             check_identity(artifact, arguments.results)
         check_identity(row.get("pdf") or row.get("partial_pdf"), arguments.results)
         classification = row["terminal_status"]["classification"]
-        produced_pdf = row.get("pdf") is not None or row.get("partial_pdf") is not None
+        successful_pdf = row.get("pdf")
+        produced_pdf = successful_pdf is not None
         expected_classification = (
             "PDF-success"
-            if row["terminal_status"]["exit_status"] == 0 and produced_pdf
+            if (row["terminal_status"]["exit_status"] == 0 and produced_pdf
+                and successful_pdf.get("pages", 0) > 0
+                and successful_pdf.get("reported_bytes") == successful_pdf.get("bytes"))
             else "PDF-failure"
         )
         if classification != expected_classification:

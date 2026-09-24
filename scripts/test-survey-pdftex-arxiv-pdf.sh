@@ -22,8 +22,17 @@ printf '%s\n' "$((count + 1))" >"$FAKE_PDFTEX_COUNT"
 for argument in "$@"; do
   case "$argument" in
     --jobname*) echo 'jobname override is forbidden' >&2; exit 90 ;;
+    -progname=pdflatex-dev) dev_profile=1 ;;
   esac
 done
+test "${dev_profile:-0}" = 1
+test "${TEXINPUTS+x}" != x
+test "${TEXFONTS+x}" != x
+test "$TFMFONTS" = "$FAKE_RUNTIME/fonts/tfm//"
+test "$TEXMFCNF" = "$FAKE_RUNTIME/web2c"
+test "${TEXFONTMAPS+x}" != x
+test "$TEXFORMATS" = "$FAKE_FORMAT_DIR"
+test "$TEXMFLOCAL" != /ambient/texmf
 input=$argument
 jobname=${input##*/}
 jobname=${jobname%.tex}
@@ -36,8 +45,13 @@ case "$jobname" in
     exit 1
     ;;
 esac
-printf 'pdf\n' >"$jobname.pdf"
-printf 'Output written on %s.pdf (1 page, 4 bytes).\n' "$jobname" >"$jobname.log"
+if test "$jobname" = article; then
+  printf 'hello world\n' >"$jobname.pdf"
+  printf 'Output written on arti\ncle.pdf (1 page, 1\n2 bytes).\n' >"$jobname.log"
+else
+  printf 'pdf\n' >"$jobname.pdf"
+  printf 'Output written on %s.pdf (1 page, 4 bytes).\n' "$jobname" >"$jobname.log"
+fi
 EOF
 chmod +x "$work/fake-pdftex"
 oracle_sha=$(sha256sum "$work/fake-pdftex" | awk '{print $1}')
@@ -70,7 +84,9 @@ for specification in 'ok:pdflatex:paper.tex' 'fails:pdflatex:fails.tex' \
 done
 
 run_survey() {
-  FAKE_PDFTEX_COUNT="$work/count" \
+  FAKE_PDFTEX_COUNT="$work/count" FAKE_RUNTIME="$work/runtime" \
+  FAKE_FORMAT_DIR="$work" TEXINPUTS=/ambient/texmf \
+  TEXMFLOCAL=/ambient/texmf \
     "$root/scripts/survey-pdftex-arxiv-pdf.py" \
     --source-lock "$work/source.lock.tsv" \
     --archives "$work/archives" \
@@ -97,6 +113,7 @@ test "$(wc -l <"$work/results/results.jsonl")" -eq 3
 grep -q '"PDF-success": 2' "$work/results/summary.json"
 grep -q '"PDF-failure": 1' "$work/results/summary.json"
 grep -q '"jobname":"article"' "$work/results/results.jsonl"
+grep -q '"reported_bytes": 12' "$work/results/rows/nested/result.json"
 ! grep -q -- '--jobname' "$work/results/results.jsonl"
 
 run_survey
