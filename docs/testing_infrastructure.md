@@ -150,24 +150,39 @@ projection must itself name observable behavior; an internal hash or counter
 is not a semantic oracle. [Semantic Testing](semantic_testing.md) gives that
 assertion boundary.
 
-On the semantic-testing production candidate `c91995f9b`, explicitly
-selecting the same 210-case manual command below reports `matched=207,
-executed-known-failure=0, unexpected-pass=0, other-failure=3, dormant=0,
-unselected=0` and exits `FAIL`. The three failed cases have six channel
-discrepancies and no execution or focused-projection mismatch:
-`alignments/span-width-record` has a typed confusion-report source byte of 46
-where the reference says 43; `input-expansion/input-tokenization-lifecycle`
-differs in terminal and log bytes and lacks the reference source location on
-its typed emergency-stop report; and
-`scanners-internal-quantities/input-stream-four-bit-recovery` has terminal and
-log differences. These are exact output or diagnostic-location failures, not
-automatically page-typesetting defects. None is marked expected to make the
-manual suite green.
+On production revision `607d505c5`, explicitly selecting the same 210-case
+manual command below reports `matched=210, executed-known-failure=0,
+unexpected-pass=0, other-failure=0, dormant=0, unselected=0` and exits `PASS`,
+including the independent format-provider reuse checks after the census.
+No reference fixture or comparison criterion changed to resolve the last
+three cases from `c91995f9b`:
 
-On the same production candidate, `scripts/check-and-test.sh` passed all seven
-routine native and quality stages (`PASS 7`, `FAIL 0`, `BLOCKED 0`) without a
-gate reduction. The routine result does not execute or clear the manually
-selected command-semantic corpus; its 207/3 verdict above remains `FAIL`.
+- `alignments/span-width-record` now attributes the typed confusion report to
+  the last delivered source command, preserving that site when an alignment
+  delimiter is intercepted.
+- `input-expansion/input-tokenization-lifecycle` preserves the original file
+  and line for diagnostics when terminal input replaces a line. Token
+  provenance still identifies the replacement bytes. The channel translator
+  uses the registered root source ID rather than guessing from a command.
+- That case and
+  `scanners-internal-quantities/input-stream-four-bit-recovery` now print
+  terminal prompts with TeX's explicit line-break and control-sequence printer
+  operations, respecting live character-printing parameters.
+
+The same revision passed all seven stages of `scripts/check-and-test.sh`
+(`PASS 7`, `FAIL 0`, `BLOCKED 0`) with no coverage reductions. Focused routine
+regressions cover replacement lengths, intercepted delimiters, terminal input,
+rollback, prompt parameters, and generated first-command provenance.
+Diagnostic coordinates are journaled for rollback but excluded from semantic
+convergence identity, as required by the incremental provenance contract.
+The manual driver checks independent format-provider reuse without depending
+on a private cache directory name or file count. The routine suite still
+leaves the manual corpus unselected; the two passing verdicts are separate.
+
+The preceding production candidate `c91995f9b` matched 207 cases and failed
+three, with six exact channel discrepancies. Those were diagnostic-location
+and terminal/log formatting differences, not automatically page-typesetting
+defects. Its routine seven-stage gate passed independently.
 
 The immediately preceding candidate `90c2f0fad`, with the same independent
 reference-channel and projection criteria, matched 178 and failed 32. The
