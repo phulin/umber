@@ -287,6 +287,11 @@ metadata records its construction root; the final root has a separate digest
 because it additionally names the formats and complete runtime.
 
 `tests/latex-source.lock` owns the exact input bytes and distribution name.
+It authorizes the format construction source closure. The CLI input-admission
+receipt distinguishes resources consumed by the engine from speculative
+admissions: every consumed resource must match the locked logical key, size,
+and content digest, while unused admissions do not expand the source closure.
+The builder also verifies the main entry point against its locked identity.
 It does not pin the root digest of a particular packaging run. The bootstrap
 root, final root, and any deployment pin are computed and verified at their
 own boundaries. An explicit `--format-distribution` with matching

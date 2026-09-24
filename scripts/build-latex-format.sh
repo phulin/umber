@@ -25,7 +25,7 @@ usage: scripts/build-latex-format.sh [--engine latex|pdflatex]
                                      [--publish-input-closure] [--force|--check]
 
 Restores a validated pinned Umber-native LaTeX format from the generated-format
-cache, or verifies the exact mode-specific locked input closure, builds once,
+cache, or verifies consumed inputs against the mode-specific locked source closure, builds once,
 validates the resulting image through the cache codec, and atomically publishes
 the miss. --force always regenerates. --check regenerates and compares the cache
 and output without changing either. Every engine run uses the same authenticated
@@ -143,15 +143,9 @@ fi
 
 if [[ -d "$distribution_path" ]]; then
   distribution_path="$(cd "$distribution_path" && pwd -P)"
-  if [[ -f "$distribution_path/manifest-v9.json" ]]; then
-    distribution_manifest="$distribution_path/manifest-v9.json"
-  elif [[ -f "$distribution_path/manifest-v8.json" ]]; then
-    distribution_manifest="$distribution_path/manifest-v8.json"
-  elif [[ -f "$distribution_path/manifest.json" ]]; then
-    distribution_manifest="$distribution_path/manifest.json"
-  else
-    fail "distribution directory has no manifest-v9.json, manifest-v8.json, or manifest.json: $distribution_path"
-  fi
+  distribution_manifest="$distribution_path/manifest.json"
+  [[ -f "$distribution_manifest" ]] || \
+    fail "distribution directory has no manifest.json: $distribution_path"
 elif [[ -f "$distribution_path" ]]; then
   distribution_directory="$(cd "$(dirname "$distribution_path")" && pwd -P)"
   distribution_path="${distribution_directory}/$(basename "$distribution_path")"
@@ -180,12 +174,9 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
-expected_receipt="${tmp_root}/expected.inputs"
-expected_index="${tmp_root}/expected.index"
 closure_index="${tmp_root}/input-closure.index"
 source_index="${tmp_root}/sources.index"
 identity_index="${tmp_root}/input-identities.index"
-: > "$expected_index"
 : > "$closure_index"
 : > "$source_index"
 : > "$identity_index"
@@ -214,7 +205,6 @@ while read -r kind relative expected_bytes expected_hash extra; do
   [[ -z "${extra:-}" ]] || fail "invalid source lock entry for $relative"
   [[ "$relative" != /* && "$relative" != *..* && "$relative" != *\\* ]] || \
     fail "unsafe source path in lock: $relative"
-  printf '%s\t%s\n' "$source" "$expected_bytes" >> "$expected_index"
   printf '%s\t%s\t%s\n' "$source" "$expected_bytes" "$expected_hash" >> "$source_index"
   request_name="${relative##*/}"
   [[ "$request_name" =~ ^[A-Za-z0-9._/-]+$ ]] || \
@@ -227,7 +217,6 @@ while read -r kind relative expected_bytes expected_hash extra; do
   printf '%s\n' "$request_key" >> "$closure_index"
   printf '%s\t%s\t%s\n' "$request_key" "$($publisher --file-ahash64 "$source")" "$expected_bytes" >> "$identity_index"
 done < "$lock_file"
-LC_ALL=C sort -k1,1 "$expected_index" | awk -F '\t' '{ print $2 "\t" $1 }' | LC_ALL=C sort > "$expected_receipt"
 LC_ALL=C sort -u "$closure_index" -o "$closure_index"
 LC_ALL=C sort -k1,1 "$identity_index" -o "$identity_index"
 
@@ -294,9 +283,11 @@ build_one() {
     grep -m1 '^! ' "${directory}/build.stdout" >&2
     fail "LaTeX format build emitted a diagnostic"
   fi
-  LC_ALL=C sort "${directory}/build.inputs" > "${directory}/build.inputs.sorted"
-  cmp "$expected_receipt" "${directory}/build.inputs.sorted" || \
-    fail "LaTeX format build opened inputs outside the locked closure"
+  python3 "${repo_root}/scripts/verify-latex-format-inputs.py" \
+    --receipt "${directory}/build.inputs" \
+    --authorized "$identity_index" \
+    --main-key "tex:${format_input##*/}" || \
+    fail "LaTeX format build consumed inputs outside the locked closure"
 }
 
 package_id="$(cargo pkgid -p umber)"

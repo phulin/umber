@@ -17,12 +17,13 @@ mkdir -p \
   "${tmp_root}/bin" \
   "${tmp_root}/cache"
 cp "${repo_root}/scripts/build-latex-format.sh" "${fixture_repo}/scripts/"
+cp "${repo_root}/scripts/verify-latex-format-inputs.py" "${fixture_repo}/scripts/"
 printf '\\dump\n' > "${fixture_repo}/texmf-dist/tex/latex-dev/base/latex.ltx"
 printf '\\end\n' > "${fixture_repo}/tests/latex/format-equivalence.tex"
 printf '\\end\n' > "${fixture_repo}/tests/latex/pdflatex-smoke.tex"
 printf 'pdf configuration\n' > "${fixture_repo}/tests/latex/pdftexconfig.tex"
 printf '\\input latex.ltx\n' > "${fixture_repo}/texmf-dist/tex/latex/tex-ini-files/pdflatex.ini"
-printf '{"schema":8}\n' > "${fixture_repo}/distribution/manifest-v8.json"
+printf '{"schema":8}\n' > "${fixture_repo}/distribution/manifest.json"
 
 sha256_file() {
   if command -v sha256sum >/dev/null 2>&1; then
@@ -52,14 +53,18 @@ source tfm fonts/runtime-b.tfm 10 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 EOF
 
 expected_receipt="${tmp_root}/expected.inputs"
-printf '6\t%s\n' \
-  "${fixture_repo}/texmf-dist/tex/latex-dev/base/latex.ltx" > "$expected_receipt"
+{
+  printf 'umber-input-admissions-v1\n'
+  printf 'main\t6\tffffffffffffffff\n'
+  printf 'file\tadmitted\ttex:extra-prefetch.tex\t23\tffffffffffffffff\n'
+} > "$expected_receipt"
 pdflatex_expected_receipt="${tmp_root}/pdflatex-expected.inputs"
 {
-  printf '6\t%s\n' "${fixture_repo}/texmf-dist/tex/latex-dev/base/latex.ltx"
-  printf '17\t%s\n' "${fixture_repo}/texmf-dist/tex/latex/tex-ini-files/pdflatex.ini"
-  printf '18\t%s\n' "${fixture_repo}/tests/latex/pdftexconfig.tex"
-} | LC_ALL=C sort > "$pdflatex_expected_receipt"
+  printf 'umber-input-admissions-v1\n'
+  printf 'main\t17\tffffffffffffffff\n'
+  printf 'file\tused\ttex:latex.ltx\t6\tffffffffffffffff\n'
+  printf 'file\tused\ttex:pdftexconfig.tex\t18\tffffffffffffffff\n'
+} > "$pdflatex_expected_receipt"
 invocations="${tmp_root}/run-invocations.jsonl"
 captured_build_configuration="${tmp_root}/build-configuration.txt"
 
@@ -123,7 +128,7 @@ cat > "${fixture_repo}/tools/texlive-wasm-publish/target/release/texlive-wasm-pu
 set -euo pipefail
 [[ "$1" == --file-ahash64 && -f "$2" ]]
 case "${2##*/}" in
-  manifest-v8.json) printf '%s\n' dddddddddddddddd ;;
+  manifest.json) printf '%s\n' dddddddddddddddd ;;
   *.fmt) printf '%s\n' eeeeeeeeeeeeeeee ;;
   *) printf '%s\n' ffffffffffffffff ;;
 esac
@@ -235,5 +240,36 @@ assert len(rows) == 1, rows
 assert "--format-out" in rows[0], rows
 assert "--format" not in rows[0], rows
 PY
+
+identity_index="${tmp_root}/authorized.index"
+{
+  printf 'tex:latex.ltx\tffffffffffffffff\t6\n'
+  printf 'tex:pdflatex.ini\tffffffffffffffff\t17\n'
+  printf 'tex:pdftexconfig.tex\tffffffffffffffff\t18\n'
+} > "$identity_index"
+verify_inputs="${fixture_repo}/scripts/verify-latex-format-inputs.py"
+python3 "$verify_inputs" --receipt "$expected_receipt" \
+  --authorized "$identity_index" --main-key tex:latex.ltx
+python3 "$verify_inputs" --receipt "$pdflatex_expected_receipt" \
+  --authorized "$identity_index" --main-key tex:pdflatex.ini
+
+consumed_extra="${tmp_root}/consumed-extra.inputs"
+sed 's/file\tadmitted\t/file\tused\t/' "$expected_receipt" > "$consumed_extra"
+expect_failure 'consumed tex:extra-prefetch.tex is outside the locked source closure' \
+  python3 "$verify_inputs" --receipt "$consumed_extra" \
+    --authorized "$identity_index" --main-key tex:latex.ltx
+
+wrong_main="${tmp_root}/wrong-main.inputs"
+sed 's/main\t6\t/main\t7\t/' "$expected_receipt" > "$wrong_main"
+expect_failure 'main input differs from locked tex:latex.ltx' \
+  python3 "$verify_inputs" --receipt "$wrong_main" \
+    --authorized "$identity_index" --main-key tex:latex.ltx
+
+wrong_identity="${tmp_root}/wrong-identity.inputs"
+sed 's/tex:latex.ltx\t6\t/tex:latex.ltx\t7\t/' \
+  "$pdflatex_expected_receipt" > "$wrong_identity"
+expect_failure 'consumed tex:latex.ltx is outside the locked source closure' \
+  python3 "$verify_inputs" --receipt "$wrong_identity" \
+    --authorized "$identity_index" --main-key tex:pdflatex.ini
 
 printf '%s\n' 'build-latex-format tests: PASS'

@@ -160,7 +160,10 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   `test-build-initex-format-matrix.sh`: serial guarded Plain, LaTeX, and
   pdfLaTeX INITEX reproduction plus hermetic argument-routing coverage.
 - `test-build-latex-format.sh`: hermetic required-argument, root-pin,
-  all-engine-run passthrough, and forced-offline format-authority coverage.
+  all-engine-run passthrough, forced-offline format authority, and consumed
+  versus speculative admission coverage. `verify-latex-format-inputs.py`
+  checks the engine's semantic admission receipt against the SHA-verified
+  construction closure without pinning local source paths.
 - `check-latex-representative-resources.sh` and its test: cold, isolated,
   offline source-profile and loaded-format prefetch smokes over the exact
   pdfLaTeX construction/runtime locks, with a machine-readable identity
