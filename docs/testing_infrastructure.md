@@ -839,6 +839,15 @@ establish a TeX semantic or DVI mismatch. Increasing the limit would not
 resolve whether optional prefetch can prevent a demanded read. The captured
 failure and guards remain unchanged.
 
+The separate Umber LaTeX format also rebuilt and passed source verification
+(963030 bytes, aHash64 `5c89f9ae0a4cf390`), but the base multi-pass LaTeX
+corpus was not run in this wave. Its reference format profile is unresolved:
+LaTeX 2026 rejects the available canonical e-TeX 2.6 engine, while clean
+pdfTeX requires the additional pdfTeX source closure. Those reference-build
+failures are retained in slot 1's `target/parity-wave/reference-latex/`.
+A verified format build does not establish corpus DVI parity or prove that
+all allowed runtime inputs are consumed.
+
 The [serial arXiv DVI cohort](arxiv_dvi_cohort.md) implements the canonical
 per-document parity workflow, separately from the census. A
 candidate qualifies only when its complete, unmodified archive compiles
