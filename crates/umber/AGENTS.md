@@ -83,6 +83,9 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
   misses are authoritative; do not restore selected-record or selected-miss
   caches. Catalog existence remains separate from engine-readable payload
   readiness.
+- `src/cli_resource/input_receipt.rs`: deterministic native CLI input-admission
+  receipt over accepted local and distribution resources, with consumed status
+  derived from the accepted semantic input-dependency ledger.
 - `src/cli_resource/tests.rs`: retained-resource reuse and superseded-revision cancellation coverage.
 - `src/distribution_verify.rs`: explicit pinned local root/shard/object graph verifier, streaming object authentication, and complete-work report.
 - `src/distribution_verify/tests.rs`: exhaustive distribution verifier positive and corruption controls.

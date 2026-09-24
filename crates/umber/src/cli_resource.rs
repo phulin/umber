@@ -36,6 +36,9 @@ use crate::{
     TexInputSearchPath, VirtualCompileSession,
 };
 
+mod input_receipt;
+use input_receipt::InputAdmissions;
+
 pub const DEFAULT_DISTRIBUTION_URL: &str =
     "https://assets.umber.ink/texlive/texlive-20260301/manifest-v8.json";
 
@@ -183,16 +186,22 @@ impl NativeRunError {
 pub fn run(options: &NativeRunOptions) -> Result<MemoryRunOutput, NativeRunError> {
     let owner = NativeDistributionOwner::from_environment(options)?;
     let store = tex_incr::new_reachability_store();
-    NativeCompileSession::new_with_owners(options, &FetchCancellation::new(), &owner, &store)?
-        .compile(&FetchCancellation::new())
+    NativeCompileSession::new_with_owners(
+        options,
+        &FetchCancellation::new(),
+        &owner,
+        &store,
+        false,
+    )?
+    .compile(&FetchCancellation::new())
 }
 
 pub struct NativeAcceptedRun {
     output: MemoryRunOutput,
     finalization: AcceptedFinalization,
     input_path_map: BTreeMap<PathBuf, PathBuf>,
-    resolved_inputs: Vec<(PathBuf, usize)>,
-    main_input: (PathBuf, usize),
+    input_admissions: Option<InputAdmissions>,
+    used_resources: Vec<(PathBuf, tex_state::ContentIdentity)>,
     telemetry: CompileTelemetry,
     host_telemetry: NativeHostTelemetry,
 }
@@ -201,8 +210,6 @@ pub type NativeAcceptedParts = (
     MemoryRunOutput,
     AcceptedFinalization,
     BTreeMap<PathBuf, PathBuf>,
-    Vec<(PathBuf, usize)>,
-    (PathBuf, usize),
     CompileTelemetry,
     NativeHostTelemetry,
 );
@@ -280,6 +287,18 @@ pub struct ResolverTelemetry {
 }
 
 impl NativeAcceptedRun {
+    /// Returns exact file bytes admitted by the accepted native run, including
+    /// local and distribution prefetches, classified by accepted dependencies,
+    /// plus the CLI entry-file identity.
+    pub fn input_admission_receipt_bytes(&self) -> Result<Vec<u8>, NativeRunError> {
+        self.input_admissions
+            .as_ref()
+            .ok_or_else(|| {
+                NativeRunError::Selection("input admission receipt was not requested".to_owned())
+            })?
+            .to_bytes(&self.used_resources)
+    }
+
     #[must_use]
     pub fn pdf_draft_mode(&self) -> bool {
         self.finalization
@@ -309,8 +328,6 @@ impl NativeAcceptedRun {
             self.output,
             self.finalization,
             self.input_path_map,
-            self.resolved_inputs,
-            self.main_input,
             self.telemetry,
             self.host_telemetry,
         )
@@ -406,12 +423,18 @@ fn encode_hex(bytes: &[u8]) -> String {
 #[allow(clippy::disallowed_methods)] // Process telemetry; TeX state never observes it.
 pub fn run_for_finalization(
     options: &NativeRunOptions,
+    collect_input_admissions: bool,
 ) -> Result<NativeAcceptedRun, NativeRunError> {
     let cancellation = FetchCancellation::new();
     let owner = NativeDistributionOwner::from_environment(options)?;
     let store = tex_incr::new_reachability_store();
-    let mut session =
-        NativeCompileSession::new_with_owners(options, &cancellation, &owner, &store)?;
+    let mut session = NativeCompileSession::new_with_owners(
+        options,
+        &cancellation,
+        &owner,
+        &store,
+        collect_input_admissions,
+    )?;
     let output = match session.compile_without_publication(&cancellation) {
         Ok(output) => output,
         Err(error) => {
@@ -423,8 +446,30 @@ pub fn run_for_finalization(
     session.emit_resource_boundary_summary();
     let accepted_handoff_started = Instant::now();
     let input_path_map = session.local.input_path_map();
-    let resolved_inputs = session.local.resolved_inputs();
-    let main_input = (options.input.clone(), session.source.len());
+    let input_admissions = session.input_admissions;
+    let used_resources = if input_admissions.is_some() {
+        let observations = session
+            .session
+            .accepted_input_observations()
+            .expect("accepted compile has input observations");
+        observations
+            .observations()
+            .iter()
+            .filter_map(|observation| {
+                if observation.namespace() != crate::InputObservationNamespace::Distribution {
+                    return None;
+                }
+                match observation.outcome() {
+                    crate::InputObservationOutcome::Present(identity) => {
+                        Some((observation.path().as_path().to_owned(), identity))
+                    }
+                    crate::InputObservationOutcome::Missing => None,
+                }
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     let telemetry = session.session.compile_telemetry();
     let mut host_telemetry = session.host_telemetry;
     let finalization = session
@@ -439,8 +484,8 @@ pub fn run_for_finalization(
         output,
         finalization,
         input_path_map,
-        resolved_inputs,
-        main_input,
+        input_admissions,
+        used_resources,
         telemetry,
         host_telemetry,
     })
@@ -457,6 +502,7 @@ pub struct NativeCompileSession<'owner> {
     prefetch: PrefetchPlanner,
     source: String,
     pending_source: Option<String>,
+    input_admissions: Option<InputAdmissions>,
     host_telemetry: NativeHostTelemetry,
     resource_restart_batches: u64,
     resource_restart_batch_drops: u64,
@@ -470,12 +516,14 @@ impl<'owner> NativeCompileSession<'owner> {
         cancellation: &FetchCancellation,
         owner: &NativeDistributionOwner,
         reachability_store: &'owner tex_state::ReachabilityStore,
+        collect_input_admissions: bool,
     ) -> Result<Self, NativeRunError> {
         Self::new_with_resolver(
             options,
             cancellation,
             owner.resolver(options)?,
             reachability_store,
+            collect_input_admissions,
         )
     }
 
@@ -486,7 +534,7 @@ impl<'owner> NativeCompileSession<'owner> {
         owner: &NativeDistributionOwner,
     ) -> Result<NativeCompileSession<'static>, NativeRunError> {
         let store = Box::leak(Box::new(tex_incr::new_reachability_store()));
-        NativeCompileSession::new_with_owners(options, cancellation, owner, store)
+        NativeCompileSession::new_with_owners(options, cancellation, owner, store, false)
     }
 
     #[cfg(test)]
@@ -508,10 +556,12 @@ impl<'owner> NativeCompileSession<'owner> {
         cancellation: &FetchCancellation,
         mut distribution: DistributionResolver,
         reachability_store: &'owner tex_state::ReachabilityStore,
+        collect_input_admissions: bool,
     ) -> Result<Self, NativeRunError> {
         let setup_started = std::time::Instant::now();
         let source_started = std::time::Instant::now();
         let main = read(&options.input)?;
+        let input_admissions = collect_input_admissions.then(|| InputAdmissions::new(&main));
         let source = match String::from_utf8(main.clone()) {
             Ok(source) => source,
             Err(error) => error.into_bytes().into_iter().map(char::from).collect(),
@@ -685,6 +735,7 @@ impl<'owner> NativeCompileSession<'owner> {
             prefetch: planner,
             source,
             pending_source: None,
+            input_admissions,
             host_telemetry: NativeHostTelemetry {
                 startup_time,
                 resolver: resolver_telemetry,
@@ -865,6 +916,9 @@ impl<'owner> NativeCompileSession<'owner> {
                     );
                     self.distribution
                         .note_engine_admitted(&mut self.host_telemetry.resolver, &resolved);
+                    if let Some(admissions) = &mut self.input_admissions {
+                        admissions.record_files(&resolved.admitted_files)?;
+                    }
                     for (request, file) in &resolved.admitted_files {
                         let dependencies =
                             self.distribution.dependencies_for([request.key().clone()]);
@@ -924,6 +978,9 @@ impl<'owner> NativeCompileSession<'owner> {
                 .retire_unadmitted_prefetch(&hints, &resolved.admitted_files);
             self.distribution
                 .note_engine_admitted(&mut self.host_telemetry.resolver, &resolved);
+            if let Some(admissions) = &mut self.input_admissions {
+                admissions.record_files(&resolved.admitted_files)?;
+            }
             for (request, file) in &resolved.admitted_files {
                 let dependencies = self.distribution.dependencies_for([request.key().clone()]);
                 self.prefetch.admit_file_with_metadata(
@@ -1272,7 +1329,6 @@ struct LocalResolver {
     input: TexInputSearchPath,
     font: TexFontSearchPath,
     input_paths: RefCell<BTreeMap<PathBuf, PathBuf>>,
-    resolved_inputs: RefCell<Vec<(PathBuf, usize)>>,
 }
 
 impl LocalResolver {
@@ -1304,7 +1360,6 @@ impl LocalResolver {
             input: TexInputSearchPath::new(&base, input_areas),
             font: TexFontSearchPath::new(base, font_areas),
             input_paths: RefCell::new(BTreeMap::new()),
-            resolved_inputs: RefCell::new(Vec::new()),
         }
     }
 
@@ -1362,9 +1417,6 @@ impl LocalResolver {
             Err(error) => return Err(local_world_error(error)),
         };
         let bytes = content.shared_bytes();
-        self.resolved_inputs
-            .borrow_mut()
-            .push((content.path().to_owned(), bytes.len()));
         let digest = FileContentId::for_bytes(&bytes);
         let virtual_path = self.virtual_path(request.key().kind(), content.path(), digest);
         let resolved_path = content.path().to_owned();
@@ -1408,9 +1460,6 @@ impl LocalResolver {
             Err(error) => return Err(local_world_error(error)),
         };
         let bytes = content.bytes().to_vec();
-        self.resolved_inputs
-            .borrow_mut()
-            .push((content.path().to_owned(), bytes.len()));
         let digest =
             umber_hash::AHash64::for_bytes(umber_hash::HashDomain::PkProgram, &bytes).to_le_bytes();
         let virtual_path = self.virtual_path(
@@ -1466,9 +1515,6 @@ impl LocalResolver {
         };
         let path = content.path().to_owned();
         let bytes = content.shared_bytes();
-        self.resolved_inputs
-            .borrow_mut()
-            .push((path.clone(), bytes.len()));
         let digest = FileContentId::for_bytes(&bytes);
         let virtual_path = self.virtual_path(request.key().kind(), &path, digest);
         self.input_paths
@@ -1484,10 +1530,6 @@ impl LocalResolver {
 
     fn input_path_map(&self) -> BTreeMap<PathBuf, PathBuf> {
         self.input_paths.borrow().clone()
-    }
-
-    fn resolved_inputs(&self) -> Vec<(PathBuf, usize)> {
-        self.resolved_inputs.borrow().clone()
     }
 }
 

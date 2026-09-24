@@ -294,9 +294,14 @@ fn compile_once(
 ) -> Result<(Vec<u8>, ResolverTelemetry), String> {
     let cancellation = FetchCancellation::new();
     let reachability_store = tex_incr::new_reachability_store();
-    let mut session =
-        NativeCompileSession::new_with_owners(options, &cancellation, owner, &reachability_store)
-            .map_err(|error| error.to_string())?;
+    let mut session = NativeCompileSession::new_with_owners(
+        options,
+        &cancellation,
+        owner,
+        &reachability_store,
+        false,
+    )
+    .map_err(|error| error.to_string())?;
     let output = session
         .compile(&cancellation)
         .map_err(|error| error.to_string())?;

@@ -96,6 +96,7 @@ pub(super) fn run(mut args: impl Iterator<Item = String>) -> Result<(), WatchErr
         &startup_cancellation,
         &distribution_owner,
         &reachability_store,
+        false,
     )?;
     set_active(&active, None);
     if interrupted.load(Ordering::Acquire) {
@@ -171,6 +172,7 @@ pub(super) fn run(mut args: impl Iterator<Item = String>) -> Result<(), WatchErr
                         &cancellation,
                         &distribution_owner,
                         &reachability_store,
+                        false,
                     )?;
                     set_active(&active, None);
                 }

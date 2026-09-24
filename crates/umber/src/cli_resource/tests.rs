@@ -795,7 +795,6 @@ fn local_resolver(root: &Path) -> LocalResolver {
         input: TexInputSearchPath::new(root, Vec::new()),
         font: TexFontSearchPath::new(root.to_owned(), Vec::new()),
         input_paths: RefCell::new(BTreeMap::new()),
-        resolved_inputs: RefCell::new(Vec::new()),
     }
 }
 
@@ -1522,7 +1521,7 @@ fn explicit_local_distribution_resolves_nested_ec_tfm_record() {
 }
 
 #[test]
-fn local_resolution_owns_virtual_and_request_path_receipt_aliases() {
+fn local_resolution_owns_virtual_and_request_path_aliases() {
     let directory = TempDir::new().expect("local resolution tempdir");
     let path = directory.path().join("owned.ltx");
     std::fs::write(&path, b"owned bytes").expect("write local input");
@@ -1540,7 +1539,7 @@ fn local_resolution_owns_virtual_and_request_path_receipt_aliases() {
 
     assert_eq!(path_map.get(Path::new("owned.ltx")), Some(&path));
     assert_eq!(path_map.get(Path::new(&resolved.virtual_path)), Some(&path));
-    assert_eq!(resolver.resolved_inputs(), vec![(path, 11)]);
+    assert_eq!(resolved.bytes.as_ref(), b"owned bytes");
 }
 
 #[test]

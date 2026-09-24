@@ -290,18 +290,25 @@ fn run_offline_local_mirror_miss_names_the_exact_object_digest() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
-fn run_writes_a_sorted_deduplicated_input_record_receipt() {
+fn input_receipt_records_semantic_local_inputs_and_tfm() {
     let temp_dir = tempfile::tempdir().expect("create input receipt temp dir");
     let source = temp_dir.path().join("main.tex");
     let helper = temp_dir.path().join("helper.tex");
     let nested = temp_dir.path().join("nested.tex");
+    let font = temp_dir.path().join("cmr10.tfm");
     let receipt = temp_dir.path().join("inputs.tsv");
-    let source_bytes = b"\\input helper \\input helper \\end\n";
+    let source_bytes = b"\\font\\f=cmr10 \\input helper \\input helper \\end\n";
     let helper_bytes = b"\\input nested \\relax\n";
     let nested_bytes = b"\\relax\n";
     fs::write(&source, source_bytes).expect("write principal input");
     fs::write(&helper, helper_bytes).expect("write included input");
     fs::write(&nested, nested_bytes).expect("write nested input");
+    fs::copy(
+        test_support::repository_root().join("crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"),
+        &font,
+    )
+    .expect("copy metric fixture");
+    let font_bytes = fs::read(&font).expect("read metric fixture");
 
     let output = Command::new(env!("CARGO_BIN_EXE_umber"))
         .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
@@ -318,16 +325,94 @@ fn run_writes_a_sorted_deduplicated_input_record_receipt() {
         String::from_utf8_lossy(&output.stderr)
     );
     let expected = format!(
-        "{}\t{}\n{}\t{}\n{}\t{}\n",
-        helper_bytes.len(),
-        helper.display(),
+        "umber-input-admissions-v1\nmain\t{}\t{}\nfile\tused\ttex:helper.tex\t{}\t{}\nfile\tused\ttex:nested.tex\t{}\t{}\nfile\tused\ttfm:cmr10.tfm\t{}\t{}\n",
         source_bytes.len(),
-        source.display(),
+        hex_ahash64(source_bytes),
+        helper_bytes.len(),
+        hex_ahash64(helper_bytes),
         nested_bytes.len(),
-        nested.display()
+        hex_ahash64(nested_bytes),
+        font_bytes.len(),
+        hex_ahash64(&font_bytes)
     );
     assert_eq!(
         fs::read_to_string(receipt).expect("read input receipt"),
         expected
     );
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary distribution and CLI execution.
+fn input_receipt_distinguishes_consumed_remote_from_unused_remote_prefetch() {
+    let temp_dir = tempfile::tempdir().expect("create receipt fixture");
+    let source = temp_dir.path().join("main.tex");
+    let local = temp_dir.path().join("local.tex");
+    let distribution = temp_dir.path().join("distribution");
+    let objects = distribution.join("objects");
+    let receipt = temp_dir.path().join("inputs.receipt");
+    fs::create_dir_all(&objects).expect("create object directory");
+    let main_bytes = b"\\input local \\end\n";
+    let local_bytes = b"\\input remote \\relax\n";
+    let remote_bytes = b"\\message{remote-read}\n";
+    let unused_bytes = b"\\message{unused}\n";
+    fs::write(&source, main_bytes).expect("write main");
+    fs::write(&local, local_bytes).expect("write local");
+    let entries = [
+        ("remote.tex", remote_bytes.as_slice()),
+        ("unused.tex", unused_bytes.as_slice()),
+    ];
+    let mut manifest_entries = Vec::new();
+    for (name, bytes) in entries {
+        let digest = hex_ahash64(bytes);
+        let object = format!("ahash64-v1-{digest}");
+        fs::write(objects.join(&object), bytes).expect("write source object");
+        manifest_entries.push(format!(
+            "\"tex:{name}\":{{\"virtualPath\":\"/texlive/tex/{name}\",\"object\":\"{object}\",\"ahash64\":\"{digest}\",\"bytes\":{}}}",
+            bytes.len()
+        ));
+    }
+    let shard = format!(
+        "{{\"schema\":3,\"distribution\":\"receipt-test\",\"index\":0,\"files\":{{{}}}}}\n",
+        manifest_entries.join(",")
+    );
+    let packed =
+        pack_shard(&ManifestShard::parse(&shard).expect("parse shard")).expect("pack shard");
+    let shard_digest = hex_ahash64(&packed);
+    fs::write(objects.join(format!("ahash64-v1-{shard_digest}")), packed)
+        .expect("write shard object");
+    let manifest = format!(
+        "{{\"schema\":8,\"distribution\":\"receipt-test\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"]}}\n"
+    );
+    fs::write(distribution.join("manifest-v8.json"), &manifest).expect("write root");
+    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .env("XDG_CACHE_HOME", temp_dir.path().join("cache"))
+        .args(["run", "--offline", "--distribution"])
+        .arg(&distribution)
+        .args(["--distribution-ahash64", &hex_ahash64(manifest.as_bytes())])
+        .args(["--prefetch-input", "tex:remote.tex"])
+        .args(["--prefetch-input", "tex:unused.tex"])
+        .arg(&source)
+        .arg("--input-records-out")
+        .arg(&receipt)
+        .output()
+        .expect("run mixed receipt fixture");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let actual = fs::read_to_string(receipt).expect("read receipt");
+    let expected = format!(
+        "umber-input-admissions-v1\nmain\t{}\t{}\nfile\tused\ttex:local.tex\t{}\t{}\nfile\tused\ttex:remote.tex\t{}\t{}\nfile\tadmitted\ttex:unused.tex\t{}\t{}\n",
+        main_bytes.len(),
+        hex_ahash64(main_bytes),
+        local_bytes.len(),
+        hex_ahash64(local_bytes),
+        remote_bytes.len(),
+        hex_ahash64(remote_bytes),
+        unused_bytes.len(),
+        hex_ahash64(unused_bytes),
+    );
+    assert_eq!(actual, expected);
 }

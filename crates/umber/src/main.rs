@@ -1,6 +1,5 @@
-use std::collections::BTreeMap;
 use std::env;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use sha2::{Digest, Sha256};
@@ -475,8 +474,8 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
     if opts.html.is_some() {
         outputs = outputs.with(umber::OutputCapability::Html);
     }
-    let accepted =
-        umber::cli_resource::run_for_finalization(&umber::cli_resource::NativeRunOptions {
+    let accepted = umber::cli_resource::run_for_finalization(
+        &umber::cli_resource::NativeRunOptions {
             input: opts.input.clone(),
             format: opts.format.clone(),
             initial_prefetch_keys: opts.initial_prefetch_keys.clone(),
@@ -497,7 +496,9 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
             offline: opts.offline,
             expansion_fuel: opts.expansion_fuel,
             execution_steps: opts.execution_steps,
-        })?;
+        },
+        opts.input_records_out.is_some(),
+    )?;
     if let Some(path) = &opts.pdf_font_closure_out {
         accepted.write_pdf_font_closure_receipt(path)?;
     }
@@ -519,8 +520,13 @@ fn finalize_run(
     accepted_wall: std::time::Duration,
 ) -> Result<(), CliError> {
     let font_resources_ns = 0;
-    let (output, finalization, _input_path_map, resolved_inputs, main_input, telemetry, host) =
-        accepted.into_parts();
+    let input_receipt = opts
+        .input_records_out
+        .as_ref()
+        .map(|_| accepted.input_admission_receipt_bytes())
+        .transpose()
+        .map_err(|error| CliError::InputReceipt(error.to_string()))?;
+    let (output, finalization, _input_path_map, telemetry, host) = accepted.into_parts();
     if env::var_os("UMBER_RESOURCE_TELEMETRY").is_some_and(|value| value == "1") {
         eprintln!(
             "RESOURCE_TELEMETRY cold_starts={} suspensions={} resource_restarts={} local_step_retries={} replayed_delivered_tokens={} replayed_dispatches={} cumulative_fuel={} discarded_fuel={} resource_wait_ns={} engine_ns={}",
@@ -724,7 +730,7 @@ fn finalize_run(
     if let Some(receipt_output) = &opts.input_records_out {
         driver_files.push(DriverFile::new(
             receipt_output.clone(),
-            input_record_receipt(&resolved_inputs, Some(main_input))?,
+            input_receipt.expect("requested input receipt was prepared"),
         ));
     }
     let materialize_started = std::time::Instant::now();
@@ -1068,60 +1074,6 @@ impl RunCliOptions {
             None
         }
     }
-}
-
-fn input_record_receipt(
-    resolved_inputs: &[(PathBuf, usize)],
-    main_input: Option<(PathBuf, usize)>,
-) -> Result<Vec<u8>, CliError> {
-    let mut records = BTreeMap::<PathBuf, usize>::new();
-    for (path, len) in resolved_inputs {
-        insert_input_record(&mut records, path.clone(), *len)?;
-    }
-    if let Some((path, len)) = main_input {
-        insert_input_record(&mut records, path, len)?;
-    }
-
-    let mut receipt = Vec::new();
-    for (path, len) in records {
-        let Some(path) = path.to_str() else {
-            return Err(CliError::InputReceipt(
-                "an input path is not valid UTF-8".to_owned(),
-            ));
-        };
-        if path.contains(['\n', '\r', '\t']) {
-            return Err(CliError::InputReceipt(format!(
-                "an input path contains a receipt delimiter: {}",
-                Path::new(path).display()
-            )));
-        }
-        receipt.extend_from_slice(len.to_string().as_bytes());
-        receipt.push(b'\t');
-        receipt.extend_from_slice(path.as_bytes());
-        receipt.push(b'\n');
-    }
-    Ok(receipt)
-}
-
-fn insert_input_record(
-    records: &mut BTreeMap<PathBuf, usize>,
-    path: PathBuf,
-    len: usize,
-) -> Result<(), CliError> {
-    match records.entry(path) {
-        std::collections::btree_map::Entry::Vacant(entry) => {
-            entry.insert(len);
-        }
-        std::collections::btree_map::Entry::Occupied(entry) => {
-            if *entry.get() != len {
-                return Err(CliError::InputReceipt(format!(
-                    "input changed length while the job was running: {}",
-                    entry.key().display()
-                )));
-            }
-        }
-    }
-    Ok(())
 }
 
 fn format_token<G>(token: Token, stores: &Universe<G>) -> String {
@@ -1494,31 +1446,5 @@ mod tests {
         assert!(!line.contains("\\secret"));
         assert!(!line.contains("first_command=unknown"));
         assert!(!line.contains("first_token=unknown"));
-    }
-
-    #[test]
-    fn input_receipt_deduplicates_accepted_resolved_reads() {
-        let path = PathBuf::from("external.cfg");
-        let receipt = input_record_receipt(&[(path.clone(), 8), (path, 8)], None)
-            .expect("build input receipt");
-        assert_eq!(receipt, b"8\texternal.cfg\n");
-    }
-
-    #[test]
-    fn input_receipt_uses_resolved_paths() {
-        let resolved = PathBuf::from("/locked/texmf/logical.ltx");
-        let receipt =
-            input_record_receipt(&[(resolved, 8)], None).expect("build authoritative receipt");
-
-        assert_eq!(receipt, b"8\t/locked/texmf/logical.ltx\n");
-    }
-
-    #[test]
-    fn input_receipt_rejects_unescaped_tsv_delimiters() {
-        for path in ["tab\tname.tex", "line\nname.tex", "return\rname.tex"] {
-            let error = input_record_receipt(&[(PathBuf::from(path), 1)], None)
-                .expect_err("receipt paths containing delimiters must be rejected");
-            assert!(matches!(error, CliError::InputReceipt(_)));
-        }
     }
 }
