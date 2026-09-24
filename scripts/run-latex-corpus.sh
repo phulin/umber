@@ -38,6 +38,8 @@ cargo build -p parity-harness --features reference-tools > target/latex-corpus-h
 
 umber_bin="${CARGO_TARGET_DIR:-${repo_root}/target}/release/umber"
 parity_harness_bin="${CARGO_TARGET_DIR:-${repo_root}/target}/debug/parity-harness"
+publisher="${CARGO_TARGET_DIR:-${repo_root}/tools/texlive-wasm-publish/target}/release/texlive-wasm-publish"
+[[ -x "$publisher" ]] || fail "missing authenticated TeX Live publisher: $publisher"
 format_file="${repo_root}/target/latex-format/latex.fmt"
 texinputs="${texmf_dist}/tex/latex/base:${texmf_dist}/tex/latex/l3kernel:${texmf_dist}/tex/latex/l3backend:${texmf_dist}/tex/generic/unicode-data:${texmf_dist}/tex/generic/babel:${texmf_dist}/tex/generic/hyphen"
 texfonts="${texmf_dist}/fonts/tfm/public/cm:${texmf_dist}/fonts/tfm/public/latex-fonts:${texmf_dist}/fonts/tfm/jknappen/ec"
@@ -65,7 +67,9 @@ while read -r record kind relative expected_bytes expected_hash extra; do
   actual_bytes="$(wc -c < "$source" | tr -d ' ')"
   [[ "$actual_bytes" == "$expected_bytes" ]] || fail "runtime length mismatch for $relative"
   [[ "$(sha256 "$source")" == "$expected_hash" ]] || fail "runtime hash mismatch for $relative"
-  printf '%s\t%s\n' "$expected_bytes" "$source" >> "$expected_runtime"
+  request_name="${relative##*/}"
+  printf '%s:%s\t%s\t%s\n' "$kind" "$request_name" \
+    "$($publisher --file-ahash64 "$source")" "$expected_bytes" >> "$expected_runtime"
 done < "$runtime_lock"
 LC_ALL=C sort -u -o "$expected_runtime" "$expected_runtime"
 
@@ -93,6 +97,8 @@ for source in tests/latex/article.tex tests/latex/report.tex tests/latex/book.te
   cp "$source" "${reference_dir}/document.tex"
   cp "$source" "${umber_dir}/document.tex"
   cp "$format_file" "${umber_dir}/latex.fmt"
+  main_bytes="$(wc -c < "$source" | tr -d ' ')"
+  main_ahash64="$($publisher --file-ahash64 "$source")"
 
   for pass in 1 2 3; do
     (
@@ -111,17 +117,24 @@ for source in tests/latex/article.tex tests/latex/report.tex tests/latex/book.te
       grep -m1 '^! ' "${umber_dir}/document.stdout" >&2
       fail "Umber emitted a diagnostic for ${case_name}, pass ${pass}"
     fi
+    python3 scripts/verify-latex-corpus-inputs.py \
+      --receipt "${umber_dir}/document.inputs" \
+      --authorized "$expected_runtime" \
+      --main-bytes "$main_bytes" \
+      --main-ahash64 "$main_ahash64" \
+      --workdir "$umber_dir" \
+      --used-out "${umber_dir}/document-runtime.inputs" || \
+      fail "unlocked runtime input for ${case_name}, pass ${pass}"
+    cat "${umber_dir}/document-runtime.inputs" >> "$actual_runtime"
   done
 
   "$parity_harness_bin" --compare-existing-dvi \
     "${reference_dir}/document.dvi" "${umber_dir}/document.dvi" || \
     fail "DVI mismatch for ${case_name}"
   compare_auxiliary_files "$reference_dir" "$umber_dir"
-  awk -F '\t' -v prefix="${texmf_dist}/" 'index($2, prefix) == 1' \
-    "${umber_dir}/document.inputs" >> "$actual_runtime"
   printf 'LaTeX corpus parity: %s (3 passes)\n' "$case_name"
 done
 
 LC_ALL=C sort -u -o "$actual_runtime" "$actual_runtime"
 cmp "$expected_runtime" "$actual_runtime" || fail "base-corpus runtime closure changed"
-printf 'LaTeX runtime closure: exact (%s pinned inputs)\n' "$(wc -l < "$actual_runtime" | tr -d ' ')"
+printf 'LaTeX runtime closure: exact (%s pinned logical inputs)\n' "$(wc -l < "$actual_runtime" | tr -d ' ')"

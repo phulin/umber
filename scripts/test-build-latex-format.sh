@@ -18,6 +18,8 @@ mkdir -p \
   "${tmp_root}/cache"
 cp "${repo_root}/scripts/build-latex-format.sh" "${fixture_repo}/scripts/"
 cp "${repo_root}/scripts/verify-latex-format-inputs.py" "${fixture_repo}/scripts/"
+cp "${repo_root}/scripts/verify-latex-corpus-inputs.py" "${fixture_repo}/scripts/"
+cp "${repo_root}/scripts/latex_input_admissions.py" "${fixture_repo}/scripts/"
 printf '\\dump\n' > "${fixture_repo}/texmf-dist/tex/latex-dev/base/latex.ltx"
 printf '\\end\n' > "${fixture_repo}/tests/latex/format-equivalence.tex"
 printf '\\end\n' > "${fixture_repo}/tests/latex/pdflatex-smoke.tex"
@@ -271,5 +273,42 @@ sed 's/tex:latex.ltx\t6\t/tex:latex.ltx\t7\t/' \
 expect_failure 'consumed tex:latex.ltx is outside the locked source closure' \
   python3 "$verify_inputs" --receipt "$wrong_identity" \
     --authorized "$identity_index" --main-key tex:pdflatex.ini
+
+corpus_index="${tmp_root}/corpus.index"
+printf 'tfm:cmr10.tfm\tffffffffffffffff\t1296\n' > "$corpus_index"
+corpus_receipt="${tmp_root}/corpus.inputs"
+{
+  printf 'umber-input-admissions-v1\n'
+  printf 'main\t21\tffffffffffffffff\n'
+  printf 'file\tused\ttex:document.aux\t8\tffffffffffffffff\n'
+  printf 'file\tadmitted\ttex:unused.sty\t10\tffffffffffffffff\n'
+  printf 'file\tused\ttfm:cmr10.tfm\t1296\tffffffffffffffff\n'
+} > "$corpus_receipt"
+corpus_workdir="${tmp_root}/corpus"
+mkdir -p "$corpus_workdir"
+printf 'auxiliary' > "$corpus_workdir/document.aux"
+corpus_used="${tmp_root}/corpus-used.index"
+corpus_verifier="${fixture_repo}/scripts/verify-latex-corpus-inputs.py"
+corpus_args=(
+  --authorized "$corpus_index"
+  --main-bytes 21
+  --main-ahash64 ffffffffffffffff
+  --workdir "$corpus_workdir"
+  --used-out "$corpus_used"
+)
+python3 "$corpus_verifier" --receipt "$corpus_receipt" "${corpus_args[@]}"
+cmp "$corpus_index" "$corpus_used"
+
+corpus_extra="${tmp_root}/corpus-extra.inputs"
+sed 's/file\tadmitted\ttex:unused/file\tused\ttex:unused/' \
+  "$corpus_receipt" > "$corpus_extra"
+expect_failure 'consumed tex:unused.sty is outside the locked runtime closure' \
+  python3 "$corpus_verifier" --receipt "$corpus_extra" "${corpus_args[@]}"
+
+corpus_wrong_tfm="${tmp_root}/corpus-wrong-tfm.inputs"
+sed 's/tfm:cmr10.tfm\t1296\t/tfm:cmr10.tfm\t1297\t/' \
+  "$corpus_receipt" > "$corpus_wrong_tfm"
+expect_failure 'consumed tfm:cmr10.tfm differs from locked runtime identity' \
+  python3 "$corpus_verifier" --receipt "$corpus_wrong_tfm" "${corpus_args[@]}"
 
 printf '%s\n' 'build-latex-format tests: PASS'

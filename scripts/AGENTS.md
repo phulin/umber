@@ -161,9 +161,11 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   pdfLaTeX INITEX reproduction plus hermetic argument-routing coverage.
 - `test-build-latex-format.sh`: hermetic required-argument, root-pin,
   all-engine-run passthrough, forced-offline format authority, and consumed
-  versus speculative admission coverage. `verify-latex-format-inputs.py`
-  checks the engine's semantic admission receipt against the SHA-verified
-  construction closure without pinning local source paths.
+  versus speculative admission coverage. `latex_input_admissions.py` parses the
+  shared semantic receipt; `verify-latex-format-inputs.py` binds consumed
+  construction inputs to the SHA-verified format source closure, and
+  `verify-latex-corpus-inputs.py` binds consumed format-loaded inputs to the
+  pinned base-corpus runtime closure without physical source paths.
 - `check-latex-representative-resources.sh` and its test: cold, isolated,
   offline source-profile and loaded-format prefetch smokes over the exact
   pdfLaTeX construction/runtime locks, with a machine-readable identity
