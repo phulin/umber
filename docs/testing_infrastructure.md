@@ -150,8 +150,8 @@ projection must itself name observable behavior; an internal hash or counter
 is not a semantic oracle. [Semantic Testing](semantic_testing.md) gives that
 assertion boundary.
 
-On production revision `607d505c5`, explicitly selecting the same 210-case
-manual command below reports `matched=210, executed-known-failure=0,
+On production revision `3fa06c4da` (2026-09-24), explicitly selecting the same
+210-case manual command below reports `matched=210, executed-known-failure=0,
 unexpected-pass=0, other-failure=0, dormant=0, unselected=0` and exits `PASS`,
 including the independent format-provider reuse checks after the census.
 No reference fixture or comparison criterion changed to resolve the last
@@ -169,7 +169,8 @@ three cases from `c91995f9b`:
   terminal prompts with TeX's explicit line-break and control-sequence printer
   operations, respecting live character-printing parameters.
 
-The same revision passed all seven stages of `scripts/check-and-test.sh`
+Revision `607d505c5`, where those repairs landed, passed all seven stages of
+`scripts/check-and-test.sh`
 (`PASS 7`, `FAIL 0`, `BLOCKED 0`) with no coverage reductions. Focused routine
 regressions cover replacement lengths, intercepted delimiters, terminal input,
 rollback, prompt parameters, and generated first-command provenance.
@@ -807,14 +808,39 @@ normal side files. The command requires explicit clean-oracle, oracle-build,
 paired-format, format-receipt, TeX Live runtime, archive, and output paths.
 After the survey, pass the same arguments with `--verify-only`; that path
 launches no compiler and rehashes the complete source and artifact evidence
-before reproducing the ordered report and totals. The 2026-09-02 capture is
-`target/arxiv_census/recent-20260902-pdftex-pdf/`: 87 of 94 declared-pdfLaTeX
-rows produced authoritative reference PDFs, six stopped at an undefined
-control sequence, and one hit the 120-second guard with a non-authoritative
-partial PDF. This tier must not invoke Umber, inspect an Umber PDF, or patch a
-paper.
+before reproducing the ordered report and totals. The verified 2026-09-24
+capture is `target/parity-wave/arxiv-reference-pdf-paired-v3/`: 87 of 94
+declared-pdfLaTeX rows produced authoritative reference PDFs, six stopped at an
+undefined control sequence, and one hit the 120-second guard. All 100 locked
+archives were restored and verified; the two declared-LaTeX and four
+declared-XeLaTeX rows remain outside this denominator. The reference profile
+uses `pdflatex-dev` with the paired format and the pinned runtime
+configuration for font maps and Type1 lookup. This tier must not invoke Umber,
+inspect an Umber PDF, or patch a paper.
 
-The canonical per-document parity workflow is separate from the census. A
+The first full-source DVI run on `ed68f61a2` stopped after four rows:
+three were reference-DVI-ineligible, then `2607.09696` compiled with the
+reference but failed in Umber before producing DVI. The failure is
+`resolved files requires 513, exceeding limit 512`; no DVI comparison has
+passed yet, and the remaining 90 declared-pdfLaTeX rows are unvisited.
+The run and its verified prefix are in `target/parity-wave/arxiv-dvi/`.
+The authenticated schema-8 runtime root is `513498046b9743e2`, paired Umber
+pdfLaTeX format `a7467396cc8ee0bb` (990985 bytes). Both the format's semantic
+source verification and the clean-reference format-pair gate passed.
+The same production tree passed all seven combined native/quality stages.
+
+A separate clean-reference recorder run on the failing paper completed with
+201 unique input records. Umber's resource telemetry reproduces the binding
+limit after large speculative batches. `PrefetchPolicy::begin_phase` renews
+optional reservations on each engine demand, while the VFS binding limit
+covers the retained job-wide positive and negative records. This identifies
+resource admission and retention as the next diagnosis boundary; it does not
+establish a TeX semantic or DVI mismatch. Increasing the limit would not
+resolve whether optional prefetch can prevent a demanded read. The captured
+failure and guards remain unchanged.
+
+The [serial arXiv DVI cohort](arxiv_dvi_cohort.md) implements the canonical
+per-document parity workflow, separately from the census. A
 candidate qualifies only when its complete, unmodified archive compiles
 cleanly with the pinned TeX Live 2026 pdfTeX in both DVI and PDF modes; retain
 the two output identities and page counts. PDF compilation is only an
@@ -1576,12 +1602,13 @@ The [command-core diagnostic tools](command_core_diagnostics.md) document the di
 ## TRIP Corpus
 
 The explicit TRIP, e-TRIP, and canonical Gentle gates all passed at
-`dac5a4edd` on 2026-09-24. Each selected one full-document test against its
-existing local oracle; no reference artifacts or acceptance rules changed.
+`a0e30e56c` on 2026-09-24, after the CLI input-receipt change. Each selected
+one full-document test against its existing local oracle; no reference artifacts or acceptance rules changed.
 These results are separate from the 210-case semantic corpus and from the
-routine native gate. Their logs are retained under each assigned worktree's
-`target/parity-wave/`: slot 1 `trip-canonical.log`, slot 2
-`etrip-current.log`, and slot 3 `gentle-canonical.log`.
+routine native gate. Their logs are retained in slot 3's
+`target/parity-wave/`: `final-trip_canonical.log`, `final-etrip.log`, and
+`final-gentle_canonical.log`. The same revision passed all seven stages of
+`scripts/check-and-test.sh`, with no failures, blockers, or coverage reductions.
 
 The original Knuth TeX82 TRIP and e-TeX V2 e-TRIP workloads are end-to-end DVI
 conformance tests governed by the

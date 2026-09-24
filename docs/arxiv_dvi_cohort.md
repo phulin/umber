@@ -25,7 +25,7 @@ directory cannot silently change authority on resume:
 python3 scripts/run-arxiv-dvi-cohort.py \
   --source-lock scripts/pdftex-arxiv-recent-sample-100.lock.tsv \
   --archives target/parity-wave/arxiv-acquisition \
-  --pdf-survey target/parity-wave/arxiv-reference-pdf-paired \
+  --pdf-survey target/parity-wave/arxiv-reference-pdf-paired-v3 \
   --oracle target/pdftex14029-oracle/bin/umber-pdftex14029-oracle-clean \
   --oracle-build-record target/pdftex14029-oracle/build-record.txt \
   --reference-format target/pdftex14029-reference-format/pdflatex.fmt \
