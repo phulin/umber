@@ -2,7 +2,7 @@
 
 ## Dated-source front
 
-The next parity front selects the TeX Live year from each archive's
+The dated-source parity front selects the TeX Live year from each archive's
 `00README.json`, and uses the same dated stable sources to build the reference
 and Umber formats. The reference engine remains modern pdfTeX. See the
 [detailed source-selection contract](texlive_release_selection.md#dated-source-parity-rollout-20232026).
@@ -20,6 +20,27 @@ installation. Reference DVI success qualifies a paper independently of PDF
 success. XeLaTeX remains explicitly unsupported by this engine. Preserve the
 fixed-2026 development-kernel experiment below; its success counts cannot be
 carried over to this source selection.
+
+The completed 100-archive run in
+`target/texlive-years/arxiv-modern-latex/summary.json` records 18 exact DVI
+matches, covering 346 pages, 78 reference-DVI-ineligible papers, and four
+unsupported XeLaTeX papers. All papers with successful reference DVI match;
+there are no pending comparisons or divergences. DVI equality uses the existing
+comparator's preamble-comment normalization. The ordinary resource limits
+below remain unchanged.
+
+The separate `target/texlive-years/modern-latex-representatives/` capture
+contains eight exact one-page article comparisons: LaTeX and pdfLaTeX for each
+of 2023, 2024, 2025, and 2026. These establish format loading and basic output
+for all four releases; they do not substitute for a substantial paper corpus
+for each year. The qualifying papers in this sample all declare 2025.
+Both captures use `target/texlive-years/all-modern-latex-preparation.json`.
+
+LaTeX DVI runs retain pdfTeX primitives and engine identity, as the reference
+does. Hiding them made `iftex.sty` choose different font packages in the
+51-page paper `2606.27112`. Correcting that engine profile and rebuilding the
+native LaTeX formats resolves the difference. Reference formats, native
+pdfLaTeX formats, and runtime catalogs were reused.
 
 Acquire the selected releases, then prepare them with the same current binaries:
 
