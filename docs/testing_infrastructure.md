@@ -842,24 +842,36 @@ The full native and quality gate, TRIP, e-TRIP, Gentle, and all 210 command
 semantic cases passed at `13e904f1b`. The subsequent negative-code correction
 at `7081313e9` also matches all 28 reduced reference DVI controls.
 
-The fresh full-source corpus capture at
-`target/parity-wave/arxiv-dvi-protrusion-rounding/` matches four papers:
-`2607.09696` (4 pages), `2607.00102` (17 pages), `2607.09012` (15 pages), and
-`2607.08982` (46 pages). The next qualified paper, `2607.12761`, completes all
-40 pages but first differs at byte 186469 on page 37: the reference emits a
-rule above a `k`, while Umber emits a nested push and horizontal movement.
-Its cause remains unestablished. The serial runner stopped there: 27 of 94
-rows recorded, including 19 reference-DVI failures and three reference-PDF
-failures. The remaining 12 DVI-qualified papers have not run with this binary.
-Four of the 17 qualified papers therefore have exact parity; completing a
-paper is not counted as a match.
+The paired-script fix at `b9118cf50` preserves vertical boxes when combining
+superscripts and subscripts, retaining overlines and other vertical material.
+All eleven reduced reference DVI cases match, including single-script and
+ordinary horizontal controls. The final full-source corpus capture at
+`target/parity-wave/arxiv-dvi-script-axis/` completed all 94 declared-pdfLaTeX
+rows: **all 17 reference-DVI-success papers match exactly, totaling 295 pages**.
+The remaining rows comprise 70 reference-DVI failures and seven reference-PDF
+failures; the independent DVI qualification confirms that none of those seven
+adds a DVI-success candidate. The other six locked archives declare LaTeX or
+XeLaTeX and are outside this cohort.
+
+The runner used unmodified source archives and the existing 120-second,
+1536-MiB, 500-million-fuel, and 10-million-step limits. Comparison normalizes
+only the DVI preamble comment. Every completed receipt was reverified without
+compiler launches, with verdict `COMPLETE (94/94 declared-pdfLaTeX rows)`.
+This is DVI parity for the qualified sample, not a measurement of Umber PDF
+output or the separate multi-pass LaTeX corpus.
+
+Final validation at `b9118cf50` passed the complete native suite and quality
+gate (`scripts/check-and-test.sh`: seven stages passed, zero failed or blocked,
+zero coverage reductions), TRIP, e-TRIP, Gentle, and all 210 command-semantic
+cases.
 
 The new authenticated schema-8 runtime root is `f797fe56a183a3d9`, with Umber
 pdfLaTeX format `132a135cdd424b1f` (1128469 bytes, format schema 13). The
 format's source verification, clean-reference format-pair gate, and complete
 published-object verification passed. Earlier captures remain intact under
 `target/parity-wave/arxiv-dvi-demand-admission/` and
-`target/parity-wave/arxiv-dvi-glue-identity/`. The original speculative-loading
+`target/parity-wave/arxiv-dvi-glue-identity/`, and
+`target/parity-wave/arxiv-dvi-protrusion-rounding/`. The original speculative-loading
 failure is preserved in `target/parity-wave/arxiv-dvi/`; its 512-binding limit
 was not increased.
 
