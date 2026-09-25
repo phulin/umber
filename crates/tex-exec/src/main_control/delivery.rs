@@ -262,6 +262,7 @@ impl<G> MainControl<G> {
                 let tracked_region_is_active = context.tracked_region_is_active();
                 let job_is_all_over = crate::page_output::job_is_all_over(context);
                 let display_eq_no = self.modes.current_list().display_eq_no().is_some();
+                let mut retained_main_loop_command = false;
                 if raw_main_loop_delivery
                     && self.main_loop_active
                     && matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal)
@@ -336,6 +337,7 @@ impl<G> MainControl<G> {
                         Ok(tex_command::DeliveryStatus::CharacterRunBoundary) => {
                             // The resolved raw tail remains in `frame.command`; the
                             // ordinary processor below performs §1038's x_token.
+                            retained_main_loop_command = true;
                         }
                         Ok(tex_command::DeliveryStatus::CharacterRun) => {}
                         Ok(_) => unreachable!(
@@ -377,6 +379,14 @@ impl<G> MainControl<G> {
                         )
                     };
                     processor.set_output_routine_active(self.boxes.output_routine_active);
+                    if retained_main_loop_command {
+                        // TeX82 §1038 keeps this raw `cur_cmd` live while
+                        // leaving the character loop. The source-run and
+                        // ordinary processor borrows are separate here, so
+                        // readmit that same delivery before x_token or
+                        // §1095's `head_for_vmode` can back it up.
+                        processor.resume_current_command(frame.current());
+                    }
                     prepare_command_trace(&mut processor, mode, self.shown_mode);
                     // TeX82 has one raw-fetch/classification loop. Enter it once with
                     // §1038's first-command policy when the character loop is active;

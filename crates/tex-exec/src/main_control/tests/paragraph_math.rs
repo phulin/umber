@@ -3,6 +3,23 @@
 use super::*;
 
 #[test]
+fn main_loop_boundary_keeps_vertical_glue_delivery_live_for_backup() {
+    // TeX82 §1038 leaves the already-read `\vfil` in cur_cmd when a
+    // character run ends. Section 1095 then backs it up before inserting
+    // `\par`. Both transitions must address the same delivery even when
+    // executor preflight uses two processor borrows.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_cmr10_as(&mut control, stores, "cmr10.tfm");
+        register_source(&mut control, br"\font\f=cmr10 \f A\vfil\end");
+
+        run_to_end(&mut control, stores);
+
+        assert_eq!(stores.world().committed_artifacts().len(), 2);
+    });
+}
+
+#[test]
 fn etex_lastlinefit_traces_saved_shortfall_glue_and_final_adjustment() {
     // e-TeX change-file section 38.846 prints the two extra active-node
     // words whenever last-line fitting is enabled, naming the terminal
