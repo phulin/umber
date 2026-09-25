@@ -24,7 +24,6 @@ printf 'format fixture\n' > "${fixture_repo}/pdflatex.fmt"
 
 cat > "${fixture_repo}/tests/latex-source.lock" <<'EOF'
 distribution fixture
-format_schema 11
 source_date_epoch 1
 source tex/base.tex 1 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 local tests/local.tex 2 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb

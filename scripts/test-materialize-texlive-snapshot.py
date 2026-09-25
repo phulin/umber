@@ -9,6 +9,9 @@ import tempfile
 import threading
 from pathlib import Path
 
+import texlive
+from texlive_test_fixtures import packed_fixture_shard
+
 
 def sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
@@ -17,7 +20,7 @@ def sha(data: bytes) -> str:
 def key_for_shard(stem: str, index: int) -> str:
     for suffix in range(1000):
         key = f"tex:{stem}-{suffix}.tex"
-        if hashlib.sha256(key.encode()).digest()[0] >> 7 == index:
+        if int(texlive.ahash64_bytes(key.encode(), 2), 16) >> 63 == index:
             return key
     raise AssertionError(f"could not construct a key for shard {index}")
 
@@ -38,46 +41,41 @@ with tempfile.TemporaryDirectory() as temporary:
 
     selected = b"selected fixture payload\n"
     selected_digest = sha(selected)
-    selected_name = f"sha256-{selected_digest}"
+    selected_hash = texlive.ahash64_bytes(selected)
+    selected_name = f"ahash64-v1-{selected_hash}"
     (objects / selected_name).write_bytes(selected)
     unselected = b"unselected payload must remain remote\n"
     unselected_digest = sha(unselected)
-    unselected_name = f"sha256-{unselected_digest}"
+    unselected_hash = texlive.ahash64_bytes(unselected)
+    unselected_name = f"ahash64-v1-{unselected_hash}"
     (objects / unselected_name).write_bytes(unselected)
 
     selected_key = "tex:selected.tex"
-    selected_index = hashlib.sha256(selected_key.encode()).digest()[0] >> 7
+    selected_index = int(texlive.ahash64_bytes(selected_key.encode(), 2), 16) >> 63
     other_index = 1 - selected_index
     unavailable_key = key_for_shard("unavailable", other_index)
     unselected_key = key_for_shard("unselected", other_index)
     shard_files = [{}, {}]
     shard_files[selected_index][selected_key] = {
-        "virtualPath": "tex/selected.tex",
+        "virtualPath": "/texlive/tex/selected.tex",
         "object": selected_name,
-        "sha256": selected_digest,
+        "ahash64": selected_hash,
         "bytes": len(selected),
         "dependencies": [],
     }
     shard_files[other_index][unselected_key] = {
-        "virtualPath": "tex/unselected.tex",
+        "virtualPath": "/texlive/tex/unselected.tex",
         "object": unselected_name,
-        "sha256": unselected_digest,
+        "ahash64": unselected_hash,
         "bytes": len(unselected),
         "dependencies": [],
     }
     shard_digests = []
     for index, files in enumerate(shard_files):
-        shard = canonical_json(
-            {
-                "schema": 1,
-                "distribution": "fixture",
-                "index": index,
-                "files": files,
-            }
-        )
-        digest = sha(shard)
+        shard = packed_fixture_shard("fixture", files, index=index)
+        digest = texlive.ahash64_bytes(shard)
         shard_digests.append(digest)
-        (objects / f"sha256-{digest}").write_bytes(shard)
+        (objects / f"ahash64-v1-{digest}").write_bytes(shard)
 
     class Quiet(http.server.SimpleHTTPRequestHandler):
         def log_message(self, *_arguments) -> None:
@@ -91,7 +89,7 @@ with tempfile.TemporaryDirectory() as temporary:
     base = f"http://127.0.0.1:{server.server_port}/"
     manifest = canonical_json(
         {
-            "schema": 3,
+            "schema": 8,
             "distribution": "fixture",
             "objectsBaseUrl": base + "objects/",
             "shardBits": 1,
@@ -100,38 +98,40 @@ with tempfile.TemporaryDirectory() as temporary:
             "formats": {
                 "latex": {
                     "object": selected_name,
-                    "sha256": selected_digest,
+                    "ahash64": selected_hash,
                     "bytes": len(selected),
                     "inputClosure": {"schema": 1, "keys": [selected_key]},
                 }
             },
         }
     )
-    (hosted / "manifest-v3.json").write_bytes(manifest)
+    (hosted / "manifest.json").write_bytes(manifest)
 
     fixture = work / "provision.py"
     fixture.write_text(script.read_text())
     (work / "texlive.py").write_text(library.read_text())
+    for module in ("pdftex_reference_format.py", "texlive_release.py"):
+        (work / module).write_text((root / "scripts" / module).read_text())
     common = [
         "python3",
         str(fixture),
         "materialize",
         "--root-url",
-        base + "manifest-v3.json",
-        "--root-sha256",
-        sha(manifest),
+        base + "manifest.json",
+        "--root-ahash64",
+        texlive.ahash64_bytes(manifest),
     ]
 
     destination = work / "mirror"
     command = common + ["--output-dir", str(destination), "--format", "latex"]
     subprocess.run(command, check=True, capture_output=True, text=True)
     subprocess.run(command + ["--offline"], check=True, capture_output=True, text=True)
-    assert (destination / "manifest-v3.json").read_bytes() == manifest
+    assert (destination / "manifest-v8.json").read_bytes() == manifest
     assert (destination / "objects" / selected_name).read_bytes() == selected
     assert not (destination / "objects" / unselected_name).exists()
     assert (destination / "texmf-dist/tex/selected.tex").read_bytes() == selected
     for digest in shard_digests:
-        assert (destination / "objects" / f"sha256-{digest}").is_file()
+        assert (destination / "objects" / f"ahash64-v1-{digest}").is_file()
 
     key_file = work / "keys.txt"
     key_file.write_text(selected_key + "\n")
@@ -149,8 +149,6 @@ with tempfile.TemporaryDirectory() as temporary:
     representative_lock = work / "representative.lock"
     representative_lock.write_text(
         "distribution fixture\n"
-        f"distribution_sha256 {sha(manifest)}\n"
-        "format_schema 11\n"
         "source_date_epoch 1\n"
         f"pdflatex-source tex/selected.tex {len(selected)} {selected_digest}\n"
     )
@@ -202,6 +200,15 @@ with tempfile.TemporaryDirectory() as temporary:
     )
     assert mismatched.returncode != 0
     assert "differs from pinned lock identity" in mismatched.stderr
+    # A valid transport cache must not bypass the independent source lock.
+    cached_mismatch = subprocess.run(
+        common + ["--output-dir", str(work / "mismatched-mirror"),
+                  "--keys-from", str(mismatched_lock), "--offline"],
+        capture_output=True, text=True,
+    )
+    assert cached_mismatch.returncode != 0
+    assert "differs from pinned lock identity" in cached_mismatch.stderr
+    assert not (work / "mismatched-mirror/texmf-dist/tex/selected.tex").exists()
 
     receipt = work / "font-closure.tsv"
     receipt.write_text(

@@ -3,7 +3,6 @@
 # Common fields: source|local <path> <bytes> <sha256>.
 # pdfLaTeX-only fields: pdflatex-source|pdflatex-local <path> <bytes> <sha256>.
 distribution texlive-20260301-texmf
-format_schema 12
 source_date_epoch 1772323200
 pdftex-reference-source web2c/texmf.cnf 43630 a2e9447fc8b6dfa407fa8d0d710e59b039e22598e3f17de0bdf54daba478742c
 pdftex-reference-source web2c/cp227.tcx 3500 3218a2fe7de309874c669993af05edd7335d30189f75c405b2390e7eb18d8250

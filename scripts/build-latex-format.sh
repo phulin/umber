@@ -133,9 +133,8 @@ sha256() {
 [[ -f "$lock_file" ]] || fail "missing source lock: $lock_file"
 
 distribution="$(awk '$1 == "distribution" { print $2 }' "$lock_file")"
-format_schema="$(awk '$1 == "format_schema" { print $2 }' "$lock_file")"
 source_date_epoch="$(awk '$1 == "source_date_epoch" { print $2 }' "$lock_file")"
-[[ -n "$distribution" && -n "$format_schema" && -n "$source_date_epoch" ]] || \
+[[ -n "$distribution" && -n "$source_date_epoch" ]] || \
   fail "source lock is missing required metadata"
 if awk '$1 == "distribution_ahash64" { found = 1 } END { exit !found }' "$lock_file"; then
   fail "source lock must not pin a packaging root digest"
@@ -331,10 +330,9 @@ else
 fi
 
 magic="$(od -An -t x1 -N 8 "$format_file" | tr -d ' \n')"
-actual_schema="$(od -An -t u4 -j 8 -N 4 "$format_file" | tr -d ' \n')"
+format_schema="$(od -An -t u4 -j 8 -N 4 "$format_file" | tr -d ' \n')"
 [[ "$magic" == 554d4252464d5400 ]] || fail "format image lacks Umber format magic"
-[[ "$actual_schema" == "$format_schema" ]] || \
-  fail "format schema $actual_schema does not match locked schema $format_schema"
+[[ "$format_schema" =~ ^[1-9][0-9]*$ ]] || fail "format image has no valid schema"
 if [[ "$generated" -eq 1 && "$cache_state" == hit ]]; then
   cmp "$format_file" "$cached_format" || \
     fail "regenerated ${format_name} format differs from the validated cache entry"

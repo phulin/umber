@@ -42,7 +42,6 @@ pdftexconfig_sha256="$(sha256_file "${fixture_repo}/tests/latex/pdftexconfig.tex
 
 cat > "${fixture_repo}/tests/latex-source.lock" <<EOF
 distribution fixture
-format_schema 12
 source_date_epoch 1
 source tex/latex-dev/base/latex.ltx 6 ${source_sha256}
 pdflatex-source tex/latex/tex-ini-files/pdflatex.ini 17 ${pdflatex_source_sha256}
@@ -117,7 +116,7 @@ with Path(os.environ["UMBER_TEST_INVOCATIONS"]).open("a", encoding="utf-8") as o
     output.write(json.dumps(arguments) + "\n")
 if "--format-out" in arguments:
     output = Path(arguments[arguments.index("--format-out") + 1])
-    output.write_bytes(b"UMBRFMT\0" + struct.pack("<I", 12) + b"fixture")
+    output.write_bytes(b"UMBRFMT\0" + struct.pack("<I", 37) + b"fixture")
 if "--input-records-out" in arguments:
     output = Path(arguments[arguments.index("--input-records-out") + 1])
     output.write_bytes(Path(os.environ["UMBER_TEST_INPUT_RECEIPT"]).read_bytes())
@@ -190,6 +189,14 @@ UMBER_TEST_BUILD_CONFIGURATION="$captured_build_configuration" \
     --distribution-ahash64 "$distribution_ahash64" \
     --output-dir "${fixture_repo}/output" \
     --force >/dev/null
+
+# Packaging reports the producer's schema; the source lock owns only inputs.
+python3 - "${fixture_repo}/output/latex-format.json" <<'PYSCHEMA'
+import json
+import sys
+with open(sys.argv[1]) as stream:
+    assert json.load(stream)["formatSchema"] == 37
+PYSCHEMA
 
 grep -Fx 'schema=2' "$captured_build_configuration" >/dev/null
 grep -Fx "producer-sha256=$(sha256_file "${fixture_repo}/target/release/umber")" \

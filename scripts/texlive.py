@@ -430,7 +430,6 @@ def read_runtime_requests(
         if not fields or fields[0].startswith("#") or fields[0] in {
             "distribution",
             "distribution_sha256",
-            "format_schema",
             "source_date_epoch",
         }:
             continue
@@ -962,6 +961,17 @@ def materialize_snapshot(
         if data is None:
             _acquire_snapshot_object(urljoin(objects_url, name), object_path, identity, offline)
         total += identity.bytes
+    # Catalogue aHash64 authenticates transport objects. Source locks and
+    # consumed-input receipts independently constrain their SHA-256 content,
+    # regardless of whether acquisition used HTTP, a cache, or a seed root.
+    for key, source_identity in sorted(expected.items()):
+        record = shard_documents[_shard_index(key, bits)][key]
+        verify_file(
+            output / "objects" / record["object"],
+            source_identity,
+            "sha256",
+            f"requested key differs from pinned lock identity: {key}",
+        )
     for virtual, name in sorted(views.items(), key=lambda item: str(item[0])):
         source = output / "objects" / name
         destination = output / "texmf-dist" / virtual

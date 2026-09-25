@@ -38,6 +38,8 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   shared-counter amsthm and exact-byte-input probe in DVI mode only, requires
   normalized DVI identity, and publishes the matching macro and DVI fingerprints
   under `target/`.
+- `texlive_test_fixtures.py`: tiny packed schema-8 catalogue fixtures shared by
+  provisioning and execution-mirror tests.
 - `test-provision.py`: hermetic program-source and release-runtime acquisition,
   replacement, ISO-range, offline, and ordered TRIP-locator coverage for the
   shared libraries and CLI.

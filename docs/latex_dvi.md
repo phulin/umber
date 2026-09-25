@@ -137,7 +137,9 @@ distribution transport locations are part of this identity.
 
 The explicit distribution must be a local authenticated mirror. Its root
 digest is supplied and checked at build time; `tests/latex-source.lock` pins
-the exact source bytes independently of packaging. Every engine invocation
+the exact source bytes independently of packaging. The engine codec owns the
+format schema; builders report the validated image header without duplicating
+that version in the source lock. Every engine invocation
 uses the resolved path and digest with offline acquisition. Materialize and recheck the required
 selection as described in [Sharded Distribution Manifest](distribution_manifest.md)
 before running the builder.
