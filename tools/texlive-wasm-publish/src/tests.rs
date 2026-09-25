@@ -76,13 +76,13 @@ fn rewrite_packed_shard(
     Ok(())
 }
 
-fn migrated_plain_format(
+fn plain_format_fixture(
     fixture: &TempDir,
     label: &str,
 ) -> Result<(std::path::PathBuf, serde_json::Value)> {
     let assets = test_support::repository_root().join("crates/umber-wasm/assets");
-    let mut bytes = fs::read(assets.join("plain.fmt"))?;
-    bytes[8..12].copy_from_slice(&12_u32.to_le_bytes());
+    let bytes = fs::read(assets.join("plain.fmt"))?;
+    let format_schema = u32::from_le_bytes(bytes[8..12].try_into()?);
     let path = fixture.path().join(format!("{label}.fmt"));
     fs::write(&path, &bytes)?;
     let ahash64 = digest(&bytes);
@@ -96,7 +96,7 @@ fn migrated_plain_format(
             "bytes": bytes.len(),
             "engine": "umber",
             "engineVersion": "fixture",
-            "formatSchema": 12,
+            "formatSchema": format_schema,
             "sourceDistribution": "fixture",
             "sourceManifestAhash64": "a".repeat(16),
             "sourceDateEpoch": 0
@@ -367,7 +367,7 @@ fn fixture_publication_is_byte_stable_and_content_addressed() -> Result<()> {
     write(&second, "tex/extra.tex", b"extra\n")?;
 
     let mut config = config(vec![root("first", &first)?, root("second", &second)?]);
-    let (format_path, metadata) = migrated_plain_format(&fixture, "stable-plain")?;
+    let (format_path, metadata) = plain_format_fixture(&fixture, "stable-plain")?;
     let metadata_path = write_metadata(&fixture, "stable-plain", &metadata)?;
     config.formats.push(FormatConfig {
         path: format_path,
@@ -405,7 +405,12 @@ fn fixture_publication_is_byte_stable_and_content_addressed() -> Result<()> {
     assert_eq!(inline.ahash64, manifest.files["tfm:cmr10.tfm"].ahash64);
     let format = manifest.formats.get("plain").expect("plain format");
     assert_eq!(format.engine, "umber");
-    assert_eq!(format.format_schema, 12);
+    assert_eq!(
+        u64::from(format.format_schema),
+        metadata["formatSchema"]
+            .as_u64()
+            .expect("fixture format schema")
+    );
     assert_eq!(
         objects_a.get(&format.object).map(Vec::len),
         Some(format.bytes as usize)
@@ -478,7 +483,7 @@ fn sparse_successor_reuses_an_verified_base_and_stages_only_changes() -> Result<
     fs::create_dir_all(&base_root)?;
     write(&base_root, "tex/plain/base/plain.tex", b"old plain\n")?;
     write(&base_root, "tex/other.tex", b"unchanged\n")?;
-    let (format_path, metadata) = migrated_plain_format(&fixture, "successor-plain")?;
+    let (format_path, metadata) = plain_format_fixture(&fixture, "successor-plain")?;
     let metadata_path = write_metadata(&fixture, "successor-plain", &metadata)?;
     let mut base_config = config(vec![root("base", &base_root)?]);
     base_config.dependencies.clear();
@@ -545,7 +550,7 @@ fn format_input_closures_are_canonical_and_verified() -> Result<()> {
     fs::create_dir_all(&root_path)?;
     write(&root_path, "tex/plain.tex", b"plain")?;
     write(&root_path, "fonts/tfm/public/cm/cmr10.tfm", b"tfm")?;
-    let (format_path, mut metadata) = migrated_plain_format(&fixture, "closure-plain")?;
+    let (format_path, mut metadata) = plain_format_fixture(&fixture, "closure-plain")?;
     metadata["schema"] = 4.into();
     metadata["inputClosure"] = serde_json::json!({
         "schema": 1,
@@ -624,7 +629,7 @@ fn rejects_format_built_from_a_shadowed_runtime_input() -> Result<()> {
         development,
     )?;
 
-    let (format_path, mut metadata) = migrated_plain_format(&fixture, "shadowed-plain")?;
+    let (format_path, mut metadata) = plain_format_fixture(&fixture, "shadowed-plain")?;
     metadata["schema"] = 4.into();
     metadata["inputClosure"] = serde_json::json!({
         "schema": 1,
@@ -676,7 +681,7 @@ fn format_language_configuration_is_the_published_runtime_winner() -> Result<()>
         b"generated runtime language configuration\n",
     )?;
 
-    let (format_path, mut metadata) = migrated_plain_format(&fixture, "language-plain")?;
+    let (format_path, mut metadata) = plain_format_fixture(&fixture, "language-plain")?;
     metadata["schema"] = 4.into();
     metadata["inputClosure"] = serde_json::json!({
         "schema": 1,
@@ -729,7 +734,7 @@ fn rejects_duplicate_and_oversized_format_input_closures() -> Result<()> {
     let root_path = fixture.path().join("root");
     fs::create_dir_all(&root_path)?;
     write(&root_path, "tex/plain.tex", b"plain")?;
-    let (format_path, base) = migrated_plain_format(&fixture, "invalid-closure-plain")?;
+    let (format_path, base) = plain_format_fixture(&fixture, "invalid-closure-plain")?;
     for (label, keys) in [
         ("duplicate", vec!["tex:plain.tex".to_owned(); 2]),
         (

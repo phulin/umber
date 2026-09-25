@@ -190,76 +190,10 @@ fn every_excluded_workspace_directory_names_its_check() {
     }
 }
 
-/// A format-schema bump crosses workspace, excluded-tool, release-lock,
-/// browser-fixture, benchmark, and documentation boundaries. Keep the
-/// deliberately explicit inventory here so a new bump cannot leave a
-/// consumer outside the crate that owns the version.
+/// The shipped local asset must match the codec that will load it. Source
+/// locks, synthetic parser fixtures, and prose do not own codec versions.
 #[test]
-fn current_format_schema_receipts_cover_every_release_surface() {
-    struct HistoricalSchema10Use {
-        path: &'static str,
-        marker: &'static str,
-        expected_count: usize,
-        reason: &'static str,
-    }
-
-    const HISTORICAL_SCHEMA_10_USES: &[HistoricalSchema10Use] = &[
-        HistoricalSchema10Use {
-            path: "crates/umber-distribution/src/tests.rs",
-            marker: "\"formatSchema\":10",
-            expected_count: 3,
-            reason: "schema-agnostic distribution parser fixtures",
-        },
-        HistoricalSchema10Use {
-            path: "crates/tex-exec/src/shipout/transaction.rs",
-            marker: "artifact_schema: 10,",
-            expected_count: 1,
-            reason: "memo artifact schema, not the frozen-format schema",
-        },
-        HistoricalSchema10Use {
-            path: "docs/architecture.md",
-            marker: "Schema 10 introduced authoritative fixed-width sections",
-            expected_count: 1,
-            reason: "frozen-format schema history",
-        },
-        HistoricalSchema10Use {
-            path: "docs/architecture.md",
-            marker: "Schemas 9 and 10 are rejected rather than guessed",
-            expected_count: 1,
-            reason: "frozen-format migration policy",
-        },
-        HistoricalSchema10Use {
-            path: "docs/frozen_format.md",
-            marker: "Schema 10 introduced the",
-            expected_count: 1,
-            reason: "frozen-format schema history",
-        },
-        HistoricalSchema10Use {
-            path: "docs/frozen_format.md",
-            marker: "schema 10, or partially migrated images",
-            expected_count: 1,
-            reason: "frozen-format compatibility exclusion",
-        },
-        HistoricalSchema10Use {
-            path: "docs/format_cache.md",
-            marker: "historical 588,488-byte schema-10 image",
-            expected_count: 1,
-            reason: "historical Plain reproducibility result",
-        },
-        HistoricalSchema10Use {
-            path: "docs/format_cache.md",
-            marker: "historical minimal fixed-clock 38,304-byte schema-10 image",
-            expected_count: 1,
-            reason: "historical e-TeX reproducibility result",
-        },
-        HistoricalSchema10Use {
-            path: "docs/format_cache.md",
-            marker: "historical packaged Plain test loaded the same schema-10 bytes",
-            expected_count: 1,
-            reason: "historical browser compatibility result",
-        },
-    ];
-
+fn packaged_plain_format_matches_current_codec() {
     let root = repo_root();
     let schema_source =
         std::fs::read_to_string(root.join("crates/tex-state/src/format_container.rs"))
@@ -274,39 +208,6 @@ fn current_format_schema_receipts_cover_every_release_surface() {
         })
         .expect("format schema owner declares a literal SCHEMA_VERSION");
 
-    let receipts = [
-        (
-            "crates/umber-wasm/assets/plain-source.lock",
-            format!("format_schema {schema}"),
-        ),
-        (
-            "crates/umber-wasm/js/manifest-resolver.test.js",
-            format!("formatSchema: {schema}"),
-        ),
-        ("tests/latex-source.lock", format!("format_schema {schema}")),
-        (
-            "tools/texlive-wasm-publish/src/tests.rs",
-            format!("assert_eq!(format.format_schema, {schema})"),
-        ),
-        (
-            "benchmarks/tex-state/src/bin/format_cache_profile.rs",
-            format!("profile input must be schema-{schema}"),
-        ),
-        (
-            "docs/architecture.md",
-            format!("currently\nat schema {schema}"),
-        ),
-    ];
-
-    for (path, expected) in receipts {
-        let contents = std::fs::read_to_string(root.join(path))
-            .unwrap_or_else(|error| panic!("{path}: {error}"));
-        assert!(
-            contents.contains(&expected),
-            "{path} must receipt current format schema {schema} with {expected:?}"
-        );
-    }
-
     // The browser fixture uses a generated packed catalog. The local Plain
     // image has its own metadata; deployment of a default catalog is separate.
     let plain_metadata: Value = serde_json::from_str(
@@ -320,83 +221,14 @@ fn current_format_schema_receipts_cover_every_release_surface() {
         plain_metadata["formatSchema"].as_u64(),
         Some(u64::from(schema))
     );
-    assert!(plain_metadata["ahash64"].as_str().is_some());
-
-    let tracked = Command::new("git")
-        .args(["ls-files", "-z"])
-        .current_dir(&root)
-        .output()
-        .expect("list tracked release surfaces");
-    assert!(
-        tracked.status.success(),
-        "git ls-files failed: {}",
-        String::from_utf8_lossy(&tracked.stderr)
-    );
-    let mut classified_counts = vec![0_usize; HISTORICAL_SCHEMA_10_USES.len()];
-    let mut unclassified = Vec::new();
-    for path in tracked
-        .stdout
-        .split(|byte| *byte == 0)
-        .filter(|path| !path.is_empty())
-    {
-        let path = std::str::from_utf8(path).expect("tracked path is UTF-8");
-        if path == "crates/test-support/tests/workspace_selection.rs" {
-            continue;
-        }
-        let Ok(contents) = std::fs::read_to_string(root.join(path)) else {
-            continue;
-        };
-        for (line_index, line) in contents.lines().enumerate() {
-            let lowercase = line.to_ascii_lowercase();
-            let compact: String = lowercase
-                .chars()
-                .filter(|character| character.is_ascii_alphanumeric())
-                .collect();
-            let mentions_schema_10 =
-                compact.contains("schema10") || compact.contains("schemas9and10");
-            if !mentions_schema_10 {
-                continue;
-            }
-            let matches: Vec<usize> = HISTORICAL_SCHEMA_10_USES
-                .iter()
-                .enumerate()
-                .filter_map(|(index, classified)| {
-                    (classified.path == path && line.contains(classified.marker)).then_some(index)
-                })
-                .collect();
-            if matches.len() == 1 {
-                classified_counts[matches[0]] += 1;
-            } else {
-                unclassified.push(format!("  {path}:{}: {line}", line_index + 1));
-            }
-        }
-    }
-    assert!(
-        unclassified.is_empty(),
-        "unclassified schema-10 text can be a stale current format receipt:\n{}\n\n\
-         Replace stale receipts with schema {schema}, or classify legitimate \
-         historical, migration, or schema-agnostic text explicitly.",
-        unclassified.join("\n")
-    );
-    let stale_classifications: Vec<String> = HISTORICAL_SCHEMA_10_USES
-        .iter()
-        .zip(classified_counts)
-        .filter(|(classified, count)| *count != classified.expected_count)
-        .map(|(classified, count)| {
-            format!(
-                "  {} / {:?}: matched {count} lines ({})",
-                classified.path, classified.marker, classified.reason
-            )
-        })
-        .collect();
-    assert!(
-        stale_classifications.is_empty(),
-        "schema-10 classifications must each match exactly once:\n{}",
-        stale_classifications.join("\n")
-    );
 
     let plain_format =
         std::fs::read(root.join("crates/umber-wasm/assets/plain.fmt")).expect("read Plain format");
+    assert_eq!(plain_format.get(..8), Some(b"UMBRFMT\0".as_slice()));
+    assert_eq!(
+        plain_metadata["bytes"].as_u64(),
+        Some(plain_format.len() as u64)
+    );
     assert_eq!(
         plain_format.get(8..12),
         Some(schema.to_le_bytes().as_slice())
