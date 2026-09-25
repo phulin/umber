@@ -66,6 +66,7 @@ pub(crate) struct ExpressionGlue<G> {
     shrink_order: Order,
     identity: Option<GlueId<G>>,
     source_register: Option<(bool, u16)>,
+    shared_zero: bool,
 }
 
 impl<G> Clone for ExpressionGlue<G> {
@@ -85,12 +86,14 @@ impl<G> ExpressionGlue<G> {
         shrink_order: Order::Normal,
         identity: None,
         source_register: None,
+        shared_zero: false,
     };
 
     fn from_spec(
         spec: GlueSpec,
         identity: Option<GlueId<G>>,
         source_register: Option<(bool, u16)>,
+        shared_zero: bool,
     ) -> Self {
         Self {
             width: i64::from(spec.width.raw()),
@@ -100,6 +103,7 @@ impl<G> ExpressionGlue<G> {
             shrink_order: spec.shrink_order,
             identity,
             source_register,
+            shared_zero,
         }
     }
 
@@ -233,6 +237,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         if overflow {
             self.expression_arithmetic_error()?;
             value = kind.zero();
+            // pdftex.web scan_expr returns the shared zero_glue pointer after
+            // a glue-expression arithmetic error, not a fresh zero spec.
+            if let ExpressionValue::Glue(glue) = &mut value {
+                glue.shared_zero = true;
+            }
         }
         self.observe_expression(kind, value);
         self.scanned_glue_identity = match value {
@@ -242,6 +251,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.scanned_glue_register = match value {
             ExpressionValue::Glue(value) => value.source_register,
             ExpressionValue::Number(_) => None,
+        };
+        self.scanned_glue_shared_zero = match value {
+            ExpressionValue::Glue(value) => value.shared_zero,
+            ExpressionValue::Number(_) => false,
         };
         Ok(expression_internal_value(kind, value))
     }
@@ -363,6 +376,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                     value.value,
                                     self.scanned_glue_identity,
                                     self.scanned_glue_register,
+                                    self.scanned_glue_shared_zero,
                                 ))
                             })
                         }
@@ -373,6 +387,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                     value.value,
                                     self.scanned_glue_identity,
                                     self.scanned_glue_register,
+                                    self.scanned_glue_shared_zero,
                                 ))
                             })
                         }
@@ -595,6 +610,7 @@ fn negate_value<G>(value: ExpressionValue<G>) -> ExpressionValue<G> {
             value.shrink = value.shrink.saturating_neg();
             value.identity = None;
             value.source_register = None;
+            value.shared_zero = false;
             ExpressionValue::Glue(value)
         }
     }
@@ -627,6 +643,7 @@ fn apply_factor<G>(
                 glue.normalize();
                 glue.identity = None;
                 glue.source_register = None;
+                glue.shared_zero = false;
                 frame.term = ExpressionValue::Glue(glue);
             }
         }
@@ -706,6 +723,7 @@ fn add_value<G>(
             left.normalize();
             left.identity = None;
             left.source_register = None;
+            left.shared_zero = false;
             ExpressionValue::Glue(left)
         }
         _ => unreachable!("one expression frame has one value type"),
@@ -793,6 +811,7 @@ fn map_components<G>(
             glue.shrink = apply(glue.shrink, DIMENSION_LIMIT);
             glue.identity = None;
             glue.source_register = None;
+            glue.shared_zero = false;
             ExpressionValue::Glue(glue)
         }
     }

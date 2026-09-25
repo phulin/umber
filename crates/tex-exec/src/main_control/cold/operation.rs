@@ -741,9 +741,11 @@ pub(in crate::main_control) enum ColdOperation<
     },
     HorizontalSkip {
         value: GlueSpec,
+        shared_zero_glue: bool,
     },
     VerticalSkip {
         value: GlueSpec,
+        shared_zero_glue: bool,
     },
     Kern {
         amount: Scaled,
@@ -1178,12 +1180,14 @@ pub(in crate::main_control) enum ColdOperation<
         kind: GlueKind,
         payload: LeaderPayload,
         glue: GlueSpec,
+        shared_zero_glue: bool,
     },
     LeaderRegister {
         kind: GlueKind,
         index: u16,
         copy: bool,
         glue: GlueSpec,
+        shared_zero_glue: bool,
     },
     MissingLeaderPayload,
     LeadersNotFollowedByGlue,

@@ -5,8 +5,8 @@ use super::*;
 pub(super) struct PreparedAlignmentPreamble<G> {
     pub(super) alignment: AlignmentIdentity,
     pub(super) columns: Vec<PreparedAlignmentCellTemplates<G>>,
-    pub(super) tabskips: Vec<GlueSpec>,
-    pub(super) default_tabskip: GlueSpec,
+    pub(super) tabskips: Vec<tex_state::node::GlueValue>,
+    pub(super) default_tabskip: tex_state::node::GlueValue,
     pub(super) repeat_start: Option<usize>,
 }
 
@@ -1706,12 +1706,29 @@ pub(super) fn scan_unary_scalar_operation<G>(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HSkip) => {
             let status = processor.scan_glue_into(false, scalar);
             let value = take_operation_scalar!(scalar, status, take_glue).value;
-            complete_cold_scan!(cold, ColdOperation::HorizontalSkip { value })
+            // pdftex.web §§454, 485, 1003, 1236: an internal zero glue
+            // quantity retains the shared `zero_glue` pointer when appended.
+            // Scanned literal zero glue and negated internal glue are fresh.
+            let shared_zero_glue = processor.scanned_glue_shared_zero();
+            complete_cold_scan!(
+                cold,
+                ColdOperation::HorizontalSkip {
+                    value,
+                    shared_zero_glue
+                }
+            )
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VSkip) => {
             let status = processor.scan_glue_into(false, scalar);
             let value = take_operation_scalar!(scalar, status, take_glue).value;
-            complete_cold_scan!(cold, ColdOperation::VerticalSkip { value })
+            let shared_zero_glue = processor.scanned_glue_shared_zero();
+            complete_cold_scan!(
+                cold,
+                ColdOperation::VerticalSkip {
+                    value,
+                    shared_zero_glue
+                }
+            )
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Kern) => {
             let status = processor.scan_dimension_into(scalar);
@@ -2775,7 +2792,7 @@ pub(super) fn scan_leader_glue_command<G>(
     {
         let status = processor.scan_glue_into(false, scalar);
         let glue = take_operation_scalar!(scalar, status, take_glue).value;
-        write_completed_leader_glue(cold, result, glue);
+        write_completed_leader_glue(cold, result, glue, processor.scanned_glue_shared_zero());
         return Ok(true);
     }
     let infinite = match (horizontal, primitive) {
@@ -2826,7 +2843,7 @@ pub(super) fn scan_leader_glue_command<G>(
             shrink_order: Order::Normal,
         }
     };
-    write_completed_leader_glue(cold, result, glue);
+    write_completed_leader_glue(cold, result, glue, false);
     Ok(true)
 }
 
@@ -2834,6 +2851,7 @@ fn write_completed_leader_glue<G>(
     cold: &mut ColdOperationSlot<G>,
     result: LeaderGlueResult,
     glue: GlueSpec,
+    shared_zero_glue: bool,
 ) {
     write_cold_scan!(
         cold,
@@ -2842,12 +2860,14 @@ fn write_completed_leader_glue<G>(
                 kind,
                 payload,
                 glue,
+                shared_zero_glue,
             },
             LeaderGlueResult::Register { kind, index, copy } => ColdOperation::LeaderRegister {
                 kind,
                 index,
                 copy,
                 glue,
+                shared_zero_glue,
             },
         }
     );

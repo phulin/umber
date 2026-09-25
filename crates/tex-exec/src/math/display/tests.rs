@@ -104,11 +104,13 @@ fn directed_display_retains_left_prototype_edge_and_copies_only_right_edge() {
         };
         let children = stores.publish_page_nodes(vec![
             Node::Glue {
+                origin: tex_state::node::GlueSpecOrigin::Owned,
                 spec: skip,
                 kind: GlueKind::LeftSkip,
                 leader: None,
             },
             Node::Glue {
+                origin: tex_state::node::GlueSpecOrigin::Owned,
                 spec: skip,
                 kind: GlueKind::RightSkip,
                 leader: None,

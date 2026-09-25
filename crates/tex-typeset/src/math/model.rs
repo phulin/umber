@@ -177,6 +177,7 @@ pub enum MathNode {
     Glue {
         spec: GlueSpec,
         kind: GlueKind,
+        origin: tex_state::node::GlueSpecOrigin,
         leader: Option<LeaderPayload>,
     },
     Penalty(i32),

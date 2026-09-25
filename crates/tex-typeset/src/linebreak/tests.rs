@@ -186,6 +186,7 @@ fn last_line_fit_paragraph() -> (TestState, Vec<Node>, LineBreakParams) {
         nodes.push(rule(30 * Scaled::UNITY));
         if index != 4 {
             nodes.push(Node::Glue {
+                origin: tex_state::node::GlueSpecOrigin::Owned,
                 spec: finite,
                 kind: GlueKind::Normal,
                 leader: None,
@@ -194,6 +195,7 @@ fn last_line_fit_paragraph() -> (TestState, Vec<Node>, LineBreakParams) {
     }
     nodes.push(Node::Penalty(INF_PENALTY));
     nodes.push(Node::Glue {
+        origin: tex_state::node::GlueSpecOrigin::Owned,
         spec: par_fill,
         kind: GlueKind::ParFillSkip,
         leader: None,

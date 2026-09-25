@@ -135,9 +135,9 @@ fn normalize_split_infinite_shrink<G>(
             .nodes()
             .get(index)
         {
-            Some(tex_state::node_view::NodeView::Glue { spec, kind, leader }) => {
-                Some((spec, kind, leader))
-            }
+            Some(tex_state::node_view::NodeView::Glue {
+                spec, kind, leader, ..
+            }) => Some((spec, kind, leader)),
             _ => None,
         };
         let Some((mut finite, kind, leader)) = replacement else {
@@ -156,6 +156,7 @@ fn normalize_split_infinite_shrink<G>(
         stores.push_page_active_list(
             &mut output,
             Node::Glue {
+                origin: tex_state::node::GlueSpecOrigin::Owned,
                 spec: finite,
                 kind,
                 leader,

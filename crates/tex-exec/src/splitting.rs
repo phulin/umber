@@ -74,7 +74,12 @@ pub(crate) fn prune_page_top_list<G>(
     }
     if let (Some(index), Some(spec)) = (first_box, adjusted_top_skip) {
         pieces.push(stores.construct_page_node(|destination| {
-            destination.glue(spec, GlueKind::SplitTopSkip, None);
+            destination.glue(
+                spec,
+                GlueKind::SplitTopSkip,
+                tex_state::node::GlueSpecOrigin::Owned,
+                None,
+            );
         }));
         pieces.push(stores.slice_page_node_sequence(source, index..source_len, &mut slices));
     }
@@ -116,6 +121,7 @@ pub(crate) fn prune_page_top_list_with_discards<G>(
                 stores.push_page_active_list(
                     &mut retained,
                     Node::Glue {
+                        origin: tex_state::node::GlueSpecOrigin::Owned,
                         spec: adjusted,
                         kind: GlueKind::SplitTopSkip,
                         leader: None,

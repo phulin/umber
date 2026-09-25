@@ -1021,6 +1021,7 @@ fn recursive_test_box<G>(stores: &mut Universe<G>) -> tex_state::page_node_arena
                 depth: Some(Scaled::from_raw(3)),
             },
             Node::Glue {
+                origin: tex_state::node::GlueSpecOrigin::Owned,
                 spec: glue,
                 kind: GlueKind::Leaders,
                 leader: Some(LeaderPayload::HList(box_node(leaf))),

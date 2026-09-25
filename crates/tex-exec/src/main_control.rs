@@ -626,8 +626,8 @@ struct ActiveReplayAlignment<G> {
     /// topology beside TeX82 §775's alignment list.
     captured_row_count: usize,
     captured_cell_count: usize,
-    tabskips: Vec<tex_state::glue::GlueSpec>,
-    default_tabskip: tex_state::glue::GlueSpec,
+    tabskips: Vec<tex_state::node::GlueValue>,
+    default_tabskip: tex_state::node::GlueValue,
     /// TeX82 §786's `cur_head`/`cur_tail` holding list: the insertions, marks,
     /// and `\vadjust` contents §796's `hpack` migrated out of this row's
     /// columns, waiting for §799 `fin_row` to append them after the row.
@@ -4790,11 +4790,16 @@ impl<G> MainControl<G> {
                     diagnostic_effects,
                 )?;
             }
-            MathRequest::MuMaterial(ScannedMathMuMaterial::Glue(glue)) => {
+            MathRequest::MuMaterial(ScannedMathMuMaterial::Glue { spec, shared_zero }) => {
                 self.modes.current_list_mutation().push(
                     &mut stores.command_context().expect("math glue admission"),
                     Node::Glue {
-                        spec: glue,
+                        origin: if shared_zero {
+                            tex_state::node::GlueSpecOrigin::SharedZero
+                        } else {
+                            tex_state::node::GlueSpecOrigin::Owned
+                        },
+                        spec,
                         kind: GlueKind::MuSkip,
                         leader: None,
                     },

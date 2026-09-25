@@ -355,6 +355,7 @@ fn materialize_channel<S: TypesetState>(
         line.push(Node::Glue {
             spec: params.left_skip,
             kind: GlueKind::LeftSkip,
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             leader: None,
         });
     }
@@ -397,6 +398,11 @@ fn materialize_channel<S: TypesetState>(
     line.push(Node::Glue {
         spec: params.right_skip,
         kind: GlueKind::RightSkip,
+        origin: if params.right_skip == GlueSpec::ZERO {
+            tex_state::node::GlueSpecOrigin::SharedZero
+        } else {
+            tex_state::node::GlueSpecOrigin::Owned
+        },
         leader: None,
     });
     while cursor.nodes.first(state).is_some_and(is_discardable) {

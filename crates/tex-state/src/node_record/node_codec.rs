@@ -481,7 +481,22 @@ impl NodeRecord<PageMaterialLane> {
             }
             _ => return None,
         };
-        Some((decode_glue(glue)?, kind))
+        let spec = decode_glue(glue)?;
+        if self.glue_origin()? == crate::node::GlueSpecOrigin::SharedZero && spec != GlueSpec::ZERO
+        {
+            return None;
+        }
+        Some((spec, kind))
+    }
+
+    pub(crate) fn glue_origin(self) -> Option<crate::node::GlueSpecOrigin> {
+        (self.kind()? == NodeKind::Glue).then(|| {
+            if self.flags() & 0x20 != 0 {
+                crate::node::GlueSpecOrigin::SharedZero
+            } else {
+                crate::node::GlueSpecOrigin::Owned
+            }
+        })
     }
 
     pub(crate) fn glue_leader(
@@ -733,13 +748,27 @@ impl NodeRecord<PageMaterialLane> {
                     ],
                 )
             }
-            Node::Glue { spec, kind, leader } => {
+            Node::Glue {
+                spec,
+                kind,
+                origin,
+                leader,
+            } => {
+                assert!(
+                    origin != crate::node::GlueSpecOrigin::SharedZero || spec == GlueSpec::ZERO,
+                    "shared zero_glue origin requires the zero specification"
+                );
                 let glue = encode_glue(spec);
+                let origin_flag = if origin == crate::node::GlueSpecOrigin::SharedZero {
+                    0x20
+                } else {
+                    0
+                };
                 match leader {
                     None => Self::new(
                         NodeKind::Glue,
                         encode_glue_kind(kind),
-                        0,
+                        origin_flag,
                         [glue[0], glue[1], glue[2], glue[3], 0, 0, 0],
                     ),
                     Some(LeaderPayload::Rule {
@@ -747,7 +776,8 @@ impl NodeRecord<PageMaterialLane> {
                         height,
                         depth,
                     }) => {
-                        let flags = 1
+                        let flags = origin_flag
+                            | 1
                             | (bool_word(width.is_some()) << 2)
                             | (bool_word(height.is_some()) << 3)
                             | (bool_word(depth.is_some()) << 4);
@@ -775,7 +805,7 @@ impl NodeRecord<PageMaterialLane> {
                         Self::with_key(
                             NodeKind::Glue,
                             encode_glue_kind(kind),
-                            if is_vertical { 3 } else { 2 },
+                            origin_flag | if is_vertical { 3 } else { 2 },
                             key,
                         )
                     }
@@ -1109,31 +1139,51 @@ impl NodeRecord<PageMaterialLane> {
             }
             NodeKind::Glue => {
                 let kind = decode_glue_kind(subtype)?;
+                let origin = self.glue_origin()?;
+                let valid_origin = |spec: GlueSpec| {
+                    origin != crate::node::GlueSpecOrigin::SharedZero || spec == GlueSpec::ZERO
+                };
                 match flags & 3 {
-                    0 if flags == 0 && words[4..].iter().all(|word| *word == 0) => {
+                    0 if flags & !0x20 == 0 && words[4..].iter().all(|word| *word == 0) => {
+                        let spec = decode_glue(words[..4].try_into().ok()?)?;
+                        if !valid_origin(spec) {
+                            return None;
+                        }
                         Some(Node::Glue {
-                            spec: decode_glue(words[..4].try_into().ok()?)?,
+                            spec,
                             kind,
+                            origin,
                             leader: None,
                         })
                     }
-                    1 if flags & !0x1d == 0 => Some(Node::Glue {
-                        spec: decode_glue(words[..4].try_into().ok()?)?,
-                        kind,
-                        leader: Some(LeaderPayload::Rule {
-                            width: (flags & 4 != 0).then(|| decode_scaled(words[4])),
-                            height: (flags & 8 != 0).then(|| decode_scaled(words[5])),
-                            depth: (flags & 16 != 0).then(|| decode_scaled(words[6])),
-                        }),
-                    }),
-                    leader @ (2 | 3) if flags == leader => {
+                    1 if flags & !0x3d == 0 => {
+                        let spec = decode_glue(words[..4].try_into().ok()?)?;
+                        if !valid_origin(spec) {
+                            return None;
+                        }
+                        Some(Node::Glue {
+                            spec,
+                            kind,
+                            origin,
+                            leader: Some(LeaderPayload::Rule {
+                                width: (flags & 4 != 0).then(|| decode_scaled(words[4])),
+                                height: (flags & 8 != 0).then(|| decode_scaled(words[5])),
+                                depth: (flags & 16 != 0).then(|| decode_scaled(words[6])),
+                            }),
+                        })
+                    }
+                    leader @ (2 | 3) if flags & !0x20 == leader => {
                         let payload = annex
                             .resolve_fixed_array::<LeaderBoxPayload, 32>(key_from_record(self))?;
                         let spec = decode_glue(payload[..4].try_into().ok()?)?;
+                        if !valid_origin(spec) {
+                            return None;
+                        }
                         let boxed = decode_box_payload(&payload[4..])?;
                         Some(Node::Glue {
                             spec,
                             kind,
+                            origin,
                             leader: Some(if leader == 2 {
                                 LeaderPayload::HList(boxed)
                             } else {

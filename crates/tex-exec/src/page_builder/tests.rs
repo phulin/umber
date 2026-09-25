@@ -185,6 +185,7 @@ fn pdftex_page_top_discards_snapy_but_preserves_other_whatsits() {
             [
                 reference,
                 Node::Glue {
+                    origin: tex_state::node::GlueSpecOrigin::Owned,
                     spec: stores.glue(stores.glue_param(GlueParam::TOP_SKIP).expect("top skip")),
                     kind: GlueKind::TopSkip,
                     leader: None,
@@ -567,6 +568,7 @@ fn outer_vertical_contribution_routes_every_node_kind_canonically() {
         let leading = glue(&mut stores, 2, 0, Order::Normal, 0, Order::Normal);
         let mark = tex_state::node::NodeTokenKey::default();
         stores.append_page_contribution(Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: leading,
             kind: GlueKind::Normal,
             leader: None,
@@ -746,6 +748,7 @@ fn page_contribution_last_items_and_max_depth_matrix() {
 
         let zero_glue = glue(&mut stores, 0, 0, Order::Normal, 0, Order::Normal);
         stores.append_page_contribution(Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: zero_glue,
             kind: GlueKind::Normal,
             leader: None,
@@ -808,11 +811,13 @@ fn page_infinite_shrink_recovery_normalizes_only_the_offending_glue() {
         let bad = glue(&mut stores, 2, 0, Order::Normal, 5, Order::Fil);
         let good = glue(&mut stores, 3, 0, Order::Normal, 7, Order::Normal);
         stores.append_page_contribution(Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: bad,
             kind: GlueKind::Normal,
             leader: None,
         });
         stores.append_page_contribution(Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: good,
             kind: GlueKind::Normal,
             leader: None,

@@ -68,8 +68,35 @@ fn with_run<R>(
         &mut Universe<GenerationBrand<'id>>,
     ) -> R,
 ) -> R {
+    with_run_profile(source, with_font, false, test)
+}
+
+fn with_pdftex_run<R>(
+    source: &[u8],
+    with_font: bool,
+    test: impl for<'id> FnOnce(
+        &MainControl<GenerationBrand<'id>>,
+        &mut Universe<GenerationBrand<'id>>,
+    ) -> R,
+) -> R {
+    with_run_profile(source, with_font, true, test)
+}
+
+fn with_run_profile<R>(
+    source: &[u8],
+    with_font: bool,
+    pdftex: bool,
+    test: impl for<'id> FnOnce(
+        &MainControl<GenerationBrand<'id>>,
+        &mut Universe<GenerationBrand<'id>>,
+    ) -> R,
+) -> R {
     crate::test_harness::with_nonstop_plain_universe(|universe| {
-        let mut control = MainControl::tex82_initex(universe);
+        let mut control = if pdftex {
+            super::pdftex_initex(universe)
+        } else {
+            MainControl::tex82_initex(universe)
+        };
         control.set_fuel_limit(100_000).expect("bounded fuel");
         if with_font {
             const CMR10: &[u8] =
@@ -422,6 +449,76 @@ fn boxed_children<G>(universe: &mut Universe<G>, register: u16) -> Vec<Node> {
         };
         page_vec_context(context, boxed.children)
     })
+}
+
+/// pdftex.web §§454, 485, 1003, 1236, 1405: an assigned zero register
+/// names the shared spec, while a literal, negation, or arithmetic result
+/// allocates an equal-valued spec. The distinction survives lastskip and
+/// leader materialization and the preamble tabskip trap exception.
+#[test]
+fn glue_zero_spec_origin_survives_scanning_and_box_materialization() {
+    use tex_state::node::GlueSpecOrigin::{Owned, SharedZero};
+
+    with_pdftex_run(
+        br"\skip0=0pt plus0fil minus0fill
+          \setbox0=\hbox{\hskip\skip0}
+          \setbox1=\hbox{\hskip\skip1}
+          \setbox2=\hbox{\hskip0pt}
+          \setbox3=\hbox{\hskip-\skip0}
+          \setbox4=\hbox{\hskip\skip0\hskip\lastskip}
+          \setbox5=\hbox{\hskip0pt\hskip\lastskip}
+          \setbox6=\hbox{\leaders\hrule\hskip\skip0}
+          \setbox7=\hbox{\leaders\hrule\hskip0pt}
+          \globaldefs=1
+          \setbox8=\vbox{\halign{\tabskip=0pt #\cr X\cr}}
+          \globaldefs=0
+          \setbox9=\hbox{\hskip\tabskip}
+          \globaldefs=1
+          \setbox10=\vbox{\halign{\tabskip=\skip0 #\cr X\cr}}
+          \globaldefs=0
+          \setbox11=\hbox{\hskip\tabskip}
+          \setbox12=\hbox{\hskip\glueexpr\skip0\relax}
+          \setbox13=\hbox{\hskip\glueexpr0pt\relax}
+          \setbox14=\hbox{\hskip\glueexpr\skip0+0pt\relax}
+          \setbox15=\hbox{\hskip0\skip0}
+          \setbox16=\hbox{\hskip0pt plus0\skip0}
+          \setbox17=\hbox{\hskip\glueexpr-\skip0\relax}",
+        false,
+        |_, universe| {
+            for (register, expected) in [
+                (0, vec![SharedZero]),
+                (1, vec![SharedZero]),
+                (2, vec![Owned]),
+                (3, vec![Owned]),
+                (4, vec![SharedZero, SharedZero]),
+                (5, vec![Owned, Owned]),
+                (6, vec![SharedZero]),
+                (7, vec![Owned]),
+                (9, vec![Owned]),
+                (11, vec![SharedZero]),
+                (12, vec![SharedZero]),
+                (13, vec![Owned]),
+                (14, vec![Owned]),
+                (15, vec![Owned]),
+                (16, vec![Owned]),
+                (17, vec![Owned]),
+            ] {
+                let actual = boxed_children(universe, register)
+                    .into_iter()
+                    .filter_map(|node| match node {
+                        Node::Glue { origin, .. } => Some(origin),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    actual,
+                    expected,
+                    "box {register} glue origin; {}",
+                    terminal(universe)
+                );
+            }
+        },
+    );
 }
 
 fn terminal<G>(universe: &Universe<G>) -> String {

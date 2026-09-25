@@ -77,6 +77,7 @@ fn vtop_readjusts_leading_glue_height_and_depth() {
             ..GlueSpec::ZERO
         };
         let list = stores.publish_page_nodes(vec![Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: glue,
             kind: GlueKind::Normal,
             leader: None,

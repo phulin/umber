@@ -110,12 +110,14 @@ fn pdftex_protrusion_scores_the_glyph_before_breakpoint_glue() {
     let nodes = vec![
         microtype_char(font, 'A'),
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: finite,
             kind: GlueKind::Normal,
             leader: None,
         },
         microtype_char(font, 'B'),
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: break_glue,
             kind: GlueKind::Normal,
             leader: None,
@@ -123,6 +125,7 @@ fn pdftex_protrusion_scores_the_glyph_before_breakpoint_glue() {
         microtype_char(font, 'C'),
         Node::Penalty(INF_PENALTY),
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: par_fill,
             kind: GlueKind::ParFillSkip,
             leader: None,
@@ -193,12 +196,14 @@ fn pdftex_hz_modes_have_the_exact_scoring_and_breakpoint_matrix() {
             vec![
                 microtype_char(first, 'A'),
                 Node::Glue {
+                    origin: tex_state::node::GlueSpecOrigin::Owned,
                     spec: glue,
                     kind: GlueKind::Normal,
                     leader: None,
                 },
                 microtype_char(first, 'B'),
                 Node::Glue {
+                    origin: tex_state::node::GlueSpecOrigin::Owned,
                     spec: glue,
                     kind: GlueKind::Normal,
                     leader: None,
@@ -223,18 +228,21 @@ fn pdftex_hz_modes_have_the_exact_scoring_and_breakpoint_matrix() {
             vec![
                 microtype_char(first, 'A'),
                 Node::Glue {
+                    origin: tex_state::node::GlueSpecOrigin::Owned,
                     spec: glue,
                     kind: GlueKind::Normal,
                     leader: None,
                 },
                 microtype_char(first, 'B'),
                 Node::Glue {
+                    origin: tex_state::node::GlueSpecOrigin::Owned,
                     spec: glue,
                     kind: GlueKind::Normal,
                     leader: None,
                 },
                 microtype_char(first, 'C'),
                 Node::Glue {
+                    origin: tex_state::node::GlueSpecOrigin::Owned,
                     spec: glue,
                     kind: GlueKind::Normal,
                     leader: None,
@@ -267,6 +275,7 @@ fn pdftex_hz_modes_have_the_exact_scoring_and_breakpoint_matrix() {
                 },
                 microtype_char(first, 'B'),
                 Node::Glue {
+                    origin: tex_state::node::GlueSpecOrigin::Owned,
                     spec: glue,
                     kind: GlueKind::Normal,
                     leader: None,
@@ -291,12 +300,14 @@ fn pdftex_hz_modes_have_the_exact_scoring_and_breakpoint_matrix() {
             vec![
                 microtype_char(first, 'A'),
                 Node::Glue {
+                    origin: tex_state::node::GlueSpecOrigin::Owned,
                     spec: glue,
                     kind: GlueKind::Normal,
                     leader: None,
                 },
                 microtype_char(second, 'B'),
                 Node::Glue {
+                    origin: tex_state::node::GlueSpecOrigin::Owned,
                     spec: glue,
                     kind: GlueKind::Normal,
                     leader: None,
@@ -357,12 +368,14 @@ fn pdftex_hz_mode_two_is_inert_without_pdftex_font_configuration() {
     let nodes = vec![
         rule(100),
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: glue,
             kind: GlueKind::Normal,
             leader: None,
         },
         rule(100),
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: glue,
             kind: GlueKind::Normal,
             leader: None,

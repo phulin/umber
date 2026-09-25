@@ -437,11 +437,13 @@ fn node_dump_covers_leader_kern_math_penalty_and_adjustment_rows() {
         ]);
         let nodes = [
             Node::Glue {
+                origin: tex_state::node::GlueSpecOrigin::Owned,
                 spec: leader_glue,
                 kind: GlueKind::Cleaders,
                 leader: Some(leader),
             },
             Node::Glue {
+                origin: tex_state::node::GlueSpecOrigin::Owned,
                 spec: leader_glue,
                 kind: GlueKind::Xleaders,
                 leader: Some(leader),
@@ -650,6 +652,7 @@ fn glue_subtype_dump_matrix_preserves_canonical_subtype_units() {
 
         for (kind, payload, expected) in cases {
             let node = Node::Glue {
+                origin: tex_state::node::GlueSpecOrigin::Owned,
                 spec,
                 kind,
                 leader: payload,
@@ -695,6 +698,7 @@ fn zero_glue_dump_distinguishes_nonscript_sentinel_from_printed_specs() {
                 dump_node_slice(
                     context,
                     &[Node::Glue {
+                        origin: tex_state::node::GlueSpecOrigin::Owned,
                         spec: zero,
                         kind,
                         leader: payload,
@@ -715,6 +719,7 @@ fn zero_glue_dump_distinguishes_nonscript_sentinel_from_printed_specs() {
                 context,
                 &[
                     Node::Glue {
+                        origin: tex_state::node::GlueSpecOrigin::Owned,
                         spec: zero,
                         kind: GlueKind::NonScript,
                         leader: None,
@@ -775,6 +780,7 @@ fn glue_unit_order_and_sign_matrix_is_exact_and_immutable() {
             let spec = value;
             for (kind, expected) in [(GlueKind::Normal, ordinary), (GlueKind::MuSkip, math)] {
                 let node = Node::Glue {
+                    origin: tex_state::node::GlueSpecOrigin::Owned,
                     spec,
                     kind,
                     leader: None,
@@ -943,6 +949,7 @@ fn shifted_display_box_and_parametric_glue_project_independently() {
                 children: empty,
             })),
             Node::Glue {
+                origin: tex_state::node::GlueSpecOrigin::Owned,
                 spec: baseline,
                 kind: GlueKind::BaselineSkip,
                 leader: None,
@@ -1196,6 +1203,7 @@ fn showbox_limits_side_lists_leaders_and_discretionaries_without_mutation() {
 
         let adjust = Node::Adjust(AdjustNode::ordinary(two_kerns));
         let leader = Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: glue,
             kind: GlueKind::Leaders,
             leader: Some(LeaderPayload::HList(zero_sized_hbox(two_kerns))),

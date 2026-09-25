@@ -746,10 +746,10 @@ pub enum LastNodeItem {
     /// The tail is a kern node: `\lastkern` reads its width.
     Kern(Scaled),
     /// The tail is a glue node: `\lastskip` reads its specification.
-    Glue(GlueSpec),
+    Glue(GlueSpec, tex_state::node::GlueSpecOrigin),
     /// The tail is a glue node created in mu units (TeX82's `mu_glue`
     /// subtype, e.g. from `\mskip`): `\lastskip` reads it at `mu_val` level.
-    MuGlue(GlueSpec),
+    MuGlue(GlueSpec, tex_state::node::GlueSpecOrigin),
 }
 
 /// Long-lived immutable-resource capabilities owned by the executor.

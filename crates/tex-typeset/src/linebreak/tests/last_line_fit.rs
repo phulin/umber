@@ -288,6 +288,7 @@ fn etex_last_line_fit_does_not_adjust_a_single_line_paragraph() {
         rule(30 * Scaled::UNITY),
         Node::Penalty(INF_PENALTY),
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: par_fill,
             kind: GlueKind::ParFillSkip,
             leader: None,
@@ -374,6 +375,7 @@ fn breaks_at_legal_glue() {
             kind: KernKind::Explicit,
         },
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: glue,
             kind: GlueKind::Normal,
 
@@ -384,6 +386,7 @@ fn breaks_at_legal_glue() {
             kind: KernKind::Explicit,
         },
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: glue,
             kind: GlueKind::Normal,
 

@@ -71,6 +71,11 @@ pub(crate) fn append_node_to_vertical_list<G>(
             nest,
             stores,
             Node::Glue {
+                origin: if kind == GlueKind::LineSkip {
+                    tex_state::node::GlueSpecOrigin::from_trapped_parameter(spec)
+                } else {
+                    tex_state::node::GlueSpecOrigin::Owned
+                },
                 spec,
                 kind,
                 leader: None,

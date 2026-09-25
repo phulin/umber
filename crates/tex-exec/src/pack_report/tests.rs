@@ -69,6 +69,7 @@ fn short_display_skips_the_physical_discretionary_replacement_count() {
         ];
         for _ in 0..3 {
             nodes.push(Node::Glue {
+                origin: tex_state::node::GlueSpecOrigin::Owned,
                 spec: space,
                 kind: GlueKind::Normal,
                 leader: None,
@@ -128,6 +129,7 @@ fn short_display_retains_rule_after_nonphysical_discretionary_replacement() {
         ];
         for _ in 0..3 {
             nodes.push(Node::Glue {
+                origin: tex_state::node::GlueSpecOrigin::Owned,
                 spec: space,
                 kind: GlueKind::Normal,
                 leader: None,
@@ -295,11 +297,13 @@ fn short_display_maps_all_node_classes() {
                 depth: None,
             },
             Node::Glue {
+                origin: tex_state::node::GlueSpecOrigin::Owned,
                 spec: zero_glue,
                 kind: GlueKind::Normal,
                 leader: None,
             },
             Node::Glue {
+                origin: tex_state::node::GlueSpecOrigin::Owned,
                 spec: nonzero_glue,
                 kind: GlueKind::Normal,
                 leader: None,

@@ -86,7 +86,20 @@ and discretionary rules. A left margin kern precedes the glyph material and a
 right margin kern follows it before `\rightskip`; each amount is the negative
 of `round(em * code / 1000)`. Margin kerns retain side, source font, and byte
 character so expansion-aware repacking, diagnostics, enquiries, snapshots,
-and output lowering do not infer provenance from neighbors.
+and output lowering do not infer provenance from neighbors. pdfTeX §1061
+prepends the left margin kern at the line-material boundary, before any
+transparent anchor or zero-glue nodes that precede the edge glyph.
+
+pdfTeX §1003 skips a glue node at a line edge only when its specification
+points to the shared `zero_glue`. Width and glue subtype do not determine that
+identity. TeX82 §461 preserves a positive internal glue quantity's pointer;
+§1237 canonicalizes zero glue registers and parameters, while literal
+`\\hskip0pt` allocates a fresh equal-valued specification. A negative internal
+quantity also gets a fresh specification. The node representation therefore
+carries glue subtype and the shared-zero origin as independent facts. Scanning
+transfers the origin through an unchanged internal value, and arithmetic clears
+it. The node record preserves both facts, and protrusion tests the origin while
+box dumps and output lowering use the subtype.
 
 `\leftmarginkern` and `\rightmarginkern` scan a box register, require a
 non-empty hbox, skip the corresponding line skip glue and other pdfTeX

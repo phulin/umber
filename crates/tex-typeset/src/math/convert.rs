@@ -326,7 +326,12 @@ fn first_pass<S: MathTypesetState>(
             tex_state::node_view::NodeView::MathChoice(_) => {
                 unreachable!("math choices are expanded by the iterative view")
             }
-            tex_state::node_view::NodeView::Glue { spec, kind, leader } => {
+            tex_state::node_view::NodeView::Glue {
+                spec,
+                kind,
+                origin,
+                leader,
+            } => {
                 // AppG rule 2
                 let suppress_next = matches!(kind, GlueKind::NonScript)
                     && ctx.style.is_script_or_smaller()
@@ -346,12 +351,18 @@ fn first_pass<S: MathTypesetState>(
                     out.push(WorkItem::Node(MathNode::Glue {
                         spec: spacing::math_glue(spec, ctx.mu),
                         kind: GlueKind::Normal,
+                        origin: tex_state::node::GlueSpecOrigin::Owned,
                         leader,
                     }));
                 } else {
                     out.push(WorkItem::Node(match view.source(index) {
                         Some(source) => native_source(source, NativeNodeEvidence::Glue(spec)),
-                        None => MathNode::Glue { spec, kind, leader },
+                        None => MathNode::Glue {
+                            spec,
+                            kind,
+                            origin,
+                            leader,
+                        },
                     }));
                 }
                 // TeX82 §732 keeps the conditional-glue marker and removes
@@ -927,6 +938,7 @@ fn second_pass<S: MathTypesetState>(
                     output.push(MathNode::Glue {
                         spec,
                         kind: math_glue_kind_for_spacing(spacing),
+                        origin: tex_state::node::GlueSpecOrigin::Owned,
                         leader: None,
                     });
                 }
@@ -961,6 +973,7 @@ fn second_pass<S: MathTypesetState>(
                     output.push(MathNode::Glue {
                         spec,
                         kind: math_glue_kind_for_spacing(spacing),
+                        origin: tex_state::node::GlueSpecOrigin::Owned,
                         leader: None,
                     });
                 }
@@ -1313,9 +1326,19 @@ pub(crate) fn source_node(
                 depth,
             },
         },
-        tex_state::node_view::NodeView::Glue { spec, kind, leader } => match source {
+        tex_state::node_view::NodeView::Glue {
+            spec,
+            kind,
+            origin,
+            leader,
+        } => match source {
             Some(source) => native_source(source, NativeNodeEvidence::Glue(spec)),
-            None => MathNode::Glue { spec, kind, leader },
+            None => MathNode::Glue {
+                spec,
+                kind,
+                origin,
+                leader,
+            },
         },
         node @ (tex_state::node_view::NodeView::HList(_)
         | tex_state::node_view::NodeView::VList(_)) => {

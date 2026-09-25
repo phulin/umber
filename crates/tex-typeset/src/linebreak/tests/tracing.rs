@@ -16,6 +16,7 @@ fn tracing_display_includes_the_feasible_glue_breakpoint() {
     let nodes = vec![
         rule(20),
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: glue,
             kind: GlueKind::Normal,
             leader: None,
@@ -191,6 +192,7 @@ fn paragraph_prefix_widths_remain_exact_past_i32_max() {
         nodes.push(rule(700_000_000));
         if index != 5 {
             nodes.push(Node::Glue {
+                origin: tex_state::node::GlueSpecOrigin::Owned,
                 spec: zero,
                 kind: GlueKind::Normal,
                 leader: None,

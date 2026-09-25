@@ -750,6 +750,7 @@ pub(crate) fn append_end_job_contributions<G>(stores: &mut CommandContext<'_, G>
         shrink_order: Order::Normal,
     };
     stores.append_page_contribution(Node::Glue {
+        origin: tex_state::node::GlueSpecOrigin::Owned,
         spec: fill,
         kind: GlueKind::Normal,
         leader: None,

@@ -169,7 +169,7 @@ pub struct ScannedMathFraction {
 /// A completed `\\mskip` or `\\mkern` operand.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ScannedMathMuMaterial {
-    Glue(GlueSpec),
+    Glue { spec: GlueSpec, shared_zero: bool },
     Kern(Scaled),
 }
 

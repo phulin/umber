@@ -321,7 +321,8 @@ external validator matrix.
 
 `pdftex_font_microtype.md` defines immutable copied/letterspaced/expanded font
 identity, expansion and protrusion arithmetic, line-material ownership, margin
-enquiries, and the detached `pdf_writer` resource boundary.
+enquiries, glue pointer-origin transfer at protrusion edges, and the detached
+`pdf_writer` resource boundary.
 
 `pdftex_graphics_state.md` defines literal modes and expansion timing, typed
 graphics-state lowering, color-stack page/form scope, saved positions and

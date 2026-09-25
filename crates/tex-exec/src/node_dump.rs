@@ -434,7 +434,9 @@ fn dump_node<G, List, Glue, Tokens, Storage>(
                 format_scaled_without_unit(amount)
             );
         }
-        NodeView::Glue { spec, kind, leader } => {
+        NodeView::Glue {
+            spec, kind, leader, ..
+        } => {
             if let Some(leader) = leader {
                 kind.append_leader_dump_prefix(stores, out);
                 let _ = writeln!(
@@ -1590,6 +1592,7 @@ mod unset_diagnostic_tests {
                 dump_node_slice(
                     context,
                     &[Node::Glue {
+                        origin: tex_state::node::GlueSpecOrigin::Owned,
                         spec,
                         kind: GlueKind::LineSkip,
                         leader: None,
@@ -1653,6 +1656,7 @@ mod unset_diagnostic_tests {
                     depth: Some(Scaled::from_raw(Scaled::UNITY)),
                 },
                 Node::Glue {
+                    origin: tex_state::node::GlueSpecOrigin::Owned,
                     spec: glue,
                     kind: GlueKind::Leaders,
                     leader: Some(LeaderPayload::Rule {

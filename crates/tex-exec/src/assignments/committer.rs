@@ -115,7 +115,7 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
     fn redundant_zero_glue(&self, current: Option<GlueId<G>>, replacement: &GlueSpec) -> bool {
         self.stores.int_param(IntParam::ETEX_EXTENDED_MODE) > 0
             && current.is_none()
-            && *replacement == GlueSpec::ZERO
+            && replacement.has_zero_components()
     }
 
     pub(crate) fn scoped_word<T, Write, Trace>(
@@ -286,6 +286,13 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
         redundant: bool,
         reassigning: bool,
     ) -> MutationReceipt {
+        // TeX82 §1237 canonicalizes every zero assignment to `zero_glue`,
+        // including zero components with non-normal stretch/shrink orders.
+        let value = if value.has_zero_components() {
+            GlueSpec::ZERO
+        } else {
+            value
+        };
         // e-TeX 2.6 [19.277--279] observes the old eqtb glue pointer before
         // `eq_destroy` can release it. Snapshot its fixed-size semantic value
         // before Umber's combined write-and-trace boundary releases the root.
@@ -299,31 +306,36 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
         let old_spec = old.map_or(GlueSpec::ZERO, |id| self.stores.glue(id));
         let redundant = !global && (redundant || self.redundant_zero_glue(old, &value));
         if !redundant {
-            let new = self
-                .stores
-                .allocate_glue(value)
-                .expect("assignment glue fits admitted durable storage");
+            let new = if value == GlueSpec::ZERO {
+                None
+            } else {
+                Some(
+                    self.stores
+                        .allocate_glue(value)
+                        .expect("assignment glue fits admitted durable storage"),
+                )
+            };
             match (mu, global) {
                 (true, true) => {
                     self.stores
-                        .assign_mu_glue_register(index, Some(new), AssignmentScope::Global)
+                        .assign_mu_glue_register(index, new, AssignmentScope::Global)
                 }
                 (true, false) => {
                     self.stores
-                        .assign_mu_glue_register(index, Some(new), AssignmentScope::Local)
+                        .assign_mu_glue_register(index, new, AssignmentScope::Local)
                 }
                 (false, true) => {
                     self.stores
-                        .assign_glue_register(index, Some(new), AssignmentScope::Global)
+                        .assign_glue_register(index, new, AssignmentScope::Global)
                 }
                 (false, false) => {
                     self.stores
-                        .assign_glue_register(index, Some(new), AssignmentScope::Local)
+                        .assign_glue_register(index, new, AssignmentScope::Local)
                 }
             }
             .expect("glue-register assignment targets admitted state");
         }
-        let changed = !(reassigning || (old_spec == GlueSpec::ZERO && value == GlueSpec::ZERO));
+        let changed = !(reassigning || (old.is_none() && value == GlueSpec::ZERO));
         if mu {
             tracing::trace_muglue_register(
                 self.stores,
@@ -535,6 +547,11 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
         key: String,
         global: bool,
     ) -> MutationReceipt {
+        let value = if value.has_zero_components() {
+            GlueSpec::ZERO
+        } else {
+            value
+        };
         let parameter = GlueParam::new(index);
         // Snapshot the pre-image for the same e-TeX [19.277--279] interval as
         // glue registers above.
@@ -542,17 +559,22 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
         let old_spec = old.map_or(GlueSpec::ZERO, |id| self.stores.glue(id));
         let redundant = !global && self.redundant_zero_glue(old, &value);
         if !redundant {
-            let new = self
-                .stores
-                .allocate_glue(value)
-                .expect("parameter glue fits admitted durable storage");
+            let new = if value == GlueSpec::ZERO {
+                None
+            } else {
+                Some(
+                    self.stores
+                        .allocate_glue(value)
+                        .expect("parameter glue fits admitted durable storage"),
+                )
+            };
             if global {
                 self.stores
-                    .assign_glue_parameter(parameter, Some(new), AssignmentScope::Global)
+                    .assign_glue_parameter(parameter, new, AssignmentScope::Global)
                     .expect("global glue-parameter assignment targets admitted state");
             } else {
                 self.stores
-                    .assign_glue_parameter(parameter, Some(new), AssignmentScope::Local)
+                    .assign_glue_parameter(parameter, new, AssignmentScope::Local)
                     .expect("local glue-parameter assignment targets admitted state");
             }
         }

@@ -194,7 +194,8 @@ fn effective_tail_facts<G>(
                 let last_node = match last_node_type {
                     11 => context
                         .page_last_skip()
-                        .map(tex_command::LastNodeItem::Glue),
+                        .zip(context.page_last_skip_origin())
+                        .map(|(spec, origin)| tex_command::LastNodeItem::Glue(spec, origin)),
                     12 => Some(tex_command::LastNodeItem::Kern(context.page_last_kern())),
                     13 => Some(tex_command::LastNodeItem::Penalty(
                         context.page_last_penalty(),
@@ -254,10 +255,11 @@ fn classify_last_node<G>(
         tex_state::node_view::NodeView::Glue {
             spec,
             kind: GlueKind::MuSkip,
+            origin,
             ..
-        } => Some(tex_command::LastNodeItem::MuGlue(spec)),
-        tex_state::node_view::NodeView::Glue { spec, .. } => {
-            Some(tex_command::LastNodeItem::Glue(spec))
+        } => Some(tex_command::LastNodeItem::MuGlue(spec, origin)),
+        tex_state::node_view::NodeView::Glue { spec, origin, .. } => {
+            Some(tex_command::LastNodeItem::Glue(spec, origin))
         }
         // TeX82 keeps a discretionary's no-break replacement nodes in
         // the surrounding list (§1119), immediately after the disc node.

@@ -33,6 +33,7 @@ pub(crate) fn display_line_prototype<G>(
             }
         } else {
             Node::Glue {
+                origin: tex_state::node::GlueSpecOrigin::Owned,
                 spec,
                 kind,
                 leader: None,
@@ -145,6 +146,7 @@ pub(super) fn package_directed_display_line<G>(
                 spec,
                 kind,
                 leader: None,
+                ..
             } => PrototypeBoundary::Glue(spec, kind),
             tex_state::node_view::NodeView::Kern { kind, .. } => PrototypeBoundary::Kern(kind),
             _ => panic!("e-TeX display prototype left boundary is glue or kern"),
@@ -157,6 +159,7 @@ pub(super) fn package_directed_display_line<G>(
                 spec,
                 kind,
                 leader: None,
+                ..
             } => PrototypeBoundary::Glue(spec, kind),
             tex_state::node_view::NodeView::Kern { kind, .. } => PrototypeBoundary::Kern(kind),
             _ => panic!("e-TeX display prototype right boundary is glue or kern"),
@@ -290,6 +293,7 @@ fn cancel_display_skip<G>(
         shrink_order: original.shrink_order,
     };
     Node::Glue {
+        origin: tex_state::node::GlueSpecOrigin::Owned,
         spec,
         kind,
         leader: None,

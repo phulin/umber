@@ -1923,6 +1923,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn scan_glue(&mut self, mu: bool) -> Result<ScannedScalar<GlueSpec>, CommandError> {
         self.scanned_glue_identity = None;
         self.scanned_glue_register = None;
+        self.scanned_glue_shared_zero = false;
         let result = self.scan_glue_from_leading(mu, false, OriginId::UNKNOWN);
         finish_scalar_result!(self, result)
     }
@@ -2007,6 +2008,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     // identical-pointer reassignment and discard the negation.
                     self.scanned_glue_identity = None;
                     self.scanned_glue_register = None;
+                    self.scanned_glue_shared_zero = false;
                 }
                 let (InternalValue::Glue(glue) | InternalValue::MuGlue(glue)) = internal else {
                     unreachable!("outer pattern restricts the value to a glue specification")
@@ -2028,7 +2030,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     self.scanned_glue_identity = None;
                     self.scanned_glue_register = None;
                 }
-                self.scan_glue_plus_keyword(
+                let result = self.scan_glue_plus_keyword(
                     mu,
                     GlueSpec {
                         width,
@@ -2036,7 +2038,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                     },
                     ScalarRecovery::None,
                     provenance,
-                )
+                );
+                self.clear_fresh_glue_scan_origin();
+                result
             }
             // §461: `if cur_val_level=int_val then scan_dimen(mu,false,
             // true)`. §430 has already negated the integer, which is the
@@ -2047,7 +2051,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     self.scanned_glue_identity = None;
                     self.scanned_glue_register = None;
                 }
-                self.scan_glue_plus_keyword(
+                let result = self.scan_glue_plus_keyword(
                     mu,
                     GlueSpec {
                         width,
@@ -2055,7 +2059,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                     },
                     ScalarRecovery::None,
                     provenance,
-                )
+                );
+                self.clear_fresh_glue_scan_origin();
+                result
             }
             InternalScan::Value(InternalValue::Font(_) | InternalValue::Tokens { .. }) => {
                 unreachable!("TeX82 §416 converts identifiers to dimen_val zero before §461")
@@ -2074,12 +2080,13 @@ impl<G> CommandProcessor<'_, '_, G> {
         mu: bool,
         negative: bool,
     ) -> Result<ScannedScalar<GlueSpec>, CommandError> {
+        self.scanned_glue_shared_zero = false;
         let width = self.scan_dimension_with_order(false, mu)?.0;
         if negative {
             self.scanned_glue_identity = None;
             self.scanned_glue_register = None;
         }
-        self.scan_glue_plus_keyword(
+        let result = self.scan_glue_plus_keyword(
             mu,
             GlueSpec {
                 width: if negative {
@@ -2091,7 +2098,17 @@ impl<G> CommandProcessor<'_, '_, G> {
             },
             width.recovery,
             width.provenance.primary,
-        )
+        );
+        self.clear_fresh_glue_scan_origin();
+        result
+    }
+
+    fn clear_fresh_glue_scan_origin(&mut self) {
+        // Nested dimension scans may read an internal glue as a unit. The
+        // surrounding literal specification is still newly allocated.
+        self.scanned_glue_identity = None;
+        self.scanned_glue_register = None;
+        self.scanned_glue_shared_zero = false;
     }
 
     fn scan_glue_plus_keyword(
@@ -3595,6 +3612,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 let identity = self.state.glue_register(index).ok().flatten();
                 self.scanned_glue_identity = identity;
                 self.scanned_glue_register = Some((false, index));
+                self.scanned_glue_shared_zero = identity.is_none();
                 InternalValue::Glue(
                     identity.map_or_else(|| GlueSpec::ZERO, |id| self.state.glue(id)),
                 )
@@ -3604,6 +3622,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 let identity = self.state.muskip(index);
                 self.scanned_glue_identity = identity;
                 self.scanned_glue_register = Some((true, index));
+                self.scanned_glue_shared_zero = identity.is_none();
                 InternalValue::MuGlue(
                     identity.map_or_else(|| GlueSpec::ZERO, |id| self.state.glue(id)),
                 )
@@ -3893,6 +3912,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 let identity = self.state.glue_register(index).ok().flatten();
                 self.scanned_glue_identity = identity;
                 self.scanned_glue_register = Some((false, index));
+                self.scanned_glue_shared_zero = identity.is_none();
                 InternalValue::Glue(
                     identity.map_or_else(|| GlueSpec::ZERO, |id| self.state.glue(id)),
                 )
@@ -3901,6 +3921,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 let identity = self.state.muskip(index);
                 self.scanned_glue_identity = identity;
                 self.scanned_glue_register = Some((true, index));
+                self.scanned_glue_shared_zero = identity.is_none();
                 InternalValue::MuGlue(
                     identity.map_or_else(|| GlueSpec::ZERO, |id| self.state.glue(id)),
                 )
@@ -3910,6 +3931,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .state
                     .glue_param(tex_state::env::banks::GlueParam::new(index));
                 self.scanned_glue_identity = identity;
+                self.scanned_glue_shared_zero = identity.is_none();
                 InternalValue::Glue(
                     identity.map_or_else(|| GlueSpec::ZERO, |id| self.state.glue(id)),
                 )
@@ -3919,6 +3941,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .state
                     .glue_param(tex_state::env::banks::GlueParam::new(index));
                 self.scanned_glue_identity = identity;
+                self.scanned_glue_shared_zero = identity.is_none();
                 InternalValue::MuGlue(
                     identity.map_or_else(|| GlueSpec::ZERO, |id| self.state.glue(id)),
                 )
@@ -4022,9 +4045,20 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastSkip) => {
                 match self.host.last_node(self.state) {
-                    Some(crate::LastNodeItem::Glue(value)) => InternalValue::Glue(value),
-                    Some(crate::LastNodeItem::MuGlue(value)) => InternalValue::MuGlue(value),
-                    _ => InternalValue::Glue(GlueSpec::ZERO),
+                    Some(crate::LastNodeItem::Glue(value, origin)) => {
+                        self.scanned_glue_shared_zero =
+                            origin == tex_state::node::GlueSpecOrigin::SharedZero;
+                        InternalValue::Glue(value)
+                    }
+                    Some(crate::LastNodeItem::MuGlue(value, origin)) => {
+                        self.scanned_glue_shared_zero =
+                            origin == tex_state::node::GlueSpecOrigin::SharedZero;
+                        InternalValue::MuGlue(value)
+                    }
+                    _ => {
+                        self.scanned_glue_shared_zero = true;
+                        InternalValue::Glue(GlueSpec::ZERO)
+                    }
                 }
             }
             // TeX82 §413's `scan_something_internal` groups `char_given` and

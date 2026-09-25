@@ -273,6 +273,7 @@ fn all_node_kinds() -> Vec<Node> {
         Node::Glue {
             spec: glue,
             kind: GlueKind::Cleaders,
+            origin: crate::node::GlueSpecOrigin::Owned,
             leader: Some(LeaderPayload::HList(box_node())),
         },
         Node::Penalty(-50),
@@ -380,6 +381,46 @@ fn every_node_kind_round_trips_through_record_and_annex() {
             "{expected_kind:?}"
         );
     }
+}
+
+#[test]
+fn glue_record_preserves_origin_independently_of_subtype_and_rejects_false_shared_zero() {
+    let mut annex = AnnexHarness::new();
+    for kind in [GlueKind::Normal, GlueKind::MuSkip, GlueKind::Leaders] {
+        for origin in [
+            crate::node::GlueSpecOrigin::SharedZero,
+            crate::node::GlueSpecOrigin::Owned,
+        ] {
+            let node = Node::Glue {
+                spec: GlueSpec::ZERO,
+                kind,
+                origin,
+                leader: None,
+            };
+            let record = NodeRecord::encode_owned(node.clone(), &mut annex.writer());
+            assert_eq!(record.glue_origin(), Some(origin));
+            assert_eq!(record.decode_owned(annex.view()), Some(node));
+        }
+    }
+
+    let nonzero = Node::Glue {
+        spec: GlueSpec {
+            width: Scaled::from_raw(1),
+            ..GlueSpec::ZERO
+        },
+        kind: GlueKind::Normal,
+        origin: crate::node::GlueSpecOrigin::Owned,
+        leader: None,
+    };
+    let record = NodeRecord::encode_owned(nonzero, &mut annex.writer());
+    let invalid = NodeRecord::new(
+        NodeKind::Glue,
+        record.subtype(),
+        record.flags() | 0x20,
+        record.words(),
+    );
+    assert!(invalid.glue_spec_kind(annex.view()).is_none());
+    assert!(invalid.decode_owned(annex.view()).is_none());
 }
 
 #[test]

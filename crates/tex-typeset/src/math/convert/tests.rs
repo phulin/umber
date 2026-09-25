@@ -118,6 +118,7 @@ fn mlist_passes_cover_all_styles_bins_nonscript_spacing_and_penalties() {
     let zero = GlueSpec::ZERO;
     let nonscript = stores.publish_page_nodes(&[
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: zero,
             kind: GlueKind::NonScript,
             leader: None,
@@ -184,6 +185,7 @@ fn nonscript_suppression_retains_marker_source_not_removed_node() {
     let marker = GlueSpec::ZERO;
     let input = stores.publish_page_nodes(&[
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: marker,
             kind: GlueKind::NonScript,
             leader: None,

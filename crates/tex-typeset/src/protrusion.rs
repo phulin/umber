@@ -1,7 +1,7 @@
 //! Pure pdfTeX character-protrusion edge discovery and line materialization.
 
 use tex_state::font::PdfFontCode;
-use tex_state::node::{GlueKind, KernKind, MarginKernSide, Node};
+use tex_state::node::{GlueKind, GlueSpecOrigin, KernKind, MarginKernSide, Node};
 use tex_state::node_view::NodeCursor;
 use tex_state::scaled::Scaled;
 
@@ -138,10 +138,8 @@ pub fn insert_margin_kerns(
     );
     if let Some(glyph) = left.filter(|glyph| glyph_width(state, *glyph, Edge::Left).raw() != 0) {
         let amount = glyph_width(state, glyph, Edge::Left);
-        let at =
-            edge_position(state, nodes, Edge::Left).unwrap_or_else(|| leading_left_skip_end(nodes));
         nodes.insert(
-            at,
+            material_start,
             Node::MarginKern {
                 amount: amount
                     .checked_neg()
@@ -201,10 +199,8 @@ pub fn plan_margin_kerns(
         .filter(|glyph| glyph_width(state, *glyph, Edge::Left).raw() != 0)
         .map(|glyph| {
             let amount = glyph_width(state, glyph, Edge::Left);
-            let at = edge_position_cursor(state, nodes, Edge::Left)
-                .unwrap_or_else(|| leading_left_skip_end_cursor(nodes));
             (
-                at,
+                material_start,
                 Node::MarginKern {
                     amount: amount
                         .checked_neg()
@@ -216,46 +212,6 @@ pub fn plan_margin_kerns(
             )
         });
     MarginKernPlan { left, right }
-}
-
-fn edge_position_cursor(
-    state: &impl TypesetState,
-    nodes: NodeCursor<'_>,
-    edge: Edge,
-) -> Option<usize> {
-    match edge {
-        Edge::Left => (0..nodes.len())
-            .find_map(|index| match search_node(state, nodes.get(index)?, edge) {
-                Search::Glyph(_) => Some(Some(index)),
-                Search::Skip => None,
-                Search::Block => Some(None),
-            })
-            .flatten(),
-        Edge::Right => (0..nodes.len())
-            .rev()
-            .find_map(|index| match search_node(state, nodes.get(index)?, edge) {
-                Search::Glyph(_) => Some(Some(index)),
-                Search::Skip => None,
-                Search::Block => Some(None),
-            })
-            .flatten(),
-    }
-}
-
-fn leading_left_skip_end_cursor(nodes: NodeCursor<'_>) -> usize {
-    (0..nodes.len())
-        .take_while(|index| {
-            matches!(
-                nodes.get(*index),
-                Some(
-                    tex_state::node_view::NodeView::Glue {
-                        kind: GlueKind::LeftSkip,
-                        ..
-                    } | tex_state::node_view::NodeView::Direction(_)
-                )
-            )
-        })
-        .count()
 }
 
 fn right_margin_position_cursor(nodes: NodeCursor<'_>) -> usize {
@@ -286,49 +242,6 @@ fn right_margin_position_cursor(nodes: NodeCursor<'_>) -> usize {
         index -= 1;
     }
     index
-}
-
-fn edge_position(state: &impl TypesetState, nodes: &[Node], edge: Edge) -> Option<usize> {
-    match edge {
-        Edge::Left => nodes
-            .iter()
-            .enumerate()
-            .find_map(
-                |(index, node)| match search_node(state, node.into(), edge) {
-                    Search::Glyph(_) => Some(Some(index)),
-                    Search::Skip => None,
-                    Search::Block => Some(None),
-                },
-            )
-            .flatten(),
-        Edge::Right => nodes
-            .iter()
-            .enumerate()
-            .rev()
-            .find_map(
-                |(index, node)| match search_node(state, node.into(), edge) {
-                    Search::Glyph(_) => Some(Some(index)),
-                    Search::Skip => None,
-                    Search::Block => Some(None),
-                },
-            )
-            .flatten(),
-    }
-}
-
-fn leading_left_skip_end(nodes: &[Node]) -> usize {
-    nodes
-        .iter()
-        .take_while(|node| {
-            matches!(
-                node,
-                Node::Glue {
-                    kind: GlueKind::LeftSkip,
-                    ..
-                } | Node::Direction(_)
-            )
-        })
-        .count()
 }
 
 fn right_margin_position(nodes: &[Node]) -> usize {
@@ -376,41 +289,6 @@ enum Search {
     Glyph(Glyph),
     Skip,
     Block,
-}
-
-/// Whether a zero-valued glue node retains TeX's shared `zero_glue` pointer.
-///
-/// Parameter glue is canonicalized by TeX82 §1237 before these named nodes
-/// are made, and `\nonscript` directly uses `zero_glue`. Scanned glue instead
-/// owns a fresh specification even when its value is zero; leader and
-/// explicit math-skip nodes retain that scanned identity in their kinds.
-const fn shares_zero_glue(kind: GlueKind) -> bool {
-    match kind {
-        GlueKind::Normal
-        | GlueKind::Leaders
-        | GlueKind::Cleaders
-        | GlueKind::Xleaders
-        | GlueKind::MuSkip => false,
-        GlueKind::SpaceSkip
-        | GlueKind::XSpaceSkip
-        | GlueKind::TabSkip
-        | GlueKind::BaselineSkip
-        | GlueKind::LineSkip
-        | GlueKind::TopSkip
-        | GlueKind::SplitTopSkip
-        | GlueKind::LeftSkip
-        | GlueKind::RightSkip
-        | GlueKind::ParSkip
-        | GlueKind::ParFillSkip
-        | GlueKind::AboveDisplaySkip
-        | GlueKind::BelowDisplaySkip
-        | GlueKind::AboveDisplayShortSkip
-        | GlueKind::BelowDisplayShortSkip
-        | GlueKind::ThinMuSkip
-        | GlueKind::MedMuSkip
-        | GlueKind::ThickMuSkip
-        | GlueKind::NonScript => true,
-    }
 }
 
 fn edge_glyph_cursor(
@@ -528,14 +406,12 @@ fn search_node(
         }
         // pdftex.web §1003 recognizes pointer identity with the shared
         // `zero_glue`, not merely an equal-valued specification. Parameter
-        // and `\nonscript` kinds retain that identity when their value is
-        // zero; scanned explicit glue and leader/muskip specifications are
-        // fresh nodes and remain blocking even when all dimensions are zero.
-        tex_state::node_view::NodeView::Glue { spec, kind, .. }
-            if spec == tex_state::glue::GlueSpec::ZERO && shares_zero_glue(kind) =>
-        {
-            Search::Skip
-        }
+        // and `\nonscript` can retain that identity; literal specifications
+        // are fresh and remain blocking even when every component is zero.
+        tex_state::node_view::NodeView::Glue {
+            origin: GlueSpecOrigin::SharedZero,
+            ..
+        } => Search::Skip,
         tex_state::node_view::NodeView::Penalty(_)
         | tex_state::node_view::NodeView::MarginKern { .. }
         | tex_state::node_view::NodeView::Mark { .. }

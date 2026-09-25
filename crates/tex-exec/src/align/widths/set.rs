@@ -339,8 +339,8 @@ fn spanned_target<G>(
     for offset in 1..span {
         let spanned_column = column + offset;
         let glue = resolved.tabskips[spanned_column];
-        target = add_scaled(target, glue.width)?;
-        target = add_scaled(target, glue_adjustment(glue, prototype)?)?;
+        target = add_scaled(target, glue.spec.width)?;
+        target = add_scaled(target, glue_adjustment(glue.spec, prototype)?)?;
         target = add_scaled(target, resolved.columns[spanned_column])?;
     }
     Ok(target)

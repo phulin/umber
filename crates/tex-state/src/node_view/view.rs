@@ -33,6 +33,7 @@ pub enum NodeView<'a, List = PageListId, Glue = GlueSpec, Tokens = NodeTokenKey>
     Glue {
         spec: Glue,
         kind: crate::node::GlueKind,
+        origin: crate::node::GlueSpecOrigin,
         leader: Option<crate::node::LeaderPayload<List>>,
     },
     Penalty(i32),
@@ -116,9 +117,15 @@ impl<'a, List: Copy, Glue: Copy, Tokens: Clone> From<&'a Node<List, Glue, Tokens
                 font: *font,
                 ch: *ch,
             },
-            Node::Glue { spec, kind, leader } => Self::Glue {
+            Node::Glue {
+                spec,
+                kind,
+                origin,
+                leader,
+            } => Self::Glue {
                 spec: *spec,
                 kind: *kind,
+                origin: *origin,
                 leader: *leader,
             },
             Node::Penalty(value) => Self::Penalty(*value),
@@ -212,7 +219,17 @@ impl NodeView<'static> {
                 font,
                 ch,
             },
-            Node::Glue { spec, kind, leader } => Self::Glue { spec, kind, leader },
+            Node::Glue {
+                spec,
+                kind,
+                origin,
+                leader,
+            } => Self::Glue {
+                spec,
+                kind,
+                origin,
+                leader,
+            },
             Node::Penalty(value) => Self::Penalty(value),
             Node::Rule {
                 width,
@@ -531,9 +548,15 @@ impl NodeView<'_> {
                 font: *font,
                 ch: *ch,
             },
-            Self::Glue { spec, kind, leader } => Node::Glue {
+            Self::Glue {
+                spec,
+                kind,
+                origin,
+                leader,
+            } => Node::Glue {
                 spec: *spec,
                 kind: *kind,
+                origin: *origin,
                 leader: *leader,
             },
             Self::Penalty(value) => Node::Penalty(*value),

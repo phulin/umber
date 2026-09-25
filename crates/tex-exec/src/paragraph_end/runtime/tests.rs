@@ -137,9 +137,9 @@ fn normalize_test_paragraph_indexed_reference<G>(
             .nodes()
             .get(index)
         {
-            Some(tex_state::NodeView::Glue { spec, kind, leader })
-                if spec.shrink.raw() != 0 && spec.shrink_order != Order::Normal =>
-            {
+            Some(tex_state::NodeView::Glue {
+                spec, kind, leader, ..
+            }) if spec.shrink.raw() != 0 && spec.shrink_order != Order::Normal => {
                 Some((spec, kind, leader))
             }
             _ => None,
@@ -154,7 +154,15 @@ fn normalize_test_paragraph_indexed_reference<G>(
                 &mut reported,
             )
             .expect("node glue normalization succeeds");
-            stores.push_page_active_list(&mut output, Node::Glue { spec, kind, leader });
+            stores.push_page_active_list(
+                &mut output,
+                Node::Glue {
+                    origin: tex_state::node::GlueSpecOrigin::Owned,
+                    spec,
+                    kind,
+                    leader,
+                },
+            );
         } else {
             stores.append_page_active_list_range(&mut output, source, index..index + 1);
         }
@@ -278,6 +286,7 @@ fn production_post_line_discards_an_explicit_kern_chosen_as_a_break() {
                 kind: KernKind::Explicit,
             },
             Node::Glue {
+                origin: tex_state::node::GlueSpecOrigin::Owned,
                 spec: GlueSpec::ZERO,
                 kind: GlueKind::Normal,
                 leader: None,
@@ -568,6 +577,7 @@ fn paragraph_glue_normalization_retains_source_across_interleaved_output_appends
             .map(|index| {
                 if index.is_multiple_of(OFFENDING_STEP) {
                     Node::Glue {
+                        origin: tex_state::node::GlueSpecOrigin::Owned,
                         spec: infinite,
                         kind: GlueKind::Normal,
                         leader: None,

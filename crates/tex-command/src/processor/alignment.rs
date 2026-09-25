@@ -9,7 +9,6 @@
 mod tests;
 
 use tex_state::TokenListId;
-use tex_state::glue::GlueSpec;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::token::{Catcode, Token, TracedTokenWord};
 
@@ -125,9 +124,9 @@ pub struct FinishedAlignmentCell {
 pub struct AlignmentPreamble {
     pub columns: Vec<AlignmentCellTemplates>,
     /// TeX82 §759's `\tabskip` value at each preamble boundary.
-    pub tabskips: Vec<GlueSpec>,
+    pub tabskips: Vec<tex_state::node::GlueValue>,
     /// Value left by the last preamble `\tabskip` assignment.
-    pub default_tabskip: GlueSpec,
+    pub default_tabskip: tex_state::node::GlueValue,
     /// First column of TeX82's periodic `&&` preamble suffix, if present.
     ///
     /// TeX82 §760 consumes the second tab while scanning an otherwise empty

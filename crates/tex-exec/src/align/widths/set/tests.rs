@@ -88,8 +88,8 @@ fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
             &ResolvedWidths {
                 columns: vec![sp(11)],
                 tabskips: vec![
-                    tex_state::glue::GlueSpec::ZERO,
-                    tex_state::glue::GlueSpec::ZERO,
+                    tex_state::node::GlueValue::owned(tex_state::glue::GlueSpec::ZERO),
+                    tex_state::node::GlueValue::owned(tex_state::glue::GlueSpec::ZERO),
                 ],
             },
             &Prototype {
@@ -128,8 +128,8 @@ fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
             &ResolvedWidths {
                 columns: vec![sp(13)],
                 tabskips: vec![
-                    tex_state::glue::GlueSpec::ZERO,
-                    tex_state::glue::GlueSpec::ZERO,
+                    tex_state::node::GlueValue::owned(tex_state::glue::GlueSpec::ZERO),
+                    tex_state::node::GlueValue::owned(tex_state::glue::GlueSpec::ZERO),
                 ],
             },
             &Prototype {
@@ -167,8 +167,8 @@ fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
             &ResolvedWidths {
                 columns: vec![sp(11)],
                 tabskips: vec![
-                    tex_state::glue::GlueSpec::ZERO,
-                    tex_state::glue::GlueSpec::ZERO,
+                    tex_state::node::GlueValue::owned(tex_state::glue::GlueSpec::ZERO),
+                    tex_state::node::GlueValue::owned(tex_state::glue::GlueSpec::ZERO),
                 ],
             },
             &Prototype {
@@ -233,9 +233,13 @@ fn materialize_spanned_cell_adds_tabskip_and_empty_boxes() {
             empty,
         );
         let row_children = stores.publish_page_nodes(vec![
-            tabskip_node(tex_state::glue::GlueSpec::ZERO),
+            tabskip_node(tex_state::node::GlueValue::owned(
+                tex_state::glue::GlueSpec::ZERO,
+            )),
             Node::Unset(cell),
-            tabskip_node(tex_state::glue::GlueSpec::ZERO),
+            tabskip_node(tex_state::node::GlueValue::owned(
+                tex_state::glue::GlueSpec::ZERO,
+            )),
         ]);
         let row = Node::Unset(UnsetNode::new(UnsetNodeFields {
             kind: UnsetKind::HBox,
@@ -252,9 +256,9 @@ fn materialize_spanned_cell_adds_tabskip_and_empty_boxes() {
         let resolved = ResolvedWidths {
             columns: vec![sp(4), sp(5)],
             tabskips: vec![
-                tex_state::glue::GlueSpec::ZERO,
-                middle,
-                tex_state::glue::GlueSpec::ZERO,
+                tex_state::node::GlueValue::owned(tex_state::glue::GlueSpec::ZERO),
+                tex_state::node::GlueValue::owned(middle),
+                tex_state::node::GlueValue::owned(tex_state::glue::GlueSpec::ZERO),
             ],
         };
         let prototype = Prototype {
@@ -338,9 +342,13 @@ fn set_alignment_preserves_final_node_order_and_running_rules() {
             empty,
         ));
         let children = stores.publish_page_nodes(vec![
-            tabskip_node(tex_state::glue::GlueSpec::ZERO),
+            tabskip_node(tex_state::node::GlueValue::owned(
+                tex_state::glue::GlueSpec::ZERO,
+            )),
             cell,
-            tabskip_node(tex_state::glue::GlueSpec::ZERO),
+            tabskip_node(tex_state::node::GlueValue::owned(
+                tex_state::glue::GlueSpec::ZERO,
+            )),
         ]);
         let row = Node::Unset(UnsetNode::new(UnsetNodeFields {
             kind: UnsetKind::HBox,
@@ -393,7 +401,10 @@ fn set_alignment_preserves_final_node_order_and_running_rules() {
             rows,
             &ResolvedWidths {
                 columns: vec![sp(4)],
-                tabskips: vec![tex_state::glue::GlueSpec::ZERO; 2],
+                tabskips: vec![
+                    tex_state::node::GlueValue::owned(tex_state::glue::GlueSpec::ZERO);
+                    2
+                ],
             },
             &Prototype {
                 box_node: box_node(9, 2, empty),

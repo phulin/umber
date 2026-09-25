@@ -2972,16 +2972,20 @@ impl<'a, G> CommandContext<'a, G> {
             .flatten()
     }
 
-    pub fn define_preamble_tabskip(&mut self, value: GlueSpec, global: bool) {
-        let id = self
-            .admitted
-            .allocate_glue(value)
-            .expect("preamble tabskip fits durable glue storage");
+    pub fn define_preamble_tabskip(&mut self, value: crate::node::GlueValue, global: bool) {
+        let id = match value.origin {
+            crate::node::GlueSpecOrigin::SharedZero => None,
+            crate::node::GlueSpecOrigin::Owned => Some(
+                self.admitted
+                    .allocate_glue(value.spec)
+                    .expect("preamble tabskip fits durable glue storage"),
+            ),
+        };
         self.admitted
             .state()
             .assign_glue_parameter(
                 crate::env::banks::GlueParam::TAB_SKIP,
-                Some(id),
+                id,
                 if global {
                     crate::AssignmentScope::Global
                 } else {

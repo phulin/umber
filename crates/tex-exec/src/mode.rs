@@ -1274,8 +1274,8 @@ pub struct AlignState {
     kind: AlignmentKind,
     pack_spec: AlignmentPackSpec,
     columns: Vec<AlignColumn>,
-    tabskips: Vec<GlueSpec>,
-    default_tabskip: GlueSpec,
+    tabskips: Vec<tex_state::node::GlueValue>,
+    default_tabskip: tex_state::node::GlueValue,
     loop_start: Option<usize>,
     current_row: usize,
     current_col: usize,
@@ -1289,8 +1289,8 @@ impl AlignState {
         kind: AlignmentKind,
         pack_spec: AlignmentPackSpec,
         columns: Vec<AlignColumn>,
-        tabskips: Vec<GlueSpec>,
-        default_tabskip: GlueSpec,
+        tabskips: Vec<tex_state::node::GlueValue>,
+        default_tabskip: tex_state::node::GlueValue,
         loop_start: Option<usize>,
     ) -> Self {
         Self {
@@ -1323,12 +1323,12 @@ impl AlignState {
     }
 
     #[must_use]
-    pub fn tabskips(&self) -> &[GlueSpec] {
+    pub fn tabskips(&self) -> &[tex_state::node::GlueValue] {
         &self.tabskips
     }
 
     #[must_use]
-    pub fn default_tabskip(&self) -> &GlueSpec {
+    pub fn default_tabskip(&self) -> &tex_state::node::GlueValue {
         &self.default_tabskip
     }
 
@@ -1376,7 +1376,7 @@ impl AlignState {
     }
 
     #[must_use]
-    pub fn tabskip_for_boundary(&self, boundary: usize) -> &GlueSpec {
+    pub fn tabskip_for_boundary(&self, boundary: usize) -> &tex_state::node::GlueValue {
         if let Some(tabskip) = self.tabskips.get(boundary) {
             return tabskip;
         }
@@ -1798,9 +1798,15 @@ fn hash_mode_list<G>(
             }
             projection.usize(align.tabskips.len());
             for tabskip in &align.tabskips {
-                hash_node_glue(*tabskip, projection);
+                hash_node_glue(tabskip.spec, projection);
+                projection.u8(u8::from(
+                    tabskip.origin == tex_state::node::GlueSpecOrigin::SharedZero,
+                ));
             }
-            hash_node_glue(align.default_tabskip, projection);
+            hash_node_glue(align.default_tabskip.spec, projection);
+            projection.u8(u8::from(
+                align.default_tabskip.origin == tex_state::node::GlueSpecOrigin::SharedZero,
+            ));
             hash_optional_usize(align.loop_start, projection);
             projection.usize(align.current_row);
             projection.usize(align.current_col);

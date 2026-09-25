@@ -5,7 +5,7 @@ mod state_hash;
 
 use crate::fork_arena::{CheckpointMark, ChunkPool, ForkArena, ForkArenaCounters, ForkArenaError};
 use crate::glue::GlueSpec;
-use crate::node::{Node, NodeTokenKey};
+use crate::node::{GlueSpecOrigin, Node, NodeTokenKey};
 use crate::node_region::{NodeCheckpointMark, NodePool, NodeRegionId, PageClosureBuildMark};
 use crate::node_sequence::SemanticSequenceIdentity;
 use crate::node_view::{NodeCursor, NodeCursorIter};
@@ -475,7 +475,7 @@ pub(crate) struct PageBuilderState {
     page_depth: Scaled,
     page_max_depth: Scaled,
     contents: PageContents,
-    last_glue: Option<GlueSpec>,
+    last_glue: Option<(GlueSpec, GlueSpecOrigin)>,
     last_penalty: i32,
     last_kern: Scaled,
     last_node_type: i32,
@@ -613,7 +613,7 @@ struct PageScalars {
     dimensions: [Scaled; 8],
     page_max_depth: Scaled,
     contents: PageContents,
-    last_glue: Option<GlueSpec>,
+    last_glue: Option<(GlueSpec, GlueSpecOrigin)>,
     last_penalty: i32,
     last_kern: Scaled,
     last_node_type: i32,
@@ -639,7 +639,7 @@ struct PageInverseTarget<'a> {
     roots: [&'a mut PageListSpan; 5],
     dimensions: [&'a mut Scaled; 9],
     contents: &'a mut PageContents,
-    last_glue: &'a mut Option<GlueSpec>,
+    last_glue: &'a mut Option<(GlueSpec, GlueSpecOrigin)>,
     last_penalty: &'a mut i32,
     last_kern: &'a mut Scaled,
     last_node_type: &'a mut i32,
@@ -2649,9 +2649,10 @@ impl PageBuilderState {
             value.raw().hash(&mut hasher);
         }
         match self.last_glue {
-            Some(glue) => {
+            Some((glue, origin)) => {
                 1_u8.hash(&mut hasher);
                 hash_page_glue(glue, &mut hasher);
+                origin.hash(&mut hasher);
             }
             None => 0_u8.hash(&mut hasher),
         }
@@ -3199,10 +3200,11 @@ impl PageBuilderState {
                     .map(|node| node.to_owned()),
             );
         }
-        if let Some(spec) = &self.last_glue {
+        if let Some((spec, origin)) = &self.last_glue {
             nodes.push(Node::Glue {
                 spec: *spec,
                 kind: crate::node::GlueKind::Normal,
+                origin: *origin,
                 leader: None,
             });
         }
@@ -3291,7 +3293,7 @@ impl PageBuilderState {
         let split_discards_range = take(&mut cursor, state.split_discards_len);
         let last_glue = if state.has_last_glue {
             match &nodes[cursor] {
-                Node::Glue { spec, .. } => Some(*spec),
+                Node::Glue { spec, origin, .. } => Some((*spec, *origin)),
                 _ => return Err(crate::MemoValueError::Invalid("invalid last-glue sentinel")),
             }
         } else {
@@ -4396,14 +4398,14 @@ impl PageBuilderState {
         self.last_kern = Scaled::from_raw(0);
         self.last_node_type = node.etex_type();
         match node {
-            Node::Glue { spec, .. } => self.last_glue = Some(*spec),
+            Node::Glue { spec, origin, .. } => self.last_glue = Some((*spec, *origin)),
             Node::Penalty(value) => self.last_penalty = *value,
             Node::Kern { amount, .. } => self.last_kern = *amount,
             _ => {}
         }
     }
 
-    pub(crate) fn last_skip_ref(&self) -> Option<GlueSpec> {
+    pub(crate) fn last_skip_ref(&self) -> Option<(GlueSpec, GlueSpecOrigin)> {
         self.last_glue
     }
 

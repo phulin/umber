@@ -55,9 +55,10 @@ impl PageBuilderState {
                 }
                 projection.i32(self.page_max_depth.raw());
                 match self.last_glue {
-                    Some(glue) => {
+                    Some((glue, origin)) => {
                         projection.bool(true);
                         hash_glue(glue, projection);
+                        projection.bool(origin == crate::node::GlueSpecOrigin::SharedZero);
                     }
                     None => projection.bool(false),
                 }

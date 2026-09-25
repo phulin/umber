@@ -485,6 +485,7 @@ pub(crate) fn append_space_after_flush<G>(
     nest.current_list_mutation().push(
         stores,
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec,
             kind,
             leader: None,
@@ -511,6 +512,7 @@ pub(crate) fn append_control_space_glue_after_flush<G>(
     nest.current_list_mutation().push(
         stores,
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec,
             kind,
             leader: None,

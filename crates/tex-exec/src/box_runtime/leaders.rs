@@ -64,6 +64,7 @@ pub(crate) fn append_leader_contribution<G>(
     kind: GlueKind,
     payload: LeaderPayload,
     spec: GlueSpec,
+    origin: tex_state::node::GlueSpecOrigin,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     append_node_to_current_list(
@@ -71,6 +72,7 @@ pub(crate) fn append_leader_contribution<G>(
         stores,
         diagnostic_effects,
         Node::Glue {
+            origin,
             spec,
             kind,
             leader: Some(payload),

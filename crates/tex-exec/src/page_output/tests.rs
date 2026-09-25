@@ -241,6 +241,7 @@ fn earlier_break_preserves_unrelated_pending_penalty() {
             shrink_order: Order::Normal,
         };
         let chosen_break = Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: glue,
             kind: GlueKind::Normal,
             leader: None,

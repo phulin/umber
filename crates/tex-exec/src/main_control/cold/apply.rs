@@ -333,7 +333,10 @@ pub(in crate::main_control) fn apply<G>(
             command.retain_assignment_receipt(receipt);
             Ok(ReplayStep::Continue)
         }
-        ColdOperation::HorizontalSkip { value } => {
+        ColdOperation::HorizontalSkip {
+            value,
+            shared_zero_glue,
+        } => {
             if matches!(
                 modes.current_mode(),
                 Mode::Vertical | Mode::InternalVertical
@@ -357,6 +360,11 @@ pub(in crate::main_control) fn apply<G>(
                 Node::Glue {
                     spec: *value,
                     kind: GlueKind::Normal,
+                    origin: if *shared_zero_glue {
+                        tex_state::node::GlueSpecOrigin::SharedZero
+                    } else {
+                        tex_state::node::GlueSpecOrigin::Owned
+                    },
                     leader: None,
                 },
             );
@@ -556,6 +564,7 @@ pub(in crate::main_control) fn apply<G>(
             modes.current_list_mutation().push(
                 stores,
                 Node::Glue {
+                    origin: tex_state::node::GlueSpecOrigin::SharedZero,
                     spec: GlueSpec::ZERO,
                     kind: GlueKind::NonScript,
                     leader: None,
@@ -620,6 +629,7 @@ pub(in crate::main_control) fn apply<G>(
                     modes.current_list_mutation().push(
                         stores,
                         Node::Glue {
+                            origin: tex_state::node::GlueSpecOrigin::Owned,
                             spec,
                             kind: GlueKind::Normal,
                             leader: None,
@@ -775,6 +785,7 @@ pub(in crate::main_control) fn apply<G>(
             modes.current_list_mutation().push(
                 stores,
                 Node::Glue {
+                    origin: tex_state::node::GlueSpecOrigin::Owned,
                     spec: crate::box_runtime::fixed_infinite_glue(*primitive),
                     kind: GlueKind::Normal,
                     leader: None,
@@ -782,7 +793,10 @@ pub(in crate::main_control) fn apply<G>(
             );
             Ok(ReplayStep::Continue)
         }
-        ColdOperation::VerticalSkip { value } => {
+        ColdOperation::VerticalSkip {
+            value,
+            shared_zero_glue,
+        } => {
             // TeX82 §1054's `vmode+vskip: append_glue` (§1057): unlike
             // `\hskip` in vertical mode, `\vskip` never starts a paragraph --
             // the scan side (`scan_command`) only produces this step when the
@@ -798,6 +812,11 @@ pub(in crate::main_control) fn apply<G>(
                 Node::Glue {
                     spec: *value,
                     kind: GlueKind::Normal,
+                    origin: if *shared_zero_glue {
+                        tex_state::node::GlueSpecOrigin::SharedZero
+                    } else {
+                        tex_state::node::GlueSpecOrigin::Owned
+                    },
                     leader: None,
                 },
                 command.fuel,
@@ -813,6 +832,7 @@ pub(in crate::main_control) fn apply<G>(
                 stores,
                 command.diagnostic_effects,
                 Node::Glue {
+                    origin: tex_state::node::GlueSpecOrigin::Owned,
                     spec,
                     kind: GlueKind::Normal,
                     leader: None,
@@ -2602,6 +2622,7 @@ pub(in crate::main_control) fn apply<G>(
             kind,
             payload,
             glue,
+            shared_zero_glue,
         } => {
             boxes.pending_leader = None;
             crate::box_runtime::append_leader_contribution(
@@ -2611,6 +2632,11 @@ pub(in crate::main_control) fn apply<G>(
                 *kind,
                 *payload,
                 *glue,
+                if *shared_zero_glue {
+                    tex_state::node::GlueSpecOrigin::SharedZero
+                } else {
+                    tex_state::node::GlueSpecOrigin::Owned
+                },
                 command.fuel,
             )?;
             crate::vertical::build_page_if_outer_vertical(
@@ -2626,6 +2652,7 @@ pub(in crate::main_control) fn apply<G>(
             index,
             copy,
             glue,
+            shared_zero_glue,
         } => {
             if let Some(payload) = crate::box_runtime::take_register_payload(stores, *index, *copy)
             {
@@ -2636,6 +2663,11 @@ pub(in crate::main_control) fn apply<G>(
                     *kind,
                     payload,
                     *glue,
+                    if *shared_zero_glue {
+                        tex_state::node::GlueSpecOrigin::SharedZero
+                    } else {
+                        tex_state::node::GlueSpecOrigin::Owned
+                    },
                     command.fuel,
                 )?;
                 crate::vertical::build_page_if_outer_vertical(
@@ -3492,10 +3524,15 @@ pub(in crate::main_control) fn apply<G>(
                 .map_err(|_| ExecError::MissingToken {
                     context: "alignment lifecycle",
                 })?;
-            let default_tabskip = stores
-                .glue_param(GlueParam::TAB_SKIP)
-                .map(|id| stores.glue(id))
-                .unwrap_or(GlueSpec::ZERO);
+            let tabskip_id = stores.glue_param(GlueParam::TAB_SKIP);
+            let default_tabskip = tex_state::node::GlueValue {
+                spec: tabskip_id.map_or(GlueSpec::ZERO, |id| stores.glue(id)),
+                origin: if tabskip_id.is_none() {
+                    tex_state::node::GlueSpecOrigin::SharedZero
+                } else {
+                    tex_state::node::GlueSpecOrigin::Owned
+                },
+            };
             *active_alignment = Some(ActiveReplayAlignment {
                 identity,
                 kind: if *vertical {

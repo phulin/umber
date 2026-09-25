@@ -145,6 +145,7 @@ fn next_line_discards_all_discardables_but_retains_font_kern() {
         rule(1),
         Node::Penalty(0),
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: zero,
             kind: GlueKind::Normal,
             leader: None,
@@ -462,8 +463,8 @@ fn post_line_break_omits_only_zero_leftskip() {
             Node::Glue {
                 spec,
                 kind: GlueKind::RightSkip,
-
                 leader: None,
+                ..
             },
         ] if *spec == zero
     ));
@@ -492,16 +493,16 @@ fn post_line_break_omits_only_zero_leftskip() {
             Node::Glue {
                 spec: left,
                 kind: GlueKind::LeftSkip,
-
                 leader: None,
+                ..
             },
             Node::Rule { .. },
             Node::Penalty(10_000),
             Node::Glue {
                 spec: right,
                 kind: GlueKind::RightSkip,
-
                 leader: None,
+                ..
             },
         ] if *left == nonzero && *right == zero
     ));
@@ -515,6 +516,7 @@ fn paragraph_tape_bounds_analysis_storage_for_large_paragraphs() {
     for _ in 0..50_000 {
         nodes.push(rule(1));
         nodes.push(Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: glue,
             kind: GlueKind::Normal,
             leader: None,

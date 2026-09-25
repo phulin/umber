@@ -32,4 +32,10 @@ impl GlueSpec {
         shrink: Scaled::from_raw(0),
         shrink_order: Order::Normal,
     };
+
+    /// TeX82 §1237's `trap_zero_glue` ignores the orders of zero components.
+    #[must_use]
+    pub const fn has_zero_components(self) -> bool {
+        self.width.raw() == 0 && self.stretch.raw() == 0 && self.shrink.raw() == 0
+    }
 }

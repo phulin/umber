@@ -7,7 +7,6 @@ mod tests;
 
 use tex_state::CommandContext;
 use tex_state::diagnostic::DiagnosticEffects;
-use tex_state::glue::GlueSpec;
 use tex_state::node::{
     BoxNode, BoxNodeFields, GlueKind, Node, Sign, UnsetKind, UnsetNode, UnsetNodeFields,
 };
@@ -72,7 +71,7 @@ pub(crate) fn finish_alignment<G>(
 #[derive(Clone, Debug)]
 struct ResolvedWidths {
     columns: Vec<Scaled>,
-    tabskips: Vec<GlueSpec>,
+    tabskips: Vec<tex_state::node::GlueValue>,
 }
 
 #[derive(Clone, Debug)]
@@ -214,9 +213,10 @@ fn empty_column_box(kind: AlignmentKind, size: Scaled, empty: PageListId) -> Nod
     }
 }
 
-fn tabskip_node(spec: GlueSpec) -> Node {
+fn tabskip_node(value: tex_state::node::GlueValue) -> Node {
     Node::Glue {
-        spec,
+        origin: value.origin,
+        spec: value.spec,
         kind: GlueKind::TabSkip,
         leader: None,
     }

@@ -281,6 +281,8 @@ pub struct CommandProcessor<'episode, 'admission, G> {
     /// e-TeX expression result remains pointer-identical to its source.
     pub(crate) scanned_glue_identity: Option<tex_state::GlueId<G>>,
     pub(crate) scanned_glue_register: Option<(bool, u16)>,
+    /// Whether the scanned specification is TeX's shared `zero_glue` pointer.
+    pub(crate) scanned_glue_shared_zero: bool,
     /// Nesting of TeX82's artificial deferred-write expansion episode.
     /// This is operational call-stack state, never snapshot state.
     pub(crate) write_expansion_depth: u32,
@@ -533,6 +535,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.scanned_glue_register
     }
 
+    #[must_use]
+    pub const fn scanned_glue_shared_zero(&self) -> bool {
+        self.scanned_glue_shared_zero
+    }
+
     /// TeX82 §578's `find_font_dimen` decision for a scanned parameter number.
     ///
     /// §578 resolves `n<=0` to the same `fmem_ptr` scratch cell as an
@@ -732,6 +739,7 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
             output_routine_active: false,
             scanned_glue_identity: None,
             scanned_glue_register: None,
+            scanned_glue_shared_zero: false,
             write_expansion_depth: 0,
             command_trace_mode_prefix: None,
             command_trace_printed: false,

@@ -200,10 +200,15 @@ impl<G> CommandProcessor<'_, '_, G> {
                     previous_align_state: None,
                 },),
             );
-            let current_tabskip = self
-                .state
-                .glue_param(GlueParam::TAB_SKIP)
-                .map_or_else(|| GlueSpec::ZERO, |id| self.state.glue(id));
+            let tabskip_id = self.state.glue_param(GlueParam::TAB_SKIP);
+            let current_tabskip = tex_state::node::GlueValue {
+                spec: tabskip_id.map_or(GlueSpec::ZERO, |id| self.state.glue(id)),
+                origin: if tabskip_id.is_none() {
+                    tex_state::node::GlueSpecOrigin::SharedZero
+                } else {
+                    tex_state::node::GlueSpecOrigin::Owned
+                },
+            };
             AlignmentPreambleState {
                 alignment,
                 builder,
@@ -250,7 +255,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                     AlignmentPreambleScalarPhase::TabskipGlue => {
                         match self.scan_glue_retained(false) {
                             crate::RetainedScalarScan::Complete(value) => {
-                                pending.current_tabskip = value.value;
+                                pending.current_tabskip = tex_state::node::GlueValue {
+                                    spec: value.value,
+                                    origin: if self.scanned_glue_shared_zero {
+                                        tex_state::node::GlueSpecOrigin::SharedZero
+                                    } else {
+                                        tex_state::node::GlueSpecOrigin::Owned
+                                    },
+                                };
                                 let global = self.state.int_param(IntParam::GLOBAL_DEFS) > 0;
                                 self.state
                                     .define_preamble_tabskip(pending.current_tabskip, global);

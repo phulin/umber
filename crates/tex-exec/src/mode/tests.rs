@@ -689,8 +689,10 @@ fn align_state() -> AlignState {
         AlignmentKind::HAlign,
         AlignmentPackSpec::Natural,
         Vec::new(),
-        vec![tex_state::glue::GlueSpec::ZERO],
-        tex_state::glue::GlueSpec::ZERO,
+        vec![tex_state::node::GlueValue::owned(
+            tex_state::glue::GlueSpec::ZERO,
+        )],
+        tex_state::node::GlueValue::owned(tex_state::glue::GlueSpec::ZERO),
         None,
     )
 }
@@ -974,8 +976,10 @@ fn alignment_template_coordinates_survive_destructive_journal_rollback() {
                         u_template,
                         v_template,
                     }],
-                    vec![tex_state::glue::GlueSpec::ZERO],
-                    tex_state::glue::GlueSpec::ZERO,
+                    vec![tex_state::node::GlueValue::owned(
+                        tex_state::glue::GlueSpec::ZERO,
+                    )],
+                    tex_state::node::GlueValue::owned(tex_state::glue::GlueSpec::ZERO),
                     None,
                 ));
             nest.reset_journal_for_test();

@@ -2120,6 +2120,7 @@ mod tests {
         font: tex_state::ids::FontId,
     ) -> tex_state::page_node_arena::PageListId {
         let mut nodes = vec![Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: tex_state::glue::GlueSpec::ZERO,
             kind: tex_state::node::GlueKind::Normal,
             leader: None,
@@ -2662,6 +2663,7 @@ mod tests {
                     )
                     .expect("right minimum");
                 let mut nodes = vec![Node::Glue {
+                    origin: tex_state::node::GlueSpecOrigin::Owned,
                     spec: tex_state::glue::GlueSpec::ZERO,
                     kind: tex_state::node::GlueKind::Normal,
                     leader: None,

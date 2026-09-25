@@ -111,6 +111,7 @@ fn borrowed_paragraph_tape_materializes_from_immutable_source_and_overlays_par_f
     let nodes = vec![
         rule(1),
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: original,
             kind: GlueKind::ParFillSkip,
             leader: None,
@@ -165,6 +166,7 @@ fn owned_slice_and_composite_arena_paragraphs_agree() {
     let source = vec![
         rule(12),
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: GlueSpec {
                 width: sp(4),
                 stretch: sp(20),
@@ -241,6 +243,7 @@ fn coordinate_paragraph_tape_reborrows_arena_between_execution_steps() {
     let left = universe.publish_owned_page_nodes(vec![rule(8)]);
     let right = universe.publish_owned_page_nodes(vec![
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: GlueSpec {
                 width: sp(2),
                 stretch: sp(10),
@@ -290,6 +293,7 @@ fn coordinate_paragraph_tape_reborrows_arena_between_execution_steps() {
         [
             rule(8),
             Node::Glue {
+                origin: tex_state::node::GlueSpecOrigin::Owned,
                 spec: GlueSpec {
                     width: sp(2),
                     stretch: sp(10),

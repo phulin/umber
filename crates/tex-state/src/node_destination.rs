@@ -199,8 +199,19 @@ impl<'a> NodeDestination<'a> {
         });
     }
 
-    pub fn glue(self, spec: GlueSpec, kind: GlueKind, leader: Option<LeaderPayload<PageListId>>) {
-        self.store(Node::Glue { spec, kind, leader });
+    pub fn glue(
+        self,
+        spec: GlueSpec,
+        kind: GlueKind,
+        origin: crate::node::GlueSpecOrigin,
+        leader: Option<LeaderPayload<PageListId>>,
+    ) {
+        self.store(Node::Glue {
+            spec,
+            kind,
+            origin,
+            leader,
+        });
     }
 
     pub fn penalty(self, value: i32) {

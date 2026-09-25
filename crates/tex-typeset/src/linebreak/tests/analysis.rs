@@ -54,6 +54,7 @@ fn direct_page_chunk_analysis_matches_slice_layout_semantics() {
             kind: KernKind::Explicit,
         });
         nodes.push(Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: GlueSpec {
                 width: sp(1),
                 ..GlueSpec::ZERO
@@ -102,6 +103,7 @@ fn ordinary_breakpoint_analysis_crosses_each_block_once_at_required_sizes() {
             .map(|index| {
                 if index % 3 == 1 {
                     Node::Glue {
+                        origin: tex_state::node::GlueSpecOrigin::Owned,
                         spec: GlueSpec {
                             width: sp(1),
                             ..GlueSpec::ZERO
@@ -231,6 +233,7 @@ fn tracing_reports_a_line_class_champion_before_the_next_class_feasible_route() 
     let nodes = vec![
         rule(40),
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: stretch,
             kind: GlueKind::Normal,
             leader: None,
@@ -306,6 +309,7 @@ fn positive_emergency_stretch_uses_the_real_tolerance_route() {
     let nodes = vec![
         rule(100),
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: zero,
             kind: GlueKind::Normal,
             leader: None,

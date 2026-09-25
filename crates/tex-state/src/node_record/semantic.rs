@@ -97,8 +97,9 @@ impl Hash for SemanticRecord<'_> {
             }
             NodeKind::Glue => {
                 let kind = decode_glue_kind(subtype).expect("published glue kind");
+                let origin = record.glue_origin().expect("published glue origin");
                 let (spec, leader) = decode_glue_semantic(record, annex);
-                fields!(Glue, spec, kind, leader);
+                fields!(Glue, spec, kind, origin, leader);
             }
             NodeKind::Penalty => {
                 let value = words[0] as i32;

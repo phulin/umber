@@ -33,6 +33,7 @@ fn math_lowering_moves_whole_native_list_and_copies_only_trailing_wrapper_edge()
                 kind: KernKind::Explicit,
             },
             Node::Glue {
+                origin: tex_state::node::GlueSpecOrigin::Owned,
                 spec: GlueSpec::ZERO,
                 kind: GlueKind::Normal,
                 leader: None,
@@ -198,6 +199,7 @@ fn math_lowering_appends_exactly_the_mu_rewrites() {
                 kind: KernKind::Mu,
             },
             Node::Glue {
+                origin: tex_state::node::GlueSpecOrigin::Owned,
                 spec: GlueSpec {
                     width: Scaled::from_raw(3 * Scaled::UNITY),
                     ..GlueSpec::ZERO

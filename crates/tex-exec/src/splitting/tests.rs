@@ -38,6 +38,7 @@ fn tex82_prune_page_top_prefix_and_split_skip_matrix() {
                 kind: KernKind::Explicit,
             },
             Node::Glue {
+                origin: tex_state::node::GlueSpecOrigin::Owned,
                 spec: discarded_glue,
                 kind: GlueKind::Normal,
                 leader: None,
@@ -115,6 +116,7 @@ fn pdftex_prune_page_top_discards_snapy_but_preserves_other_whatsits() {
             [
                 Node::Whatsit(tex_state::node::Whatsit::PdfSnapRefPoint),
                 Node::Glue {
+                    origin: tex_state::node::GlueSpecOrigin::Owned,
                     spec: top,
                     kind: GlueKind::SplitTopSkip,
                     leader: None,

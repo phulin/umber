@@ -271,7 +271,12 @@ impl<'a, 'ctx, G> LoweredMathSink<'a, 'ctx, G> {
                             destination.kern(*amount, *kind);
                         });
                 }
-                MathNode::Glue { spec, kind, leader } => {
+                MathNode::Glue {
+                    spec,
+                    kind,
+                    origin,
+                    leader,
+                } => {
                     let value = if let Some((_, value)) =
                         self.glue_cache.iter().find(|(cached, _)| cached == spec)
                     {
@@ -282,7 +287,7 @@ impl<'a, 'ctx, G> LoweredMathSink<'a, 'ctx, G> {
                     };
                     self.stores
                         .construct_page_active_list(&mut target, |destination| {
-                            destination.glue(value, lower_math_glue_kind(*kind), *leader);
+                            destination.glue(value, lower_math_glue_kind(*kind), *origin, *leader);
                         });
                 }
                 MathNode::Penalty(penalty) => {
@@ -451,7 +456,12 @@ impl<'a, 'ctx, G> LoweredMathSink<'a, 'ctx, G> {
                                 kind: *kind,
                             },
                         ),
-                        MathNode::Glue { spec, kind, leader } => {
+                        MathNode::Glue {
+                            spec,
+                            kind,
+                            origin,
+                            leader,
+                        } => {
                             let leader = leader.map(|leader| {
                                 leader.map_lists(|child| {
                                     self.stores
@@ -462,6 +472,7 @@ impl<'a, 'ctx, G> LoweredMathSink<'a, 'ctx, G> {
                             self.stores.push_shipout_scratch_node(
                                 target,
                                 Node::Glue {
+                                    origin: *origin,
                                     spec: *spec,
                                     kind: lower_math_glue_kind(*kind),
                                     leader,

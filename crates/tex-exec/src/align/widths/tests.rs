@@ -19,13 +19,17 @@ fn columns(count: usize) -> Vec<AlignColumn> {
     ]
 }
 
-fn state(kind: AlignmentKind, spec: AlignmentPackSpec, tabskips: Vec<GlueSpec>) -> AlignState {
+fn state(
+    kind: AlignmentKind,
+    spec: AlignmentPackSpec,
+    tabskips: Vec<tex_state::node::GlueValue>,
+) -> AlignState {
     AlignState::new(
         kind,
         spec,
         columns(tabskips.len() - 1),
         tabskips,
-        tex_state::glue::GlueSpec::ZERO,
+        tex_state::node::GlueValue::owned(tex_state::glue::GlueSpec::ZERO),
         None,
     )
 }
@@ -68,7 +72,11 @@ fn pack_alignment_prototype_applies_spec_in_both_modes() {
             };
             let resolved = ResolvedWidths {
                 columns: vec![sp(4), sp(5)],
-                tabskips: vec![flexible, tex_state::glue::GlueSpec::ZERO, flexible],
+                tabskips: vec![
+                    tex_state::node::GlueValue::owned(flexible),
+                    tex_state::node::GlueValue::owned(tex_state::glue::GlueSpec::ZERO),
+                    tex_state::node::GlueValue::owned(flexible),
+                ],
             };
             let empty = PageListId::empty();
 
@@ -144,8 +152,8 @@ fn alignment_prototype_diagnostic_retains_unset_columns() {
             let resolved = ResolvedWidths {
                 columns: vec![sp(4)],
                 tabskips: vec![
-                    tex_state::glue::GlueSpec::ZERO,
-                    tex_state::glue::GlueSpec::ZERO,
+                    tex_state::node::GlueValue::owned(tex_state::glue::GlueSpec::ZERO),
+                    tex_state::node::GlueValue::owned(tex_state::glue::GlueSpec::ZERO),
                 ],
             };
             let empty = PageListId::empty();
@@ -188,11 +196,17 @@ fn fin_align_orders_groups_packing_pop_and_insertion() {
         let first = unset(UnsetKind::HBox, 4, 1);
         let second = unset(UnsetKind::HBox, 6, 1);
         let row_children = stores.publish_page_nodes(vec![
-            tabskip_node(tex_state::glue::GlueSpec::ZERO),
+            tabskip_node(tex_state::node::GlueValue::owned(
+                tex_state::glue::GlueSpec::ZERO,
+            )),
             first,
-            tabskip_node(tex_state::glue::GlueSpec::ZERO),
+            tabskip_node(tex_state::node::GlueValue::owned(
+                tex_state::glue::GlueSpec::ZERO,
+            )),
             second,
-            tabskip_node(tex_state::glue::GlueSpec::ZERO),
+            tabskip_node(tex_state::node::GlueValue::owned(
+                tex_state::glue::GlueSpec::ZERO,
+            )),
         ]);
         let row = Node::Unset(UnsetNode::new(UnsetNodeFields {
             kind: UnsetKind::HBox,
@@ -210,9 +224,9 @@ fn fin_align_orders_groups_packing_pop_and_insertion() {
             AlignmentKind::HAlign,
             AlignmentPackSpec::Exactly(sp(12)),
             vec![
-                tex_state::glue::GlueSpec::ZERO,
-                tex_state::glue::GlueSpec::ZERO,
-                tex_state::glue::GlueSpec::ZERO,
+                tex_state::node::GlueValue::owned(tex_state::glue::GlueSpec::ZERO),
+                tex_state::node::GlueValue::owned(tex_state::glue::GlueSpec::ZERO),
+                tex_state::node::GlueValue::owned(tex_state::glue::GlueSpec::ZERO),
             ],
         );
 

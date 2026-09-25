@@ -304,11 +304,18 @@ pub(in crate::main_control) fn begin_replay_alignment_cell<G>(
         modes.current_list_mutation().push(
             stores,
             Node::Glue {
+                origin: active
+                    .tabskips
+                    .first()
+                    .cloned()
+                    .unwrap_or(active.default_tabskip)
+                    .origin,
                 spec: active
                     .tabskips
                     .first()
                     .cloned()
-                    .unwrap_or(active.default_tabskip),
+                    .unwrap_or(active.default_tabskip)
+                    .spec,
                 kind: GlueKind::TabSkip,
                 leader: None,
             },
@@ -400,11 +407,18 @@ pub(in crate::main_control) fn capture_replay_alignment_cell<G>(
     modes.current_list_mutation().push(
         stores,
         Node::Glue {
+            origin: active
+                .tabskips
+                .get(active.column.saturating_add(1))
+                .cloned()
+                .unwrap_or(active.default_tabskip)
+                .origin,
             spec: active
                 .tabskips
                 .get(active.column.saturating_add(1))
                 .cloned()
-                .unwrap_or(active.default_tabskip),
+                .unwrap_or(active.default_tabskip)
+                .spec,
             kind: GlueKind::TabSkip,
             leader: None,
         },

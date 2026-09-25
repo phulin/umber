@@ -57,6 +57,7 @@ fn break_glue_does_not_contribute_to_preceding_line_width() {
     let nodes = vec![
         rule(20),
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: glue,
             kind: GlueKind::Normal,
 
@@ -89,17 +90,20 @@ fn discardable_tail_does_not_create_an_empty_final_line() {
     let nodes = vec![
         rule(100),
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: trailing,
             kind: GlueKind::Normal,
             leader: None,
         },
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: trailing,
             kind: GlueKind::Normal,
             leader: None,
         },
         Node::Penalty(10_000),
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: par_fill,
             kind: GlueKind::ParFillSkip,
             leader: None,
@@ -142,6 +146,7 @@ fn looseness_can_select_empty_line_after_terminal_discretionary() {
         },
         Node::Penalty(10_000),
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: par_fill,
             kind: GlueKind::ParFillSkip,
             leader: None,
@@ -176,6 +181,7 @@ fn equal_demerit_easy_line_champion_uses_terminal_discretionary_route() {
         },
         Node::Penalty(INF_PENALTY),
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: par_fill,
             kind: GlueKind::ParFillSkip,
             leader: None,
@@ -233,6 +239,7 @@ fn unmet_looseness_retries_after_the_pretolerance_pass() {
     let nodes = vec![
         rule(10),
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: break_glue,
             kind: GlueKind::Normal,
             leader: None,
@@ -240,6 +247,7 @@ fn unmet_looseness_retries_after_the_pretolerance_pass() {
         rule(10),
         Node::Penalty(10_000),
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: par_fill,
             kind: GlueKind::ParFillSkip,
             leader: None,
@@ -270,6 +278,7 @@ fn mathoff_breaks_only_before_following_glue_and_zeroes_break_width() {
         rule(10),
         Node::MathOff(sp(5)),
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: glue,
             kind: GlueKind::Normal,
 
@@ -336,6 +345,7 @@ fn explicit_kern_break_scores_before_adding_the_kern() {
         rule(10),
         kern(5),
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: glue,
             kind: GlueKind::Normal,
             leader: None,
@@ -408,6 +418,7 @@ fn math_boundaries_suppress_internal_glue_and_kern_breaks() {
         Node::MathOn(sp(0)),
         rule(10),
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: glue,
             kind: GlueKind::ThinMuSkip,
             leader: None,
@@ -415,6 +426,7 @@ fn math_boundaries_suppress_internal_glue_and_kern_breaks() {
         rule(10),
         kern(5),
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: glue,
             kind: GlueKind::Normal,
             leader: None,
@@ -422,6 +434,7 @@ fn math_boundaries_suppress_internal_glue_and_kern_breaks() {
         rule(10),
         Node::MathOff(sp(0)),
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: glue,
             kind: GlueKind::Normal,
             leader: None,
@@ -450,6 +463,7 @@ fn final_pass_deactivates_unshrinkable_active_line() {
     let nodes = vec![
         rule(30),
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: glue,
             kind: GlueKind::Normal,
 
@@ -457,6 +471,7 @@ fn final_pass_deactivates_unshrinkable_active_line() {
         },
         rule(30),
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: glue,
             kind: GlueKind::Normal,
 
@@ -464,6 +479,7 @@ fn final_pass_deactivates_unshrinkable_active_line() {
         },
         rule(30),
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: glue,
             kind: GlueKind::Normal,
 
@@ -471,6 +487,7 @@ fn final_pass_deactivates_unshrinkable_active_line() {
         },
         rule(30),
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: glue,
             kind: GlueKind::Normal,
 
@@ -582,6 +599,7 @@ fn existing_discretionary_is_available_on_the_pretolerance_pass() {
         rule(20),
         Node::Penalty(10_000),
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: par_fill,
             kind: GlueKind::ParFillSkip,
             leader: None,

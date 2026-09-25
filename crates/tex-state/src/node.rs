@@ -231,6 +231,7 @@ pub enum Node<List = PageListId, Glue = GlueSpec, Tokens = NodeTokenKey> {
     Glue {
         spec: Glue,
         kind: GlueKind,
+        origin: GlueSpecOrigin,
         leader: Option<LeaderPayload<List>>,
     },
     Penalty(i32),
@@ -287,7 +288,12 @@ enum SemanticNodeRef<'a, List, Glue, Tokens> {
     Lig(&'a FontId, &'a char, &'a [char], &'a bool, &'a bool),
     Kern(&'a Scaled, &'a KernKind),
     MarginKern(&'a Scaled, &'a MarginKernSide, &'a FontId, &'a u8),
-    Glue(&'a Glue, &'a GlueKind, &'a Option<LeaderPayload<List>>),
+    Glue(
+        &'a Glue,
+        &'a GlueKind,
+        &'a GlueSpecOrigin,
+        &'a Option<LeaderPayload<List>>,
+    ),
     Penalty(&'a i32),
     Rule(&'a Option<Scaled>, &'a Option<Scaled>, &'a Option<Scaled>),
     HList(&'a BoxNode<List>),
@@ -368,7 +374,12 @@ impl<List, Glue, Tokens> Node<List, Glue, Tokens> {
                 font,
                 ch,
             } => SemanticNodeRef::MarginKern(amount, side, font, ch),
-            Self::Glue { spec, kind, leader } => SemanticNodeRef::Glue(spec, kind, leader),
+            Self::Glue {
+                spec,
+                kind,
+                origin,
+                leader,
+            } => SemanticNodeRef::Glue(spec, kind, origin, leader),
             Self::Penalty(value) => SemanticNodeRef::Penalty(value),
             Self::Rule {
                 width,
@@ -811,9 +822,15 @@ impl<List, Glue, Tokens> Node<List, Glue, Tokens> {
                 font,
                 ch,
             },
-            Self::Glue { spec, kind, leader } => Node::Glue {
+            Self::Glue {
                 spec,
                 kind,
+                origin,
+                leader,
+            } => Node::Glue {
+                spec,
+                kind,
+                origin,
                 leader: leader.map(|value| value.map_lists(&mut map)),
             },
             Self::Penalty(value) => Node::Penalty(value),
@@ -908,9 +925,15 @@ impl<List, Glue, Tokens> Node<List, Glue, Tokens> {
                 font,
                 ch,
             },
-            Self::Glue { spec, kind, leader } => Node::Glue {
+            Self::Glue {
+                spec,
+                kind,
+                origin,
+                leader,
+            } => Node::Glue {
                 spec: map_glue(spec),
                 kind,
+                origin,
                 leader,
             },
             Self::Penalty(value) => Node::Penalty(value),
@@ -1257,6 +1280,45 @@ pub enum KernKind {
 pub enum MarginKernSide {
     Left,
     Right,
+}
+
+/// Whether a glue node retains TeX's shared `zero_glue` specification pointer.
+/// pdftex.web §1003 tests this identity independently of glue subtype.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
+pub enum GlueSpecOrigin {
+    SharedZero,
+    /// An allocated specification, which may still be referenced by many nodes.
+    Owned,
+}
+
+impl GlueSpecOrigin {
+    /// TeX82 §1237 canonicalizes assigned zero parameter glue to `zero_glue`.
+    #[must_use]
+    pub fn from_trapped_parameter(spec: crate::glue::GlueSpec) -> Self {
+        if spec == crate::glue::GlueSpec::ZERO {
+            Self::SharedZero
+        } else {
+            Self::Owned
+        }
+    }
+}
+
+/// A scanned glue value with the pointer category retained through alignment
+/// preambles, where equal zero values may denote different pdfTeX specs.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct GlueValue {
+    pub spec: crate::glue::GlueSpec,
+    pub origin: GlueSpecOrigin,
+}
+
+impl GlueValue {
+    #[must_use]
+    pub const fn owned(spec: crate::glue::GlueSpec) -> Self {
+        Self {
+            spec,
+            origin: GlueSpecOrigin::Owned,
+        }
+    }
 }
 
 /// The source of a glue node.

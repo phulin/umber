@@ -34,11 +34,13 @@ fn package_unset_cell_records_natural_extent_and_glue_orders() {
                 depth: Some(sp(1)),
             },
             Node::Glue {
+                origin: tex_state::node::GlueSpecOrigin::Owned,
                 spec: fil,
                 kind: GlueKind::Normal,
                 leader: None,
             },
             Node::Glue {
+                origin: tex_state::node::GlueSpecOrigin::Owned,
                 spec: fill,
                 kind: GlueKind::Normal,
                 leader: None,

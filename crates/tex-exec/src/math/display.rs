@@ -216,6 +216,7 @@ pub(crate) fn finish_display_math<G>(
             nest,
             stores,
             Node::Glue {
+                origin: tex_state::node::GlueSpecOrigin::from_trapped_parameter(spec),
                 spec,
                 kind: above_display_glue_kind(above),
                 leader: None,
@@ -298,6 +299,7 @@ pub(crate) fn finish_display_math<G>(
             nest,
             stores,
             Node::Glue {
+                origin: tex_state::node::GlueSpecOrigin::from_trapped_parameter(spec),
                 spec,
                 kind: below_display_glue_kind(below),
                 leader: None,
@@ -325,6 +327,7 @@ pub(crate) fn finish_display_alignment<G>(
         nest,
         stores,
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::from_trapped_parameter(spec),
             spec,
             kind: above_display_glue_kind(above),
             leader: None,
@@ -402,6 +405,7 @@ pub(crate) fn finish_display_alignment<G>(
         nest,
         stores,
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::from_trapped_parameter(spec),
             spec,
             kind: GlueKind::BelowDisplaySkip,
             leader: None,

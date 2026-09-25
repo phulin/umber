@@ -9,6 +9,7 @@ fn final_pass_keeps_last_active_route_when_every_route_is_overfull() {
     let nodes = vec![
         rule(100),
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: glue,
             kind: GlueKind::Normal,
             leader: None,
@@ -73,6 +74,7 @@ fn glue_route_is_considered_at_immediately_following_forced_penalty() {
     let nodes = vec![
         rule(1),
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: zero,
             kind: GlueKind::Normal,
             leader: None,
@@ -118,6 +120,7 @@ fn line_break_includes_left_and_right_skip_in_background_widths() {
     let nodes = vec![
         rule(80),
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: break_glue,
             kind: GlueKind::Normal,
             leader: None,
@@ -290,6 +293,7 @@ fn active_list_order_matches_tex_for_equal_demerit_discretionary_routes() {
         disc(nonempty),
         Node::Penalty(10_000),
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: par_fill,
             kind: GlueKind::ParFillSkip,
             leader: None,

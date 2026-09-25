@@ -498,7 +498,11 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<ScannedMathMuMaterial, CommandError> {
         if glue {
             let result = self.scan_glue_retained(true);
-            Ok(ScannedMathMuMaterial::Glue(result.into_result()?.value))
+            let spec = result.into_result()?.value;
+            Ok(ScannedMathMuMaterial::Glue {
+                spec,
+                shared_zero: self.scanned_glue_shared_zero,
+            })
         } else {
             let result = self.scan_mu_dimension_retained();
             Ok(ScannedMathMuMaterial::Kern(result.into_result()?.value))

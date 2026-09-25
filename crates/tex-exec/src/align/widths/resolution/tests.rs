@@ -62,8 +62,11 @@ fn state(columns: usize, tabskips: Vec<GlueSpec>) -> AlignState {
             };
             columns
         ],
-        tabskips,
-        tex_state::glue::GlueSpec::ZERO,
+        tabskips
+            .into_iter()
+            .map(tex_state::node::GlueValue::owned)
+            .collect(),
+        tex_state::node::GlueValue::owned(tex_state::glue::GlueSpec::ZERO),
         None,
     )
 }
@@ -139,7 +142,11 @@ fn resolve_alignment_widths_applies_tex82_recurrence() {
 
         assert_eq!(resolved.columns, vec![sp(4), sp(5)]);
         assert_eq!(
-            resolved.tabskips,
+            resolved
+                .tabskips
+                .iter()
+                .map(|value| value.spec)
+                .collect::<Vec<_>>(),
             vec![
                 tex_state::glue::GlueSpec::ZERO,
                 middle,
@@ -167,8 +174,8 @@ fn resolve_alignment_widths_zeroes_null_column_tabskip() {
         .expect("null columns resolve to zero");
 
         assert_eq!(resolved.columns, vec![sp(4), Scaled::from_raw(0)]);
-        assert_eq!(resolved.tabskips[1], middle);
-        assert_eq!(resolved.tabskips[2], tex_state::glue::GlueSpec::ZERO);
+        assert_eq!(resolved.tabskips[1].spec, middle);
+        assert_eq!(resolved.tabskips[2].spec, tex_state::glue::GlueSpec::ZERO);
     });
 }
 
@@ -220,6 +227,6 @@ fn alignment_width_resolution_negative_zero_and_competing_span_matrix() {
         )
         .expect("negative residual and null leading column resolve");
         assert_eq!(resolved.columns, vec![Scaled::from_raw(0), sp(-3)]);
-        assert_eq!(resolved.tabskips[1], tex_state::glue::GlueSpec::ZERO);
+        assert_eq!(resolved.tabskips[1].spec, tex_state::glue::GlueSpec::ZERO);
     });
 }

@@ -650,6 +650,7 @@ fn initialize_page_with_topskip<G>(
     };
     let spec = adjusted;
     stores.prepend_page_contribution(Node::Glue {
+        origin: tex_state::node::GlueSpecOrigin::Owned,
         spec,
         kind: GlueKind::TopSkip,
         leader: None,
@@ -680,10 +681,21 @@ fn update_glue_or_kern<G>(
     let mut replacement = None;
     let width = match node {
         Node::Kern { amount, .. } => *amount,
-        Node::Glue { spec, kind, leader } => {
-            let spec = *spec;
-            let spec = finite_page_shrink(stores, diagnostic_effects, spec, diagnostic_context)?;
+        Node::Glue {
+            spec,
+            kind,
+            origin,
+            leader,
+        } => {
+            let original = *spec;
+            let spec =
+                finite_page_shrink(stores, diagnostic_effects, original, diagnostic_context)?;
             replacement = Some(Node::Glue {
+                origin: if spec == original {
+                    *origin
+                } else {
+                    tex_state::node::GlueSpecOrigin::Owned
+                },
                 spec,
                 kind: *kind,
                 leader: *leader,
@@ -742,8 +754,9 @@ fn normalize_insert_content_shrink<G>(
         .nodes();
     let mut replacements = Vec::new();
     for &index in indices {
-        let Some(tex_state::node_view::NodeView::Glue { spec, kind, leader }) =
-            content_nodes.get(index)
+        let Some(tex_state::node_view::NodeView::Glue {
+            spec, kind, leader, ..
+        }) = content_nodes.get(index)
         else {
             continue;
         };
@@ -774,7 +787,7 @@ fn normalize_insert_content_shrink<G>(
             pieces.push(stores.slice_page_node_sequence(content, start..index, &mut slices));
         }
         pieces.push(stores.construct_page_node(|destination| {
-            destination.glue(spec, kind, leader);
+            destination.glue(spec, kind, tex_state::node::GlueSpecOrigin::Owned, leader);
         }));
         start = index + 1;
     }

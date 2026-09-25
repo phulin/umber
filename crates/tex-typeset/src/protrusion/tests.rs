@@ -103,6 +103,7 @@ fn zero_width_stretch_glue_blocks_edge_discovery() {
         &[
             character(font, '.'),
             Node::Glue {
+                origin: tex_state::node::GlueSpecOrigin::Owned,
                 spec: par_fill,
                 kind: GlueKind::ParFillSkip,
                 leader: None,
@@ -128,6 +129,7 @@ fn nested_hlist_preserves_blocking_child_at_both_edges() {
         ..GlueSpec::ZERO
     };
     let children = state.publish_page_nodes(&[Node::Glue {
+        origin: tex_state::node::GlueSpecOrigin::Owned,
         spec: stretch_glue,
         kind: GlueKind::Normal,
         leader: None,
@@ -157,6 +159,7 @@ fn nested_hlist_only_skips_when_its_contents_are_transparent() {
             kind: KernKind::Explicit,
         },
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::SharedZero,
             spec: GlueSpec::ZERO,
             kind: GlueKind::NonScript,
             leader: None,
@@ -174,6 +177,49 @@ fn nested_hlist_only_skips_when_its_contents_are_transparent() {
         line_protrusion(&state, &[character(font, 'A'), box_node]).right,
         sp(5 * 65_536)
     );
+}
+
+/// pdftex.web §1061 prepends the marginal kern to the line before its
+/// transparent anchor material. The edge glyph decides the amount, not the
+/// insertion coordinate.
+#[test]
+fn left_margin_kern_precedes_transparent_anchor_material() {
+    let mut state = TestState::new();
+    let font = state.intern_font(protruding_font());
+    state.set_pdf_font_code(PdfFontCode::Lp, font, b'A', 500);
+    let anchor = state.publish_page_nodes(&[
+        Node::Penalty(10_000),
+        Node::Glue {
+            spec: GlueSpec::ZERO,
+            kind: GlueKind::Normal,
+            origin: tex_state::node::GlueSpecOrigin::SharedZero,
+            leader: None,
+        },
+    ]);
+    let mut nodes = vec![
+        Node::Glue {
+            spec: GlueSpec::ZERO,
+            kind: GlueKind::LeftSkip,
+            origin: tex_state::node::GlueSpecOrigin::SharedZero,
+            leader: None,
+        },
+        hlist(anchor, sp(0), sp(0), sp(0)),
+        character(font, 'A'),
+    ];
+
+    let plan = plan_margin_kerns(&state, tex_state::node_view::NodeCursor::owned(&nodes), 1);
+    assert!(
+        matches!(plan.left, Some((1, Node::MarginKern { amount, .. })) if amount == sp(-5 * 65_536))
+    );
+    insert_margin_kerns(&state, &mut nodes, 1);
+    assert!(matches!(
+        nodes[1],
+        Node::MarginKern {
+            side: MarginKernSide::Left,
+            ..
+        }
+    ));
+    assert!(matches!(nodes[2], Node::HList(_)));
 }
 
 #[test]
@@ -242,6 +288,7 @@ fn materializes_margin_kerns_inside_paragraph_skip_glue() {
     let zero = GlueSpec::ZERO;
     let mut nodes = vec![
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: zero,
             kind: GlueKind::LeftSkip,
             leader: None,
@@ -249,11 +296,13 @@ fn materializes_margin_kerns_inside_paragraph_skip_glue() {
         character(font, 'A'),
         character(font, '.'),
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: zero,
             kind: GlueKind::ParFillSkip,
             leader: None,
         },
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: zero,
             kind: GlueKind::RightSkip,
             leader: None,
@@ -306,6 +355,7 @@ fn finalized_centering_boundaries_do_not_block_margin_kern_planning() {
     let empty = state.publish_page_nodes(&[]);
     let nodes = [
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: centered,
             kind: GlueKind::LeftSkip,
             leader: None,
@@ -315,11 +365,13 @@ fn finalized_centering_boundaries_do_not_block_margin_kern_planning() {
         character(font, '.'),
         Node::Penalty(10_000),
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: GlueSpec::ZERO,
             kind: GlueKind::ParFillSkip,
             leader: None,
         },
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: centered,
             kind: GlueKind::RightSkip,
             leader: None,
@@ -366,12 +418,14 @@ fn later_leftskip_remains_a_left_edge_blocker() {
     };
     let nodes = [
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: centered,
             kind: GlueKind::LeftSkip,
             leader: None,
         },
         Node::Penalty(0),
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: centered,
             kind: GlueKind::LeftSkip,
             leader: None,
@@ -435,8 +489,21 @@ fn edge_search_distinguishes_transparent_zero_width_and_blocking_material() {
         },
         // `\nonscript` directly retains pdfTeX's shared `zero_glue` pointer.
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::SharedZero,
             spec: zero_glue,
             kind: GlueKind::NonScript,
+            leader: None,
+        },
+        Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::SharedZero,
+            spec: zero_glue,
+            kind: GlueKind::Normal,
+            leader: None,
+        },
+        Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::SharedZero,
+            spec: zero_glue,
+            kind: GlueKind::Leaders,
             leader: None,
         },
         Node::Disc {
@@ -468,11 +535,19 @@ fn edge_search_distinguishes_transparent_zero_width_and_blocking_material() {
         // A scanned explicit `\hskip0pt` has an equal value but a fresh glue
         // specification, so pdftex.web §1003 requires it to block.
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: GlueSpec::ZERO,
             kind: GlueKind::Normal,
             leader: None,
         },
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
+            spec: GlueSpec::ZERO,
+            kind: GlueKind::NonScript,
+            leader: None,
+        },
+        Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             spec: wide_glue,
             kind: GlueKind::Normal,
             leader: None,

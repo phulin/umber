@@ -307,6 +307,7 @@ mod tests {
         let nodes = vec![
             hbox(&mut universe, 10, 0),
             Node::Glue {
+                origin: tex_state::node::GlueSpecOrigin::Owned,
                 spec: glue,
                 kind: GlueKind::Normal,
 
@@ -351,6 +352,7 @@ mod tests {
                 kind: KernKind::Explicit,
             },
             Node::Glue {
+                origin: tex_state::node::GlueSpecOrigin::Owned,
                 spec: glue,
                 kind: GlueKind::Normal,
 
@@ -378,6 +380,7 @@ mod tests {
         let nodes = vec![
             hbox(&mut universe, 10, 0),
             Node::Glue {
+                origin: tex_state::node::GlueSpecOrigin::Owned,
                 spec: glue,
                 kind: GlueKind::Normal,
 

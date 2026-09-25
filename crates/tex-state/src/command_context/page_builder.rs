@@ -256,7 +256,12 @@ impl<'a, G> CommandContext<'a, G> {
 
     #[must_use]
     pub fn page_last_skip(&self) -> Option<GlueSpec> {
-        self.page.last_skip_ref()
+        self.page.last_skip_ref().map(|(spec, _)| spec)
+    }
+
+    #[must_use]
+    pub fn page_last_skip_origin(&self) -> Option<crate::node::GlueSpecOrigin> {
+        self.page.last_skip_ref().map(|(_, origin)| origin)
     }
 
     #[must_use]

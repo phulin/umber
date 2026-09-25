@@ -198,6 +198,7 @@ impl ArenaPostLineChannel {
             let retained = stores.slice_page_node_span(self.source.span(), self.position..end);
             self.position = end;
             let suffix = stores.publish_unique_page_nodes(vec![Node::Glue {
+                origin: tex_state::node::GlueSpecOrigin::from_trapped_parameter(params.right_skip),
                 spec: params.right_skip,
                 kind: GlueKind::RightSkip,
                 leader: None,
@@ -216,7 +217,12 @@ impl ArenaPostLineChannel {
         output_lineages.clear();
         if params.left_skip != GlueSpec::ZERO {
             stores.construct_page_active_list(&mut output, |destination| {
-                destination.glue(params.left_skip, GlueKind::LeftSkip, None);
+                destination.glue(
+                    params.left_skip,
+                    GlueKind::LeftSkip,
+                    tex_state::node::GlueSpecOrigin::Owned,
+                    None,
+                );
             });
         }
         for direction in self.active_directions.iter().copied() {
@@ -341,6 +347,7 @@ impl ArenaPostLineChannel {
                         destination.glue(
                             par_fill_override.expect("matched override"),
                             GlueKind::ParFillSkip,
+                            tex_state::node::GlueSpecOrigin::Owned,
                             None,
                         );
                     });
@@ -376,7 +383,16 @@ impl ArenaPostLineChannel {
             });
         }
         stores.construct_page_active_list(&mut output, |destination| {
-            destination.glue(params.right_skip, GlueKind::RightSkip, None);
+            destination.glue(
+                params.right_skip,
+                GlueKind::RightSkip,
+                if params.right_skip == GlueSpec::ZERO {
+                    tex_state::node::GlueSpecOrigin::SharedZero
+                } else {
+                    tex_state::node::GlueSpecOrigin::Owned
+                },
+                None,
+            );
         });
         self.position = skip_post_line_discardable(
             stores
@@ -643,6 +659,7 @@ pub(crate) fn break_current_paragraph<G>(
     nest.current_list_mutation().push(
         stores,
         Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::from_trapped_parameter(params.par_fill_skip),
             spec: params.par_fill_skip,
             kind: GlueKind::ParFillSkip,
             leader: None,
@@ -1389,7 +1406,15 @@ fn normalize_paragraph_chunk_prefix<G>(
             diagnostic_effects,
             reported,
         )?;
-        stores.push_page_active_list(output, Node::Glue { spec, kind, leader });
+        stores.push_page_active_list(
+            output,
+            Node::Glue {
+                origin: tex_state::node::GlueSpecOrigin::Owned,
+                spec,
+                kind,
+                leader,
+            },
+        );
         *retained_start = index + 1;
     }
     Ok(())
@@ -1940,6 +1965,7 @@ pub(crate) fn start_paragraph<G>(
                     nest,
                     stores,
                     Node::Glue {
+                        origin: tex_state::node::GlueSpecOrigin::from_trapped_parameter(parskip),
                         spec: parskip,
                         kind: GlueKind::ParSkip,
                         leader: None,

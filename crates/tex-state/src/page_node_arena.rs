@@ -116,6 +116,11 @@ impl<'a> PageMaterialNodeRef<'a> {
     }
 
     #[must_use]
+    pub fn glue_origin(self) -> Option<crate::node::GlueSpecOrigin> {
+        self.record.glue_origin()
+    }
+
+    #[must_use]
     pub fn glue_leader(self) -> Option<Option<crate::node::LeaderPayload<PageListId>>> {
         self.record.glue_leader(self.annex)
     }

@@ -1112,7 +1112,9 @@ fn emit_node_ref<G, P: ShipoutPayload<G>>(
             output.margin_kern(amount, lower_margin_kern_side(side), projection.font_id, ch)?;
             dvi.kern(amount).map_err(invalid_artifact)?;
         }
-        NodeView::Glue { spec, kind, leader } => {
+        NodeView::Glue {
+            spec, kind, leader, ..
+        } => {
             let spec = lower_glue(P::glue(stores, spec));
             let kind = lower_glue_kind(kind);
             emit_glue::<G, P>(

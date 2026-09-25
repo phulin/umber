@@ -51,6 +51,7 @@ pub(super) fn rebox(
                 shrink_order: Order::Fil,
             },
             kind: tex_state::node::GlueKind::Normal,
+            origin: tex_state::node::GlueSpecOrigin::Owned,
             leader: None,
         };
         boxed.list = ctx
