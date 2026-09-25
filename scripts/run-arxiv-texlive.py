@@ -13,11 +13,13 @@ import re
 import resource
 import subprocess
 import sys
-from pathlib import Path
+from functools import lru_cache
+from pathlib import Path, PurePosixPath
 
 from arxiv_corpus import (archive_members, declared_texlive, materialize, sha256_file,
                           source_identity, source_jobname, verify_view)
 from texlive import ahash64_file
+from latex_input_admissions import read_receipt
 
 ROOT = Path(__file__).resolve().parent.parent
 SUPPORTED_ENGINES = ("latex", "pdflatex")
@@ -69,7 +71,7 @@ def check_recorder(path: Path, run: Path, runtime: Path, fmt: Path) -> None:
     """Reject every recorded input outside the source job and selected release."""
     if not path.is_file():
         fail(f"successful reference DVI has no recorder trace: {path}")
-    roots = (run.resolve(), runtime.resolve())
+    roots = (run.resolve(), runtime.resolve(), (fmt.parent / "generated-config").resolve())
     for line in path.read_text(errors="replace").splitlines():
         if not line.startswith("INPUT "):
             continue
@@ -77,6 +79,36 @@ def check_recorder(path: Path, run: Path, runtime: Path, fmt: Path) -> None:
         resolved = (source if source.is_absolute() else run / source).resolve()
         if resolved != fmt.resolve() and not any(resolved.is_relative_to(root) for root in roots):
             fail(f"reference recorder escaped selected source/runtime: {resolved}")
+
+
+def preserve_incomplete(path: Path, parent: Path, stem: str) -> None:
+    """Keep a failed attempt while freeing its stable path for a fresh run."""
+    if not path.exists():
+        return
+    parent.mkdir(parents=True, exist_ok=True)
+    for number in range(1, 10_000):
+        destination = parent / f"{stem}-{number:04d}"
+        if not destination.exists():
+            os.replace(path, destination)
+            return
+    fail(f"too many retained incomplete attempts for {path}")
+
+
+def preserve_incomplete_umber(row_dir: Path) -> None:
+    names = ("umber", "umber.log", "umber.inputs", "comparison.log", "triage")
+    present = [name for name in names if (row_dir / name).exists()]
+    if not present:
+        return
+    attempts = row_dir / "incomplete-umber"
+    attempts.mkdir(exist_ok=True)
+    for number in range(1, 10_000):
+        destination = attempts / f"{number:04d}"
+        if not destination.exists():
+            destination.mkdir()
+            for name in present:
+                os.replace(row_dir / name, destination / name)
+            return
+    fail(f"too many retained incomplete Umber attempts for {row_dir}")
 
 
 def read_sources(lock: Path, archives: Path, expected_rows: int) -> list[dict]:
@@ -165,6 +197,10 @@ def authority(preparation: Path, rows: list[dict]) -> tuple[dict, dict]:
         if (format_receipt.get("format", {}).get("sha256") != sha256_file(paths["reference_format"])
                 or format_receipt.get("engine", {}).get("sha256") != sha256_file(paths["reference_binary"])):
             fail(f"prepared {year} {engine} reference format receipt differs")
+        arguments = format_receipt.get("engine", {}).get("arguments")
+        if (not isinstance(arguments, list) or f"-progname={engine}" not in arguments
+                or f"-jobname={engine}" not in arguments):
+            fail(f"prepared {year} {engine} reference format engine differs")
         year_receipt = json.loads(runtime_receipt.read_text())
         snapshot_date = year_receipt.get("snapshot_date")
         try:
@@ -180,7 +216,9 @@ def authority(preparation: Path, rows: list[dict]) -> tuple[dict, dict]:
         inputs = format_receipt.get("inputs")
         if not isinstance(inputs, list) or not inputs:
             fail(f"prepared {year} {engine} reference input list is missing")
-        allowed = (runtime.resolve(), (runtime.parent / "formats/generated-config").resolve())
+        format_root = paths["reference_format"].parent.resolve()
+        generated_config = format_root / "generated-config"
+        allowed = (runtime.resolve(), generated_config)
         seen_inputs = set()
         for record in inputs:
             if not isinstance(record, dict) or not isinstance(record.get("path"), str):
@@ -194,15 +232,16 @@ def authority(preparation: Path, rows: list[dict]) -> tuple[dict, dict]:
             seen_inputs.add(path.resolve())
         required_inputs = {runtime / "tex/latex/base/latex.ltx",
                            runtime / "tex/latex/l3kernel/expl3-code.tex",
-                           runtime.parent / "formats/generated-config/language.dat"}
+                           generated_config / "language.dat"}
         if not {path.resolve() for path in required_inputs} <= seen_inputs:
             fail(f"prepared {year} {engine} stable LaTeX inputs are missing")
         admission = Path(str(umber_format_receipt.get("input_admissions", "")))
-        if (not admission.is_file() or not admission.resolve().is_relative_to(runtime.parent / "formats")
+        if (not admission.is_file() or not admission.resolve().is_relative_to(format_root)
                 or umber_format_receipt.get("input_admissions_sha256") != sha256_file(admission)):
             fail(f"prepared {year} {engine} Umber input admissions differ")
         key = f"{year}/{engine}"
         selected[key] = {"runtime_root": str(runtime), "runtime_receipt": identity(runtime_receipt),
+                         "generated_config": str(generated_config),
                          "reference_binary": identity(paths["reference_binary"]),
                          "reference_format": identity(paths["reference_format"]),
                          "reference_format_receipt": identity(paths["reference_format_receipt"]),
@@ -216,6 +255,10 @@ def authority(preparation: Path, rows: list[dict]) -> tuple[dict, dict]:
 
 
 def reference_environment(runtime: Path, run: Path, fmt: Path, epoch: int) -> dict[str, str]:
+    from texlive_formats import stable_paths
+
+    base, kernel, ini = stable_paths(runtime)
+    config = fmt.parent / "generated-config"
     env = {key: value for key, value in os.environ.items()
            if not key.startswith(("TEX", "TFMF")) and not key.endswith("FONTS")
            and key != "OSFONTDIR"}
@@ -228,10 +271,107 @@ def reference_environment(runtime: Path, run: Path, fmt: Path, epoch: int) -> di
         env[key] = str(path)
     env.update({"TEXMFCNF": str(runtime / "web2c"), "TEXMFROOT": str(runtime.parent),
                 "TEXMFDIST": str(runtime), "TEXFORMATS": str(fmt.parent),
-                "TEXINPUTS": f"{run}:{runtime}/tex/latex//:{runtime}/tex/generic//:{runtime}/tex/plain//",
+                "TEXINPUTS": ":".join((str(run), str(config), str(base), str(kernel), str(ini),
+                                       f"{runtime}/tex/latex//", f"{runtime}/tex/generic//",
+                                       f"{runtime}/tex/plain//", f"{runtime}/tex//")),
                 "TFMFONTS": f"{run}:{runtime}/fonts/tfm//", "SOURCE_DATE_EPOCH": str(epoch),
                 "FORCE_SOURCE_DATE": "1"})
     return env
+
+
+@lru_cache(maxsize=4)
+def runtime_names(runtime: Path) -> dict[str, tuple[Path, ...]]:
+    """Index the already verified snapshot inventory for extra Umber reads."""
+    names: dict[str, list[Path]] = {}
+    inventory = runtime.parent / "runtime.files"
+    for line in inventory.read_text(encoding="utf-8").splitlines():
+        relative, _, _ = line.split("\t")
+        if not relative.startswith("texmf-dist/") or "/tex/latex-dev/" in relative:
+            continue
+        path = runtime.parent / relative
+        names.setdefault(path.name, []).append(path)
+    return {name: tuple(paths) for name, paths in names.items()}
+
+
+def audit_umber_inputs(row: dict, row_dir: Path, proof: dict, admission: Path) -> dict:
+    """Prove common read bytes match and extra reads come from selected inputs."""
+    reference_run = row_dir / "reference"
+    umber_run = row_dir / "umber"
+    runtime = Path(proof["runtime_root"])
+    config = Path(proof["generated_config"])
+    source_members = {str(member["path"]): member for member in archive_members(row["archive"])}
+    entry = source_members[row["entrypoint"]]
+    main_path = umber_run / row["entrypoint"]
+    if (not main_path.is_file() or sha256_file(main_path) != entry["sha256"]):
+        fail(f"Umber main input differs from locked source: {row['id']}")
+    main, files = read_receipt(admission)
+    if main != (entry["bytes"], ahash64_file(main_path)):
+        fail(f"Umber main input admission differs from locked source: {row['id']}")
+    common: dict[str, set[tuple[int, str]]] = {}
+    recorder = reference_run / f"{row['jobname']}.fls"
+    for line in recorder.read_text(encoding="utf-8").splitlines():
+        if not line.startswith("INPUT "):
+            continue
+        source = Path(line[6:])
+        path = (source if source.is_absolute() else reference_run / source).resolve()
+        if path.is_relative_to(reference_run):
+            relative = path.relative_to(reference_run).as_posix()
+            member = source_members.get(relative)
+            if member is None:
+                continue  # Generated auxiliary, excluded from external admissions.
+            if sha256_file(path) != member["sha256"]:
+                fail(f"reference source input changed during run: {path}")
+        elif path.is_relative_to(runtime):
+            relative = path.relative_to(runtime).as_posix()
+            # verify_snapshot has authenticated the selected runtime.
+        elif path == config / "language.dat":
+            relative = "language.dat"  # The format authority checked this input.
+        else:
+            continue  # The reference format itself is separately authenticated.
+        observed = (path.stat().st_size, ahash64_file(path))
+        parts = PurePosixPath(relative).parts
+        for index in range(len(parts)):
+            common.setdefault("/".join(parts[index:]), set()).add(observed)
+    extras = []
+    matched = 0
+    ambiguous = 0
+    for status, key, observed in files:
+        if status != "used":
+            continue
+        _, name = key.split(":", 1)
+        request = PurePosixPath(name)
+        if (request.is_absolute() or not name or ".." in request.parts
+                or request.as_posix() != name):
+            fail(f"Umber used unsafe request name {key}: {row['id']}")
+        basename = request.name
+        expected = common.get(name, common.get(basename))
+        if expected is not None:
+            if observed not in expected:
+                fail(f"Umber consumed {key} with bytes different from reference: {row['id']}")
+            if len(expected) == 1:
+                matched += 1
+            else:
+                ambiguous += 1
+            continue
+        candidates = [umber_run / relative for relative in source_members
+                      if relative == name or relative.endswith("/" + name)]
+        candidates.extend(runtime_names(runtime).get(basename, ()))
+        if basename == "language.dat":
+            candidates.append(config / "language.dat")
+        selected = next((path for path in candidates
+                         if path.is_file() and not path.is_symlink()
+                         and path.stat().st_size == observed[0]
+                         and ahash64_file(path) == observed[1]), None)
+        if selected is None:
+            fail(f"Umber consumed {key} outside selected source/runtime: {row['id']}")
+        if selected.is_relative_to(umber_run):
+            relative = selected.relative_to(umber_run).as_posix()
+            if sha256_file(selected) != source_members[relative]["sha256"]:
+                fail(f"Umber extra source input changed during run: {selected}")
+        extras.append({"key": key, "path": str(selected), "bytes": observed[0],
+                       "sha256": sha256_file(selected)})
+    return {"common_reads": matched, "ambiguous_common_reads": ambiguous,
+            "selected_extra_reads": extras}
 
 
 def memory_limit(mib: int):
@@ -283,13 +423,12 @@ def run_umber(args: argparse.Namespace, row: dict, row_dir: Path, proof: dict, e
     verify_view(row["archive"], run)
     output = run / f"{row['jobname']}.dvi"
     log, comparison = row_dir / "umber.log", row_dir / "comparison.log"
-    runtime = Path(proof["runtime_root"])
+    admission = row_dir / "umber.inputs"
     env = {key: value for key, value in os.environ.items()
            if not key.startswith(("TEX", "TFMF")) and not key.endswith("FONTS")
            and key != "OSFONTDIR" and not key.startswith("UMBER_")}
     env.update({"SOURCE_DATE_EPOCH": str(proof["source_date_epoch"]), "FORCE_SOURCE_DATE": "1",
-                "TEXINPUTS": f"{run}:{runtime}/tex/latex//:{runtime}/tex/generic//:{runtime}/tex/plain//",
-                "TEXFONTS": f"{run}:{runtime}/fonts/tfm//"})
+                "TEXINPUTS": str(run), "TEXFONTS": str(run)})
     command = [sys.executable, str(ROOT / "scripts/run-umber-guarded.py"),
                "--timeout-seconds", str(args.timeout_seconds), "--max-rss-mib",
                str(args.max_rss_mib), "--term-grace-seconds", "2", "--", str(args.umber),
@@ -297,13 +436,13 @@ def run_umber(args: argparse.Namespace, row: dict, row_dir: Path, proof: dict, e
                "--distribution-ahash64", proof["distribution_ahash64"],
                "--format", proof["umber_format"]["path"], "--offline",
                "--expansion-fuel", "500000000", "--execution-steps", "10000000",
-               "--dvi", str(output), row["entrypoint"]]
+               "--dvi", str(output), "--input-records-out", str(admission), row["entrypoint"]]
     with log.open("wb") as out:
         completed = subprocess.run(command, cwd=run, env=env, stdout=out,
                                    stderr=subprocess.STDOUT, check=False)
     result = {"command": command, "working_directory": str(run),
               "exit_status": completed.returncode, "dvi": artifact(output),
-              "artifacts": {"log": artifact(log)}}
+              "artifacts": {"log": artifact(log), "inputs": artifact(admission)}}
     if completed.returncode or not output.is_file():
         result["status"] = "Umber-failure"
         return result
@@ -312,6 +451,9 @@ def run_umber(args: argparse.Namespace, row: dict, row_dir: Path, proof: dict, e
     except ValueError:
         result["status"] = "Umber-failure"
         return result
+    if not admission.is_file():
+        fail(f"successful Umber DVI has no input admission receipt: {row['id']}")
+    result["input_audit"] = audit_umber_inputs(row, row_dir, proof, admission)
     compare = [str(args.parity_harness), "--compare-existing-dvi", str(expected),
                str(output), "--label", row["id"], "--triage-dir", str(row_dir / "triage")]
     with comparison.open("wb") as out:
@@ -384,7 +526,8 @@ def check_result(result: dict, row: dict, proof: dict | None, results: Path,
                       "--distribution-ahash64", proof["distribution_ahash64"],
                       "--format", proof["umber_format"]["path"], "--offline",
                       "--expansion-fuel", "500000000", "--execution-steps", "10000000",
-                      "--dvi", str(row_dir / "umber" / f"{row['jobname']}.dvi"), row["entrypoint"]]
+                      "--dvi", str(row_dir / "umber" / f"{row['jobname']}.dvi"),
+                      "--input-records-out", str(row_dir / "umber.inputs"), row["entrypoint"]]
     if umber.get("command") != expected_umber or umber.get("working_directory") != str(row_dir / "umber"):
         fail(f"Umber command changed: {row['id']}")
     for item in (umber.get("dvi"), *(umber.get("artifacts") or {}).values(),
@@ -398,6 +541,10 @@ def check_result(result: dict, row: dict, proof: dict | None, results: Path,
         fail(f"missing successful Umber DVI: {row['id']}")
     if umber.get("pages") != dvi_pages(Path(umber["dvi"]["path"])):
         fail(f"Umber DVI page count changed: {row['id']}")
+    admission = (umber.get("artifacts") or {}).get("inputs")
+    if admission is None or umber.get("input_audit") != audit_umber_inputs(
+            row, row_dir, proof, Path(admission["path"])):
+        fail(f"Umber input audit changed: {row['id']}")
     comparison_command = [str(args.parity_harness), "--compare-existing-dvi", dvi["path"],
                           umber["dvi"]["path"], "--label", row["id"],
                           "--triage-dir", str(row_dir / "triage")]
@@ -472,7 +619,7 @@ def main() -> int:
                 continue
             else:
                 if row_dir.exists():
-                    fail(f"corpus row receipt missing from existing directory: {row['id']}")
+                    preserve_incomplete(row_dir, row_root / "incomplete-reference", row["id"])
                 row_dir.mkdir()
                 result = {key: row[key] for key in ("id", "lock_order", "entrypoint", "jobname",
                                                     "source", "compiler", "year", "declaration")}
@@ -497,6 +644,7 @@ def main() -> int:
                     continue
                 row_dir = row_root / row["id"]
                 proof = authorities[f"{row['year']}/{row['compiler']}"]
+                preserve_incomplete_umber(row_dir)
                 result["umber"] = run_umber(args, row, row_dir, proof,
                                              Path(result["reference"]["dvi"]["path"]))
                 result["status"] = result["umber"]["status"]

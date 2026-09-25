@@ -91,19 +91,21 @@ name=${input%.tex}
 test -f side.bbl
 printf 'reference %s %s\\n' "$name" "$TEXMFDIST" >> "$TEST_COUNTS"
 cp "$TEST_DVI" "$name.dvi"
-printf 'PWD %s\nINPUT %s\n' "$PWD" "$PWD/$name.tex" > "$name.fls"
+printf 'PWD %s\nINPUT %s\nINPUT %s\n' "$PWD" "$PWD/$name.tex" "$PWD/side.bbl" > "$name.fls"
 """)
             umber = root / "umber"
             executable(umber, """
 previous=
 for arg in "$@"; do
   if test "$previous" = output; then output=$arg; fi
-  case "$arg" in --dvi) previous=output;; *) previous=;; esac
+  if test "$previous" = inputs; then admissions=$arg; fi
+  case "$arg" in --dvi) previous=output;; --input-records-out) previous=inputs;; *) previous=;; esac
 done
 input=$arg
 name=${input%.tex}
 test -f side.bbl
 printf 'umber %s %s\\n' "$name" "$TEXINPUTS" >> "$TEST_COUNTS"
+cp "$TEST_RECEIPTS/$name.inputs" "$admissions"
 if test "$name" = latex23; then cp "$TEST_DIFFERENT" "$output";
 else cp "$TEST_DVI" "$output"; fi
 """)
@@ -117,25 +119,30 @@ if ! cmp -s "$2" "$3"; then
 fi
 """)
             years = {}
+            receipts = root / "admissions"
+            receipts.mkdir()
             for year, engine in (("2023", "latex"), ("2025", "pdflatex")):
                 runtime = root / year / "texmf-dist"
                 (runtime / "web2c").mkdir(parents=True)
-                for name in ("tex/latex/base/latex.ltx", "tex/latex/l3kernel/expl3-code.tex"):
+                for name in ("tex/latex/base/latex.ltx", "tex/latex/l3kernel/expl3-code.tex",
+                             "tex/latex/latexconfig/latex.ini", "tex/latex/latexconfig/pdflatex.ini"):
                     path = runtime / name
-                    path.parent.mkdir(parents=True)
+                    path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_text(name + "\n")
                 config = root / year / "formats/generated-config/language.dat"
                 config.parent.mkdir(parents=True)
                 config.write_text("=english\n")
+                (root / year / "runtime.files").write_text("")
                 (runtime / "web2c" / "sentinel").write_text("release input\n")
                 (root / year / "acquisition.json").write_text(json.dumps({
                     "snapshot_date": f"{year}-01-01",
                     "sentinel_sha256": sha256_file(runtime / "web2c" / "sentinel")}))
                 epoch = int(dt.datetime(int(year), 1, 1, tzinfo=dt.timezone.utc).timestamp())
-                reference_fmt = root / year / f"{engine}.fmt"
+                reference_fmt = root / year / "formats" / f"{engine}.fmt"
                 reference_fmt.write_text("reference format\n")
-                reference_receipt = root / year / f"{engine}-reference.json"
-                reference_receipt.write_text(json.dumps({"engine": {"sha256": sha256_file(oracle)},
+                reference_receipt = reference_fmt.with_suffix(".json")
+                reference_receipt.write_text(json.dumps({"engine": {"sha256": sha256_file(oracle),
+                                                                    "arguments": [f"-progname={engine}", f"-jobname={engine}"]},
                                                          "format": {"sha256": sha256_file(reference_fmt)},
                                                          "source_date_epoch": epoch,
                                                          "inputs": [{"path": str(path),
@@ -144,12 +151,12 @@ fi
                                                                     (runtime / "tex/latex/base/latex.ltx",
                                                                      runtime / "tex/latex/l3kernel/expl3-code.tex",
                                                                      config)]}))
-                umber_fmt = root / year / f"{engine}.umberfmt"
+                umber_fmt = root / year / "formats" / f"{engine}.umberfmt"
                 umber_fmt.write_text("umber format\n")
                 admission = root / year / f"formats/umber-{engine}-work/build.inputs"
                 admission.parent.mkdir(parents=True)
                 admission.write_text("{}\n")
-                umber_receipt = root / year / f"{engine}-umber.json"
+                umber_receipt = root / year / "formats" / f"{engine}-umber.json"
                 umber_receipt.write_text(json.dumps({"format": {"sha256": sha256_file(umber_fmt)},
                                                      "engine": engine, "source_date_epoch": epoch,
                                                      "input_admissions": str(admission),
@@ -169,6 +176,14 @@ fi
                                                    "umber_format_receipt": str(umber_receipt),
                                                    "source_date_epoch": epoch,
                                                    "distribution_ahash64": ahash64_file(manifest)}}}
+                paper = "latex23" if year == "2023" else "pdf25"
+                source_view = archives / f"{paper}-source"
+                main = source_view / f"{paper}.tex"
+                side = source_view / "side.bbl"
+                (receipts / f"{paper}.inputs").write_text(
+                    "umber-input-admissions-v1\n"
+                    f"main\t{main.stat().st_size}\t{ahash64_file(main)}\n"
+                    f"file\tused\ttex:side.bbl\t{side.stat().st_size}\t{ahash64_file(side)}\n")
             preparation = root / "preparation.json"
             preparation.write_text(json.dumps({"schema": 1, "years": years}))
             results = root / "results"
@@ -177,7 +192,7 @@ fi
                     "--parity-harness", str(parity), "--results", str(results),
                     "--expected-rows", "3", "--timeout-seconds", "10", "--max-rss-mib", "128"]
             environment = {"TEST_DVI": str(expected), "TEST_DIFFERENT": str(different),
-                           "TEST_COUNTS": str(count)}
+                           "TEST_COUNTS": str(count), "TEST_RECEIPTS": str(receipts)}
             def verify_snapshot(year: int, cache_root: Path):
                 year_root = cache_root / str(year)
                 receipt = year_root / "acquisition.json"
@@ -212,6 +227,11 @@ fi
                 with self.assertRaisesRegex(SystemExit, "missing earlier row receipt"):
                     runner.main()
                 first_receipt.write_bytes(first_bytes)
+                last_receipt = results / "rows/pdf25/result.json"
+                last_receipt.unlink()
+                self.assertEqual(runner.main(), 1)
+                self.assertTrue((results / "rows/incomplete-reference/pdf25-0001/reference/pdf25.dvi").is_file())
+                self.assertTrue(last_receipt.is_file())
                 prepared_bytes = preparation.read_bytes()
                 preparation.write_text(json.dumps({"schema": 1, "years": {"2025": years["2025"]}}))
                 with self.assertRaisesRegex(SystemExit, "prepared TeX Live year is missing"):
@@ -223,9 +243,47 @@ fi
                 wrong_year["years"]["2023"]["formats"]["latex"]["reference_format_receipt"] = \
                     years["2025"]["formats"]["pdflatex"]["reference_format_receipt"]
                 preparation.write_text(json.dumps(wrong_year))
-                with self.assertRaisesRegex(SystemExit, "format source clock or engine differs"):
+                with self.assertRaisesRegex(SystemExit, "reference format engine differs"):
                     runner.main()
                 preparation.write_bytes(prepared_bytes)
+                wrong_engine = json.loads(prepared_bytes)
+                other_fmt = root / "2023/formats/pdflatex.fmt"
+                other_fmt.write_bytes((root / "2023/formats/latex.fmt").read_bytes())
+                other_receipt = root / "2023/formats/pdflatex.json"
+                other_data = json.loads((root / "2023/formats/latex.json").read_text())
+                other_data["engine"]["arguments"] = ["-progname=pdflatex", "-jobname=pdflatex"]
+                other_receipt.write_text(json.dumps(other_data))
+                wrong_engine["years"]["2023"]["formats"]["latex"]["reference_format"] = str(other_fmt)
+                wrong_engine["years"]["2023"]["formats"]["latex"]["reference_format_receipt"] = str(other_receipt)
+                preparation.write_text(json.dumps(wrong_engine))
+                with self.assertRaisesRegex(SystemExit, "reference format engine differs"):
+                    runner.main()
+                preparation.write_bytes(prepared_bytes)
+                resume_results = root / "resume-results"
+                resume_args = args.copy()
+                resume_args[resume_args.index("--results") + 1] = str(resume_results)
+                with patch.object(runner.sys, "argv", resume_args + ["--qualify-only"]):
+                    self.assertEqual(runner.main(), 2)
+                stale_umber = resume_results / "rows/latex23/umber"
+                stale_umber.mkdir()
+                (stale_umber / "partial.txt").write_text("interrupted\n")
+                with patch.object(runner.sys, "argv", resume_args):
+                    self.assertEqual(runner.main(), 1)
+                self.assertEqual((resume_results / "rows/latex23/incomplete-umber/0001/umber/partial.txt").read_text(),
+                                 "interrupted\n")
+                audit_results = root / "audit-results"
+                audit_args = args.copy()
+                audit_args[audit_args.index("--results") + 1] = str(audit_results)
+                admission_file = receipts / "latex23.inputs"
+                valid_admission = admission_file.read_text()
+                admission_file.write_text(valid_admission.replace(ahash64_file(archives / "latex23-source/side.bbl"),
+                                                                "0" * 16))
+                with patch.object(runner.sys, "argv", audit_args):
+                    with self.assertRaisesRegex(SystemExit, "bytes different from reference"):
+                        runner.main()
+                    admission_file.write_text(valid_admission)
+                    self.assertEqual(runner.main(), 1)
+                self.assertTrue((audit_results / "rows/latex23/incomplete-umber/0001/umber/latex23.dvi").is_file())
                 parity_bytes = parity.read_bytes()
                 executable(parity, "echo comparator failed >&2\nexit 2\n")
                 error_results = root / "error-results"
@@ -240,7 +298,7 @@ fi
                 with self.assertRaisesRegex(ValueError, "runtime inventory changed"):
                     runner.main()
                 (root / "2023/texmf-dist/web2c/sentinel").write_text("release input\n")
-                (root / "2023" / "latex.fmt").write_text("modified\n")
+                (root / "2023/formats/latex.fmt").write_text("modified\n")
                 with self.assertRaisesRegex(SystemExit, "reference format receipt differs"):
                     runner.main()
 
