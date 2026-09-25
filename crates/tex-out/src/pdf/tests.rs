@@ -161,6 +161,117 @@ fn graphics_save_restore_retains_the_pdftex_origin_raster() {
 }
 
 #[test]
+fn exact_origin_translations_print_scaled_deltas_and_restore_the_raster() {
+    // pdftex.web §690: the second `cm` uses the first `scaled_out`, not the
+    // subtraction of two separately rounded binary floats. Restoring q/Q
+    // also restores the retained origin used by the following translation.
+    let at = |h, x| PdfContentOperation::Save {
+        x,
+        y: 0.0,
+        exact_position: Some(PdfContentTextPosition {
+            h,
+            v: 0,
+            decimal_digits: 3,
+        }),
+    };
+    let bytes = ordered_page_content(&[
+        at(3_220_936, 48.964),
+        at(3_876_320, 58.927),
+        PdfContentOperation::Literal {
+            mode: crate::PdfLiteralMode::Origin,
+            x: 58.927,
+            y: 0.0,
+            exact_position: Some(PdfContentTextPosition {
+                h: 3_876_320,
+                v: 0,
+                decimal_digits: 3,
+            }),
+            bytes: b"X".to_vec(),
+        },
+        PdfContentOperation::Restore {
+            x: 58.927,
+            y: 0.0,
+            exact_position: Some(PdfContentTextPosition {
+                h: 3_876_320,
+                v: 0,
+                decimal_digits: 3,
+            }),
+        },
+        PdfContentOperation::Restore {
+            x: 48.964,
+            y: 0.0,
+            exact_position: Some(PdfContentTextPosition {
+                h: 3_220_936,
+                v: 0,
+                decimal_digits: 3,
+            }),
+        },
+        PdfContentOperation::Literal {
+            mode: crate::PdfLiteralMode::Origin,
+            x: 58.927,
+            y: 0.0,
+            exact_position: Some(PdfContentTextPosition {
+                h: 3_876_320,
+                v: 0,
+                decimal_digits: 3,
+            }),
+            bytes: b"Y".to_vec(),
+        },
+    ]);
+    assert_eq!(
+        String::from_utf8(bytes).expect("ASCII content"),
+        "1 0 0 1 48.964 0 cm\nq\n1 0 0 1 9.963 0 cm\nq\nX\nQ\n1 0 0 1 -9.963 0 cm\nQ\n1 0 0 1 9.963 0 cm\nY"
+    );
+}
+
+#[test]
+fn exact_origin_ignores_sub_precision_scaled_motion() {
+    // pdftex.web §690 initializes min_bp_val to 66sp for three decimals.
+    let literal = |h| PdfContentOperation::Literal {
+        mode: crate::PdfLiteralMode::Origin,
+        x: h as f32 / 65_782.0,
+        y: 0.0,
+        exact_position: Some(PdfContentTextPosition {
+            h,
+            v: 0,
+            decimal_digits: 3,
+        }),
+        bytes: b"x".to_vec(),
+    };
+    let content = String::from_utf8(ordered_page_content(&[
+        literal(65),
+        literal(66),
+        literal(100),
+    ]))
+    .expect("ASCII content");
+    assert_eq!(content, "x\n1 0 0 1 0.001 0 cm\nx\nx");
+}
+
+#[test]
+fn exact_vertical_origin_prints_the_chart_translation() {
+    // The two positions print as 481.908 and 369.782 bp. pdftex.web §690
+    // subtracts their retained scaled values, yielding -112.126 bp;
+    // subtracting the f32 coordinates instead yields -112.12598.
+    let literal = |v, y| PdfContentOperation::Literal {
+        mode: crate::PdfLiteralMode::Origin,
+        x: 0.0,
+        y,
+        exact_position: Some(PdfContentTextPosition {
+            h: 0,
+            v,
+            decimal_digits: 3,
+        }),
+        bytes: b"X".to_vec(),
+    };
+    let content = String::from_utf8(ordered_page_content(&[
+        literal(31_700_753, 481.908),
+        literal(24_324_907, 369.782),
+    ]))
+    .expect("ASCII content");
+    assert_eq!(content, "1 0 0 1 0 481.908 cm\nX\n1 0 0 1 0 -112.126 cm\nX");
+}
+
+#[test]
 fn origin_literal_moves_but_page_and_direct_literals_do_not() {
     let bytes = ordered_page_content(&[
         PdfContentOperation::Literal {

@@ -6,6 +6,8 @@ use super::{
     PdfContentOperation, PdfContentRectangle, PdfContentRule, PdfNumber, fixed_number_bytes,
 };
 
+const ONE_HUNDRED_BP: i64 = 6_578_176;
+
 pub(super) enum PdfPaintProgram<'a> {
     Rectangles(&'a [PdfContentRectangle]),
     Ordered(&'a [PdfContentOperation]),
@@ -537,33 +539,74 @@ impl PdfPainter {
         y: f32,
         exact_position: Option<super::PdfContentTextPosition>,
     ) {
+        if let (Some(origin), Some(position)) = (self.exact_origin, exact_position) {
+            // pdftex.web §690 tests the unrounded scaled distance before
+            // printing either operand. Each printed operand then advances the
+            // retained origin by `scaled_out`, including a rounded zero.
+            let min_bp_val = pdftex_divide_scaled(
+                ONE_HUNDRED_BP,
+                10_i64.pow(u32::from(position.decimal_digits) + 2),
+                0,
+            )
+            .0;
+            let delta_h = position.h - origin.h;
+            let delta_v = position.v - origin.v;
+            let retained = if delta_h.abs() >= min_bp_val || delta_v.abs() >= min_bp_val {
+                let (h_coefficient, h_out) = pdftex_divide_scaled(
+                    delta_h,
+                    ONE_HUNDRED_BP,
+                    u32::from(position.decimal_digits) + 2,
+                );
+                let (v_coefficient, v_out) = pdftex_divide_scaled(
+                    delta_v,
+                    ONE_HUNDRED_BP,
+                    u32::from(position.decimal_digits) + 2,
+                );
+                self.emit_exact_translation(h_coefficient, v_coefficient, position.decimal_digits);
+                let retained = PdfExactTextPosition {
+                    h: origin.h + h_out,
+                    v: origin.v + v_out,
+                };
+                self.origin = (
+                    scaled_raw_to_bp(retained.h, position.decimal_digits),
+                    scaled_raw_to_bp(retained.v, position.decimal_digits),
+                );
+                retained
+            } else {
+                origin
+            };
+            self.exact_origin = Some(retained);
+            self.fixed_origin = fixed_scaled_number(retained.h, position.decimal_digits)
+                .zip(fixed_scaled_number(retained.v, position.decimal_digits));
+            return;
+        }
+
         let (dx, dy) = (x - self.origin.0, y - self.origin.1);
         if dx != 0.0 || dy != 0.0 {
             self.content.transform([1.0, 0.0, 0.0, 1.0, dx, dy]);
             self.origin = (x, y);
         }
-        self.exact_origin = match (self.exact_origin, exact_position) {
-            (Some(origin), Some(position)) => {
-                let (_, h_out) =
-                    pdftex_text_coordinate(position.h - origin.h, position.decimal_digits);
-                let (_, v_out) =
-                    pdftex_text_coordinate(position.v - origin.v, position.decimal_digits);
-                Some(PdfExactTextPosition {
-                    h: origin.h + h_out,
-                    v: origin.v + v_out,
-                })
-            }
-            _ => None,
-        };
+        self.exact_origin = None;
         self.fixed_origin = exact_position.and_then(|position| {
-            let exact_origin = self.exact_origin;
-            let h = exact_origin.map(|origin| origin.h).unwrap_or(position.h);
-            let v = exact_origin.map(|origin| origin.v).unwrap_or(position.v);
             Some((
-                fixed_scaled_number(h, position.decimal_digits)?,
-                fixed_scaled_number(v, position.decimal_digits)?,
+                fixed_scaled_number(position.h, position.decimal_digits)?,
+                fixed_scaled_number(position.v, position.decimal_digits)?,
             ))
         });
+    }
+
+    fn emit_exact_translation(&mut self, h: i64, v: i64, decimal_digits: u8) {
+        let mut operation = self.content.op("cm");
+        let mut buffer = [0_u8; 32];
+        for coefficient in [1, 0, 0, 1] {
+            let number = PdfNumber::new(coefficient, 0).expect("matrix unit has valid precision");
+            operation.operand(Raw(fixed_number_bytes(number, &mut buffer)));
+        }
+        for coefficient in [h, v] {
+            let number = PdfNumber::new(coefficient, decimal_digits)
+                .expect("canonical PDF origin has valid precision");
+            operation.operand(Raw(fixed_number_bytes(number, &mut buffer)));
+        }
     }
 
     fn save(&mut self) {
@@ -818,7 +861,6 @@ fn pdftex_text_coordinate(delta: i64, decimal_digits: u8) -> (f64, i64) {
     // retained scaled coordinates first. `divide_scaled` then rounds the
     // delta and returns both the printed coefficient and the scaled position
     // actually represented by that coefficient.
-    const ONE_HUNDRED_BP: i64 = 6_578_176;
     let (coefficient, scaled_out) =
         pdftex_divide_scaled(delta, ONE_HUNDRED_BP, u32::from(decimal_digits) + 2);
     let scale = 10_i64.pow(u32::from(decimal_digits)) as f64;
