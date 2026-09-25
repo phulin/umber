@@ -3537,6 +3537,9 @@ impl<G> Universe<G> {
         self.command_retained
             .hyphenation
             .set_trie_capacity(profile.configuration().trie_nodes);
+        self.command_retained
+            .hyphenation
+            .select_process_exception_capacity(profile.configuration().hyphenation_exceptions);
     }
 
     /// Selects the executable-process `hyph_size` bound.

@@ -1266,6 +1266,55 @@ fn configured_hyphenation_exception_capacity_roundtrips_with_format_usage() {
 }
 
 #[test]
+fn texlive_exception_capacity_survives_a_large_format_and_loaded_job_start() {
+    // TeX82 §§934/1308/1334 and Web2C tex.ch [51.1332]: the process chooses
+    // `hyph_size` before INITEX and the loaded format retains that value.
+    let image = with_universe(budget(), |universe| {
+        universe.set_engine_capacity_profile(crate::EngineCapacityProfile::Texlive2026);
+        for index in 0..400 {
+            universe
+                .command_context()
+                .expect("exception context")
+                .add_hyphenation_exception_for_language(
+                    0,
+                    crate::hyphenation::ExceptionSpec {
+                        word: format!("word{index}"),
+                        positions: vec![2],
+                    },
+                );
+        }
+        assert_eq!(
+            universe
+                .command_context()
+                .expect("usage context")
+                .detach_engine_usage_statistics()
+                .hyphenation_exception_capacity,
+            8_191
+        );
+        universe.capture_format_image().expect("capture format")
+    })
+    .expect("source universe");
+
+    with_materialized_format(
+        budget(),
+        World::memory(),
+        validated_copy(&image),
+        |universe| {
+            universe.set_engine_capacity_profile(crate::EngineCapacityProfile::Texlive2026);
+            let context = universe.command_context().expect("loaded context");
+            let usage = context.detach_engine_usage_statistics();
+            assert_eq!(usage.hyphenation_exceptions, 400);
+            assert_eq!(usage.hyphenation_exception_capacity, 8_191);
+            assert_eq!(
+                context.hyphen_positions_for_language(0, "word399", 1, 1),
+                [2]
+            );
+        },
+    )
+    .expect("materialized format");
+}
+
+#[test]
 fn logical_roundtrip_preserves_font_node_box_and_pdf_roots() {
     let (image, raw_object, form_object) = with_universe(budget(), |universe| {
         universe.set_engine_capacity_profile(crate::EngineCapacityProfile::Texlive2026);

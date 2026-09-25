@@ -335,3 +335,30 @@ fn checkpoint_candidate_settlement_preserves_exact_accepted_or_candidate_state()
     assert_eq!(table.exception("word"), Some(&[4][..]));
     assert_eq!(table.saved_hyphen_code(0, 'a'), Some(Some('d')));
 }
+
+#[test]
+fn exception_capacity_selection_survives_rollback_with_an_unchanged_number() {
+    let mut table = HyphenationTable::new();
+    assert_eq!(table.exception_usage().capacity, 307);
+    assert!(!table.runtime.exception_capacity_fixed);
+    let checkpoint = table.checkpoint();
+
+    // A host may explicitly choose the compact value. Its numeric identity
+    // is unchanged, but later executable startup must not replace it.
+    table.set_exception_capacity(307);
+    assert!(table.runtime.exception_capacity_fixed);
+    table.select_process_exception_capacity(8_191);
+    assert_eq!(table.exception_usage().capacity, 307);
+
+    let candidate = table.begin_checkpoint_candidate(&checkpoint);
+    assert!(!table.runtime.exception_capacity_fixed);
+    table.reject_checkpoint_candidate(candidate);
+    assert!(table.runtime.exception_capacity_fixed);
+    table.select_process_exception_capacity(8_191);
+    assert_eq!(table.exception_usage().capacity, 307);
+
+    table.restore_checkpoint(&checkpoint);
+    assert!(!table.runtime.exception_capacity_fixed);
+    table.select_process_exception_capacity(8_191);
+    assert_eq!(table.exception_usage().capacity, 8_191);
+}

@@ -232,9 +232,27 @@ impl HyphenationTable {
     }
 
     pub fn set_exception_capacity(&mut self, capacity: usize) {
-        self.journal.push(HyphenationInverse::ExceptionCapacity(
-            self.runtime.exception_capacity,
-        ));
+        self.set_exception_capacity_with_selection(capacity, true);
+    }
+
+    /// Applies the binary's default only until an explicit host choice or a
+    /// format image fixes its own `hyph_size` compatibility coordinate.
+    pub(crate) fn select_process_exception_capacity(&mut self, capacity: usize) {
+        if !self.runtime.exception_capacity_fixed {
+            self.set_exception_capacity_with_selection(capacity, false);
+        }
+    }
+
+    fn set_exception_capacity_with_selection(&mut self, capacity: usize, fixed: bool) {
+        if self.runtime.exception_capacity == capacity
+            && self.runtime.exception_capacity_fixed == fixed
+        {
+            return;
+        }
+        self.journal.push(HyphenationInverse::ExceptionCapacity {
+            capacity: self.runtime.exception_capacity,
+            fixed: self.runtime.exception_capacity_fixed,
+        });
         if let Some(root) = &mut self.reachable_state_identity {
             root.replace(
                 1,
@@ -243,6 +261,7 @@ impl HyphenationTable {
             );
         }
         self.runtime.exception_capacity = capacity;
+        self.runtime.exception_capacity_fixed = fixed;
     }
 
     #[must_use]

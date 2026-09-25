@@ -25,6 +25,8 @@ pub struct EngineCapacityConfiguration {
     pub font_info_words: usize,
     pub fonts: usize,
     pub trie_nodes: usize,
+    /// Web2C's process-selected `hyph_size` (tex.ch [51.1332]).
+    pub hyphenation_exceptions: usize,
     pub input_stack: usize,
     pub nest_stack: usize,
     pub parameter_stack: usize,
@@ -103,6 +105,7 @@ impl EngineCapacityProfile {
                 font_info_words: 20_000,
                 fonts: 75,
                 trie_nodes: 8_000,
+                hyphenation_exceptions: 307,
                 input_stack: 200,
                 nest_stack: 40,
                 parameter_stack: 60,
@@ -120,6 +123,7 @@ impl EngineCapacityProfile {
                 font_info_words: 8_000_000,
                 fonts: 9_000,
                 trie_nodes: 1_100_000,
+                hyphenation_exceptions: 8_191,
                 input_stack: 10_000,
                 nest_stack: 1_000,
                 parameter_stack: 20_000,
@@ -191,6 +195,7 @@ mod tests {
             (200, 40, 60, 500, 600, 6)
         );
         assert_eq!(tex.pdf, None);
+        assert_eq!(tex.hyphenation_exceptions, 307);
 
         let texlive = EngineCapacityProfile::Texlive2026.configuration();
         assert_eq!(
@@ -226,5 +231,6 @@ mod tests {
                 destination_name_entries: 500_000,
             })
         );
+        assert_eq!(texlive.hyphenation_exceptions, 8_191);
     }
 }

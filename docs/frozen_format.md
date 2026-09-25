@@ -335,10 +335,16 @@ capture, clone, fork, and restore clone only that owner's handle. Runtime
 exceptions and saved hyphen-code maps remain separate bounded checkpoint
 values, so their rollback and fork isolation never copy the initialized trie.
 The trie-node total is validated against the producer profile's `trie_size`
-(8000 for TeX82/e-TeX and 1,100,000 for pdfTeX). `hyph_size` remains an
-explicit serialized process coordinate because canonical TRIP and e-TRIP use
+(8000 for compact TeX82/e-TeX and 1,100,000 for pinned TeX Live executables).
+`hyph_size` remains an explicit serialized process coordinate because canonical TRIP and e-TRIP use
 their fixture-specific value; its recorded occupancy is checked against that
 exact capacity.
+Executable startup selects the profile's `hyph_size` (307 for compact TeX82,
+8191 for the pinned TeX Live process) before INITEX. An explicit host choice
+or a loaded format fixes its serialized capacity, so repeated startup profile
+selection does not replace it. The selection provenance is operational
+checkpoint state, not part of the format wire schema or reachable semantic
+identity; the numeric capacity is the sole semantic coordinate.
 
 ### Frozen node arena (kind 512)
 

@@ -66,6 +66,9 @@ pub(super) struct HyphenationRuntime {
     /// TeX82 §1334's `hyph_count` and §934's configured `hyph_size`.
     pub(super) exception_occupied: usize,
     pub(super) exception_capacity: usize,
+    /// An explicit host choice or a loaded format takes precedence over the
+    /// default selected by executable startup.
+    pub(super) exception_capacity_fixed: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -80,7 +83,10 @@ pub(super) enum HyphenationInverse {
         language: u8,
         value: Option<BTreeMap<char, char>>,
     },
-    ExceptionCapacity(usize),
+    ExceptionCapacity {
+        capacity: usize,
+        fixed: bool,
+    },
     TrieCapacity(usize),
 }
 
@@ -104,6 +110,7 @@ pub(crate) struct HyphenationCheckpoint {
     pattern_retained_bytes: usize,
     journal: usize,
     exception_capacity: usize,
+    exception_capacity_fixed: bool,
     trie_capacity: usize,
     reachable_state_identity: Option<crate::state_hash::SemanticMapIdentity>,
 }
@@ -115,6 +122,7 @@ impl Default for HyphenationRuntime {
             hyphen_codes: BTreeMap::new(),
             exception_occupied: 0,
             exception_capacity: default_exception_capacity(),
+            exception_capacity_fixed: false,
         }
     }
 }
@@ -157,6 +165,7 @@ impl HyphenationTable {
             pattern_retained_bytes: self.pattern_retained_bytes,
             journal: self.journal.len(),
             exception_capacity: self.runtime.exception_capacity,
+            exception_capacity_fixed: self.runtime.exception_capacity_fixed,
             trie_capacity: self.trie_capacity,
             reachable_state_identity: self.reachable_state_identity,
         }
@@ -175,6 +184,7 @@ impl HyphenationTable {
         self.patterns = checkpoint.patterns.clone();
         self.pattern_retained_bytes = checkpoint.pattern_retained_bytes;
         self.runtime.exception_capacity = checkpoint.exception_capacity;
+        self.runtime.exception_capacity_fixed = checkpoint.exception_capacity_fixed;
         self.dependency_fingerprints = OnceLock::new();
         self.trie_capacity = checkpoint.trie_capacity;
         self.reachable_state_identity = checkpoint.reachable_state_identity;
@@ -197,6 +207,7 @@ impl HyphenationTable {
         let accepted_trie_capacity =
             std::mem::replace(&mut self.trie_capacity, checkpoint.trie_capacity);
         self.runtime.exception_capacity = checkpoint.exception_capacity;
+        self.runtime.exception_capacity_fixed = checkpoint.exception_capacity_fixed;
         let accepted_identity = std::mem::replace(
             &mut self.reachable_state_identity,
             checkpoint.reachable_state_identity,
@@ -258,8 +269,9 @@ impl HyphenationInverse {
                 };
                 *value = current;
             }
-            Self::ExceptionCapacity(value) => {
-                std::mem::swap(&mut runtime.exception_capacity, value)
+            Self::ExceptionCapacity { capacity, fixed } => {
+                std::mem::swap(&mut runtime.exception_capacity, capacity);
+                std::mem::swap(&mut runtime.exception_capacity_fixed, fixed);
             }
             Self::TrieCapacity(value) => std::mem::swap(trie_capacity, value),
         }
@@ -338,6 +350,7 @@ impl<'de> Deserialize<'de> for HyphenationTable {
                 hyphen_codes: rows.hyphen_codes,
                 exception_occupied: rows.exception_occupied,
                 exception_capacity: rows.exception_capacity,
+                exception_capacity_fixed: true,
             },
             journal: Vec::new(),
             dependency_fingerprints: OnceLock::new(),

@@ -31,6 +31,71 @@ fn run_publishes_a_dumped_format_from_the_resource_session() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // CLI boundary intentionally launches the built Umber binary.
+fn latex_initex_dumps_more_than_tex82s_exception_capacity() {
+    // TeX82 §§934/1308/1334 and Web2C tex.ch [51.1332]: the modern binary
+    // selects `hyph_size=8191` before INITEX, and its dump retains the bound.
+    let temp_dir = tempfile::tempdir().expect("create format output temp dir");
+    let source = temp_dir.path().join("many-exceptions.tex");
+    let format = temp_dir.path().join("many-exceptions.fmt");
+    let loaded_source = temp_dir.path().join("loaded.tex");
+    let mut input = String::from("\\catcode123=1 \\catcode125=2 \\hyphenation{");
+    for index in 0..400 {
+        let high = char::from(b'a' + u8::try_from(index / 26).expect("letter index"));
+        let low = char::from(b'a' + u8::try_from(index % 26).expect("letter index"));
+        input.push_str(&format!("a{high}-{low}a "));
+    }
+    input.push_str("}\\dump\n");
+    fs::write(&source, input).expect("write format source");
+
+    let built = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .args(["run", "--latex", "--format-out"])
+        .arg(&format)
+        .arg(&source)
+        .output()
+        .expect("run LaTeX format dump");
+    assert!(
+        built.status.success(),
+        "format dump failed:\n{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let image = tex_state::DetachedFormatImage::try_from_bytes(
+        fs::read(&format).expect("read dumped format"),
+    )
+    .expect("validate dumped format");
+    tex_state::with_materialized_format(
+        tex_state::EngineCapacityProfile::Texlive2026.interner_budget(),
+        tex_state::World::memory(),
+        image,
+        |universe| {
+            // Loaded startup applies the same process profile again.
+            universe.set_engine_capacity_profile(tex_state::EngineCapacityProfile::Texlive2026);
+            let context = universe.command_context().expect("loaded format context");
+            let usage = context.detach_engine_usage_statistics();
+            assert_eq!(usage.hyphenation_exceptions, 400);
+            assert_eq!(usage.hyphenation_exception_capacity, 8_191);
+            assert_eq!(context.hyphen_positions_for_language(0, "aaaa", 1, 1), [2]);
+        },
+    )
+    .expect("materialize dumped format");
+
+    fs::write(&loaded_source, "\\end\n").expect("write loaded job");
+    let loaded = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .args(["run", "--latex", "--format"])
+        .arg(&format)
+        .arg(&loaded_source)
+        .output()
+        .expect("run loaded LaTeX format");
+    assert!(
+        loaded.status.success(),
+        "loaded job failed:\n{}",
+        String::from_utf8_lossy(&loaded.stderr)
+    );
+}
+
+#[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
 fn initex_dump_survives_futurelet_reusing_a_control_sequence_that_means_space() {
     let temp_dir = tempfile::tempdir().expect("create format output temp dir");
