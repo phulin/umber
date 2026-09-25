@@ -165,6 +165,11 @@ fi
                 distribution.mkdir()
                 manifest = distribution / "manifest.json"
                 manifest.write_text(json.dumps({"schema": 8, "formats": {}}))
+                native = json.loads(umber_receipt.read_text())
+                native["runtime_distribution"] = {
+                    "path": str(distribution), "manifest_sha256": sha256_file(manifest),
+                    "manifest_ahash64": ahash64_file(manifest)}
+                umber_receipt.write_text(json.dumps(native))
                 years[year] = {"runtime_root": str(runtime),
                                "runtime_receipt": str(root / year / "acquisition.json"),
                                "formats": {engine: {"reference_binary": str(oracle),
@@ -246,6 +251,14 @@ fi
                 with self.assertRaisesRegex(SystemExit, "reference format engine differs"):
                     runner.main()
                 preparation.write_bytes(prepared_bytes)
+                native_receipt = root / "2023/formats/latex-umber.json"
+                native_bytes = native_receipt.read_bytes()
+                altered_native = json.loads(native_bytes)
+                altered_native["runtime_distribution"]["path"] = str(root / "2025/distribution")
+                native_receipt.write_text(json.dumps(altered_native))
+                with self.assertRaisesRegex(SystemExit, "runtime distribution differs"):
+                    runner.main()
+                native_receipt.write_bytes(native_bytes)
                 wrong_engine = json.loads(prepared_bytes)
                 other_fmt = root / "2023/formats/pdflatex.fmt"
                 other_fmt.write_bytes((root / "2023/formats/latex.fmt").read_bytes())

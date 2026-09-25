@@ -194,6 +194,11 @@ def authority(preparation: Path, rows: list[dict]) -> tuple[dict, dict]:
         if (fmt.get("umber_format_sha256") != umber_format_hash
                 or umber_format_receipt.get("format", {}).get("sha256") != umber_format_hash):
             fail(f"prepared {year} {engine} Umber format differs from receipt")
+        if umber_format_receipt.get("runtime_distribution") != {
+                "path": str(paths["umber_distribution"]),
+                "manifest_sha256": sha256_file(manifest),
+                "manifest_ahash64": digest}:
+            fail(f"prepared {year} {engine} runtime distribution differs from format receipt")
         format_receipt = json.loads(paths["reference_format_receipt"].read_text())
         if (format_receipt.get("format", {}).get("sha256") != sha256_file(paths["reference_format"])
                 or format_receipt.get("engine", {}).get("sha256") != sha256_file(paths["reference_binary"])):
