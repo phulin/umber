@@ -5,9 +5,9 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path, PurePosixPath
 
-from arxiv_corpus import archive_members, sha256_file
+from arxiv_corpus import archive_file_bytes, archive_members, sha256_file
 from latex_input_admissions import read_receipt
-from texlive import ahash64_file
+from texlive import ahash64_bytes, ahash64_file
 
 
 def fail(message: str) -> None:
@@ -19,12 +19,12 @@ def runtime_names(runtime: Path) -> dict[str, tuple[Path, ...]]:
     """Index the already verified snapshot inventory for extra Umber reads."""
     names: dict[str, list[Path]] = {}
     inventory = runtime.parent / "runtime.files"
+    root = runtime.parent
     for line in inventory.read_text(encoding="utf-8").splitlines():
         relative, _, _ = line.split("\t")
         if not relative.startswith("texmf-dist/") or "/tex/latex-dev/" in relative:
             continue
-        path = runtime.parent / relative
-        names.setdefault(path.name, []).append(path)
+        names.setdefault(relative.rsplit("/", 1)[-1], []).append(root / relative)
     return {name: tuple(paths) for name, paths in names.items()}
 
 
@@ -52,17 +52,37 @@ def audit_umber_inputs(row: dict, row_dir: Path, proof: dict, admission: Path) -
         fail(f"Umber main input admission differs from locked source: {row['id']}")
     common: dict[str, set[tuple[int, str]]] = {}
     recorder = reference_run / f"{row['jobname']}.fls"
+    events = []
     for line in recorder.read_text(encoding="utf-8").splitlines():
-        if not line.startswith("INPUT "):
+        kind, _, name = line.partition(" ")
+        if kind in ("INPUT", "OUTPUT"):
+            source = Path(name)
+            events.append((kind, (source if source.is_absolute() else reference_run / source).resolve()))
+    outputs = {path for kind, path in events if kind == "OUTPUT"}
+    written = set()
+    checked = set()
+    archive_bytes = None
+    for kind, path in events:
+        if kind == "OUTPUT":
+            written.add(path)
             continue
-        source = Path(line[6:])
-        path = (source if source.is_absolute() else reference_run / source).resolve()
+        if path in written or path in checked:
+            continue  # Generated reads are not external source admissions.
+        checked.add(path)
+        observed = None
         if path.is_relative_to(reference_run):
             relative = path.relative_to(reference_run).as_posix()
             member = source_members.get(relative)
             if member is None:
-                continue  # Generated auxiliary, excluded from external admissions.
-            if sha256_file(path) != member["sha256"]:
+                continue
+            if path in outputs:
+                # The verified fresh view contained archive bytes at this first
+                # read. The final on-disk file is a later generated revision.
+                if archive_bytes is None:
+                    archive_bytes = archive_file_bytes(row["archive"])
+                data = archive_bytes[relative]
+                observed = (len(data), ahash64_bytes(data))
+            elif sha256_file(path) != member["sha256"]:
                 fail(f"reference source input changed during run: {path}")
         elif path.is_relative_to(runtime):
             relative = path.relative_to(runtime).as_posix()
@@ -73,7 +93,8 @@ def audit_umber_inputs(row: dict, row_dir: Path, proof: dict, admission: Path) -
             relative = "language.dat"  # The format authority checked this input.
         else:
             continue  # The reference format itself is separately authenticated.
-        observed = (path.stat().st_size, ahash64_file(path))
+        if observed is None:
+            observed = (path.stat().st_size, ahash64_file(path))
         parts = PurePosixPath(relative).parts
         for index in range(len(parts)):
             common.setdefault("/".join(parts[index:]), set()).add(observed)

@@ -101,6 +101,50 @@ class DeclaredYearCorpus(unittest.TestCase):
                                 capture_output=True, text=True, check=True)
         self.assertEqual(result.stdout.strip(), str(128 * 1024 * 1024))
 
+    def test_archived_auxiliary_read_then_rewrite_keeps_initial_input_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "paper.src"
+            archive(source, "paper", "pdflatex", "2025")
+            original = root / "paper-source/paper.out"
+            original.write_bytes(b"archived bookmarks")
+            with tarfile.open(source, "w:gz") as stream:
+                for member in original.parent.iterdir():
+                    stream.add(member, arcname=member.name)
+            row_dir = root / "row"
+            reference, umber = row_dir / "reference", row_dir / "umber"
+            reference.mkdir(parents=True)
+            umber.mkdir()
+            main = original.parent / "paper.tex"
+            (umber / "paper.tex").write_bytes(main.read_bytes())
+            (umber / "paper.out").write_bytes(original.read_bytes())
+            rewritten = reference / "paper.out"
+            rewritten.write_bytes(b"regenerated bookmarks")
+            recorder = reference / "paper.fls"
+            recorder.write_text("INPUT paper.out\nINPUT paper.out\nOUTPUT paper.out\nINPUT paper.out\n")
+            admission = root / "paper.inputs"
+            def record(path: Path) -> None:
+                admission.write_text(
+                    "umber-input-admissions-v1\n"
+                    f"main\t{main.stat().st_size}\t{ahash64_file(main)}\n"
+                    f"file\tused\ttex:paper.out\t{path.stat().st_size}\t{ahash64_file(path)}\n")
+            record(original)
+            row = {"archive": str(source), "entrypoint": "paper.tex",
+                   "jobname": "paper", "id": "paper"}
+            proof = {"runtime_root": str(root / "runtime"),
+                     "generated_config": str(root / "config"),
+                     "generated_fontmaps": str(root / "fontmaps")}
+            result = runner.audit_umber_inputs(row, row_dir, proof, admission)
+            self.assertEqual(result["common_reads"], 1)
+            self.assertEqual(result["selected_extra_reads"], [])
+            record(rewritten)
+            with self.assertRaisesRegex(SystemExit, "bytes different from reference"):
+                runner.audit_umber_inputs(row, row_dir, proof, admission)
+            record(original)
+            recorder.write_text("INPUT paper.out\n")
+            with self.assertRaisesRegex(SystemExit, "reference source input changed"):
+                runner.audit_umber_inputs(row, row_dir, proof, admission)
+
     def test_tex_implicit_suffix_audit_preserves_identity_and_exact_precedence(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

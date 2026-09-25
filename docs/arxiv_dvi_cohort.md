@@ -310,8 +310,13 @@ configuration and provenance, and corpus routing/resume/result classification.
 Their mocked engines do not establish TeX conformance; the live exact DVI
 comparisons do. Each successful Umber run also records consumed inputs. The
 runner checks common input bytes against the reference recorder and verifies
-additional reads against the selected source tree or paper archive. Interrupted
-attempts remain available beside the resumed capture.
+additional reads against the selected source tree or paper archive. Recorder
+order distinguishes archived auxiliary inputs from later generated revisions:
+a read before the first `OUTPUT` uses the authenticated archive bytes, while
+reads after that write are generated inputs. A changed archive member without
+a recorded write remains an error. Repeated recorder reads are hashed once
+within each audit; verification starts a fresh audit. Interrupted attempts
+remain available beside the resumed capture.
 
 ## Fixed-2026 development-kernel experiment
 
