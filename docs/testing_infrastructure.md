@@ -898,34 +898,24 @@ published-object verification passed. Earlier captures remain intact under
 failure is preserved in `target/parity-wave/arxiv-dvi/`; its 512-binding limit
 was not increased.
 
-The separate Umber LaTeX format also rebuilt and passed source verification
-(963030 bytes, aHash64 `5c89f9ae0a4cf390`), but the base multi-pass LaTeX
-corpus was not run in this wave. Its reference format profile is unresolved:
-LaTeX 2026 rejects the available canonical e-TeX 2.6 engine, while clean
-pdfTeX requires the additional pdfTeX source closure. Those reference-build
-failures are retained in slot 1's `target/parity-wave/reference-latex/`.
-A verified format build does not establish corpus DVI parity or prove that
-all allowed runtime inputs are consumed.
+The [declared-release arXiv corpus](arxiv_dvi_cohort.md) uses PDF as its
+primary output, with explicit DVI diagnosis retained. `run-arxiv-texlive.py`
+selects each archive's declared TeX Live year and compiler, qualifies every
+reference result, then attempts every qualified paper with Umber. Reference
+PDF success requires successful exit, a complete output report, and matching
+artifact size. The bounded `pdf-compare` tool compares the independent Hayro
+structure/content-operation projection and page geometry. This is semantic
+projection equality, not a rendered-image or raw-byte claim.
 
-The [serial arXiv DVI cohort](arxiv_dvi_cohort.md) implements the canonical
-per-document parity workflow, separately from the census. A
-candidate qualifies only when its complete, unmodified archive compiles
-cleanly with the pinned TeX Live 2026 pdfTeX in both DVI and PDF modes; retain
-the two output identities and page counts. PDF compilation is only an
-eligibility check in this pass, and PDF-only or otherwise non-DVI-capable rows
-are recorded for the later PDF pass. Then compile the complete source once
-with Umber in DVI mode under 500,000,000 expansion fuel, the ordinary
-10,000,000 execution-step cap, and the established wall-time, RSS, and
-termination-grace guards. Fuel is solely a nontermination guard and is never a
-parity metric. Compare DVI through `parity-harness --compare-existing-dvi` and
-stop at the first meaningful semantic or DVI divergence. After complete DVI
-parity, advance directly to the next eligible source in the locked corpus. Do
-not run, inspect, render, or use Umber PDF output for diagnosis until that
-corpus-wide DVI pass is complete. Prefix boundary searches, per-page
-recompilation, serialization-only PDF differences, font-subset tags, and
-extractor rounding are not parity work.
+Every comparison records its tool identity and first difference. Divergences
+and comparator errors do not stop the remaining papers. The ordinary
+500,000,000 expansion fuel, 10,000,000 execution steps, wall-time, and RSS limits
+remain unchanged. Immutable archive, format, runtime, output-mode, and binary
+identities bind resumable results. The historical DVI captures remain intact;
+PDF results use a separate directory. See the corpus document for commands,
+coverage, and the distinction between real papers and release-format smokes.
 
-The runner is serial and gives every paper one process through
+The separate census runner is serial and gives every paper one process through
 `scripts/run-umber-guarded.py`, with cumulative engine fuel, wall-time,
 aggregate-RSS, process-group TERM-to-KILL, reap, and survivor enforcement.
 It defaults to `scripts/pdftex-arxiv-recent-sample-100.tsv` and the matching

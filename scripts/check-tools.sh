@@ -45,6 +45,7 @@ check_texlive_parity_tools() {
   python3 scripts/test-texlive-formats.py || failed=1
   python3 scripts/test-texlive-reference-runtime.py || failed=1
   python3 scripts/test-run-arxiv-texlive.py || failed=1
+  python3 scripts/test-compare-arxiv-pdf-render.py || failed=1
   return "$failed"
 }
 optional_check_step_requiring "python3" texlive-parity-tools check_texlive_parity_tools

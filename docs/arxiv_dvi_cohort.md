@@ -1,6 +1,76 @@
-# Recent arXiv DVI Cohort
+# Recent arXiv PDF and DVI Corpus
 
-## Dated-source front
+## PDF corpus contract
+
+PDF is the primary comparison output for the dated-source corpus. Both engines
+compile the complete unchanged archive with its declared LaTeX/pdfLaTeX format
+and selected TeX Live runtime, with PDF output explicitly selected. XeLaTeX
+remains unsupported. DVI remains an explicit diagnostic mode; its existing
+captures are preserved and are not reused as PDF evidence.
+
+Reference qualification requires successful exit and a complete PDF. Every
+qualified paper is attempted by Umber, even after another paper differs or
+fails. Results distinguish reference failure, Umber failure, semantic PDF
+difference, comparator error, and semantic equality. Output mode and comparator
+identity belong to the run identity and are checked on resume and verification.
+
+The PDF comparator uses the independent Hayro parser and the existing PDF
+semantic projection, with page geometry and decoded content included. Object
+numbers, compression, and file layout are not page semantics. Text, positions,
+resources, images, and document structure remain comparison evidence. Equality
+in this lane means equality of that declared projection, not a claim of pixel
+identity or complete PDF specification validation. External rendering and
+validation remain separate consumer checks described in
+[PDF test architecture](pdf_test_architecture.md).
+
+Build the comparator with `cargo build --profile test -p test-support --bin
+pdf-compare`, then run the prepared corpus:
+
+```sh
+python3 scripts/run-arxiv-texlive.py \
+  --source-lock scripts/pdftex-arxiv-recent-sample-100.lock.tsv \
+  --archives target/parity-wave/arxiv-acquisition \
+  --preparation target/arxiv-pdf-formats/preparation.json \
+  --umber target/arxiv-pdf-utf8/umber \
+  --pdf-comparator target/debug/pdf-compare \
+  --results target/arxiv-pdf-corpus
+```
+
+PDF is the default. `--output-format dvi --parity-harness PATH` selects the
+DVI comparator instead. Use a new results directory when changing modes,
+formats, or binaries. `--verify-only` rechecks the saved evidence without
+compiling papers; `--qualify-only` records reference results before comparison.
+The comparator emits `equal`, `different`, or `error`, with input identities,
+page counts, projection hashes, and the first differing projection line.
+Decoded content hashes are additional evidence, not an equality requirement:
+PDF whitespace may differ while the decoded operations agree.
+
+An independent consumer pass distinguishes structural differences from visible
+or text-extraction differences. Install PyMuPDF in a local environment and run:
+
+```sh
+uv venv target/arxiv-pdf-consumer-env
+uv pip install --python target/arxiv-pdf-consumer-env/bin/python pymupdf
+target/arxiv-pdf-consumer-env/bin/python scripts/compare-arxiv-pdf-render.py \
+  --results target/arxiv-pdf-corpus --output target/arxiv-pdf-render
+```
+
+This compares RGB pages at 144 dpi with annotations enabled, page geometry,
+and extracted text. It records consumer versions, authenticated input hashes,
+per-page hashes, and separate raster/text outcomes. No tolerance hides changed
+pixels. Pixel equality at this resolution is a consumer result, not proof of
+equality at every resolution. Structural and consumer results remain separate;
+font subset encodings can differ while pages render identically. Each paper
+has the same 120-second and 1,536 MiB process limits. Missing successful PDF
+pairs are counted as unavailable; repaired or unreadable PDFs are errors.
+
+Normal pdfTeX formats must not enable encTeX. The selected TeX Live
+`fmtutil.cnf` uses extended pdfTeX and `cp227.tcx` for LaTeX, without `-enc`.
+LaTeX tests whether `\mubyte` exists before installing its normal UTF-8 input
+handling; advertising an unimplemented encTeX capability changes package
+semantics. Reference and native formats must use the same standard profile.
+
+## Dated-source DVI baseline
 
 The dated-source parity front selects the TeX Live year from each archive's
 `00README.json`, and uses the same dated stable sources to build the reference
@@ -85,7 +155,7 @@ Umber loads that explicit local catalog; paper runs do not depend on
 recursive TeX search paths in the native file resolver. This is a local parity workflow, not the proposed public `--texlive`
 package-mirror frontend.
 
-Then qualify and compare the complete source bundles:
+To run the explicit DVI diagnostic comparison:
 
 ```sh
 python3 scripts/run-arxiv-texlive.py \
@@ -94,6 +164,7 @@ python3 scripts/run-arxiv-texlive.py \
   --preparation target/texlive-formats/preparation.json \
   --umber target/debug/umber \
   --parity-harness target/parity-wave/glue-identity-bin/parity-harness \
+  --output-format dvi \
   --results target/texlive-years/arxiv-dvi
 ```
 

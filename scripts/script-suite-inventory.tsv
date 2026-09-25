@@ -30,3 +30,4 @@ scripts/test-texlive-snapshot.py	subsystem	resource-contract	scripts/check-tools
 scripts/test-texlive-formats.py	subsystem	format-contract	scripts/check-tools.sh	python3
 scripts/test-run-arxiv-texlive.py	subsystem	oracle-contract	scripts/check-tools.sh	python3
 scripts/test-texlive-reference-runtime.py	subsystem	resource-contract	scripts/check-tools.sh	python3
+scripts/test-compare-arxiv-pdf-render.py	subsystem	resource-contract	scripts/check-tools.sh	python3
