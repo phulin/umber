@@ -399,13 +399,26 @@ fn add_font_kern_capacity<S: TypesetState>(
         return;
     };
     let efcode = state.pdf_font_code(tex_state::font::PdfFontCode::Ef, left_font, left);
-    let endpoint = state.font_kern(left_font, left, right).unwrap_or(natural);
-    let stretched = crate::expansion::scaled_at_ratio(endpoint, spec.stretch());
-    let shrunk = crate::expansion::scaled_at_ratio(endpoint, -spec.shrink());
+    // pdftex.web §821 `kern_stretch`/`kern_shrink` look up the pair in each
+    // expanded font. `get_kern` returns zero when that font has no pair;
+    // the physical kern node can still have a nonzero width.
+    let pair_kern = state
+        .font_kern(left_font, left, right)
+        .unwrap_or(Scaled::from_raw(0));
+    let stretched = crate::expansion::scaled_at_ratio(pair_kern, spec.stretch());
+    let shrunk = crate::expansion::scaled_at_ratio(pair_kern, -spec.shrink());
     // pdftex.web §821 retains signed kern differences: negative kerns reduce
     // the glyph-derived capacities at both expansion endpoints.
-    let stretch = stretched.raw() - natural.raw();
-    let shrink = natural.raw() - shrunk.raw();
+    let stretch = if spec.stretch() > 0 {
+        stretched.raw() - natural.raw()
+    } else {
+        0
+    };
+    let shrink = if spec.shrink() > 0 {
+        natural.raw() - shrunk.raw()
+    } else {
+        0
+    };
     widths.font_stretch = add_scaled(
         widths.font_stretch,
         crate::expansion::scaled_ratio(stretch, efcode.clamp(0, 1000), 1000),

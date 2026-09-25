@@ -43,6 +43,46 @@ fn pdftex_font_kern_expansion_capacity_retains_signed_differences() {
     assert_eq!(positive.font_shrink.raw(), 150);
 }
 
+/// pdftex.web §821 reads the kern from the expanded font with `get_kern`.
+/// An explicit font-kern node may lack that character pair in the TFM;
+/// `get_kern` then returns zero even when the node itself is nonzero.
+#[test]
+fn pdftex_font_kern_without_tfm_pair_uses_zero_expanded_endpoint() {
+    let widths = |stretch| {
+        let mut universe = TestState::new();
+        let font = universe.intern_font(microtype_kern_font("absent-pair", 100, -100));
+        universe
+            .configure_font_expansion(
+                font,
+                FontExpansion {
+                    stretch,
+                    shrink: 500,
+                    step: 100,
+                    auto_expand: true,
+                },
+            )
+            .expect("microtype font expansion configuration is valid");
+        universe.set_pdf_font_code(tex_state::PdfFontCode::Ef, font, b'A', 1000);
+        let nodes = [
+            microtype_char(font, 'A'),
+            Node::Kern {
+                amount: sp(-100),
+                kind: KernKind::Font,
+            },
+            microtype_char(font, 'A'),
+        ];
+        line_widths_nodes(&universe, &nodes)
+    };
+
+    let both = widths(500);
+    assert_eq!(both.font_stretch.raw(), 200);
+    assert_eq!(both.font_shrink.raw(), 0);
+
+    let no_stretch = widths(0);
+    assert_eq!(no_stretch.font_stretch.raw(), 0);
+    assert_eq!(no_stretch.font_shrink.raw(), 0);
+}
+
 /// pdftex.web §823 ignores a discretionary node while the final
 /// `hpack(..., cal_expand_ratio)` measures the replacement nodes that
 /// post-line-break processing has already placed in the physical line.
