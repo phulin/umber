@@ -221,12 +221,20 @@ pinned instrumented pdfTeX 1.40.29 build from TeX Live 2026.
 
 ### Recent-arXiv document front
 
-A recent-arXiv document enters the canonical DVI parity front only after the
-complete, unmodified source compiles cleanly with the pinned TeX Live 2026
-pdfTeX in both DVI and PDF modes. Record the archive, entrypoint, oracle,
-format, output, and page-count identities for both qualification runs before
-running Umber. PDF compilation is only an eligibility check during this pass;
-record PDF-only or otherwise non-DVI-capable rows for the later PDF pass.
+A recent-arXiv document enters the canonical DVI parity front after its
+complete, unmodified source compiles cleanly in reference DVI mode. Use the
+current clean pdfTeX oracle with fresh formats built from the same selected
+TeX Live sources as Umber. The dated-source front selects the paper's declared
+`texlive_version` from its archive, using stable LaTeX sources; see
+[Dated-source parity rollout](texlive_release_selection.md#dated-source-parity-rollout-20232026).
+Do not substitute a newer distribution after a reference failure. Record the
+archive, declaration, entrypoint, oracle, source snapshot, format, output, and
+page-count identities before running Umber. Reference PDF success is a
+separate qualification result, not a prerequisite for comparing successful
+DVI output. Record PDF-only or otherwise non-DVI-capable rows for the later
+PDF pass. Preserve the earlier fixed-2026 development-kernel captures as
+separate evidence; their eligibility cannot be reused for a different source
+snapshot.
 
 Run the complete source once in Umber's DVI mode with 500,000,000 expansion
 fuel, the ordinary 10,000,000 execution-step cap, and the standing wall-time,
