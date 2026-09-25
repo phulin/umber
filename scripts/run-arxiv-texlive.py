@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import datetime as dt
 import fcntl
 import json
 import os
@@ -19,7 +20,6 @@ from arxiv_corpus import (archive_members, declared_texlive, materialize, sha256
 from texlive import ahash64_file
 
 ROOT = Path(__file__).resolve().parent.parent
-SOURCE_DATE_EPOCH = "1772323200"
 SUPPORTED_ENGINES = ("latex", "pdflatex")
 DIVERGENCES = ("Umber-failure", "DVI-diverged")
 
@@ -165,6 +165,42 @@ def authority(preparation: Path, rows: list[dict]) -> tuple[dict, dict]:
         if (format_receipt.get("format", {}).get("sha256") != sha256_file(paths["reference_format"])
                 or format_receipt.get("engine", {}).get("sha256") != sha256_file(paths["reference_binary"])):
             fail(f"prepared {year} {engine} reference format receipt differs")
+        year_receipt = json.loads(runtime_receipt.read_text())
+        snapshot_date = year_receipt.get("snapshot_date")
+        try:
+            epoch = int(dt.datetime.combine(dt.date.fromisoformat(snapshot_date), dt.time(),
+                                            dt.timezone.utc).timestamp())
+        except (TypeError, ValueError) as error:
+            fail(f"prepared {year} snapshot date is invalid: {error}")
+        if (fmt.get("source_date_epoch") != epoch
+                or format_receipt.get("source_date_epoch") != epoch
+                or umber_format_receipt.get("source_date_epoch") != epoch
+                or umber_format_receipt.get("engine") != engine):
+            fail(f"prepared {year} {engine} format source clock or engine differs")
+        inputs = format_receipt.get("inputs")
+        if not isinstance(inputs, list) or not inputs:
+            fail(f"prepared {year} {engine} reference input list is missing")
+        allowed = (runtime.resolve(), (runtime.parent / "formats/generated-config").resolve())
+        seen_inputs = set()
+        for record in inputs:
+            if not isinstance(record, dict) or not isinstance(record.get("path"), str):
+                fail(f"prepared {year} {engine} reference input record is invalid")
+            path = Path(record["path"])
+            if (not path.is_absolute() or not any(path.resolve().is_relative_to(root) for root in allowed)
+                    or "latex-dev" in path.parts or not path.is_file()
+                    or record.get("bytes") != path.stat().st_size
+                    or record.get("sha256") != sha256_file(path)):
+                fail(f"prepared {year} {engine} reference input differs: {path}")
+            seen_inputs.add(path.resolve())
+        required_inputs = {runtime / "tex/latex/base/latex.ltx",
+                           runtime / "tex/latex/l3kernel/expl3-code.tex",
+                           runtime.parent / "formats/generated-config/language.dat"}
+        if not {path.resolve() for path in required_inputs} <= seen_inputs:
+            fail(f"prepared {year} {engine} stable LaTeX inputs are missing")
+        admission = Path(str(umber_format_receipt.get("input_admissions", "")))
+        if (not admission.is_file() or not admission.resolve().is_relative_to(runtime.parent / "formats")
+                or umber_format_receipt.get("input_admissions_sha256") != sha256_file(admission)):
+            fail(f"prepared {year} {engine} Umber input admissions differ")
         key = f"{year}/{engine}"
         selected[key] = {"runtime_root": str(runtime), "runtime_receipt": identity(runtime_receipt),
                          "reference_binary": identity(paths["reference_binary"]),
@@ -173,12 +209,13 @@ def authority(preparation: Path, rows: list[dict]) -> tuple[dict, dict]:
                          "umber_distribution": str(paths["umber_distribution"]),
                          "distribution_manifest": identity(manifest),
                          "distribution_ahash64": digest,
+                         "source_date_epoch": epoch,
                          "umber_format": identity(paths["umber_format"]),
                          "umber_format_receipt": identity(paths["umber_format_receipt"])}
     return receipt, selected
 
 
-def reference_environment(runtime: Path, run: Path, fmt: Path) -> dict[str, str]:
+def reference_environment(runtime: Path, run: Path, fmt: Path, epoch: int) -> dict[str, str]:
     env = {key: value for key, value in os.environ.items()
            if not key.startswith(("TEX", "TFMF")) and not key.endswith("FONTS")
            and key != "OSFONTDIR"}
@@ -192,7 +229,7 @@ def reference_environment(runtime: Path, run: Path, fmt: Path) -> dict[str, str]
     env.update({"TEXMFCNF": str(runtime / "web2c"), "TEXMFROOT": str(runtime.parent),
                 "TEXMFDIST": str(runtime), "TEXFORMATS": str(fmt.parent),
                 "TEXINPUTS": f"{run}:{runtime}/tex/latex//:{runtime}/tex/generic//:{runtime}/tex/plain//",
-                "TFMFONTS": f"{run}:{runtime}/fonts/tfm//", "SOURCE_DATE_EPOCH": SOURCE_DATE_EPOCH,
+                "TFMFONTS": f"{run}:{runtime}/fonts/tfm//", "SOURCE_DATE_EPOCH": str(epoch),
                 "FORCE_SOURCE_DATE": "1"})
     return env
 
@@ -220,7 +257,8 @@ def run_reference(args: argparse.Namespace, row: dict, row_dir: Path, proof: dic
                "--halt-on-error", row["entrypoint"]]
     with stdout.open("wb") as out, stderr.open("wb") as err:
         completed = subprocess.run(command, cwd=run,
-                                   env=reference_environment(Path(proof["runtime_root"]), run, Path(fmt)),
+                                   env=reference_environment(Path(proof["runtime_root"]), run, Path(fmt),
+                                                             proof["source_date_epoch"]),
                                    stdout=out, stderr=err, check=False,
                                    preexec_fn=memory_limit(args.max_rss_mib))
     pages = None
@@ -249,7 +287,7 @@ def run_umber(args: argparse.Namespace, row: dict, row_dir: Path, proof: dict, e
     env = {key: value for key, value in os.environ.items()
            if not key.startswith(("TEX", "TFMF")) and not key.endswith("FONTS")
            and key != "OSFONTDIR" and not key.startswith("UMBER_")}
-    env.update({"SOURCE_DATE_EPOCH": SOURCE_DATE_EPOCH, "FORCE_SOURCE_DATE": "1",
+    env.update({"SOURCE_DATE_EPOCH": str(proof["source_date_epoch"]), "FORCE_SOURCE_DATE": "1",
                 "TEXINPUTS": f"{run}:{runtime}/tex/latex//:{runtime}/tex/generic//:{runtime}/tex/plain//",
                 "TEXFONTS": f"{run}:{runtime}/fonts/tfm//"})
     command = [sys.executable, str(ROOT / "scripts/run-umber-guarded.py"),
@@ -473,7 +511,9 @@ def main() -> int:
         complete = len(reports) == len(rows) and all(result["status"] != "DVI-qualified" for result in reports)
         verdict = ("ERROR" if comparison_error else "DIVERGED" if divergent else
                    "COMPLETE" if complete else "PARTIAL")
-        summary = {"schema": 1, "sample_rows": len(rows), "qualified_rows": len(reports),
+        summary = {"schema": 1, "sample_rows": len(rows), "reference_rows_recorded": len(reports),
+                   "dvi_eligible_rows": sum(result["reference"]["status"] == "DVI-success"
+                                            for result in reports if "reference" in result),
                    "verdict": verdict, "counts": {status: sum(result["status"] == status for result in reports)
                                                   for status in sorted({result["status"] for result in reports})},
                    "first_divergence": divergent, "comparison_error": comparison_error}

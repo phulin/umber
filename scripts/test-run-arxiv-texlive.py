@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import datetime as dt
 import json
 import os
 import tarfile
@@ -119,18 +120,40 @@ fi
             for year, engine in (("2023", "latex"), ("2025", "pdflatex")):
                 runtime = root / year / "texmf-dist"
                 (runtime / "web2c").mkdir(parents=True)
+                for name in ("tex/latex/base/latex.ltx", "tex/latex/l3kernel/expl3-code.tex"):
+                    path = runtime / name
+                    path.parent.mkdir(parents=True)
+                    path.write_text(name + "\n")
+                config = root / year / "formats/generated-config/language.dat"
+                config.parent.mkdir(parents=True)
+                config.write_text("=english\n")
                 (runtime / "web2c" / "sentinel").write_text("release input\n")
                 (root / year / "acquisition.json").write_text(json.dumps({
+                    "snapshot_date": f"{year}-01-01",
                     "sentinel_sha256": sha256_file(runtime / "web2c" / "sentinel")}))
+                epoch = int(dt.datetime(int(year), 1, 1, tzinfo=dt.timezone.utc).timestamp())
                 reference_fmt = root / year / f"{engine}.fmt"
                 reference_fmt.write_text("reference format\n")
                 reference_receipt = root / year / f"{engine}-reference.json"
                 reference_receipt.write_text(json.dumps({"engine": {"sha256": sha256_file(oracle)},
-                                                         "format": {"sha256": sha256_file(reference_fmt)}}))
+                                                         "format": {"sha256": sha256_file(reference_fmt)},
+                                                         "source_date_epoch": epoch,
+                                                         "inputs": [{"path": str(path),
+                                                                     "bytes": path.stat().st_size,
+                                                                     "sha256": sha256_file(path)} for path in
+                                                                    (runtime / "tex/latex/base/latex.ltx",
+                                                                     runtime / "tex/latex/l3kernel/expl3-code.tex",
+                                                                     config)]}))
                 umber_fmt = root / year / f"{engine}.umberfmt"
                 umber_fmt.write_text("umber format\n")
+                admission = root / year / f"formats/umber-{engine}-work/build.inputs"
+                admission.parent.mkdir(parents=True)
+                admission.write_text("{}\n")
                 umber_receipt = root / year / f"{engine}-umber.json"
-                umber_receipt.write_text(json.dumps({"format": {"sha256": sha256_file(umber_fmt)}}))
+                umber_receipt.write_text(json.dumps({"format": {"sha256": sha256_file(umber_fmt)},
+                                                     "engine": engine, "source_date_epoch": epoch,
+                                                     "input_admissions": str(admission),
+                                                     "input_admissions_sha256": sha256_file(admission)}))
                 distribution = root / year / "distribution"
                 distribution.mkdir()
                 manifest = distribution / "manifest.json"
@@ -144,6 +167,7 @@ fi
                                                    "umber_format": str(umber_fmt),
                                                    "umber_format_sha256": sha256_file(umber_fmt),
                                                    "umber_format_receipt": str(umber_receipt),
+                                                   "source_date_epoch": epoch,
                                                    "distribution_ahash64": ahash64_file(manifest)}}}
             preparation = root / "preparation.json"
             preparation.write_text(json.dumps({"schema": 1, "years": years}))
@@ -191,6 +215,15 @@ fi
                 prepared_bytes = preparation.read_bytes()
                 preparation.write_text(json.dumps({"schema": 1, "years": {"2025": years["2025"]}}))
                 with self.assertRaisesRegex(SystemExit, "prepared TeX Live year is missing"):
+                    runner.main()
+                preparation.write_bytes(prepared_bytes)
+                wrong_year = json.loads(prepared_bytes)
+                wrong_year["years"]["2023"]["formats"]["latex"]["reference_format"] = \
+                    years["2025"]["formats"]["pdflatex"]["reference_format"]
+                wrong_year["years"]["2023"]["formats"]["latex"]["reference_format_receipt"] = \
+                    years["2025"]["formats"]["pdflatex"]["reference_format_receipt"]
+                preparation.write_text(json.dumps(wrong_year))
+                with self.assertRaisesRegex(SystemExit, "format source clock or engine differs"):
                     runner.main()
                 preparation.write_bytes(prepared_bytes)
                 parity_bytes = parity.read_bytes()
