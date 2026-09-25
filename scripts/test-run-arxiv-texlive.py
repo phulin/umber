@@ -50,6 +50,30 @@ def archive(path: Path, paper: str, compiler: str, year: str | None) -> None:
 
 
 class DeclaredYearCorpus(unittest.TestCase):
+    def test_reference_pdf_completion_accepts_tex_line_wraps_only(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            name = "SPINEA_Kohler_2026_Main_Manuscript"
+            pdf = root / f"{name}.pdf"
+            log = root / f"{name}.log"
+            pdf.write_bytes(b"%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\n%%EOF\n")
+            byte_count = str(pdf.stat().st_size)
+            report = (f"Output written on {name[:22]}\n{name[22:]}.pdf "
+                      f"(23 pages, {byte_count[:-1]}\n{byte_count[-1:]} bytes).\n"
+                      f"Transcript written on {name}.log.\n")
+            log.write_text(report)
+            self.assertEqual(runner.pdf_pages_from_log(log, pdf), 23)
+            log.write_text(report.replace(name[:22] + "\n", name[:22] + " \n", 1))
+            self.assertIsNone(runner.pdf_pages_from_log(log, pdf))
+            log.write_text(report.replace(f"{byte_count[:-1]}\n{byte_count[-1:]}",
+                                          str(pdf.stat().st_size + 1), 1))
+            self.assertIsNone(runner.pdf_pages_from_log(log, pdf))
+            log.write_text(report.replace("23 pages", "0 pages", 1))
+            self.assertIsNone(runner.pdf_pages_from_log(log, pdf))
+            pdf.write_bytes(b"not a PDF")
+            log.write_text(report)
+            self.assertIsNone(runner.pdf_pages_from_log(log, pdf))
+
     def test_declaration_is_required_and_strict(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -129,6 +129,9 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `arxiv_texlive_authority.py`: authenticate the declared release runtime,
   reference format, native format, and exact inputs selected by the PDF/DVI
   corpus runner.
+- `arxiv_pdf_completion.py`: shared bounded parser for pdfTeX's PDF completion
+  report, including TeX's physical line wraps; both the survey and
+  declared-release runner match the exact jobname and reported byte count.
 - `test-arxiv-corpus.sh`: hermetic archive/view identity contract, including mutation and extra-file rejection.
 - `survey-pdftex-arxiv-pdf.py`: resumable clean-pdfTeX PDF-success survey over
   the locked recent-arXiv sample, with exact source/oracle/runtime/format

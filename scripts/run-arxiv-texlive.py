@@ -14,6 +14,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from arxiv_pdf_completion import pdf_completion
 from arxiv_corpus import (archive_members, declared_texlive, materialize, sha256_file,
                           source_identity, source_jobname, verify_view)
 from arxiv_texlive_inputs import audit_umber_inputs
@@ -60,14 +61,13 @@ def pdf_pages_from_log(path: Path, output: Path) -> int | None:
     """Require pdfTeX's completed PDF report to match the published artifact."""
     if not path.is_file() or not output.is_file():
         return None
-    report = re.search(rf"Output written on {re.escape(output.name)} \((\d+) pages?, (\d+) bytes\)\.",
-                       path.read_text(errors="replace"))
-    if report is None or int(report[1]) < 1 or int(report[2]) != output.stat().st_size:
+    completion = pdf_completion(path.read_text(errors="replace"), output.stem)
+    if completion is None or completion[0] < 1 or completion[1] != output.stat().st_size:
         return None
     with output.open("rb") as source:
         if not source.read(8).startswith(b"%PDF-"):
             return None
-    return int(report[1])
+    return completion[0]
 
 
 def output_pages(mode: str, path: Path, log: Path | None = None) -> int | None:
