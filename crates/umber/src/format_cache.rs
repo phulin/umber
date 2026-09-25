@@ -291,7 +291,7 @@ pub enum FormatCacheError {
 impl fmt::Display for FormatCacheError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidFormat(message) => write!(f, "invalid schema-12 format image: {message}"),
+            Self::InvalidFormat(message) => write!(f, "invalid format image: {message}"),
             Self::FormatTooLarge(bytes) => {
                 write!(
                     f,

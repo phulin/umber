@@ -41,7 +41,7 @@ fn compound_identity(mode: FormatEngineMode) -> FormatCacheIdentity {
 
 fn format() -> Vec<u8> {
     crate::format_fixture::construct_format_in_worker(&crate::FormatRecipe::raw_tex82())
-        .expect("schema-12 format")
+        .expect("current format")
         .image
 }
 

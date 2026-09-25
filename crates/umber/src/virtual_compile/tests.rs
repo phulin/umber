@@ -3686,7 +3686,7 @@ fn failed_patch_restores_the_complete_accepted_build() {
 }
 
 #[test]
-fn every_engine_mode_has_source_and_schema_12_format_artifact_equivalence() {
+fn every_engine_mode_has_source_and_current_format_artifact_equivalence() {
     let source = b"\\catcode123=1 \\catcode125=2 \\shipout\\hbox{}\\end";
     for engine in [
         EngineMode::Tex82,
@@ -3698,7 +3698,7 @@ fn every_engine_mode_has_source_and_schema_12_format_artifact_equivalence() {
         let format = construct_test_format(engine, "\\dump");
         assert_eq!(
             u32::from_le_bytes(format.as_bytes()[8..12].try_into().expect("schema bytes")),
-            12
+            tex_state::FORMAT_SCHEMA_VERSION
         );
 
         let mut formatted = VirtualCompileSession::new(SessionOptions {

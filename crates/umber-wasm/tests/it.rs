@@ -1514,7 +1514,7 @@ fn schema_twelve_formats_load_and_plain_asset_is_available() {
         prepare_run_stores(initialized);
         initialized
             .capture_format_image()
-            .expect("capture schema-12 format")
+            .expect("capture current format")
             .into_bytes()
     })
     .expect("fresh format universe");
@@ -1583,7 +1583,7 @@ fn formatted_session_survives_multiple_resource_retries() {
         prepare_run_stores(initialized);
         initialized
             .capture_format_image()
-            .expect("capture schema-12 format")
+            .expect("capture current format")
             .into_bytes()
     })
     .expect("fresh format universe");

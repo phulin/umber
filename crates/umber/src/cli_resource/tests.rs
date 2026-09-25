@@ -1744,9 +1744,10 @@ fn schema_three_format_closure_does_not_drive_native_live_lookup() {
     let shard_digest = hex_digest(&packed);
     std::fs::write(objects.join(format!("ahash64-v1-{shard_digest}")), packed).expect("shard");
     let root = format!(
-        "{{\"schema\":8,\"distribution\":\"closure\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"],\"formats\":{{\"latex\":{{\"object\":\"ahash64-v1-{format_digest}\",\"ahash64\":\"{format_digest}\",\"bytes\":{},\"engine\":\"umber\",\"engineVersion\":\"{}\",\"formatSchema\":12,\"sourceDistribution\":\"closure\",\"sourceManifestAhash64\":\"{}\",\"sourceDateEpoch\":0,\"inputClosure\":{{\"schema\":1,\"keys\":[\"tex:latex.ltx\",\"tex:stale.tex\"]}}}}}}}}\n",
+        "{{\"schema\":8,\"distribution\":\"closure\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"],\"formats\":{{\"latex\":{{\"object\":\"ahash64-v1-{format_digest}\",\"ahash64\":\"{format_digest}\",\"bytes\":{},\"engine\":\"umber\",\"engineVersion\":\"{}\",\"formatSchema\":{},\"sourceDistribution\":\"closure\",\"sourceManifestAhash64\":\"{}\",\"sourceDateEpoch\":0,\"inputClosure\":{{\"schema\":1,\"keys\":[\"tex:latex.ltx\",\"tex:stale.tex\"]}}}}}}}}\n",
         format_bytes.len(),
         crate::PACKAGE_VERSION,
+        tex_state::FORMAT_SCHEMA_VERSION,
         "1".repeat(16)
     );
     std::fs::write(directory.path().join("manifest-v8.json"), root).expect("root");
@@ -2223,9 +2224,10 @@ fn loaded_format_replay_retains_admitted_input_bindings() {
         .collect::<Vec<_>>()
         .join(",");
     let root = format!(
-        "{{\"schema\":8,\"distribution\":\"du4r-probe\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"],\"formats\":{{\"probe\":{{\"object\":\"ahash64-v1-{format_digest}\",\"ahash64\":\"{format_digest}\",\"bytes\":{},\"engine\":\"umber\",\"engineVersion\":\"{}\",\"formatSchema\":12,\"sourceDistribution\":\"du4r-probe\",\"sourceManifestAhash64\":\"{}\",\"sourceDateEpoch\":0,\"inputClosure\":{{\"schema\":1,\"keys\":[{}]}}}}}}}}\n",
+        "{{\"schema\":8,\"distribution\":\"du4r-probe\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"],\"formats\":{{\"probe\":{{\"object\":\"ahash64-v1-{format_digest}\",\"ahash64\":\"{format_digest}\",\"bytes\":{},\"engine\":\"umber\",\"engineVersion\":\"{}\",\"formatSchema\":{},\"sourceDistribution\":\"du4r-probe\",\"sourceManifestAhash64\":\"{}\",\"sourceDateEpoch\":0,\"inputClosure\":{{\"schema\":1,\"keys\":[{}]}}}}}}}}\n",
         format.len(),
         crate::PACKAGE_VERSION,
+        tex_state::FORMAT_SCHEMA_VERSION,
         "1".repeat(16),
         key_json
     );
@@ -2346,7 +2348,7 @@ fn format_closure_prefetches_followups_after_engine_admission() {
         recipe.format_ident_name = recipe.format_name.clone();
         recipe.distribution_identity = format!("closure-test-{engine:?}").into_bytes();
         let format = crate::format_fixture::construct_format_in_worker(&recipe)
-            .expect("schema-12 format")
+            .expect("current format")
             .image;
         let format_digest = hex_digest(&format);
         std::fs::write(objects.join(format!("ahash64-v1-{format_digest}")), &format)
@@ -2383,9 +2385,10 @@ fn format_closure_prefetches_followups_after_engine_admission() {
         std::fs::write(objects.join(format!("ahash64-v1-{shard_digest}")), packed)
             .expect("shard object");
         let root = format!(
-            "{{\"schema\":8,\"distribution\":\"closure-attempts\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"],\"formats\":{{\"probe\":{{\"object\":\"ahash64-v1-{format_digest}\",\"ahash64\":\"{format_digest}\",\"bytes\":{},\"engine\":\"umber\",\"engineVersion\":\"{}\",\"formatSchema\":12,\"sourceDistribution\":\"closure-attempts\",\"sourceManifestAhash64\":\"{}\",\"sourceDateEpoch\":0,\"inputClosure\":{{\"schema\":1,\"keys\":[{}]}}}}}}}}\n",
+            "{{\"schema\":8,\"distribution\":\"closure-attempts\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"],\"formats\":{{\"probe\":{{\"object\":\"ahash64-v1-{format_digest}\",\"ahash64\":\"{format_digest}\",\"bytes\":{},\"engine\":\"umber\",\"engineVersion\":\"{}\",\"formatSchema\":{},\"sourceDistribution\":\"closure-attempts\",\"sourceManifestAhash64\":\"{}\",\"sourceDateEpoch\":0,\"inputClosure\":{{\"schema\":1,\"keys\":[{}]}}}}}}}}\n",
             format.len(),
             crate::PACKAGE_VERSION,
+            tex_state::FORMAT_SCHEMA_VERSION,
             "1".repeat(16),
             closure_keys.join(",")
         );
