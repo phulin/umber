@@ -10,9 +10,9 @@ and Umber formats. The reference engine remains modern pdfTeX. See the
 | Declared year | Selected source snapshot | Corpus declarations                   |
 | ------------- | ------------------------ | ------------------------------------- |
 | 2023          | 2023-05-21               | One pdfLaTeX, one XeLaTeX             |
-| 2024          | 2024-03-13               | None; representative format coverage  |
+| 2024          | 2024-03-14               | None; representative format coverage  |
 | 2025          | 2025-08-03               | 93 pdfLaTeX, two LaTeX, three XeLaTeX |
-| 2026          | 2026-03-01               | None; representative format coverage  |
+| 2026          | 2026-03-02               | None; representative format coverage  |
 
 These are dated upstream sources. arXiv also has site configuration and
 package patches, so this tier does not claim to reproduce its private
@@ -38,7 +38,10 @@ python3 scripts/texlive_formats.py \
 ```
 
 The acquisition helper retains dated upstream package databases, verifies
-container lengths and SHA-512, and checks the extracted inventory on reuse.
+the database’s declared release year, container lengths and SHA-512, and the
+extracted inventory on reuse. An archive date alone does not establish the
+release year during the annual transition. `--archive-cache PATH` reuses
+package archives from another local cache only after verifying their identities.
 It excludes architecture packages, documentation, and package sources. Format
 preparation derives the full `language.dat` from that database and uses
 stable LaTeX inputs for both engines. Each engine receives its own native

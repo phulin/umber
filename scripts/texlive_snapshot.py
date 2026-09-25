@@ -28,7 +28,7 @@ from urllib.parse import urljoin, urlsplit
 
 import texlive
 
-SNAPSHOT_DATES = {2023: "2023-05-21", 2024: "2024-03-13", 2025: "2025-08-03", 2026: "2026-03-01"}
+SNAPSHOT_DATES = {2023: "2023-05-21", 2024: "2024-03-14", 2025: "2025-08-03", 2026: "2026-03-02"}
 DEFAULT_CACHE_ROOT = Path("target/texlive-years")
 MAX_DATABASE_BYTES = 16 * 1024 * 1024
 MAX_EXPANDED_DATABASE_BYTES = 128 * 1024 * 1024
@@ -94,7 +94,7 @@ def _archive_member(raw: str, relocated: bool) -> str:
     return raw.removeprefix("RELOC/") if relocated else raw
 
 
-def parse_tlpdb(compressed: bytes) -> tuple[Package, ...]:
+def parse_tlpdb(compressed: bytes, *, year: int | None = None) -> tuple[Package, ...]:
     """Select every platform-independent package with installable TEXMF runfiles."""
     if len(compressed) > MAX_DATABASE_BYTES:
         raise texlive.TexliveError("TLPDB exceeds compressed byte limit")
@@ -109,6 +109,13 @@ def parse_tlpdb(compressed: bytes) -> tuple[Package, ...]:
         database = raw.decode("utf-8")
     except UnicodeError as error:
         raise texlive.TexliveError("TLPDB is not UTF-8") from error
+    if year is not None:
+        releases = [line.removeprefix("depend release/")
+                    for block in database.split("\n\n")
+                    if "name 00texlive.config" in block.splitlines()
+                    for line in block.splitlines() if line.startswith("depend release/")]
+        if releases != [str(year)]:
+            raise texlive.TexliveError(f"TLPDB release mismatch: requested {year}, declared {releases}")
     packages: list[Package] = []
     names: set[str] = set()
     installed: set[str] = set()
@@ -362,8 +369,6 @@ def _reuse_archive(root: Path, cache_root: Path, year: int, package: Package) ->
     if destination.exists():
         return
     for other_year in SNAPSHOT_DATES:
-        if other_year == year:
-            continue
         candidate = cache_root / str(other_year) / "archives" / package.archive_name
         if not candidate.is_file():
             continue
@@ -438,7 +443,7 @@ def verify_snapshot(year: int, cache_root: Path = DEFAULT_CACHE_ROOT) -> Snapsho
         raise texlive.TexliveError(f"snapshot identity mismatch: {receipt_path}")
     database_path = root / "tlpkg/texlive.tlpdb.xz"
     texlive.verify_file(database_path, identity, "sha512", "snapshot TLPDB")
-    packages = parse_tlpdb(database_path.read_bytes())
+    packages = parse_tlpdb(database_path.read_bytes(), year=year)
     if len(packages) != receipt.get("package_count"):
         raise texlive.TexliveError("snapshot package count mismatch")
     for package in packages:
@@ -495,6 +500,7 @@ def ensure_snapshot(
     max_download_bytes: int = DEFAULT_MAX_DOWNLOAD_BYTES,
     mirror: str | None = None,
     workers: int = 4,
+    archive_caches: tuple[Path, ...] = (),
 ) -> SnapshotResult:
     """Download and install one dated, complete platform-independent runtime."""
     base_url = _source_url(year, mirror)
@@ -519,9 +525,14 @@ def ensure_snapshot(
         # supply the authority for subsequent package hashes.
         database_path.unlink()
     database_identity = _download(database_url, database_path, expected=database_pin, limit=MAX_DATABASE_BYTES, offline=offline)
+    try:
+        packages = parse_tlpdb(database_path.read_bytes(), year=year)
+    except texlive.TexliveError:
+        if database_pin is None:
+            database_path.unlink(missing_ok=True)
+        raise
     if database_pin is None:
         _atomic_json(identity_path, {"url": database_url, "bytes": database_identity.bytes, "sha512": database_identity.digest})
-    packages = parse_tlpdb(database_path.read_bytes())
     selected_bytes = sum(package.identity.bytes for package in packages)
     cached_bytes = sum(package.identity.bytes for package in packages if (root / "archives" / package.archive_name).is_file())
     if selected_bytes - cached_bytes > max_download_bytes:
@@ -534,7 +545,8 @@ def ensure_snapshot(
     def install(package: Package) -> None:
         nonlocal extracted_total
         archive = root / "archives" / package.archive_name
-        _reuse_archive(root, cache_root, year, package)
+        for archive_cache in (cache_root, *archive_caches):
+            _reuse_archive(root, archive_cache, year, package)
         _download(urljoin(base_url, f"archive/{package.archive_name}"), archive, expected=package.identity, limit=package.identity.bytes, offline=offline)
         marker = root / ".complete" / f"{package.archive_name}.json"
         valid_marker = False
@@ -588,6 +600,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--year", type=int, required=True, choices=SNAPSHOT_DATES)
     parser.add_argument("--cache-root", type=Path, default=DEFAULT_CACHE_ROOT)
     parser.add_argument("--offline", action="store_true")
+    parser.add_argument("--archive-cache", type=Path, action="append", default=[], help="Read-only cache root for authenticated package reuse; repeatable")
     parser.add_argument("--max-download-bytes", type=int, default=DEFAULT_MAX_DOWNLOAD_BYTES)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--mirror", help="HTTPS archive base; localhost HTTP allowed for hermetic tests")
@@ -596,7 +609,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "verify":
             result = verify_snapshot(args.year, args.cache_root)
         else:
-            result = ensure_snapshot(args.year, args.cache_root, offline=args.offline, max_download_bytes=args.max_download_bytes, mirror=args.mirror, workers=args.workers)
+            result = ensure_snapshot(args.year, args.cache_root, offline=args.offline, max_download_bytes=args.max_download_bytes, mirror=args.mirror, workers=args.workers, archive_caches=tuple(args.archive_cache))
     except texlive.TexliveError as error:
         parser.exit(1, f"texlive_snapshot: {error}\n")
     print(json.dumps({"runtime_root": str(result.root.resolve()), "runtime_receipt": str(result.receipt.resolve()), "snapshot_date": result.snapshot_date, "tlpdb_sha512": result.tlpdb_identity.digest, "package_count": result.package_count, "file_count": result.file_count}, sort_keys=True))

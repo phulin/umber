@@ -49,7 +49,7 @@ def database(name: str, archive: bytes, *, duplicate_path: bool = False) -> byte
         "runfiles size=1\n"
         " RELOC/tex/latex/demo.sty\n"
     )
-    return lzma.compress((record + ("\n" + record.replace(f"name {name}", "name another") if duplicate_path else "")).encode())
+    return lzma.compress(("name 00texlive.config\ncategory TLCore\ndepend release/2025\n\n" + record + ("\n" + record.replace(f"name {name}", "name another") if duplicate_path else "")).encode())
 
 
 class QuietHandler(SimpleHTTPRequestHandler):
@@ -74,6 +74,18 @@ class SnapshotTests(unittest.TestCase):
             try:
                 cache = base / "cache"
                 url = f"http://127.0.0.1:{server.server_port}/"
+                database_path = origin / "tlpkg/texlive.tlpdb.xz"
+                valid_database = database_path.read_bytes()
+                for invalid, message in (
+                    (valid_database[:30], "TLPDB"),
+                    (lzma.compress(lzma.decompress(valid_database).replace(b"release/2025", b"release/2024")), "release mismatch"),
+                ):
+                    database_path.write_bytes(invalid)
+                    with self.assertRaisesRegex(texlive.TexliveError, message):
+                        snapshot.ensure_snapshot(2025, cache, mirror=url)
+                    self.assertFalse((cache / "2025/tlpkg/texlive.tlpdb.identity.json").exists())
+                    self.assertFalse((cache / "2025/tlpkg/texlive.tlpdb.xz").exists())
+                database_path.write_bytes(valid_database)
                 result = snapshot.ensure_snapshot(2025, cache, mirror=url, workers=2)
                 self.assertEqual(result.package_count, 1)
                 self.assertEqual(result.file_count, 1)
@@ -82,6 +94,16 @@ class SnapshotTests(unittest.TestCase):
                 self.assertEqual(receipt["snapshot_date"], "2025-08-03")
                 self.assertEqual(receipt["selected_archive_bytes"], len(archive))
                 snapshot.ensure_snapshot(2025, cache, offline=True)
+                retained_db = result.root / "tlpkg/texlive.tlpdb.xz"
+                wrong_year = lzma.compress(lzma.decompress(valid_database).replace(b"release/2025", b"release/2024"))
+                retained_db.write_bytes(wrong_year)
+                wrong_receipt = json.loads(result.receipt.read_text())
+                wrong_receipt["tlpdb"].update(bytes=len(wrong_year), sha512=hashlib.sha512(wrong_year).hexdigest())
+                result.receipt.write_text(json.dumps(wrong_receipt))
+                with self.assertRaisesRegex(texlive.TexliveError, "release mismatch"):
+                    snapshot.verify_snapshot(2025, cache)
+                retained_db.write_bytes(valid_database)
+                result.receipt.write_text(json.dumps(receipt))
                 (result.root / "texmf-dist/tex/latex/demo.sty").write_bytes(b"changed\n")
                 with self.assertRaisesRegex(texlive.TexliveError, "runtime file changed"):
                     snapshot.verify_snapshot(2025, cache)
@@ -99,6 +121,31 @@ class SnapshotTests(unittest.TestCase):
                 server.shutdown()
                 server.server_close()
                 thread.join(timeout=5)
+
+    def test_database_release_is_required_and_exact(self):
+        raw = lzma.decompress(database("demo", package_archive("demo")))
+        for content in (
+            raw.replace(b"release/2025", b"release/2024"),
+            raw.replace(b"depend release/2025\n", b""),
+            raw.replace(b"depend release/2025", b"depend release/2025\ndepend release/2025"),
+        ):
+            with self.assertRaisesRegex(texlive.TexliveError, "release mismatch"):
+                snapshot.parse_tlpdb(lzma.compress(content), year=2025)
+
+    def test_external_archive_reuse_checks_bytes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive = package_archive("demo")
+            package = snapshot.parse_tlpdb(database("demo", archive))[0]
+            candidate = root / "old/2025/archives" / package.archive_name
+            candidate.parent.mkdir(parents=True)
+            candidate.write_bytes(b"corrupt")
+            destination = root / "new/2025"
+            snapshot._reuse_archive(destination, root / "old", 2025, package)
+            self.assertFalse((destination / "archives" / package.archive_name).exists())
+            candidate.write_bytes(archive)
+            snapshot._reuse_archive(destination, root / "old", 2025, package)
+            self.assertEqual((destination / "archives" / package.archive_name).read_bytes(), archive)
 
     def test_tlpdb_duplicate_installed_path_is_rejected(self):
         archive = package_archive("demo")
