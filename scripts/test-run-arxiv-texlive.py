@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Hermetic declared-year routing and DVI corpus evidence contract."""
+"""Hermetic declared-year PDF parity and explicit DVI diagnostic contract."""
 
 from __future__ import annotations
 
@@ -65,7 +65,7 @@ class DeclaredYearCorpus(unittest.TestCase):
             archive(path, "paper3", "xelatex", "2025")
             self.assertEqual(declared_texlive(path)[:2], ("xelatex", "2025"))
 
-    def test_dvi_qualification_precedes_parity_and_resume_checks_evidence(self) -> None:
+    def test_qualification_precedes_parity_and_resume_checks_evidence(self) -> None:
         with tempfile.TemporaryDirectory(prefix="arxiv-year-contract-") as temporary:
             root = Path(temporary)
             archives = root / "archives"
@@ -84,6 +84,8 @@ class DeclaredYearCorpus(unittest.TestCase):
             expected, different = root / "expected.dvi", root / "different.dvi"
             dvi(expected, 0)
             dvi(different, 1)
+            sample_pdf = root / "sample.pdf"
+            sample_pdf.write_bytes(b"%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\n%%EOF\n")
             count = root / "invocations"
             oracle = root / "oracle"
             executable(oracle, """
@@ -91,7 +93,11 @@ for arg in "$@"; do input=$arg; done
 name=${input%.tex}
 test -f side.bbl
 printf 'reference %s %s\\n' "$name" "$TEXMFDIST" >> "$TEST_COUNTS"
-cp "$TEST_DVI" "$name.dvi"
+if test "${TEST_OUTPUT_FORMAT:-dvi}" = pdf; then
+  cp "$TEST_PDF" "$name.pdf"
+  bytes=$(wc -c < "$name.pdf")
+  printf 'Output written on %s.pdf (1 page, %s bytes).\n' "$name" "$bytes" > "$name.log"
+else cp "$TEST_DVI" "$name.dvi"; fi
 printf 'PWD %s\nINPUT %s\nINPUT %s\n' "$PWD" "$PWD/$name.tex" "$PWD/side.bbl" > "$name.fls"
 mapdir=${TEXFONTMAPS%%:*}
 mapdir=${mapdir%//}
@@ -103,14 +109,15 @@ previous=
 for arg in "$@"; do
   if test "$previous" = output; then output=$arg; fi
   if test "$previous" = inputs; then admissions=$arg; fi
-  case "$arg" in --dvi) previous=output;; --input-records-out) previous=inputs;; *) previous=;; esac
+  case "$arg" in --dvi|--pdf) previous=output;; --input-records-out) previous=inputs;; *) previous=;; esac
 done
 input=$arg
 name=${input%.tex}
 test -f side.bbl
 printf 'umber %s %s\\n' "$name" "$TEXINPUTS" >> "$TEST_COUNTS"
 cp "$TEST_RECEIPTS/$name.inputs" "$admissions"
-if test "$name" = latex23; then cp "$TEST_DIFFERENT" "$output";
+if test "${TEST_OUTPUT_FORMAT:-dvi}" = pdf; then cp "$TEST_PDF" "$output";
+elif test "$name" = latex23; then cp "$TEST_DIFFERENT" "$output";
 else cp "$TEST_DVI" "$output"; fi
 """)
             parity = root / "parity"
@@ -121,6 +128,26 @@ if ! cmp -s "$2" "$3"; then
   echo "$5 DVI mismatch at byte 10 on page 1 (a != b)" >&2
   exit 1
 fi
+""")
+            pdf_comparator = root / "pdf-compare"
+            executable(pdf_comparator, """
+if test "${1:-}" = --version; then echo umber-pdf-compare-v1; exit 0; fi
+python3 - "$1" "$2" <<'PY'
+import hashlib, json, os, pathlib, sys
+def identity(path):
+    data = pathlib.Path(path).read_bytes()
+    return {'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest(),
+            'pages': 1, 'projection_sha256': ('b' if 'latex23' in path and '/umber/' in path else 'a') * 64}
+name = pathlib.Path(sys.argv[1]).stem
+status = 'different' if name == 'latex23' else 'equal'
+receipt = {'schema': 'umber-pdf-compare-v1',
+           'criterion': 'hayro-structure-page-geometry-v1', 'status': status,
+           'reference': identity(sys.argv[1]), 'umber': identity(sys.argv[2])}
+if status == 'different':
+    receipt['first_difference'] = {'line': 1, 'reference': 'a', 'umber': 'b'}
+print(json.dumps(receipt))
+sys.exit(1 if status == 'different' else 0)
+PY
 """)
             years = {}
             receipts = root / "admissions"
@@ -202,9 +229,11 @@ fi
             results = root / "results"
             args = [str(SCRIPT), "--source-lock", str(lock), "--archives", str(archives),
                     "--preparation", str(preparation), "--umber", str(umber),
-                    "--parity-harness", str(parity), "--results", str(results),
+                    "--output-format", "dvi", "--parity-harness", str(parity),
+                    "--results", str(results),
                     "--expected-rows", "3", "--timeout-seconds", "10", "--max-rss-mib", "128"]
             environment = {"TEST_DVI": str(expected), "TEST_DIFFERENT": str(different),
+                           "TEST_PDF": str(sample_pdf),
                            "TEST_COUNTS": str(count), "TEST_RECEIPTS": str(receipts)}
             def verify_snapshot(year: int, cache_root: Path):
                 year_root = cache_root / str(year)
@@ -230,9 +259,10 @@ fi
                 self.assertTrue(observed[1].startswith(f"reference pdf25 {Path(years['2025']['reference_runtime']['root']) / 'texmf-dist'}"))
                 self.assertTrue(observed[2].startswith("umber latex23 "))
                 self.assertEqual(observed[3], "compare latex23")
-                self.assertEqual(len(observed), 4)
+                self.assertEqual(observed[5], "compare pdf25")
+                self.assertEqual(len(observed), 6)
                 self.assertEqual(json.loads((results / "summary.json").read_text())["counts"], {
-                    "DVI-diverged": 1, "DVI-qualified": 1, "unsupported-xelatex": 1})
+                    "DVI-diverged": 1, "DVI-exact": 1, "unsupported-xelatex": 1})
                 with patch.object(runner.sys, "argv", args + ["--verify-only"]):
                     self.assertEqual(runner.main(), 1)
                 self.assertEqual(count.read_text().splitlines(), observed)
@@ -340,6 +370,62 @@ fi
                 self.assertEqual(json.loads((error_results / "summary.json").read_text())["verdict"],
                                  "ERROR")
                 parity.write_bytes(parity_bytes)
+                pdf_results = root / "pdf-results"
+                pdf_args = [value for value in args if value != "dvi"]
+                del pdf_args[pdf_args.index("--output-format")]
+                index = pdf_args.index("--parity-harness")
+                del pdf_args[index:index + 2]
+                pdf_args.extend(("--pdf-comparator", str(pdf_comparator)))
+                pdf_args[pdf_args.index("--results") + 1] = str(pdf_results)
+                with patch.dict(os.environ, {"TEST_OUTPUT_FORMAT": "pdf"}), \
+                     patch.object(runner.sys, "argv", pdf_args):
+                    self.assertEqual(runner.main(), 1)
+                    pdf_summary = json.loads((pdf_results / "summary.json").read_text())
+                    self.assertEqual(pdf_summary["output_format"], "pdf")
+                    self.assertEqual(pdf_summary["counts"], {
+                        "PDF-diverged": 1, "PDF-equal": 1, "unsupported-xelatex": 1})
+                    self.assertEqual(pdf_summary["pdf_eligible_rows"], 2)
+                    self.assertEqual(runner.main(), 1)
+                    with patch.object(runner.sys, "argv", pdf_args + ["--verify-only"]):
+                        self.assertEqual(runner.main(), 1)
+                    receipt_path = pdf_results / "rows/latex23/result.json"
+                    receipt_bytes = receipt_path.read_bytes()
+                    tampered = json.loads(receipt_bytes)
+                    tampered["umber"]["comparison_receipt"]["status"] = "equal"
+                    receipt_path.write_text(json.dumps(tampered))
+                    with self.assertRaisesRegex(SystemExit, "PDF comparator receipt changed"):
+                        runner.main()
+                    receipt_path.write_bytes(receipt_bytes)
+                    with patch.object(runner.sys, "argv", pdf_args + ["--output-format", "dvi",
+                                                                  "--parity-harness", str(parity)]):
+                        with self.assertRaisesRegex(SystemExit, "corpus run authority changed"):
+                            runner.main()
+                    pdf_comparator.write_text(pdf_comparator.read_text() + "# changed\n")
+                    with self.assertRaisesRegex(SystemExit, "corpus run authority changed"):
+                        runner.main()
+                error_comparator = root / "error-compare"
+                executable(error_comparator, """
+if test "${1:-}" = --version; then echo umber-pdf-compare-v1; exit 0; fi
+python3 - "$1" "$2" <<'PY'
+import hashlib, json, pathlib, sys
+def identity(path):
+    data = pathlib.Path(path).read_bytes()
+    return {'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
+print(json.dumps({'schema': 'umber-pdf-compare-v1',
+                  'criterion': 'hayro-structure-page-geometry-v1',
+                  'status': 'error', 'error': 'invalid structure',
+                  'reference': identity(sys.argv[1]), 'umber': identity(sys.argv[2])}))
+sys.exit(2)
+PY
+""")
+                error_pdf_args = pdf_args.copy()
+                error_pdf_args[error_pdf_args.index("--pdf-comparator") + 1] = str(error_comparator)
+                error_pdf_args[error_pdf_args.index("--results") + 1] = str(root / "pdf-error-results")
+                with patch.dict(os.environ, {"TEST_OUTPUT_FORMAT": "pdf"}), \
+                     patch.object(runner.sys, "argv", error_pdf_args):
+                    self.assertEqual(runner.main(), 3)
+                    self.assertEqual(json.loads((root / "pdf-error-results/summary.json").read_text())["counts"], {
+                        "comparison-error": 2, "unsupported-xelatex": 1})
                 (root / "2023/texmf-dist/web2c/sentinel").write_text("changed\n")
                 with self.assertRaisesRegex(ValueError, "runtime inventory changed"):
                     runner.main()

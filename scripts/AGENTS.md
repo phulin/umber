@@ -126,6 +126,9 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `arxiv_texlive_inputs.py`: declared-year corpus input audit, comparing common
   consumed bytes and checking extra Umber reads against locked source or the
   verified selected runtime inventory.
+- `arxiv_texlive_authority.py`: authenticate the declared release runtime,
+  reference format, native format, and exact inputs selected by the PDF/DVI
+  corpus runner.
 - `test-arxiv-corpus.sh`: hermetic archive/view identity contract, including mutation and extra-file rejection.
 - `survey-pdftex-arxiv-pdf.py`: resumable clean-pdfTeX PDF-success survey over
   the locked recent-arXiv sample, with exact source/oracle/runtime/format
@@ -238,8 +241,10 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   it publishes generated maps outside the immutable snapshot with input and
   output identities.
 - `run-arxiv-texlive.py` and `test-run-arxiv-texlive.py`: archive-declared year
-  routing, complete reference DVI qualification, and serial exact Umber
-  comparison with resumable, source-bound results. The
+  routing, complete reference PDF qualification, and serial semantic Umber PDF
+  comparison with resumable, source-bound results. Explicit DVI mode preserves
+  exact byte comparison for diagnosis. Both modes finish every eligible row
+  after a divergence or comparison error. The
   `check-tools.sh texlive-parity-tools` step owns these hermetic suites.
 
 - `texlive_reference_runtime.py` and `test-texlive-reference-runtime.py`: derived
