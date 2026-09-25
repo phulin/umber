@@ -21,6 +21,17 @@ class AnnualFormatsTest(unittest.TestCase):
         with self.assertRaisesRegex(formats.FormatPreparationError, "snapshot_date"):
             formats.source_epoch({"year": 2024})
 
+    def test_upstream_release_marker_prevents_mislabelled_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            tlpdb = Path(raw) / "texlive.tlpdb.xz"
+            with lzma.open(tlpdb, "wt", encoding="utf-8") as stream:
+                stream.write("name 00texlive.config\ndepend minrelease/2016\ndepend release/2023\nname unrelated\ndepend release/2025\n")
+            self.assertEqual(formats.tlpdb_release_year(tlpdb), 2023)
+            with lzma.open(tlpdb, "wt", encoding="utf-8") as stream:
+                stream.write("name 00texlive.config\ndepend minrelease/2016\nname unrelated\ndepend release/2025\n")
+            with self.assertRaisesRegex(formats.FormatPreparationError, "release year"):
+                formats.tlpdb_release_year(tlpdb)
+
     def test_language_dat_uses_selected_tlpdb_and_dat_directives(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -102,7 +113,10 @@ class AnnualFormatsTest(unittest.TestCase):
             texmf = root / "texmf-dist"
             ini = texmf / "tex/latex/tex-ini-files/latex.ini"
             stable = texmf / "tex/latex/base/latex.ltx"
-            for path, data in ((ini, b"entry"), (stable, b"stable")):
+            extra = texmf / "tex/latex/base/omsenc.dfu"
+            companion = texmf / "tex/latex/tex-ini-files/pdflatex.ini"
+            kernel = texmf / "tex/latex/l3kernel/expl3-code.tex"
+            for path, data in ((ini, b"entry"), (stable, b"stable"), (extra, b"extra"), (companion, b"other"), (kernel, b"kernel")):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(data)
             publisher = root / "publisher"
@@ -110,7 +124,7 @@ class AnnualFormatsTest(unittest.TestCase):
                 "#!/usr/bin/env python3\n"
                 "import sys\n"
                 "from pathlib import Path\n"
-                "print({'entry':'0000000000000001','stable':'0000000000000002'}[Path(sys.argv[2]).read_text()])\n",
+                "print({'entry':'0000000000000001','stable':'0000000000000002','extra':'0000000000000004'}[Path(sys.argv[2]).read_text()])\n",
                 encoding="utf-8",
             )
             publisher.chmod(0o755)
@@ -123,17 +137,19 @@ class AnnualFormatsTest(unittest.TestCase):
                 "umber-input-admissions-v1\n"
                 "main\t5\t0000000000000001\n"
                 "file\tused\ttex:latex.ltx\t6\t0000000000000002\n"
+                "file\tused\ttex:omsenc.dfu\t5\t0000000000000004\n"
                 "file\tadmitted\ttex:unused.sty\t1\t0000000000000003\n",
                 encoding="utf-8",
             )
-            formats.verify_umber_inputs(reference, admission, publisher, texmf, root / "config", "latex")
+            extras = formats.verify_umber_inputs(reference, admission, publisher, texmf, root / "config", "latex")
+            self.assertEqual([record["path"] for record in extras], [str(extra)])
             admission.write_text(
                 "umber-input-admissions-v1\n"
                 "main\t5\t0000000000000001\n"
                 "file\tused\ttex:latex.ltx\t6\t0000000000000003\n",
                 encoding="utf-8",
             )
-            with self.assertRaisesRegex(formats.FormatPreparationError, "outside the reference source closure"):
+            with self.assertRaisesRegex(formats.FormatPreparationError, "different from clean reference"):
                 formats.verify_umber_inputs(reference, admission, publisher, texmf, root / "config", "latex")
 
 
