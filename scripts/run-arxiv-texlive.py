@@ -505,7 +505,7 @@ def main() -> int:
             fail(f"required corpus binary is missing or not executable: {path}")
     _, authorities = authority(args.preparation, rows)
     run_identity = {"schema": 1, "source_lock": identity(args.source_lock),
-                    "preparation": identity(args.preparation), "authorities": authorities,
+                    "authorities": authorities,
                     "umber": identity(args.umber), "parity_harness": identity(args.parity_harness),
                     "timeout_seconds": args.timeout_seconds, "max_rss_mib": args.max_rss_mib,
                     "expansion_fuel": 500000000, "execution_steps": 10000000}

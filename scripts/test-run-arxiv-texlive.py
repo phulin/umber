@@ -267,6 +267,12 @@ fi
                     runner.authority(preparation, rows)
                 native_path.write_bytes(native_bytes)
                 prepared_bytes = preparation.read_bytes()
+                unrelated_year = json.loads(prepared_bytes)
+                unrelated_year["years"]["2024"] = {"not_selected": True}
+                preparation.write_text(json.dumps(unrelated_year))
+                self.assertEqual(runner.main(), 1)
+                preparation.write_bytes(prepared_bytes)
+
                 preparation.write_text(json.dumps({"schema": 1, "years": {"2025": years["2025"]}}))
                 with self.assertRaisesRegex(SystemExit, "prepared TeX Live year is missing"):
                     runner.main()
