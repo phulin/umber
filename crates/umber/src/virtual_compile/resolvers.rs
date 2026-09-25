@@ -1,3 +1,5 @@
+mod jpeg;
+
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
@@ -359,7 +361,7 @@ pub(crate) fn parse_image(
             png_color_type: Some(color_type),
         }
     } else if bytes.starts_with(&[0xff, 0xd8]) {
-        let (width, height, bits, components) = jpeg_dimensions(bytes)?;
+        let (width, height, bits, components) = jpeg::dimensions(bytes)?;
         PdfRasterImageMetadata {
             format: PdfRasterFormat::Jpeg,
             width,
@@ -382,7 +384,7 @@ pub(crate) fn parse_image(
     }
     let (x_resolution, y_resolution) = match metadata.format {
         PdfRasterFormat::Png => png_resolution(bytes).unwrap_or((0, 0)),
-        PdfRasterFormat::Jpeg => (0, 0),
+        PdfRasterFormat::Jpeg => jpeg::resolution(bytes).unwrap_or((0, 0)),
     };
     let (x_resolution, y_resolution) =
         effective_raster_resolution(x_resolution, y_resolution, request.resolution);
@@ -529,44 +531,6 @@ fn effective_raster_resolution(x: u32, y: u32, fallback: u32) -> (u32, u32) {
     } else {
         (x, y)
     }
-}
-
-fn jpeg_dimensions(bytes: &[u8]) -> Result<(u32, u32, u8, u8), String> {
-    let mut cursor = 2;
-    while cursor + 4 <= bytes.len() {
-        if bytes[cursor] != 0xff {
-            cursor += 1;
-            continue;
-        }
-        let marker = bytes[cursor + 1];
-        cursor += 2;
-        if marker == 0xd9 || marker == 0xda {
-            break;
-        }
-        if (0xd0..=0xd7).contains(&marker) || marker == 0x01 {
-            continue;
-        }
-        if cursor + 2 > bytes.len() {
-            break;
-        }
-        let length = usize::from(u16::from_be_bytes([bytes[cursor], bytes[cursor + 1]]));
-        if length < 2 || cursor + length > bytes.len() {
-            return Err("invalid JPEG marker length".to_owned());
-        }
-        if matches!(marker, 0xc0..=0xc3 | 0xc5..=0xc7 | 0xc9..=0xcb | 0xcd..=0xcf) {
-            if length < 7 {
-                return Err("invalid JPEG frame header".to_owned());
-            }
-            return Ok((
-                u32::from(u16::from_be_bytes([bytes[cursor + 5], bytes[cursor + 6]])),
-                u32::from(u16::from_be_bytes([bytes[cursor + 3], bytes[cursor + 4]])),
-                bytes[cursor + 2],
-                bytes[cursor + 7],
-            ));
-        }
-        cursor += length;
-    }
-    Err("JPEG has no supported frame header".to_owned())
 }
 
 fn pixels_to_scaled(pixels: u32, resolution: u32) -> Scaled {

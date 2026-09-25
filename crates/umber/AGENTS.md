@@ -71,6 +71,8 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `src/virtual_compile/path.rs`: logical TeX/TFM request normalization over `umber-vfs` canonical paths.
 - `src/virtual_compile/pdf_resources.rs`: post-execution typed VF/local-TFM/map/encoding/program closure discovery and immutable parsed cache.
 - `src/virtual_compile/resolvers.rs`: VFS-snapshot-backed input/font resolvers that register selected bytes through World, with typed missing-file and logical OpenType-font side state. A native synchronous provider may admit a missing remote file through the candidate-local shadow VFS before the command observes it.
+- `src/virtual_compile/resolvers/jpeg.rs`: bounded JPEG frame and intrinsic JFIF/Exif density parsing for canonical image dimensions.
+- `src/virtual_compile/resolvers/jpeg/tests.rs`: natural-size, density-unit, endianness, marker precedence, and truncated-header regressions.
 - `src/virtual_compile/synchronous.rs`: private candidate-local VFS admission of native command-site file answers, including aggregate byte and typed response validation before World visibility.
 - `src/virtual_compile/tests.rs`: native retry, path, precedence, limits, format, effect-isolation, font batching, and DVI coverage.
 - `src/main.rs`: `umber` binary entry point, CLI argument parsing, canonical `CommandState` source-tokenization for `lex-dump`, `expand-dump`/`run` dispatch, token formatting, profiling-only TeX82 memory-projection and machine-readable hot-core census publication (including failed bounded runs), accepted PDF font-closure receipt publication, and real-run file resolvers.

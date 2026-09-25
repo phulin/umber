@@ -298,3 +298,15 @@ Focused tests independently assemble Adam7 passes from known pixels and
 assert decoded color and soft-mask samples, including narrow images with
 empty passes, palette transparency, 16-bit samples, and malformed input.
 These are sample-semantics tests; compressed stream bytes are not goldens.
+
+## Intrinsic JPEG dimensions
+
+The image resolver reads the first JPEG APP0/APP1 header using pdfTeX's
+`writejpg.c` density rules. JFIF inch densities apply directly; centimetre
+densities truncate after conversion, and a missing axis inherits the other.
+Exif integer rational conversion and TIFF byte order follow the reference.
+Only absent density reaches the existing live `\pdfimageresolution` policy.
+Focused header tests assert natural scaled dimensions rather than a serialized
+PDF snapshot, with malformed offsets and truncated headers kept bounded.
+This matters for images included by scale: ignoring a 300 dpi density and
+using 72 dpi enlarges a figure enough to change float placement and pagination.
