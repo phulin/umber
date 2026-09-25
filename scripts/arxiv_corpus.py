@@ -125,6 +125,27 @@ def archive_file_bytes(archive: Path) -> dict[str, bytes]:
     return files
 
 
+def declared_texlive(archive: Path) -> tuple[str, str, dict[str, str | int]]:
+    """Read the compiler and release declared by the archive, without inference."""
+    raw = archive_file_bytes(archive).get("00README.json")
+    if raw is None:
+        fail(f"archive has no 00README.json TeX Live declaration: {archive}")
+    try:
+        metadata = json.loads(raw)
+        compiler = metadata["process"]["compiler"]
+        year = metadata["texlive_version"]
+    except (UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError) as error:
+        fail(f"invalid 00README.json TeX Live declaration in {archive}: {error}")
+    if type(compiler) is not str or compiler not in ("pdflatex", "latex", "xelatex"):
+        fail(f"unsupported declared compiler in {archive}: {compiler!r}")
+    if type(year) is not str or year not in ("2023", "2024", "2025", "2026"):
+        fail(f"unsupported declared TeX Live year in {archive}: {year!r}")
+    return compiler, year, {
+        "path": "00README.json", "bytes": len(raw),
+        "sha256": hashlib.sha256(raw).hexdigest(),
+    }
+
+
 def verify_view(archive: Path, view: Path) -> list[dict[str, str | int]]:
     expected = archive_members(archive)
     if not view.is_dir():
