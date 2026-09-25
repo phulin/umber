@@ -43,6 +43,7 @@ check_texlive_parity_tools() {
   local failed=0
   python3 scripts/test-texlive-snapshot.py || failed=1
   python3 scripts/test-texlive-formats.py || failed=1
+  python3 scripts/test-texlive-reference-runtime.py || failed=1
   python3 scripts/test-run-arxiv-texlive.py || failed=1
   return "$failed"
 }

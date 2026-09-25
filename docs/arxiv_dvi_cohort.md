@@ -47,6 +47,11 @@ preparation derives the full `language.dat` from that database and uses
 stable LaTeX inputs for both engines. Each engine receives its own native
 format image. Preparation also packages the complete selected TeX and font
 runtime, with stable LaTeX lookup precedence and no `latex-dev` fallback.
+Reference runs use a derived Kpathsea filename database over the verified
+source tree. The index and its source link live in the preparation output;
+source snapshots remain unchanged. This avoids recursive directory scans
+without changing which source files are available.
+
 Umber loads that explicit local catalog; paper runs do not depend on
 recursive TeX search paths in the native file resolver. This is a local parity workflow, not the proposed public `--texlive`
 package-mirror frontend.
