@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 
@@ -255,6 +256,107 @@ def publish_local_support(texmf: Path, publisher: Path, output: Path, year: int)
     return distribution, digest
 
 
+def hardlink_tree(source: Path, destination: Path, *, skip_top_level: frozenset[str] = frozenset()) -> int:
+    count = 0
+    for parent, directories, filenames in os.walk(source):
+        relative = Path(parent).relative_to(source)
+        if relative == Path("."):
+            directories[:] = [name for name in directories if name not in skip_top_level]
+        directories.sort()
+        for name in sorted(filenames):
+            original = Path(parent) / name
+            if original.is_symlink() or not original.is_file():
+                raise FormatPreparationError(f"selected runtime has a nonregular source file: {original}")
+            target = destination / relative / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            os.link(original, target)
+            count += 1
+    return count
+
+
+def runtime_priority_paths(texmf: Path, references: list[dict[str, object]]) -> list[Path]:
+    """Return the authenticated format-source paths that win runtime aliases."""
+    priority: set[Path] = set()
+    for receipt in references:
+        for record in receipt["inputs"]:
+            source = Path(str(record["path"]))
+            if not source.is_relative_to(texmf / "tex") and not source.is_relative_to(texmf / "fonts"):
+                continue
+            if not source.is_file() or source.stat().st_size != record["bytes"] or sha256(source) != record["sha256"]:
+                raise FormatPreparationError(f"reference source changed since capture: {source}")
+            if "latex-dev" in source.parts:
+                raise FormatPreparationError(f"reference selected latex-dev runtime input: {source}")
+            priority.add(source)
+    return sorted(priority)
+
+
+def publish_full_runtime(year: int, snapshot_root: Path, output: Path, publisher: Path) -> tuple[Path, str]:
+    """Pack all selected TeX/font runfiles, with format inputs winning aliases."""
+    texmf = snapshot_root / "texmf-dist"
+    config = output / "generated-config/language.dat"
+    reference = [json.loads((output / f"reference-{engine}.json").read_text(encoding="utf-8")) for engine in ("latex", "pdflatex")]
+    priority_paths = runtime_priority_paths(texmf, reference)
+    acquisition = snapshot_root / "acquisition.json"
+    priority_identity = "\n".join(str(path.relative_to(texmf)) for path in priority_paths)
+    identity = hashlib.sha256(("stable-runtime-layout-v4:" + sha256(acquisition) + sha256(config) + priority_identity).encode("utf-8")).hexdigest()[:16]
+    distribution = output / f"runtime-distribution-{identity}"
+    manifest = distribution / "manifest.json"
+    if manifest.is_file():
+        subprocess.run([str(publisher), "--verify-sharded", str(distribution)], check=True, stdout=subprocess.DEVNULL)
+        digest = subprocess.run([str(publisher), "--file-ahash64", str(manifest)], capture_output=True, text=True, check=True).stdout.strip()
+        return distribution, digest
+    started = time.monotonic()
+    with tempfile.TemporaryDirectory(prefix="runtime-publish.", dir=output) as raw:
+        scratch = Path(raw)
+        priority = scratch / "priority"
+        ini = stable_paths(texmf)[2].relative_to(texmf)
+        layers = [
+            ("latex-base", "tex/latex/base", frozenset()),
+            ("l3kernel", "tex/latex/l3kernel", frozenset()),
+            ("latex-ini", str(ini), frozenset()),
+            ("latex", "tex/latex", frozenset()),
+            ("generic", "tex/generic", frozenset()),
+            ("plain", "tex/plain", frozenset()),
+            ("other-tex", "tex", frozenset({"latex", "generic", "plain", "latex-dev"})),
+        ]
+        layers.extend((f"font-{area}", f"fonts/{area}", frozenset()) for area in ("tfm", "afm", "enc", "map", "opentype", "pk", "type1", "truetype", "vf"))
+        count = 0
+        root_layers: list[tuple[str, Path]] = []
+        for label, area, skipped in layers:
+            source = texmf / area
+            if not source.is_dir():
+                continue
+            tree = scratch / label
+            count += hardlink_tree(source, tree / area, skip_top_level=skipped)
+            root_layers.append((label, tree))
+        for source in priority_paths:
+            relative = source.relative_to(texmf)
+            target = priority / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            os.link(source, target)
+        language = priority / "tex/generic/config/language.dat"
+        language.parent.mkdir(parents=True, exist_ok=True)
+        language.unlink(missing_ok=True)
+        shutil.copyfile(config, language)
+        roots = []
+        for label, tree in [("format-input-priority", priority), *root_layers]:
+            digest = subprocess.run([str(publisher), "--tree-ahash64", str(tree)], capture_output=True, text=True, check=True).stdout.strip()
+            roots.append({"name": label, "path": str(tree), "treeAhash64": digest})
+        configuration = scratch / "publish.json"
+        atomic_json(configuration, {"schema": 8, "distribution": f"texlive-{year}-stable-runtime", "objectsBaseUrl": "https://example.invalid/texlive/objects/", "shardBits": 12, "roots": roots, "formats": []})
+        staged = scratch / "publication"
+        log = output / "runtime-publication.log"
+        with log.open("wb") as stream:
+            result = subprocess.run([str(publisher), str(configuration), str(staged)], stdout=stream, stderr=subprocess.STDOUT, check=False)
+        if result.returncode:
+            raise FormatPreparationError(f"full selected-year runtime publication failed; see {log}")
+        subprocess.run([str(publisher), "--verify-sharded", str(staged)], check=True, stdout=subprocess.DEVNULL)
+        os.replace(staged, distribution)
+    digest = subprocess.run([str(publisher), "--file-ahash64", str(manifest)], capture_output=True, text=True, check=True).stdout.strip()
+    atomic_json(output / "runtime-distribution.json", {"schema": 2, "year": year, "selection": "generated-config,latex-base,l3kernel,latex-ini,latex,generic,plain,other-tex,fonts", "source_receipt_sha256": sha256(acquisition), "language_dat_sha256": sha256(config), "priority_paths": [str(path.relative_to(texmf)) for path in priority_paths], "runfiles_linked": count, "manifest_sha256": sha256(manifest), "manifest_ahash64": digest, "elapsed_seconds": round(time.monotonic() - started, 3)})
+    return distribution, digest
+
+
 def umber_input_areas(texmf: Path, config: Path, reference: dict[str, object]) -> list[Path]:
     base, kernel, ini = stable_paths(texmf)
     areas = [config, base, kernel, ini]
@@ -398,13 +500,24 @@ def publish_prepared_year(year: int, snapshot_root: Path, output_root: Path, ref
             "reference_binary": str(reference_binary),
             "reference_format": str(reference_format),
             "reference_format_receipt": str(reference_receipt),
-            "umber_distribution": str(distribution),
-            "distribution_ahash64": digest,
             "umber_format": str(umber_format),
             "umber_format_sha256": native["format"]["sha256"],
             "umber_format_receipt": str(umber_receipt),
             "source_date_epoch": epoch,
         }
+    runtime_distribution, runtime_digest = publish_full_runtime(year, snapshot_root, output, publisher)
+    runtime_manifest = runtime_distribution / "manifest.json"
+    for engine, row in formats.items():
+        row["umber_distribution"] = str(runtime_distribution)
+        row["distribution_ahash64"] = runtime_digest
+        native_receipt = output / f"umber-{engine}.json"
+        native = json.loads(native_receipt.read_text(encoding="utf-8"))
+        native["runtime_distribution"] = {
+            "path": str(runtime_distribution),
+            "manifest_sha256": sha256(runtime_manifest),
+            "manifest_ahash64": runtime_digest,
+        }
+        atomic_json(native_receipt, native)
     row = {"runtime_root": str(snapshot_root / "texmf-dist"), "runtime_receipt": str(acquisition), "formats": formats}
     receipt_path = output_root / "preparation.json"
     prepared: dict[str, object] = {}

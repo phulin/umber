@@ -152,6 +152,24 @@ class AnnualFormatsTest(unittest.TestCase):
             with self.assertRaisesRegex(formats.FormatPreparationError, "different from clean reference"):
                 formats.verify_umber_inputs(reference, admission, publisher, texmf, root / "config", "latex")
 
+    def test_runtime_priority_uses_authenticated_stable_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            texmf = Path(raw) / "texmf-dist"
+            stable = texmf / "tex/latex/base/latex.ltx"
+            stable.parent.mkdir(parents=True)
+            stable.write_bytes(b"stable")
+            record = {"path": str(stable), "bytes": 6, "sha256": formats.sha256(stable)}
+            self.assertEqual(formats.runtime_priority_paths(texmf, [{"inputs": [record]}]), [stable])
+            stable.write_bytes(b"changed")
+            with self.assertRaisesRegex(formats.FormatPreparationError, "changed since capture"):
+                formats.runtime_priority_paths(texmf, [{"inputs": [record]}])
+            dev = texmf / "tex/latex-dev/base/latex.ltx"
+            dev.parent.mkdir(parents=True)
+            dev.write_bytes(b"dev")
+            dev_record = {"path": str(dev), "bytes": 3, "sha256": formats.sha256(dev)}
+            with self.assertRaisesRegex(formats.FormatPreparationError, "latex-dev"):
+                formats.runtime_priority_paths(texmf, [{"inputs": [dev_record]}])
+
 
 if __name__ == "__main__":
     unittest.main()
