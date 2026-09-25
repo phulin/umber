@@ -1589,6 +1589,120 @@ fn local_resolution_owns_virtual_and_request_path_aliases() {
     assert_eq!(resolved.bytes.as_ref(), b"owned bytes");
 }
 
+#[cfg(unix)]
+#[test]
+fn local_image_lookup_casefolds_only_after_exact_search() {
+    let directory = TempDir::new().expect("local image tempdir");
+    let image_dir = directory.path().join("sft");
+    std::fs::create_dir(&image_dir).expect("image directory");
+    let folded = image_dir.join("1b_train.png");
+    let exact = image_dir.join("1B_train.png");
+    std::fs::write(&folded, b"folded image").expect("folded image");
+    let resolver = local_resolver(directory.path());
+    let request = FileRequest::new(
+        crate::FileRequestKey::new(FileKind::Image, "sft/1B_train.png").expect("image key"),
+        "sft/1B_train.png",
+    );
+
+    let resolved = resolver.resolve(&request).expect("lookup").expect("image");
+    assert_eq!(resolved.bytes.as_ref(), b"folded image");
+    assert_eq!(
+        resolver.input_path_map().get(Path::new("sft/1B_train.png")),
+        Some(&folded)
+    );
+    let existence_probe = FileRequest::new(
+        crate::FileRequestKey::new(FileKind::TexInput, "sft/1B_train.png")
+            .expect("TeX existence probe key"),
+        "sft/1B_train.png",
+    );
+    let probed = resolver
+        .resolve(&existence_probe)
+        .expect("TeX existence lookup")
+        .expect("folded image exists to TeX");
+    assert_eq!(probed.bytes.as_ref(), b"folded image");
+
+    std::fs::write(&exact, b"exact image").expect("exact image");
+    let resolved = resolver.resolve(&request).expect("lookup").expect("image");
+    assert_eq!(resolved.bytes.as_ref(), b"exact image");
+    assert_eq!(
+        resolver.input_path_map().get(Path::new("sft/1B_train.png")),
+        Some(&exact)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn local_image_casefold_uses_first_readable_directory_entry_and_keeps_area_case() {
+    use std::os::unix::ffi::OsStrExt;
+
+    let directory = TempDir::new().expect("local image tempdir");
+    let image_dir = directory.path().join("sft");
+    std::fs::create_dir(&image_dir).expect("image directory");
+    std::fs::create_dir(directory.path().join("SFT")).expect("other area");
+    std::fs::write(directory.path().join("SFT/1B_eval.png"), b"wrong area")
+        .expect("wrong area image");
+    for name in ["1b_eval.png", "1B_EVAL.PNG"] {
+        std::fs::write(image_dir.join(name), name.as_bytes()).expect("ambiguous image");
+    }
+    let expected = std::fs::read_dir(&image_dir)
+        .expect("read image area")
+        .filter_map(Result::ok)
+        .find(|entry| {
+            entry
+                .file_name()
+                .as_bytes()
+                .eq_ignore_ascii_case(b"1B_eval.png")
+        })
+        .expect("first matching directory entry");
+    let resolver = local_resolver(directory.path());
+    let request = FileRequest::new(
+        crate::FileRequestKey::new(FileKind::Image, "sft/1B_eval.png").expect("image key"),
+        "sft/1B_eval.png",
+    );
+    let resolved = resolver.resolve(&request).expect("lookup").expect("image");
+    assert_eq!(
+        resolver.input_path_map().get(Path::new("sft/1B_eval.png")),
+        Some(&expected.path())
+    );
+    assert_eq!(resolved.bytes.as_ref(), expected.file_name().as_bytes());
+}
+
+#[cfg(unix)]
+#[test]
+fn local_image_casefold_preserves_unreadable_match_and_continues_to_readable_variant() {
+    let directory = TempDir::new().expect("local image tempdir");
+    let image_dir = directory.path().join("sft");
+    std::fs::create_dir(&image_dir).expect("image directory");
+    let unreadable = image_dir.join("1b_loss.png");
+    std::fs::create_dir(&unreadable).expect("matched directory");
+    let resolver = local_resolver(directory.path());
+    let request = FileRequest::new(
+        crate::FileRequestKey::new(FileKind::Image, "sft/1B_loss.png").expect("image key"),
+        "sft/1B_loss.png",
+    );
+
+    let error = resolver
+        .resolve(&request)
+        .expect_err("matched directory is not an image");
+    assert!(matches!(
+        error,
+        NativeRunError::Io { path, source }
+            if path == unreadable && source.kind() == std::io::ErrorKind::IsADirectory
+    ));
+
+    let readable = image_dir.join("1B_LOSS.PNG");
+    std::fs::write(&readable, b"image").expect("readable case variant");
+    let resolved = resolver
+        .resolve(&request)
+        .expect("search continues after unreadable match")
+        .expect("readable case variant");
+    assert_eq!(resolved.bytes.as_ref(), b"image");
+    assert_eq!(
+        resolver.input_path_map().get(Path::new("sft/1B_loss.png")),
+        Some(&readable)
+    );
+}
+
 #[test]
 fn verified_schema_v2_root_returns_typed_font_unavailable() {
     let directory = TempDir::new().expect("distribution tempdir");

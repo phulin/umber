@@ -24,6 +24,8 @@ use umber_fetch::{
 };
 use umber_hash::{AHash64, HashDomain};
 
+#[cfg(unix)]
+use crate::input_search::LocalCasefoldSearchError;
 use crate::input_search::{WorldSearchError, read_first_world_detailed};
 use crate::prefetch::{
     PREFETCH_POLICY_VERSION, PrefetchDiagnosticDisposition, PrefetchPlanner, semantic_file_key,
@@ -1494,7 +1496,23 @@ impl LocalResolver {
         let mut world = World::real();
         let read = match request.key().kind() {
             FileKind::TexInput | FileKind::Image => {
-                self.input.read_from_world_detailed(&mut world, lookup_name)
+                #[cfg(unix)]
+                {
+                    match self
+                        .input
+                        .read_local_casefold_detailed(&mut world, lookup_name)
+                    {
+                        Ok(content) => Ok(content),
+                        Err(LocalCasefoldSearchError::World(error)) => Err(error),
+                        Err(LocalCasefoldSearchError::Directory { path, source }) => {
+                            return Err(NativeRunError::Io { path, source });
+                        }
+                    }
+                }
+                #[cfg(not(unix))]
+                {
+                    self.input.read_from_world_detailed(&mut world, lookup_name)
+                }
             }
             FileKind::Tfm => self
                 .font

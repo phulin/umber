@@ -35,6 +35,15 @@ def request_names(kind: str, name: str) -> tuple[str, ...]:
     return (name,)
 
 
+def local_casefold_match(physical: str, requested: str) -> bool:
+    """Kpathsea folds the last component only, after exact lookup fails."""
+    actual = PurePosixPath(physical)
+    wanted = PurePosixPath(requested)
+    return (actual.name.encode("utf-8").lower() == wanted.name.encode("utf-8").lower()
+            and (not wanted.parent.parts or actual.parent.parts[-len(wanted.parent.parts):]
+                 == wanted.parent.parts))
+
+
 def audit_umber_inputs(row: dict, row_dir: Path, proof: dict, admission: Path) -> dict:
     """Prove common read bytes match and extra reads come from selected inputs."""
     reference_run = row_dir / "reference"
@@ -114,6 +123,12 @@ def audit_umber_inputs(row: dict, row_dir: Path, proof: dict, admission: Path) -
         expected = next((common[candidate] for candidate in
                          (names[0], basenames[0], *names[1:], *basenames[1:])
                          if candidate in common), None)
+        if expected is None and kind in ("image", "tex"):
+            folded = [values for physical, values in common.items()
+                      if any(local_casefold_match(physical, candidate)
+                             for candidate in names)]
+            if folded:
+                expected = set().union(*folded)
         if expected is not None:
             if observed not in expected:
                 fail(f"Umber consumed {key} with bytes different from reference: {row['id']}")
@@ -124,7 +139,9 @@ def audit_umber_inputs(row: dict, row_dir: Path, proof: dict, admission: Path) -
             continue
         candidates = [umber_run / relative for relative in source_members
                       if any(relative == candidate or relative.endswith("/" + candidate)
-                             for candidate in names)]
+                             for candidate in names)
+                      or kind in ("image", "tex") and any(
+                          local_casefold_match(relative, candidate) for candidate in names)]
         for basename in basenames:
             candidates.extend(runtime_names(runtime).get(basename, ()))
         candidates.extend(fontmaps.rglob(basenames[0]))

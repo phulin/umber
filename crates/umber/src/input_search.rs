@@ -53,6 +53,12 @@ impl std::fmt::Display for WorldSearchError {
 
 impl std::error::Error for WorldSearchError {}
 
+#[cfg(unix)]
+pub(crate) enum LocalCasefoldSearchError {
+    World(WorldSearchError),
+    Directory { path: PathBuf, source: io::Error },
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum RestrictedPipeError {
     Invalid(String),
@@ -106,11 +112,79 @@ impl TexInputSearchPath {
         }
     }
 
+    #[cfg(any(test, not(unix)))]
     pub(crate) fn read_from_world_detailed(
         &self,
         world: &mut World,
         name: &str,
     ) -> Result<FileContent, WorldSearchError> {
+        read_first_world_detailed(world, self.candidates(name))
+    }
+
+    /// Kpathsea's configured Unix fallback retries only the final filename
+    /// component after the complete exact search has failed. This host-only
+    /// path is used for local TeX inputs and images; distribution lookups
+    /// retain their authenticated catalogue names.
+    #[cfg(unix)]
+    pub(crate) fn read_local_casefold_detailed(
+        &self,
+        world: &mut World,
+        name: &str,
+    ) -> Result<FileContent, LocalCasefoldSearchError> {
+        let candidates = self.candidates(name);
+        let mut exact_error = match read_first_world_detailed(world, candidates.clone()) {
+            Ok(content) => return Ok(content),
+            Err(error) => error,
+        };
+        let mut directory_failure = None;
+        use std::os::unix::ffi::OsStrExt;
+        for candidate in candidates {
+            let Some(wanted) = candidate.file_name() else {
+                continue;
+            };
+            let parent = candidate.parent().unwrap_or_else(|| Path::new("."));
+            let entries = match std::fs::read_dir(parent) {
+                Ok(entries) => entries,
+                Err(source) => {
+                    if source.kind() != io::ErrorKind::NotFound && directory_failure.is_none() {
+                        directory_failure = Some((parent.to_owned(), source));
+                    }
+                    continue;
+                }
+            };
+            for entry in entries {
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(source) => {
+                        if source.kind() != io::ErrorKind::NotFound && directory_failure.is_none() {
+                            directory_failure = Some((parent.to_owned(), source));
+                        }
+                        continue;
+                    }
+                };
+                if entry
+                    .file_name()
+                    .as_bytes()
+                    .eq_ignore_ascii_case(wanted.as_bytes())
+                {
+                    let path = entry.path();
+                    match world.read_file(&path) {
+                        Ok(content) => return Ok(content),
+                        Err(error) => exact_error.failures.push((path, error)),
+                    }
+                }
+            }
+        }
+        if exact_error.first_non_not_found().is_some() {
+            Err(LocalCasefoldSearchError::World(exact_error))
+        } else if let Some((path, source)) = directory_failure {
+            Err(LocalCasefoldSearchError::Directory { path, source })
+        } else {
+            Err(LocalCasefoldSearchError::World(exact_error))
+        }
+    }
+
+    fn candidates(&self, name: &str) -> Vec<PathBuf> {
         let name = Path::new(name);
         let requested = with_default_extension(name, "tex");
         let mut candidates = search_candidates(&self.user_area, &self.system_areas, &requested);
@@ -125,7 +199,7 @@ impl TexInputSearchPath {
                 }
             }
         }
-        read_first_world_detailed(world, candidates)
+        candidates
     }
 
     pub(crate) fn read_from_resource_world_detailed(

@@ -204,6 +204,55 @@ class DeclaredYearCorpus(unittest.TestCase):
                 "key": "tex:lipsum.ltd", "path": str(implicit),
                 "bytes": implicit.stat().st_size, "sha256": sha256_file(implicit)}])
 
+    def test_image_casefold_audit_uses_authenticated_physical_member(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "paper.src"
+            archive(source, "paper", "pdflatex", "2025")
+            row_dir = root / "row"
+            reference = row_dir / "reference"
+            umber = row_dir / "umber"
+            reference.mkdir(parents=True)
+            (umber / "sft").mkdir(parents=True)
+            main = root / "paper-source/paper.tex"
+            (umber / "paper.tex").write_bytes(main.read_bytes())
+            physical = umber / "sft/1b_train.png"
+            physical.write_bytes(b"authenticated image")
+            reference_physical = reference / "sft/1b_train.png"
+            reference_physical.parent.mkdir()
+            reference_physical.write_bytes(physical.read_bytes())
+            # Authenticate the added archive member with the ordinary archive reader.
+            with tarfile.open(source, "w:gz") as stream:
+                for member in (root / "paper-source").iterdir():
+                    stream.add(member, arcname=member.name)
+                stream.add(physical, arcname="sft/1b_train.png")
+            (reference / "paper.fls").write_text(f"INPUT {reference_physical}\n")
+            admission = root / "paper.inputs"
+            row = {"archive": str(source), "entrypoint": "paper.tex",
+                   "jobname": "paper", "id": "paper"}
+            proof = {"runtime_root": str(root / "2025/texmf-dist"),
+                     "generated_config": str(root / "config"),
+                     "generated_fontmaps": str(root / "fontmaps")}
+            (root / "fontmaps").mkdir()
+            (root / "2025").mkdir()
+            (root / "2025/runtime.files").write_text("")
+            for kind in ("image", "tex"):
+                admission.write_text(
+                    "umber-input-admissions-v1\n"
+                    f"main\t{main.stat().st_size}\t{ahash64_file(main)}\n"
+                    f"file\tused\t{kind}:sft/1B_train.png\t{physical.stat().st_size}"
+                    f"\t{ahash64_file(physical)}\n")
+                self.assertEqual(runner.audit_umber_inputs(row, row_dir, proof, admission)[
+                    "common_reads"], 1)
+                (reference / "paper.fls").write_text("")
+                self.assertEqual(runner.audit_umber_inputs(row, row_dir, proof, admission)[
+                    "selected_extra_reads"][0]["path"], str(physical))
+                (reference / "paper.fls").write_text(f"INPUT {reference_physical}\n")
+            (reference / "paper.fls").write_text("")
+            physical.write_bytes(b"altered image")
+            with self.assertRaisesRegex(SystemExit, "outside selected source/runtime"):
+                runner.audit_umber_inputs(row, row_dir, proof, admission)
+
     def test_reference_pdf_completion_accepts_tex_line_wraps_only(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
