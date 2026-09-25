@@ -123,6 +123,9 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   selected-step partial runs, old/new oracle selectors, and script discovery.
 - `arxiv_corpus.py`: safe exact arXiv archive inventory, identity, verification,
   materialization, and source-derived TeX jobname contract.
+- `arxiv_texlive_inputs.py`: declared-year corpus input audit, comparing common
+  consumed bytes and checking extra Umber reads against locked source or the
+  verified selected runtime inventory.
 - `test-arxiv-corpus.sh`: hermetic archive/view identity contract, including mutation and extra-file rejection.
 - `survey-pdftex-arxiv-pdf.py`: resumable clean-pdfTeX PDF-success survey over
   the locked recent-arXiv sample, with exact source/oracle/runtime/format
