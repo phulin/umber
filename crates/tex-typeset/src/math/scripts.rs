@@ -230,7 +230,9 @@ fn script_pair(
     );
     let kern = sub(sub(shifts.up, sup.depth), sub(sub_box.height, shifts.down));
     let list = ctx.layout.hlist([
-        MathNode::HList(sup),
+        // clean_box can return a vertical box (for example, an overline).
+        // TeX82 §759 links those boxes without changing either node type.
+        boxed_node(sup),
         MathNode::Kern {
             amount: kern,
             // TeX82 §158 constructs the sup/sub separator with `new_kern`,
@@ -238,7 +240,7 @@ fn script_pair(
             // layout, not a user `\kern`.
             kind: KernKind::Font,
         },
-        MathNode::HList(sub_box),
+        boxed_node(sub_box),
     ]);
     let mut pair = ctx.layout.vpack(list);
     pair.shift = shifts.down;

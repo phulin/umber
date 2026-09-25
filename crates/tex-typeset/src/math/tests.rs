@@ -747,6 +747,54 @@ fn script_pair_uses_italic_delta_scriptspace_and_cramped_substyle() {
 }
 
 #[test]
+fn paired_scripts_preserve_vertical_bar_boxes() {
+    // TeX82 §§714/720/759: clean_box may return a vbox; make_scripts
+    // links that same box into the pair so its running-width rule remains
+    // vertical material rather than disappearing in horizontal traversal.
+    for style in [Style::DISPLAY, Style::TEXT, Style::SCRIPT] {
+        for kind in [NoadKind::Overline, NoadKind::Underline] {
+            for (bar_above, bar_below) in [(true, false), (false, true), (true, true)] {
+                let mut state = setup_universe();
+                let bar = state.publish_page_nodes(&[Node::MathNoad(MathNoad::new(
+                    kind.clone(),
+                    MathField::MathChar(math_char('b')),
+                ))]);
+                let field = |barred| {
+                    if barred {
+                        MathField::SubMlist(bar)
+                    } else {
+                        MathField::MathChar(math_char('c'))
+                    }
+                };
+                let mut base = noad(NoadClass::Ord, 'a');
+                base.superscript = field(bar_above);
+                base.subscript = field(bar_below);
+                let input = state.publish_page_nodes(&[Node::MathNoad(base)]);
+                let layout = mlist_to_hlist(&state, input, style, false, &MathParams::read(&state));
+                let [_, MathNode::VList(pair)] = root_nodes(&layout).as_slice() else {
+                    panic!("expected a paired-script vbox");
+                };
+                let children = list_nodes(&layout, pair.list);
+                for (index, barred) in [(0, bar_above), (2, bar_below)] {
+                    if barred {
+                        let MathNode::VList(boxed) = children[index] else {
+                            panic!("barred script must remain vertical: {:?}", children[index]);
+                        };
+                        assert_eq!(boxed.axis, BoxAxis::Vertical);
+                        assert!(list_nodes(&layout, boxed.list).iter().any(|node| {
+                            matches!(node, MathNode::Rule { width: None, height: Some(height), .. }
+                                if height.raw() > 0)
+                        }), "vertical script retains a visible running-width bar");
+                    } else {
+                        assert!(matches!(children[index], MathNode::HList(_)));
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn make_ord_inserts_font_kern_between_adjacent_math_chars() {
     let mut universe = setup_universe();
     let input = universe.publish_page_nodes(&[
