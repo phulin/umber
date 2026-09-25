@@ -94,9 +94,18 @@ fn pdf_font_resources_share_sizes_but_distinguish_equal_metric_names() {
     let scaled = load("xyatip10", 12);
     let other_outline = load("xybtip10", 10);
 
-    assert_eq!(first.pdf_resource_identity(), scaled.pdf_resource_identity());
-    assert_eq!(first.pdf_resource_identity(), first.expanded(100).pdf_resource_identity());
-    assert_ne!(first.pdf_resource_identity(), other_outline.pdf_resource_identity());
+    assert_eq!(
+        first.pdf_resource_identity(),
+        scaled.pdf_resource_identity()
+    );
+    assert_eq!(
+        first.pdf_resource_identity(),
+        first.expanded(100).pdf_resource_identity()
+    );
+    assert_ne!(
+        first.pdf_resource_identity(),
+        other_outline.pdf_resource_identity()
+    );
 }
 
 #[test]
