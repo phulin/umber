@@ -113,7 +113,7 @@ def stable_paths(texmf: Path) -> tuple[Path, Path, Path]:
 
 def reference_environment(texmf: Path, config: Path, epoch: int, work: Path) -> dict[str, str]:
     base, kernel, ini = stable_paths(texmf)
-    paths = [config, base, kernel, ini, texmf / "tex/generic/babel", texmf / "tex/generic/tex-ini-files", texmf / "tex"]
+    paths = [Path("."), config, base, kernel, ini, texmf / "tex/generic/babel", texmf / "tex/generic/tex-ini-files", texmf / "tex"]
     env = {
         "HOME": str(work / "home"),
         "LC_ALL": "C",
