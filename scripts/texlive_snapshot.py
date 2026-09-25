@@ -129,7 +129,7 @@ def parse_tlpdb(compressed: bytes) -> tuple[Package, ...]:
             if not separator:
                 raise texlive.TexliveError(f"invalid TLPDB field: {line[:80]}")
             if key in ("name", "revision", "category", "relocated", "containersize", "containerchecksum", "binfiles"):
-                if key in fields:
+                if key in fields and key != "binfiles":
                     raise texlive.TexliveError(f"duplicate TLPDB {key} field")
                 fields[key] = value
             in_runfiles = key == "runfiles"

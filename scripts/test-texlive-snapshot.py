@@ -149,7 +149,7 @@ class SnapshotTests(unittest.TestCase):
             self.assertEqual((root / "installed/texmf-dist/tex/latex/demo.sty").read_bytes(), b"demo")
             self.assertFalse((root / "installed/tlpkg/installer.pl").exists())
             binary = record.replace("name mixed", "name mixed.windows").replace(
-                "runfiles size=1", "binfiles arch=windows size=1\n bin/windows/helper.exe\nrunfiles size=1"
+                "runfiles size=1", "binfiles arch=windows size=1\n bin/windows/helper.exe\nbinfiles arch=x86_64-linux size=1\n bin/x86_64-linux/helper\nrunfiles size=1"
             )
             self.assertEqual(
                 [item.name for item in snapshot.parse_tlpdb(lzma.compress((record + "\n" + binary).encode()))],
