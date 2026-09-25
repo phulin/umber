@@ -4,6 +4,8 @@ use md5::Digest as _;
 use std::collections::BTreeSet;
 use umber_hash::{AHash64, HashDomain};
 
+mod transform;
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct PdfType1ProgramIdentity([u8; 8]);
 
@@ -208,6 +210,15 @@ impl PdfType1Program {
         let value = self.cleartext_value(b"/ItalicAngle")?;
         let value: f32 = std::str::from_utf8(value).ok()?.parse().ok()?;
         value.is_finite().then_some(value.trunc() as i32)
+    }
+
+    /// pdfTeX rounds a map-transformed Type-1 angle after rewriting its
+    /// cleartext `/ItalicAngle` value (`writet1.c::t1_modify_italic`).
+    #[must_use]
+    pub fn transformed_italic_angle(&self) -> Option<i32> {
+        let value = self.cleartext_value(b"/ItalicAngle")?;
+        let value: f32 = std::str::from_utf8(value).ok()?.parse().ok()?;
+        value.is_finite().then_some(value.round() as i32)
     }
 
     #[must_use]
@@ -1323,7 +1334,10 @@ fn parse_decimal(bytes: &[u8], cursor: &mut usize) -> Result<usize, PdfType1Subs
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PdfType1SubsetError {
     InvalidSegments,
+    InvalidMapTransform,
     MissingFontName,
+    InvalidFontMatrix,
+    InvalidItalicAngle,
     MissingEncoding,
     MissingCharStrings,
     MalformedCharStrings,
@@ -1405,7 +1419,51 @@ mod tests {
 
         assert_eq!(program(b"-14.04").italic_angle(), Some(-14));
         assert_eq!(program(b"14.99").italic_angle(), Some(14));
+        assert_eq!(program(b"14.99").transformed_italic_angle(), Some(15));
         assert_eq!(program(b"not-a-number").italic_angle(), None);
+    }
+
+    #[test]
+    fn slant_then_extend_rewrites_type1_matrix_angle_and_name() {
+        let clear = b"%!PS\n/ItalicAngle 0.0 def\n/FontName /Fixture def\n/FontMatrix [0.001 0 0 0.001 0 0] readonly def\n";
+        let mut pfb = vec![0x80, 1];
+        pfb.extend_from_slice(&(clear.len() as u32).to_le_bytes());
+        pfb.extend_from_slice(clear);
+        pfb.extend_from_slice(&[0x80, 2, 1, 0, 0, 0, 0, 0x80, 3]);
+        let original = PdfType1Program::from_pfb(&pfb).expect("valid synthetic PFB");
+        let transformed = original
+            .with_transform(
+                crate::PdfType1Transform {
+                    slant: 167,
+                    extend: 1200,
+                },
+                b"Fixture-Slant_167-Extend_1200",
+            )
+            .expect("transform Type-1 program");
+        let clear = &transformed.bytes()[..transformed.lengths()[0] as usize];
+        let text = std::str::from_utf8(clear).expect("ASCII header");
+        let matrix = text
+            .lines()
+            .find(|line| line.starts_with("/FontMatrix"))
+            .expect("matrix line");
+        let values: Vec<f32> = matrix
+            .split_once('[')
+            .expect("matrix open")
+            .1
+            .split_once(']')
+            .expect("matrix close")
+            .0
+            .split_whitespace()
+            .map(|part| part.parse().expect("matrix scalar"))
+            .collect();
+        assert_eq!(values, [0.0012, 0.0, 0.0002004, 0.001, 0.0, 0.0]);
+        assert!(
+            clear
+                .windows(b"/FontName /Fixture-Slant_167-Extend_1200".len())
+                .any(|part| part == b"/FontName /Fixture-Slant_167-Extend_1200")
+        );
+        assert_eq!(transformed.italic_angle(), Some(-9));
+        assert_eq!(original.italic_angle(), Some(0));
     }
 
     #[test]

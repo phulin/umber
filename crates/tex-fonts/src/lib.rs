@@ -35,7 +35,7 @@ pub use opentype::{
 pub use pdf_encoding::{PdfEncoding, PdfEncodingError};
 pub use pdf_map::{
     PdfFontMap, PdfFontMapDirective, PdfFontMapEntry, PdfFontMapError, PdfFontMapFile,
-    PdfFontMapProgram,
+    PdfFontMapProgram, PdfType1Transform,
 };
 pub use pdf_pk::{PdfPkFont, PdfPkFontError, PdfPkFontIdentity, PdfPkFontRequest, PdfPkGlyph};
 pub use pdf_truetype::{

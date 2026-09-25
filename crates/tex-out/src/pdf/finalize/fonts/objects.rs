@@ -26,25 +26,24 @@ pub(in crate::pdf::finalize) fn pdf_font_objects(
         ));
     }
     let is_truetype = matches!(input.program, PdfFontProgramInput::TrueType(_));
-    let type1 = match &input.program {
+    let original_type1 = match &input.program {
         PdfFontProgramInput::Type1(program) => Some(program),
         _ => None,
     };
     // pdfTeX's fd_entry retains the original built-in encoding independently
     // from the subset program written to FontFile. ToUnicode must see that
     // pre-subset table so unused but mapped encoding slots remain available.
-    let to_unicode_type1 = type1;
     let truetype = match &input.program {
         PdfFontProgramInput::TrueType(program) => Some(program),
         _ => None,
     };
     if let Some(program_name) = program_name
-        && type1.is_none()
+        && original_type1.is_none()
         && truetype.is_none()
     {
         return Err(PdfBuildError::MissingFontProgram(program_name.to_vec()));
     }
-    let base_font = truetype
+    let mut base_font = truetype
         .and_then(tex_fonts::PdfTrueTypeProgram::postscript_name)
         .or_else(|| {
             mapped
@@ -53,6 +52,41 @@ pub(in crate::pdf::finalize) fn pdf_font_objects(
         })
         .unwrap_or(font.name.as_bytes())
         .to_vec();
+    let transform = mapped
+        .map(tex_fonts::PdfFontMapEntry::type1_transform)
+        .transpose()
+        .map_err(|error| PdfBuildError::Type1Subset {
+            font: font.name.clone(),
+            error,
+        })?
+        .unwrap_or_default();
+    if transform != tex_fonts::PdfType1Transform::default()
+        && (original_type1.is_none() || resident)
+    {
+        return Err(PdfBuildError::Type1Subset {
+            font: font.name.clone(),
+            error: tex_fonts::PdfType1SubsetError::InvalidMapTransform,
+        });
+    }
+    if transform.slant != 0 {
+        base_font.extend_from_slice(format!("-Slant_{}", transform.slant).as_bytes());
+    }
+    if transform.extend != 0 {
+        base_font.extend_from_slice(format!("-Extend_{}", transform.extend).as_bytes());
+    }
+    let transformed_type1 = original_type1
+        .filter(|_| transform != tex_fonts::PdfType1Transform::default())
+        .map(|program| {
+            program
+                .with_transform(transform, &base_font)
+                .map_err(|error| PdfBuildError::Type1Subset {
+                    font: font.name.clone(),
+                    error,
+                })
+        })
+        .transpose()?;
+    let type1 = transformed_type1.as_ref().or(original_type1);
+    let to_unicode_type1 = type1;
     let encoding = input.encoding.as_ref();
     let glyph_names: BTreeSet<Vec<u8>> = if subset_requested {
         used_codes
@@ -193,7 +227,11 @@ pub(in crate::pdf::finalize) fn pdf_font_objects(
                 tfm_descent,
                 tfm_cap_height,
                 tfm_x_height,
-                i64::from(program.italic_angle().unwrap_or(0)),
+                i64::from(if transform.slant != 0 {
+                    program.transformed_italic_angle().unwrap_or(0)
+                } else {
+                    program.italic_angle().unwrap_or(0)
+                }),
                 type1_descriptor_stem_v(program, tfm_stem_v),
             )
         };

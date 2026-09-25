@@ -112,7 +112,58 @@ pub struct PdfFontMapEntry {
     pub program: PdfFontMapProgram,
 }
 
+/// The Type-1 transformations in a pdfTeX map, in thousandths. pdfTeX's
+/// `mapfile.c` rounds the decimal operands to these integers before embedding.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct PdfType1Transform {
+    pub slant: i32,
+    pub extend: i32,
+}
+
 impl PdfFontMapEntry {
+    pub fn type1_transform(&self) -> Result<PdfType1Transform, crate::PdfType1SubsetError> {
+        let mut transform = PdfType1Transform::default();
+        for instruction in &self.special_instructions {
+            let mut previous: Option<&[u8]> = None;
+            for token in instruction
+                .split(u8::is_ascii_whitespace)
+                .filter(|part| !part.is_empty())
+            {
+                for (keyword, slot) in [
+                    (b"SlantFont".as_slice(), &mut transform.slant),
+                    (b"ExtendFont".as_slice(), &mut transform.extend),
+                ] {
+                    let Some(prefix) = token.strip_suffix(keyword) else {
+                        continue;
+                    };
+                    let operand = if prefix.is_empty() {
+                        previous.unwrap_or(b"")
+                    } else {
+                        prefix
+                    };
+                    let Ok(value) = std::str::from_utf8(operand).unwrap_or("").parse::<f32>()
+                    else {
+                        continue;
+                    };
+                    if value.is_finite() {
+                        // mapfile.c scans `%f`, multiplies by 1000 in float,
+                        // then rounds half away from zero into an integer.
+                        *slot = ((f64::from(value) * 1000.0) as f32).round() as i32;
+                    }
+                }
+                previous = Some(token);
+            }
+        }
+        if transform.extend == 1000 {
+            transform.extend = 0;
+        }
+        if !(-1000..=1000).contains(&transform.slant) || !(-2000..=2000).contains(&transform.extend)
+        {
+            return Err(crate::PdfType1SubsetError::InvalidMapTransform);
+        }
+        Ok(transform)
+    }
+
     /// Parses one `\pdfmapline` payload or one non-comment map-file line.
     pub fn parse(payload: &[u8]) -> Result<Self, PdfFontMapError> {
         let (directive, body) = PdfFontMapDirective::split(trim_ascii(payload));
@@ -335,6 +386,46 @@ mod tests {
         assert_eq!(entry.encoding_files, [b"8r.enc"]);
         assert_eq!(entry.font_file.as_deref(), Some(b"utmr8a.pfb".as_slice()));
         assert_eq!(entry.program, PdfFontMapProgram::Subset);
+    }
+
+    #[test]
+    fn reads_pdftex_type1_slant_and_extend_from_map_specials() {
+        let entry = PdfFontMapEntry::parse(
+            br#"ptmro8r NimbusRomNo9L-Regu ".167 SlantFont 1.2 ExtendFont TeXBase1Encoding ReEncodeFont" <8r.enc <utmr8a.pfb"#,
+        )
+        .expect("valid Type-1 map entry");
+        assert_eq!(
+            entry.type1_transform(),
+            Ok(PdfType1Transform {
+                slant: 167,
+                extend: 1200
+            })
+        );
+        let plain = PdfFontMapEntry::parse(b"ptmr8r NimbusRomNo9L-Regu <utmr8a.pfb")
+            .expect("plain map entry");
+        assert_eq!(plain.type1_transform(), Ok(PdfType1Transform::default()));
+        let attached = PdfFontMapEntry::parse(br#"foo Foo ".167SlantFont" <foo.pfb"#)
+            .expect("canonical attached operand");
+        assert_eq!(
+            attached.type1_transform(),
+            Ok(PdfType1Transform {
+                slant: 167,
+                extend: 0
+            })
+        );
+        let oversized = PdfFontMapEntry::parse(br#"foo Foo "1.001 SlantFont" <foo.pfb"#)
+            .expect("syntactically valid map entry");
+        assert_eq!(
+            oversized.type1_transform(),
+            Err(crate::PdfType1SubsetError::InvalidMapTransform)
+        );
+        let negative_overflow =
+            PdfFontMapEntry::parse(br#"foo Foo "-9999999999 SlantFont" <foo.pfb"#)
+                .expect("syntactically valid map entry");
+        assert_eq!(
+            negative_overflow.type1_transform(),
+            Err(crate::PdfType1SubsetError::InvalidMapTransform)
+        );
     }
 
     #[test]

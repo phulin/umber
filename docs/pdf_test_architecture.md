@@ -53,6 +53,24 @@ those boundaries. Raw object bodies and `nested_array` preserve focused
 malformed, cycle, and depth-limit cases without adding a general PDF value
 model or encoder.
 
+## Type-1 font map transforms
+
+`tex-fonts` keeps pdfTeX map specials as source bytes and interprets
+`SlantFont` and `ExtendFont` operands in thousandths when a mapped font is
+embedded. The map transformation is valid only for an embedded Type-1 program;
+pdfTeX's `mapfile.c` bounds slant to ±1000 and extend to ±2000. The Type-1
+owner applies slant before extend to the cleartext `/FontMatrix`, updates
+`/ItalicAngle` and `/FontName`, then subsets the transformed program. The
+transformed name also determines the six-letter subset tag. These operations
+follow `writet1.c::t1_modify_fm`, `t1_modify_italic`, and `t1_scan_keys` from
+the pinned pdfTeX 1.40.29 source.
+
+Focused `tex-fonts` tests cover map operand parsing, invalid bounds, matrix
+order, angle rounding, and names. `tex-out` assembles the detached font
+descriptor and embedded stream. External PDF consumers check visible glyph
+shape and text extraction on complete documents; they do not enter the
+routine Cargo test suite.
+
 ## Required Hayro boundary
 
 Pinned `hayro-syntax` 0.7.2 already supplies all stable identity and content
