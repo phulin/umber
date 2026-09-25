@@ -9,7 +9,6 @@ import fcntl
 import json
 import os
 import re
-import resource
 import subprocess
 import sys
 from pathlib import Path
@@ -19,6 +18,7 @@ from arxiv_corpus import (archive_members, declared_texlive, materialize, sha256
                           source_identity, source_jobname, verify_view)
 from arxiv_texlive_inputs import audit_umber_inputs
 from arxiv_texlive_authority import authority, fail, identity
+from arxiv_corpus_parallel import automatic_jobs, run_jobs
 
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT_FORMATS = ("pdf", "dvi")
@@ -227,10 +227,10 @@ def reference_environment(runtime: Path, run: Path, fmt: Path, epoch: int,
     return env
 
 
-def memory_limit(mib: int):
-    def limit() -> None:
-        resource.setrlimit(resource.RLIMIT_AS, (mib * 1024 * 1024, mib * 1024 * 1024))
-    return limit
+def limited_command(command: list[str], mib: int) -> list[str]:
+    # The helper sets RLIMIT_AS before exec. Python preexec_fn is unsafe when
+    # subprocesses are launched from several worker threads.
+    return [sys.executable, str(ROOT / "scripts/arxiv_resource_limit.py"), str(mib), *command]
 
 
 def run_reference(args: argparse.Namespace, row: dict, row_dir: Path, proof: dict) -> dict:
@@ -249,12 +249,11 @@ def run_reference(args: argparse.Namespace, row: dict, row_dir: Path, proof: dic
                f"--fmt={fmt}", f"--output-format={args.output_format}", "-recorder", "--interaction=nonstopmode",
                "--halt-on-error", row["entrypoint"]]
     with stdout.open("wb") as out, stderr.open("wb") as err:
-        completed = subprocess.run(command, cwd=run,
+        completed = subprocess.run(limited_command(command, args.max_rss_mib), cwd=run,
                                    env=reference_environment(Path(proof["runtime_root"]), run, Path(fmt),
                                                              proof["source_date_epoch"], Path(proof["reference_view"]),
                                                              Path(proof["generated_fontmaps"])),
-                                   stdout=out, stderr=err, check=False,
-                                   preexec_fn=memory_limit(args.max_rss_mib))
+                                   stdout=out, stderr=err, check=False)
     pages = output_pages(args.output_format, output, log)
     success = completed.returncode == 0 and pages is not None and recorder.is_file()
     if recorder.is_file():
@@ -311,9 +310,10 @@ def run_umber(args: argparse.Namespace, row: dict, row_dir: Path, proof: dict, e
         compare = [str(args.pdf_comparator), str(expected), str(output)]
     with comparison.open("wb") as out:
         try:
-            compared = subprocess.run(compare, cwd=run, stdout=out, stderr=subprocess.STDOUT,
+            compared = subprocess.run(limited_command(compare, args.max_rss_mib), cwd=run,
+                                      stdout=out, stderr=subprocess.STDOUT,
                                       timeout=args.timeout_seconds,
-                                      preexec_fn=memory_limit(args.max_rss_mib), check=False)
+                                      check=False)
             compare_status = compared.returncode
         except subprocess.TimeoutExpired:
             compare_status = 124
@@ -463,6 +463,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--expected-rows", type=int, default=100)
     parser.add_argument("--timeout-seconds", type=int, default=120)
     parser.add_argument("--max-rss-mib", type=int, default=1536)
+    parser.add_argument("--jobs", type=int, help="concurrent papers per phase (default: host capacity)")
     parser.add_argument("--verify-only", action="store_true")
     parser.add_argument("--qualify-only", action="store_true")
     args = parser.parse_args()
@@ -477,11 +478,15 @@ def parse_args() -> argparse.Namespace:
         parser.error("DVI mode requires --parity-harness")
     if args.expected_rows < 1 or not 1 <= args.timeout_seconds <= 1800 or not 1 <= args.max_rss_mib <= 6144:
         fail("corpus row count or guard limits are outside supported range")
+    if args.jobs is not None and args.jobs < 1:
+        fail("--jobs must be positive")
+    args.jobs = args.jobs or automatic_jobs(args.max_rss_mib)
     return args
 
 
 def main() -> int:
     args = parse_args()
+    print(f"corpus jobs per phase: {args.jobs}", flush=True)
     rows = read_sources(args.source_lock, args.archives, args.expected_rows)
     comparator = args.pdf_comparator if args.output_format == "pdf" else args.parity_harness
     for path in (args.umber, comparator):
@@ -519,10 +524,10 @@ def main() -> int:
             write_json(identity_path, run_identity)
         row_root = args.results / "rows"
         row_root.mkdir(exist_ok=True)
-        existing = [(row_root / row["id"] / "result.json").is_file() for row in rows]
-        if any(later and not earlier for earlier, later in zip(existing, existing[1:])):
-            fail("corpus has a missing earlier row receipt before a later row")
-        reports = []
+        # An interrupted parallel phase can leave valid later receipts with
+        # earlier gaps. Never mistake a stale summary for a complete run.
+        (args.results / "summary.json").unlink(missing_ok=True)
+        reports_by_id = {}
         for row in rows:
             row_dir = row_root / row["id"]
             receipt = row_dir / "result.json"
@@ -530,33 +535,39 @@ def main() -> int:
             if receipt.is_file():
                 result = json.loads(receipt.read_text())
                 check_result(result, row, proof, args.results, args)
-            elif args.verify_only:
-                continue
+                reports_by_id[row["id"]] = result
+                print(f"reference {row['id']}: {result['status']} (reused)", flush=True)
+        def qualify(row: dict) -> dict:
+            row_dir = row_root / row["id"]
+            receipt = row_dir / "result.json"
+            proof = authorities.get(f"{row['year']}/{row['compiler']}")
+            if row_dir.exists():
+                preserve_incomplete(row_dir, row_root / "incomplete-reference", row["id"])
+            row_dir.mkdir()
+            result = {key: row[key] for key in ("id", "lock_order", "entrypoint", "jobname",
+                                                "source", "compiler", "year", "declaration")}
+            result.update(schema=1, authority=proof, output_format=args.output_format)
+            if proof is None:
+                result["status"] = "unsupported-xelatex"
             else:
-                if row_dir.exists():
-                    preserve_incomplete(row_dir, row_root / "incomplete-reference", row["id"])
-                row_dir.mkdir()
-                result = {key: row[key] for key in ("id", "lock_order", "entrypoint", "jobname",
-                                                    "source", "compiler", "year", "declaration")}
-                result["schema"] = 1
-                result["authority"] = proof
-                result["output_format"] = args.output_format
-                if proof is None:
-                    result["status"] = "unsupported-xelatex"
-                else:
-                    reference = run_reference(args, row, row_dir, proof)
-                    result["reference"] = reference
-                    prefix = args.output_format.upper()
-                    result["status"] = (f"{prefix}-qualified" if reference["status"] == f"{prefix}-success"
-                                        else f"{prefix}-ineligible")
-                write_json(receipt, result)
-                check_result(result, row, proof, args.results, args)
-            reports.append(result)
-            print(f"reference {row['id']}: {result['status']}", flush=True)
+                reference = run_reference(args, row, row_dir, proof)
+                result["reference"] = reference
+                prefix = args.output_format.upper()
+                result["status"] = (f"{prefix}-qualified" if reference["status"] == f"{prefix}-success"
+                                    else f"{prefix}-ineligible")
+            write_json(receipt, result)
+            check_result(result, row, proof, args.results, args)
+            return result
+
+        if not args.verify_only:
+            pending = [row for row in rows if row["id"] not in reports_by_id]
+            reports_by_id.update((result["id"], result) for result in run_jobs(
+                pending, args.jobs, qualify,
+                lambda result: print(f"reference {result['id']}: {result['status']}", flush=True)))
+        reports = [reports_by_id[row["id"]] for row in rows if row["id"] in reports_by_id]
         if not args.verify_only and not args.qualify_only:
-            for row, result in zip(rows, reports):
-                if result["status"] != f"{args.output_format.upper()}-qualified":
-                    continue
+            def compare(row: dict) -> dict:
+                result = reports_by_id[row["id"]]
                 row_dir = row_root / row["id"]
                 proof = authorities[f"{row['year']}/{row['compiler']}"]
                 preserve_incomplete_umber(row_dir)
@@ -565,7 +576,12 @@ def main() -> int:
                 result["status"] = result["umber"]["status"]
                 write_json(row_dir / "result.json", result)
                 check_result(result, row, proof, args.results, args)
-                print(f"parity {row['id']}: {result['status']}", flush=True)
+                return result
+
+            pending = [row for row in rows if reports_by_id[row["id"]]["status"] ==
+                       f"{args.output_format.upper()}-qualified"]
+            run_jobs(pending, args.jobs, compare,
+                     lambda result: print(f"parity {result['id']}: {result['status']}", flush=True))
         divergent = next((result["id"] for result in reports
                           if result["status"] in ("Umber-failure", f"{args.output_format.upper()}-diverged")), None)
         comparison_error = next((result["id"] for result in reports

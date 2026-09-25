@@ -244,11 +244,16 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   it publishes generated maps outside the immutable snapshot with input and
   output identities.
 - `run-arxiv-texlive.py` and `test-run-arxiv-texlive.py`: archive-declared year
-  routing, complete reference PDF qualification, and serial semantic Umber PDF
-  comparison with resumable, source-bound results. Explicit DVI mode preserves
-  exact byte comparison for diagnosis. Both modes finish every eligible row
-  after a divergence or comparison error. The
+  routing, complete reference PDF qualification, then bounded parallel semantic
+  Umber PDF comparison with resumable, source-bound per-paper results. `--jobs 1`
+  selects serial diagnosis; the default follows available CPU and memory. Explicit
+  DVI mode preserves exact byte comparison for diagnosis. Both modes finish every
+  eligible row after a divergence or comparison error. The
   `check-tools.sh texlive-parity-tools` step owns these hermetic suites.
+- `arxiv_corpus_parallel.py`: capacity-aware per-phase scheduling with stable
+  source-order results and independently resumable paper receipts.
+- `arxiv_resource_limit.py`: child-side address-space guard before exec, keeping
+  threaded subprocess launches safe without changing recorded command identities.
 
 - `texlive_reference_runtime.py` and `test-texlive-reference-runtime.py`: derived
   Kpathsea filename indexes over authenticated snapshots, with immutable source

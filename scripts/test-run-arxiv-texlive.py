@@ -7,8 +7,11 @@ import importlib.util
 import datetime as dt
 import json
 import os
+import subprocess
+import sys
 import tarfile
 import tempfile
+import threading
 import types
 import unittest
 from pathlib import Path
@@ -17,6 +20,7 @@ from unittest.mock import patch
 from arxiv_corpus import declared_texlive, sha256_file
 from texlive import ahash64_file
 from texlive_reference_runtime import prepare_reference_runtime
+from arxiv_corpus_parallel import automatic_jobs, linux_available_memory_bytes, run_jobs
 
 SCRIPT = Path(__file__).with_name("run-arxiv-texlive.py")
 spec = importlib.util.spec_from_file_location("arxiv_texlive_runner", SCRIPT)
@@ -50,6 +54,53 @@ def archive(path: Path, paper: str, compiler: str, year: str | None) -> None:
 
 
 class DeclaredYearCorpus(unittest.TestCase):
+    def test_bounded_scheduler_overlaps_isolated_jobs_and_keeps_source_order(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            lock = threading.Lock()
+            overlap = threading.Barrier(2, timeout=10)
+            release_first = threading.Event()
+            active = peak = 0
+            completed = []
+            def work(number: int) -> int:
+                nonlocal active, peak
+                with lock:
+                    active += 1
+                    peak = max(peak, active)
+                paper = root / str(number)
+                paper.mkdir()
+                (paper / "receipt").write_text(str(number))
+                if number < 2:
+                    overlap.wait()
+                if number == 0:
+                    self.assertTrue(release_first.wait(10))
+                with lock:
+                    active -= 1
+                return number
+            def record(value: int) -> None:
+                completed.append(value)
+                if value == 1:
+                    release_first.set()
+            self.assertEqual(run_jobs(list(range(6)), 2, work, record),
+                             list(range(6)))
+            self.assertEqual(peak, 2)
+            self.assertLess(completed.index(1), completed.index(0))
+            self.assertEqual(sorted(path.parent.name for path in root.glob("*/receipt")),
+                             [str(number) for number in range(6)])
+            with patch("arxiv_corpus_parallel.available_cpus", return_value=12), \
+                 patch("arxiv_corpus_parallel.available_memory_bytes", return_value=8 * 1024**3):
+                self.assertEqual(automatic_jobs(1536), 4)
+            meminfo = root / "meminfo"
+            meminfo.write_text("MemFree: 646000 kB\nMemAvailable: 49283072 kB\n")
+            self.assertEqual(linux_available_memory_bytes(meminfo), 49283072 * 1024)
+
+    def test_resource_ceiling_is_applied_before_exec(self) -> None:
+        result = subprocess.run([sys.executable, str(SCRIPT.with_name("arxiv_resource_limit.py")),
+                                 "128", sys.executable, "-c",
+                                 "import resource; print(resource.getrlimit(resource.RLIMIT_AS)[0])"],
+                                capture_output=True, text=True, check=True)
+        self.assertEqual(result.stdout.strip(), str(128 * 1024 * 1024))
+
     def test_tex_implicit_suffix_audit_preserves_identity_and_exact_precedence(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -176,6 +227,17 @@ for arg in "$@"; do input=$arg; done
 name=${input%.tex}
 test -f side.bbl
 printf 'reference %s %s\\n' "$name" "$TEXMFDIST" >> "$TEST_COUNTS"
+if test -n "${TEST_SYNC:-}"; then
+  printf 'reference-start %s\\n' "$name" >> "$TEST_EVENTS"
+  touch "$TEST_SYNC/reference-start-$name"
+  remaining=60
+  until test -f "$TEST_SYNC/reference-start-latex23" && test -f "$TEST_SYNC/reference-start-pdf25"; do
+    test "$remaining" -gt 0 || exit 17
+    remaining=$((remaining - 1))
+    sleep 0.05
+  done
+  printf 'reference-end %s\\n' "$name" >> "$TEST_EVENTS"
+fi
 if test "${TEST_OUTPUT_FORMAT:-dvi}" = pdf; then
   cp "$TEST_PDF" "$name.pdf"
   bytes=$(wc -c < "$name.pdf")
@@ -198,6 +260,17 @@ input=$arg
 name=${input%.tex}
 test -f side.bbl
 printf 'umber %s %s\\n' "$name" "$TEXINPUTS" >> "$TEST_COUNTS"
+if test -n "${TEST_SYNC:-}"; then
+  printf 'umber-start %s\\n' "$name" >> "$TEST_EVENTS"
+  touch "$TEST_SYNC/umber-start-$name"
+  remaining=60
+  until test -f "$TEST_SYNC/umber-start-latex23" && test -f "$TEST_SYNC/umber-start-pdf25"; do
+    test "$remaining" -gt 0 || exit 17
+    remaining=$((remaining - 1))
+    sleep 0.05
+  done
+  printf 'umber-end %s\\n' "$name" >> "$TEST_EVENTS"
+fi
 cp "$TEST_RECEIPTS/$name.inputs" "$admissions"
 if test "${TEST_OUTPUT_FORMAT:-dvi}" = pdf; then cp "$TEST_PDF" "$output";
 elif test "$name" = latex23; then cp "$TEST_DIFFERENT" "$output";
@@ -314,7 +387,8 @@ PY
                     "--preparation", str(preparation), "--umber", str(umber),
                     "--output-format", "dvi", "--parity-harness", str(parity),
                     "--results", str(results),
-                    "--expected-rows", "3", "--timeout-seconds", "10", "--max-rss-mib", "128"]
+                    "--expected-rows", "3", "--timeout-seconds", "10", "--max-rss-mib", "128",
+                    "--jobs", "1"]
             environment = {"TEST_DVI": str(expected), "TEST_DIFFERENT": str(different),
                            "TEST_PDF": str(sample_pdf),
                            "TEST_COUNTS": str(count), "TEST_RECEIPTS": str(receipts)}
@@ -354,16 +428,41 @@ PY
                     runner.main()
                 dvi(results / "rows/pdf25/reference/pdf25.dvi", 0)
                 first_receipt = results / "rows/latex23/result.json"
-                first_bytes = first_receipt.read_bytes()
                 first_receipt.unlink()
-                with self.assertRaisesRegex(SystemExit, "missing earlier row receipt"):
-                    runner.main()
-                first_receipt.write_bytes(first_bytes)
+                with patch.object(runner.sys, "argv", args + ["--verify-only"]):
+                    self.assertEqual(runner.main(), 2)
+                    self.assertEqual(json.loads((results / "summary.json").read_text())["verdict"], "PARTIAL")
+                self.assertEqual(runner.main(), 1)
+                self.assertTrue(first_receipt.is_file())
+                self.assertTrue((results / "rows/incomplete-reference/latex23-0001").is_dir())
                 last_receipt = results / "rows/pdf25/result.json"
                 last_receipt.unlink()
                 self.assertEqual(runner.main(), 1)
                 self.assertTrue((results / "rows/incomplete-reference/pdf25-0001/reference/pdf25.dvi").is_file())
                 self.assertTrue(last_receipt.is_file())
+                parallel_results = root / "parallel-results"
+                parallel_args = args.copy()
+                parallel_args[parallel_args.index("--results") + 1] = str(parallel_results)
+                parallel_args[parallel_args.index("--jobs") + 1] = "2"
+                events = root / "events"
+                sync = root / "sync"
+                sync.mkdir()
+                with patch.object(runner.sys, "argv", parallel_args), \
+                     patch.dict(os.environ, {"TEST_SYNC": str(sync), "TEST_EVENTS": str(events)}):
+                    self.assertEqual(runner.main(), 1)
+                    self.assertEqual(json.loads((parallel_results / "summary.json").read_text())["counts"],
+                                     json.loads((results / "summary.json").read_text())["counts"])
+                    self.assertEqual(runner.main(), 1)
+                    with patch.object(runner.sys, "argv", parallel_args[:-1] + ["1", "--verify-only"]):
+                        self.assertEqual(runner.main(), 1)
+                event_lines = events.read_text().splitlines()
+                self.assertEqual(sum(line.startswith("reference-start") for line in event_lines), 2)
+                self.assertLess(event_lines.index("reference-start pdf25"),
+                                event_lines.index("reference-end latex23"))
+                self.assertLess(event_lines.index("umber-start pdf25"),
+                                event_lines.index("umber-end latex23"))
+                self.assertLess(max(i for i, line in enumerate(event_lines) if line.startswith("reference-end")),
+                                min(i for i, line in enumerate(event_lines) if line.startswith("umber-start")))
                 # Rebuilt native formats can retain reference formats in another
                 # output directory; their input receipt remains content-bound.
                 native_path = Path(years["2023"]["formats"]["latex"]["umber_format_receipt"])
