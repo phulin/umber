@@ -328,7 +328,7 @@ uses the production publisher to generate small packed shards locally, and
 checks the generated WASM catalog, prefetch, and packaged worker resource flow
 in a real browser. The existing `node-unit` step retains fake-binding transport
 tests. `default-format` checks the local Plain image against its schema-3
-metadata and format schema 12. The default hosted distribution remains
+metadata and format schema 13. The default hosted distribution remains
 unpublished, so the browser example needs an explicit migrated manifest URL
 and digest. This local availability result is separate from the browser
 fixture's result. `npm-pack` checks the package inventory after construction.
@@ -345,7 +345,7 @@ full Rust prefetch policy. Native filesystem lookup and browser fetch, cache,
 worker, and cancellation behavior retain their own tests. The shared contract
 is explained in [Resource Lifecycle](resource_lifecycle.md).
 
-The local Plain-format metadata now declares schema 3 and format schema 12,
+The local Plain-format metadata now declares schema 3 and format schema 13,
 and the named `default-format` step can validate the tracked image. A hosted
 default distribution remains unpublished. The final integrated native,
 quality, WASM, and external PDF verdicts are recorded in
@@ -1194,11 +1194,11 @@ The LaTeX format builder is a separate deterministic integration tier:
 scripts/build-latex-format.sh \
   --engine latex \
   --distribution target/texlive-snapshot \
-  --distribution-sha256 61b8d665e492662b18c8beb70ab8cd8a8f73d9bd7e4d9aeb2f958ea8613f8883
+  --distribution-ahash64 "$DISTRIBUTION_AHASH64"
 scripts/build-latex-format.sh \
   --engine pdflatex \
   --distribution target/texlive-snapshot \
-  --distribution-sha256 61b8d665e492662b18c8beb70ab8cd8a8f73d9bd7e4d9aeb2f958ea8613f8883
+  --distribution-ahash64 "$DISTRIBUTION_AHASH64"
 ```
 
 Both modes build one clean format and validate the resulting cache image. The
@@ -1221,13 +1221,13 @@ worktrees receive the exact qualified bytes rather than rebuilding them.
 
 `python3 scripts/check-pdftex-format-pair.py --distribution PATH
 --distribution-ahash64 AHASH64` is the focused live gate for that pairing. It
-checks the reference receipt and the distribution's schema-12 pdfLaTeX record
+checks the reference receipt and the distribution's current-schema pdfLaTeX record
 against `tests/latex-source.lock`, runs `tests/latex/format-pairing.tex` through
 clean pdfTeX and Umber in DVI mode, and requires identical `2026-06-01` and
 `proposition` macro markers. Its receipt records both binary and format SHA-256
 identities plus the macro-marker fingerprint. It does not run or inspect Umber
 PDF.
-The source lock also pins the schema-3 distribution digest. Both flags are
+The distribution path and its root digest are caller-supplied. Both flags are
 required, the local root is authenticated before compilation, and all four
 engine runs use the same absolute path and pin with offline resolution.
 All builder-started Umber and format-cache subprocesses reuse
@@ -1244,7 +1244,7 @@ pdfLaTeX mirror with independent empty native caches:
 ```bash
 scripts/check-latex-representative-resources.sh \
   --distribution target/texlive-snapshot \
-  --distribution-sha256 61b8d665e492662b18c8beb70ab8cd8a8f73d9bd7e4d9aeb2f958ea8613f8883 \
+  --distribution-ahash64 "$DISTRIBUTION_AHASH64" \
   --format /path/to/generated/pdflatex.fmt \
   --receipt target/pdflatex-resource-smoke.txt
 ```

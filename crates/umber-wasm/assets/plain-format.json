@@ -1,13 +1,13 @@
 {
   "schema": 3,
   "name": "plain",
-  "object": "ahash64-v1-d973a639880df425",
-  "ahash64": "d973a639880df425",
-  "bytes": 107346,
+  "object": "ahash64-v1-2cd4eabf2ba2b7ce",
+  "ahash64": "2cd4eabf2ba2b7ce",
+  "bytes": 107637,
   "engine": "umber",
   "engineVersion": "0.1.0",
-  "formatSchema": 12,
+  "formatSchema": 13,
   "sourceDistribution": "texlive-2025",
-  "sourceManifestAhash64": "b036dad6ce279e29",
+  "sourceManifestAhash64": "ae6d485ea93408b9",
   "sourceDateEpoch": 0
 }

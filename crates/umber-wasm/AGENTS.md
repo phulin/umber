@@ -43,8 +43,8 @@ deleted-status contract.
 - `tests/virtual_font_acquisition.rs`: focused host-neutral WASM coverage for
   typed virtual-font resource retries and their recursive PDF resource closure.
 - `assets/plain-source.lock`: exact TeX Live 2025 Plain, hyphenation, and TFM source identities.
-- `assets/plain.fmt`: locally reproducible schema-12 Plain image; it is not shipped in the npm package.
-- `assets/plain-format.json`: schema-3 metadata for the local schema-12 Plain image.
+- `assets/plain.fmt`: locally reproducible schema-13 Plain image; it is not shipped in the npm package.
+- `assets/plain-format.json`: schema-3 metadata for the local schema-13 Plain image.
 - `assets/cmu-serif-500-roman.woff2` / `assets/CMU-OFL.txt`: repository-only
   conformance fixtures and license; the npm runtime inventory excludes both.
 - `js/`: authored ES modules and Node acceptance tests, including the unified resource facade and optional application-manifest file/font resolver.

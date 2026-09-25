@@ -8,7 +8,8 @@ if (metadata.schema === 0 && typeof metadata.unavailable === "string") {
 } else if (
 	metadata.schema === 3 &&
 	metadata.name === "plain" &&
-	metadata.formatSchema === 12 &&
+	Number.isSafeInteger(metadata.formatSchema) &&
+	metadata.formatSchema > 0 &&
 	metadata.object === `ahash64-v1-${metadata.ahash64}` &&
 	/^[0-9a-f]{16}$/.test(metadata.ahash64) &&
 	Number.isSafeInteger(metadata.bytes) &&
@@ -16,6 +17,7 @@ if (metadata.schema === 0 && typeof metadata.unavailable === "string") {
 ) {
 	const image = await readFile(process.argv[3]);
 	if (
+		image.byteLength < 12 ||
 		image.subarray(0, 8).toString("binary") !== "UMBRFMT\0" ||
 		image.readUInt32LE(8) !== metadata.formatSchema ||
 		image.byteLength !== metadata.bytes ||
@@ -23,7 +25,9 @@ if (metadata.schema === 0 && typeof metadata.unavailable === "string") {
 	) {
 		throw new Error("default Plain format image does not match its metadata");
 	}
-	console.log("default Plain format: schema 12 image and metadata available");
+	console.log(
+		`default Plain format: schema ${metadata.formatSchema} image and metadata available`,
+	);
 } else {
 	throw new Error(
 		"default Plain format metadata has an unsupported availability state",
