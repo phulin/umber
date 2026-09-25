@@ -273,8 +273,8 @@ pub struct ResolverTelemetry {
     pub object_cache_hits: u64,
     /// Content-addressed object payload validations, excluding response IDs.
     pub object_hashes: u64,
-    /// Accepted-run predictor and readiness metrics.  Persistent cache hits
-    /// still count as prefetch bytes only when they cross the engine boundary.
+    /// Accepted-run predictor and readiness metrics. Prefetch bytes count
+    /// verified host staging; unused bytes were never read by the engine.
     pub startup_prefetch_candidates: u64,
     pub literal_prefetch_hints: u64,
     pub package_group_candidates: u64,
@@ -832,9 +832,10 @@ impl<'owner> NativeCompileSession<'owner> {
                             .ok_or_else(|| {
                                 "native provider omitted a blocking file answer".to_owned()
                             })?;
-                        for (request, file) in
-                            resolved.admitted_files.iter().chain(&resolved.staged_files)
-                        {
+                        for (request, _) in &resolved.staged_files {
+                            prefetch.observe_staged_file(request);
+                        }
+                        for (request, file) in &resolved.admitted_files {
                             let dependencies =
                                 distribution.dependencies_for([request.key().clone()]);
                             prefetch.observe_verified_file_with_metadata(
@@ -974,10 +975,8 @@ impl<'owner> NativeCompileSession<'owner> {
                     };
                     self.distribution
                         .record_generated_misses(&batch, &generated_transaction);
-                    // Prefetch hints are admitted through the same typed VFS
-                    // transaction as demanded resources.  A host cache hit is
-                    // not engine readiness until this boundary has accepted
-                    // the payload and its request metadata.
+                    // Only demanded responses enter the engine VFS. Hints stay
+                    // in the host cache until the engine requests them.
                     let provision_started = Instant::now();
                     self.session
                         .note_resource_exists(resolved.catalog_exists.clone());
@@ -1007,7 +1006,10 @@ impl<'owner> NativeCompileSession<'owner> {
                     if let Some(admissions) = &mut self.input_admissions {
                         admissions.record_files(&resolved.admitted_files)?;
                     }
-                    for (request, file) in &planned_files {
+                    for (request, _) in &resolved.staged_files {
+                        self.prefetch.observe_staged_file(request);
+                    }
+                    for (request, file) in &resolved.admitted_files {
                         let dependencies =
                             self.distribution.dependencies_for([request.key().clone()]);
                         self.prefetch.observe_verified_file_with_metadata(
@@ -1073,7 +1075,10 @@ impl<'owner> NativeCompileSession<'owner> {
             if let Some(admissions) = &mut self.input_admissions {
                 admissions.record_files(&resolved.admitted_files)?;
             }
-            for (request, file) in &planned_files {
+            for (request, _) in &resolved.staged_files {
+                self.prefetch.observe_staged_file(request);
+            }
+            for (request, file) in &resolved.admitted_files {
                 let dependencies = self.distribution.dependencies_for([request.key().clone()]);
                 self.prefetch.observe_verified_file_with_metadata(
                     request,

@@ -399,6 +399,19 @@ lookup manifest, literal-only source hints, and bounded small package/runtime
 metadata groups. Hints are resolved through this canonical lifecycle, are
 suggestions rather than semantics, and never create negative bindings.
 
+Native host-cache staging does not expand a prediction's runtime literals or
+catalog dependencies. `PrefetchPolicy::staged_request` deduplicates the cached
+key; an actual engine admission promotes it and discovers its bounded
+follow-ups once. This prevents an unused package from fetching its companions.
+Native startup history selects successful required reads and probes, excluding
+hint-only records: fetching a prediction is not evidence that the document
+needed it. Literal hints from the current source remain eligible.
+
+With `UMBER_RESOURCE_TELEMETRY=1`, the native CLI reports staged prefetch bytes,
+unused prefetch bytes, and demand bytes. Unused bytes are determined from the
+accepted input-dependency ledger, so a warm cache hit does not count as useful
+unless the engine actually reads the resource.
+
 The manifest identity includes engine/profile, format identity, options,
 authenticated distribution identity, and provider/search policy while allowing
 document-text edits. Project and generated negative evidence is scoped to its

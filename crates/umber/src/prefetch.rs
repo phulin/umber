@@ -127,7 +127,10 @@ impl PrefetchPlanner {
     ) -> Self {
         let mut planner = Self::new(identity.clone(), budget);
         if let Some(prior) = prior.filter(|manifest| manifest.identity() == &identity) {
-            planner.metrics.startup_candidates = prior.resolved_records().count() as u64;
+            planner.metrics.startup_candidates = prior
+                .resolved_records()
+                .filter(|record| record.role != LookupRole::Hint)
+                .count() as u64;
             planner.prior = Some(prior);
         }
         planner
@@ -257,9 +260,12 @@ impl PrefetchPlanner {
             diagnostics.dropped = 0;
         }
         self.metrics = PrefetchMetrics {
-            startup_candidates: self
-                .prior_manifest()
-                .map_or(0, |manifest| manifest.resolved_records().count() as u64),
+            startup_candidates: self.prior_manifest().map_or(0, |manifest| {
+                manifest
+                    .resolved_records()
+                    .filter(|record| record.role != LookupRole::Hint)
+                    .count() as u64
+            }),
             ..PrefetchMetrics::default()
         };
         self.enqueue_startup_requests(source);
@@ -270,6 +276,7 @@ impl PrefetchPlanner {
             .prior_manifest()
             .into_iter()
             .flat_map(|prior| prior.resolved_records())
+            .filter(|record| record.role != LookupRole::Hint)
             .filter_map(distribution_record_request)
             .collect::<Vec<_>>();
         for request in prior_requests {
@@ -378,9 +385,19 @@ impl PrefetchPlanner {
             .unwrap_or(DiscoveryContext::ROOT)
     }
 
-    /// Feeds the prediction policy after a host has verified a payload or the
-    /// engine has admitted a demanded file. This records planner readiness,
-    /// not engine VFS readiness. Follow-ups are bounded lexical predictions.
+    /// Caching a guess does not establish that its own dependencies are useful.
+    /// Keep it deduplicated, but discover children only after actual demand.
+    pub fn observe_staged_file(&mut self, request: &FileRequest) {
+        let resource = ResourceRequest::File(request.clone());
+        let Some(parent) = policy_request(&resource, "staged", false) else {
+            return;
+        };
+        self.policy.staged_request(&parent);
+        self.discovery_context.remove(&parent.file_key);
+    }
+
+    /// Discovers bounded follow-ups after the engine admits a demanded file.
+    /// Host-only predictions must use `observe_staged_file` instead.
     pub fn observe_verified_file(&mut self, request: &FileRequest, bytes: &[u8]) {
         self.observe_verified_file_with_metadata(request, "", bytes, std::iter::empty());
     }

@@ -934,6 +934,7 @@ pub struct PrefetchPolicy {
     classes: BTreeMap<String, PrefetchClass>,
     dependencies: BTreeMap<String, Vec<PrefetchRequest>>,
     admitted: BTreeSet<String>,
+    staged: BTreeSet<String>,
     scanned: BTreeSet<String>,
     scanned_runtime_bytes: u64,
     replay: BTreeMap<(PrefetchRegionKey, String), ReplayMisses>,
@@ -965,6 +966,7 @@ impl PrefetchPolicy {
             classes: BTreeMap::new(),
             dependencies: BTreeMap::new(),
             admitted: BTreeSet::new(),
+            staged: BTreeSet::new(),
             scanned: BTreeSet::new(),
             scanned_runtime_bytes: 0,
             replay: BTreeMap::new(),
@@ -1397,21 +1399,18 @@ impl PrefetchPolicy {
         self.admitted_request_with_class(request, request.class, bytes, dependencies);
     }
 
-    /// Admission variant for adapters that retain a semantic file kind which
-    /// aliases the distribution namespace (notably images and TeX inputs).
-    /// The explicit class prevents an image named `figure.sty` from being
-    /// interpreted as runtime text merely because its catalogue key ends in a
-    /// runtime-looking suffix.
-    pub fn admitted_request_with_class(
-        &mut self,
-        request: &PrefetchRequest,
-        class: PrefetchClass,
-        bytes: &[u8],
-        dependencies: impl IntoIterator<Item = PrefetchRequest>,
-    ) {
+    /// Records verified host-cache content without expanding its predictions.
+    /// A later engine admission promotes it and discovers follow-ups once.
+    pub fn staged_request(&mut self, request: &PrefetchRequest) {
+        if self.record_acquired_request(request, request.class) {
+            self.staged.insert(request.identity());
+        }
+    }
+
+    fn record_acquired_request(&mut self, request: &PrefetchRequest, class: PrefetchClass) -> bool {
         let identity = request.identity();
         if !self.admitted.insert(identity.clone()) {
-            return;
+            return false;
         }
         self.classes.insert(identity.clone(), class);
         if let Some(index) = self
@@ -1426,6 +1425,26 @@ impl PrefetchPolicy {
         self.deferred.remove(&identity);
         self.attempted_priorities.remove(&identity);
         self.metrics.admitted_files = self.metrics.admitted_files.saturating_add(1);
+        true
+    }
+
+    /// Admission variant for adapters that retain a semantic file kind which
+    /// aliases the distribution namespace (notably images and TeX inputs).
+    /// The explicit class prevents an image named `figure.sty` from being
+    /// interpreted as runtime text merely because its catalogue key ends in a
+    /// runtime-looking suffix.
+    pub fn admitted_request_with_class(
+        &mut self,
+        request: &PrefetchRequest,
+        class: PrefetchClass,
+        bytes: &[u8],
+        dependencies: impl IntoIterator<Item = PrefetchRequest>,
+    ) {
+        let identity = request.identity();
+        let was_staged = self.staged.remove(&identity);
+        if !self.record_acquired_request(request, class) && !was_staged {
+            return;
+        }
         let parent_depth = self.depths.get(&identity).copied().unwrap_or_default();
         if !request.origin().is_metadata_leaf() {
             for dependency in dependencies {

@@ -510,3 +510,86 @@ fn opt_in_diagnostics_are_bounded_at_planner_seams() {
     assert_eq!(emitted, MAX_PREFETCH_DIAGNOSTIC_DECISIONS as u64);
     assert!(dropped > 0);
 }
+
+#[test]
+fn staged_predictions_expand_only_after_actual_demand() {
+    let mut planner = planner();
+    let root = FileRequest::new(
+        FileRequestKey::new(FileKind::TexInput, "root.sty").expect("key"),
+        "root.sty",
+    );
+    planner.enqueue_escalation([root.clone()]);
+    assert_eq!(planner.drain_followups().len(), 1);
+    planner.observe_staged_file(&root);
+    planner.enqueue_escalation([root.clone()]);
+    assert!(
+        planner.drain_followups().is_empty(),
+        "cached guesses are deduplicated"
+    );
+
+    let dependency = FileRequest::new(
+        FileRequestKey::new(FileKind::TexInput, "peer.sty").expect("key"),
+        "peer.sty",
+    );
+    planner.note_actual_demand(&ResourceRequest::File(root.clone()));
+    planner.observe_verified_file_with_metadata(
+        &root,
+        "",
+        br"\input{child.tex}",
+        [dependency.clone()],
+    );
+    let mut followups = planner.drain_followups();
+    followups.extend(planner.drain_followups());
+    assert_eq!(followups.len(), 2);
+    assert!(followups.contains(&ResourceRequest::File(dependency)));
+    assert!(followups.iter().any(|request| matches!(request,
+        ResourceRequest::File(file) if file.key().name() == "child.tex")));
+    planner.observe_verified_file(&root, br"\input{child.tex}");
+    assert!(
+        planner.drain_followups().is_empty(),
+        "promotion expands only once"
+    );
+}
+
+#[test]
+fn unused_history_hints_do_not_become_observed_startup_inputs() {
+    let identity = planner().identity().clone();
+    let mut prior = LookupManifest::new(identity.clone());
+    for (name, role) in [
+        ("unused.sty", LookupRole::Hint),
+        ("used.sty", LookupRole::Required),
+    ] {
+        prior
+            .record(
+                LookupRecord::new(
+                    name,
+                    format!("tex:{name}"),
+                    "tex",
+                    "distribution",
+                    role,
+                    LookupOutcome::Resolved(
+                        ResolvedIdentity::new(
+                            format!("tex:{name}"),
+                            Some(format!("/texlive/{name}")),
+                            "object",
+                            "0123456789abcdef",
+                            10,
+                        )
+                        .expect("resolved"),
+                    ),
+                )
+                .expect("record"),
+            )
+            .expect("history");
+    }
+    let mut planner = PrefetchPlanner::with_prior(identity, PrefetchBudget::default(), Some(prior));
+    assert_eq!(planner.metrics().startup_candidates, 1);
+    for _ in 0..2 {
+        let hints = planner.startup_hints("");
+        assert!(
+            matches!(hints.as_slice(), [ResourceRequest::File(file)] if file.key().name() == "used.sty")
+        );
+        planner.reset_for_context("");
+        assert_eq!(planner.metrics().startup_candidates, 1);
+    }
+}

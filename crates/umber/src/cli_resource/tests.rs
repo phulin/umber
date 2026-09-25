@@ -86,11 +86,13 @@ fn staged_prefetch_does_not_consume_engine_file_capacity() {
         b"\\message{REQUIRED}\\endinput",
     )
     .expect("required");
-    std::fs::write(directory.path().join("unused.tex"), b"\\relax").expect("unused prefetch");
+    let unused = br"\input{child.tex}";
+    std::fs::write(directory.path().join("unused.sty"), unused).expect("unused prefetch");
+    std::fs::write(directory.path().join("child.tex"), b"unused child").expect("child");
     let options = NativeRunOptions {
         input: directory.path().join("main.tex"),
         format: None,
-        initial_prefetch_keys: vec!["tex:unused.tex".to_owned()],
+        initial_prefetch_keys: vec!["tex:unused.sty".to_owned()],
         engine: EngineMode::Tex82,
         pdf_output_mode: None,
         outputs: OutputCapabilitySet::DVI,
@@ -111,7 +113,11 @@ fn staged_prefetch_does_not_consume_engine_file_capacity() {
         .compile(&FetchCancellation::new())
         .expect("blocking input after staged prefetch");
     assert!(String::from_utf8_lossy(&output.terminal).contains("REQUIRED"));
-    assert!(session.host_telemetry().resolver.prefetch_bytes > 0);
+    assert_eq!(
+        session.host_telemetry().resolver.unused_prefetch_bytes,
+        unused.len() as u64,
+        "an unused package must not cause its children to be prefetched"
+    );
     assert_eq!(session.session.resolved_file_count(), 1);
 }
 

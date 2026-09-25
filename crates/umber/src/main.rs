@@ -529,6 +529,12 @@ fn finalize_run(
     let (output, finalization, _input_path_map, telemetry, host) = accepted.into_parts();
     if env::var_os("UMBER_RESOURCE_TELEMETRY").is_some_and(|value| value == "1") {
         eprintln!(
+            "RESOURCE_PREFETCH_TELEMETRY prefetch_bytes={} unused_prefetch_bytes={} demand_bytes={}",
+            host.resolver.prefetch_bytes,
+            host.resolver.unused_prefetch_bytes,
+            host.resolver.demand_bytes,
+        );
+        eprintln!(
             "RESOURCE_TELEMETRY cold_starts={} suspensions={} resource_restarts={} local_step_retries={} replayed_delivered_tokens={} replayed_dispatches={} cumulative_fuel={} discarded_fuel={} resource_wait_ns={} engine_ns={}",
             telemetry.execution.cold_starts,
             telemetry.execution.suspensions,
