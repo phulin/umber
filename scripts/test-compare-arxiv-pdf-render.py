@@ -77,12 +77,26 @@ class RenderContractTests(unittest.TestCase):
             self.assertEqual(report["verdict"], verdict)
             self.assertEqual(report["reference_qualified_rows"], qualified)
 
+    def test_missing_rows_cannot_produce_a_passing_subset(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root / "summary.json").write_text(json.dumps({"output_format": "pdf", "sample_rows": 2,
+                "reference_rows_recorded": 2, "pdf_eligible_rows": 1}))
+            receipt = root / "rows" / "paper" / "result.json"
+            receipt.parent.mkdir(parents=True)
+            receipt.write_text(json.dumps({"reference": {"status": "PDF-success"}}))
+            with self.assertRaisesRegex(ValueError, "coverage differs"):
+                render.corpus_rows(root)
+
     def test_memory_limit_is_installed_in_child_not_parent(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             receipt = root / "rows" / "paper" / "result.json"
             receipt.parent.mkdir(parents=True)
-            receipt.write_text(json.dumps({"id": "paper", "status": "PDF-diverged"}))
+            receipt.write_text(json.dumps({"id": "paper", "status": "PDF-diverged",
+                                           "reference": {"status": "PDF-success"}}))
+            (root / "summary.json").write_text(json.dumps({"output_format": "pdf", "sample_rows": 1,
+                "reference_rows_recorded": 1, "pdf_eligible_rows": 1}))
             result = {"schema": render.SCHEMA, "status": "equal", "reference": {}, "umber": {},
                       "raster_equal": True, "text_equal": True}
             with patch.object(sys, "argv", ["render", "--results", str(root),

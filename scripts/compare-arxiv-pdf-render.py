@@ -114,6 +114,19 @@ def summarize(reports: list[dict]) -> dict:
             "text_equal_rows": sum(r.get("text_equal", False) for r in reports)}
 
 
+def corpus_rows(results: Path) -> list[tuple[Path, dict]]:
+    summary = json.loads((results / "summary.json").read_text())
+    rows = [(path, json.loads(path.read_text()))
+            for path in sorted((results / "rows").glob("*/result.json"))]
+    expected = summary.get("sample_rows")
+    qualified = sum(row.get("reference", {}).get("status") == "PDF-success" for _, row in rows)
+    if (summary.get("output_format") != "pdf" or not isinstance(expected, int) or expected < 1
+            or len(rows) != expected or summary.get("reference_rows_recorded") != expected
+            or qualified != summary.get("pdf_eligible_rows")):
+        raise ValueError("corpus coverage differs from summary; finish and verify reference qualification first")
+    return rows
+
+
 def memory_limit() -> None:
     resource.setrlimit(resource.RLIMIT_AS, (1536 * 1024 * 1024,) * 2)
 
@@ -137,11 +150,11 @@ def main() -> int:
         parser.error("PyMuPDF is required; run with the Python environment documented in docs/arxiv_dvi_cohort.md")
     if args.output.exists() and any(args.output.iterdir()):
         parser.error("output directory already contains evidence; choose a new --output directory")
+    rows = corpus_rows(args.results)
     args.output.mkdir(parents=True, exist_ok=True)
     script = Path(__file__).resolve()
     reports = []
-    for receipt in sorted((args.results / "rows").glob("*/result.json")):
-        row = json.loads(receipt.read_text())
+    for receipt, row in rows:
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", row["id"]) or row["id"] != receipt.parent.name:
             raise ValueError("invalid corpus row identifier")
         pair = eligible_pair(row)
