@@ -84,7 +84,11 @@ updates normal font kerns and discretionary pre/post glyphs.
 Protrusion finds the first and last eligible glyphs using pdfTeX's nested hlist
 and discretionary rules. A left margin kern precedes the glyph material and a
 right margin kern follows it before `\rightskip`; each amount is the negative
-of `round(em * code / 1000)`. Margin kerns retain side, source font, and byte
+of pdfTeX’s `round_xn_over_d(em, code, 1000)` (§687). Positive codes round
+to nearest, but negative codes truncate toward zero because the upstream
+routine normalizes only the em’s sign and never increments a negative
+remainder. This distinction affects both margin placement and the final
+packed line’s glue ratio. Margin kerns retain side, source font, and byte
 character so expansion-aware repacking, diagnostics, enquiries, snapshots,
 and output lowering do not infer provenance from neighbors. pdfTeX §1061
 prepends the left margin kern at the line-material boundary, before any

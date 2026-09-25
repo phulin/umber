@@ -447,7 +447,13 @@ fn glyph_width(state: &impl TypesetState, glyph: Glyph, edge: Edge) -> Scaled {
 fn round_scaled_ratio(value: Scaled, numerator: i32, denominator: i32) -> Scaled {
     let product = i64::from(value.raw()) * i64::from(numerator);
     let denominator = i64::from(denominator);
-    let rounded = if product >= 0 {
+    // pdftex.web §687's round_xn_over_d normalizes x's sign, not n's.
+    // A negative code leaves a negative remainder, so its rounding increment
+    // never fires. Preserve that truncation; symmetric rounding changes the
+    // margin kern and therefore the final hpack glue ratio by one scaled point.
+    let rounded = if numerator < 0 {
+        product / denominator
+    } else if product >= 0 {
         (product + denominator / 2) / denominator
     } else {
         -((-product + denominator / 2) / denominator)

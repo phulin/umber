@@ -87,6 +87,52 @@ fn computes_pdftex_edge_amounts_from_font_quad_and_codes() {
     assert_eq!(protrusion.total(), sp(12 * 65_536));
 }
 
+/// pdftex.web §§687/821: round_xn_over_d normalizes the quad's sign,
+/// but a negative protrusion code keeps a negative remainder and truncates.
+/// The signed 10pt-quad cases are also checked against live reference DVI.
+#[test]
+fn negative_protrusion_codes_truncate_at_both_edges() {
+    for quad_sign in [-1, 1] {
+        let mut state = TestState::new();
+        let font = state.intern_font(protruding_font());
+        state
+            .set_font_dimen(font, 6, sp(quad_sign * 10 * 65_536))
+            .expect("test font has a quad");
+        for (code, expected) in [
+            (-25, -16_384),
+            (-10, -6_553),
+            (-1, -655),
+            (0, 0),
+            (1, 655),
+            (10, 6_554),
+            (25, 16_384),
+        ] {
+            state.set_pdf_font_code(PdfFontCode::Lp, font, b'A', code);
+            state.set_pdf_font_code(PdfFontCode::Rp, font, b'.', code);
+            let nodes = [character(font, 'A'), character(font, '.')];
+            let edges = line_protrusion(&state, &nodes);
+            let expected = sp(quad_sign * expected);
+            assert_eq!(
+                edges.left, expected,
+                "left edge: quad sign {quad_sign}, code {code}"
+            );
+            assert_eq!(
+                edges.right, expected,
+                "right edge: quad sign {quad_sign}, code {code}"
+            );
+            let plan = plan_margin_kerns(&state, NodeCursor::owned(&nodes), 0);
+            for entry in [plan.left, plan.right] {
+                if expected.raw() == 0 {
+                    assert!(entry.is_none());
+                } else {
+                    assert!(matches!(entry, Some((_, Node::MarginKern { amount, .. }))
+                        if amount.raw() == -expected.raw()));
+                }
+            }
+        }
+    }
+}
+
 #[test]
 fn zero_width_stretch_glue_blocks_edge_discovery() {
     let mut state = TestState::new();
