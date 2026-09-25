@@ -1,17 +1,16 @@
 //! Bounded comparison of two independently produced PDF files.
 //!
-//! This is a strict semantic projection, not a rendering oracle. It reuses the
-//! established Hayro graph/content projection and additionally observes page
-//! crop boxes and rotation. Complete decoded page streams are separately
-//! attested in the receipt: lexical whitespace and comments can vary even when
-//! the parsed content operations are the same. Hayro's content iterator is
-//! lenient, so projection equality does not claim full syntax or visual parity.
+//! This is a structural/content-operation projection, not a rendering oracle.
+//! It walks the Hayro document graph once, preserves resource and inline-image
+//! evidence, and records ordered page operations in bounded chunks. Complete
+//! decoded page streams are separately attested in the receipt: lexical
+//! whitespace and comments can vary even when operations match. Hayro's
+//! content iterator is lenient, so projection equality does not claim full
+//! syntax or visual parity.
 
-use anyhow::{Context, Result, bail};
-use sha2::{Digest, Sha256};
+use anyhow::Result;
 
-use crate::pdf::normalize_structure;
-use crate::pdf_query::{PdfQuery, QueryLimits};
+mod corpus;
 
 /// Maximum input bytes per side. The page/graph budgets are in `QueryLimits`.
 pub const MAX_PDF_BYTES: usize = 64 * 1024 * 1024;
@@ -27,52 +26,13 @@ pub struct PdfProjection {
 }
 
 pub fn project_pdf(bytes: &[u8]) -> Result<PdfProjection> {
-    if bytes.len() > MAX_PDF_BYTES {
-        bail!("PDF exceeds {MAX_PDF_BYTES} byte input limit");
-    }
-    check_framing(bytes)?;
-    let limits = QueryLimits::default();
-    let query = PdfQuery::new(bytes, limits).context("Hayro could not parse PDF")?;
-    let pages = query.pages().context("could not project PDF pages")?;
-    let mut text = normalize_structure(bytes).context("could not normalize PDF structure")?;
-    if text.len() > MAX_PROJECTION_BYTES {
-        bail!("PDF projection exceeds {MAX_PROJECTION_BYTES} byte limit");
-    }
-    let mut content_digest = Sha256::new();
-    for page in &pages {
-        text.push_str(&format!("page-extra {} crop-box", page.number));
-        for value in page.crop_box {
-            if !value.is_finite() {
-                bail!("page {} has nonfinite crop box", page.number);
-            }
-            text.push_str(&format!(" {value:.6}"));
-        }
-        text.push_str(&format!(" rotation {}\n", page.rotation_degrees));
-        match &page.content {
-            Some(content) => {
-                content_digest.update([1]);
-                content_digest.update((content.decoded.len() as u64).to_be_bytes());
-                content_digest.update(&content.decoded);
-            }
-            None => content_digest.update([0]),
-        }
-        if text.len() > MAX_PROJECTION_BYTES {
-            bail!("PDF projection exceeds {MAX_PROJECTION_BYTES} byte limit");
-        }
-    }
-    let sha256 = hex(&Sha256::digest(text.as_bytes()));
-    let decoded_content_sha256 = hex(&content_digest.finalize());
-    Ok(PdfProjection {
-        pages: pages.len(),
-        text,
-        sha256,
-        decoded_content_sha256,
-    })
+    corpus::project_pdf(bytes)
 }
 
 /// Check mandatory file framing before passing bytes to Hayro's recovery parser.
 /// This is a sanity check, not a substitute for a strict PDF validator.
-fn check_framing(bytes: &[u8]) -> Result<()> {
+pub(super) fn check_framing(bytes: &[u8]) -> Result<()> {
+    use anyhow::bail;
     if bytes.len() < 16 || !bytes.starts_with(b"%PDF-") {
         bail!("PDF header is missing");
     }

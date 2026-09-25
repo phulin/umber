@@ -219,6 +219,7 @@ pub struct QueryStream<'a> {
     pub dictionary: QueryDictionary<'a>,
     pub raw: Vec<u8>,
     pub decoded: Vec<u8>,
+    pub decoded_ok: bool,
     pub decoded_sha256: [u8; 32],
     xref: &'a hayro_syntax::xref::XRef,
 }
@@ -226,13 +227,15 @@ pub struct QueryStream<'a> {
 impl<'a> QueryStream<'a> {
     fn new(xref: &'a hayro_syntax::xref::XRef, stream: Stream<'a>) -> Self {
         let raw = stream.raw_data().into_owned();
-        let decoded = stream
-            .decoded()
-            .map_or_else(|_| Vec::new(), |decoded| decoded.into_owned());
+        let (decoded, decoded_ok) = match stream.decoded() {
+            Ok(decoded) => (decoded.into_owned(), true),
+            Err(_) => (Vec::new(), false),
+        };
         Self {
             id: stream.obj_id().into(),
             dictionary: QueryDictionary::new(xref, stream.dict().clone()),
             raw,
+            decoded_ok,
             decoded_sha256: Sha256::digest(&decoded).into(),
             decoded,
             xref,
@@ -263,6 +266,15 @@ pub enum QueryOperand {
     Name(Vec<u8>),
     Array(Vec<Self>),
     Dictionary(BTreeMap<Vec<u8>, Self>),
+    /// Inline image (the `BI` instruction) or another stream operand. Raw
+    /// bytes are retained by digest even when a filter cannot be decoded.
+    Stream {
+        dictionary: BTreeMap<Vec<u8>, Self>,
+        raw_len: usize,
+        raw_sha256: [u8; 32],
+        decoded_len: Option<usize>,
+        decoded_sha256: Option<[u8; 32]>,
+    },
 }
 
 /// A resource category with inheritance layers ordered ancestor to child.
@@ -622,7 +634,26 @@ fn project_operand(
                 })
                 .collect::<Result<_>>()?,
         ),
-        Object::Stream(_) => bail!("content-stream operand cannot be a stream"),
+        Object::Stream(stream) => {
+            let QueryOperand::Dictionary(dictionary) =
+                project_operand(xref, Object::Dict(stream.dict().clone()), depth + 1, budget)?
+            else {
+                unreachable!("dictionary projection must remain a dictionary")
+            };
+            let raw = stream.raw_data();
+            let decoded = stream.decoded().ok();
+            budget.add_stream_bytes(
+                raw.len()
+                    .saturating_add(decoded.as_ref().map_or(0, |bytes| bytes.len())),
+            )?;
+            QueryOperand::Stream {
+                dictionary,
+                raw_len: raw.len(),
+                raw_sha256: Sha256::digest(&raw).into(),
+                decoded_len: decoded.as_ref().map(|bytes| bytes.len()),
+                decoded_sha256: decoded.as_ref().map(|bytes| Sha256::digest(bytes).into()),
+            }
+        }
     })
 }
 

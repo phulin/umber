@@ -510,6 +510,23 @@ fn canonical_operand(value: &QueryOperand) -> Result<String> {
                 .collect::<Result<Vec<_>>>()?
                 .join(" ")
         ),
+        QueryOperand::Stream {
+            dictionary,
+            raw_len,
+            raw_sha256,
+            decoded_len,
+            decoded_sha256,
+        } => {
+            let dictionary = canonical_operand(&QueryOperand::Dictionary(dictionary.clone()))?;
+            let decoded = match (decoded_len, decoded_sha256) {
+                (Some(len), Some(digest)) => format!("decoded bytes {len} sha256 {}", hex(digest)),
+                _ => "decoded unavailable".to_owned(),
+            };
+            format!(
+                "stream {dictionary} raw bytes {raw_len} sha256 {} {decoded}",
+                hex(raw_sha256)
+            )
+        }
     })
 }
 

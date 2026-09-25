@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+flate2.workspace = true
 hayro-syntax.workspace = true
 pdf-writer.workspace = true
 serde_json.workspace = true

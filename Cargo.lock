@@ -1237,6 +1237,7 @@ name = "test-support"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "flate2",
  "hayro-syntax",
  "pdf-writer",
  "serde_json",

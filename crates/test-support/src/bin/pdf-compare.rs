@@ -13,8 +13,8 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use test_support::pdf_compare::{MAX_PDF_BYTES, PdfProjection, first_difference, hex, project_pdf};
 
-const SCHEMA: &str = "umber-pdf-compare-v1";
-const CRITERION: &str = "hayro-structure-page-geometry-v1";
+const SCHEMA: &str = "umber-pdf-compare-v2";
+const CRITERION: &str = "hayro-corpus-graph-content-v2";
 
 struct Side {
     bytes: usize,
