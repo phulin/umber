@@ -1305,6 +1305,72 @@ fn clean_box_physically_removes_only_a_trailing_italic_kern_after_packing() {
 }
 
 #[test]
+fn clean_box_removes_trailing_kern_from_a_native_source_box() {
+    // pdftex.web §720 simplifies a reused sub-box after its width has been
+    // fixed. The source nodes must be recognized as character plus kern so
+    // protrusion can inspect the character inside a superscript box.
+    let mut universe = setup_universe();
+    let font = universe.math_family_font(MathFontSize::Text, 0);
+    let children = universe.publish_page_nodes(&[
+        Node::Char {
+            font,
+            ch: 'a',
+            origin: Default::default(),
+        },
+        Node::Kern {
+            amount: sc(3),
+            kind: KernKind::Explicit,
+        },
+    ]);
+    let source = universe.publish_page_nodes(&[Node::HList(BoxNode::new(BoxNodeFields {
+        width: sc(13),
+        height: sc(5),
+        depth: sc(1),
+        shift: sc(0),
+        box_lr: tex_state::node::BoxLr::Normal,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children,
+    }))]);
+    let params = MathParams::read(&universe);
+    let mut ctx = Context {
+        state: &universe,
+        params: &params,
+        style: Style::TEXT,
+        mu: sc(0),
+        layout: NativeNodeTransaction::new(),
+        converted: Default::default(),
+        source_lists: Default::default(),
+        conversion_events: Default::default(),
+        capture_replay: false,
+        pack_replays: Default::default(),
+        event_replays: Default::default(),
+        recovered: Default::default(),
+        scratch: Default::default(),
+    };
+
+    let boxed = clean_box(&mut ctx, &MathField::SubBox(source), Style::TEXT);
+
+    assert_eq!(boxed.width, sc(13), "the packed width retains the kern");
+    assert!(matches!(
+        ctx.layout.nodes(boxed.list),
+        [MathNode::NativeSource {
+            evidence: NativeNodeEvidence::Character(_),
+            ..
+        }]
+    ));
+    assert_ne!(
+        boxed
+            .source
+            .expect("reused source box has provenance")
+            .payload,
+        boxed.list,
+        "lowering must reconstruct the box with its cleaned child list"
+    );
+}
+
+#[test]
 fn rebox_restores_clean_character_italic_kern_before_infinite_glue() {
     // TeX82 §715 restores the difference between a clean character's
     // natural width and the width retained after §720 removed its italic

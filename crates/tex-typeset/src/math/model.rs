@@ -474,7 +474,19 @@ impl NativeNodeTransaction {
         let mut logical = Vec::with_capacity(2);
         self.collect_nodes_bounded(list, &mut logical, 3);
         match logical.as_slice() {
-            [character @ MathNode::Char { .. }, MathNode::Kern { .. }] => Some(**character),
+            [character, kern]
+                if node_is_char(character)
+                    && matches!(
+                        kern,
+                        MathNode::Kern { .. }
+                            | MathNode::NativeSource {
+                                evidence: NativeNodeEvidence::Kern(_),
+                                ..
+                            }
+                    ) =>
+            {
+                Some(**character)
+            }
             _ => None,
         }
     }

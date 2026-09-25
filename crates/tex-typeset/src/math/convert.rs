@@ -1079,7 +1079,8 @@ fn clean_hlist(ctx: &mut Context<'_, impl MathTypesetState>, list: FrozenHList) 
     // the exact character-plus-kern case after hpack has fixed the box
     // dimensions. This is semantic list ownership, not showbox normalization:
     // later consumers see the one-character payload while the packed width
-    // still includes the removed italic correction.
+    // still includes the removed kern. This also applies to a source box
+    // whose character and kern are retained by page-arena coordinates.
     if let Some(character) = ctx.layout.trivial_character_before_kern(boxed.list) {
         boxed.list = ctx.layout.hlist([character]);
     }
