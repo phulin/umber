@@ -622,7 +622,7 @@ materializing them.
 ## Dated-source parity rollout (2023–2026)
 
 The first executable tier is local source-tree parity, using the existing
-native file provider and format codec. It does not depend on deploying the
+packed-distribution provider and format codec. It does not depend on deploying the
 proposed package mirror or implementing the public `--texlive` selector.
 One modern pdfTeX oracle builds fresh formats alongside Umber for every
 selected source snapshot. Historical Web2C formats are never imported.

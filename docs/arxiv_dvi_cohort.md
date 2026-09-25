@@ -45,8 +45,10 @@ package archives from another local cache only after verifying their identities.
 It excludes architecture packages, documentation, and package sources. Format
 preparation derives the full `language.dat` from that database and uses
 stable LaTeX inputs for both engines. Each engine receives its own native
-format image; the existing local resource provider supplies the selected
-runtime. This is a local parity workflow, not the proposed public `--texlive`
+format image. Preparation also packages the complete selected TeX and font
+runtime, with stable LaTeX lookup precedence and no `latex-dev` fallback.
+Umber loads that explicit local catalog; paper runs do not depend on
+recursive TeX search paths in the native file resolver. This is a local parity workflow, not the proposed public `--texlive`
 package-mirror frontend.
 
 Then qualify and compare the complete source bundles:
@@ -79,7 +81,10 @@ scripts/check-tools.sh texlive-parity-tools
 They test source acquisition and corruption rejection, generated format
 configuration and provenance, and corpus routing/resume/result classification.
 Their mocked engines do not establish TeX conformance; the live exact DVI
-comparisons do.
+comparisons do. Each successful Umber run also records consumed inputs. The
+runner checks common input bytes against the reference recorder and verifies
+additional reads against the selected source tree or paper archive. Interrupted
+attempts remain available beside the resumed capture.
 
 ## Fixed-2026 development-kernel experiment
 
