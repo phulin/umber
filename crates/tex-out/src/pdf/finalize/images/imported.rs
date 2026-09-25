@@ -112,6 +112,8 @@ pub(in crate::pdf::finalize) fn imported_pdf_page_matrix(
     };
     let width_scale = scaled_ratio_number(width, natural_width)?;
     let height_scale = scaled_ratio_number(total_height, natural_height)?;
+    // PDF /Rotate is clockwise in a coordinate system whose y axis points
+    // up. Compose pdfTeX's pdftoepdf.cc page rotation with placement here.
     let (x_offset, y_offset) = match rotation {
         PdfPageRotationInput::None => (
             scaled_product_divide(width, page_box.left, natural_width)?
@@ -121,7 +123,7 @@ pub(in crate::pdf::finalize) fn imported_pdf_page_matrix(
                 .checked_neg()
                 .ok_or(PdfBuildError::PageGeometryOverflow)?,
         ),
-        PdfPageRotationInput::Clockwise90 => (
+        PdfPageRotationInput::Clockwise270 => (
             scaled_product_divide(width, page_box.top, natural_width)?,
             scaled_product_divide(total_height, page_box.left, natural_height)?
                 .checked_neg()
@@ -131,7 +133,7 @@ pub(in crate::pdf::finalize) fn imported_pdf_page_matrix(
             scaled_product_divide(width, page_box.right, natural_width)?,
             scaled_product_divide(total_height, page_box.top, natural_height)?,
         ),
-        PdfPageRotationInput::Clockwise270 => (
+        PdfPageRotationInput::Clockwise90 => (
             scaled_product_divide(width, page_box.bottom, natural_width)?
                 .checked_neg()
                 .ok_or(PdfBuildError::PageGeometryOverflow)?,
@@ -147,7 +149,7 @@ pub(in crate::pdf::finalize) fn imported_pdf_page_matrix(
     let zero = PdfNumber::new(0, 0)?;
     let (a, b, c, d) = match rotation {
         PdfPageRotationInput::None => (width_scale, zero, zero, height_scale),
-        PdfPageRotationInput::Clockwise90 => {
+        PdfPageRotationInput::Clockwise270 => {
             (zero, height_scale, negate_pdf_number(width_scale)?, zero)
         }
         PdfPageRotationInput::UpsideDown => (
@@ -156,7 +158,7 @@ pub(in crate::pdf::finalize) fn imported_pdf_page_matrix(
             zero,
             negate_pdf_number(height_scale)?,
         ),
-        PdfPageRotationInput::Clockwise270 => {
+        PdfPageRotationInput::Clockwise90 => {
             (zero, negate_pdf_number(height_scale)?, width_scale, zero)
         }
     };

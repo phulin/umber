@@ -121,131 +121,65 @@ fn imported_pdf_form_bbox_preserves_nonzero_page_coordinates() {
 }
 
 #[test]
-fn imported_pdf_matrix_selects_scaled_page_box_boundaries_for_each_rotation() {
-    let page_box = super::super::PdfPageBoxInput {
-        left: Scaled::from_raw(2 * Scaled::UNITY),
-        bottom: Scaled::from_raw(-3 * Scaled::UNITY),
-        right: Scaled::from_raw(12 * Scaled::UNITY),
-        top: Scaled::from_raw(23 * Scaled::UNITY),
-    };
-    let width = page_box.right.checked_sub(page_box.left).expect("width");
-    let height = page_box.top.checked_sub(page_box.bottom).expect("height");
+fn imported_page_corners_follow_clockwise_pdf_rotation_and_destination_scaling() {
+    // Corner order is lower-left, lower-right, upper-right, upper-left.
+    // These permutations describe visible clockwise rotation, independently
+    // of the matrix coefficients (PDF /Rotate; pdftoepdf.cc::write_epdf).
     let cases = [
-        (
-            PdfPageRotationInput::None,
-            [
-                scaled_to_bp_number_checked(page_box.left.checked_neg().expect("negative left"), 4)
-                    .expect("left"),
-                scaled_to_bp_number_checked(
-                    page_box.bottom.checked_neg().expect("negative bottom"),
-                    4,
-                )
-                .expect("bottom"),
-            ],
-        ),
+        (PdfPageRotationInput::None, [[0, 0], [1, 0], [1, 1], [0, 1]]),
         (
             PdfPageRotationInput::Clockwise90,
-            [
-                scaled_to_bp_number_checked(page_box.top, 4).expect("top"),
-                scaled_to_bp_number_checked(page_box.left.checked_neg().expect("negative left"), 4)
-                    .expect("left"),
-            ],
+            [[0, 1], [0, 0], [1, 0], [1, 1]],
         ),
         (
             PdfPageRotationInput::UpsideDown,
-            [
-                scaled_to_bp_number_checked(page_box.right, 4).expect("right"),
-                scaled_to_bp_number_checked(page_box.top, 4).expect("top"),
-            ],
+            [[1, 1], [0, 1], [0, 0], [1, 0]],
         ),
         (
             PdfPageRotationInput::Clockwise270,
-            [
-                scaled_to_bp_number_checked(
-                    page_box.bottom.checked_neg().expect("negative bottom"),
-                    4,
-                )
-                .expect("bottom"),
-                scaled_to_bp_number_checked(page_box.right, 4).expect("right"),
-            ],
+            [[1, 0], [1, 1], [0, 1], [0, 0]],
         ),
     ];
-    for (rotation, translation) in cases {
-        let matrix = imported_pdf_page_matrix(
-            Scaled::from_raw(0),
-            Scaled::from_raw(0),
-            if rotation_swaps_axes(rotation) {
-                height
-            } else {
-                width
-            },
-            if rotation_swaps_axes(rotation) {
-                width
-            } else {
-                height
-            },
-            page_box,
-            rotation,
-            4,
-        )
-        .expect("valid imported page matrix");
-        assert_eq!([matrix[4], matrix[5]], translation);
-    }
-}
-
-#[test]
-fn imported_pdf_matrix_scales_rotated_axes_in_the_destination_order() {
+    let pt = |value| Scaled::from_raw(value * Scaled::UNITY);
     let page_box = super::super::PdfPageBoxInput {
-        left: Scaled::from_raw(2 * Scaled::UNITY),
-        bottom: Scaled::from_raw(-3 * Scaled::UNITY),
-        right: Scaled::from_raw(12 * Scaled::UNITY),
-        top: Scaled::from_raw(23 * Scaled::UNITY),
+        left: pt(2),
+        bottom: pt(-3),
+        right: pt(12),
+        top: pt(23),
     };
-    let width = page_box.right.checked_sub(page_box.left).expect("width");
-    let height = page_box.top.checked_sub(page_box.bottom).expect("height");
-    let twice = |value: Scaled| Scaled::from_raw(value.raw().checked_mul(2).expect("twice"));
-    let three_times =
-        |value: Scaled| Scaled::from_raw(value.raw().checked_mul(3).expect("three times"));
-
-    let clockwise90 = imported_pdf_page_matrix(
-        Scaled::from_raw(0),
-        Scaled::from_raw(0),
-        twice(height),
-        three_times(width),
-        page_box,
-        PdfPageRotationInput::Clockwise90,
-        4,
-    )
-    .expect("valid clockwise-90 matrix");
-    assert_eq!(
-        clockwise90[..4],
-        [
-            PdfNumber::new(0, 0).expect("zero"),
-            PdfNumber::new(3, 0).expect("height scale"),
-            PdfNumber::new(-2, 0).expect("width scale"),
-            PdfNumber::new(0, 0).expect("zero"),
-        ]
-    );
-
-    let clockwise270 = imported_pdf_page_matrix(
-        Scaled::from_raw(0),
-        Scaled::from_raw(0),
-        twice(height),
-        three_times(width),
-        page_box,
-        PdfPageRotationInput::Clockwise270,
-        4,
-    )
-    .expect("valid clockwise-270 matrix");
-    assert_eq!(
-        clockwise270[..4],
-        [
-            PdfNumber::new(0, 0).expect("zero"),
-            PdfNumber::new(-3, 0).expect("height scale"),
-            PdfNumber::new(2, 0).expect("width scale"),
-            PdfNumber::new(0, 0).expect("zero"),
-        ]
-    );
+    let bp_per_pt = 72.0 / 72.27;
+    for (rotation, corners) in cases {
+        let (width, height) = if rotation_swaps_axes(rotation) {
+            (52, 30)
+        } else {
+            (20, 78)
+        };
+        let matrix =
+            imported_pdf_page_matrix(pt(7), pt(-5), pt(width), pt(height), page_box, rotation, 4)
+                .expect("valid imported page matrix");
+        let [a, b, c, d, e, f] =
+            matrix.map(|n| n.coefficient() as f64 / 10_f64.powi(i32::from(n.decimal_places())));
+        for ([x, y], [u, v]) in [[2, -3], [12, -3], [12, 23], [2, 23]]
+            .into_iter()
+            .zip(corners)
+        {
+            let actual = [
+                (a * f64::from(x) + c * f64::from(y)) * bp_per_pt + e,
+                (b * f64::from(x) + d * f64::from(y)) * bp_per_pt + f,
+            ];
+            let expected = [
+                f64::from(7 + u * width) * bp_per_pt,
+                f64::from(-5 + v * height) * bp_per_pt,
+            ];
+            for axis in 0..2 {
+                // Only the emitted translation is rounded to four decimals.
+                assert!(
+                    (actual[axis] - expected[axis]).abs() <= 0.00005,
+                    "{rotation:?} corner ({x}, {y}): {actual:?} != {expected:?}"
+                );
+            }
+        }
+    }
 }
 
 #[test]
