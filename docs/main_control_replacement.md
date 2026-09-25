@@ -480,7 +480,7 @@ keeps physical source coordinates in a sparse cold sidecar, so ordinary word
 delivery does not construct diagnostic ranges. Resource suspension detaches handle-free words and coordinates, and
 resume admits fresh input, macro, argument, and invocation chunks at the exact
 portable cursors. Runtime chunk identities never enter the continuation or
-schema-12 format DTOs. Live macro meaning and diagnostic reads admit one
+schema-13 format DTOs. Live macro meaning and diagnostic reads admit one
 definition owner at macro entry; replacement delivery borrows its packed tail
 directly without reconstructing a view or changing its reference count.
 Transaction marks remain for `umber2-awgc.4.2`.

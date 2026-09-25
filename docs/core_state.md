@@ -88,13 +88,13 @@ cursor. Source levels retain the exact 64-bit physical cursor required for
 large inputs and diagnostic reconstruction. Detached continuations remain
 handle-free and reconstruct fresh frames from their portable identity and
 token position. Runtime frames derive no serialization and cannot enter
-schema-12 formats. Foreign and stale spans reject at arena admission; admitted
+schema-13 formats. Foreign and stale spans reject at arena admission; admitted
 traversal performs no repeated generation lookup. Macro-body and argument
 delivery now use admitted 64-record macro chunks, 16-byte argument-span
 coordinates, 48-byte activations, and reusable argument/invocation chunks.
 The packed macro cache owns no semantic child by itself: the environment root
 remains authoritative until one command-level chunk admission retains the live
-token and provenance closure. Continuation and schema-12 DTOs remain
+token and provenance closure. Continuation and schema-13 DTOs remain
 handle-free and reconstruct fresh runtime chunks.
 
 An incremental session uses the external store's optional prior slot and one
@@ -413,7 +413,7 @@ duplicated there nor reconstructed through their ordinary mutation APIs.
 Environment references are checked against the decoded frozen prefixes before
 either the base or its stores are published.
 
-The schema-12 publisher is structurally separate from the test-only legacy DTO
+The schema-13 publisher is structurally separate from the test-only legacy DTO
 restorer. Operation-level test instrumentation proves that normal loading does
 not remap detached graph keys, reseal node semantic identities, or replay raw
 environment assignments. Loaded-base mutation remains ordinary groupable and

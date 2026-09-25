@@ -148,7 +148,7 @@ before running the builder.
 
 Byte-exact DVI reference work must not load the TeX Live release's pregenerated
 `pdflatex.fmt`: that image can embed a different LaTeX program from Umber's
-schema-12 format even when both are labeled TeX Live 2026. Primary provisioning
+schema-13 format even when both are labeled TeX Live 2026. Primary provisioning
 therefore builds `target/pdftex14029-reference-format/pdflatex.fmt` with the
 pinned clean pdfTeX 1.40.29 oracle, `pdflatex-dev` lookup profile, fixed clock,
 and the exact pdfLaTeX records in `tests/latex-source.lock`. The recorder rejects
