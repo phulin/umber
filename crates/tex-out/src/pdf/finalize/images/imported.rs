@@ -51,13 +51,10 @@ pub(in crate::pdf::finalize) fn import_pdf_page(
             object: PdfObject::FormXObject {
                 dictionary,
                 data: imported.data,
-                // A Form's BBox is expressed in form space and is clipped
-                // before its Matrix is applied. Preserve the selected page's
-                // coordinates here. Imported placement transforms are emitted
-                // at the page-content inclusion site because pdf_writer's
-                // FormXObject matrix API narrows operands through f32.
+                // pdfTeX's pdftoepdf.cc writes the original page box and the
+                // rotation on the Form, before page-content placement.
                 bbox: imported_pdf_form_bbox(page_box)?,
-                matrix: None,
+                matrix: imported_pdf_form_matrix(page_box, image.metadata)?,
             },
         },
         dependencies: imported.dependencies,
@@ -65,15 +62,64 @@ pub(in crate::pdf::finalize) fn import_pdf_page(
     })
 }
 
+pub(in crate::pdf::finalize) fn imported_pdf_form_matrix(
+    page_box: crate::pdf::PdfPageBoxInput,
+    metadata: PdfImageMetadataInput,
+) -> Result<Option<[PdfNumber; 6]>, PdfBuildError> {
+    let PdfImageMetadataInput::PdfPage { rotation, .. } = metadata else {
+        return Err(PdfBuildError::InvalidPdfPage(
+            "expected PDF page metadata".to_owned(),
+        ));
+    };
+    let [left, bottom, right, top] = page_box.source.map(f64::from_bits);
+    let (linear, offset) = match rotation {
+        PdfPageRotationInput::None => return Ok(None),
+        PdfPageRotationInput::Clockwise90 => ([0, -1, 1, 0], [left - bottom, bottom + right]),
+        PdfPageRotationInput::UpsideDown => ([-1, 0, 0, -1], [left + right, bottom + top]),
+        PdfPageRotationInput::Clockwise270 => ([0, 1, -1, 0], [left + top, bottom - left]),
+    };
+    let mut matrix = [PdfNumber::new(0, 0)?; 6];
+    for (index, coefficient) in linear.into_iter().enumerate() {
+        matrix[index] = PdfNumber::new(coefficient, 0)?;
+    }
+    for (index, coordinate) in offset.into_iter().enumerate() {
+        matrix[index + 4] = pdftex_source_number(coordinate)?;
+    }
+    Ok(Some(matrix))
+}
+
 pub(in crate::pdf::finalize) fn imported_pdf_form_bbox(
     page_box: crate::pdf::PdfPageBoxInput,
 ) -> Result<[PdfNumber; 4], PdfBuildError> {
     Ok([
-        scaled_to_bp_number_checked(page_box.left, 4)?,
-        scaled_to_bp_number_checked(page_box.bottom, 4)?,
-        scaled_to_bp_number_checked(page_box.right, 4)?,
-        scaled_to_bp_number_checked(page_box.top, 4)?,
+        pdftex_source_number(f64::from_bits(page_box.source[0]))?,
+        pdftex_source_number(f64::from_bits(page_box.source[1]))?,
+        pdftex_source_number(f64::from_bits(page_box.source[2]))?,
+        pdftex_source_number(f64::from_bits(page_box.source[3]))?,
     ])
+}
+
+/// `pdftoepdf.cc::write_epdf` formats each final source-space operand with
+/// `%.8f`. Format after double-precision box arithmetic, not before it.
+fn pdftex_source_number(value: f64) -> Result<PdfNumber, PdfBuildError> {
+    if !value.is_finite() {
+        return Err(PdfBuildError::PageGeometryOverflow);
+    }
+    let decimal = format!("{value:.8}");
+    let negative = decimal.starts_with('-');
+    let mut coefficient = 0_i64;
+    for digit in decimal.bytes().filter(|digit| digit.is_ascii_digit()) {
+        coefficient = coefficient
+            .checked_mul(10)
+            .and_then(|value| value.checked_add(i64::from(digit - b'0')))
+            .ok_or(PdfBuildError::PageGeometryOverflow)?;
+    }
+    if negative {
+        coefficient = coefficient
+            .checked_neg()
+            .ok_or(PdfBuildError::PageGeometryOverflow)?;
+    }
+    PdfNumber::new(coefficient, 8).map_err(Into::into)
 }
 
 pub(in crate::pdf::finalize) fn rotation_swaps_axes(rotation: PdfPageRotationInput) -> bool {
@@ -81,6 +127,19 @@ pub(in crate::pdf::finalize) fn rotation_swaps_axes(rotation: PdfPageRotationInp
         rotation,
         PdfPageRotationInput::Clockwise90 | PdfPageRotationInput::Clockwise270
     )
+}
+
+pub(in crate::pdf::finalize) fn imported_pdf_page_origin(
+    page_box: crate::pdf::PdfPageBoxInput,
+    decimal_digits: i32,
+) -> Result<[PdfNumber; 2], PdfBuildError> {
+    Ok([
+        negate_pdf_number(scaled_to_bp_number_checked(page_box.left, decimal_digits)?)?,
+        negate_pdf_number(scaled_to_bp_number_checked(
+            page_box.bottom,
+            decimal_digits,
+        )?)?,
+    ])
 }
 
 pub(in crate::pdf::finalize) fn imported_pdf_page_matrix(
@@ -112,63 +171,16 @@ pub(in crate::pdf::finalize) fn imported_pdf_page_matrix(
     };
     let width_scale = scaled_ratio_number(width, natural_width)?;
     let height_scale = scaled_ratio_number(total_height, natural_height)?;
-    // PDF /Rotate is clockwise in a coordinate system whose y axis points
-    // up. Compose pdfTeX's pdftoepdf.cc page rotation with placement here.
-    let (x_offset, y_offset) = match rotation {
-        PdfPageRotationInput::None => (
-            scaled_product_divide(width, page_box.left, natural_width)?
-                .checked_neg()
-                .ok_or(PdfBuildError::PageGeometryOverflow)?,
-            scaled_product_divide(total_height, page_box.bottom, natural_height)?
-                .checked_neg()
-                .ok_or(PdfBuildError::PageGeometryOverflow)?,
-        ),
-        PdfPageRotationInput::Clockwise270 => (
-            scaled_product_divide(width, page_box.top, natural_width)?,
-            scaled_product_divide(total_height, page_box.left, natural_height)?
-                .checked_neg()
-                .ok_or(PdfBuildError::PageGeometryOverflow)?,
-        ),
-        PdfPageRotationInput::UpsideDown => (
-            scaled_product_divide(width, page_box.right, natural_width)?,
-            scaled_product_divide(total_height, page_box.top, natural_height)?,
-        ),
-        PdfPageRotationInput::Clockwise90 => (
-            scaled_product_divide(width, page_box.bottom, natural_width)?
-                .checked_neg()
-                .ok_or(PdfBuildError::PageGeometryOverflow)?,
-            scaled_product_divide(total_height, page_box.right, natural_height)?,
-        ),
-    };
-    let x = base_x
-        .checked_add(x_offset)
-        .ok_or(PdfBuildError::PageGeometryOverflow)?;
-    let y = base_y
-        .checked_add(y_offset)
-        .ok_or(PdfBuildError::PageGeometryOverflow)?;
+    // pdfTeX places the selected box using a scale and a subsequent origin
+    // translation. Its page rotation remains on the imported Form object.
     let zero = PdfNumber::new(0, 0)?;
-    let (a, b, c, d) = match rotation {
-        PdfPageRotationInput::None => (width_scale, zero, zero, height_scale),
-        PdfPageRotationInput::Clockwise270 => {
-            (zero, height_scale, negate_pdf_number(width_scale)?, zero)
-        }
-        PdfPageRotationInput::UpsideDown => (
-            negate_pdf_number(width_scale)?,
-            zero,
-            zero,
-            negate_pdf_number(height_scale)?,
-        ),
-        PdfPageRotationInput::Clockwise90 => {
-            (zero, negate_pdf_number(height_scale)?, width_scale, zero)
-        }
-    };
     Ok([
-        a,
-        b,
-        c,
-        d,
-        scaled_to_bp_number_checked(x, decimal_digits)?,
-        scaled_to_bp_number_checked(y, decimal_digits)?,
+        width_scale,
+        zero,
+        zero,
+        height_scale,
+        scaled_to_bp_number_checked(base_x, decimal_digits)?,
+        scaled_to_bp_number_checked(base_y, decimal_digits)?,
     ])
 }
 

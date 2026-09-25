@@ -1468,6 +1468,12 @@ mod tests {
                 bottom: Scaled::from_raw(0),
                 right: Scaled::from_raw(Scaled::UNITY),
                 top: Scaled::from_raw(Scaled::UNITY),
+                source: [
+                    0.0_f64.to_bits(),
+                    0.0_f64.to_bits(),
+                    0.996264_f64.to_bits(),
+                    0.996264_f64.to_bits(),
+                ],
             };
             stores
                 .allocate_pdf_external_image(

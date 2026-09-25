@@ -474,6 +474,10 @@ pub(in crate::pdf::finalize) fn append_content_objects(
                                         rotation,
                                         parameters.decimal_digits,
                                     )?,
+                                    origin: imported_pdf_page_origin(
+                                        page_box,
+                                        parameters.decimal_digits,
+                                    )?,
                                     name,
                                 },
                                 PdfImageMetadataInput::Raster { .. } => {
@@ -753,6 +757,10 @@ pub(in crate::pdf::finalize) fn append_content_objects(
                                         total_image_height,
                                         page_box,
                                         rotation,
+                                        parameters.decimal_digits,
+                                    )?,
+                                    origin: imported_pdf_page_origin(
+                                        page_box,
                                         parameters.decimal_digits,
                                     )?,
                                     name,

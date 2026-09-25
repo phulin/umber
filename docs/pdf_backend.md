@@ -439,8 +439,9 @@ scanner accepts only a complete PDF number token (an optional sign, digits with
 an optional decimal point, and at least one digit), and accumulates its
 integer and fractional parts in a stack-only `f64` loop matching xpdf's
 `Lexer::getObj` path. It does not admit exponents, non-finite spellings, or
-trailing bytes. Page-box coordinates follow xpdf's `Page::readBox`: each
-value is clamped to `[-1e9, 1e9]` before endpoint ordering. At image admission,
+trailing bytes. Page-box coordinates follow xpdf's `PageAttrs::readBox`: each
+value is clamped to `[-1e9, 1e9]`, endpoints are ordered, and
+`PageAttrs::clipBoxes` clips Crop, Bleed, Trim, and Art boxes to MediaBox. At image admission,
 pdfTeX's `pdftoepdf.cc::read_pdf_info` origin and positive extent are computed
 in floating point and `writeimg.c::bp2int` rounds each independently with
 `one_hundred_bp / 100.0`; checked scaled conversion and addition preserve the
@@ -448,6 +449,19 @@ destination range without wrapping. Copied resource numbers use the same
 scanner, then the existing `convertNumToPDF` six-place quantization seam, so a
 long valid input fraction is never first quantized to the nine-place output
 model.
+
+The effective selected page box has two representations: TeX scaled
+coordinates for dimension queries and the selected PDF `f64` coordinate bits
+for the imported Form `/BBox` and rotation `/Matrix`. The latter remain exact
+until pdfTeX's eight-place formatting, including rotation sums and
+differences. In
+`pdftoepdf.cc::write_epdf`, page rotation belongs to the Form, while the page
+content stream applies scaling and a separate translation by the selected box
+origin. Keeping those transforms separate avoids rounding their composed
+translation to one TeX scaled coordinate. Form Matrix operands use fixed PDF
+numbers directly because `pdf_writer`'s matrix helper narrows them to `f32`.
+Imported-page records are runtime image state and are absent from saved TeX
+formats.
 
 The source payload remains the admitted `tex_content::SharedBytes` owner from
 VFS or World through image inspection, host capability replay, `PdfState`,

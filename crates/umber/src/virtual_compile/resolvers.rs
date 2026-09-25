@@ -442,6 +442,7 @@ fn parse_pdf_image(
         bottom,
         right,
         top,
+        source: coordinates.map(f64::to_bits),
     };
     let rotation = inspected.rotation;
     let box_width = page_box.right - page_box.left;
@@ -1245,6 +1246,12 @@ mod tests {
         // extent, also one point, so the reconstructed right endpoint is two.
         assert_eq!(page_box.left.raw(), 1);
         assert_eq!(page_box.right.raw(), 2);
+        assert_eq!(
+            page_box
+                .source
+                .map(|bits| (f64::from_bits(bits) * 100_000_000.0).round() as i64),
+            [1_000, 0, 2_000, 100_000_000]
+        );
         assert_eq!(source.natural_width.raw(), 2 - 1);
     }
 }

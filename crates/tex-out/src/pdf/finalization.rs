@@ -222,6 +222,8 @@ pub struct PdfPageBoxInput {
     pub bottom: Scaled,
     pub right: Scaled,
     pub top: Scaled,
+    /// Exact `f64` bits of the effective box observed by xpdf.
+    pub source: [u64; 4],
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

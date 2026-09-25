@@ -590,6 +590,7 @@ fn image_metadata(metadata: PdfExternalImageMetadata) -> PdfImageMetadataInput {
                 bottom: page_box.bottom,
                 right: page_box.right,
                 top: page_box.top,
+                source: page_box.source,
             },
             rotation: match rotation {
                 tex_state::PdfPageRotation::None => PdfPageRotationInput::None,

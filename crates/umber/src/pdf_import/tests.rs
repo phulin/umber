@@ -195,6 +195,66 @@ fn page_box_clamps_each_coordinate_before_ordering() {
 }
 
 #[test]
+fn crop_box_is_clipped_to_media_box_before_pdf_inclusion() {
+    // xpdf PageAttrs::clipBoxes runs before pdftoepdf.cc reads getCropBox().
+    let mut document = ValidPdfFixture::new("1.7").expect("create PDF");
+    document
+        .add_dictionary(
+            1,
+            Dictionary::new()
+                .entry("Type", name("Catalog"))
+                .entry("Pages", reference(2)),
+        )
+        .expect("catalog");
+    document
+        .add_dictionary(
+            2,
+            Dictionary::new()
+                .entry("Type", name("Pages"))
+                .entry("Kids", array([reference(3)]))
+                .entry("Count", b"1"),
+        )
+        .expect("pages");
+    document
+        .add_dictionary(
+            3,
+            Dictionary::new()
+                .entry("Type", name("Page"))
+                .entry("Parent", reference(2))
+                .entry("MediaBox", b"[0 0 572.59848 507.40156]")
+                .entry("CropBox", b"[0 0 572.598 507.402]"),
+        )
+        .expect("page");
+    document
+        .set_trailer_entry("Root", reference(1))
+        .expect("trailer");
+    let bytes = document.finish().expect("serialize PDF");
+    let crop = inspect_pdf_page(
+        bytes.clone().into(),
+        &PdfImagePageSelection::Number(1),
+        PdfImagePageBox::Crop,
+    )
+    .expect("crop box");
+    let output_coordinates = |box_coordinates: [f64; 4]| {
+        box_coordinates.map(|value| (value * 100_000_000.0).round() as i64)
+    };
+    assert_eq!(
+        output_coordinates(crop.page_box),
+        [0, 0, 57_259_800_000, 50_740_156_000]
+    );
+    let media = inspect_pdf_page(
+        bytes.into(),
+        &PdfImagePageSelection::Number(1),
+        PdfImagePageBox::Media,
+    )
+    .expect("media box");
+    assert_eq!(
+        output_coordinates(media.page_box),
+        [0, 0, 57_259_848_000, 50_740_156_000]
+    );
+}
+
+#[test]
 fn page_box_scaled_conversion_rounds_ties_away_from_zero() {
     let scale = 6_578_176.0 / 100.0;
     let tie = 0.5 / scale;

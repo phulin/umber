@@ -56,12 +56,14 @@ pub(crate) fn inspect_pdf_page(
     let pdf = load_pdf(bytes)?;
     let page_number = selected_page_number(&pdf, selection)?;
     let page = selected_page(&pdf, page_number)?;
+    let media_box = inherited_rect(page, b"MediaBox", source_bytes.as_ref())?
+        .unwrap_or([0.0, 0.0, 612.0, 792.0]);
     let keys: &[&[u8]] = match page_box {
-        PdfImagePageBox::Media => &[b"MediaBox"],
-        PdfImagePageBox::Crop => &[b"CropBox", b"MediaBox"],
-        PdfImagePageBox::Bleed => &[b"BleedBox", b"CropBox", b"MediaBox"],
-        PdfImagePageBox::Trim => &[b"TrimBox", b"CropBox", b"MediaBox"],
-        PdfImagePageBox::Art => &[b"ArtBox", b"CropBox", b"MediaBox"],
+        PdfImagePageBox::Media => &[],
+        PdfImagePageBox::Crop => &[b"CropBox"],
+        PdfImagePageBox::Bleed => &[b"BleedBox", b"CropBox"],
+        PdfImagePageBox::Trim => &[b"TrimBox", b"CropBox"],
+        PdfImagePageBox::Art => &[b"ArtBox", b"CropBox"],
     };
     let rect = keys
         .iter()
@@ -73,7 +75,19 @@ pub(crate) fn inspect_pdf_page(
             },
         )
         .transpose()?
-        .ok_or_else(|| "selected PDF page box is missing".to_owned())?;
+        .unwrap_or(media_box);
+    // xpdf PageAttrs::clipBoxes clips every non-media page box to MediaBox
+    // before pdftoepdf.cc observes it. The clamp is per coordinate.
+    let rect = if page_box == PdfImagePageBox::Media {
+        rect
+    } else {
+        [
+            rect[0].clamp(media_box[0], media_box[2]),
+            rect[1].clamp(media_box[1], media_box[3]),
+            rect[2].clamp(media_box[0], media_box[2]),
+            rect[3].clamp(media_box[1], media_box[3]),
+        ]
+    };
     Ok(InspectedPdfPage {
         page_box: rect,
         rotation: inherited_rotation(page)?,

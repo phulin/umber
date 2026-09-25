@@ -201,6 +201,34 @@ fn image_attributes_precede_the_imported_page_group() {
 }
 
 #[test]
+fn imported_form_matrix_serializes_eight_place_source_translation() {
+    let mut input = sample_input(&[1, 2, 3, 4, 5]);
+    let number = |coefficient, places| PdfNumber::new(coefficient, places).expect("PDF number");
+    input.objects.push(PdfIndirectObject {
+        id: id(6),
+        object: PdfObject::FormXObject {
+            dictionary: dictionary([("Resources", PdfValue::Dictionary(PdfDictionary::new()))]),
+            data: Vec::new(),
+            bbox: [number(0, 0); 4],
+            matrix: Some([
+                number(0, 0),
+                number(-1, 0),
+                number(1, 0),
+                number(0, 0),
+                number(-12_811_609_000, 8),
+                number(72_981_400_000, 8),
+            ]),
+        },
+    });
+    let bytes = input
+        .validate()
+        .expect("valid imported form")
+        .to_pdf_bytes()
+        .expect("serialize imported form");
+    assert!(find_bytes(&bytes, b"/Matrix[0 -1 1 0 -128.11609 729.814]").is_some());
+}
+
+#[test]
 fn compact_serialization_is_deterministic_and_independently_parseable() {
     let first = sample_document(&[1, 2, 3, 4, 5]);
     let reordered = sample_document(&[5, 3, 1, 4, 2]);

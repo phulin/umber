@@ -1335,11 +1335,12 @@ fn imported_pdf_content_operation_emits_fixed_cm_operands() {
             number(-891018, 3),
             number(-1332506, 3),
         ],
+        origin: [number(-10, 0), number(20, 0)],
         name: b"Fm1".to_vec(),
     }]);
     assert_eq!(
         String::from_utf8(bytes).expect("ASCII content"),
-        "q\n0 1 -1 0 -891.018 -1332.506 cm\n/Fm1 Do\nQ"
+        "q\n0 1 -1 0 -891.018 -1332.506 cm\n1 0 0 1 -10 20 cm\n/Fm1 Do\nQ"
     );
 }
 
@@ -1369,11 +1370,12 @@ fn imported_pdf_content_operation_subtracts_the_retained_fixed_origin() {
                 number(30, 0),
                 number(40, 0),
             ],
+            origin: [number(-2, 0), number(-3, 0)],
             name: b"Im1".to_vec(),
         },
     ]);
     assert_eq!(
         String::from_utf8(bytes).expect("ASCII content"),
-        "1 0 0 1 10 20 cm\nORIGIN\nq\n1 0 0 1 20 20 cm\n/Im1 Do\nQ"
+        "1 0 0 1 10 20 cm\nORIGIN\nq\n1 0 0 1 20 20 cm\n1 0 0 1 -2 -3 cm\n/Im1 Do\nQ"
     );
 }

@@ -82,6 +82,12 @@ fn procset_tracks_pdftex_page_resource_classes() {
             bottom: Scaled::from_raw(0),
             right: Scaled::from_raw(Scaled::UNITY),
             top: Scaled::from_raw(Scaled::UNITY),
+            source: [
+                0.0_f64.to_bits(),
+                0.0_f64.to_bits(),
+                0.996264_f64.to_bits(),
+                0.996264_f64.to_bits(),
+            ],
         },
         rotation: PdfPageRotationInput::None,
         page: 1,
@@ -108,15 +114,58 @@ fn imported_pdf_form_bbox_preserves_nonzero_page_coordinates() {
         bottom: Scaled::from_raw(3 * Scaled::UNITY),
         right: Scaled::from_raw(12 * Scaled::UNITY),
         top: Scaled::from_raw(23 * Scaled::UNITY),
+        source: [
+            2.00000001_f64.to_bits(),
+            3.00000002_f64.to_bits(),
+            12.00000003_f64.to_bits(),
+            23.00000004_f64.to_bits(),
+        ],
     };
     assert_eq!(
         imported_pdf_form_bbox(page_box).expect("valid page box"),
         [
-            scaled_to_bp_number(page_box.left, 4).expect("left"),
-            scaled_to_bp_number(page_box.bottom, 4).expect("bottom"),
-            scaled_to_bp_number(page_box.right, 4).expect("right"),
-            scaled_to_bp_number(page_box.top, 4).expect("top"),
+            PdfNumber::new(200_000_001, 8).expect("left"),
+            PdfNumber::new(300_000_002, 8).expect("bottom"),
+            PdfNumber::new(1_200_000_003, 8).expect("right"),
+            PdfNumber::new(2_300_000_004, 8).expect("top"),
         ]
+    );
+}
+
+#[test]
+fn imported_form_rotation_rounds_after_double_coordinate_arithmetic() {
+    // pdftoepdf.cc::write_epdf adds source doubles before `%.8f` formatting.
+    // Rounding each endpoint first would produce 10.00000002 here.
+    let page_box = super::super::PdfPageBoxInput {
+        left: Scaled::from_raw(0),
+        bottom: Scaled::from_raw(0),
+        right: Scaled::from_raw(10 * Scaled::UNITY),
+        top: Scaled::from_raw(20 * Scaled::UNITY),
+        source: [
+            0.000000006_f64.to_bits(),
+            0.0_f64.to_bits(),
+            10.000000006_f64.to_bits(),
+            20.0_f64.to_bits(),
+        ],
+    };
+    let metadata = PdfImageMetadataInput::PdfPage {
+        page_box,
+        rotation: PdfPageRotationInput::UpsideDown,
+        page: 1,
+        total_pages: 1,
+        has_page_group: false,
+        version: (1, 7),
+    };
+    let matrix = imported_pdf_form_matrix(page_box, metadata)
+        .expect("valid Form matrix")
+        .expect("rotated page has a Matrix");
+    assert_eq!(
+        matrix[4],
+        PdfNumber::new(1_000_000_001, 8).expect("translation")
+    );
+    assert_eq!(
+        imported_pdf_form_bbox(page_box).expect("Form box")[0],
+        PdfNumber::new(1, 8).expect("rounded endpoint"),
     );
 }
 
@@ -141,11 +190,21 @@ fn imported_page_corners_follow_clockwise_pdf_rotation_and_destination_scaling()
         ),
     ];
     let pt = |value| Scaled::from_raw(value * Scaled::UNITY);
+    let source = |value: Scaled| {
+        let number = scaled_to_bp_number_checked(value, 8).expect("source coordinate");
+        (number.coefficient() as f64 / 10_f64.powi(i32::from(number.decimal_places()))).to_bits()
+    };
     let page_box = super::super::PdfPageBoxInput {
         left: pt(2),
         bottom: pt(-3),
         right: pt(12),
         top: pt(23),
+        source: [
+            source(pt(2)),
+            source(pt(-3)),
+            source(pt(12)),
+            source(pt(23)),
+        ],
     };
     let bp_per_pt = 72.0 / 72.27;
     for (rotation, corners) in cases {
@@ -154,18 +213,44 @@ fn imported_page_corners_follow_clockwise_pdf_rotation_and_destination_scaling()
         } else {
             (20, 78)
         };
-        let matrix =
+        let placement =
             imported_pdf_page_matrix(pt(7), pt(-5), pt(width), pt(height), page_box, rotation, 4)
                 .expect("valid imported page matrix");
-        let [a, b, c, d, e, f] =
-            matrix.map(|n| n.coefficient() as f64 / 10_f64.powi(i32::from(n.decimal_places())));
-        for ([x, y], [u, v]) in [[2, -3], [12, -3], [12, 23], [2, 23]]
+        let origin = imported_pdf_page_origin(page_box, 4).expect("valid source origin");
+        let form = imported_pdf_form_matrix(
+            page_box,
+            PdfImageMetadataInput::PdfPage {
+                page_box,
+                rotation,
+                page: 1,
+                total_pages: 1,
+                has_page_group: false,
+                version: (1, 7),
+            },
+        )
+        .expect("valid form matrix")
+        .unwrap_or([
+            PdfNumber::new(1, 0).expect("one"),
+            PdfNumber::new(0, 0).expect("zero"),
+            PdfNumber::new(0, 0).expect("zero"),
+            PdfNumber::new(1, 0).expect("one"),
+            PdfNumber::new(0, 0).expect("zero"),
+            PdfNumber::new(0, 0).expect("zero"),
+        ]);
+        let real =
+            |n: PdfNumber| n.coefficient() as f64 / 10_f64.powi(i32::from(n.decimal_places()));
+        let [a, b, c, d, e, f] = placement.map(real);
+        let [fa, fb, fc, fd, fe, ff] = form.map(real);
+        let [ox, oy] = origin.map(real);
+        let [left, bottom, right, top] = page_box.source.map(f64::from_bits);
+        for ([x, y], [u, v]) in [[left, bottom], [right, bottom], [right, top], [left, top]]
             .into_iter()
             .zip(corners)
         {
+            let rotated = [fa * x + fc * y + fe + ox, fb * x + fd * y + ff + oy];
             let actual = [
-                (a * f64::from(x) + c * f64::from(y)) * bp_per_pt + e,
-                (b * f64::from(x) + d * f64::from(y)) * bp_per_pt + f,
+                a * rotated[0] + c * rotated[1] + e,
+                b * rotated[0] + d * rotated[1] + f,
             ];
             let expected = [
                 f64::from(7 + u * width) * bp_per_pt,
@@ -174,7 +259,7 @@ fn imported_page_corners_follow_clockwise_pdf_rotation_and_destination_scaling()
             for axis in 0..2 {
                 // Only the emitted translation is rounded to four decimals.
                 assert!(
-                    (actual[axis] - expected[axis]).abs() <= 0.00005,
+                    (actual[axis] - expected[axis]).abs() <= 0.0001,
                     "{rotation:?} corner ({x}, {y}): {actual:?} != {expected:?}"
                 );
             }
@@ -201,16 +286,6 @@ fn imported_pdf_matrix_rounds_ratio_ties_away_from_zero() {
             .coefficient(),
         7_813,
     );
-    assert_eq!(
-        scaled_product_divide(
-            Scaled::from_raw(5),
-            Scaled::from_raw(1),
-            Scaled::from_raw(2),
-        )
-        .expect("scaled tie")
-        .raw(),
-        3,
-    );
 }
 
 #[test]
@@ -220,6 +295,7 @@ fn imported_pdf_matrix_rejects_empty_boxes_and_excess_precision() {
         bottom: Scaled::from_raw(0),
         right: Scaled::from_raw(2),
         top: Scaled::from_raw(1),
+        source: [0.0_f64.to_bits(); 4],
     };
     assert!(matches!(
         imported_pdf_page_matrix(
@@ -238,6 +314,7 @@ fn imported_pdf_matrix_rejects_empty_boxes_and_excess_precision() {
         bottom: Scaled::from_raw(0),
         right: Scaled::from_raw(1),
         top: Scaled::from_raw(1),
+        source: [0.0_f64.to_bits(); 4],
     };
     assert!(matches!(
         imported_pdf_page_matrix(

@@ -150,13 +150,16 @@ impl std::fmt::Display for PdfExternalImageIdError {
 
 impl std::error::Error for PdfExternalImageIdError {}
 
-/// The selected PDF page box, already normalized into TeX scaled points.
+/// The selected PDF page box. Scaled coordinates serve TeX dimension queries;
+/// source coordinates retain pdfTeX's eight-decimal Form XObject precision.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct PdfPageBox {
     pub left: Scaled,
     pub bottom: Scaled,
     pub right: Scaled,
     pub top: Scaled,
+    /// Exact `f64` bits of the effective box observed by xpdf.
+    pub source: [u64; 4],
 }
 
 /// The inherited clockwise rotation of an imported PDF page.
@@ -4647,6 +4650,9 @@ fn external_image_fingerprint(
                 hasher.i32(page_box.bottom.raw());
                 hasher.i32(page_box.right.raw());
                 hasher.i32(page_box.top.raw());
+                for coordinate in page_box.source {
+                    hasher.u64(coordinate);
+                }
                 hasher.u8(rotation as u8);
                 hasher.u32(page);
                 hasher.u32(total_pages);
