@@ -381,8 +381,8 @@ impl EngineMode {
     pub const fn command_profile(self) -> tex_command::CommandProfile {
         match self {
             Self::Tex82 => tex_command::CommandProfile::TEX82,
-            Self::ETex | Self::Latex => tex_command::CommandProfile::ETEX26,
-            Self::PdfTex | Self::PdfLatex => tex_command::CommandProfile::PDFTEX14029,
+            Self::ETex => tex_command::CommandProfile::ETEX26,
+            Self::PdfTex | Self::Latex | Self::PdfLatex => tex_command::CommandProfile::PDFTEX14029,
         }
     }
 
@@ -411,7 +411,7 @@ impl EngineMode {
             Self::Tex82 => "3.141592653",
             Self::ETex => "2.6",
             Self::PdfTex => "1.40.29",
-            Self::Latex => "1",
+            Self::Latex => "1.40.29",
             Self::PdfLatex => "1.40.29",
         }
     }
@@ -457,12 +457,7 @@ impl EngineMode {
                 crate::pdftex::install_pdftex_layer(stores);
                 stores.enable_pdf_output();
             }
-            Self::Latex => {
-                tex_command::install_etex_expandable_primitives(stores);
-                tex_exec::install_etex_unexpandable_primitives(stores);
-                crate::install_latex_compatibility_layer(stores);
-            }
-            Self::PdfLatex => {
+            Self::Latex | Self::PdfLatex => {
                 tex_command::install_etex_expandable_primitives(stores);
                 tex_exec::install_etex_unexpandable_primitives(stores);
                 crate::pdftex::install_pdftex_layer(stores);
@@ -504,7 +499,7 @@ impl EngineMode {
     /// Whether this compatibility contract can publish PDF output.
     #[must_use]
     pub const fn supports_pdf_output(self) -> bool {
-        matches!(self, Self::PdfTex | Self::PdfLatex)
+        matches!(self, Self::PdfTex | Self::Latex | Self::PdfLatex)
     }
 }
 

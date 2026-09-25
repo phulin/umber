@@ -1729,36 +1729,31 @@ mod tests {
     }
 
     #[test]
-    fn pdftex_layer_is_visible_only_in_pdftex_mode() {
-        for (prepare, intentional_overlaps) in [
-            (StorePreparation::Tex, &[][..]),
-            (StorePreparation::Etex, &[][..]),
-            (StorePreparation::Latex, &["expanded", "ifincsname"][..]),
-        ] {
+    fn pdftex_layer_is_visible_in_pdftex_and_latex_modes() {
+        for prepare in [StorePreparation::Tex, StorePreparation::Etex] {
             with_pdftex_stores(|stores| {
                 prepare.apply(stores);
                 for name in pdftex_primitive_names() {
-                    if intentional_overlaps.contains(&name) {
-                        continue;
-                    }
                     let symbol = stores.intern(name);
                     assert_eq!(stores.meaning(symbol), Meaning::Undefined, "{name}");
                 }
             });
         }
 
-        with_pdftex_stores(|stores| {
-            prepare_pdftex_run_stores(stores);
-            for name in pdftex_primitive_names() {
-                let symbol = stores.intern(name);
-                assert_ne!(stores.meaning(symbol), Meaning::Undefined, "{name}");
-            }
-            let revision = stores.intern("pdftexrevision");
-            assert_eq!(
-                stores.meaning(revision),
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfTeXRevision),
-            );
-        });
+        for prepare in [StorePreparation::Pdftex, StorePreparation::Latex] {
+            with_pdftex_stores(|stores| {
+                prepare.apply(stores);
+                for name in pdftex_primitive_names() {
+                    let symbol = stores.intern(name);
+                    assert_ne!(stores.meaning(symbol), Meaning::Undefined, "{name}");
+                }
+                let revision = stores.intern("pdftexrevision");
+                assert_eq!(
+                    stores.meaning(revision),
+                    Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfTeXRevision),
+                );
+            });
+        }
     }
 
     #[test]
@@ -2204,11 +2199,7 @@ mod tests {
 
     #[test]
     fn pdftex_parameter_defaults_are_not_installed_in_other_modes() {
-        for prepare in [
-            StorePreparation::Tex,
-            StorePreparation::Etex,
-            StorePreparation::Latex,
-        ] {
+        for prepare in [StorePreparation::Tex, StorePreparation::Etex] {
             with_pdftex_stores(|stores| {
                 prepare.apply(stores);
                 for row in pdftex_parameters() {

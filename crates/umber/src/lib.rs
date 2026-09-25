@@ -742,23 +742,6 @@ pub fn install_pdftex_format_primitives<G>(
     Ok(())
 }
 
-fn register_tex_format_primitives<G>(
-    stores: &mut Universe<G>,
-) -> Result<(), tex_state::FormatError> {
-    tex_exec::register_unexpandable_primitives(stores)?;
-    tex_command::register_tex82_expandable_primitives(stores);
-    Ok(())
-}
-
-fn register_etex_format_primitives<G>(
-    stores: &mut Universe<G>,
-) -> Result<(), tex_state::FormatError> {
-    register_tex_format_primitives(stores)?;
-    tex_command::register_etex_expandable_primitives(stores);
-    tex_exec::register_etex_unexpandable_primitives(stores);
-    Ok(())
-}
-
 fn install_latex_compatibility_layer<G>(stores: &mut Universe<G>) {
     tex_command::install_latex_expandable_primitives(stores);
     let mut context = stores
@@ -802,17 +785,14 @@ fn install_plain_catcodes<G>(stores: &mut Universe<G>) {
 pub fn install_latex_format_primitives<G>(
     stores: &mut Universe<G>,
 ) -> Result<(), tex_state::FormatError> {
-    register_etex_format_primitives(stores)?;
-    tex_command::register_latex_expandable_primitives(stores);
-    Ok(())
+    install_pdflatex_format_primitives(stores)
 }
 
-/// Installs the primitive/state setup used by supported LaTeX-DVI runs.
-///
-/// This is an Umber extension layer over e-TeX. It intentionally does not
-/// install pdfTeX identity or PDF-backend primitives.
+/// Installs pdfTeX's primitive layer and LaTeX's compatibility layer for DVI.
+/// pdftex.web §§236, 413 register `\pdfoutput` and `\pdftexversion`
+/// independently: DVI mode must retain the pdfTeX engine identity.
 pub fn prepare_latex_run_stores<G>(stores: &mut Universe<G>) {
-    prepare_etex_run_stores(stores);
+    prepare_pdftex_run_stores(stores);
     install_latex_compatibility_layer(stores);
 }
 
@@ -1130,13 +1110,20 @@ mod primitive_mode_tests {
             assert_eq!(latex.catcode('A'), Catcode::Letter);
             assert_eq!(latex.catcode('\\'), Catcode::Escape);
             let pdftex_version = latex.intern("pdftexversion");
-            assert_eq!(latex.meaning(pdftex_version), Meaning::Undefined);
+            assert_ne!(latex.meaning(pdftex_version), Meaning::Undefined);
+            let pdfoutput = latex.intern("pdfoutput");
+            assert_eq!(
+                latex.meaning(pdfoutput),
+                Meaning::IntParam(IntParam::PDF_OUTPUT.raw())
+            );
+            assert_eq!(latex.int_param(IntParam::PDF_OUTPUT), 0);
         });
 
         with_stores(|latex_initex| {
             EngineMode::Latex.prepare_initex(latex_initex);
             let pdftex_version = latex_initex.intern("pdftexversion");
-            assert_eq!(latex_initex.meaning(pdftex_version), Meaning::Undefined);
+            assert_ne!(latex_initex.meaning(pdftex_version), Meaning::Undefined);
+            assert_eq!(latex_initex.int_param(IntParam::PDF_OUTPUT), 0);
         });
     }
 

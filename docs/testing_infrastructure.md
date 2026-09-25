@@ -1791,9 +1791,11 @@ same-stem standard-`.tlg` shipout candidate under `base`, `required/tools`,
 candidates. A live classic-LaTeX census emits DVIs for 286 of them and records
 the nine exact manifest-pinned alternate-configuration paths separately;
 unexpected reference DVI absence or presence fails the tier. The manifest retains
-`base/testfiles/sx172785.lvt` in that 286-case reference-DVI cohort but skips it
-explicitly as `unsupported-pdftex-primitives:pdfprotrudechars,rpcode`; this is
-the only unsupported case, leaving 285 applicable classic-DVI comparisons.
+`base/testfiles/sx172785.lvt` in that 286-case reference-DVI cohort. It was
+previously skipped under the e-TeX-based LaTeX mode, but the pdfTeX engine
+now supplies its `\pdfprotrudechars` and `\rpcode` primitives. All 286 cases
+therefore participate in the explicit parity tier; earlier 285-case results
+do not establish its current verdict.
 Offline mode rejects a missing or changed archive cache without accessing the
 network.
 

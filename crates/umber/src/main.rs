@@ -1377,7 +1377,14 @@ mod tests {
                 Some(umber::PdfOutputMode::Pdf),
             ),
             (vec!["--pdflatex", "main.tex"], None),
-            (vec!["--latex", "--dvi", "main.dvi", "main.tex"], None),
+            (
+                vec!["--latex", "--dvi", "main.dvi", "main.tex"],
+                Some(umber::PdfOutputMode::Dvi),
+            ),
+            (
+                vec!["--latex", "--pdf", "main.pdf", "main.tex"],
+                Some(umber::PdfOutputMode::Pdf),
+            ),
         ] {
             let options = RunCliOptions::parse(arguments.into_iter().map(str::to_owned))
                 .expect("valid output selection");

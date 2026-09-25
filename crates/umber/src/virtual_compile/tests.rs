@@ -3786,36 +3786,38 @@ fn pdftex_output_mode_override_runs_after_format_loading() {
     // pdftex.web §1515 applies the process-selected output format after the
     // format image is loaded and before the first source token. The override
     // is independent from the downstream DVI receipt capability.
-    for (stored, override_mode, expected) in [
-        (0, None, 0),
-        (1, Some(PdfOutputMode::Dvi), 0),
-        (0, Some(PdfOutputMode::Pdf), 1),
-    ] {
-        let format =
-            construct_test_format(EngineMode::PdfTex, &format!("\\pdfoutput={stored}\\dump"));
-        let mut session = VirtualCompileSession::new(SessionOptions {
-            format: Some(format.into_bytes()),
-            engine: EngineMode::PdfTex,
-            pdf_output_mode: override_mode,
-            outputs: OutputCapabilitySet::DVI,
-            ..SessionOptions::default()
-        })
-        .expect("pdfTeX loaded-format session");
-        session
-            .add_user_file(
-                "main.tex",
-                br"\message{PDFOUTPUT=\the\pdfoutput}\end".to_vec(),
-            )
-            .expect("output-mode probe");
+    for engine in [EngineMode::PdfTex, EngineMode::Latex] {
+        for (stored, override_mode, expected) in [
+            (0, None, 0),
+            (1, None, 1),
+            (1, Some(PdfOutputMode::Dvi), 0),
+            (0, Some(PdfOutputMode::Pdf), 1),
+        ] {
+            let format = construct_test_format(engine, &format!("\\pdfoutput={stored}\\dump"));
+            let mut session = VirtualCompileSession::new(SessionOptions {
+                format: Some(format.into_bytes()),
+                engine,
+                pdf_output_mode: override_mode,
+                outputs: OutputCapabilitySet::DVI,
+                ..SessionOptions::default()
+            })
+            .expect("pdfTeX loaded-format session");
+            session
+                .add_user_file(
+                    "main.tex",
+                    br"\message{PDFOUTPUT=\the\pdfoutput}\end".to_vec(),
+                )
+                .expect("output-mode probe");
 
-        let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
-            panic!("pdfTeX output-mode probe did not complete");
-        };
-        let terminal = String::from_utf8_lossy(&output.terminal);
-        assert!(
-            terminal.contains(&format!("PDFOUTPUT={expected}")),
-            "stored={stored}, override={override_mode:?}: {terminal}"
-        );
+            let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
+                panic!("pdfTeX output-mode probe did not complete");
+            };
+            let terminal = String::from_utf8_lossy(&output.terminal);
+            assert!(
+                terminal.contains(&format!("PDFOUTPUT={expected}")),
+                "engine={engine:?}, stored={stored}, override={override_mode:?}: {terminal}"
+            );
+        }
     }
 }
 
@@ -3850,7 +3852,10 @@ fn virtual_initex_installs_the_canonical_profile_registry() {
             );
             assert_eq!(
                 stores.primitive_meaning("pdfprimitive").is_some(),
-                matches!(engine, EngineMode::PdfTex | EngineMode::PdfLatex),
+                matches!(
+                    engine,
+                    EngineMode::PdfTex | EngineMode::Latex | EngineMode::PdfLatex
+                ),
                 "{} pdfTeX registry",
                 engine.name()
             );
@@ -3860,10 +3865,10 @@ fn virtual_initex_installs_the_canonical_profile_registry() {
 }
 
 #[test]
-fn latex_session_keeps_pdftex_identity_out_of_the_etex_compatibility_profile() {
+fn latex_dvi_session_retains_pdftex_engine_identity() {
     assert_eq!(
         EngineMode::Latex.command_profile(),
-        tex_command::CommandProfile::ETEX26
+        tex_command::CommandProfile::PDFTEX14029
     );
     let mut session = VirtualCompileSession::new(SessionOptions {
         engine: EngineMode::Latex,
@@ -3875,6 +3880,7 @@ fn latex_session_keeps_pdftex_identity_out_of_the_etex_compatibility_profile() {
             "main.tex",
             br"\catcode123=1 \catcode125=2
                \ifdefined\pdftexversion\message{PDFTEX}\else\message{ETEX}\fi
+               \message{PDFOUTPUT=\the\pdfoutput}
                \end"
                 .to_vec(),
         )
@@ -3884,8 +3890,8 @@ fn latex_session_keeps_pdftex_identity_out_of_the_etex_compatibility_profile() {
         panic!("LaTeX compatibility source did not complete");
     };
     let terminal = String::from_utf8_lossy(&output.terminal);
-    assert!(terminal.contains("ETEX"), "{terminal}");
-    assert!(!terminal.contains("PDFTEX"), "{terminal}");
+    assert!(terminal.contains("PDFTEX"), "{terminal}");
+    assert!(terminal.contains("PDFOUTPUT=0"), "{terminal}");
 }
 
 #[test]
@@ -3937,7 +3943,10 @@ fn virtual_format_registry_preserves_live_meanings_and_profile_distinctions() {
             );
             assert_eq!(
                 stores.primitive_meaning("pdfprimitive").is_some(),
-                matches!(engine, EngineMode::PdfTex | EngineMode::PdfLatex),
+                matches!(
+                    engine,
+                    EngineMode::PdfTex | EngineMode::Latex | EngineMode::PdfLatex
+                ),
                 "{} pdfTeX restored registry",
                 engine.name()
             );
@@ -4404,7 +4413,7 @@ fn html_only_is_independent_from_every_engine_compatibility_contract() {
 
 #[test]
 fn pdf_capability_requires_a_pdftex_compatible_engine() {
-    for engine in [EngineMode::Tex82, EngineMode::ETex, EngineMode::Latex] {
+    for engine in [EngineMode::Tex82, EngineMode::ETex] {
         let error = VirtualCompileSession::new(SessionOptions {
             engine,
             outputs: OutputCapabilitySet::PDF,
