@@ -94,11 +94,15 @@ content stream's operands are owned focused projections. The former
 semantic consumers now identify this boundary as a focused query. It is not an
 owned DOM and must not become one again. The workspace pins
 the immutable `phulin/hayro` revision
-`abf6c167f6b877a18a077b9ff76dad36573e271d`, based directly on the 0.7.2
-release commit; its sole compatibility addition retains the selected trailer
-byte range and exposes the accessor above. Once an
-equivalent accessor is released upstream, replace the git pin with that release;
-the query itself uses no other fork-specific API.
+`26286dfd928f75d499091f4b4d594944fe670e5d`, based on the 0.7.2 release.
+The fork exposes the selected trailer accessor above and
+`XRef::get_raw_number`, which borrows numeric source bytes from the object
+selected by the active cross-reference table, including compressed objects.
+The production PDF importer uses those bytes to retain pdfTeX's exact decimal
+conversion without scanning the whole file for object headers. Tests cover
+compressed numbers, incremental object replacement, and overlapping object
+numbers such as 11 and 111. The query itself uses only the trailer addition.
+Once both accessors are released upstream, replace the git pin with that release.
 
 Each materializing query starts a fresh `QueryLimits` accounting scope. The
 explicit non-retaining validation query counts nesting, indirect resolutions, values, content

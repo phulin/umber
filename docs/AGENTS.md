@@ -317,8 +317,8 @@ font and character-packet model, recursion metadata, authority mapping, and
 the acquisition/lowering ownership boundaries.
 
 `pdf_test_architecture.md` defines the lightweight oracle mix and complete
-`lopdf` migration inventory for PDF tests, including the minimal Hayro trailer
-accessor, stable-identity/cycle/content observations, raw fixture boundary, and
+`lopdf` migration inventory for PDF tests, including the Hayro trailer and raw numeric
+accessors, stable-identity/cycle/content observations, raw fixture boundary, and
 external validator matrix.
 
 `pdftex_font_microtype.md` defines immutable copied/letterspaced/expanded font
