@@ -44,13 +44,21 @@ release year during the annual transition. `--archive-cache PATH` reuses
 package archives from another local cache only after verifying their identities.
 It excludes architecture packages, documentation, and package sources. Format
 preparation derives the full `language.dat` from that database and uses
-stable LaTeX inputs for both engines. Each engine receives its own native
+stable LaTeX inputs for both engines. Each release’s own `updmap.pl`,
+configuration, and authenticated Perl support generate its installed font map.
+The map is available to both engines, including DVI runs that use font expansion. Each engine receives its own native
 format image. Preparation also packages the complete selected TeX and font
 runtime, with stable LaTeX lookup precedence and no `latex-dev` fallback.
 Reference runs use a derived Kpathsea filename database over the verified
 source tree. The index and its source link live in the preparation output;
 source snapshots remain unchanged. This avoids recursive directory scans
 without changing which source files are available.
+
+Use `--runtime-only --preparation NEW-PATH` with an existing format output
+root to refresh generated runtime configuration while reusing verified format
+images. Runtime publication records belong to the new preparation receipt;
+refreshing them does not rewrite the format producer receipts or earlier
+corpus evidence.
 
 Umber loads that explicit local catalog; paper runs do not depend on
 recursive TeX search paths in the native file resolver. This is a local parity workflow, not the proposed public `--texlive`

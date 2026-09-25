@@ -66,11 +66,11 @@ def dvi_pages(path: Path) -> int:
     return int.from_bytes(data[post + 27:post + 29], "big")
 
 
-def check_recorder(path: Path, run: Path, runtime: Path, fmt: Path) -> None:
+def check_recorder(path: Path, run: Path, runtime: Path, fmt: Path, fontmaps: Path) -> None:
     """Reject every recorded input outside the source job and selected release."""
     if not path.is_file():
         fail(f"successful reference DVI has no recorder trace: {path}")
-    roots = (run.resolve(), runtime.resolve(), (fmt.parent / "generated-config").resolve())
+    roots = (run.resolve(), runtime.resolve(), fontmaps.resolve())
     for line in path.read_text(errors="replace").splitlines():
         if not line.startswith("INPUT "):
             continue
@@ -78,7 +78,7 @@ def check_recorder(path: Path, run: Path, runtime: Path, fmt: Path) -> None:
         resolved = (source if source.is_absolute() else run / source).resolve()
         if "latex-dev" in resolved.parts:
             fail(f"reference selected latex-dev input: {resolved}")
-        if resolved != fmt.resolve() and not any(resolved.is_relative_to(root) for root in roots):
+        if resolved not in (fmt.resolve(), (fmt.parent / "generated-config/language.dat").resolve()) and not any(resolved.is_relative_to(root) for root in roots):
             fail(f"reference recorder escaped selected source/runtime: {resolved}")
 
 
@@ -146,6 +146,8 @@ def read_sources(lock: Path, archives: Path, expected_rows: int) -> list[dict]:
 
 def authority(preparation: Path, rows: list[dict]) -> tuple[dict, dict]:
     from texlive_snapshot import verify_snapshot
+    from texlive_reference_runtime import verify_reference_runtime
+    from texlive_fontmaps import verify_fontmaps
 
     receipt = json.loads(preparation.read_text())
     if receipt.get("schema") != 1 or not isinstance(receipt.get("years"), dict):
@@ -190,15 +192,12 @@ def authority(preparation: Path, rows: list[dict]) -> tuple[dict, dict]:
         if ahash64_file(manifest) != digest:
             fail(f"prepared {year} {engine} distribution digest changed")
         umber_format_hash = sha256_file(paths["umber_format"])
+        if fmt.get("distribution_manifest_sha256") != sha256_file(manifest):
+            fail(f"prepared {year} {engine} distribution manifest changed")
         umber_format_receipt = json.loads(paths["umber_format_receipt"].read_text())
         if (fmt.get("umber_format_sha256") != umber_format_hash
                 or umber_format_receipt.get("format", {}).get("sha256") != umber_format_hash):
             fail(f"prepared {year} {engine} Umber format differs from receipt")
-        if umber_format_receipt.get("runtime_distribution") != {
-                "path": str(paths["umber_distribution"]),
-                "manifest_sha256": sha256_file(manifest),
-                "manifest_ahash64": digest}:
-            fail(f"prepared {year} {engine} runtime distribution differs from format receipt")
         format_receipt = json.loads(paths["reference_format_receipt"].read_text())
         if (format_receipt.get("format", {}).get("sha256") != sha256_file(paths["reference_format"])
                 or format_receipt.get("engine", {}).get("sha256") != sha256_file(paths["reference_binary"])):
@@ -245,9 +244,15 @@ def authority(preparation: Path, rows: list[dict]) -> tuple[dict, dict]:
         if (not admission.is_file() or not admission.resolve().is_relative_to(format_root)
                 or umber_format_receipt.get("input_admissions_sha256") != sha256_file(admission)):
             fail(f"prepared {year} {engine} Umber input admissions differ")
+        view = verify_reference_runtime(runtime.parent, year_record["reference_runtime"])
+        fontmaps = verify_fontmaps(runtime.parent, year_record["fontmaps"])
         key = f"{year}/{engine}"
         selected[key] = {"runtime_root": str(runtime), "runtime_receipt": identity(runtime_receipt),
                          "generated_config": str(generated_config),
+                         "reference_runtime": year_record["reference_runtime"],
+                         "reference_view": str(view),
+                         "fontmaps": year_record["fontmaps"],
+                         "generated_fontmaps": str(fontmaps),
                          "reference_binary": identity(paths["reference_binary"]),
                          "reference_format": identity(paths["reference_format"]),
                          "reference_format_receipt": identity(paths["reference_format_receipt"]),
@@ -260,10 +265,12 @@ def authority(preparation: Path, rows: list[dict]) -> tuple[dict, dict]:
     return receipt, selected
 
 
-def reference_environment(runtime: Path, run: Path, fmt: Path, epoch: int) -> dict[str, str]:
+def reference_environment(runtime: Path, run: Path, fmt: Path, epoch: int,
+                          view: Path, fontmaps: Path) -> dict[str, str]:
     from texlive_formats import stable_paths
 
-    base, kernel, ini = stable_paths(runtime)
+    selected = view / "texmf-dist"
+    base, kernel, ini = stable_paths(selected)
     config = fmt.parent / "generated-config"
     env = {key: value for key, value in os.environ.items()
            if not key.startswith(("TEX", "TFMF")) and not key.endswith("FONTS")
@@ -275,12 +282,14 @@ def reference_environment(runtime: Path, run: Path, fmt: Path, epoch: int) -> di
         path = run / name
         path.mkdir(parents=True, exist_ok=True)
         env[key] = str(path)
-    env.update({"TEXMFCNF": str(runtime / "web2c"), "TEXMFROOT": str(runtime.parent),
-                "TEXMFDIST": str(runtime), "TEXFORMATS": str(fmt.parent),
-                "TEXINPUTS": ":".join((str(run), str(config), str(base), str(kernel), str(ini),
-                                       f"{runtime}/tex/latex//", f"{runtime}/tex/generic//",
-                                       f"{runtime}/tex/plain//", f"{runtime}/tex//")),
-                "TFMFONTS": f"{run}:{runtime}/fonts/tfm//", "SOURCE_DATE_EPOCH": str(epoch),
+    env.update({"TEXMFCNF": str(runtime / "web2c"), "TEXMFROOT": str(view),
+                "TEXMFDIST": str(selected), "TEXMFDBS": f"!!{view}", "TEXFORMATS": str(fmt.parent),
+                "TEXINPUTS": ":".join((str(run), str(config), f"!!{base}", f"!!{kernel}", f"!!{ini}",
+                                       f"!!{selected}/tex/latex//", f"!!{selected}/tex/generic//",
+                                       f"!!{selected}/tex/plain//", f"!!{selected}/tex//")),
+                "TFMFONTS": f"{run}:!!{selected}/fonts/tfm//",
+                "TEXFONTMAPS": f"{fontmaps}/fonts/map//:!!{selected}/fonts/map//",
+                "SOURCE_DATE_EPOCH": str(epoch),
                 "FORCE_SOURCE_DATE": "1"})
     return env
 
@@ -309,7 +318,8 @@ def run_reference(args: argparse.Namespace, row: dict, row_dir: Path, proof: dic
     with stdout.open("wb") as out, stderr.open("wb") as err:
         completed = subprocess.run(command, cwd=run,
                                    env=reference_environment(Path(proof["runtime_root"]), run, Path(fmt),
-                                                             proof["source_date_epoch"]),
+                                                             proof["source_date_epoch"], Path(proof["reference_view"]),
+                                                             Path(proof["generated_fontmaps"])),
                                    stdout=out, stderr=err, check=False,
                                    preexec_fn=memory_limit(args.max_rss_mib))
     pages = None
@@ -320,7 +330,7 @@ def run_reference(args: argparse.Namespace, row: dict, row_dir: Path, proof: dic
             pass
     success = completed.returncode == 0 and pages is not None and recorder.is_file()
     if recorder.is_file():
-        check_recorder(recorder, run, Path(proof["runtime_root"]), Path(fmt))
+        check_recorder(recorder, run, Path(proof["runtime_root"]), Path(fmt), Path(proof["generated_fontmaps"]))
     return {"command": command, "working_directory": str(run),
             "exit_status": completed.returncode, "status": "DVI-success" if success else "DVI-failure",
             "pages": pages, "dvi": artifact(output),
@@ -422,7 +432,7 @@ def check_result(result: dict, row: dict, proof: dict | None, results: Path,
         fail(f"invalid successful reference DVI: {row['id']}")
     check_recorder(row_dir / "reference" / f"{row['jobname']}.fls",
                    row_dir / "reference", Path(proof["runtime_root"]),
-                   Path(proof["reference_format"]["path"]))
+                   Path(proof["reference_format"]["path"]), Path(proof["generated_fontmaps"]))
     umber = result.get("umber")
     if umber is None:
         if result.get("status") != "DVI-qualified":

@@ -16,6 +16,7 @@ from unittest.mock import patch
 
 from arxiv_corpus import declared_texlive, sha256_file
 from texlive import ahash64_file
+from texlive_reference_runtime import prepare_reference_runtime
 
 SCRIPT = Path(__file__).with_name("run-arxiv-texlive.py")
 spec = importlib.util.spec_from_file_location("arxiv_texlive_runner", SCRIPT)
@@ -92,6 +93,9 @@ test -f side.bbl
 printf 'reference %s %s\\n' "$name" "$TEXMFDIST" >> "$TEST_COUNTS"
 cp "$TEST_DVI" "$name.dvi"
 printf 'PWD %s\nINPUT %s\nINPUT %s\n' "$PWD" "$PWD/$name.tex" "$PWD/side.bbl" > "$name.fls"
+mapdir=${TEXFONTMAPS%%:*}
+mapdir=${mapdir%//}
+printf 'INPUT %s/pdftex/updmap/pdftex.map\n' "$mapdir" >> "$name.fls"
 """)
             umber = root / "umber"
             executable(umber, """
@@ -165,12 +169,15 @@ fi
                 distribution.mkdir()
                 manifest = distribution / "manifest.json"
                 manifest.write_text(json.dumps({"schema": 8, "formats": {}}))
-                native = json.loads(umber_receipt.read_text())
-                native["runtime_distribution"] = {
-                    "path": str(distribution), "manifest_sha256": sha256_file(manifest),
-                    "manifest_ahash64": ahash64_file(manifest)}
-                umber_receipt.write_text(json.dumps(native))
+                fontmaps = root / year / "generated-fontmaps"
+                fontmaps.mkdir()
+                fontmap = fontmaps / "fonts/map/pdftex/updmap/pdftex.map"
+                fontmap.parent.mkdir(parents=True)
+                fontmap.write_text("generated maps\n")
                 years[year] = {"runtime_root": str(runtime),
+                               "reference_runtime": prepare_reference_runtime(runtime.parent, root / year / "formats"),
+                               "fontmaps": {"generated_root": str(fontmaps), "pdftex_map": str(fontmap),
+                                            "pdftex_map_sha256": sha256_file(fontmap)},
                                "runtime_receipt": str(root / year / "acquisition.json"),
                                "formats": {engine: {"reference_binary": str(oracle),
                                                    "reference_format": str(reference_fmt),
@@ -180,6 +187,7 @@ fi
                                                    "umber_format_sha256": sha256_file(umber_fmt),
                                                    "umber_format_receipt": str(umber_receipt),
                                                    "source_date_epoch": epoch,
+                                                   "distribution_manifest_sha256": sha256_file(manifest),
                                                    "distribution_ahash64": ahash64_file(manifest)}}}
                 paper = "latex23" if year == "2023" else "pdf25"
                 source_view = archives / f"{paper}-source"
@@ -206,14 +214,20 @@ fi
                     raise ValueError("runtime inventory changed")
                 return types.SimpleNamespace(root=year_root, receipt=receipt)
 
+            fontmap_module = types.ModuleType("texlive_fontmaps")
+            def verify_fontmaps(snapshot, record):
+                if sha256_file(Path(record["pdftex_map"])) != record["pdftex_map_sha256"]:
+                    raise ValueError("generated font map changed")
+                return Path(record["generated_root"])
+            fontmap_module.verify_fontmaps = verify_fontmaps
             snapshot_module = types.ModuleType("texlive_snapshot")
             snapshot_module.verify_snapshot = verify_snapshot
             with patch.object(runner.sys, "argv", args), patch.dict(os.environ, environment), \
-                 patch.dict(runner.sys.modules, {"texlive_snapshot": snapshot_module}):
+                 patch.dict(runner.sys.modules, {"texlive_snapshot": snapshot_module, "texlive_fontmaps": fontmap_module}):
                 self.assertEqual(runner.main(), 1)
                 observed = count.read_text().splitlines()
-                self.assertTrue(observed[0].startswith(f"reference latex23 {root / '2023' / 'texmf-dist'}"))
-                self.assertTrue(observed[1].startswith(f"reference pdf25 {root / '2025' / 'texmf-dist'}"))
+                self.assertTrue(observed[0].startswith(f"reference latex23 {Path(years['2023']['reference_runtime']['root']) / 'texmf-dist'}"))
+                self.assertTrue(observed[1].startswith(f"reference pdf25 {Path(years['2025']['reference_runtime']['root']) / 'texmf-dist'}"))
                 self.assertTrue(observed[2].startswith("umber latex23 "))
                 self.assertEqual(observed[3], "compare latex23")
                 self.assertEqual(len(observed), 4)
@@ -251,14 +265,12 @@ fi
                 with self.assertRaisesRegex(SystemExit, "reference format engine differs"):
                     runner.main()
                 preparation.write_bytes(prepared_bytes)
-                native_receipt = root / "2023/formats/latex-umber.json"
-                native_bytes = native_receipt.read_bytes()
-                altered_native = json.loads(native_bytes)
-                altered_native["runtime_distribution"]["path"] = str(root / "2025/distribution")
-                native_receipt.write_text(json.dumps(altered_native))
-                with self.assertRaisesRegex(SystemExit, "runtime distribution differs"):
+                altered_catalog = json.loads(prepared_bytes)
+                altered_catalog["years"]["2023"]["formats"]["latex"]["distribution_ahash64"] = "0" * 16
+                preparation.write_text(json.dumps(altered_catalog))
+                with self.assertRaisesRegex(SystemExit, "distribution digest changed"):
                     runner.main()
-                native_receipt.write_bytes(native_bytes)
+                preparation.write_bytes(prepared_bytes)
                 wrong_engine = json.loads(prepared_bytes)
                 other_fmt = root / "2023/formats/pdflatex.fmt"
                 other_fmt.write_bytes((root / "2023/formats/latex.fmt").read_bytes())

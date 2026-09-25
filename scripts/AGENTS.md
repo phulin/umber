@@ -240,7 +240,7 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `run-arxiv-texlive.py` and `test-run-arxiv-texlive.py`: archive-declared year
   routing, complete reference DVI qualification, and serial exact Umber
   comparison with resumable, source-bound results. The
-  `check-tools.sh texlive-parity-tools` step owns the three hermetic suites.
+  `check-tools.sh texlive-parity-tools` step owns these hermetic suites.
 
 - `texlive_reference_runtime.py` and `test-texlive-reference-runtime.py`: derived
   Kpathsea filename indexes over authenticated snapshots, with immutable source

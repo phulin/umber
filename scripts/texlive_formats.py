@@ -533,7 +533,11 @@ def publish_prepared_year(year: int, snapshot_root: Path, output_root: Path, ref
     texlive_fontmaps.verify_fontmaps(snapshot_root, fontmaps)
     fontmaps["receipt"] = str(fontmaps_receipt)
     fontmaps["receipt_sha256"] = sha256(fontmaps_receipt)
-    row = {"runtime_root": str(snapshot_root / "texmf-dist"), "runtime_receipt": str(acquisition), "fontmaps": fontmaps, "formats": formats}
+    from texlive_reference_runtime import prepare_reference_runtime
+
+    reference_runtime = prepare_reference_runtime(snapshot_root, output)
+    row = {"runtime_root": str(snapshot_root / "texmf-dist"), "runtime_receipt": str(acquisition),
+           "fontmaps": fontmaps, "reference_runtime": reference_runtime, "formats": formats}
     receipt_path = preparation_path or output_root / "preparation.json"
     prepared: dict[str, object] = {}
     if receipt_path.is_file():

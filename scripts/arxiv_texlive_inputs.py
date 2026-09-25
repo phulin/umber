@@ -34,6 +34,7 @@ def audit_umber_inputs(row: dict, row_dir: Path, proof: dict, admission: Path) -
     umber_run = row_dir / "umber"
     runtime = Path(proof["runtime_root"])
     config = Path(proof["generated_config"])
+    fontmaps = Path(proof["generated_fontmaps"])
     source_members = {str(member["path"]): member for member in archive_members(row["archive"])}
     entry = source_members[row["entrypoint"]]
     main_path = umber_run / row["entrypoint"]
@@ -59,6 +60,8 @@ def audit_umber_inputs(row: dict, row_dir: Path, proof: dict, admission: Path) -
         elif path.is_relative_to(runtime):
             relative = path.relative_to(runtime).as_posix()
             # verify_snapshot has authenticated the selected runtime.
+        elif path.is_relative_to(fontmaps):
+            relative = path.relative_to(fontmaps).as_posix()
         elif path == config / "language.dat":
             relative = "language.dat"  # The format authority checked this input.
         else:
@@ -91,6 +94,7 @@ def audit_umber_inputs(row: dict, row_dir: Path, proof: dict, admission: Path) -
         candidates = [umber_run / relative for relative in source_members
                       if relative == name or relative.endswith("/" + name)]
         candidates.extend(runtime_names(runtime).get(basename, ()))
+        candidates.extend(fontmaps.rglob(basename))
         if basename == "language.dat":
             candidates.append(config / "language.dat")
         selected = next((path for path in candidates
