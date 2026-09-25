@@ -77,6 +77,29 @@ fn generated_fonts_preserve_source_ancestry_and_pdftex_rounding() {
 }
 
 #[test]
+fn pdf_font_resources_share_sizes_but_distinguish_equal_metric_names() {
+    let load = |name, size| {
+        LoadedFont::new(
+            name,
+            format!("/fonts/{name}.tfm"),
+            [7; 8],
+            42,
+            Scaled::from_raw(10 * Scaled::UNITY),
+            Scaled::from_raw(size * Scaled::UNITY),
+            vec![Scaled::from_raw(0); 7],
+            FontMetrics::new(vec![None; 256], Vec::new(), None, None, Vec::new()),
+        )
+    };
+    let first = load("xyatip10", 10);
+    let scaled = load("xyatip10", 12);
+    let other_outline = load("xybtip10", 10);
+
+    assert_eq!(first.pdf_resource_identity(), scaled.pdf_resource_identity());
+    assert_eq!(first.pdf_resource_identity(), first.expanded(100).pdf_resource_identity());
+    assert_ne!(first.pdf_resource_identity(), other_outline.pdf_resource_identity());
+}
+
+#[test]
 fn lig_kern_program_capacity_accepts_both_addressable_length_edges() {
     for (len, start) in [
         (usize::from(u16::MAX), u16::MAX - 1),

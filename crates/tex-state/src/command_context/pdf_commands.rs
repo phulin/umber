@@ -220,6 +220,7 @@ impl<'a, G> CommandContext<'a, G> {
         let recipe = self.resident.fonts.artifact_recipe(font);
         let identity = tex_fonts::PdfFontResourceIdentity::new(
             recipe.tfm_content_hash,
+            &recipe.name,
             recipe.opentype.map(|opentype| opentype.program_identity),
         );
         self.resident

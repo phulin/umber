@@ -33,7 +33,7 @@ fn output() -> PdfOutputParameters {
 #[test]
 fn aliased_pdf_fonts_enumerate_one_terminal_resource_object() {
     let mut state = PdfState::<()>::default();
-    let identity = tex_fonts::PdfFontResourceIdentity::new([7; 8], None);
+    let identity = tex_fonts::PdfFontResourceIdentity::new([7; 8], "cmr10", None);
     let first = state
         .ensure_font_resource(
             crate::ids::FontId::testing_new(1),
@@ -60,9 +60,36 @@ fn aliased_pdf_fonts_enumerate_one_terminal_resource_object() {
 }
 
 #[test]
+fn equal_tfm_bytes_with_distinct_names_keep_distinct_pdf_outlines() {
+    // pdfTeX §32e resolves each TFM name through its map entry. Xy-pic's
+    // xyatip10 and xybtip10 have identical TFM bytes but different Type 1
+    // programs; merging them paints the second overlay with the first shape.
+    let mut state = PdfState::<()>::default();
+    let metrics = [7; 8];
+    let first = state
+        .ensure_font_resource(
+            crate::ids::FontId::testing_new(1),
+            tex_fonts::FontSourceIdentity::from_bytes([1; 8]),
+            tex_fonts::PdfFontResourceIdentity::new(metrics, "xyatip10", None),
+        )
+        .expect("first Xy-pic font resource");
+    let second = state
+        .ensure_font_resource(
+            crate::ids::FontId::testing_new(2),
+            tex_fonts::FontSourceIdentity::from_bytes([2; 8]),
+            tex_fonts::PdfFontResourceIdentity::new(metrics, "xybtip10", None),
+        )
+        .expect("second Xy-pic font resource");
+
+    assert_ne!(first.resource_number(), second.resource_number());
+    assert_ne!(first.object_number(), second.object_number());
+    assert_eq!(state.font_resources().count(), 2);
+}
+
+#[test]
 fn terminal_pdf_completion_retains_every_scaled_font_alias_recipe() {
     let mut state = PdfState::<()>::default();
-    let identity = tex_fonts::PdfFontResourceIdentity::new([7; 8], None);
+    let identity = tex_fonts::PdfFontResourceIdentity::new([7; 8], "cmr10", None);
     let base = crate::ids::FontId::testing_new(1);
     let scaled = crate::ids::FontId::testing_new(2);
     let base_identity = tex_fonts::FontSourceIdentity::from_bytes([1; 8]);
@@ -447,7 +474,7 @@ fn checkpoint_fork_reuses_append_only_metadata_prefix_allocations() {
         source_identity: tex_fonts::FontSourceIdentity::from_bytes([7; 8]),
         resource_number: 7,
         object_number: 11,
-        identity: tex_fonts::PdfFontResourceIdentity::new([8; 8], None),
+        identity: tex_fonts::PdfFontResourceIdentity::new([8; 8], "test-font", None),
     });
     let payload = state.payloads.store(vec![1]);
     state.external_images.push(PdfExternalImageEntry {

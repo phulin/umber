@@ -4693,6 +4693,7 @@ fn append_font_resource_fingerprint(
     hasher.bytes(&record.source_identity.bytes());
     hasher.u32(record.resource_number);
     hasher.u32(record.object_number);
+    hasher.bytes(&record.identity.name_hash());
     hasher.bytes(&record.identity.tfm_content_hash());
     hasher.bool(record.identity.program_identity().is_some());
     if let Some(identity) = record.identity.program_identity() {
@@ -4908,7 +4909,11 @@ pub fn profile_pdf_fork_family(
                     source_identity: tex_fonts::FontSourceIdentity::from_bytes([row as u8; 8]),
                     resource_number: row as u32,
                     object_number: row as u32 + 1,
-                    identity: tex_fonts::PdfFontResourceIdentity::new([row as u8; 8], None),
+                    identity: tex_fonts::PdfFontResourceIdentity::new(
+                        [row as u8; 8],
+                        "test-font",
+                        None,
+                    ),
                 }));
         }
         PdfForkProfileFamily::ExternalImageMetadata => {

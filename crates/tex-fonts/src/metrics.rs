@@ -187,25 +187,38 @@ pub type FontSourceIdentity = RealizedFontIdentity;
 ///
 /// The selected size and generated-font ancestry remain part of
 /// [`RealizedFontIdentity`] but intentionally do not split a PDF font object:
-/// pdfTeX reuses the same dictionary for equal TFM bytes and selected outline
-/// program, applying size in the text state. Type 1, TrueType, PK, and resident
-/// program selection remains a PDF finalization view over this key.
+/// pdfTeX reuses the same dictionary for the same TFM name, metrics, and
+/// selected outline program, applying size in the text state. Distinct TFM
+/// names can have identical metric bytes but different map-selected outlines.
+/// Type 1, TrueType, PK, and resident program selection remains a PDF
+/// finalization view over this key.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct PdfFontResourceIdentity {
+    name_hash: [u8; 8],
     tfm_content_hash: FontContentHash,
     program_identity: Option<FontProgramIdentity>,
 }
 
 impl PdfFontResourceIdentity {
     #[must_use]
-    pub const fn new(
+    pub fn new(
         tfm_content_hash: FontContentHash,
+        name: &str,
         program_identity: Option<FontProgramIdentity>,
     ) -> Self {
+        let mut hasher = AHash64Hasher::new(HashDomain::RealizedFont);
+        hasher.write(b"umber-pdf-font-name-v1");
+        hasher.write(name.as_bytes());
         Self {
+            name_hash: hasher.finish().to_le_bytes(),
             tfm_content_hash,
             program_identity,
         }
+    }
+
+    #[must_use]
+    pub const fn name_hash(self) -> [u8; 8] {
+        self.name_hash
     }
 
     #[must_use]
@@ -962,7 +975,11 @@ impl LoadedFont {
     /// Canonical format-specific view used for pdfTeX font-object reuse.
     #[must_use]
     pub fn pdf_resource_identity(&self) -> PdfFontResourceIdentity {
-        PdfFontResourceIdentity::new(self.content_hash, self.opentype().map(|font| font.identity))
+        PdfFontResourceIdentity::new(
+            self.content_hash,
+            &self.name,
+            self.opentype().map(|font| font.identity),
+        )
     }
 
     /// Reattaches validated construction metadata at a detached restore
