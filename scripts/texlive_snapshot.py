@@ -128,7 +128,7 @@ def parse_tlpdb(compressed: bytes) -> tuple[Package, ...]:
             key, separator, value = line.partition(" ")
             if not separator:
                 raise texlive.TexliveError(f"invalid TLPDB field: {line[:80]}")
-            if key in ("name", "revision", "category", "relocated", "containersize", "containerchecksum"):
+            if key in ("name", "revision", "category", "relocated", "containersize", "containerchecksum", "binfiles"):
                 if key in fields:
                     raise texlive.TexliveError(f"duplicate TLPDB {key} field")
                 fields[key] = value
@@ -142,7 +142,7 @@ def parse_tlpdb(compressed: bytes) -> tuple[Package, ...]:
         # This synthetic installer image has no downloadable container. Its
         # generated maps/configuration are built by the installer, not an
         # upstream package archive.
-        if name == "00texlive.image" or not runfiles or fields.get("category") not in ("Package", "TLCore"):
+        if name == "00texlive.image" or "binfiles" in fields or not runfiles or fields.get("category") not in ("Package", "TLCore"):
             continue
         relocated = fields.get("relocated") == "1"
         selected: list[tuple[str, str]] = []
