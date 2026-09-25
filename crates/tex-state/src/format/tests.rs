@@ -71,6 +71,33 @@ fn validated_copy(image: &DetachedFormatImage) -> DetachedFormatImage {
 }
 
 #[test]
+fn format_rejects_nonzero_glue_with_shared_zero_origin() {
+    use crate::node::{GlueKind, GlueSpecOrigin};
+
+    let node: Node<u32, u32, u32> = Node::Glue {
+        spec: 0,
+        kind: GlueKind::Normal,
+        origin: GlueSpecOrigin::SharedZero,
+        leader: None,
+    };
+    let rows = [FormatNodeList {
+        nodes: vec![bincode::serialize(&node).expect("test node encodes")],
+    }];
+    let glue = [super::schema::FormatGlue {
+        width: 1,
+        stretch: 0,
+        stretch_order: 0,
+        shrink: 0,
+        shrink_order: 0,
+    }];
+    let error = super::validate_node_rows(&[], &[], &glue, &[], &rows)
+        .expect_err("shared zero_glue cannot name nonzero components");
+    assert!(
+        matches!(error, FormatError::InvalidState(message) if message.contains("shared zero_glue"))
+    );
+}
+
+#[test]
 fn materialized_candidate_can_admit_epoch_only_active_character() {
     struct InternActive;
 

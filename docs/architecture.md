@@ -703,7 +703,7 @@ it.
 ## 14. Portable format images
 
 `tex-state` owns a fixed-width little-endian frozen-format container, currently
-at schema 12. Its canonical section directory, alignment and zero-padding
+at schema 13. Its canonical section directory, alignment and zero-padding
 rules, whole-image checksum, exact ABI and lookup-configuration fingerprints,
 relative/index reference model, validation order, literal hash-table layout,
 and immutable-versus-job-local state boundary are specified in
@@ -716,7 +716,9 @@ environment cells, and reachable node graphs. The historically named section
 is not a schema-9 compatibility payload. Schema 11 additionally preserves the
 presence tag that distinguishes an absent token parameter from an explicitly
 assigned empty token list. Schemas 9 and 10 are rejected rather than guessed
-or reinterpreted, and formats are regenerated from source. Loading never
+or reinterpreted. Schema 13 additionally preserves the shared-zero origin of
+glue nodes for pdfTeX protrusion; older images are regenerated from source.
+Loading never
 publishes partially validated state, persists Rust heap layout, or mutates
 frozen bytes. Job-local clocks, input, page state, journals, effects, and
 mutable overlays are constructed fresh.

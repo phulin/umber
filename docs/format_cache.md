@@ -1,6 +1,6 @@
 # Generated format cache
 
-Status: schema-12 cache identity and TeX validation in `umber`, unified verified
+Status: schema-13 cache identity and TeX validation in `umber`, unified verified
 native blob persistence in `umber-fetch`, and pinned LaTeX/pdfLaTeX generation
 integration implemented.
 
@@ -9,7 +9,7 @@ older `objects/`, `manifests/`, or `formats-v2/sha256-<key>` directory is not
 an input to the current cache. Missing current entries are ordinary misses;
 the pinned builder can regenerate them from authenticated sources. The
 `format-cache restore|store` CLI remains the current builder interface, while
-the current format decoder accepts only schema 12. Artifact API names are
+the current format decoder accepts only schema 13. Artifact API names are
 unversioned; the separate artifact wire header still requires version 24.
 
 ## Identity contract
@@ -123,10 +123,10 @@ codec inputs.
 ## Native entry and validation
 
 `umber::FormatCacheStore` owns the canonical key preimage, current format
-envelope, schema-12 decoder, and construction-evidence policy. It persists that
+envelope, schema-13 decoder, and construction-evidence policy. It persists that
 opaque envelope through `umber-fetch::BlobStore` under the `formats-v2`
 logical namespace. Entries live in the shared `blobs-v2` substrate. The old
-directory with the same name is ignored. The exact schema-12 payload bytes are
+directory with the same name is ignored. The exact schema-13 payload bytes are
 unchanged.
 
 The shared native blob storage opens the cache root one component at a time and
@@ -158,7 +158,7 @@ performance event, not a source of trusted engine state.
 
 ## Native/browser and portability boundaries
 
-The schema-12 image and key preimage are host-neutral. Filesystem discovery,
+The schema-13 image and key preimage are host-neutral. Filesystem discovery,
 temporary files, atomic rename, locks, quarantine, permissions, and recovery
 belong only to the native `umber-fetch` boundary. Browser-packaged formats and HTTP/IndexedDB
 caches must not refer to native paths or treat a native entry envelope as a
@@ -168,7 +168,7 @@ the same Rust `Universe` decoder before use.
 
 Neither a release-manifest pin nor a cache key replaces format validation: the
 manifest authenticates acquisition, the cache key identifies generation
-inputs, and the schema-12 decoder establishes runtime compatibility and
+inputs, and the schema-13 decoder establishes runtime compatibility and
 structural validity. Formats are portable across native and browser hosts only
 when those three independent checks agree. The cache contains no process-local
 handles or job-local mutable state, consistent with

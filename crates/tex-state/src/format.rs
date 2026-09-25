@@ -1196,6 +1196,24 @@ fn validate_node_rows(
         for bytes in &row.nodes {
             let node: crate::node::Node<u32, u32, u32> = bincode::deserialize(bytes)
                 .map_err(|error| FormatError::InvalidState(error.to_string()))?;
+            if matches!(
+                &node,
+                crate::node::Node::Glue {
+                    spec,
+                    origin: crate::node::GlueSpecOrigin::SharedZero,
+                    ..
+                } if glue.get(*spec as usize).is_none_or(|value| {
+                    value.width != 0
+                        || value.stretch != 0
+                        || value.stretch_order != 0
+                        || value.shrink != 0
+                        || value.shrink_order != 0
+                })
+            ) {
+                return Err(FormatError::InvalidState(
+                    "shared zero_glue format node has a nonzero specification".to_owned(),
+                ));
+            }
             let mut valid_lists = true;
             node.visit_node_lists(|child| {
                 valid_lists &= *child == 0 || (*child as usize) <= index;

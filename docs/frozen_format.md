@@ -1,12 +1,12 @@
 # Portable Frozen Format Images
 
-Status: schema-12 container, authoritative core-store sections, portable
+Status: schema-13 container, authoritative core-store sections, portable
 precomputed lookup indexes, runtime-ready frozen node arena, and groupable
 environment base/overlay.
 
 This document is the durable ABI contract for Umber format images. The outer
 container is implemented in `tex-state::format_container`. The current schema
-is 12. Section 1 contains only Universe-level interaction
+is 13. Section 1 contains only Universe-level interaction
 mode and permitted PDF configuration. Format-visible environment entries are
 authoritative in kind 528, reachable node graphs are authoritative in kind
 512, and non-node semantic stores are authoritative in their fixed sections.
@@ -26,14 +26,14 @@ or process-local handle. Integers in frozen sections have an explicit `u8`,
 schema change is required to change the meaning or width of any existing
 field.
 
-## Schema-12 container
+## Schema-13 container
 
 The header is exactly 80 bytes:
 
 | Offset | Width | Field                            |
 | -----: | ----: | -------------------------------- |
 |      0 |     8 | magic `UMBRFMT\0`                |
-|      8 |     4 | schema version, currently `12`   |
+|      8 |     4 | schema version, currently `13`   |
 |     12 |     4 | header size, `80`                |
 |     16 |     4 | directory-record size, `40`      |
 |     20 |     4 | section count, `1..=64`          |
@@ -42,7 +42,7 @@ The header is exactly 80 bytes:
 |     40 |     8 | container ABI fingerprint        |
 |     48 |     8 | lookup-configuration fingerprint |
 |     56 |     8 | image checksum                   |
-|     64 |     4 | flags, zero in schema 12         |
+|     64 |     4 | flags, zero in schema 13         |
 |     68 |    12 | reserved, all zero               |
 
 Every integer is little-endian. The ABI fingerprint is FNV-1a-64 of the
@@ -97,9 +97,8 @@ rejects invented or mixed pairs and requires `str_ptr <= max_strings` and
 baseline. Executable framing may then select the same or a larger supported
 process profile without counting that selection as string usage. Runtime
 rollback restores the selected pair, pool coordinates, and recycled-name
-membership together. These are validations of the existing schema-12 fields,
-not an alternate codec or compatibility fallback, so the schema and ABI
-fingerprints do not change.
+membership together. These are validations of the existing field geometry, not an alternate codec or
+compatibility fallback.
 The admitted pair identifies one complete typed producer profile, not merely
 two independent string limits. The decoder uses that same profile for the
 main-memory extent, hash occupancy, font count and aggregate `fmem_ptr`, trie
@@ -144,7 +143,7 @@ current state version 2; version-1 image rows are rejected rather than
 silently supplied with missing image attributes. Destination names, color stacks, pages, and other
 job-local PDF tables are excluded rather than assigned invented format
 coordinates.
-The schema-12 runtime requires
+The schema-13 runtime requires
 exactly kinds 1, 256, 257, 272, 288, 304, 320, 336, 352, 512, and 528. The
 following kinds are allocated for the complete rollout:
 
@@ -222,7 +221,7 @@ Unused payload bits are zero. Character, catcode, name-index, and sentinel
 domains are validated. The semantic identity is recomputed from the decoded
 tokens and name semantic atoms before the arena is published. The decoder
 also accepts the previous version-1, 24-byte-record, `u64`-word token section
-when loading an older schema-12 image; new dumps never emit it.
+within a schema-13 container; new dumps never emit it. Older containers remain rejected.
 
 ### Macros (kind 288)
 
@@ -277,7 +276,7 @@ their semantic interning APIs.
 
 The 32-byte header contains version, font count, payload offset and length,
 an optional-prepared-`mag` tag and signed value, the last-loaded font index,
-and a reserved `u32`. The payload is the canonical fixed-integer schema-12
+and a reserved `u32`. The payload is the canonical fixed-integer schema-13
 encoding of detached font records: names and content hashes, immutable and
 source parameters, TeX82's logical `font_info` word extent, character metrics,
 lig/kern instructions, extensible recipes, derivation identity,
@@ -324,7 +323,7 @@ and no assignment or group history.
 ### Hyphenation (kind 352)
 
 The 16-byte header contains version, payload offset and length, and a reserved
-`u32`. Its canonical fixed-integer schema-12 payload stores language-indexed
+`u32`. Its canonical fixed-integer schema-13 payload stores language-indexed
 runtime tries, exception maps, and saved hyphen-code maps. Validation requires
 one root per language, strictly sorted unique edges, live edge targets, exactly
 one incoming edge for every non-root node, and nonempty exception words whose
@@ -357,6 +356,12 @@ handles or compact native node words. Lists occur bottom-up. Decoding rejects
 forward or self references, cycles, invalid store indices, malformed enum
 values, bad section geometry, reserved bytes, count mismatches, and semantic
 identities that do not recompute from the validated graph.
+
+Schema 13 records a glue node's shared-`zero_glue` origin independently of
+its subtype. The decoder resolves its glue-table index and rejects a node
+that claims the shared origin unless the referenced specification is exactly
+zero, including its stretch and shrink orders. Schema 12 images lack this
+semantic field and are rejected instead of being inferred from glue values.
 
 The same node DTO vocabulary is used by detached memos, but a memo bundle has
 no frozen payload-root namespace: every list key must be exactly `(dense
@@ -427,7 +432,7 @@ canonical `(kind, scalar)` order and need only the previous coordinate. This
 validation is complete before destination publication and preserves the
 historical schema-12 row order without copying logical keys.
 
-The schema-12 frozen encoder and decoder are the only store format path.
+The schema-13 frozen encoder and decoder are the only store format path.
 Store-level round-trip tests call `encode_frozen_format` and
 `decode_frozen_format` directly. Universe-level tests exercise `dump_format`
 and `Universe::from_format`, including malformed-section rejection, immutable
@@ -517,7 +522,7 @@ configuration compatibility plus full structural validation are authoritative:
 the decoder verifies bucket bounds, entry uniqueness, one bucket per entry,
 canonical insertion/probe placement, key equality, and the declared maximum
 probe. Deterministic checksum-derived spot checks additionally exercise the
-runtime lookup implementation after validation. Schema 12 selects up to eight
+runtime lookup implementation after validation. Schema 13 selects up to eight
 entries per table from the container checksum using a fixed xorshift64*
 sequence. Those checks are
 supplementary diagnostics and can never make an incompatible fingerprint or
@@ -558,7 +563,7 @@ packed handles to immutable primitive rows. Source-built and loaded-format
 paths issue those handles from the same deterministic registry order; handle
 resolution never addresses the restored mutable meaning cells. Because the
 handles are process-local accelerators and are neither captured nor encoded,
-this optimization does not change schema 12, its ABI fingerprint, or its
+this optimization does not change schema 13, its ABI fingerprint, or its
 lookup-configuration fingerprint.
 
 ## Unsupported older schemas
@@ -568,10 +573,10 @@ envelope had one opaque payload rather than an extensible fixed-width section
 directory and carried no compatibility fingerprints. Schema 10 introduced the
 sectioned frozen-store representation, but it could not distinguish an absent
 token-parameter cell from a present cell containing token-list record 0.
-The loader accepts only schema 12. Users regenerate older images from source;
+The loader accepts only schema 13. Users regenerate older images from source;
 Umber does not reinterpret an old image heuristically.
 
-Schema 12 writes environment cells only to kind 528 and node graphs only to
+Schema 13 writes environment cells only to kind 528 and node graphs only to
 kind 512. Names, token lists, macros, glue, fonts, code tables, and hyphenation
 exist only in authoritative sections 256 through 352 and are never reinterned
 during normal loading. The decoder validates environment references and token
@@ -586,16 +591,16 @@ image rejected: ...`; WASM returns the same message in its compile diagnostic.
 Failures are deterministic and identify the rejected boundary:
 
 - wrong magic means the input is not an Umber format image;
-- any schema other than 12 reports the unsupported
+- any schema other than 13 reports the unsupported
   version and must be regenerated rather than upgraded in place;
 - ABI or lookup fingerprint mismatch means the image and runtime implement
-  different schema-12 contracts;
+  different schema-13 contracts;
 - checksum mismatch means the bytes changed after publication; and
 - directory, section, canonical-order, or cross-reference errors identify a
   structurally invalid image even when its checksum was recomputed.
 
 Browser manifests reject an incompatible `engineVersion` or `formatSchema`
 before downloading the object. Length and SHA-256 validate transport, then the
-Rust decoder applies the complete schema-12 validation above. There is no
+Rust decoder applies the complete schema-13 validation above. There is no
 compatibility flag or fallback loader for TeX Live-native `.fmt`, schema 9,
 schema 10, or partially migrated images.

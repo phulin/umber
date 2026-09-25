@@ -38,7 +38,7 @@ Those values are not distribution object identities or cache keys.
 - Font and legacy-mapping records are schema 2 inside the packed payload.
 - Producer format metadata is schema 3 without an input closure and schema 4
   with a schema-1 input closure.
-- Umber format images are schema 12 and page artifacts are schema 24.
+- Umber format images are schema 13 and page artifacts are schema 24.
 - Native cache envelopes are schema 2 under `blobs-v2`.
 
 The small root remains canonical JSON because it is fetched and parsed once.
@@ -169,7 +169,7 @@ runtime authority remains the shared safe Rust view.
 
 External source files continue to be checked against their licensed SHA-256
 locks before their aHash64 distribution identity is accepted. Format images
-remain independent schema-12 objects: repacking the catalogue changes their
+remain independent schema-13 objects: repacking the catalogue changes their
 root reference, not their engine contents.
 
 ## Exact production inventory

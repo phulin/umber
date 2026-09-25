@@ -10,7 +10,7 @@ scheduler.
 Repository-owned distribution and font/resource identities are deterministic
 64-bit aHash v1 values with explicit domains and fixed seeds. They provide
 stable selection and accidental-corruption detection across native and WASM,
-not adversarial authenticity. Persisted format schema 12, page-artifact schema
+not adversarial authenticity. Persisted format schema 13, page-artifact schema
 24, font response schema 3, distribution roots 6/7, shards 3/4, and cache
 envelope schema 2 reject their SHA-era predecessors. External source locks,
 oracle fixtures, corpus evidence, and parity output digests remain SHA-256
