@@ -221,3 +221,15 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   regeneration contract, exact canonical profile/fixture selectors, committed
   fixture and bidirectional TeX82 matrix audit, full-document staged
   publication, and schema pins.
+
+- `texlive_snapshot.py` and `test-texlive-snapshot.py`: dated upstream TeX Live
+  2023–2026 runtime acquisition, authenticated package extraction, and local
+  inventory verification. This local parity source tier does not publish a
+  production mirror.
+- `texlive_formats.py` and `test-texlive-formats.py`: selected-release stable
+  LaTeX/pdfLaTeX format preparation with one modern pdfTeX oracle, shared
+  generated language configuration, and separate native Umber images.
+- `run-arxiv-texlive.py` and `test-run-arxiv-texlive.py`: archive-declared year
+  routing, complete reference DVI qualification, and serial exact Umber
+  comparison with resumable, source-bound results. The
+  `check-tools.sh texlive-parity-tools` step owns the three hermetic suites.

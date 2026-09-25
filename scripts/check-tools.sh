@@ -28,7 +28,7 @@ for requested in "$@"; do
   selected_args+=("$requested")
 done
 OPTIONAL_CHECK_ARGS="${selected_args[*]}" optional_check_begin check-tools.sh \
-  arxiv-corpus arxiv-census oracle-contract \
+  arxiv-corpus arxiv-census texlive-parity-tools oracle-contract \
   parity-harness fixturegen texlive-wasm-publish \
   profiling-command-tests profiling-cli copy-attribution clippy-reference-tools \
   clippy-profiling-runner clippy-dvi-tools
@@ -37,6 +37,17 @@ optional_check_step_requiring "python3 tar gzip" arxiv-corpus \
   scripts/test-arxiv-corpus.sh
 optional_check_step_requiring "python3 tar gzip" arxiv-census \
   scripts/test-stepwise-arxiv-census.sh
+# Synthetic archives and mocked engines exercise year selection, acquisition,
+# format provenance, and corpus resume without downloads or live TeX binaries.
+check_texlive_parity_tools() {
+  local failed=0
+  python3 scripts/test-texlive-snapshot.py || failed=1
+  python3 scripts/test-texlive-formats.py || failed=1
+  python3 scripts/test-run-arxiv-texlive.py || failed=1
+  return "$failed"
+}
+optional_check_step_requiring "python3" texlive-parity-tools check_texlive_parity_tools
+
 optional_check_step_requiring "python3 openssl" oracle-contract \
   scripts/test-oracle-regeneration.sh
 

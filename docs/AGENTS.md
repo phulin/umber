@@ -125,7 +125,9 @@ native entries, corruption recovery, and the browser portability boundary.
 package mirrors on `assets.umber.ink`, platform-cache ownership, lazy and
 complete-distribution caching, output-scoped classic and HTML font acquisition,
 existing generated-format cache binding, and multi-release pdfTeX parity
-without compiling each historical engine.
+without compiling each historical engine. Its dated-source rollout defines the
+local 2023–2026 parity tier and distinguishes arXiv snapshot dates from the
+proposed initial-release product policy.
 
 `target/arxiv_census/` contains generated machine-readable captures for the
 recent arXiv sample. It is build output, not checked-in documentation; its
