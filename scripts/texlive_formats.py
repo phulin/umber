@@ -18,6 +18,8 @@ import tempfile
 import time
 from pathlib import Path
 
+import texlive_fontmaps
+
 
 class FormatPreparationError(Exception):
     """A selected release could not produce an auditable format pair."""
@@ -294,11 +296,14 @@ def publish_full_runtime(year: int, snapshot_root: Path, output: Path, publisher
     """Pack all selected TeX/font runfiles, with format inputs winning aliases."""
     texmf = snapshot_root / "texmf-dist"
     config = output / "generated-config/language.dat"
+    fontmaps = json.loads((output / "fontmaps.json").read_text(encoding="utf-8"))
+    generated = texlive_fontmaps.verify_fontmaps(snapshot_root, fontmaps)
+    pdftex_map = generated / "fonts/map/pdftex/updmap/pdftex.map"
     reference = [json.loads((output / f"reference-{engine}.json").read_text(encoding="utf-8")) for engine in ("latex", "pdflatex")]
     priority_paths = runtime_priority_paths(texmf, reference)
     acquisition = snapshot_root / "acquisition.json"
     priority_identity = "\n".join(str(path.relative_to(texmf)) for path in priority_paths)
-    identity = hashlib.sha256(("stable-runtime-layout-v4:" + sha256(acquisition) + sha256(config) + priority_identity).encode("utf-8")).hexdigest()[:16]
+    identity = hashlib.sha256(("stable-runtime-layout-v5:" + sha256(acquisition) + sha256(config) + sha256(pdftex_map) + priority_identity).encode("utf-8")).hexdigest()[:16]
     distribution = output / f"runtime-distribution-{identity}"
     manifest = distribution / "manifest.json"
     if manifest.is_file():
@@ -338,6 +343,9 @@ def publish_full_runtime(year: int, snapshot_root: Path, output: Path, publisher
         language.parent.mkdir(parents=True, exist_ok=True)
         language.unlink(missing_ok=True)
         shutil.copyfile(config, language)
+        generated_map = priority / "fonts/map/pdftex/updmap/pdftex.map"
+        generated_map.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(pdftex_map, generated_map)
         roots = []
         for label, tree in [("format-input-priority", priority), *root_layers]:
             digest = subprocess.run([str(publisher), "--tree-ahash64", str(tree)], capture_output=True, text=True, check=True).stdout.strip()
@@ -353,7 +361,7 @@ def publish_full_runtime(year: int, snapshot_root: Path, output: Path, publisher
         subprocess.run([str(publisher), "--verify-sharded", str(staged)], check=True, stdout=subprocess.DEVNULL)
         os.replace(staged, distribution)
     digest = subprocess.run([str(publisher), "--file-ahash64", str(manifest)], capture_output=True, text=True, check=True).stdout.strip()
-    atomic_json(output / "runtime-distribution.json", {"schema": 2, "year": year, "selection": "generated-config,latex-base,l3kernel,latex-ini,latex,generic,plain,other-tex,fonts", "source_receipt_sha256": sha256(acquisition), "language_dat_sha256": sha256(config), "priority_paths": [str(path.relative_to(texmf)) for path in priority_paths], "runfiles_linked": count, "manifest_sha256": sha256(manifest), "manifest_ahash64": digest, "elapsed_seconds": round(time.monotonic() - started, 3)})
+    atomic_json(output / "runtime-distribution.json", {"schema": 3, "year": year, "selection": "generated-config,generated-fontmaps,latex-base,l3kernel,latex-ini,latex,generic,plain,other-tex,fonts", "source_receipt_sha256": sha256(acquisition), "language_dat_sha256": sha256(config), "pdftex_map_sha256": sha256(pdftex_map), "priority_paths": [str(path.relative_to(texmf)) for path in priority_paths], "runfiles_linked": count, "manifest_sha256": sha256(manifest), "manifest_ahash64": digest, "elapsed_seconds": round(time.monotonic() - started, 3)})
     return distribution, digest
 
 
@@ -470,7 +478,7 @@ def build_umber(repo: Path, texmf: Path, config: Path, binary: Path, publisher: 
     return receipt
 
 
-def publish_prepared_year(year: int, snapshot_root: Path, output_root: Path, reference_binary: Path, publisher: Path) -> dict[str, object]:
+def publish_prepared_year(year: int, snapshot_root: Path, output_root: Path, reference_binary: Path, publisher: Path, preparation_path: Path | None = None) -> dict[str, object]:
     """Publish one complete, source-bound year without disturbing other years."""
     acquisition = snapshot_root / "acquisition.json"
     source = json.loads(acquisition.read_text(encoding="utf-8"))
@@ -489,6 +497,13 @@ def publish_prepared_year(year: int, snapshot_root: Path, output_root: Path, ref
         native = json.loads(umber_receipt.read_text(encoding="utf-8"))
         if ref["engine"]["sha256"] != sha256(reference_binary) or ref["format"]["sha256"] != sha256(reference_format):
             raise FormatPreparationError(f"stale {year} {engine} reference format receipt")
+        for record in ref["inputs"]:
+            source_path = Path(str(record["path"]))
+            if not (source_path.is_relative_to(snapshot_root / "texmf-dist") or source_path.is_relative_to(output / "generated-config")):
+                raise FormatPreparationError(f"foreign {year} {engine} reference input: {source_path}")
+            if (source_path.is_symlink() or not source_path.is_file() or source_path.stat().st_size != record["bytes"]
+                    or sha256(source_path) != record["sha256"]):
+                raise FormatPreparationError(f"stale {year} {engine} reference input: {source_path}")
         if native["format"]["sha256"] != sha256(umber_format) or native["source_date_epoch"] != epoch:
             raise FormatPreparationError(f"stale {year} {engine} Umber format receipt")
         arguments = native["arguments"]
@@ -507,19 +522,19 @@ def publish_prepared_year(year: int, snapshot_root: Path, output_root: Path, ref
         }
     runtime_distribution, runtime_digest = publish_full_runtime(year, snapshot_root, output, publisher)
     runtime_manifest = runtime_distribution / "manifest.json"
-    for engine, row in formats.items():
+    for row in formats.values():
         row["umber_distribution"] = str(runtime_distribution)
         row["distribution_ahash64"] = runtime_digest
-        native_receipt = output / f"umber-{engine}.json"
-        native = json.loads(native_receipt.read_text(encoding="utf-8"))
-        native["runtime_distribution"] = {
-            "path": str(runtime_distribution),
-            "manifest_sha256": sha256(runtime_manifest),
-            "manifest_ahash64": runtime_digest,
-        }
-        atomic_json(native_receipt, native)
-    row = {"runtime_root": str(snapshot_root / "texmf-dist"), "runtime_receipt": str(acquisition), "formats": formats}
-    receipt_path = output_root / "preparation.json"
+        row["distribution_manifest_sha256"] = sha256(runtime_manifest)
+    fontmaps = json.loads((output / "fontmaps.json").read_text(encoding="utf-8"))
+    fontmaps_receipt = output / f"fontmaps-{fontmaps['recipe_sha256'][:24]}.json"
+    if json.loads(fontmaps_receipt.read_text(encoding="utf-8")) != fontmaps:
+        raise FormatPreparationError(f"selected font-map receipt changed: {fontmaps_receipt}")
+    texlive_fontmaps.verify_fontmaps(snapshot_root, fontmaps)
+    fontmaps["receipt"] = str(fontmaps_receipt)
+    fontmaps["receipt_sha256"] = sha256(fontmaps_receipt)
+    row = {"runtime_root": str(snapshot_root / "texmf-dist"), "runtime_receipt": str(acquisition), "fontmaps": fontmaps, "formats": formats}
+    receipt_path = preparation_path or output_root / "preparation.json"
     prepared: dict[str, object] = {}
     if receipt_path.is_file():
         previous = json.loads(receipt_path.read_text(encoding="utf-8"))
@@ -536,8 +551,11 @@ def main() -> int:
     parser.add_argument("--years", help="comma-separated selected years; defaults to all snapshot years")
     parser.add_argument("--snapshot-root", type=Path, default=Path("target/texlive-years"), help="read-only acquired snapshot root")
     parser.add_argument("--output-root", type=Path, default=Path("target/texlive-formats"), help="generated format and receipt root")
+    parser.add_argument("--preparation", type=Path, help="preparation receipt destination; defaults to OUTPUT_ROOT/preparation.json")
+    parser.add_argument("--runtime-only", action="store_true", help="reuse verified format images and publish updated runtime configuration")
     parser.add_argument("--reference-binary", type=Path, required=True)
-    parser.add_argument("--umber", type=Path, required=True)
+    parser.add_argument("--kpsewhich", type=Path, default=Path("third_party/texlive-source/build-pdftex14029-20260301/texk/kpathsea/kpsewhich"), help="built kpathsea lookup utility from the project TeX Live source")
+    parser.add_argument("--umber", type=Path, help="Umber binary, required unless --runtime-only")
     parser.add_argument("--publisher", type=Path, required=True)
     args = parser.parse_args()
     repo = Path(__file__).resolve().parent.parent
@@ -552,7 +570,12 @@ def main() -> int:
         for year in years:
             if year not in texlive_snapshot.SNAPSHOT_DATES:
                 raise FormatPreparationError(f"unsupported format year: {year}")
-        for binary in (args.reference_binary, args.umber, args.publisher):
+        if not args.runtime_only and args.umber is None:
+            raise FormatPreparationError("--umber is required unless --runtime-only is used")
+        binaries = (args.reference_binary, args.publisher, args.kpsewhich)
+        if args.umber is not None and not args.runtime_only:
+            binaries += (args.umber,)
+        for binary in binaries:
             if not binary.resolve().is_file():
                 raise FormatPreparationError(f"missing binary: {binary}")
         version = subprocess.run([str(args.reference_binary.resolve()), "--version"], capture_output=True, text=True, check=True).stdout.splitlines()[0]
@@ -577,13 +600,16 @@ def main() -> int:
             config = output / "generated-config"
             config_receipt = language_dat(texmf, tlpdb, config / "language.dat")
             atomic_json(output / "generated-config.json", config_receipt)
-            distribution, digest = publish_local_support(texmf, args.publisher.resolve(), output, year)
-            for engine in ("latex", "pdflatex"):
-                reference = build_reference(repo, texmf, config, args.reference_binary.resolve(), engine, epoch, output)
-                build_umber(repo, texmf, config, args.umber.resolve(), args.publisher.resolve(), engine, epoch, output, reference, distribution, digest, year)
-            publish_prepared_year(year, root, output_root, args.reference_binary.resolve(), args.publisher.resolve())
+            texlive_fontmaps.prepare_fontmaps(root, output, args.kpsewhich)
+            if not args.runtime_only:
+                distribution, digest = publish_local_support(texmf, args.publisher.resolve(), output, year)
+                for engine in ("latex", "pdflatex"):
+                    reference = build_reference(repo, texmf, config, args.reference_binary.resolve(), engine, epoch, output)
+                    build_umber(repo, texmf, config, args.umber.resolve(), args.publisher.resolve(), engine, epoch, output, reference, distribution, digest, year)
+            preparation = args.preparation.resolve() if args.preparation else None
+            publish_prepared_year(year, root, output_root, args.reference_binary.resolve(), args.publisher.resolve(), preparation)
             print(f"prepared reference and Umber formats for TeX Live {year}: {output}")
-    except (OSError, ValueError, subprocess.CalledProcessError, FormatPreparationError) as error:
+    except (OSError, ValueError, subprocess.CalledProcessError, FormatPreparationError, texlive_fontmaps.FontMapError) as error:
         print(f"texlive_formats.py: {error}", file=sys.stderr)
         return 1
     return 0

@@ -4,15 +4,91 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
+import json
 import lzma
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
 
+import texlive_fontmaps as fontmaps
 import texlive_formats as formats
 
 
 class AnnualFormatsTest(unittest.TestCase):
+    def test_updmap_config_must_match_authenticated_package_directives(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            tlpdb = root / "texlive.tlpdb.xz"
+            config = root / "updmap.cfg"
+            with lzma.open(tlpdb, "wt", encoding="utf-8") as stream:
+                stream.write("name one\nexecute addMap foo.map\nexecute addMixedMap bar.map\nname two\nexecute addKanjiMap baz.map\n")
+            config.write_text("# selected config\nMap foo.map\nMixedMap  bar.map\nKanjiMap baz.map\n", encoding="utf-8")
+            self.assertEqual(fontmaps.validate_updmap_config(tlpdb, config), 3)
+            config.write_text("Map foo.map\nMixedMap bar.map\nKanjiMap other.map\n", encoding="utf-8")
+            with self.assertRaisesRegex(fontmaps.FontMapError, "disagrees with TLPDB"):
+                fontmaps.validate_updmap_config(tlpdb, config)
+
+    def test_fontmap_support_requires_selected_archive_digest(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            snapshot = root / "snapshot"
+            archive = snapshot / "archives/texlive.infra.r1.tar.xz"
+            archive.parent.mkdir(parents=True)
+            module = root / "TLUtils.pm"
+            module.write_bytes(b"package TeXLive::TLUtils; 1;\n")
+            with tarfile.open(archive, "w:xz") as stream:
+                stream.add(module, arcname="tlpkg/TeXLive/TLUtils.pm")
+            digest = hashlib.sha512(archive.read_bytes()).hexdigest()
+            tlpdb = snapshot / "tlpkg/texlive.tlpdb.xz"
+            tlpdb.parent.mkdir(parents=True)
+            with lzma.open(tlpdb, "wt", encoding="utf-8") as stream:
+                stream.write(
+                    f"name texlive.infra\nrevision 1\ncontainersize {archive.stat().st_size}\n"
+                    f"containerchecksum {digest}\nrunfiles size=1\n tlpkg/TeXLive/TLUtils.pm\n"
+                )
+            staged = fontmaps.stage_modules(snapshot, root / "output")
+            self.assertEqual(staged["module_count"], 1)
+            self.assertEqual((Path(staged["support_root"]) / "tlpkg/TeXLive/TLUtils.pm").read_bytes(), module.read_bytes())
+            archive.write_bytes(archive.read_bytes() + b"changed")
+            with self.assertRaisesRegex(Exception, "selected texlive.infra archive"):
+                fontmaps.stage_modules(snapshot, root / "output")
+
+    def test_generated_fontmap_root_admits_only_receipted_map(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            snapshot = root / "snapshot"
+            inputs = {
+                "tlpdb_sha256": snapshot / "tlpkg/texlive.tlpdb.xz",
+                "updmap_script_sha256": snapshot / "texmf-dist/scripts/texlive/updmap.pl",
+                "updmap_config_sha256": snapshot / "texmf-dist/web2c/updmap.cfg",
+            }
+            for path in inputs.values():
+                path.parent.mkdir(parents=True)
+                path.write_bytes(b"selected source")
+            recipe = {key: fontmaps.sha256(path) for key, path in inputs.items()}
+            recipe.update({
+                "generator": "selected-texlive-updmap-pl-v1",
+                "texlive_infra_archive_sha512": "a" * 128,
+                "kpsewhich_sha256": "b" * 64,
+            })
+            recipe_hash = hashlib.sha256(json.dumps(recipe, sort_keys=True).encode()).hexdigest()
+            generated = root / "output/generated-fontmaps" / recipe_hash[:24]
+            pdftex_map = generated / "fonts/map/pdftex/updmap/pdftex.map"
+            pdftex_map.parent.mkdir(parents=True)
+            pdftex_map.write_bytes(b"cmr10 CMR10 <cmr10.pfb\n")
+            record = {
+                **recipe, "schema": 1, "recipe_sha256": recipe_hash,
+                "generated_root": str(generated), "pdftex_map": str(pdftex_map),
+                "pdftex_map_sha256": fontmaps.sha256(pdftex_map),
+                "pdftex_map_bytes": pdftex_map.stat().st_size,
+            }
+            self.assertEqual(fontmaps.verify_fontmaps(snapshot, record), generated)
+            (generated / "unexpected.map").write_bytes(b"unverified")
+            with self.assertRaisesRegex(fontmaps.FontMapError, "unexpected files"):
+                fontmaps.verify_fontmaps(snapshot, record)
+
     def test_clock_comes_from_selected_acquisition_receipt(self) -> None:
         self.assertEqual(
             formats.source_epoch({"snapshot_date": "2024-03-11"}),

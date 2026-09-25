@@ -231,7 +231,12 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   production mirror.
 - `texlive_formats.py` and `test-texlive-formats.py`: selected-release stable
   LaTeX/pdfLaTeX format preparation with one modern pdfTeX oracle, shared
-  generated language configuration, and separate native Umber images.
+  generated language and font-map configuration, separate native Umber images,
+  and runtime-only catalogue refresh without changing format receipts.
+- `texlive_fontmaps.py`: official selected-release `updmap.pl` execution using
+  verified `texlive.infra` Perl modules and the built kpathsea lookup utility;
+  it publishes generated maps outside the immutable snapshot with input and
+  output identities.
 - `run-arxiv-texlive.py` and `test-run-arxiv-texlive.py`: archive-declared year
   routing, complete reference DVI qualification, and serial exact Umber
   comparison with resumable, source-bound results. The
