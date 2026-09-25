@@ -129,7 +129,7 @@ The end state has one engine, not “batch” and “incremental” engines:
    semantics. Compact episode sidecars collect the minimum exact information
    needed to publish them at a barrier. They are absent only when the existing
    typed policy says the consumer is absent.
-8. Formats remain validated handle-free schema-12 semantic images. A loaded
+8. Formats remain validated handle-free schema-13 semantic images. A loaded
    immutable base and its mutable overlay use the same banks and publication
    rules as INITEX. Runtime cursors, builder capacity, generations, journals,
    provenance, and caches never enter format bytes.
@@ -300,7 +300,7 @@ vectors and allocation counts are in
 - `NeedResource`, cancellation, fuel, error, effect, checkpoint, and observer
   perturbation tests prove atomic rollback or commit and full-checkpoint replay
   through the host session;
-- fresh and schema-12-loaded runs have identical state, output, format redump,
+- fresh and schema-13-loaded runs have identical state, output, format redump,
   and checkpoint schedules; cold and incremental runs compare state, effects,
   artifacts, dependencies, provenance queries, and named boundaries;
 - the closed direct slice retains at least 10x at 6M/12M and 5x nested after
