@@ -1728,22 +1728,6 @@ impl<'output, 'word, 'projection, 'vectors>
                     return Err(error);
                 }
             };
-        let post_source = pending_word_range(self.word, position..end);
-        let post = match reconstitute_branch(
-            stores,
-            diagnostic_effects,
-            &post_source,
-            false,
-            self.right_boundary,
-            fuel,
-            tfm_work,
-        ) {
-            Ok(post) => post,
-            Err(error) => {
-                self.resume_main(stores);
-                return Err(error);
-            }
-        };
         let (physical_replace_count, physical_post) = match physical_projection_for_glyph(
             stores,
             diagnostic_effects,
@@ -1763,6 +1747,11 @@ impl<'output, 'word, 'projection, 'vectors>
             }
         };
         let replace = singleton_glyph_branch(stores, glyph, tfm_work);
+        // TeX82 §§914--918 reconstitutes the post-break branch through the
+        // next synchronization point in the whole word. A kern after its
+        // final glyph can belong to this branch even though the next glyph
+        // remains in the main list (for example, `ef-` / `fect`).
+        let post = physical_post;
         self.resume_main(stores);
         stores.construct_page_active_list(self.output, |destination| {
             destination.discretionary(
@@ -2421,6 +2410,118 @@ mod tests {
                 }
             });
         }
+    }
+
+    #[test]
+    fn post_break_reconstitution_keeps_kern_before_next_source_glyph() {
+        // TeX82 §§914--918 reconstitutes the post-break branch from the
+        // hyphenation point through the next synchronized source boundary.
+        // `ff` is a ligature, while the following `f`/`e` pair has a kern.
+        crate::test_harness::with_nonstop_plain_universe(|universe| {
+            let mut stores = universe.command_context().expect("test state is admitted");
+            let mut characters = vec![None; 256];
+            for code in *b"-ceftx" {
+                characters[usize::from(code)] = Some(tex_state::font::CharMetrics {
+                    width: Scaled::from_raw(Scaled::UNITY),
+                    height: Scaled::from_raw(0),
+                    depth: Scaled::from_raw(0),
+                    italic_correction: Scaled::from_raw(0),
+                    tag: tex_state::font::CharTag::None,
+                });
+            }
+            characters[usize::from(b'f')]
+                .as_mut()
+                .expect("f exists")
+                .tag = tex_state::font::CharTag::LigKern {
+                program_index: 0,
+                start_index: 0,
+            };
+            let program = vec![
+                tex_fonts::LigKernInstruction {
+                    skip_byte: 0,
+                    next_char: b'f',
+                    command: Some(tex_fonts::LigKernCommand::Ligature(
+                        tex_fonts::LigatureCommand {
+                            replacement: b'x',
+                            delete_current: true,
+                            delete_next: true,
+                            pass_over: 0,
+                        },
+                    )),
+                },
+                tex_fonts::LigKernInstruction {
+                    skip_byte: 128,
+                    next_char: b'e',
+                    command: Some(tex_fonts::LigKernCommand::Kern(Scaled::from_raw(-22_938))),
+                },
+            ];
+            let size = Scaled::from_raw(10 * Scaled::UNITY);
+            let font = stores.intern_font(tex_state::font::LoadedFont::new(
+                "post-break-kern",
+                "post-break-kern.tfm",
+                tex_fonts::font_content_hash(b"post-break-kern"),
+                0,
+                size,
+                size,
+                vec![Scaled::from_raw(0); 7],
+                tex_state::font::FontMetrics::new(characters, program, None, None, Vec::new()),
+            ));
+            stores.set_font_hyphen_char(font, i32::from(b'-'));
+            stores.add_hyphenation_exception_for_language(
+                0,
+                ExceptionSpec {
+                    word: "effect".into(),
+                    positions: vec![2],
+                },
+            );
+            for parameter in [IntParam::LEFT_HYPHEN_MIN, IntParam::RIGHT_HYPHEN_MIN] {
+                stores
+                    .assign_int_param(parameter, 1, tex_state::AssignmentScope::Global)
+                    .expect("hyphen minimum");
+            }
+            let mut nodes = vec![Node::Glue {
+                origin: tex_state::node::GlueSpecOrigin::Owned,
+                spec: tex_state::glue::GlueSpec::ZERO,
+                kind: tex_state::node::GlueKind::Normal,
+                leader: None,
+            }];
+            nodes.extend("effect".chars().map(|ch| character(font, ch)));
+            nodes.push(Node::Penalty(0));
+            let source = stores.publish_page_nodes(nodes);
+            let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut scratch = crate::mode::HorizontalModeScratch::default();
+            let mut fuel = tex_command::CommandFuelLedger::new(10_000).expect("bounded fuel");
+            let result = hyphenated_hlist_with_fuel(
+                &mut stores,
+                &mut effects,
+                source,
+                &mut scratch,
+                fuel.fuel_mut(),
+            )
+            .expect("ligature reconstitution");
+            for list in [result.semantic, result.physical] {
+                let post = stores
+                    .page_nodes(list)
+                    .expect("hyphenated list")
+                    .iter()
+                    .find_map(|node| match node {
+                        tex_state::NodeView::Disc { post, .. } => Some(post),
+                        _ => None,
+                    })
+                    .expect("hyphen inside ff ligature");
+                let branch = stores.page_nodes(post).expect("post-break branch");
+                assert_eq!(branch.len(), 2);
+                assert!(matches!(
+                    branch.get(0),
+                    Some(tex_state::NodeView::Char { ch: 'f', .. })
+                ));
+                assert!(matches!(
+                    branch.get(1),
+                    Some(tex_state::NodeView::Kern { amount, kind: KernKind::Font })
+                        if amount.raw() == -22_938
+                ));
+            }
+        });
     }
 
     #[test]
