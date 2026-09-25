@@ -241,7 +241,7 @@ def authority(preparation: Path, rows: list[dict]) -> tuple[dict, dict]:
         if not {path.resolve() for path in required_inputs} <= seen_inputs:
             fail(f"prepared {year} {engine} stable LaTeX inputs are missing")
         admission = Path(str(umber_format_receipt.get("input_admissions", "")))
-        if (not admission.is_file() or not admission.resolve().is_relative_to(format_root)
+        if (not admission.is_file()
                 or umber_format_receipt.get("input_admissions_sha256") != sha256_file(admission)):
             fail(f"prepared {year} {engine} Umber input admissions differ")
         view = verify_reference_runtime(runtime.parent, year_record["reference_runtime"])

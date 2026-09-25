@@ -251,6 +251,21 @@ fi
                 self.assertEqual(runner.main(), 1)
                 self.assertTrue((results / "rows/incomplete-reference/pdf25-0001/reference/pdf25.dvi").is_file())
                 self.assertTrue(last_receipt.is_file())
+                # Rebuilt native formats can retain reference formats in another
+                # output directory; their input receipt remains content-bound.
+                native_path = Path(years["2023"]["formats"]["latex"]["umber_format_receipt"])
+                native_bytes = native_path.read_bytes()
+                native = json.loads(native_bytes)
+                rebuilt_inputs = root / "rebuilt-native.inputs"
+                rebuilt_inputs.write_bytes(Path(native["input_admissions"]).read_bytes())
+                native["input_admissions"] = str(rebuilt_inputs)
+                native_path.write_text(json.dumps(native))
+                rows = runner.read_sources(lock, archives, 3)
+                runner.authority(preparation, rows)
+                rebuilt_inputs.write_text("corrupt")
+                with self.assertRaisesRegex(SystemExit, "Umber input admissions differ"):
+                    runner.authority(preparation, rows)
+                native_path.write_bytes(native_bytes)
                 prepared_bytes = preparation.read_bytes()
                 preparation.write_text(json.dumps({"schema": 1, "years": {"2025": years["2025"]}}))
                 with self.assertRaisesRegex(SystemExit, "prepared TeX Live year is missing"):
