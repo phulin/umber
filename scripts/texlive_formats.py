@@ -104,8 +104,14 @@ def language_dat(texmf: Path, tlpdb: Path, output: Path) -> dict[str, object]:
 def stable_paths(texmf: Path) -> tuple[Path, Path, Path]:
     base = texmf / "tex/latex/base"
     kernel = texmf / "tex/latex/l3kernel"
-    ini = texmf / "tex/latex/tex-ini-files"
-    for path in (base / "latex.ltx", kernel / "expl3-code.tex", ini / "latex.ini", ini / "pdflatex.ini"):
+    found = [
+        path.parent for path in (texmf / "tex/latex").rglob("latex.ini")
+        if "latex-dev" not in path.parts and (path.parent / "pdflatex.ini").is_file()
+    ]
+    if len(found) != 1:
+        raise FormatPreparationError(f"expected one selected stable LaTeX ini directory, found {found}")
+    ini = found[0]
+    for path in (base / "latex.ltx", kernel / "expl3-code.tex"):
         if not path.is_file():
             raise FormatPreparationError(f"missing stable format source: {path}")
     return base, kernel, ini
@@ -202,8 +208,8 @@ def build_reference(repo: Path, texmf: Path, config: Path, binary: Path, engine:
 def publish_local_support(texmf: Path, publisher: Path, output: Path, year: int) -> tuple[Path, str]:
     """Provide an explicit selected-release fallback catalogue for local TEXMF runs."""
     staged = output / "distribution-input"
-    source = texmf / "tex/latex/tex-ini-files/latex.ini"
-    target = staged / "tex/latex/tex-ini-files/latex.ini"
+    source = stable_paths(texmf)[2] / "latex.ini"
+    target = staged / source.relative_to(texmf)
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source, target)
     tree = subprocess.run([str(publisher), "--tree-ahash64", str(staged)], capture_output=True, text=True, check=True).stdout.strip()
@@ -286,7 +292,8 @@ def build_umber(repo: Path, texmf: Path, config: Path, binary: Path, publisher: 
     admission = work / "build.inputs"
     fmt.unlink(missing_ok=True)
     admission.unlink(missing_ok=True)
-    arguments = ["run", f"--{engine}", "--distribution", str(distribution), "--distribution-ahash64", distribution_digest, "--offline", str(texmf / f"tex/latex/tex-ini-files/{engine}.ini"), "--format-out", str(fmt), "--input-records-out", str(admission)]
+    entry = stable_paths(texmf)[2] / f"{engine}.ini"
+    arguments = ["run", f"--{engine}", "--distribution", str(distribution), "--distribution-ahash64", distribution_digest, "--offline", str(entry), "--format-out", str(fmt), "--input-records-out", str(admission)]
     run_guarded(repo, binary, arguments, cwd=work, env=env, stdout=work / "terminal.txt", stderr=work / "stderr.txt")
     if not fmt.is_file() or fmt.read_bytes()[:8] != b"UMBRFMT\0":
         raise FormatPreparationError(f"Umber omitted valid {engine} native format")

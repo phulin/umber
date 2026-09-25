@@ -62,6 +62,26 @@ class AnnualFormatsTest(unittest.TestCase):
             with self.assertRaisesRegex(formats.FormatPreparationError, "stable format source"):
                 formats.stable_paths(texmf)
 
+    def test_ini_directory_is_discovered_from_selected_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            texmf = Path(raw)
+            for relative in (
+                "tex/latex/base/latex.ltx",
+                "tex/latex/l3kernel/expl3-code.tex",
+                "tex/latex/latexconfig/latex.ini",
+                "tex/latex/latexconfig/pdflatex.ini",
+            ):
+                path = texmf / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("test", encoding="utf-8")
+            self.assertEqual(formats.stable_paths(texmf)[2], texmf / "tex/latex/latexconfig")
+            other = texmf / "tex/latex/another/latex.ini"
+            other.parent.mkdir(parents=True)
+            other.write_text("test", encoding="utf-8")
+            (other.parent / "pdflatex.ini").write_text("test", encoding="utf-8")
+            with self.assertRaisesRegex(formats.FormatPreparationError, "expected one"):
+                formats.stable_paths(texmf)
+
     def test_recorder_rejects_latex_dev_and_foreign_inputs(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
