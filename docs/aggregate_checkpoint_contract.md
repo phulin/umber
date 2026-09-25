@@ -582,3 +582,15 @@ any standing component gate:
 
 Timing is diagnostic in the standalone executable. Flat allocation and
 requested-byte assertions are deterministic and enforced there.
+
+## Releasing history during terminal cleanup
+
+Restoring an ordinary checkpoint requires quiescent group state. Releasing
+its retained history does not restore execution and must also work when a
+complete TeX job ends inside a group: TeX.web §1335 reports that condition
+as a terminal warning. Dense checkpoint and ordinary group-save records
+have separate owners. Prefix release validates the checkpoint owner and
+retained coordinate, rejects active transactions and unsettled forks, and
+reclaims only the checkpoint prefix. It leaves current group saves and
+values intact. Aggregate release uses that release-specific validation;
+ordinary restore retains its stronger quiescence requirement.

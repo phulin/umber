@@ -1136,7 +1136,7 @@ impl<G> SaveJournal<G> {
         &mut self,
         cursor: JournalCursor<G>,
     ) -> Result<usize, crate::StateError> {
-        if !self.validate_cursor(cursor) || self.checkpoint_fork {
+        if !self.validate_release_cursor(cursor) {
             return Err(crate::StateError::InvalidCursor);
         }
         let released = self
@@ -1145,6 +1145,15 @@ impl<G> SaveJournal<G> {
             .map_err(|_| crate::StateError::InvalidCursor)?;
         self.refresh_checkpoint_capacity_bytes();
         Ok(released)
+    }
+
+    /// Prefix reclamation does not restore state or consume ordinary group
+    /// saves. It remains valid during TeX's final cleanup with open groups.
+    pub(crate) fn validate_release_cursor(&self, cursor: JournalCursor<G>) -> bool {
+        self.validate_cursor_shape(cursor)
+            && self.transaction_depth == 0
+            && self.transaction_entries.is_empty()
+            && !self.checkpoint_fork
     }
 
     #[must_use]

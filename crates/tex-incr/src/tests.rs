@@ -70,6 +70,21 @@ fn cold_execution_keeps_shipout_only_in_output_history() {
 }
 
 #[test]
+fn complete_job_with_open_group_preserves_output_and_terminal_warning() {
+    // TeX.web final_cleanup (§1335) warns about open groups; a complete job
+    // does not require every group to have been closed before releasing history.
+    let mut session = session(
+        RevisionId::new(1),
+        r"\begingroup\shipout\vbox{\hrule height1pt width10pt}\end",
+    );
+    let output = session
+        .cold()
+        .expect("a complete job may end inside a group");
+    assert_eq!(output.pages().len(), 1);
+    assert!(terminal_effect_text(&output).contains("end occurred inside a group"));
+}
+
+#[test]
 fn cold_candidate_runs_canonical_job_start_before_root_input() {
     let mut session = session(
         RevisionId::new(1),

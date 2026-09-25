@@ -2287,6 +2287,10 @@ impl<G> DenseState<G> {
         Ok(())
     }
 
+    pub(crate) fn validate_checkpoint_release(&self, cursor: JournalCursor<G>) -> bool {
+        self.journal().validate_release_cursor(cursor)
+    }
+
     pub(crate) fn release_checkpoint_prefix(
         &mut self,
         cursor: JournalCursor<G>,

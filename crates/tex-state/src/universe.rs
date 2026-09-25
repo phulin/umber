@@ -50,6 +50,12 @@ use smallvec::SmallVec;
 use std::marker::PhantomData;
 use std::rc::Rc;
 
+enum CheckpointValidation {
+    Restore,
+    ReplayRestore,
+    Release,
+}
+
 fn tex_memory_words(nodes: &[Node], etex_node_sizes: bool) -> (usize, usize) {
     nodes.iter().fold((0_usize, 0_usize), |words, node| {
         let node_words = node.tex_memory_words(etex_node_sizes);
@@ -929,7 +935,7 @@ impl<G> Universe<G> {
             checkpoint,
             self.durable_boxes
                 .validates_cursor(*checkpoint.state.mark().durable()),
-            false,
+            CheckpointValidation::Restore,
         )
     }
 
@@ -938,7 +944,7 @@ impl<G> Universe<G> {
             checkpoint,
             self.durable_boxes
                 .validates_cursor(*checkpoint.state.mark().durable()),
-            true,
+            CheckpointValidation::ReplayRestore,
         )
     }
 
@@ -946,19 +952,24 @@ impl<G> Universe<G> {
         &self,
         checkpoint: &RuntimeCheckpoint<G>,
         durable_ready: bool,
-        after_direct_replay_discard: bool,
+        validation: CheckpointValidation,
     ) -> bool {
         let mark = checkpoint.state.mark();
         let Some(core) = self.core.as_ref() else {
             return false;
         };
         core.owns_generation(checkpoint.state.owner().generation())
-            && if after_direct_replay_discard {
-                core.state()
+            && match validation {
+                CheckpointValidation::Restore => {
+                    core.state().validate_restore(*mark.journal()).is_ok()
+                }
+                CheckpointValidation::ReplayRestore => core
+                    .state()
                     .validate_restore_after_replay(*mark.journal())
-                    .is_ok()
-            } else {
-                core.state().validate_restore(*mark.journal()).is_ok()
+                    .is_ok(),
+                CheckpointValidation::Release => {
+                    core.state().validate_checkpoint_release(*mark.journal())
+                }
             }
             && core.state().validate_checkpoint_cursor(*mark.input())
             && durable_ready
@@ -3069,7 +3080,11 @@ impl<G> Universe<G> {
                     .snapshot_is_retained(&checkpoint.pdf)
                 && self.command_retained.fonts.validates(checkpoint.fonts)
                 && self.command_retained.sources.validates(checkpoint.sources)
-                && self.checkpoint_state_is_ready_with_durable(checkpoint, durable_ready, false)
+                && self.checkpoint_state_is_ready_with_durable(
+                    checkpoint,
+                    durable_ready,
+                    CheckpointValidation::Release,
+                )
                 && self.page_region.validates_checkpoint(checkpoint.page)
         };
         if !retained(released) || oldest_retained.is_some_and(|checkpoint| !retained(checkpoint)) {

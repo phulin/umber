@@ -36,6 +36,66 @@ fn state_with_font(parameters: &[Scaled]) -> DenseState<TestGeneration> {
 }
 
 #[test]
+fn checkpoint_prefix_release_preserves_active_group_restoration() {
+    let mut state = state();
+    state
+        .assign_count(0, 7, AssignmentScope::Global)
+        .expect("initial value");
+    let floor = state.journal_cursor().expect("outer checkpoint");
+    state
+        .begin_group(GroupKind::Simple, 1)
+        .expect("outer group");
+    state
+        .assign_count(0, 11, AssignmentScope::Local)
+        .expect("outer value");
+    state
+        .begin_group(GroupKind::Simple, 2)
+        .expect("inner group");
+    state
+        .assign_count(0, 19, AssignmentScope::Local)
+        .expect("inner value");
+    assert!(
+        state.validate_restore(floor).is_err(),
+        "ordinary restore still requires quiescence"
+    );
+    state
+        .release_checkpoint_prefix(floor)
+        .expect("reclaim history with live groups");
+    assert_eq!(state.count(0).expect("live value"), 19);
+    state
+        .end_group(GroupKind::Simple)
+        .expect("close inner group");
+    assert_eq!(state.count(0).expect("outer value"), 11);
+    state
+        .end_group(GroupKind::Simple)
+        .expect("close outer group");
+    assert_eq!(state.count(0).expect("restored value"), 7);
+}
+
+#[test]
+fn checkpoint_prefix_release_rejects_foreign_or_unsettled_ownership() {
+    let mut state = state();
+    let floor = state.journal_cursor().expect("outer checkpoint");
+    let dense = state.checkpoint_cursor();
+    let mut foreign = DenseState::<TestGeneration>::new().expect("foreign state");
+    assert!(foreign.release_checkpoint_prefix(floor).is_err());
+    let accepted = state
+        .begin_checkpoint_candidate(floor, dense)
+        .expect("candidate");
+    state
+        .assign_count(0, 19, AssignmentScope::Global)
+        .expect("candidate value");
+    assert!(state.release_checkpoint_prefix(floor).is_err());
+    state
+        .reject_checkpoint_candidate(floor, dense, accepted)
+        .expect("reject candidate");
+    assert_eq!(state.count(0).expect("accepted value"), 0);
+    state
+        .release_checkpoint_prefix(floor)
+        .expect("settled release");
+}
+
+#[test]
 fn admitted_meanings_are_direct_dense_slots() {
     let mut names = interner();
     let alpha = names.intern("alpha").expect("intern");
