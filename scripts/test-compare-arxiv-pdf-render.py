@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import sys
 import tempfile
+import threading
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -108,8 +109,50 @@ class RenderContractTests(unittest.TestCase):
                  patch.object(render.subprocess, "run", return_value=SimpleNamespace(
                      stdout=json.dumps(result), returncode=0)) as run, patch("builtins.print"):
                 self.assertEqual(render.main(), 0)
-                self.assertIs(run.call_args.kwargs["preexec_fn"], limit)
+                self.assertNotIn("preexec_fn", run.call_args.kwargs)
                 limit.assert_not_called()
+
+    def test_pair_installs_limit_before_loading_consumer(self):
+        calls = []
+        with patch.object(sys, "argv", ["render", "--pair", "a", "b"]), \
+             patch.object(render, "memory_limit", side_effect=lambda: calls.append("limit")), \
+             patch.object(render, "compare", side_effect=lambda *_: (
+                 calls.append("compare") or {"status": "equal"})), patch("builtins.print"):
+            self.assertEqual(render.main(), 0)
+        self.assertEqual(calls, ["limit", "compare"])
+
+    def test_parallel_consumers_overlap_and_preserve_all_receipts(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            rows = []
+            for name in ("first", "second"):
+                receipt = root / name / "result.json"
+                receipt.parent.mkdir()
+                receipt.write_text("{}")
+                rows.append((receipt, {"id": name, "status": "PDF-diverged"}))
+            barrier = threading.Barrier(2)
+            result = {"schema": render.SCHEMA, "status": "equal", "reference": {}, "umber": {},
+                      "raster_equal": True, "text_equal": True}
+
+            def consumer(*_args, **kwargs):
+                self.assertNotIn("preexec_fn", kwargs)
+                barrier.wait(timeout=5)
+                return SimpleNamespace(stdout=json.dumps(result), returncode=0)
+
+            with patch.object(sys, "argv", ["render", "--results", str(root), "--jobs", "2",
+                                            "--output", str(root / "output")]), \
+                 patch.object(render.importlib.util, "find_spec", return_value=True), \
+                 patch.object(render, "corpus_rows", return_value=rows), \
+                 patch.object(render, "eligible_pair", return_value=(root / "a", root / "b")), \
+                 patch.object(render, "identity", return_value={}), \
+                 patch.object(render.subprocess, "run", side_effect=consumer), patch("builtins.print"):
+                self.assertEqual(render.main(), 0)
+            summary = json.loads((root / "output" / "summary.json").read_text())
+            self.assertEqual(summary["counts"], {"equal": 2})
+            for name in ("first", "second"):
+                report = json.loads((root / "output" / f"{name}.json").read_text())
+                self.assertEqual(report["id"], name)
+                self.assertEqual(report["status"], "equal")
 
     def test_raster_and_extracted_text_are_separate_required_channels(self):
         for page, raster_equal, text_equal in [(Page(b"changed"), False, True),

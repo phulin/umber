@@ -73,7 +73,10 @@ per-page hashes, and separate raster/text outcomes. No tolerance hides changed
 pixels. Pixel equality at this resolution is a consumer result, not proof of
 equality at every resolution. Structural and consumer results remain separate;
 font subset encodings can differ while pages render identically. Each paper
-has the same 120-second and 1,536 MiB process limits. The consumer requires the
+has the same 120-second and 1,536 MiB process limits. Rendering uses bounded
+parallel workers selected from host CPU and memory capacity; `--jobs N`
+overrides that choice, and `--jobs 1` runs serially. Each consumer process
+installs its own memory limit before opening PDFs. The consumer requires the
 complete reference inventory recorded by the corpus summary, so a missing row
 cannot turn a subset into a pass. Reference failures and unsupported engines
 are counted as ineligible. A

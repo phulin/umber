@@ -259,7 +259,7 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   Kpathsea filename indexes over authenticated snapshots, with immutable source
   trees and verified index reuse. The `texlive-parity-tools` step owns the tests.
 
-- `compare-arxiv-pdf-render.py`: opt-in independent MuPDF raster/text comparison of
+- `compare-arxiv-pdf-render.py`: bounded parallel, opt-in independent MuPDF raster/text comparison of
   saved successful PDF pairs, with per-paper guards and artifact authentication.
   PyMuPDF is an external prerequisite. Its hermetic admission/channel tests live
   in `test-compare-arxiv-pdf-render.py`, owned by `texlive-parity-tools`; these do

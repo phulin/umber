@@ -13,6 +13,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from arxiv_corpus_parallel import automatic_jobs, run_jobs
+
 SCHEMA = "arxiv-pdf-render-v1"
 DPI = 144
 MAX_PAGE_PIXELS = 32_000_000
@@ -131,13 +133,44 @@ def memory_limit() -> None:
     resource.setrlimit(resource.RLIMIT_AS, (1536 * 1024 * 1024,) * 2)
 
 
+def compare_row(item: tuple[Path, dict], output: Path, script: Path) -> dict:
+    receipt, row = item
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", row["id"]) or row["id"] != receipt.parent.name:
+        raise ValueError("invalid corpus row identifier")
+    pair = eligible_pair(row)
+    if pair is None:
+        status = "unavailable" if row.get("reference", {}).get("status") == "PDF-success" else "ineligible"
+        report = {"status": status, "corpus_status": row["status"]}
+    else:
+        try:
+            completed = subprocess.run([sys.executable, str(script), "--pair", *map(str, pair)],
+                                       capture_output=True, text=True, timeout=120,
+                                       check=False)
+            report = json.loads(completed.stdout)
+            if report.get("schema") != SCHEMA or completed.returncode not in (0, 2):
+                raise ValueError(f"invalid consumer result: exit {completed.returncode}")
+            if report["status"] != "error":
+                for name, path in zip(("reference", "umber"), pair):
+                    if report[name] != identity(path):
+                        raise ValueError("consumer input identity differs")
+        except (ValueError, subprocess.TimeoutExpired) as error:
+            report = {"status": "error", "error": str(error)}
+    report.update(id=row["id"], corpus_receipt=identity(receipt))
+    (output / f"{row['id']}.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+    return report
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--results", type=Path)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--jobs", type=int, help="concurrent papers (default: host capacity)")
     parser.add_argument("--pair", nargs=2, type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.jobs is not None and args.jobs < 1:
+        parser.error("--jobs must be positive")
     if args.pair:
+        memory_limit()
         try:
             report = compare(*args.pair)
         except Exception as error:
@@ -153,32 +186,9 @@ def main() -> int:
     rows = corpus_rows(args.results)
     args.output.mkdir(parents=True, exist_ok=True)
     script = Path(__file__).resolve()
-    reports = []
-    for receipt, row in rows:
-        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", row["id"]) or row["id"] != receipt.parent.name:
-            raise ValueError("invalid corpus row identifier")
-        pair = eligible_pair(row)
-        if pair is None:
-            status = "unavailable" if row.get("reference", {}).get("status") == "PDF-success" else "ineligible"
-            report = {"status": status, "corpus_status": row["status"]}
-        else:
-            try:
-                completed = subprocess.run([sys.executable, str(script), "--pair", *map(str, pair)],
-                                           capture_output=True, text=True, timeout=120,
-                                           preexec_fn=memory_limit, check=False)
-                report = json.loads(completed.stdout)
-                if report.get("schema") != SCHEMA or completed.returncode not in (0, 2):
-                    raise ValueError(f"invalid consumer result: exit {completed.returncode}")
-                if report["status"] != "error":
-                    for name, path in zip(("reference", "umber"), pair):
-                        if report[name] != identity(path):
-                            raise ValueError("consumer input identity differs")
-            except (ValueError, subprocess.TimeoutExpired) as error:
-                report = {"status": "error", "error": str(error)}
-        report.update(id=row["id"], corpus_receipt=identity(receipt))
-        (args.output / f"{row['id']}.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
-        reports.append(report)
-        print(row["id"], report["status"], flush=True)
+    reports = run_jobs(rows, args.jobs or automatic_jobs(1536),
+                       lambda item: compare_row(item, args.output, script),
+                       lambda report: print(report["id"], report["status"], flush=True))
     if not reports:
         raise ValueError("no corpus receipts found")
     summary = {"schema": SCHEMA, "dpi": DPI, "script": identity(script), "rows": len(reports),
