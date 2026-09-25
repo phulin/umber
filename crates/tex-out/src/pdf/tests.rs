@@ -537,6 +537,40 @@ fn td_rounds_the_scaled_delta_instead_of_subtracting_rounded_positions() {
 }
 
 #[test]
+fn text_baseline_uses_pdftex_printed_unit_threshold() {
+    // pdftex.web §690 (`pdf_begin_string`) ignores a vertical difference
+    // smaller than min_bp_val. At four decimal digits the boundary is seven
+    // scaled points: six must keep one TJ string and seven must emit Td.
+    let run = |v: i64, byte| {
+        PdfContentOperation::Text(PdfContentTextRun {
+            x: 0.0,
+            exact_position: Some(PdfContentTextPosition {
+                h: 0,
+                v,
+                decimal_digits: 4,
+            }),
+            raster: None,
+            baseline: v as f32 / 65_782.0,
+            font_name: b"F1".to_vec(),
+            font_size: 10.0,
+            horizontal_scale: 1.0,
+            bytes: vec![byte],
+            advance: Some(0.0),
+        })
+    };
+    let content = String::from_utf8(ordered_page_content(&[
+        run(0, b'A'),
+        run(6, b'B'),
+        run(7, b'C'),
+    ]))
+    .expect("ASCII PDF content");
+    assert!(
+        content.contains("(A) Tj\n[(B)] TJ\n0 0.0001 Td\n(C) Tj"),
+        "{content}"
+    );
+}
+
+#[test]
 fn mapped_text_starts_its_raster_at_the_serialized_position() {
     // pdftex.web §690: `pdf_set_text_pos` assigns `pdf_h` from the rounded
     // position written to the PDF, while the next `pdf_begin_string` compares

@@ -309,7 +309,7 @@ impl PdfPainter {
             .map(|raster| raster.position_x - f64::from(self.origin.0))
             .unwrap_or_else(|| f64::from(x));
         if let (Some(cursor), Some(advance)) = (self.text_cursor, run.advance)
-            && cursor.baseline == baseline
+            && self.same_text_baseline(cursor, run, baseline)
             && cursor.horizontal_scale == run.horizontal_scale
         {
             // pdftex.web §690 (`pdf_begin_string`) keeps the PDF text
@@ -398,6 +398,28 @@ impl PdfPainter {
             horizontal_scale: run.horizontal_scale,
             exact: raster_cursor.and_then(|cursor| cursor.exact),
         });
+    }
+
+    fn same_text_baseline(
+        &self,
+        cursor: PdfTextCursor,
+        run: &super::PdfContentTextRun,
+        baseline: f32,
+    ) -> bool {
+        if let (Some(pdf), Some(current)) = (
+            self.text_matrix.and_then(|matrix| matrix.exact),
+            run.exact_position,
+        ) {
+            // pdftex.web §690 (`pdf_begin_string`) compares the source
+            // vertical coordinate with the last *printed* PDF coordinate.
+            // Changes below one printed unit leave the current TJ string in
+            // place; comparing rounded floats instead inserts a zero-height
+            // Td and changes the horizontal text raster.
+            let divisor = 10_i64.pow(u32::from(current.decimal_digits) + 2);
+            let min_bp_val = pdftex_divide_scaled(ONE_HUNDRED_BP, divisor, 0).0;
+            return (i128::from(current.v) - i128::from(pdf.v)).abs() < i128::from(min_bp_val);
+        }
+        cursor.baseline == baseline
     }
 
     fn show_rastered_text(
