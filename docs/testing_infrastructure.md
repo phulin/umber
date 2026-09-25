@@ -833,21 +833,35 @@ resource budget. It also resolves available native inputs at the requesting
 command, avoiding a restart of the document for every package. The full
 native and quality gate passed all seven stages with the existing limits.
 
-The subsequent full-source run matched DVI for `2607.09696` (4 pages) and
-`2607.00102` (17 pages). The next eligible paper, `2607.09012`, completed
-15 pages but first differed at DVI byte 14809 on page 3. Its comparison
-reports `right2 != down3` near the first theorem's destination; the cause
-has not yet been established. The serial runner stopped there as designed:
-16 of 94 rows recorded, including 12 reference-DVI failures and one
-reference-PDF failure. The other 14 DVI-qualified papers remain untested
-with this binary. The capture and reverified receipts are in
-`target/parity-wave/arxiv-dvi-demand-admission/`.
+The next fixes preserve shared-zero glue identity through scanning and stored
+nodes, prepend left protrusion before transparent anchors, and implement
+pdfTeX's truncation for negative protrusion codes. The shared-zero change
+requires format schema 13; both the native pdfLaTeX and local Plain images
+were rebuilt, with exact format-pair DVI and Plain source/load equivalence.
+The full native and quality gate, TRIP, e-TRIP, Gentle, and all 210 command
+semantic cases passed at `13e904f1b`. The subsequent negative-code correction
+at `7081313e9` also matches all 28 reduced reference DVI controls.
 
-The authenticated schema-8 runtime root is `513498046b9743e2`, paired Umber
-pdfLaTeX format `a7467396cc8ee0bb` (990985 bytes). Both the format's semantic
-source verification and the clean-reference format-pair gate passed.
-The original speculative-loading failure is preserved in
-`target/parity-wave/arxiv-dvi/`; its 512-binding limit was not increased.
+The fresh full-source corpus capture at
+`target/parity-wave/arxiv-dvi-protrusion-rounding/` matches four papers:
+`2607.09696` (4 pages), `2607.00102` (17 pages), `2607.09012` (15 pages), and
+`2607.08982` (46 pages). The next qualified paper, `2607.12761`, completes all
+40 pages but first differs at byte 186469 on page 37: the reference emits a
+rule above a `k`, while Umber emits a nested push and horizontal movement.
+Its cause remains unestablished. The serial runner stopped there: 27 of 94
+rows recorded, including 19 reference-DVI failures and three reference-PDF
+failures. The remaining 12 DVI-qualified papers have not run with this binary.
+Four of the 17 qualified papers therefore have exact parity; completing a
+paper is not counted as a match.
+
+The new authenticated schema-8 runtime root is `f797fe56a183a3d9`, with Umber
+pdfLaTeX format `132a135cdd424b1f` (1128469 bytes, format schema 13). The
+format's source verification, clean-reference format-pair gate, and complete
+published-object verification passed. Earlier captures remain intact under
+`target/parity-wave/arxiv-dvi-demand-admission/` and
+`target/parity-wave/arxiv-dvi-glue-identity/`. The original speculative-loading
+failure is preserved in `target/parity-wave/arxiv-dvi/`; its 512-binding limit
+was not increased.
 
 The separate Umber LaTeX format also rebuilt and passed source verification
 (963030 bytes, aHash64 `5c89f9ae0a4cf390`), but the base multi-pass LaTeX
