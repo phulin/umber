@@ -21,12 +21,17 @@ success. XeLaTeX remains explicitly unsupported by this engine. Preserve the
 fixed-2026 development-kernel experiment below; its success counts cannot be
 carried over to this source selection.
 
-Prepare the selected releases with the same current binaries:
+Acquire the selected releases, then prepare them with the same current binaries:
 
 ```sh
+for year in 2023 2024 2025 2026; do
+  python3 scripts/texlive_snapshot.py acquire \
+    --year "$year" --cache-root target/texlive-years
+done
 python3 scripts/texlive_formats.py \
   --years 2023,2024,2025,2026 \
-  --cache-root target/texlive-years \
+  --snapshot-root target/texlive-years \
+  --output-root target/texlive-formats \
   --reference-binary target/pdftex14029-oracle/bin/umber-pdftex14029-oracle-clean \
   --umber target/debug/umber \
   --publisher tools/texlive-wasm-publish/target/release/texlive-wasm-publish
@@ -47,7 +52,7 @@ Then qualify and compare the complete source bundles:
 python3 scripts/run-arxiv-texlive.py \
   --source-lock scripts/pdftex-arxiv-recent-sample-100.lock.tsv \
   --archives target/parity-wave/arxiv-acquisition \
-  --preparation target/texlive-years/preparation.json \
+  --preparation target/texlive-formats/preparation.json \
   --umber target/debug/umber \
   --parity-harness target/parity-wave/glue-identity-bin/parity-harness \
   --results target/texlive-years/arxiv-dvi
