@@ -76,6 +76,46 @@ class AnnualFormatsTest(unittest.TestCase):
                 with self.assertRaises(formats.FormatPreparationError):
                     formats.recorder_inputs(run, texmf, config, recorder)
 
+    def test_umber_consumed_inputs_must_match_reference_closure(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            texmf = root / "texmf-dist"
+            ini = texmf / "tex/latex/tex-ini-files/latex.ini"
+            stable = texmf / "tex/latex/base/latex.ltx"
+            for path, data in ((ini, b"entry"), (stable, b"stable")):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(data)
+            publisher = root / "publisher"
+            publisher.write_text(
+                "#!/usr/bin/env python3\n"
+                "import sys\n"
+                "from pathlib import Path\n"
+                "print({'entry':'0000000000000001','stable':'0000000000000002'}[Path(sys.argv[2]).read_text()])\n",
+                encoding="utf-8",
+            )
+            publisher.chmod(0o755)
+            reference = {"inputs": [
+                {"path": str(ini), "bytes": 5},
+                {"path": str(stable), "bytes": 6},
+            ]}
+            admission = root / "build.inputs"
+            admission.write_text(
+                "umber-input-admissions-v1\n"
+                "main\t5\t0000000000000001\n"
+                "file\tused\ttex:latex.ltx\t6\t0000000000000002\n"
+                "file\tadmitted\ttex:unused.sty\t1\t0000000000000003\n",
+                encoding="utf-8",
+            )
+            formats.verify_umber_inputs(reference, admission, publisher, texmf, root / "config", "latex")
+            admission.write_text(
+                "umber-input-admissions-v1\n"
+                "main\t5\t0000000000000001\n"
+                "file\tused\ttex:latex.ltx\t6\t0000000000000003\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(formats.FormatPreparationError, "outside the reference source closure"):
+                formats.verify_umber_inputs(reference, admission, publisher, texmf, root / "config", "latex")
+
 
 if __name__ == "__main__":
     unittest.main()

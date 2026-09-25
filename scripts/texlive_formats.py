@@ -255,7 +255,30 @@ def umber_environment(texmf: Path, config: Path, reference: dict[str, object], e
     return env
 
 
-def build_umber(repo: Path, texmf: Path, config: Path, binary: Path, engine: str, epoch: int, output: Path, reference: dict[str, object], distribution: Path, distribution_digest: str, year: int) -> dict[str, object]:
+def verify_umber_inputs(reference: dict[str, object], admission: Path, publisher: Path, texmf: Path, config: Path, engine: str) -> None:
+    """Bind only consumed Umber inputs to the clean reference's selected files."""
+    import latex_input_admissions
+
+    authorized: dict[str, latex_input_admissions.Identity] = {}
+    for record in reference["inputs"]:
+        path = Path(str(record["path"]))
+        if not (path.is_relative_to(texmf / "tex") or path.is_relative_to(texmf / "fonts/tfm") or path.is_relative_to(config)):
+            continue
+        key = f"{'tfm' if path.suffix == '.tfm' else 'tex'}:{path.name}"
+        digest = subprocess.run([str(publisher), "--file-ahash64", str(path)], capture_output=True, text=True, check=True).stdout.strip()
+        identity = (int(record["bytes"]), digest)
+        if key in authorized and authorized[key] != identity:
+            raise FormatPreparationError(f"reference inputs have conflicting request key {key}")
+        authorized[key] = identity
+    main, files = latex_input_admissions.read_receipt(admission)
+    if authorized.get(f"tex:{engine}.ini") != main:
+        raise FormatPreparationError(f"Umber {engine} main input differs from selected reference source")
+    for status, key, observed in files:
+        if status == "used" and authorized.get(key) != observed:
+            raise FormatPreparationError(f"Umber consumed {key} outside the reference source closure")
+
+
+def build_umber(repo: Path, texmf: Path, config: Path, binary: Path, publisher: Path, engine: str, epoch: int, output: Path, reference: dict[str, object], distribution: Path, distribution_digest: str, year: int) -> dict[str, object]:
     work = output / f"umber-{engine}-work"
     work.mkdir(parents=True, exist_ok=True)
     env = umber_environment(texmf, config, reference, epoch, work)
@@ -269,6 +292,7 @@ def build_umber(repo: Path, texmf: Path, config: Path, binary: Path, engine: str
         raise FormatPreparationError(f"Umber omitted valid {engine} native format")
     if "! " in (work / "terminal.txt").read_text(encoding="utf-8", errors="replace"):
         raise FormatPreparationError(f"Umber {engine} format emitted a TeX diagnostic")
+    verify_umber_inputs(reference, admission, publisher, texmf, config, engine)
     published = output / f"umber-{engine}.fmt"
     atomic_copy(fmt, published)
     receipt = {
@@ -293,21 +317,28 @@ def build_umber(repo: Path, texmf: Path, config: Path, binary: Path, engine: str
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--years", help="comma-separated selected years; defaults to all snapshot years")
-    parser.add_argument("--cache-root", type=Path, default=Path("target/texlive-years"))
+    parser.add_argument("--snapshot-root", type=Path, default=Path("target/texlive-years"), help="read-only acquired snapshot root")
+    parser.add_argument("--output-root", type=Path, default=Path("target/texlive-formats"), help="generated format and receipt root")
     parser.add_argument("--reference-binary", type=Path, required=True)
     parser.add_argument("--umber", type=Path, required=True)
     parser.add_argument("--publisher", type=Path, required=True)
-    parser.add_argument("--offline", action="store_true")
     args = parser.parse_args()
     repo = Path(__file__).resolve().parent.parent
-    cache = args.cache_root.resolve()
+    cache = args.snapshot_root.resolve()
+    output_root = args.output_root.resolve()
     try:
         import texlive_snapshot
 
         years = [int(piece) for piece in args.years.split(",")] if args.years else sorted(texlive_snapshot.SNAPSHOT_DATES)
         if not years or len(set(years)) != len(years):
             raise FormatPreparationError("--years must contain distinct years")
+        receipt_path = output_root / "preparation.json"
         prepared: dict[str, object] = {}
+        if receipt_path.is_file():
+            previous = json.loads(receipt_path.read_text(encoding="utf-8"))
+            if previous.get("schema") != 1 or not isinstance(previous.get("years"), dict):
+                raise FormatPreparationError(f"invalid existing preparation receipt: {receipt_path}")
+            prepared.update(previous["years"])
         for year in years:
             if year not in texlive_snapshot.SNAPSHOT_DATES:
                 raise FormatPreparationError(f"unsupported format year: {year}")
@@ -318,7 +349,7 @@ def main() -> int:
         if "pdfTeX" not in version or "1.40.29" not in version:
             raise FormatPreparationError(f"reference binary is not pdfTeX 1.40.29: {version}")
         for year in years:
-            snapshot = texlive_snapshot.ensure_snapshot(year, cache, offline=args.offline)
+            snapshot = texlive_snapshot.verify_snapshot(year, cache)
             root = Path(snapshot.root).resolve()
             acquisition = Path(snapshot.receipt).resolve()
             source = json.loads(acquisition.read_text(encoding="utf-8"))
@@ -327,7 +358,7 @@ def main() -> int:
             epoch = source_epoch(source)
             texmf = root / "texmf-dist"
             stable_paths(texmf)
-            output = root / "formats"
+            output = output_root / str(year)
             output.mkdir(parents=True, exist_ok=True)
             config = output / "generated-config"
             config_receipt = language_dat(texmf, root / "tlpkg/texlive.tlpdb.xz", config / "language.dat")
@@ -336,7 +367,7 @@ def main() -> int:
             formats: dict[str, object] = {}
             for engine in ("latex", "pdflatex"):
                 reference = build_reference(repo, texmf, config, args.reference_binary.resolve(), engine, epoch, output)
-                umber = build_umber(repo, texmf, config, args.umber.resolve(), engine, epoch, output, reference, distribution, digest, year)
+                umber = build_umber(repo, texmf, config, args.umber.resolve(), args.publisher.resolve(), engine, epoch, output, reference, distribution, digest, year)
                 formats[engine] = {
                     "reference_binary": str(args.reference_binary.resolve()),
                     "reference_format": str(output / f"reference-{engine}.fmt"),
@@ -349,8 +380,8 @@ def main() -> int:
                     "source_date_epoch": epoch,
                 }
             prepared[str(year)] = {"runtime_root": str(texmf), "runtime_receipt": str(acquisition), "formats": formats}
+            atomic_json(receipt_path, {"schema": 1, "years": prepared})
             print(f"prepared reference and Umber formats for TeX Live {year}: {output}")
-        atomic_json(cache / "preparation.json", {"schema": 1, "years": prepared})
     except (OSError, ValueError, subprocess.CalledProcessError, FormatPreparationError) as error:
         print(f"texlive_formats.py: {error}", file=sys.stderr)
         return 1
