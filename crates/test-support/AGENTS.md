@@ -45,8 +45,14 @@ Keep reusable test harness code here when multiple crates or integration tests n
 - `src/git_fixture.rs`: selected-checkout Git and filesystem authority validation for closed cases, preserving manifest order and revalidating before payload access.
 - `src/bin/pdf-normalize.rs`: host-only CLI exposing the independent Hayro
   structure projection to live-reference tooling.
+- `src/bin/pdf-compare.rs`: host-only JSON receipt CLI for bounded comparison
+  of two existing PDF files.
 - `src/pdf.rs`: canonical PDF structure normalizer that walks shallow Hayro-backed values directly.
 - `src/pdf/tests.rs`: inherited-resource merging and stable cycle-notation normalization coverage.
+- `src/pdf_compare.rs`: strict corpus comparison projection built on the Hayro
+  normalizer with page geometry and complete decoded-content evidence.
+- `src/pdf_compare/tests.rs`: comparison negative controls and malformed-input
+  checks.
 - `src/pdf_query.rs`: bounded Hayro document with shallow borrowed object,
   dictionary, array, and page handles plus focused owned stream-byte and
   content-operation queries. This is the semantic assertion boundary for PDF

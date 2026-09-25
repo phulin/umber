@@ -6,6 +6,7 @@ mod corpus;
 pub mod dvi;
 pub mod git_fixture;
 pub mod pdf;
+pub mod pdf_compare;
 pub mod pdf_fixture;
 pub mod pdf_query;
 
