@@ -472,12 +472,12 @@ dependencies = [
 [[package]]
 name = "hayro-ccitt"
 version = "0.3.0"
-source = "git+https://github.com/phulin/hayro.git?rev=abf6c167f6b877a18a077b9ff76dad36573e271d#abf6c167f6b877a18a077b9ff76dad36573e271d"
+source = "git+https://github.com/phulin/hayro.git?rev=26286dfd928f75d499091f4b4d594944fe670e5d#26286dfd928f75d499091f4b4d594944fe670e5d"
 
 [[package]]
 name = "hayro-jbig2"
 version = "0.3.0"
-source = "git+https://github.com/phulin/hayro.git?rev=abf6c167f6b877a18a077b9ff76dad36573e271d#abf6c167f6b877a18a077b9ff76dad36573e271d"
+source = "git+https://github.com/phulin/hayro.git?rev=26286dfd928f75d499091f4b4d594944fe670e5d#26286dfd928f75d499091f4b4d594944fe670e5d"
 dependencies = [
  "fearless_simd",
  "hayro-ccitt",
@@ -486,7 +486,7 @@ dependencies = [
 [[package]]
 name = "hayro-jpeg2000"
 version = "0.3.5"
-source = "git+https://github.com/phulin/hayro.git?rev=abf6c167f6b877a18a077b9ff76dad36573e271d#abf6c167f6b877a18a077b9ff76dad36573e271d"
+source = "git+https://github.com/phulin/hayro.git?rev=26286dfd928f75d499091f4b4d594944fe670e5d#26286dfd928f75d499091f4b4d594944fe670e5d"
 dependencies = [
  "fearless_simd",
 ]
@@ -494,7 +494,7 @@ dependencies = [
 [[package]]
 name = "hayro-syntax"
 version = "0.7.2"
-source = "git+https://github.com/phulin/hayro.git?rev=abf6c167f6b877a18a077b9ff76dad36573e271d#abf6c167f6b877a18a077b9ff76dad36573e271d"
+source = "git+https://github.com/phulin/hayro.git?rev=26286dfd928f75d499091f4b4d594944fe670e5d#26286dfd928f75d499091f4b4d594944fe670e5d"
 dependencies = [
  "flate2",
  "hayro-jbig2",

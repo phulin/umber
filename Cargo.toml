@@ -60,7 +60,7 @@ anyhow = "1"
 bincode = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 flate2 = { version = "1", default-features = false, features = ["zlib"] }
-hayro-syntax = { git = "https://github.com/phulin/hayro.git", rev = "abf6c167f6b877a18a077b9ff76dad36573e271d", default-features = false, features = ["std", "unsafe"] }
+hayro-syntax = { git = "https://github.com/phulin/hayro.git", rev = "26286dfd928f75d499091f4b4d594944fe670e5d", default-features = false, features = ["std", "unsafe"] }
 libz-sys = { version = "1.1.29", features = ["static"] }
 md-5 = "0.10"
 memchr = "2.8"

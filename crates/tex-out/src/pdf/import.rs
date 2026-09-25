@@ -27,7 +27,7 @@ pub(crate) fn import_pdf_page(
     next_object: &mut u32,
     limits: super::PdfFinalizationLimits,
 ) -> Result<ImportedPdfPage, String> {
-    let pdf = load_pdf(bytes.clone())?;
+    let pdf = load_pdf(bytes)?;
     let page = selected_page(&pdf, page_number)?;
     let data = match page.page_stream() {
         Some(data) => {
@@ -42,7 +42,6 @@ pub(crate) fn import_pdf_page(
     };
     let mut importer = Importer {
         xref: page.xref(),
-        source_bytes: bytes.as_ref(),
         next_object,
         imported: BTreeMap::new(),
         objects: Vec::new(),
@@ -78,7 +77,6 @@ fn selected_page(pdf: &Pdf, page_number: u32) -> Result<&Page<'_>, String> {
 
 struct Importer<'a, 'next> {
     xref: &'a hayro_syntax::xref::XRef,
-    source_bytes: &'a [u8],
     next_object: &'next mut u32,
     imported: BTreeMap<ObjectIdentifier, PdfObjectId>,
     objects: Vec<PdfIndirectObject>,
@@ -305,12 +303,12 @@ impl<'a> Importer<'a, '_> {
             .ok_or_else(|| format!("referenced PDF object {source_id:?} is missing"))?;
         let object = match source {
             Object::Stream(stream) => self.import_stream(stream)?,
-            value => PdfObject::Value(
-                match find_raw_indirect_object(self.source_bytes, source_id) {
-                    Some(raw) => self.convert_raw_maybe_ref(raw)?,
-                    None => self.convert_value(value)?,
-                },
-            ),
+            Object::Number(_) => PdfObject::Value(number_value(
+                self.xref.get_raw_number(source_id).ok_or_else(|| {
+                    format!("referenced PDF number {source_id:?} has no source bytes")
+                })?,
+            )?),
+            value => PdfObject::Value(self.convert_value(value)?),
         };
         self.objects.push(PdfIndirectObject { id, object });
         Ok(id)
@@ -356,33 +354,6 @@ fn nearest_resource_dictionary<'a>(page: &Page<'a>) -> Option<Dict<'a>> {
         let parent = dictionary.get_ref(b"Parent")?;
         dictionary = page.xref().get(parent.into())?;
     }
-}
-
-fn find_raw_indirect_object<'a>(data: &'a [u8], target: ObjectIdentifier) -> Option<&'a [u8]> {
-    let mut reader = Reader::new(data);
-    while !reader.at_end() {
-        let start = reader.offset();
-        if let Some(identifier) = reader.read_without_context::<ObjectIdentifier>() {
-            if identifier == target {
-                reader.skip_white_spaces_and_comments();
-                if let Some(value) = reader.skip::<MaybeRef<Object<'a>>>(false) {
-                    reader.skip_white_spaces_and_comments();
-                    // Object identifiers can occur in strings or stream
-                    // payloads when scanning without xref offsets. Accept a
-                    // candidate only when the parsed value is followed by its
-                    // object terminator; this keeps those bytes from becoming
-                    // a resource dictionary.
-                    if reader.forward_tag(b"endobj").is_some() {
-                        return Some(value);
-                    }
-                }
-            }
-            reader.jump(start.saturating_add(1));
-        } else {
-            reader.forward();
-        }
-    }
-    None
 }
 
 fn raw_dictionary_entries<'a>(data: &'a [u8]) -> Result<Vec<RawDictionaryEntry<'a>>, String> {

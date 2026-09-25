@@ -131,6 +131,239 @@ fn imported_ext_g_state_pdf() -> Vec<u8> {
     document.finish().expect("serialize ExtGState PDF")
 }
 
+fn import_fixture(bytes: Vec<u8>) -> ImportedPdfPage {
+    let mut next_object = 100;
+    import_pdf_page(
+        bytes.into(),
+        1,
+        &mut next_object,
+        super::super::PdfFinalizationLimits::default(),
+    )
+    .expect("import PDF fixture")
+}
+
+#[test]
+fn indirect_lookup_uses_real_object_eleven_after_object_one_hundred_eleven() {
+    let mut document = ValidPdfFixture::new("1.7").expect("create PDF");
+    document
+        .add_raw_object(111, b"<< /Type /StructElem /K 999 0 R >>")
+        .expect("unused object 111");
+    document
+        .add_dictionary(
+            11,
+            Dictionary::new()
+                .entry("Type", name("Font"))
+                .entry("Subtype", name("Type1"))
+                .entry("BaseFont", name("Helvetica")),
+        )
+        .expect("font object 11");
+    document
+        .add_dictionary(
+            1,
+            Dictionary::new()
+                .entry("Type", name("Catalog"))
+                .entry("Pages", reference(2)),
+        )
+        .expect("catalog");
+    document
+        .add_dictionary(
+            2,
+            Dictionary::new()
+                .entry("Type", name("Pages"))
+                .entry("Count", b"1")
+                .entry("Kids", b"[3 0 R]"),
+        )
+        .expect("pages");
+    document
+        .add_dictionary(
+            3,
+            Dictionary::new()
+                .entry("Type", name("Page"))
+                .entry("Parent", reference(2))
+                .entry("MediaBox", b"[0 0 1 1]")
+                .entry("Resources", b"<< /Font << /F1 11 0 R >> >>")
+                .entry("Contents", reference(4)),
+        )
+        .expect("page");
+    document
+        .add_stream(4, Dictionary::new(), b"q Q")
+        .expect("contents");
+    document
+        .set_trailer_entry("Root", reference(1))
+        .expect("trailer");
+    let bytes = document.finish().expect("serialize PDF");
+    let first = bytes
+        .windows(b"111 0 obj".len())
+        .position(|s| s == b"111 0 obj");
+    let second = bytes
+        .windows(b"11 0 obj".len())
+        .position(|s| s == b"11 0 obj");
+    assert_eq!(
+        first.map(|offset| offset + 1),
+        second,
+        "the old byte scan would see 11 inside 111"
+    );
+
+    let imported = import_fixture(bytes);
+    assert_eq!(imported.dependencies.len(), 1);
+    let PdfObject::Value(PdfValue::Dictionary(font)) = &imported.dependencies[0].object else {
+        panic!("font dictionary");
+    };
+    assert_eq!(
+        font.get(b"BaseFont"),
+        Some(&PdfValue::Name(PdfName::new(b"Helvetica")))
+    );
+}
+
+fn pdf_with_compressed_stem_v() -> Vec<u8> {
+    let mut pdf = b"%PDF-1.5\n".to_vec();
+    let mut offsets = [0usize; 27];
+    let objects: &[(usize, &[u8])] = &[
+        (1, b"<< /Type /Catalog /Pages 2 0 R >>"),
+        (2, b"<< /Type /Pages /Count 1 /Kids [3 0 R] >>"),
+        (3, b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 1 1] /Resources << /Font << /F1 12 0 R >> >> /Contents 4 0 R >>"),
+        (4, b"<< /Length 3 >>\nstream\nq Q\nendstream"),
+        (5, b"<< /Type /FontDescriptor /FontName /Helvetica /StemV 8 0 R /MissingWidth 9 0 R /ItalicAngle 10 0 R >>"),
+        (12, b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /FontDescriptor 5 0 R >>"),
+        (25, b"<< /Type /ObjStm /N 3 /First 14 /Length 45 >>\nstream\n8 0 9 4 10 21 813 9007199254740993 .772891500\nendstream"),
+    ];
+    for &(id, body) in objects {
+        offsets[id] = pdf.len();
+        pdf.extend_from_slice(format!("{id} 0 obj\n").as_bytes());
+        pdf.extend_from_slice(body);
+        pdf.extend_from_slice(b"\nendobj\n");
+    }
+    offsets[26] = pdf.len();
+    let mut xref = Vec::with_capacity(27 * 7);
+    for (id, &offset) in offsets.iter().enumerate() {
+        let (kind, location, generation) = if (8..=10).contains(&id) {
+            (2u8, 25u32, u16::try_from(id - 8).expect("small fixture"))
+        } else if offset != 0 {
+            (1u8, u32::try_from(offset).expect("small fixture"), 0u16)
+        } else if id == 0 {
+            (0u8, 0u32, 65535u16)
+        } else {
+            (0u8, 0u32, 0u16)
+        };
+        xref.push(kind);
+        xref.extend_from_slice(&location.to_be_bytes());
+        xref.extend_from_slice(&generation.to_be_bytes());
+    }
+    pdf.extend_from_slice(
+        format!(
+            "26 0 obj\n<< /Type /XRef /Size 27 /W [1 4 2] /Root 1 0 R /Length {} >>\nstream\n",
+            xref.len()
+        )
+        .as_bytes(),
+    );
+    pdf.extend_from_slice(&xref);
+    pdf.extend_from_slice(
+        format!("\nendstream\nendobj\nstartxref\n{}\n%%EOF\n", offsets[26]).as_bytes(),
+    );
+    pdf
+}
+
+#[test]
+fn compressed_indirect_number_is_imported_from_resolved_object_stream() {
+    let imported = import_fixture(pdf_with_compressed_stem_v());
+    assert_eq!(imported.dependencies.len(), 5);
+    assert!(
+        imported
+            .dependencies
+            .iter()
+            .any(|entry| { entry.object == PdfObject::Value(PdfValue::Number(number(813, 0))) })
+    );
+    assert!(imported.dependencies.iter().any(|entry| {
+        entry.object == PdfObject::Value(PdfValue::Number(number(9_007_199_254_740_993, 0)))
+    }));
+    assert!(
+        imported
+            .dependencies
+            .iter()
+            .any(|entry| { entry.object == PdfObject::Value(PdfValue::Number(number(772892, 6))) })
+    );
+}
+
+#[test]
+fn incremental_number_redefinition_uses_active_xref_spelling() {
+    let mut document = ValidPdfFixture::new("1.7").expect("create PDF");
+    document
+        .add_dictionary(
+            1,
+            Dictionary::new()
+                .entry("Type", name("Catalog"))
+                .entry("Pages", reference(2)),
+        )
+        .expect("catalog");
+    document
+        .add_dictionary(
+            2,
+            Dictionary::new()
+                .entry("Type", name("Pages"))
+                .entry("Count", b"1")
+                .entry("Kids", b"[3 0 R]"),
+        )
+        .expect("pages");
+    document
+        .add_dictionary(
+            3,
+            Dictionary::new()
+                .entry("Type", name("Page"))
+                .entry("Parent", reference(2))
+                .entry("MediaBox", b"[0 0 1 1]")
+                .entry("Resources", b"<< /Font << /F1 12 0 R >> >>")
+                .entry("Contents", reference(4)),
+        )
+        .expect("page");
+    document
+        .add_stream(4, Dictionary::new(), b"q Q")
+        .expect("contents");
+    document
+        .add_dictionary(5, Dictionary::new().entry("StemV", reference(8)))
+        .expect("descriptor");
+    document
+        .add_raw_object(8, b".772891499")
+        .expect("old number spelling");
+    document
+        .add_dictionary(
+            12,
+            Dictionary::new()
+                .entry("Type", name("Font"))
+                .entry("Subtype", name("Type1"))
+                .entry("BaseFont", name("Helvetica"))
+                .entry("FontDescriptor", reference(5)),
+        )
+        .expect("font");
+    document
+        .set_trailer_entry("Root", reference(1))
+        .expect("trailer");
+    let mut pdf = document.finish().expect("serialize PDF");
+    let startxref = pdf
+        .windows(b"startxref\n".len())
+        .rposition(|window| window == b"startxref\n")
+        .expect("first xref")
+        + b"startxref\n".len();
+    let previous = std::str::from_utf8(&pdf[startxref..])
+        .expect("ASCII xref")
+        .lines()
+        .next()
+        .expect("xref offset")
+        .parse::<usize>()
+        .expect("decimal xref offset");
+    let replacement = pdf.len();
+    pdf.extend_from_slice(b"\n8 0 obj\n.772891500\nendobj\n");
+    let xref = pdf.len();
+    pdf.extend_from_slice(format!("xref\n8 1\n{replacement:010} 00000 n \r\ntrailer\n<< /Size 13 /Root 1 0 R /Prev {previous} >>\nstartxref\n{xref}\n%%EOF\n").as_bytes());
+
+    let imported = import_fixture(pdf);
+    assert!(
+        imported
+            .dependencies
+            .iter()
+            .any(|entry| { entry.object == PdfObject::Value(PdfValue::Number(number(772892, 6))) })
+    );
+}
+
 #[test]
 fn imported_ext_g_state_values_are_quantized_at_admission() {
     let mut next_object = 100;
