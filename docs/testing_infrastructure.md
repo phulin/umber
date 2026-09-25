@@ -865,6 +865,29 @@ gate (`scripts/check-and-test.sh`: seven stages passed, zero failed or blocked,
 zero coverage reductions), TRIP, e-TRIP, Gentle, and all 210 command-semantic
 cases.
 
+The native prefetch audit in `target/prefetch-audit/` compares the same 17
+papers before and after demand-gated prediction expansion and exclusion of
+hint-only startup history. Each paper runs once with an empty cache and again
+with that cache retained, but with a freshly extracted source tree for both
+runs. Both versions use `SOURCE_DATE_EPOCH=1772323200`, the same authenticated
+format/distribution, and exact reference DVI comparison. All 34 runs per
+version match. Aggregate byte counts from `baseline-v2/measurements.json` and
+`fixed/measurements.json` are:
+
+| Cache  | Prefetch bytes before | Prefetch bytes after | Unused bytes before | Unused bytes after |
+| ------ | --------------------: | -------------------: | ------------------: | -----------------: |
+| Empty  |            25,464,379 |           10,142,448 |          11,374,265 |            223,349 |
+| Reused |            21,686,398 |           21,810,300 |          11,118,179 |            223,349 |
+
+Unused loading falls by approximately 98% in both cases. Reused-cache total
+prefetch is nearly unchanged because observed, useful inputs now take the
+places previously occupied by unused hints. The remaining unused hint is
+`hyperref` inside an `\ifpdf` branch in `2606.22697`; the lexical predictor does
+not evaluate TeX conditionals. The full native/quality gate passes, as do the
+selected WASM build and JavaScript unit checks; this is not a full browser-gate
+result. These measurements support byte/lookup reductions, not a wall-time
+claim.
+
 The new authenticated schema-8 runtime root is `f797fe56a183a3d9`, with Umber
 pdfLaTeX format `132a135cdd424b1f` (1128469 bytes, format schema 13). The
 format's source verification, clean-reference format-pair gate, and complete
