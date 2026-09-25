@@ -10,16 +10,25 @@ captures are preserved and are not reused as PDF evidence.
 
 Reference qualification requires successful exit and a complete PDF. Every
 qualified paper is attempted by Umber, even after another paper differs or
-fails. Results distinguish reference failure, Umber failure, semantic PDF
-difference, comparator error, and semantic equality. Output mode and comparator
+fails. Results distinguish reference failure, Umber failure, PDF projection
+difference, comparator error, and projection equality. Output mode and comparator
 identity belong to the run identity and are checked on resume and verification.
+
+Independent papers run concurrently within each phase. `--jobs` defaults to
+available CPU and memory capacity with headroom for orchestration; `--jobs 1`
+selects serial diagnosis. Reference qualification finishes before the Umber
+phase starts. Each paper keeps its own working directory and execution limits,
+and completion messages appear as papers finish. Summary ordering follows the
+source lock. An interrupted parallel run may have gaps between completed rows;
+resume validates and reuses those rows, while verification cannot report a
+complete pass for missing work. Changing `--jobs` does not change the TeX input
+or binary identity of a saved result.
 
 The PDF comparator uses the independent Hayro parser and a bounded corpus
 graph/content projection, with page geometry and decoded content included.
 Shared objects are visited once and large stream payloads are hashed rather
 than expanded into printable hex. Inline images retain dictionary and sample
-evidence. Object
-numbers, compression, and file layout are not page semantics. Text, positions,
+evidence. Object numbers, compression, and file layout are not page semantics. Text, positions,
 resources, images, and document structure remain comparison evidence. Equality
 in this lane means equality of that declared projection, not a claim of pixel
 identity or complete PDF specification validation. External rendering and
@@ -64,7 +73,10 @@ per-page hashes, and separate raster/text outcomes. No tolerance hides changed
 pixels. Pixel equality at this resolution is a consumer result, not proof of
 equality at every resolution. Structural and consumer results remain separate;
 font subset encodings can differ while pages render identically. Each paper
-has the same 120-second and 1,536 MiB process limits. Reference failures and unsupported engines are counted as ineligible. A
+has the same 120-second and 1,536 MiB process limits. The consumer requires the
+complete reference inventory recorded by the corpus summary, so a missing row
+cannot turn a subset into a pass. Reference failures and unsupported engines
+are counted as ineligible. A
 reference-qualified paper without a successful Umber PDF is unavailable;
 repaired or unreadable PDFs are errors. The consumer verdict passes only when
 every reference-qualified paper matches both channels. Structural differences
@@ -76,6 +88,104 @@ Normal pdfTeX formats must not enable encTeX. The selected TeX Live
 LaTeX tests whether `\mubyte` exists before installing its normal UTF-8 input
 handling; advertising an unimplemented encTeX capability changes package
 semantics. Reference and native formats must use the same standard profile.
+
+## Dated-source PDF baseline
+
+The September 2026 capture uses rebuilt, standard-profile LaTeX and pdfLaTeX
+formats for all four selected TeX Live years. Reference qualification in
+`target/arxiv-pdf-corpus/` succeeds for all 94 declared-pdfLaTeX papers,
+covering 2,266 pages. The two declared-LaTeX papers (`2606.27112` and
+`2607.10883`) need EPS conversion through `repstopdf`, which is unavailable in
+this environment. The four XeLaTeX papers remain unsupported. Neither the
+paper sources nor the ordinary execution limits were changed.
+
+The completed serial baseline produces 82 Umber PDFs and 12 Umber failures,
+with no comparator errors or pending papers. All 82 pairs differ under the
+strict graph projection. Their reference PDFs contain 1,519 pages and their
+Umber PDFs contain 1,521: `2606.29843` grows from 10 to 11 pages and
+`2606.04385` from 13 to 14. Structural differences alone do not establish the
+size or visibility of an output change; use the consumer results below.
+
+`target/arxiv-pdf-render/summary.json` records the independent consumer pass
+across all 100 rows, using the same PyMuPDF 1.28.2 consumer as the release
+checks. All 82 PDF pairs were compared, with no consumer errors. Its verdict
+is `FAIL`: 47 of the 94 reference-qualified papers match both required
+channels, while 35 differ and 12 have no successful Umber PDF.
+
+| Consumer result                            | Papers |
+| ------------------------------------------ | -----: |
+| Exact pixels and extracted text            |     47 |
+| Extracted text matches; pixels differ      |     21 |
+| Both pixels and extracted text differ      |     14 |
+| Reference qualified; Umber PDF unavailable |     12 |
+| Reference ineligible or unsupported engine |      6 |
+
+The pixel-only differences are not uniformly harmless: some are single-pixel
+rounding effects, while others affect substantial figure regions. Per-page
+hashes and the first differing page's changed-pixel count, bounds, and channel
+delta provide triage evidence without silently applying a tolerance.
+
+| Umber failure class                      | Papers |
+| ---------------------------------------- | -----: |
+| Stale command delivery                   |      6 |
+| Two-minute execution timeout             |      2 |
+| Checkpoint release validation            |      1 |
+| Compressed indirect PDF number import    |      1 |
+| Missing PDF tagging object during import |      1 |
+| Interlaced PNG alpha import              |      1 |
+
+The eight one-page representative documents in
+`target/arxiv-pdf-representatives/` all compile with both engines. The
+independent consumer capture in `target/arxiv-pdf-representatives-render-v1/`
+reports eight pixel-exact and extracted-text-exact matches using PyMuPDF 1.28.2.
+This covers LaTeX and pdfLaTeX format loading for 2023–2026, not substantial
+real-paper coverage for years absent from this sample. The strict graph
+comparator reports structural differences for these same eight pairs; for
+example, an indirect font-width array and an equivalent inline array have
+different graph projections but identical consumer results.
+
+A second eight-document run in `target/arxiv-pdf-representatives-parallel/`
+uses the automatic worker policy (11 available workers on this machine).
+All eight references and all eight Umber compilations succeed;
+`target/arxiv-pdf-representatives-parallel-render/summary.json` again reports
+eight exact pixel/text matches. The full 100-paper baseline above was captured
+serially, before parallel scheduling was integrated.
+
+Two early consumer differences were reduced to coordinate precision:
+`2605.27003` changes 58 pixels on page 5 near one glyph (about 0.00006 pt
+placement difference), while `2606.04749` changes 36 pixels on page 6 in an
+imported vector chart (0.00002 pt placement difference). Both preserve extracted
+text, embedded font programs, and image content. These remain exact-raster
+failures; the measurements do not justify ignoring arbitrary visual changes.
+
+The first engine failures also have independent diagnoses:
+
+- `2606.23417` reduces to an `article` document with
+  `\AddToHook{shipout/lastpage}{\relax}` followed by `\shipout\hbox{}` and
+  `\end{document}`. It fails with stale command delivery in PDF and DVI modes;
+  removing the hook succeeds. PDF finalization is not the cause.
+- `2606.24390` imports `uterus_anatomy.pdf`, whose font descriptor references
+  indirect numeric `/StemV` object 8 inside object stream 25. Hayro resolves
+  the number, but the importer then searches the original file for standalone
+  source bytes, which compressed objects do not have. The repair belongs in
+  generic PDF object import, with exact numeric conversion preserved.
+- `2607.04563` includes `metric_figure.pdf`, whose unused structure tree refers
+  to missing objects 34 and 35. Canonical pdfTeX copies the page successfully
+  without those tagging objects. Umber's raw source scan mistakes the suffix
+  of `111 0 obj` at byte 27581 for object 11 (whose real header is at byte
+  37131). It therefore copies structure element 111 instead of font resource
+  11, follows objects 32 and 33, and reaches missing object 34. The fix belongs
+  in object-source resolution, ideally using verified xref locations, not in
+  globally accepting missing objects.
+- `2606.05004` includes interlaced 8-bit RGBA PNGs (`attackcomp.png` and
+  `delay.png`). The reference accepts them, while the PNG alpha import path
+  explicitly rejects interlaced input. This requires interlace support, not
+  treating the figures as corrupt.
+- `2606.28801`, the real-paper 2023 row, reaches normal end-of-input cleanup and
+  panics while releasing the protected `JobStart` checkpoint. Runtime release
+  validation returns `InvalidCursor` before PDF finalization. The failing
+  component still needs a narrower owner-level diagnosis; removing the panic
+  would not repair the invalid checkpoint state.
 
 ## Dated-source DVI baseline
 
@@ -173,7 +283,7 @@ python3 scripts/run-arxiv-texlive.py \
   --preparation target/texlive-formats/preparation.json \
   --umber target/debug/umber \
   --parity-harness target/parity-wave/glue-identity-bin/parity-harness \
-  --output-format dvi \
+  --output-format dvi --jobs 1 \
   --results target/texlive-years/arxiv-dvi
 ```
 

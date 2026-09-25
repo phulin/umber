@@ -901,11 +901,19 @@ was not increased.
 The [declared-release arXiv corpus](arxiv_dvi_cohort.md) uses PDF as its
 primary output, with explicit DVI diagnosis retained. `run-arxiv-texlive.py`
 selects each archive's declared TeX Live year and compiler, qualifies every
-reference result, then attempts every qualified paper with Umber. Reference
+reference result, then attempts every qualified paper with Umber. Each phase
+runs independent papers concurrently, with CPU/memory-aware `--jobs` selection
+and an explicit `--jobs 1` serial option. Reference
 PDF success requires successful exit, a complete output report, and matching
 artifact size. The bounded `pdf-compare` tool compares the independent Hayro
-structure/content-operation projection and page geometry. This is semantic
-projection equality, not a rendered-image or raw-byte claim.
+structure/content-operation projection and page geometry. Projection differences
+are diagnostic: equivalent PDF representations can have different projections.
+The independent `scripts/compare-arxiv-pdf-render.py` consumer pass uses
+PyMuPDF to compare RGB pages at 144 dpi and extracted text. It reports both
+channels separately and requires all reference-qualified papers to match for a
+pass; missing Umber PDFs remain in that denominator. Pixel equality applies to
+that renderer and resolution, not every possible PDF consumer. The corpus
+document gives its opt-in dependency setup and exact commands.
 
 Every comparison records its tool identity and first difference. Divergences
 and comparator errors do not stop the remaining papers. The ordinary

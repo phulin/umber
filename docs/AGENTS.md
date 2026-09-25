@@ -65,7 +65,7 @@ the catalog-only resolver's disabled-speculation behavior.
 classes, independent execution lanes, command prerequisites, result meanings,
 fixtures, corpora, and harnesses. Update it when gate facts change.
 `arxiv_dvi_cohort.md` gives the exact reference-qualification and full-source
-serial PDF comparison, explicit DVI diagnosis, artifact contract, and
+bounded parallel PDF comparison, explicit DVI diagnosis, artifact contract, and
 resume/verdict semantics for the recent arXiv corpus.
 It also explains the selected Rust suite index and the command-semantic
 compatibility census; the script index owns discovery, not this document.
