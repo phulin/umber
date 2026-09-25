@@ -2,6 +2,7 @@
 
 use super::*;
 
+mod png_interlaced;
 mod png_rows;
 use png_rows::*;
 
@@ -88,6 +89,11 @@ pub(in crate::pdf::finalize) fn raster_image_streams(
             color_space,
             None,
         )),
+        PdfRasterFormatInput::Png
+            if png_chunk(bytes, b"IHDR").and_then(|header| header.get(12)) == Some(&1) =>
+        {
+            png_interlaced::streams(bytes, metadata, telemetry)
+        }
         PdfRasterFormatInput::Png if metadata.png_color_type == Some(3) => {
             let (color, alpha) = png_indexed_streams(bytes, metadata, telemetry)?;
             Ok((

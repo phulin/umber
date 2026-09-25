@@ -61,6 +61,8 @@ Use this crate for stable, driver-facing artifact structures and serialization c
 - `src/pdf/finalize/images.rs`: private image module wiring.
 - `src/pdf/finalize/images/raster.rs`: raster metadata, decoding, and stream selection.
 - `src/pdf/finalize/images/raster/png_rows.rs`: PNG alpha, indexed, row-filter, and compression helpers.
+- `src/pdf/finalize/images/raster/png_interlaced.rs`: Bounded Adam7 reconstruction and decoded color/alpha plane separation.
+- `src/pdf/finalize/images/raster/png_interlaced/tests.rs`: Independently constructed Adam7 pass transports and pixel/alpha semantics tests.
 - `src/pdf/finalize/images/imported.rs`: imported PDF page images and form geometry.
 - `src/pdf/finalize/numeric.rs`: checked scaled-point and PDF-number conversion helpers.
 - `src/pdf/finalize/tests.rs`: focused pure PDF-finalization regressions, including canonical pdfTeX Type-1 descriptor fallback metrics.

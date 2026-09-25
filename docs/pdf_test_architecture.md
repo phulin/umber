@@ -277,3 +277,20 @@ must present deliberately over-nested input without a validating writer
 normalizing it. All other synthetic PDF consumers use `ValidPdfFixture`, and
 output validation uses `PdfQuery` or `normalize_structure` rather than either
 fixture writer.
+
+## Interlaced PNG sample ownership
+
+PDF image streams describe full scanlines; Adam7 pass data cannot be copied
+into a PNG-predictor PDF stream. For interlaced inputs, the `png` decoder
+reconstructs the full image under the existing decoded-image byte limit.
+Palette and transparency expansion belongs to that decoder. The finalizer
+separates decoded color and alpha samples into Flate streams, preserving
+16-bit network byte order before the existing PDF-version, high-color, and
+gamma policies run. Noninterlaced inputs retain their streaming fast path.
+This follows pdfTeX `writepng.c`'s `png_set_interlace_handling` and
+`png_read_image` paths for each color type.
+
+Focused tests independently assemble Adam7 passes from known pixels and
+assert decoded color and soft-mask samples, including narrow images with
+empty passes, palette transparency, 16-bit samples, and malformed input.
+These are sample-semantics tests; compressed stream bytes are not goldens.
