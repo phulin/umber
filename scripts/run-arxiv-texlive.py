@@ -83,8 +83,8 @@ def output_pages(mode: str, path: Path, log: Path | None = None) -> int | None:
 
 def comparator_result(receipt: dict, reference: dict, umber: dict, exit_status: int) -> str:
     """Validate a semantic PDF comparison before trusting its classification."""
-    if (receipt.get("schema") != "umber-pdf-compare-v1"
-            or receipt.get("criterion") != "hayro-structure-page-geometry-v1"):
+    if (receipt.get("schema") != "umber-pdf-compare-v2"
+            or receipt.get("criterion") != "hayro-corpus-graph-content-v2"):
         return "comparison-error"
     for name, artifact_record in (("reference", reference), ("umber", umber)):
         side = receipt.get(name)
@@ -493,14 +493,14 @@ def main() -> int:
                                      text=True, timeout=10, check=False)
         except (OSError, subprocess.TimeoutExpired) as error:
             fail(f"PDF comparator version query failed: {error}")
-        if version.returncode != 0 or version.stdout.strip() != "umber-pdf-compare-v1":
+        if version.returncode != 0 or version.stdout.strip() != "umber-pdf-compare-v2":
             fail("PDF comparator protocol version differs")
     _, authorities = authority(args.preparation, rows)
     run_identity = {"schema": 2, "source_lock": identity(args.source_lock),
                     "authorities": authorities,
                     "umber": identity(args.umber), "output_format": args.output_format,
                     "comparator": identity(comparator),
-                    "comparator_protocol": "umber-pdf-compare-v1" if args.output_format == "pdf" else "dvi-parity-harness",
+                    "comparator_protocol": "umber-pdf-compare-v2" if args.output_format == "pdf" else "dvi-parity-harness",
                     "timeout_seconds": args.timeout_seconds, "max_rss_mib": args.max_rss_mib,
                     "expansion_fuel": 500000000, "execution_steps": 10000000}
     args.results.mkdir(parents=True, exist_ok=True)

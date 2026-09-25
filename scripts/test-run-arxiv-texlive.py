@@ -155,7 +155,7 @@ fi
 """)
             pdf_comparator = root / "pdf-compare"
             executable(pdf_comparator, """
-if test "${1:-}" = --version; then echo umber-pdf-compare-v1; exit 0; fi
+if test "${1:-}" = --version; then echo umber-pdf-compare-v2; exit 0; fi
 python3 - "$1" "$2" <<'PY'
 import hashlib, json, os, pathlib, sys
 def identity(path):
@@ -164,8 +164,8 @@ def identity(path):
             'pages': 1, 'projection_sha256': ('b' if 'latex23' in path and '/umber/' in path else 'a') * 64}
 name = pathlib.Path(sys.argv[1]).stem
 status = 'different' if name == 'latex23' else 'equal'
-receipt = {'schema': 'umber-pdf-compare-v1',
-           'criterion': 'hayro-structure-page-geometry-v1', 'status': status,
+receipt = {'schema': 'umber-pdf-compare-v2',
+           'criterion': 'hayro-corpus-graph-content-v2', 'status': status,
            'reference': identity(sys.argv[1]), 'umber': identity(sys.argv[2])}
 if status == 'different':
     receipt['first_difference'] = {'line': 1, 'reference': 'a', 'umber': 'b'}
@@ -429,14 +429,14 @@ PY
                         runner.main()
                 error_comparator = root / "error-compare"
                 executable(error_comparator, """
-if test "${1:-}" = --version; then echo umber-pdf-compare-v1; exit 0; fi
+if test "${1:-}" = --version; then echo umber-pdf-compare-v2; exit 0; fi
 python3 - "$1" "$2" <<'PY'
 import hashlib, json, pathlib, sys
 def identity(path):
     data = pathlib.Path(path).read_bytes()
     return {'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
-print(json.dumps({'schema': 'umber-pdf-compare-v1',
-                  'criterion': 'hayro-structure-page-geometry-v1',
+print(json.dumps({'schema': 'umber-pdf-compare-v2',
+                  'criterion': 'hayro-corpus-graph-content-v2',
                   'status': 'error', 'error': 'invalid structure',
                   'reference': identity(sys.argv[1]), 'umber': identity(sys.argv[2])}))
 sys.exit(2)
