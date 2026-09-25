@@ -50,6 +50,65 @@ def archive(path: Path, paper: str, compiler: str, year: str | None) -> None:
 
 
 class DeclaredYearCorpus(unittest.TestCase):
+    def test_tex_implicit_suffix_audit_preserves_identity_and_exact_precedence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "paper.src"
+            archive(source, "paper", "pdflatex", "2025")
+            row_dir = root / "row"
+            reference = row_dir / "reference"
+            umber = row_dir / "umber"
+            reference.mkdir(parents=True)
+            umber.mkdir()
+            main = root / "paper-source/paper.tex"
+            (umber / "paper.tex").write_bytes(main.read_bytes())
+            runtime = root / "2025/texmf-dist"
+            package = runtime / "tex/latex/lipsum"
+            package.mkdir(parents=True)
+            implicit = package / "lipsum.ltd.tex"
+            implicit.write_bytes(b"selected release TeX data\n")
+            (root / "2025/runtime.files").write_text(
+                f"texmf-dist/tex/latex/lipsum/lipsum.ltd.tex\t{implicit.stat().st_size}"
+                f"\t{sha256_file(implicit)}\n")
+            (reference / "paper.fls").write_text(f"INPUT {implicit}\n")
+            admission = root / "paper.inputs"
+            def record(kind: str, digest: str) -> None:
+                admission.write_text(
+                    "umber-input-admissions-v1\n"
+                    f"main\t{main.stat().st_size}\t{ahash64_file(main)}\n"
+                    f"file\tused\t{kind}:lipsum.ltd\t{implicit.stat().st_size}\t{digest}\n")
+            row = {"archive": str(source), "entrypoint": "paper.tex",
+                   "jobname": "paper", "id": "paper"}
+            proof = {"runtime_root": str(runtime),
+                     "generated_config": str(root / "config"),
+                     "generated_fontmaps": str(root / "fontmaps")}
+            (root / "fontmaps").mkdir()
+            record("tex", ahash64_file(implicit))
+            audit = runner.audit_umber_inputs(row, row_dir, proof, admission)
+            self.assertEqual(audit["common_reads"], 1)
+            self.assertEqual(audit["selected_extra_reads"], [])
+
+            record("tex", "0" * 16)
+            with self.assertRaisesRegex(SystemExit, "bytes different from reference"):
+                runner.audit_umber_inputs(row, row_dir, proof, admission)
+            record("tfm", ahash64_file(implicit))
+            with self.assertRaisesRegex(SystemExit, "outside selected source/runtime"):
+                runner.audit_umber_inputs(row, row_dir, proof, admission)
+
+            exact = package / "lipsum.ltd"
+            exact.write_bytes(b"different exact-name input\n")
+            (reference / "paper.fls").write_text(f"INPUT {exact}\nINPUT {implicit}\n")
+            record("tex", ahash64_file(implicit))
+            with self.assertRaisesRegex(SystemExit, "bytes different from reference"):
+                runner.audit_umber_inputs(row, row_dir, proof, admission)
+
+            (reference / "paper.fls").write_text("")
+            audit = runner.audit_umber_inputs(row, row_dir, proof, admission)
+            self.assertEqual(audit["common_reads"], 0)
+            self.assertEqual(audit["selected_extra_reads"], [{
+                "key": "tex:lipsum.ltd", "path": str(implicit),
+                "bytes": implicit.stat().st_size, "sha256": sha256_file(implicit)}])
+
     def test_reference_pdf_completion_accepts_tex_line_wraps_only(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

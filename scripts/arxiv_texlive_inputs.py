@@ -28,6 +28,13 @@ def runtime_names(runtime: Path) -> dict[str, tuple[Path, ...]]:
     return {name: tuple(paths) for name, paths in names.items()}
 
 
+def request_names(kind: str, name: str) -> tuple[str, ...]:
+    """Include TeX's implicit .tex filename when a request omits that suffix."""
+    if kind == "tex" and not name.endswith(".tex"):
+        return (name, name + ".tex")
+    return (name,)
+
+
 def audit_umber_inputs(row: dict, row_dir: Path, proof: dict, admission: Path) -> dict:
     """Prove common read bytes match and extra reads come from selected inputs."""
     reference_run = row_dir / "reference"
@@ -76,13 +83,16 @@ def audit_umber_inputs(row: dict, row_dir: Path, proof: dict, admission: Path) -
     for status, key, observed in files:
         if status != "used":
             continue
-        _, name = key.split(":", 1)
+        kind, name = key.split(":", 1)
         request = PurePosixPath(name)
         if (request.is_absolute() or not name or ".." in request.parts
                 or request.as_posix() != name):
             fail(f"Umber used unsafe request name {key}: {row['id']}")
-        basename = request.name
-        expected = common.get(name, common.get(basename))
+        names = request_names(kind, name)
+        basenames = tuple(PurePosixPath(candidate).name for candidate in names)
+        expected = next((common[candidate] for candidate in
+                         (names[0], basenames[0], *names[1:], *basenames[1:])
+                         if candidate in common), None)
         if expected is not None:
             if observed not in expected:
                 fail(f"Umber consumed {key} with bytes different from reference: {row['id']}")
@@ -92,10 +102,12 @@ def audit_umber_inputs(row: dict, row_dir: Path, proof: dict, admission: Path) -
                 ambiguous += 1
             continue
         candidates = [umber_run / relative for relative in source_members
-                      if relative == name or relative.endswith("/" + name)]
-        candidates.extend(runtime_names(runtime).get(basename, ()))
-        candidates.extend(fontmaps.rglob(basename))
-        if basename == "language.dat":
+                      if any(relative == candidate or relative.endswith("/" + candidate)
+                             for candidate in names)]
+        for basename in basenames:
+            candidates.extend(runtime_names(runtime).get(basename, ()))
+        candidates.extend(fontmaps.rglob(basenames[0]))
+        if basenames[0] == "language.dat":
             candidates.append(config / "language.dat")
         selected = next((path for path in candidates
                          if path.is_file() and not path.is_symlink()
