@@ -154,41 +154,73 @@ All eight references and all eight Umber compilations succeed;
 eight exact pixel/text matches. The full 100-paper baseline above was captured
 serially, before parallel scheduling was integrated.
 
-Two early consumer differences were reduced to coordinate precision:
-`2605.27003` changes 58 pixels on page 5 near one glyph (about 0.00006 pt
-placement difference), while `2606.04749` changes 36 pixels on page 6 in an
-imported vector chart (0.00002 pt placement difference). Both preserve extracted
-text, embedded font programs, and image content. These remain exact-raster
-failures; the measurements do not justify ignoring arbitrary visual changes.
+## PDF parity repairs
 
-The first engine failures also have independent diagnoses:
+The bounded parallel repair capture at `target/arxiv-pdf-wave2-font-rotation/`
+uses the same 100 archives, selected distributions, standard formats, and
+ordinary execution limits. At commit `0252a4e96`, 93 of the 94
+reference-qualified papers produce Umber PDFs. Its independent consumer pass
+in `target/arxiv-pdf-wave2-font-rotation-render/summary.json` reports 72 exact
+pixel/text matches, 16 pixel-only differences, five differences in both
+channels, and one unavailable PDF. All 47 baseline matches remain exact;
+there are no consumer errors. The six reference-ineligible rows are unchanged.
+All 93 completed pairs have matching page counts, totaling 1,678 pages per
+engine. The strict graph projection still differs for every completed pair.
 
-- `2606.23417` reduces to an `article` document with
-  `\AddToHook{shipout/lastpage}{\relax}` followed by `\shipout\hbox{}` and
-  `\end{document}`. It fails with stale command delivery in PDF and DVI modes;
-  removing the hook succeeds. PDF finalization is not the cause.
-- `2606.24390` imports `uterus_anatomy.pdf`, whose font descriptor references
-  indirect numeric `/StemV` object 8 inside object stream 25. Hayro resolves
-  the number, but the importer then searches the original file for standalone
-  source bytes, which compressed objects do not have. The repair belongs in
-  generic PDF object import, with exact numeric conversion preserved.
-- `2607.04563` includes `metric_figure.pdf`, whose unused structure tree refers
-  to missing objects 34 and 35. Canonical pdfTeX copies the page successfully
-  without those tagging objects. Umber's raw source scan mistakes the suffix
-  of `111 0 obj` at byte 27581 for object 11 (whose real header is at byte
-  37131). It therefore copies structure element 111 instead of font resource
-  11, follows objects 32 and 33, and reaches missing object 34. The fix belongs
-  in object-source resolution, ideally using verified xref locations, not in
-  globally accepting missing objects.
-- `2606.05004` includes interlaced 8-bit RGBA PNGs (`attackcomp.png` and
-  `delay.png`). The reference accepts them, while the PNG alpha import path
-  explicitly rejects interlaced input. This requires interlace support, not
-  treating the figures as corrupt.
-- `2606.28801`, the real-paper 2023 row, reaches normal end-of-input cleanup and
-  panics while releasing the protected `JobStart` checkpoint. Runtime release
-  validation returns `InvalidCursor` before PDF finalization. The failing
-  component still needs a narrower owner-level diagnosis; removing the panic
-  would not repair the invalid checkpoint state.
+The repairs address shared engine behavior, without changing paper sources
+or tolerating different pixels:
+
+- Retained command delivery is readmitted before the executor hands off a
+  command at a character-run boundary. This fixes all six stale-delivery
+  failures, including the reduced LaTeX last-page hook case.
+- Releasing a checkpoint validates its owner and cursor without requiring the
+  restore-only condition that every TeX group has closed. TeX permits normal
+  termination inside an open group. The 2023 paper `2606.28801` now matches
+  all 13 pages exactly.
+- PDF import resolves objects through the verified cross-reference index,
+  including compressed numeric objects. It no longer mistakes the suffix of
+  object `111` for object `11`, or searches compressed numbers in the original
+  file bytes. Missing required objects remain errors.
+- PNG import reconstructs Adam7 passes before separating color and alpha,
+  with bounded decoded size and the existing sample-depth policy.
+- PDF origin translations use canonical scaled arithmetic and printed
+  precision. This removes the small placement differences in `2605.27003`
+  and `2606.04749`, among others.
+- JPEG natural dimensions use JFIF/Exif density with pdfTeX's marker
+  precedence and rounding. The 300-dpi figure in `2606.29843` now has its
+  correct size; the document returns from 11 pages to 10 and matches exactly.
+- Local TeX and image lookup tries exact filenames before the selected
+  runtime's case-insensitive filename fallback. Input audits authenticate the
+  physical archive member. This restores omitted figures in `2607.04563`
+  and resolves the extra-page difference in `2606.04385`.
+- Type-1 font-map slant and extension are applied before subsetting. This
+  restores synthetic italic headers and makes all three affected papers
+  (`2606.26320`, `2606.26813`, and `2607.08846`) exact.
+- Imported PDF pages rotate in the declared clockwise direction. This
+  corrects an upside-down figure in `2605.23639`, reducing its page-5 raster
+  difference from 388,301 pixels to six. It remains an exact-raster difference.
+  The owner test checks where every cropped-page corner lands under each
+  quarter-turn and unequal destination scales.
+
+The five remaining text differences in this capture include changed paragraph
+line breaks and hyphenation (`2605.20861`, `2605.29849`, `2606.12566`,
+`2606.13826`, and `2607.03652`). They require layout diagnosis; extracted-text
+differences are not merely PDF object-number noise.
+
+The remaining failure, `2606.24937`, is a 588-page book. The reference
+finishes in about 34 seconds; Umber reaches the unchanged 120-second limit.
+A diagnostic shipout probe showed continued page production rather than an
+abrupt stall, with page 125 near the cutoff. A separate shipping release
+build also timed out before PDF construction, using about 1,102 MiB peak RSS.
+Both probes recorded only the startup resource batch, with no later replay
+batch. These observations narrow the investigation to compilation cost but
+do not identify a specific hot path or justify changing the guards. The
+probe code was removed.
+
+The same repaired binary also passes all eight LaTeX/pdfLaTeX representative
+consumer comparisons for TeX Live 2023–2026, recorded in
+`target/arxiv-pdf-wave2-font-rotation-representatives-render/summary.json`. These small
+format-loading checks retain their limited scope.
 
 ## Dated-source DVI baseline
 
