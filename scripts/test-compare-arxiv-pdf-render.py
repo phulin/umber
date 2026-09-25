@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Hermetic admission and independent-channel contracts; no live PDF dependency."""
 import importlib.util
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -57,6 +58,44 @@ class RenderContractTests(unittest.TestCase):
         self.assertIsNone(render.eligible_pair({"reference": {"exit_status": 1}}))
         self.assertIsNone(render.eligible_pair({"reference": {"exit_status": 0, "pdf": {}},
                                                "umber": {"exit_status": 0, "pdf": {}}}))
+
+    def test_first_raster_difference_counts_pixels_not_channels(self):
+        report = render.pixel_difference(bytes([0, 0, 0, 10, 20, 30]),
+                                         bytes([0, 0, 0, 11, 18, 30]), 2)
+        self.assertEqual(report, {"changed_pixels": 1, "bounds": [1, 0, 2, 1],
+                                  "max_channel_delta": 2})
+
+    def test_verdict_uses_reference_qualified_denominator(self):
+        for statuses, verdict, qualified in [
+            (["ineligible", "equal"], "PASS", 1),
+            (["ineligible"], "PARTIAL", 0),
+            (["equal", "unavailable"], "PARTIAL", 2),
+            (["ineligible", "different"], "FAIL", 1),
+            (["error"], "FAIL", 1),
+        ]:
+            report = render.summarize([{"status": status} for status in statuses])
+            self.assertEqual(report["verdict"], verdict)
+            self.assertEqual(report["reference_qualified_rows"], qualified)
+
+    def test_memory_limit_is_installed_in_child_not_parent(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            receipt = root / "rows" / "paper" / "result.json"
+            receipt.parent.mkdir(parents=True)
+            receipt.write_text(json.dumps({"id": "paper", "status": "PDF-diverged"}))
+            result = {"schema": render.SCHEMA, "status": "equal", "reference": {}, "umber": {},
+                      "raster_equal": True, "text_equal": True}
+            with patch.object(sys, "argv", ["render", "--results", str(root),
+                                            "--output", str(root / "output")]), \
+                 patch.object(render.importlib.util, "find_spec", return_value=True), \
+                 patch.object(render, "eligible_pair", return_value=(root / "a", root / "b")), \
+                 patch.object(render, "identity", return_value={}), \
+                 patch.object(render, "memory_limit", side_effect=AssertionError("parent limited")) as limit, \
+                 patch.object(render.subprocess, "run", return_value=SimpleNamespace(
+                     stdout=json.dumps(result), returncode=0)) as run, patch("builtins.print"):
+                self.assertEqual(render.main(), 0)
+                self.assertIs(run.call_args.kwargs["preexec_fn"], limit)
+                limit.assert_not_called()
 
     def test_raster_and_extracted_text_are_separate_required_channels(self):
         for page, raster_equal, text_equal in [(Page(b"changed"), False, True),

@@ -14,8 +14,11 @@ fails. Results distinguish reference failure, Umber failure, semantic PDF
 difference, comparator error, and semantic equality. Output mode and comparator
 identity belong to the run identity and are checked on resume and verification.
 
-The PDF comparator uses the independent Hayro parser and the existing PDF
-semantic projection, with page geometry and decoded content included. Object
+The PDF comparator uses the independent Hayro parser and a bounded corpus
+graph/content projection, with page geometry and decoded content included.
+Shared objects are visited once and large stream payloads are hashed rather
+than expanded into printable hex. Inline images retain dictionary and sample
+evidence. Object
 numbers, compression, and file layout are not page semantics. Text, positions,
 resources, images, and document structure remain comparison evidence. Equality
 in this lane means equality of that declared projection, not a claim of pixel
@@ -61,8 +64,12 @@ per-page hashes, and separate raster/text outcomes. No tolerance hides changed
 pixels. Pixel equality at this resolution is a consumer result, not proof of
 equality at every resolution. Structural and consumer results remain separate;
 font subset encodings can differ while pages render identically. Each paper
-has the same 120-second and 1,536 MiB process limits. Missing successful PDF
-pairs are counted as unavailable; repaired or unreadable PDFs are errors.
+has the same 120-second and 1,536 MiB process limits. Reference failures and unsupported engines are counted as ineligible. A
+reference-qualified paper without a successful Umber PDF is unavailable;
+repaired or unreadable PDFs are errors. The consumer verdict passes only when
+every reference-qualified paper matches both channels. Structural differences
+remain diagnostics: direct versus indirect arrays and equivalent font-subset
+representations may differ without changing rendered pages or extracted text.
 
 Normal pdfTeX formats must not enable encTeX. The selected TeX Live
 `fmtutil.cnf` uses extended pdfTeX and `cp227.tcx` for LaTeX, without `-enc`.
@@ -105,6 +112,8 @@ of 2023, 2024, 2025, and 2026. These establish format loading and basic output
 for all four releases; they do not substitute for a substantial paper corpus
 for each year. The qualifying papers in this sample all declare 2025.
 Both captures use `target/texlive-years/all-modern-latex-preparation.json`.
+They predate the correction to standard UTF-8 format initialization above;
+they are historical DVI evidence, not results for the new PDF formats.
 
 LaTeX DVI runs retain pdfTeX primitives and engine identity, as the reference
 does. Hiding them made `iftex.sty` choose different font packages in the
