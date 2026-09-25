@@ -73,6 +73,7 @@ def _safe_path(raw: str) -> str:
         not raw
         or raw.startswith("/")
         or "\\" in raw
+        or any(ord(character) < 32 for character in raw)
         or any(part in ("", ".", "..") for part in raw.split("/"))
         or str(path) != raw
     ):
@@ -503,7 +504,23 @@ def ensure_snapshot(
         return verify_snapshot(year, cache_root)
     database_path = root / "tlpkg/texlive.tlpdb.xz"
     database_url = urljoin(base_url, "tlpkg/texlive.tlpdb.xz")
-    database_identity = _download(database_url, database_path, expected=None, limit=MAX_DATABASE_BYTES, offline=offline)
+    identity_path = root / "tlpkg/texlive.tlpdb.identity.json"
+    database_pin = None
+    if identity_path.exists():
+        try:
+            pinned = json.loads(identity_path.read_text(encoding="utf-8"))
+            database_pin = texlive.Identity(pinned["bytes"], pinned["sha512"])
+            if not isinstance(database_pin.bytes, int) or database_pin.bytes <= 0 or not texlive.valid_digest(database_pin.digest, 128):
+                raise ValueError("invalid TLPDB identity")
+        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+            raise texlive.TexliveError(f"invalid retained TLPDB identity: {identity_path}") from error
+    elif database_path.exists() and not offline:
+        # An interrupted metadata fetch without its retained identity cannot
+        # supply the authority for subsequent package hashes.
+        database_path.unlink()
+    database_identity = _download(database_url, database_path, expected=database_pin, limit=MAX_DATABASE_BYTES, offline=offline)
+    if database_pin is None:
+        _atomic_json(identity_path, {"url": database_url, "bytes": database_identity.bytes, "sha512": database_identity.digest})
     packages = parse_tlpdb(database_path.read_bytes())
     selected_bytes = sum(package.identity.bytes for package in packages)
     cached_bytes = sum(package.identity.bytes for package in packages if (root / "archives" / package.archive_name).is_file())

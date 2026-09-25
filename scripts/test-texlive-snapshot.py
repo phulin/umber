@@ -91,6 +91,10 @@ class SnapshotTests(unittest.TestCase):
                 (restored.root / "texmf-dist/tex/latex/unlisted.sty").write_bytes(b"injected\n")
                 with self.assertRaisesRegex(texlive.TexliveError, "unlisted runtime file"):
                     snapshot.verify_snapshot(2025, cache)
+                restored.receipt.unlink()
+                (restored.root / "tlpkg/texlive.tlpdb.xz").write_bytes(b"modified database")
+                with self.assertRaisesRegex(texlive.TexliveError, "length mismatch"):
+                    snapshot.ensure_snapshot(2025, cache, offline=True)
             finally:
                 server.shutdown()
                 server.server_close()
