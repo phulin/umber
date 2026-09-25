@@ -619,6 +619,42 @@ concurrency, timeout, and retry limits apply before allocation or
 publication. Archive parsing rejects links and special files rather than
 materializing them.
 
+## Dated-source parity rollout (2023–2026)
+
+The first executable tier is local source-tree parity, using the existing
+native file provider and format codec. It does not depend on deploying the
+proposed package mirror or implementing the public `--texlive` selector.
+One modern pdfTeX oracle builds fresh formats alongside Umber for every
+selected source snapshot. Historical Web2C formats are never imported.
+
+For arXiv, select the year from the archive's `00README.json`
+`texlive_version`, not its submission date or successful compilation under a
+newer tree. Missing or unsupported declarations fail explicitly. arXiv
+[documents its source snapshots](https://info.arxiv.org/help/faq/texlive.html)
+as 2023-05-21 and 2025-08-03. These differ from the initial/DVD releases
+proposed for the general product. The parity tier uses those dated upstream
+snapshots for 2023 and 2025, and initial-release snapshots for 2024 and 2026.
+A dated upstream snapshot is not proof of arXiv's private installation or
+site patches; record this distinction in results.
+
+Acquisition authenticates package containers with the selected TLPDB's
+length and SHA-512. Retain the database identity and source URL in the local
+receipt, verify cached containers, reject unsafe members, and isolate each
+release's extracted runtime. These are acquired input identities, not
+hardcoded expected format or output hashes. Generated format receipts bind
+the exact engine, source inventory, configuration, clock, and input closure.
+
+Both engines use stable `latex/base` and `latex/l3kernel` sources; the earlier
+2026 corpus's `latex-dev` profile remains a separately named experiment.
+Build and run without ambient TeX search paths. Test representative documents
+against all four years and route corpus papers only to their declared year.
+Reference DVI success determines DVI eligibility; PDF qualification is useful
+independent evidence and must not exclude a successful DVI reference.
+Compare complete documents with the existing exact DVI comparator. Preserve
+original archives, source jobnames, ordinary resource guards, and the earlier
+2026 evidence. Fix the earliest generic engine divergence and repeat the
+qualified corpus after each correction.
+
 ## Multi-release conformance strategy
 
 Distribution compatibility and engine conformance remain separate axes, as in
