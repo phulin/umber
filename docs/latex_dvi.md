@@ -170,7 +170,7 @@ python3 scripts/check-pdftex-format-pair.py \
 
 Its committed probe requires both engines to report LaTeX `2026-06-01` and
 theorem key `proposition`. Two visible UTF-8 en dashes additionally expose the
-format-time encTeX byte-profile decision. The gate requires the complete DVI to
+format-time UTF-8 input setup. The gate requires the complete DVI to
 match after normalizing only the preamble comment payload, and its receipt records
 both the macro-marker and normalized-DVI fingerprints. Reference document
 generation uses this clean format with the same dev-first runtime lookup; it

@@ -27,8 +27,7 @@ aliases that a manual organized by user-facing features can omit.
 | Original e-TeX prerequisite  |               66 |                                       66 |
 | pdfTeX source layer          |              158 |                       158 in pdfTeX mode |
 | Web2C change-file supplement |                2 |    1 (`\partokencontext`) in pdfTeX mode |
-| encTeX capability supplement |                1 |             1 (`\mubyte`) in pdfTeX mode |
-| Total                        |              552 |                       551 in pdfTeX mode |
+| Total                        |              551 |                       550 in pdfTeX mode |
 
 The prerequisite count is nominal control-sequence coverage; its behavioral
 gates remain the TeX and e-TeX corpora. `umber run --pdftex` and the native or
@@ -37,13 +36,11 @@ WASM session option `engine: "pdftex"` select this layer and its truthful
 `tex-command`'s integrated catalogue rather than retained as an Umber table.
 The catalogue also installs `\partokencontext`, the supported
 `texk/web2c/partoken.ch` supplement used by the matching TeX Live runtime.
-It additionally registers encTeX's `\mubyte` capability from `enctex2.ch`
-[49.1219], because the matching pdfTeX runtime enables encTeX and LaTeX tests
-that name's definedness while building its byte catcodes. All 158 source-layer
-names and these two supported supplements are registered in that mode; names
-whose semantics were implemented by the dependency-ordered checklist have no
-unsupported-placeholder meanings. `\mubyte` execution deliberately remains
-fail-loud pending the complete encTeX state machine.
+Optional encTeX primitives are not registered. `enctex2.ch` [49.1219]
+registers `\mubyte` only with encTeX enabled, while standard TeX Live LaTeX
+formats do not enable it. Advertising that name without its state machine
+incorrectly disables LaTeX's normal UTF-8 setup. All 158 source-layer names
+and the Web2C supplement are registered in pdfTeX mode.
 
 In addition to `\expanded` and `\ifincsname`, the completed layer implements
 the parameter banks, enquiries and conversions, font and microtype controls,
@@ -55,7 +52,7 @@ The supported LaTeX-DVI contract uses the complete pdfTeX engine in DVI mode;
 `\expanded` nor `\ifincsname`. The source-set gate still requires all 158
 `pdftex.web` names in pdfTeX mode and isolates them from plain e-TeX mode. The source-set test
 compares those names directly with the pinned checklist below and separately
-excludes the Web2C and encTeX supplements from that source-derived equality.
+excludes the Web2C supplement from that source-derived equality.
 Umber also exposes the engine-neutral names `\creationdate`, `\filesize`,
 `\shellescape`, and `\strcmp`; these are implementation reuse candidates for
 the corresponding `\pdf...` aliases, not exact-name coverage.

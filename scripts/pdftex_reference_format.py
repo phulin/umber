@@ -203,7 +203,6 @@ def build(
         arguments = [
             "-ini",
             "-etex",
-            "-enc",
             "-progname=pdflatex-dev",
             "-jobname=pdflatex",
             "-translate-file=cp227.tcx",

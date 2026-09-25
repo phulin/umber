@@ -7,7 +7,7 @@ use super::*;
 #[test]
 fn enum_views_are_complete_unique_and_round_trip() {
     let views = enum_primitive_views().collect::<Vec<_>>();
-    assert_eq!(views.len(), 86 + 263);
+    assert_eq!(views.len(), 86 + 262);
     assert_eq!(
         views
             .iter()
@@ -51,30 +51,18 @@ fn profile_registration_views_preserve_source_order_and_policy() {
 }
 
 #[test]
-fn pdftex_catalogue_exposes_the_enctex_mubyte_capability() {
-    let registrations =
-        primitive_registrations(PrimitiveProfile::Pdftex14029, InstallationPolicy::INITEX)
-            .collect::<Vec<_>>();
-    assert_eq!(
-        registrations
-            .iter()
-            .find(|row| row.name == "mubyte")
-            .map(|row| row.meaning),
-        Some(Meaning::UnexpandablePrimitive(
-            UnexpandablePrimitive::Mubyte
-        ))
-    );
-    assert_eq!(
-        primitive_observation_identity(
-            CommandDialect::Pdftex14029,
-            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Mubyte),
-        ),
-        Some(("let", Some(10)))
-    );
-    assert!(
-        primitive_registrations(PrimitiveProfile::Tex82, InstallationPolicy::INITEX)
-            .all(|row| row.name != "mubyte")
-    );
+fn standard_pdftex_does_not_advertise_optional_enctex() {
+    // enctex2.ch [49.1219] registers mubyte only when enctex_p is enabled.
+    // Standard TeX Live latex/pdflatex formats do not pass -enc.
+    for policy in [
+        InstallationPolicy::INITEX,
+        InstallationPolicy::FORMAT_REGISTRY,
+    ] {
+        assert!(
+            primitive_registrations(PrimitiveProfile::Pdftex14029, policy)
+                .all(|row| row.name != "mubyte")
+        );
+    }
 }
 
 #[test]
@@ -169,7 +157,7 @@ fn enum_from_operand_maps_remain_complete() {
         );
     }
     let mut unexpandable_count = 0;
-    for raw in 0..=266 {
+    for raw in 0..=265 {
         let Some(primitive) = UnexpandablePrimitive::from_operand(raw) else {
             continue;
         };
@@ -182,7 +170,7 @@ fn enum_from_operand_maps_remain_complete() {
             Some(Meaning::UnexpandablePrimitive(primitive))
         );
     }
-    assert_eq!(unexpandable_count, 263);
+    assert_eq!(unexpandable_count, 262);
 }
 
 #[test]
@@ -209,7 +197,7 @@ fn exceptional_catalogue_covers_frozen_private_and_profile_meanings() {
     }
 
     let pdftex = primitive_names(PrimitiveProfile::Pdftex14029);
-    assert_eq!(pdftex.len(), 160);
+    assert_eq!(pdftex.len(), 159);
     for name in [
         "partokencontext",
         "pdfoptionpdfminorversion",
@@ -217,7 +205,6 @@ fn exceptional_catalogue_covers_frozen_private_and_profile_meanings() {
         "pdflastxform",
         "pdftexversion",
         "pdfpkmode",
-        "mubyte",
     ] {
         assert!(pdftex.binary_search(&name).is_ok(), "{name}");
     }

@@ -421,7 +421,7 @@ def main() -> None:
         fake_pdftex.write_text(
             "#!/usr/bin/env python3\n"
             "import os, pathlib, sys\n"
-            "expected = ['-ini', '-etex', '-enc', '-progname=pdflatex-dev', "
+            "expected = ['-ini', '-etex', '-progname=pdflatex-dev', "
             "'-jobname=pdflatex', '-translate-file=cp227.tcx', '-recorder', "
             "'pdflatex.ini']\n"
             "assert sys.argv[1:] == expected, sys.argv\n"

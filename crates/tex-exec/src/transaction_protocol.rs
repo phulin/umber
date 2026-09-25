@@ -546,7 +546,6 @@ fn primitive_barrier(primitive: UnexpandablePrimitive) -> Option<CommandBarrier>
         | P::Xdef
         | P::Let
         | P::FutureLet
-        | P::Mubyte
         | P::GlobalDefs
         | P::Global
         | P::Long

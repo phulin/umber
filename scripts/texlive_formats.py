@@ -201,7 +201,7 @@ def build_reference(repo: Path, texmf: Path, config: Path, binary: Path, engine:
     work = output / f"reference-{engine}-work"
     work.mkdir(parents=True, exist_ok=True)
     env = reference_environment(texmf, config, epoch, work)
-    arguments = ["-ini", "-etex", "-enc", f"-progname={engine}", f"-jobname={engine}", "-translate-file=cp227.tcx", "-recorder", f"{engine}.ini"]
+    arguments = ["-ini", "-etex", f"-progname={engine}", f"-jobname={engine}", "-translate-file=cp227.tcx", "-recorder", f"{engine}.ini"]
     for stale in (work / f"{engine}.fmt", work / f"{engine}.fls"):
         stale.unlink(missing_ok=True)
     run_guarded(repo, binary, arguments, cwd=work, env=env, stdout=work / "terminal.txt", stderr=work / "stderr.txt")

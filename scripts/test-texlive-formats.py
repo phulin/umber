@@ -10,6 +10,7 @@ import lzma
 import tarfile
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 import texlive_fontmaps as fontmaps
@@ -17,6 +18,27 @@ import texlive_formats as formats
 
 
 class AnnualFormatsTest(unittest.TestCase):
+    def test_standard_reference_format_does_not_enable_enctex(self) -> None:
+        # latex.ltx uses mubyte definedness to select its UTF-8 setup;
+        # official fmtutil.cnf does not enable encTeX for these formats.
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            binary = root / "pdftex"
+            binary.write_bytes(b"fake engine")
+            for engine in ("latex", "pdflatex"):
+                output = root / engine
+                output.mkdir()
+                def build(_repo, _binary, arguments, **kwargs):
+                    self.assertNotIn("-enc", arguments)
+                    self.assertIn("-etex", arguments)
+                    work = kwargs["cwd"]
+                    (work / f"{engine}.fmt").write_bytes(b"format")
+                    (work / f"{engine}.fls").write_text("")
+                with mock.patch.object(formats, "reference_environment", return_value={}), \
+                     mock.patch.object(formats, "run_guarded", side_effect=build), \
+                     mock.patch.object(formats, "recorder_inputs", return_value=[]):
+                    formats.build_reference(root, root, root, binary, engine, 0, output)
+
     def test_updmap_config_must_match_authenticated_package_directives(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)

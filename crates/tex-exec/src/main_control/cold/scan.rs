@@ -2352,7 +2352,6 @@ fn scan_unclassified_primitive<G>(
         }
         P::DiscretionaryHyphen
         | P::GlobalDefs
-        | P::Mubyte
         | P::PdfEfCode
         | P::PdfKnacCode
         | P::PdfKnbcCode

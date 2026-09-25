@@ -217,14 +217,6 @@ fn complete_primitive_codecs_are_unique_through_navigation_and_compatibility_reg
     round_trip(Meaning::UnexpandablePrimitive(
         UnexpandablePrimitive::QuitVMode,
     ));
-    assert_eq!(UnexpandablePrimitive::Mubyte.operand(), 266);
-    assert_eq!(
-        UnexpandablePrimitive::from_operand(266),
-        Some(UnexpandablePrimitive::Mubyte)
-    );
-    round_trip(Meaning::UnexpandablePrimitive(
-        UnexpandablePrimitive::Mubyte,
-    ));
     let internals = [
         (17, InternalInteger::PdfLastAnnot),
         (18, InternalInteger::PdfLastLink),

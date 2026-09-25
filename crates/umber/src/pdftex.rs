@@ -470,19 +470,19 @@ mod tests {
         source_names.dedup();
 
         let catalogue_names = pdftex_primitive_names();
-        assert_eq!(catalogue_names.len(), 160);
+        assert_eq!(catalogue_names.len(), 159);
         assert_eq!(
             catalogue_names
                 .iter()
                 .copied()
                 .collect::<BTreeSet<_>>()
                 .len(),
-            160,
+            159,
             "the registered inventory must not contain duplicates",
         );
         let source_derived_catalogue = catalogue_names
             .into_iter()
-            .filter(|name| !matches!(*name, "partokencontext" | "mubyte"))
+            .filter(|name| *name != "partokencontext")
             .collect::<Vec<_>>();
         assert_eq!(source_derived_catalogue, source_names);
     }
