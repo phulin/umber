@@ -7,7 +7,9 @@ use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 use tex_state::{DefinitionRef, ResidentMacroBody};
 
 use crate::command::HotCommand;
-use crate::execution_scratch::{ArgumentSetId, MacroArgumentWriter, PendingArgumentSet};
+use crate::execution_scratch::{
+    ArgumentRunAdmission, ArgumentSetId, MacroArgumentWriter, PendingArgumentSet,
+};
 use crate::processor::status::{
     ArgumentBuilderId, MatchingContext, ScannerStatus, ScannerStatusVisibility, ScannerWarning,
 };
@@ -841,10 +843,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         debug_assert_eq!(first_depth, 1);
         loop {
             if !self.is_observed()
-                && self
-                    .command
-                    .consume_plain_macro_body_argument_run(&mut tokens, self.fuel)?
-                    != 0
+                && self.consume_argument_run(&mut tokens, paragraph_token, None)? != 0
             {
                 continue;
             }
@@ -913,17 +912,30 @@ impl<G> CommandProcessor<'_, '_, G> {
         let mut delivery = None;
 
         loop {
-            // Delimiters are inactive inside a balanced group. Consume the
-            // ordinary literal prefix of an admitted macro body in place and
-            // return to scalar delivery only at a semantic boundary.
-            if tokens.brace_depth() != 0
-                && !self.is_observed()
-                && self
+            // Delimiters are inactive inside a balanced group. At depth zero
+            // with no pending delimiter prefix, a word other than the
+            // delimiter's first token cannot start a match either. Consume
+            // such ordinary words in place and return to scalar delivery only
+            // at a semantic boundary.
+            if !self.is_observed() {
+                let stop_word = if tokens.brace_depth() != 0 {
+                    Some(None)
+                } else if self
                     .command
-                    .consume_plain_macro_body_argument_run(&mut tokens, self.fuel)?
-                    != 0
-            {
-                continue;
+                    .scratch
+                    .delimiter_prefix_len(&tokens)
+                    .map_err(|_| CommandError::input_invariant())?
+                    == 0
+                {
+                    Some(Some(plan.delimiter_word(delimiter, 0)?))
+                } else {
+                    None
+                };
+                if let Some(stop_word) = stop_word
+                    && self.consume_argument_run(&mut tokens, paragraph_token, stop_word)? != 0
+                {
+                    continue;
+                }
             }
             if self.get_macro_match_token(&mut delivery)? != crate::DeliveryStatus::Command {
                 return Err(CommandError::ParagraphInMacroArgument);
@@ -1047,6 +1059,27 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .append_hot_delivery(&mut tokens, current, true, paragraph_token)
                 .map_err(|_| CommandError::input_invariant())?;
         }
+    }
+
+    /// Consumes one batched run of ordinary argument words. Control
+    /// sequences are classified only while no alignment interception or outer
+    /// recovery can apply to them.
+    fn consume_argument_run(
+        &mut self,
+        tokens: &mut MacroArgumentWriter<G>,
+        paragraph_token: Option<TokenWord>,
+        stop_word: Option<TokenWord>,
+    ) -> Result<u32, CommandError> {
+        let admission = ArgumentRunAdmission::with_commands(self.state, paragraph_token, stop_word);
+        let admission = if self.command.delivery_mode.alignment_active()
+            || self.outer_recovered_while_matching
+        {
+            admission.characters_only()
+        } else {
+            admission
+        };
+        self.command
+            .consume_plain_macro_body_argument_run(tokens, self.fuel, admission)
     }
 
     /// Builds KMP failure links over one immutable parameter-text delimiter.

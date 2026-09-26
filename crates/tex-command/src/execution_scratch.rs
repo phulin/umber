@@ -466,6 +466,7 @@ impl MacroWordLane {
         origin_run: &mut u32,
         destination: &mut MacroAppendPosition,
         limit: usize,
+        admission: &ArgumentRunAdmission<'_, '_, G>,
     ) -> Result<u32, ScratchError> {
         let mut consumed = 0_u32;
         let start = source
@@ -482,7 +483,7 @@ impl MacroWordLane {
             let (word, origin) = self
                 .get_sequential_parts(absolute, origin_run)
                 .ok_or(ScratchError::InvalidCoordinate)?;
-            if !plain_macro_scan_word(word) {
+            if !admission.admits(word) {
                 break;
             }
             self.append_at(destination, TracedTokenWord::from_parts(word, origin))?;
@@ -920,6 +921,7 @@ impl<G> ExecutionScratch<G> {
         origin_run: &mut u32,
         writer: &mut MacroArgumentWriter<G>,
         limit: usize,
+        admission: &ArgumentRunAdmission<'_, '_, G>,
     ) -> Result<u32, ScratchError> {
         if writer.holdback_len != 0 {
             return Err(ScratchError::InvalidCoordinate);
@@ -930,6 +932,7 @@ impl<G> ExecutionScratch<G> {
             origin_run,
             &mut writer.append,
             limit,
+            admission,
         )?;
         writer.cursor.settle_plain_run(count);
         writer.visible_end = writer.append.absolute;
@@ -1583,15 +1586,101 @@ impl<G> ExecutionScratch<G> {
     }
 }
 
-fn plain_macro_scan_word(word: TokenWord) -> bool {
-    matches!(
-        word.literal_catcode(),
-        Some(cat)
-            if !matches!(
-                cat,
-                Catcode::BeginGroup | Catcode::EndGroup | Catcode::AlignmentTab | Catcode::Active
-            )
-    )
+/// Decides which raw words a batched macro-argument run may consume without
+/// a delivery.
+///
+/// TeX82 §§392--399 only inspect each matched token's spelling, except that
+/// §336 validates an outer control sequence, §395 counts braces, and §396
+/// rejects `\par` in a non-long argument. A word that raises none of those
+/// cases settles exactly like a plain character: its spelling is appended and
+/// the scanner cursor advances. Braces, alignment tab characters, parameters,
+/// frozen tokens, the paragraph token, an outer meaning, and the caller's
+/// delimiter stop word all return the run to scalar delivery. Without a
+/// command context only literal non-active characters are admitted.
+#[derive(Clone, Copy)]
+pub(crate) struct ArgumentRunAdmission<'a, 'admission, G> {
+    state: Option<&'a tex_state::CommandContext<'admission, G>>,
+    paragraph_token: Option<TokenWord>,
+    stop_word: Option<TokenWord>,
+}
+
+impl<'a, 'admission, G> ArgumentRunAdmission<'a, 'admission, G> {
+    pub(crate) const fn with_commands(
+        state: &'a tex_state::CommandContext<'admission, G>,
+        paragraph_token: Option<TokenWord>,
+        stop_word: Option<TokenWord>,
+    ) -> Self {
+        Self {
+            state: Some(state),
+            paragraph_token,
+            stop_word,
+        }
+    }
+
+    /// The same admission restricted to literal characters, for input frames
+    /// whose control sequences need ordinary delivery settlement.
+    pub(crate) const fn characters_only(self) -> Self {
+        Self {
+            state: None,
+            ..self
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn admits(&self, word: TokenWord) -> bool {
+        if Some(word) == self.stop_word {
+            return false;
+        }
+        match word.literal_catcode() {
+            Some(Catcode::BeginGroup | Catcode::EndGroup | Catcode::AlignmentTab) => false,
+            Some(Catcode::Active) => self.admits_command(word),
+            Some(_) => true,
+            None => {
+                word.is_control_sequence()
+                    && Some(word) != self.paragraph_token
+                    && self.admits_command(word)
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn admits_command(&self, word: TokenWord) -> bool {
+        let Some(state) = self.state else {
+            return false;
+        };
+        let mut probe = OuterMeaningProbe { outer: false };
+        state.write_packed_token_command_into(word, &mut probe);
+        !probe.outer
+    }
+}
+
+/// Records only whether a resolved meaning is §336's outer class.
+struct OuterMeaningProbe {
+    outer: bool,
+}
+
+impl<G> tex_state::token::PackedCommandTarget<G> for OuterMeaningProbe {
+    #[inline(always)]
+    fn write_control_sequence(&mut self, _: Option<tex_state::interner::Symbol>) {}
+
+    #[inline(always)]
+    fn write_static_meaning_word(&mut self, word: u64) {
+        self.outer = word == tex_state::meaning::Meaning::END_TEMPLATE_WORD;
+    }
+
+    #[inline(always)]
+    fn write_font_meaning(&mut self, _: tex_state::ids::FontId) {
+        self.outer = false;
+    }
+
+    #[inline(always)]
+    fn write_macro_meaning(
+        &mut self,
+        flags: tex_state::meaning::MeaningFlags,
+        _: tex_state::DefinitionRef<G>,
+    ) {
+        self.outer = flags.contains(tex_state::meaning::MeaningFlags::OUTER);
+    }
 }
 
 #[cfg(test)]

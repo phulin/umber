@@ -1104,6 +1104,7 @@ impl<G> crate::CommandState<G> {
         &mut self,
         writer: &mut crate::execution_scratch::MacroArgumentWriter<G>,
         fuel: &mut crate::fuel::CommandFuel,
+        admission: crate::execution_scratch::ArgumentRunAdmission<'_, '_, G>,
     ) -> Result<u32, crate::CommandError> {
         let Some(resident_index) = self.roots.input.levels.top.checked_sub(1) else {
             return Ok(0);
@@ -1117,6 +1118,15 @@ impl<G> crate::CommandState<G> {
             return Ok(0);
         }
         let frame_remaining = (row.header.frame.limit() - position) as usize;
+        // A `\noexpand`-marked frame settles its control sequences through
+        // ordinary delivery.
+        let admission = if row.header.frame.flags().contains(
+            tex_state::packed_input::InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE,
+        ) {
+            admission.characters_only()
+        } else {
+            admission
+        };
         let available = fuel.remaining().min(u64::from(u32::MAX)) as usize;
         if available == 0 {
             fuel.charge()?;
@@ -1130,7 +1140,7 @@ impl<G> crate::CommandState<G> {
                     let count = span
                         .iter()
                         .take(available.min(frame_remaining))
-                        .take_while(|word| plain_macro_scan_word(word.get()))
+                        .take_while(|word| admission.admits(word.get()))
                         .count();
                     if count != 0
                         && let Err(error) = scratch.append_plain_argument_cell_span(
@@ -1160,6 +1170,7 @@ impl<G> crate::CommandState<G> {
                         &mut argument.origin_run,
                         writer,
                         available,
+                        &admission,
                     )
                     .map_err(|_| crate::CommandError::input_invariant())?;
                 (consumed, true)
@@ -1426,19 +1437,6 @@ impl<G> crate::CommandState<G> {
         }
         popped.then(|| self.complete_replay(identity)).flatten()
     }
-}
-
-fn plain_macro_scan_word(word: tex_state::token::TokenWord) -> bool {
-    use tex_state::token::Catcode;
-
-    matches!(
-        word.literal_catcode(),
-        Some(cat)
-            if !matches!(
-                cat,
-                Catcode::BeginGroup | Catcode::EndGroup | Catcode::AlignmentTab | Catcode::Active
-            )
-    )
 }
 
 pub(crate) fn observed_retirement_reason(
