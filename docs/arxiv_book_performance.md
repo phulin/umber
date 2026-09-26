@@ -202,3 +202,79 @@ correction. Keep comparing authenticated original-source runs at equal work
 and recording progress, memory, and symbolized owners before selecting another
 fix or changing any guard. See [Profiling Umber](profiling.md#long-loaded-format-latex-prefixes)
 for the release-resolution capture procedure.
+
+## Runtime allocation follow-up
+
+The integrated engine at `dcbefbebf` consumes destructive unboxes through
+history-aware region transfer, skips conditionals through compact delivery,
+and looks up expanded fonts before allocating projected metrics. Arena producers
+now publish complete child-dependency metadata, eliminating a sealing-time
+compatibility repair scan. The [allocation audit](runtime_storage_audit.md)
+distinguishes these integration gaps from intentional shared payloads and
+mutable dense banks.
+
+The original book exposed an incomplete transfer preflight: every block being
+moved must satisfy its annex dependency boundary, including blocks not reached
+by the selected root. Corpus replay then exposed an unchanged shared-tail rollback
+that unnecessarily requested exclusive mutation. Both now have ownership
+regressions; no bounds or shared-mutation checks were weakened.
+
+The production candidate SHA-256 is
+`50a8f37add4696c7d9db13a2d5f2e9a4ba8736a4eba90772baada08b9b373440`.
+The baseline is the prior split-fix production binary,
+`74834fe6eedb39305ec888ca256866f7a768092297e582ddff8eeb20cfdd74c0`.
+An isolated A/B/B/A sequence used the original source archive, the same format
+and distribution, CPU 11, and the unchanged memory, time, and execution-step
+guards. Each run stopped at the same 200-million expansion-fuel endpoint.
+No compilation or corpus replay ran during this timing sequence.
+
+| Run          | User CPU seconds | Elapsed seconds | Peak RSS KiB |
+| ------------ | ---------------- | --------------- | ------------ |
+| Baseline A1  | 52.26            | 54.96           | 636,060      |
+| Candidate B1 | 46.80            | 49.27           | 635,032      |
+| Candidate B2 | 46.51            | 49.01           | 635,288      |
+| Baseline A2  | 51.94            | 54.54           | 635,804      |
+
+Median user CPU fell from 52.10 to 46.655 seconds, approximately 10.5%; median
+elapsed time fell from 54.75 to 49.14 seconds. This result measures a fixed book
+prefix, not successful completion of the entire book. Individual unbox and
+conditional changes did not establish a book speedup on their own; the combined
+comparison is the timing evidence for this wave.
+
+Receipts and the frozen candidate live under
+`.worktrees/slot-3/target/perf-runtime-verified/`; `ab_ba_200m/` includes each full
+command, binary and source-receipt hashes, exit status, stderr, and `/usr/bin/time`
+output. The combined `scripts/check-and-test.sh` verdict was PASS: seven stages
+passed, none failed or blocked, and no coverage reductions.
+
+The fresh shipping-binary CPU profile uses `cycles:u` at 99 Hz with 8 KiB DWARF
+stacks. It collected 11,898 samples with zero lost samples. The profiled process
+received 99% CPU on CPU 11 while corpus workers used CPUs 0–7; it reached the
+unchanged 120-second guard (114.11 user seconds, 1,111,848 KiB peak RSS).
+Reports live in `full-book-profile/`, including demangled self and inclusive
+views. This supersedes the earlier capture that competed with another process
+on CPU 10.
+
+The largest remaining self cost is compact raw token delivery,
+`get_next_hot_into` (8.08%). Expanded token delivery accounts for 30.46%
+inclusive, and page/durable copying remains visible: durable-to-page recursive
+copying is 12.36% inclusive, page-to-durable 6.23%, and fixed box-annex reads
+3.83% self. These overlapping inclusive costs must not be added. Realized-font
+lookup and identity hashing no longer appear above the report's 0.5% threshold;
+the legacy dependency-repair routine has been removed. The remaining node
+copies need ownership-specific investigation, rather than treating every copy
+as a compatibility path. The profile identifies CPU costs; it does not establish
+a new pathological scaling cause.
+
+The separate unprofiled run also reached the original 120-second guard:
+114.56 user seconds, 120.33 elapsed seconds, and 1,139,360 KiB peak RSS
+(`full-book/`). The full-book timeout remains unresolved. The 10.5% fixed-work
+improvement is not evidence that the book now completes within the guard.
+
+The final original-source replay used four workers on CPUs 0–7 and restored
+all 93 previously successful papers: all 1,678 pages have exactly matching
+144-dpi rendered pixels and extracted text against their immutable reference
+PDFs. The binary hash in every receipt is the candidate above. Results are in
+`parity-93/summary.json`; the two rollback regressions also have independent
+receipts in `repro-two/`. These are rendered-output and text parity results,
+not byte-identical PDFs or identical internal PDF object graphs.
