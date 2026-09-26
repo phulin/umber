@@ -772,7 +772,6 @@ fn normalize_insert_content_shrink<G>(
     if replacements.is_empty() {
         return Ok(None);
     }
-    let mut slices = Vec::new();
     let mut pieces = Vec::with_capacity(replacements.len().saturating_mul(2) + 1);
     let mut start = 0;
     for (index, spec, kind, leader) in replacements {
@@ -784,7 +783,7 @@ fn normalize_insert_content_shrink<G>(
             &rendered_context,
         )?;
         if start < index {
-            pieces.push(stores.slice_page_node_sequence(content, start..index, &mut slices));
+            pieces.push(stores.slice_page_node_sequence(content, start..index));
         }
         pieces.push(stores.construct_page_node(|destination| {
             destination.glue(spec, kind, tex_state::node::GlueSpecOrigin::Owned, leader);
@@ -792,7 +791,7 @@ fn normalize_insert_content_shrink<G>(
         start = index + 1;
     }
     if start < content_len {
-        pieces.push(stores.slice_page_node_sequence(content, start..content_len, &mut slices));
+        pieces.push(stores.slice_page_node_sequence(content, start..content_len));
     }
     let Node::Ins {
         class,

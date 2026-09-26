@@ -1355,12 +1355,7 @@ fn copied_partial_parent_chunk_is_sealed_before_child_construction_continues() {
         .expect("parent");
     let selected = source
         .pub_arena
-        .slice_list(
-            &mut pool.chunks,
-            parent.list.coordinate(),
-            1..3,
-            &mut Vec::new(),
-        )
+        .slice_list(&mut pool.chunks, parent.list.coordinate(), 1..3)
         .expect("partial first chunk");
     let selected = RegionRoot {
         region: source.id,

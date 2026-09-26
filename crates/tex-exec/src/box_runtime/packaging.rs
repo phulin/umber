@@ -453,16 +453,15 @@ fn physical_discretionary_projection<G>(
     }
     let source_len = nodes.len();
     let _ = nodes;
-    let mut slices = Vec::new();
     let mut pieces = Vec::with_capacity(replacements.len().saturating_mul(2) + 1);
     let mut start = 0;
     for (index, replace) in replacements {
-        pieces.push(stores.slice_page_node_sequence(children, start..index + 1, &mut slices));
+        pieces.push(stores.slice_page_node_sequence(children, start..index + 1));
         pieces.push(replace);
         start = index + 1;
     }
     if start < source_len {
-        pieces.push(stores.slice_page_node_sequence(children, start..source_len, &mut slices));
+        pieces.push(stores.slice_page_node_sequence(children, start..source_len));
     }
     Some(stores.compose_page_node_sequences(&pieces))
 }

@@ -174,8 +174,7 @@ pub(super) fn set_fixed_box_word(
     let list = key
         .list(pool.logical_space(), pool.chunk_capacity())
         .ok_or(ForkArenaError::InvalidRange)?;
-    let mut scratch = Vec::new();
-    let word = arena.slice_list(pool, list, offset..offset + 1, &mut scratch)?;
+    let word = arena.slice_list(pool, list, offset..offset + 1)?;
     arena.with_single_value_mut(pool, word, |old| {
         let previous = Scaled::from_raw(*old as i32);
         *old = value.raw() as u32;

@@ -122,12 +122,11 @@ fn recover_frozen_texxet_directions<G>(
         return (list, None);
     }
 
-    let mut slices = Vec::new();
     let mut pieces = Vec::with_capacity(extra.saturating_mul(2) + 2);
     let mut start = 0;
     for index in extra_indices {
         if start < index {
-            pieces.push(stores.slice_page_node_sequence(list, start..index, &mut slices));
+            pieces.push(stores.slice_page_node_sequence(list, start..index));
         }
         pieces.push(stores.construct_page_node(|destination| {
             destination.kern(Scaled::from_raw(0), KernKind::Explicit);
@@ -135,7 +134,7 @@ fn recover_frozen_texxet_directions<G>(
         start = index + 1;
     }
     if start < source_len {
-        pieces.push(stores.slice_page_node_sequence(list, start..source_len, &mut slices));
+        pieces.push(stores.slice_page_node_sequence(list, start..source_len));
     }
     if missing != 0 {
         let mut directions = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();

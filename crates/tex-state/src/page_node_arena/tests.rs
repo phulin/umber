@@ -226,9 +226,7 @@ fn positive_box_cuts_survive_repeated_filtered_unbox_with_sibling() {
             .expect("shallow projection");
         let list = arena.publish_unique_list(projected);
         assert_eq!(list.len(), 2);
-        let selected = arena
-            .slice_sequence(list, 0..1, &mut Vec::new())
-            .expect("cut box");
+        let selected = arena.slice_sequence(list, 0..1).expect("cut box");
         let selection = arena
             .box_migration_metadata(selected)
             .expect("rebound descriptor")
@@ -236,9 +234,7 @@ fn positive_box_cuts_survive_repeated_filtered_unbox_with_sibling() {
             .expect("positive selection");
         assert_eq!(selection.node_cuts.as_slice(), std::slice::from_ref(&cut));
         assert!(selection.nodes.is_empty() && selection.annex.is_empty());
-        let neighbor = arena
-            .slice_sequence(list, 1..2, &mut Vec::new())
-            .expect("sibling");
+        let neighbor = arena.slice_sequence(list, 1..2).expect("sibling");
         let neighbor_nodes = resolved(&arena, neighbor);
         let [Node::HList(sibling_box)] = neighbor_nodes.as_slice() else {
             panic!("sibling remains a box");
@@ -384,7 +380,7 @@ fn consumed_unbox_projection_rebinds_sibling_boxes_without_copying_their_bodies(
         assert_eq!(projected.len(), 2, "margin kerns are removed");
         for (index, &(old_node, old_annex)) in original_wrappers.iter().enumerate() {
             let selected = arena
-                .slice_sequence(projected, index..index + 1, &mut Vec::new())
+                .slice_sequence(projected, index..index + 1)
                 .expect("sibling slice");
             let metadata = arena
                 .box_migration_metadata(selected)
@@ -414,10 +410,10 @@ fn consumed_unbox_projection_rebinds_sibling_boxes_without_copying_their_bodies(
     );
 
     let taken = arena
-        .slice_sequence(projected, 1..2, &mut Vec::new())
+        .slice_sequence(projected, 1..2)
         .expect("selected sibling");
     let survivor = arena
-        .slice_sequence(projected, 0..1, &mut Vec::new())
+        .slice_sequence(projected, 0..1)
         .expect("surviving sibling");
     let metadata = arena
         .box_migration_metadata(taken)
@@ -760,9 +756,7 @@ fn disabled_demand_keeps_range_and_composition_identity_work_at_zero() {
     let whole = arena
         .publish_owned(penalties(&(0..128).collect::<Vec<_>>()))
         .expect("publish");
-    let middle = arena
-        .slice_sequence(whole, 3..125, &mut Vec::new())
-        .expect("middle slice");
+    let middle = arena.slice_sequence(whole, 3..125).expect("middle slice");
     let composed = arena.compose_sequences(&[middle, middle]).expect("compose");
     let mut builder = PageMaterialActiveListBuilder::vacant();
     arena.open_active_list(&mut builder).expect("open builder");
@@ -1421,12 +1415,8 @@ fn identity_is_preserved_across_build_split_and_compose() {
         .expect("publish semantic list");
     let left_nodes = &nodes[..2];
     let right_nodes = &nodes[2..];
-    let left = arena
-        .slice_sequence(whole, 0..2, &mut Vec::new())
-        .expect("split left");
-    let right = arena
-        .slice_sequence(whole, 2..4, &mut Vec::new())
-        .expect("split right");
+    let left = arena.slice_sequence(whole, 0..2).expect("split left");
+    let right = arena.slice_sequence(whole, 2..4).expect("split right");
     let recomposed = arena.compose_sequences(&[left, right]).expect("compose");
 
     assert_eq!(whole.semantic_identity(), Some(identity(&nodes).raw()));
@@ -1451,7 +1441,7 @@ fn long_middle_slice_uses_summaries_and_explicit_copy_hashes_each_node_once() {
     let summaries_before = arena.semantic_summary_work();
 
     let middle = arena
-        .slice_sequence(whole, 3..1021, &mut Vec::new())
+        .slice_sequence(whole, 3..1021)
         .expect("slice long middle");
 
     let hashed = arena.semantic_hash_work() - hash_before;
@@ -1512,16 +1502,12 @@ fn multi_range_slice_identity_is_independent_of_descriptor_boundaries() {
     arena.enable_semantic_identity();
     let nodes = penalties(&(0..1024).collect::<Vec<_>>());
     let whole = arena.publish_owned(nodes.clone()).expect("publish");
-    let left = arena
-        .slice_sequence(whole, 0..300, &mut Vec::new())
-        .expect("left");
-    let right = arena
-        .slice_sequence(whole, 700..1024, &mut Vec::new())
-        .expect("right");
+    let left = arena.slice_sequence(whole, 0..300).expect("left");
+    let right = arena.slice_sequence(whole, 700..1024).expect("right");
     let composite = arena.compose_sequences(&[left, right]).expect("composite");
     let hash_before = arena.semantic_hash_work();
     let selected = arena
-        .slice_sequence(composite, 2..622, &mut Vec::new())
+        .slice_sequence(composite, 2..622)
         .expect("cross-range selection");
     let mut expected = nodes[2..300].to_vec();
     expected.extend_from_slice(&nodes[700..1022]);
@@ -1563,7 +1549,7 @@ fn partial_operation_restore_restores_payload_chunk_summary() {
         .expect("restore partial payload tail");
     assert!(!arena.contains(rejected));
     let restored = arena
-        .slice_sequence(retained, 1..3, &mut Vec::new())
+        .slice_sequence(retained, 1..3)
         .expect("slice restored prefix");
     assert_eq!(
         restored.semantic_identity(),

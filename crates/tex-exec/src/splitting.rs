@@ -67,10 +67,9 @@ pub(crate) fn prune_page_top_list<G>(
     let source_len = nodes.len();
     let _ = nodes;
 
-    let mut slices = Vec::new();
     let mut pieces = Vec::with_capacity(retained.len() + 2);
     for range in retained {
-        pieces.push(stores.slice_page_node_sequence(source, range, &mut slices));
+        pieces.push(stores.slice_page_node_sequence(source, range));
     }
     if let (Some(index), Some(spec)) = (first_box, adjusted_top_skip) {
         pieces.push(stores.construct_page_node(|destination| {
@@ -81,7 +80,7 @@ pub(crate) fn prune_page_top_list<G>(
                 None,
             );
         }));
-        pieces.push(stores.slice_page_node_sequence(source, index..source_len, &mut slices));
+        pieces.push(stores.slice_page_node_sequence(source, index..source_len));
     }
     stores.compose_page_node_sequences(&pieces)
 }

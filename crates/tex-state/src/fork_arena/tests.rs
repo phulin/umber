@@ -1389,7 +1389,7 @@ fn resumable_chunk_cursor_preserves_shared_prefix_across_append() {
     let original: [u32; 64] = core::array::from_fn(|index| index as u32);
     let root = list(&mut arena, &mut pool, original);
     let prefix = arena
-        .slice_list(&mut pool, root, 0..37, &mut Vec::new())
+        .slice_list(&mut pool, root, 0..37)
         .expect("shared sealed prefix");
     let tail = arena
         .admitted_tail_chunk(&pool, prefix)
@@ -2246,7 +2246,6 @@ fn direct_chunk_sequence_has_indexed_and_sequential_parity() {
     let mut arena = ForkArena::<u32, ActiveLane>::new();
     let left = list(&mut arena, &mut pool, [1, 2, 3]);
     let right = list(&mut arena, &mut pool, [7, 8]);
-    let mut scratch = Vec::new();
     let composite = arena
         .copy_shared_then_splice(&mut pool, left, right)
         .expect("range sequence");
@@ -2274,7 +2273,7 @@ fn direct_chunk_sequence_has_indexed_and_sequential_parity() {
     }
 
     let sliced = arena
-        .slice_list(&mut pool, composite, 1..4, &mut scratch)
+        .slice_list(&mut pool, composite, 1..4)
         .expect("slice across canonical ranges");
     assert_eq!(
         arena
@@ -3307,11 +3306,8 @@ fn sequence_summaries_move_atomically_with_promoted_direct_chunks() {
     let promoted = active
         .promote_batch_into(&mut pool, &mut page, batch)
         .expect("promote summary storage")[0];
-    let mut scratch = Vec::new();
     let (middle, summary, work) = page
-        .slice_list_summarized(&mut pool, promoted, 3..61, &mut scratch, |value| {
-            value.wrapping_add(100)
-        })
+        .slice_list_summarized(&mut pool, promoted, 3..61, |value| value.wrapping_add(100))
         .expect("summarized promoted slice");
     let mut expected = crate::node_sequence::SemanticSequenceIdentity::empty();
     for value in 3..61_u64 {

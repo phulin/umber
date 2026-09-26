@@ -315,7 +315,6 @@ fn distribute_insertions<G>(
 
     let mut retained = Vec::new();
     let mut heldover = Vec::new();
-    let mut slices = Vec::new();
     let mut heldover_count = 0usize;
     for index in 0..page_nodes.len() {
         let insertion = match stores
@@ -381,19 +380,11 @@ fn distribute_insertions<G>(
                     }
                 }
                 if wait {
-                    heldover.push(stores.slice_page_node_sequence(
-                        page_nodes,
-                        index..index + 1,
-                        &mut slices,
-                    ));
+                    heldover.push(stores.slice_page_node_sequence(page_nodes, index..index + 1));
                     heldover_count += 1;
                 }
             }
-            None => retained.push(stores.slice_page_node_sequence(
-                page_nodes,
-                index..index + 1,
-                &mut slices,
-            )),
+            None => retained.push(stores.slice_page_node_sequence(page_nodes, index..index + 1)),
         }
     }
 
@@ -462,10 +453,8 @@ fn split_insertion_remainder<G>(
         .checked_add(broken_at)
         .ok_or(ExecError::ArithmeticOverflow)?
         .min(queue.nodes.len());
-    let mut slices = Vec::new();
-    let remainder =
-        stores.slice_page_node_sequence(queue.nodes, split_at..queue.nodes.len(), &mut slices);
-    queue.nodes = stores.slice_page_node_sequence(queue.nodes, 0..split_at, &mut slices);
+    let remainder = stores.slice_page_node_sequence(queue.nodes, split_at..queue.nodes.len());
+    queue.nodes = stores.slice_page_node_sequence(queue.nodes, 0..split_at);
     let pruned = crate::splitting::prune_page_top_list(stores, remainder, context.split_top_skip);
     if pruned.is_empty() {
         return Ok(None);
@@ -572,8 +561,7 @@ fn output_penalty_and_rewrite_break<G>(
     if let Some(penalty) = first_penalty {
         let replacement =
             stores.construct_page_node(|destination| destination.penalty(INF_PENALTY));
-        let mut slices = Vec::new();
-        let tail = stores.slice_page_node_sequence(after_break, 1..after_break.len(), &mut slices);
+        let tail = stores.slice_page_node_sequence(after_break, 1..after_break.len());
         return (
             penalty,
             stores.compose_page_node_sequences(&[replacement, tail]),

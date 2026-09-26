@@ -80,8 +80,8 @@ pub(crate) fn split_vbox_register<G>(
     )?;
     let (split_list, remainder) = match split.break_index {
         Some(index) => (
-            stores.slice_page_node_sequence(split_nodes, 0..index, &mut Vec::new()),
-            stores.slice_page_node_sequence(split_nodes, index..split_nodes.len(), &mut Vec::new()),
+            stores.slice_page_node_sequence(split_nodes, 0..index),
+            stores.slice_page_node_sequence(split_nodes, index..split_nodes.len()),
         ),
         None => (split_nodes, tex_state::page_node_arena::PageListId::empty()),
     };

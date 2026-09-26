@@ -2148,10 +2148,9 @@ fn page_sequence_slices_and_composition_preserve_order() {
         let left = context.publish_page_nodes(vec![Node::Penalty(1), Node::Penalty(2)]);
         let right = context.publish_page_nodes(vec![Node::Penalty(3), Node::Penalty(4)]);
         let source = context.compose_page_node_sequences(&[left, right]);
-        let mut slice_scratch = Vec::new();
-        let first = context.slice_page_node_sequence(source, 0..1, &mut slice_scratch);
+        let first = context.slice_page_node_sequence(source, 0..1);
         let generated = context.publish_page_nodes(vec![Node::Penalty(9)]);
-        let last = context.slice_page_node_sequence(source, 3..4, &mut slice_scratch);
+        let last = context.slice_page_node_sequence(source, 3..4);
         let transformed = context.compose_page_node_sequences(&[first, generated, last]);
 
         assert_eq!(

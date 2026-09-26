@@ -789,7 +789,6 @@ const _: () = assert!(core::mem::size_of::<PageListSpan>() <= 64);
 /// enclosing page-region history and is borrowed explicitly for every access.
 pub struct PageMaterialRegion {
     region: NodeRegion<PageRole>,
-    list_scratch: Vec<()>,
     semantic_identity_enabled: bool,
     durable_transitions: DurableTransitionCounters,
 }
@@ -823,7 +822,6 @@ pub(crate) struct DurableTransitionCounters {
 pub struct PageMaterialArena<'a> {
     pool: &'a mut NodePool,
     region: &'a mut NodeRegion<PageRole>,
-    list_scratch: &'a mut Vec<()>,
     semantic_identity_enabled: &'a mut bool,
     durable_transitions: &'a mut DurableTransitionCounters,
 }
@@ -835,7 +833,6 @@ impl PageMaterialRegion {
             .expect("page-material region identity capacity");
         Self {
             region,
-            list_scratch: Vec::new(),
             semantic_identity_enabled: false,
             durable_transitions: DurableTransitionCounters::default(),
         }
@@ -923,7 +920,6 @@ impl PageMaterialRegion {
         let region = source.region.share_sealed_prefix(pool, mark, roots)?;
         Ok(Self {
             region,
-            list_scratch: Vec::new(),
             semantic_identity_enabled: source.semantic_identity_enabled,
             durable_transitions: source.durable_transitions,
         })
@@ -1012,7 +1008,6 @@ impl<'a> PageMaterialArena<'a> {
         Self {
             pool,
             region: &mut state.region,
-            list_scratch: &mut state.list_scratch,
             semantic_identity_enabled: &mut state.semantic_identity_enabled,
             durable_transitions: &mut state.durable_transitions,
         }
@@ -2360,7 +2355,6 @@ impl<'a> PageMaterialArena<'a> {
         &mut self,
         list: PageListId,
         selected: Range<usize>,
-        _scratch: &mut Vec<PageListId>,
     ) -> Result<PageListId, ForkArenaError> {
         if *self.semantic_identity_enabled {
             let annex = NodeAnnexView::new(&self.pool.annex_chunks, &self.region.annex_arena);
@@ -2368,7 +2362,6 @@ impl<'a> PageMaterialArena<'a> {
                 &mut self.pool.chunks,
                 list.coordinate(),
                 selected,
-                self.list_scratch,
                 |record| semantic_record_identity(record, annex),
             )?;
             self.region.pub_arena.record_identity_work(work);
@@ -2378,7 +2371,6 @@ impl<'a> PageMaterialArena<'a> {
                 &mut self.pool.chunks,
                 list.coordinate(),
                 selected,
-                self.list_scratch,
             )?;
             Ok(PageListId::from_parts(coordinate, None))
         }
@@ -2396,7 +2388,6 @@ impl<'a> PageMaterialArena<'a> {
                     &mut self.pool.chunks,
                     span.list.coordinate(),
                     selected,
-                    self.list_scratch,
                     |record| semantic_record_identity(record, annex),
                 )?;
             self.region.pub_arena.record_identity_work(work);
@@ -2406,7 +2397,6 @@ impl<'a> PageMaterialArena<'a> {
                 &mut self.pool.chunks,
                 span.list.coordinate(),
                 selected,
-                self.list_scratch,
             )?;
             PageListId::from_parts(coordinate, None)
         };

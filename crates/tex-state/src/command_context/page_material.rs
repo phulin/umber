@@ -296,10 +296,9 @@ impl<'a, G> CommandContext<'a, G> {
         &mut self,
         sequence: crate::page_node_arena::PageListId,
         range: core::ops::Range<usize>,
-        scratch: &mut Vec<crate::page_node_arena::PageListId>,
     ) -> crate::page_node_arena::PageListId {
         self.page_nodes
-            .slice_sequence(sequence, range, scratch)
+            .slice_sequence(sequence, range)
             .expect("page sequence range belongs to the live page arena")
     }
 

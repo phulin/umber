@@ -5072,15 +5072,14 @@ impl<T, Lane> ForkArena<T, Lane> {
         pool: &mut ChunkPool<T>,
         builder: &mut ActiveListBuilder<T, Lane>,
         split: usize,
-        scratch: &mut Vec<()>,
     ) -> Result<(ArenaListId<Lane>, ArenaListId<Lane>), ForkArenaError> {
         self.finalize_active_list(pool, builder)?;
         let list = builder.take_sealed()?;
         if split > list.len() {
             return Err(ForkArenaError::InvalidRange);
         }
-        let left = self.slice_list(pool, list, 0..split, scratch)?;
-        let right = self.slice_list(pool, list, split..list.len(), scratch)?;
+        let left = self.slice_list(pool, list, 0..split)?;
+        let right = self.slice_list(pool, list, split..list.len())?;
         Ok((left, right))
     }
 
@@ -5480,16 +5479,12 @@ impl<T, Lane> ForkArena<T, Lane> {
 
     /// Selects one logical subrange without copying payload values.
     ///
-    /// `scratch` is retained in the API while callers migrate away from range
-    /// scratch; direct roots need no temporary topology storage.
     pub fn slice_list(
         &mut self,
         pool: &mut ChunkPool<T>,
         list: ArenaListId<Lane>,
         selected: Range<usize>,
-        scratch: &mut Vec<()>,
     ) -> Result<ArenaListId<Lane>, ForkArenaError> {
-        scratch.clear();
         self.slice_direct_root(pool, list, selected)
     }
 
@@ -5498,10 +5493,8 @@ impl<T, Lane> ForkArena<T, Lane> {
         pool: &mut ChunkPool<T>,
         list: ArenaListId<Lane>,
         selected: Range<usize>,
-        scratch: &mut Vec<()>,
     ) -> Result<ArenaListId<Lane>, ForkArenaError> {
         self.validate_list(pool, list)?;
-        scratch.clear();
         self.slice_direct_root(pool, list, selected)
     }
 
@@ -5510,7 +5503,6 @@ impl<T, Lane> ForkArena<T, Lane> {
         pool: &mut ChunkPool<T>,
         list: ArenaListId<Lane>,
         selected: Range<usize>,
-        scratch: &mut Vec<()>,
         mut item_identity: impl FnMut(&T) -> u64,
     ) -> Result<
         (
@@ -5520,7 +5512,6 @@ impl<T, Lane> ForkArena<T, Lane> {
         ),
         ForkArenaError,
     > {
-        scratch.clear();
         let selected_root = self.slice_direct_root(pool, list, selected)?;
         let (summary, work) =
             self.summarize_direct_root(pool, selected_root, &mut item_identity)?;
@@ -5532,7 +5523,6 @@ impl<T, Lane> ForkArena<T, Lane> {
         pool: &mut ChunkPool<T>,
         list: ArenaListId<Lane>,
         selected: Range<usize>,
-        scratch: &mut Vec<()>,
         mut item_identity: impl FnMut(&T) -> u64,
     ) -> Result<
         (
@@ -5543,7 +5533,6 @@ impl<T, Lane> ForkArena<T, Lane> {
         ForkArenaError,
     > {
         self.validate_list(pool, list)?;
-        scratch.clear();
         let selected_root = self.slice_direct_root(pool, list, selected)?;
         let (summary, work) =
             self.summarize_direct_root(pool, selected_root, &mut item_identity)?;
