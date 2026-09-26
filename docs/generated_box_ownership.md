@@ -24,8 +24,8 @@ create more than two cuts in one box. Projection cost is bounded by selected
 cut records, while complete interior chunks retain their physical payload.
 
 Before extending the transfer to child-bearing outputs, the profiling build
-attributes each remaining built-root structural copy to ordinary setbox,
-lastbox fallback, or PDF form publication. It records copied node volume and
+attributes each remaining built-root structural copy to setbox construction,
+register take/copy, vsplit, lastbox fallback, or PDF form publication. It records copied node volume and
 classifies the wrapper's immediate child list by leader, nested box, disc,
 migrating material, math, other annex-bearing material, or inline leaves.
 This census is enabled only by the profiling-stats CLI flag; normal builds

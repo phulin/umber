@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crate::page_node_arena::BuiltBoxOrigin;
 
-const ORIGINS: usize = 4;
+const ORIGINS: usize = 7;
 const SHAPES: usize = 8;
 const CELLS: usize = ORIGINS * SHAPES;
 
@@ -30,14 +30,31 @@ impl BoxFallbackShape {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BoxFallbackCensus {
     pub events: [u64; CELLS],
     pub copied_nodes: [u64; CELLS],
 }
 
+impl Default for BoxFallbackCensus {
+    fn default() -> Self {
+        Self {
+            events: [0; CELLS],
+            copied_nodes: [0; CELLS],
+        }
+    }
+}
+
 impl BoxFallbackCensus {
-    pub const ORIGIN_NAMES: [&'static str; ORIGINS] = ["setbox", "lastbox", "pdf_form", "other"];
+    pub const ORIGIN_NAMES: [&'static str; ORIGINS] = [
+        "setbox_construction",
+        "setbox_register_take",
+        "setbox_register_copy",
+        "setbox_vsplit",
+        "lastbox",
+        "pdf_form",
+        "other",
+    ];
     pub const SHAPE_NAMES: [&'static str; SHAPES] = [
         "inline",
         "glue",

@@ -2498,7 +2498,7 @@ pub(in crate::main_control) fn apply<G>(
             boxes.pending_setbox = Some(PendingSetBox {
                 target: *target,
                 region: stores.begin_page_node_region(),
-                origin: tex_state::page_node_arena::BuiltBoxOrigin::SetBox,
+                origin: tex_state::page_node_arena::BuiltBoxOrigin::SetBoxConstruction,
             });
             match path {
                 ScannedSetBoxPath::Forbidden { error_context } => {
@@ -2524,6 +2524,15 @@ pub(in crate::main_control) fn apply<G>(
                         report_improper_setbox(context, stores, command.diagnostic_effects)?;
                     }
                     ScannedBoxShiftPayload::BoxRegister { index, copy } => {
+                        boxes
+                            .pending_setbox
+                            .as_mut()
+                            .expect("setbox target remains pending")
+                            .origin = if *copy {
+                            tex_state::page_node_arena::BuiltBoxOrigin::SetBoxRegisterCopy
+                        } else {
+                            tex_state::page_node_arena::BuiltBoxOrigin::SetBoxRegisterTake
+                        };
                         let id = read_box_register(*index, *copy, stores, command);
                         let node = crate::box_runtime::first_box_node(stores, id);
                         let context = boxes.take_box_context(false);
@@ -2533,6 +2542,11 @@ pub(in crate::main_control) fn apply<G>(
                         unreachable!("setbox lastbox is ordered before its destination suffix")
                     }
                     ScannedBoxShiftPayload::VSplit(split) => {
+                        boxes
+                            .pending_setbox
+                            .as_mut()
+                            .expect("setbox target remains pending")
+                            .origin = tex_state::page_node_arena::BuiltBoxOrigin::SetBoxVSplit;
                         if let Some(context) = &split.missing_to_context {
                             report_missing_vsplit_to(context, command.diagnostic_effects, stores)?;
                         }

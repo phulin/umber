@@ -924,7 +924,10 @@ type BuiltClosureMoveResult =
 /// Construction path for profiling a box whose child predates its build mark.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BuiltBoxOrigin {
-    SetBox,
+    SetBoxConstruction,
+    SetBoxRegisterTake,
+    SetBoxRegisterCopy,
+    SetBoxVSplit,
     LastBox,
     PdfForm,
     Other,
