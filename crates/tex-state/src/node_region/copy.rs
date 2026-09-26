@@ -12,6 +12,7 @@ pub(super) struct CopyContext<'a> {
     destination: &'a mut ForkArena<RegionNode, PageMaterialLane>,
     destination_annex: &'a mut ForkArena<u32, NodeAnnexLane>,
     stack: Vec<PageListId>,
+    fixed_words: Vec<u32>,
     semantic_identity_enabled: bool,
 }
 
@@ -20,7 +21,7 @@ impl<'a> CopyContext<'a> {
         &mut self,
         records: &mut [RegionNode],
         pending: &mut SmallVec<[(usize, u16); 16]>,
-        words: &mut SmallVec<[u32; 1024]>,
+        batch_start: usize,
         paired_floor: &mut usize,
     ) -> Result<(), ForkArenaError> {
         if pending.is_empty() {
@@ -31,7 +32,7 @@ impl<'a> CopyContext<'a> {
             .iter()
             .map(|(_, len)| *len)
             .collect::<SmallVec<[u16; 16]>>();
-        let keys = writer.append_fixed_flat(words, &lengths)?;
+        let keys = writer.append_fixed_flat(&mut self.fixed_words[batch_start..], &lengths)?;
         if keys.len() != pending.len() {
             return Err(ForkArenaError::InvalidRange);
         }
@@ -41,7 +42,7 @@ impl<'a> CopyContext<'a> {
                 .with_relocated_fixed_key(key)
                 .ok_or(ForkArenaError::InvalidRange)?;
         }
-        words.clear();
+        self.fixed_words.truncate(batch_start);
         Ok(())
     }
 
@@ -62,6 +63,7 @@ impl<'a> CopyContext<'a> {
             destination,
             destination_annex,
             stack: Vec::new(),
+            fixed_words: Vec::new(),
             semantic_identity_enabled,
         }
     }
@@ -76,9 +78,11 @@ impl<'a> CopyContext<'a> {
         if self.stack.contains(&list) {
             return Err(ForkArenaError::InvalidRegion);
         }
+        let scratch_mark = self.fixed_words.len();
         self.stack.push(list);
         let result = self.copy_nonempty_list(list);
         self.stack.pop();
+        self.fixed_words.truncate(scratch_mark);
         result
     }
 
@@ -102,7 +106,7 @@ impl<'a> CopyContext<'a> {
         .then(SemanticSequenceIdentity::empty);
         let mut records = SmallVec::<[RegionNode; 16]>::new();
         let mut pending = SmallVec::<[(usize, u16); 16]>::new();
-        let mut fixed_words = SmallVec::<[u32; 1024]>::new();
+        let batch_start = self.fixed_words.len();
         for mut cursor in cursors.into_iter().rev() {
             records.clear();
             debug_assert!(pending.is_empty());
@@ -122,9 +126,9 @@ impl<'a> CopyContext<'a> {
                         .with_fixed_copy_body(
                             NodeAnnexView::new(self.annex_pool, self.source_annex),
                             |body, fields| {
-                                let start = fixed_words.len();
-                                fixed_words.push(0);
-                                fixed_words.extend_from_slice(body);
+                                let start = self.fixed_words.len();
+                                self.fixed_words.push(0);
+                                self.fixed_words.extend_from_slice(body);
                                 (start + 1, body.len(), fields)
                             },
                         )
@@ -133,14 +137,14 @@ impl<'a> CopyContext<'a> {
                         record.kind(),
                         Some(crate::node::NodeKind::HList | crate::node::NodeKind::VList)
                     ) {
-                        fixed_words[body_start + 28..body_start + body_len].fill(0);
+                        self.fixed_words[body_start + 28..body_start + body_len].fill(0);
                     }
                     let mut copied_children = [PageListId::empty(); 4];
                     let mut has_nonempty_child = false;
                     for (child_index, &offset) in fields.offsets().iter().enumerate() {
                         let start = body_start + usize::from(offset);
                         let source_child = PageListId::from_words(
-                            fixed_words[start..start + 10]
+                            self.fixed_words[start..start + 10]
                                 .try_into()
                                 .map_err(|_| ForkArenaError::InvalidRange)?,
                         )
@@ -162,7 +166,8 @@ impl<'a> CopyContext<'a> {
                                     let copied = copied_children[child_index];
                                     visit(copied.coordinate());
                                     let start = body_start + usize::from(offset);
-                                    fixed_words[start..start + 10].copy_from_slice(&copied.words());
+                                    self.fixed_words[start..start + 10]
+                                        .copy_from_slice(&copied.words());
                                 }
                                 Some(())
                             })?;
@@ -174,7 +179,7 @@ impl<'a> CopyContext<'a> {
                         self.publish_fixed_batch(
                             &mut records,
                             &mut pending,
-                            &mut fixed_words,
+                            batch_start,
                             &mut paired_floor,
                         )?;
                     }
@@ -219,12 +224,7 @@ impl<'a> CopyContext<'a> {
                 dependency_floor = dependency_floor.min(child_floor.unwrap_or(usize::MAX));
                 paired_floor = paired_floor.min(child_annex_floor.unwrap_or(usize::MAX));
             }
-            self.publish_fixed_batch(
-                &mut records,
-                &mut pending,
-                &mut fixed_words,
-                &mut paired_floor,
-            )?;
+            self.publish_fixed_batch(&mut records, &mut pending, batch_start, &mut paired_floor)?;
             if let Some(identity) = &mut computed_identity {
                 let annex = NodeAnnexView::new(self.annex_pool, self.destination_annex);
                 for record in &records {

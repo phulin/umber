@@ -80,7 +80,7 @@ continuing a parent list must therefore use its own tail key, never another
 list's tail merely because the offsets happen to match.
 
 For a fixed annex payload, preparation authenticates its source key and copies
-the body directly into bounded, flat chunk scratch. A descriptor records the
+the body directly into bounded, flat operation scratch. A descriptor records the
 body's offset and child-field offsets without owning another copy of the body.
 Each occurrence of each nonempty child is copied independently; the copied
 coordinates replace those fields in the flat scratch. Empty child coordinates
@@ -105,7 +105,10 @@ block; a segment rotates before the next record when space is insufficient.
 Each resulting key names only that record's exact word range, and its serial
 authenticates it independently. The caller's paired operation marks cover the
 whole batch if a later child or parent publication fails. Group scratch is
-bounded even when a source list spans many node chunks.
+bounded even when a source list spans many node chunks. Recursive copies share
+one growable scratch buffer in the copy context. Each child records its entry
+offset and truncates to that offset on return, preserving its parent's pending
+run without placing the flat buffer on every Rust call frame.
 
 The destination root remains private to copy construction until its complete
 child closure has been rewritten and its tail sealed. Each run settles child

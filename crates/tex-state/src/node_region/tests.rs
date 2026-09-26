@@ -1153,6 +1153,50 @@ fn long_flat_copy_uses_bounded_rust_stack() {
 }
 
 #[test]
+fn nested_fixed_copy_keeps_batch_scratch_off_recursive_stack() {
+    std::thread::Builder::new()
+        .stack_size(256 * 1024)
+        .spawn(|| {
+            let mut pool = NodePool::new();
+            let mut source = pool.start_region::<DurableRole>().expect("source");
+            let mut root = source
+                .publish_owned(&mut pool, [Node::Penalty(73)])
+                .expect("leaf");
+            for _ in 0..64 {
+                root = source
+                    .publish_owned(&mut pool, [boxed(root.list)])
+                    .expect("nested box");
+            }
+            let mut destination = pool.start_region::<PageRole>().expect("destination");
+            let copied = copy_region_root_into(&mut pool, &source, root, &mut destination, false)
+                .expect("deep copy");
+            pool.retire_region(source)
+                .map_err(|(error, _)| error)
+                .expect("retire source");
+            let mut list = copied.list;
+            for _ in 0..64 {
+                let admitted = destination.root(&pool, list).expect("copied box root");
+                let view = destination.list(&pool, admitted).expect("copied box list");
+                let crate::NodeView::HList(boxed) = view.get(0).expect("box") else {
+                    panic!("copied node lost its box shape");
+                };
+                list = boxed.children;
+            }
+            let admitted = destination.root(&pool, list).expect("copied leaf root");
+            assert_eq!(
+                destination
+                    .list(&pool, admitted)
+                    .expect("copied leaf")
+                    .get(0),
+                Some(crate::NodeView::Penalty(73))
+            );
+        })
+        .expect("small-stack worker")
+        .join()
+        .expect("bounded recursive fixed copy");
+}
+
+#[test]
 fn copied_partial_parent_chunk_is_sealed_before_child_construction_continues() {
     let mut pool = NodePool::with_chunk_bytes(64);
     let mut source = pool.start_region::<PageRole>().expect("source");
