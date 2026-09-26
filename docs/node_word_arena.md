@@ -228,7 +228,7 @@ offsets, list predecessors, child roots, and annex keys do not change.
 Checkpoint capture stores only the aggregate node cursor, annex cursor,
 PageBuilder roots, and scalar/journal positions. It allocates and copies zero.
 An interior fork copies at most 2,047 32-byte records, or 65,504 bytes, and at
-most 16,383 annex words, or 65,532 bytes. A boundary-aligned cursor copies
+most 1,023 annex words, or 4,092 bytes. A boundary-aligned cursor copies
 zero. Candidate acceptance drops the superseded accepted private tails and
 moves the candidate table vectors into the accepted role; it copies zero
 payload. Rejection drops candidate-private blocks and returns the accepted
@@ -624,12 +624,25 @@ without rewriting the node. A stale, foreign, truncated, or kind-mismatched
 key cannot alias replacement storage.
 
 The annex uses the same exact 64 KiB dense superblocks as the node arena. One
-block contains 16,384 words. A fixed record is padded to the next block rather
-than crossing a boundary, so it resolves through one direct flat-table lookup.
-Dynamic spans may cross blocks and cost one direct lookup per block actually
-consumed. The largest fixed record is the 41-word math choice, so boundary
-padding is at most 160 bytes. There is one annex table and one annex cursor,
-not one allocation or cursor per payload type.
+physical block contains 16,384 words. It is divided into sixteen independently
+owned logical chunks of 1,024 words each. The flat table maps each logical
+chunk to a physical block and a word base. A fixed record is padded to the next
+logical chunk rather than crossing a boundary, so it resolves through one direct
+flat-table lookup. Dynamic spans may cross logical chunks and cost one direct
+lookup per chunk consumed. The largest fixed record is the 41-word math choice,
+so boundary padding is at most 160 bytes. There is one annex table and one annex
+cursor, not one allocation or cursor per payload type.
+
+Physical packing does not join semantic owners. A page and a durable box may
+own disjoint logical chunks of one physical block. Each chunk keeps its own
+generation, lineage, used prefix, dependency floor, and release operation. A
+physical block returns to the warm-vacant list only when its last logical chunk
+retires. Vacant logical ranges inside a live block can be reused after their
+incarnations advance. Because packed words are non-owning `Copy` values, the
+physical initialized prefix can include retired values. Reads remain bounded
+by the admitted logical chunk's used prefix; reuse overwrites the new owner's
+range, and publication serials reject old keys. The 64 KiB allocation and
+pool-stable coordinate vocabulary remain unchanged.
 
 Every fixed record starts with its publication serial; the sizes below include
 that word. Reusing a truncated offset assigns a fresh serial without changing
@@ -781,15 +794,15 @@ An exact edit fork uses one aggregate two-view wrapper whose node and annex
 components settle together. Complete blocks are shared immutable. An interior node tail
 copies `32 * tail_nodes`, with an exact maximum of 65,504 bytes for 2,047
 records. An interior annex tail copies `4 * tail_words`, with an exact maximum
-of 65,532 bytes for 16,383 words. Candidate keys retain the same flat
+of 4,092 bytes for 1,023 words. Candidate keys retain the same flat
 block ordinals and logical incarnations because each copied tail occupies the
 corresponding private physical block. A boundary-aligned tail copies zero. The
-exact node-region payload-copy maximum is therefore 131,036 bytes per fork,
+exact node-region payload-copy maximum is therefore 69,596 bytes per fork,
 independent of accepted prefix, candidate suffix, list count, or checkpoint
 count. The generation token store has its own exact 65,532-byte tail maximum,
 charged once to aggregate generation settlement rather than once per node
 region. If all three tails are interior and maximal, the aggregate bound is
-196,568 bytes.
+135,128 bytes.
 
 Rejection drops candidate-private node and annex blocks and restores the exact
 accepted tables and cursors. Acceptance first removes roots and journals that
@@ -854,7 +867,7 @@ The deterministic gates report:
 - one payload lookup for inline nodes and exactly one additional lookup for a
   fixed annex payload;
 - zero node/annex copy at checkpoint capture, exact maxima of 65,504 node and
-  65,532 annex bytes at fork, and zero payload copy at acceptance;
+  4,092 annex bytes at fork, and zero payload copy at acceptance;
 - exact table entries/bytes copied, node/annex tail values/bytes copied,
   boundary padding, live-owner backing bytes, warm vacant backing bytes, stable
   vacant-slot metadata, and stale-key rejections;

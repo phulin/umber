@@ -173,13 +173,8 @@ impl<T> DenseBlockPayload<T> {
                 Ok(())
             }
             Self::Packed(block) => {
-                if block.len() != index {
-                    return Err(ForkArenaError::InvalidRange);
-                }
-                block
-                    .push_with(|slot| slot.insert(value))
-                    .map(|_| ())
-                    .map_err(|_| ForkArenaError::CapacityOverflow)
+                *block.get_mut(index).ok_or(ForkArenaError::InvalidRange)? = value;
+                Ok(())
             }
         }
     }
@@ -198,10 +193,9 @@ impl<T> DenseBlockPayload<T> {
                 *slot = Some(value);
             }
             Self::Packed(block) => {
-                debug_assert_eq!(block.len(), index);
-                block
-                    .push_with(|slot| slot.insert(value))
-                    .expect("admitted destination retains exact-block capacity");
+                *block
+                    .get_mut(index)
+                    .expect("admitted packed destination is in bounds") = value;
             }
         }
     }
@@ -301,6 +295,7 @@ struct ChunkStorage<T> {
     logical_free: Vec<u32>,
     chunk_bytes: usize,
     slots_per_chunk: usize,
+    packed_vacant: Option<fn() -> T>,
     blocks: Vec<DenseBlock<T>>,
     free_blocks: Vec<u32>,
     free_ranges: Vec<(DenseBlockKey, u32)>,
@@ -437,14 +432,13 @@ impl<T> AdmittedAppendRun<'_, T> {
                 }
             }
             DenseBlockPayload::Packed(block) => {
+                let cells = &mut block.initialized_mut()[self.index..self.index + count];
                 if let Some(first) = first {
-                    block
-                        .extend_copy_from_slice(core::slice::from_ref(&first))
-                        .expect("admitted header retains exact-block capacity");
+                    cells[0] = first;
+                    cells[1..].copy_from_slice(&body[..body_count]);
+                } else {
+                    cells.copy_from_slice(&body[..body_count]);
                 }
-                block
-                    .extend_copy_from_slice(&body[..body_count])
-                    .expect("admitted body retains exact-block capacity");
             }
         }
         self.index += count;
@@ -610,9 +604,11 @@ impl<T> ChunkStorage<T> {
     #[cfg(any(test, feature = "testing"))]
     fn with_packed_chunk_bytes(chunk_bytes: usize) -> Self
     where
-        T: Copy,
+        T: Copy + Default,
     {
-        Self::with_layout(chunk_bytes, ChunkStorageLayout::PackedCopy)
+        let mut storage = Self::with_layout(chunk_bytes, ChunkStorageLayout::PackedCopy);
+        storage.packed_vacant = Some(T::default);
+        storage
     }
 
     fn with_layout(chunk_bytes: usize, layout: ChunkStorageLayout) -> Self {
@@ -631,6 +627,7 @@ impl<T> ChunkStorage<T> {
             logical_free: Vec::new(),
             chunk_bytes,
             slots_per_chunk,
+            packed_vacant: None,
             blocks: Vec::new(),
             free_blocks: Vec::new(),
             free_ranges: Vec::new(),
@@ -1040,13 +1037,14 @@ impl<T> ChunkStorage<T> {
     }
 
     fn allocate_dense_range(&mut self) -> Result<(DenseBlockKey, u32), ForkArenaError> {
-        if self.layout == ChunkStorageLayout::PackedCopy {
-            let key = self.allocate_dense_block()?;
-            self.dense_block_mut(key)?.live_chunks = 1;
-            return Ok((key, 0));
-        }
+        // Retired ranges from an earlier physical incarnation may remain in
+        // this stack. Pop each at most once; a stale entry cannot match a
+        // recycled block's incremented incarnation.
         while let Some((key, base)) = self.free_ranges.pop() {
             if let Ok(block) = self.dense_block_mut(key) {
+                if block.live_chunks == 0 {
+                    continue;
+                }
                 block.live_chunks = block
                     .live_chunks
                     .checked_add(1)
@@ -1054,7 +1052,10 @@ impl<T> ChunkStorage<T> {
                 return Ok((key, base));
             }
         }
-        let capacity = Superblock::<Option<T>>::capacity();
+        let capacity = match self.layout {
+            ChunkStorageLayout::OptionalSlots => Superblock::<Option<T>>::capacity(),
+            ChunkStorageLayout::PackedCopy => Superblock::<T>::capacity(),
+        };
         let tail = self.tail_block.filter(|key| {
             self.dense_block(*key).is_ok_and(|block| {
                 block.payload().len().saturating_add(self.slots_per_chunk) <= capacity
@@ -1071,14 +1072,22 @@ impl<T> ChunkStorage<T> {
         let base = u32::try_from(self.dense_block(key)?.payload().len())
             .map_err(|_| ForkArenaError::CapacityOverflow)?;
         let slots_per_chunk = self.slots_per_chunk;
+        let packed_vacant = self.packed_vacant;
         let block = self.dense_block_mut(key)?;
         for _ in 0..slots_per_chunk {
-            let DenseBlockPayload::Optional(payload) = block.payload_mut() else {
-                return Err(ForkArenaError::InvalidChunk);
-            };
-            payload
-                .push_with(|slot| slot.insert(None))
-                .map_err(|_| ForkArenaError::CapacityOverflow)?;
+            match block.payload_mut() {
+                DenseBlockPayload::Optional(payload) => {
+                    payload
+                        .push_with(|slot| slot.insert(None))
+                        .map_err(|_| ForkArenaError::CapacityOverflow)?;
+                }
+                DenseBlockPayload::Packed(payload) => {
+                    let vacant = packed_vacant.ok_or(ForkArenaError::InvalidChunk)?;
+                    payload
+                        .push_with(|slot| slot.insert(vacant()))
+                        .map_err(|_| ForkArenaError::CapacityOverflow)?;
+                }
+            }
         }
         block.live_chunks += 1;
         Ok((key, base))
@@ -1319,7 +1328,7 @@ impl<T> ChunkStorage<T> {
             DenseBlockPayload::Optional(payload) if payload.get(index).is_none() => {
                 return Err(ForkArenaError::InvalidRange);
             }
-            DenseBlockPayload::Packed(payload) if payload.len() != index => {
+            DenseBlockPayload::Packed(payload) if payload.get(index).is_none() => {
                 return Err(ForkArenaError::InvalidRange);
             }
             _ => {}
@@ -1374,7 +1383,7 @@ impl<T> ChunkStorage<T> {
             DenseBlockPayload::Optional(payload) if payload.get(index as usize).is_none() => {
                 return Err(ForkArenaError::InvalidRange);
             }
-            DenseBlockPayload::Packed(payload) if payload.len() != index as usize => {
+            DenseBlockPayload::Packed(payload) if payload.get(index as usize).is_none() => {
                 return Err(ForkArenaError::InvalidRange);
             }
             _ => {}
@@ -1639,10 +1648,7 @@ impl<T> ChunkStorage<T> {
                     drop(block.get_mut(index).and_then(Option::take));
                 }
             }
-            DenseBlockPayload::Packed(block) => {
-                debug_assert_eq!(base, 0);
-                block.truncate(used as usize);
-            }
+            DenseBlockPayload::Packed(_) => {}
         }
         let capacity = self.slots_per_chunk;
         let meta = self.validate_exclusive_lineage_mut(key, arena, lineage)?;
@@ -1703,10 +1709,7 @@ impl<T> ChunkStorage<T> {
                     drop(block.get_mut(index).and_then(Option::take));
                 }
             }
-            DenseBlockPayload::Packed(block) => {
-                debug_assert_eq!(physical_base, 0);
-                block.truncate(0);
-            }
+            DenseBlockPayload::Packed(_) => {}
         }
         let meta = self.validate_mut(key, arena)?;
         meta.live = false;
@@ -1723,14 +1726,13 @@ impl<T> ChunkStorage<T> {
             .ok_or(ForkArenaError::InvalidChunk)?;
         if block.live_chunks == 0 {
             block.payload_mut().truncate(0);
-            self.free_ranges.retain(|(key, _)| *key != physical);
             self.free_blocks.push(physical.slot);
             if self.tail_block == Some(physical) {
                 self.tail_block = None;
             }
             #[cfg(feature = "profiling")]
             self.record_node_pool_storage(NodePoolStorageEvent::Release);
-        } else if self.layout == ChunkStorageLayout::OptionalSlots {
+        } else {
             self.free_ranges.push((physical, physical_base));
         }
         self.release_logical(key)?;
@@ -1968,7 +1970,7 @@ impl<T> ChunkPool<T> {
     #[cfg(test)]
     pub(crate) fn with_packed_chunk_bytes(chunk_bytes: usize) -> Self
     where
-        T: Copy,
+        T: Copy + Default,
     {
         Self {
             owner: NEXT_POOL_OWNER.fetch_add(1, Ordering::Relaxed),
@@ -1982,7 +1984,7 @@ impl<T> ChunkPool<T> {
     #[doc(hidden)]
     pub fn testing_with_packed_chunk_bytes(chunk_bytes: usize) -> Self
     where
-        T: Copy,
+        T: Copy + Default,
     {
         Self {
             owner: NEXT_POOL_OWNER.fetch_add(1, Ordering::Relaxed),
@@ -2011,9 +2013,9 @@ impl<T> ChunkPool<T> {
         class: NodePoolStorageClass,
     ) -> Self
     where
-        T: Copy,
+        T: Copy + Default,
     {
-        Self {
+        let mut pool = Self {
             owner: NEXT_POOL_OWNER.fetch_add(1, Ordering::Relaxed),
             payload: ChunkStorage::with_node_pool_layout(
                 chunk_bytes,
@@ -2021,7 +2023,9 @@ impl<T> ChunkPool<T> {
                 class,
             ),
             next_publication_serial: 1,
-        }
+        };
+        pool.payload.packed_vacant = Some(T::default);
+        pool
     }
 
     pub(crate) fn next_publication_serial(&mut self) -> u32 {

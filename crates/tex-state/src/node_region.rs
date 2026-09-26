@@ -143,7 +143,7 @@ impl NodePool {
             id: NEXT_NODE_POOL_ID.fetch_add(1, Ordering::Relaxed),
             chunks: ChunkPool::with_node_pool_chunk_bytes(chunk_bytes, NodePoolStorageClass::Node),
             annex_chunks: ChunkPool::with_node_pool_packed_chunk_bytes(
-                65_536,
+                4_096,
                 NodePoolStorageClass::Annex,
             ),
             regions: Vec::new(),

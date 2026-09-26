@@ -640,12 +640,12 @@ fn closure_boundary_rotates_node_and_annex_tails() {
 
     assert_ne!(prefix_node_address, suffix_node_address);
     assert_ne!(prefix_annex_address, suffix_annex_address);
-    assert_eq!(pool.annex_chunks.chunk_byte_budget(), 65_536);
+    assert_eq!(pool.annex_chunks.chunk_byte_budget(), 4_096);
     assert!(
         source
             .annex_arena
             .payload_chunk_capacity(&pool.annex_chunks)
-            <= 16_384
+            <= 1_024
     );
 }
 

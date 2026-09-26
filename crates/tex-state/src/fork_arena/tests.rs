@@ -223,6 +223,61 @@ fn packed_superblock_release_warms_backing_and_rejects_stale_coordinate() {
 }
 
 #[test]
+fn packed_subranges_keep_other_regions_live_and_reuse_vacant_ranges() {
+    let mut pool = ChunkPool::<u32>::with_node_pool_packed_chunk_bytes(
+        4_096,
+        super::NodePoolStorageClass::Annex,
+    );
+    let mut regions = Vec::new();
+    for value in 0..16_u32 {
+        let mut arena = ForkArena::<u32, ActiveLane>::new();
+        let root = list(&mut arena, &mut pool, [value + 1]);
+        regions.push((arena, root));
+    }
+    assert_eq!(pool.page_count(), 1, "sixteen owners share one superblock");
+    assert_eq!(pool.payload.live_page_count(), 1);
+    let mut retained = regions.pop().expect("retained region");
+    for (index, (mut arena, root)) in regions.drain(..).enumerate() {
+        assert_eq!(
+            arena.list(&pool, root).expect("live list").get(0),
+            Some(&(index as u32 + 1))
+        );
+        arena
+            .retire_region(&mut pool)
+            .expect("retire independent owner");
+    }
+    assert_eq!(pool.payload.live_page_count(), 1);
+    assert_eq!(
+        retained
+            .0
+            .list(&pool, retained.1)
+            .expect("retained list")
+            .get(0),
+        Some(&16)
+    );
+
+    let mut replacement = ForkArena::<u32, ActiveLane>::new();
+    let fresh = list(&mut replacement, &mut pool, [99]);
+    assert_eq!(pool.page_count(), 1, "reuse a vacant range in a live block");
+    assert_eq!(
+        replacement.list(&pool, fresh).expect("fresh list").get(0),
+        Some(&99)
+    );
+    retained
+        .0
+        .retire_region(&mut pool)
+        .expect("retire final old owner");
+    assert_eq!(
+        replacement.list(&pool, fresh).expect("fresh list").get(0),
+        Some(&99)
+    );
+    replacement
+        .retire_region(&mut pool)
+        .expect("retire replacement");
+    assert_eq!(pool.payload.vacant_page_payload_bytes(), 65_536);
+}
+
+#[test]
 fn chunk_release_drops_payload_in_place_once_in_order_and_remains_retryable() {
     let drops = Rc::new(RefCell::new(Vec::new()));
     let did_panic = Rc::new(Cell::new(false));
