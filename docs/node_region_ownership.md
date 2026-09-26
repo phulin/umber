@@ -126,6 +126,53 @@ The transfer rebases that entire suffix. If any block still depends on annex
 data before the build boundary, the selected closure takes the structural-copy
 fallback while the source suffix remains in its page region.
 
+### Interleaved box closure ownership
+
+TeX82 §§1074 and 1077 require `\setbox<n>=\lastbox` to remove the selected
+box from the live mode list before assigning the register. The selected box's
+child lists can therefore precede the destination construction mark, while
+the source-list rewrite must remain page-owned. Moving that mark before
+`\lastbox` is insufficient: it would put the rewritten live source list in
+the detachable suffix. The same boundary may contain a `\vsplit` discard-list
+side effect or an unrelated node whose annex refers to older page data.
+
+Removing the interleaved full-closure copy requires an ownership partition,
+not a weaker closure check. The transfer preflight must identify the exact
+recursive selected closure from authority recorded when that closure was
+built, then passed along with its mode-list or page-list owner. Removing a
+last box consumes that authority when it removes the tail; it must not
+discover ownership by scanning all roots or maintaining a reachability cache.
+An operation rollback receipt temporarily loans the selected ranges and can
+restore them to their exact original positions; it does not by itself require
+a copy. A retained checkpoint or save owner that must preserve the earlier
+state blocks the unique move and selects the explicit history-preservation
+copy. A page-owned side-effect range stays with the page even when its allocation
+follows the build mark. The selected node and annex ranges move together under
+one receipt, and all predecessor and child coordinates must still resolve
+through the destination's sole owner after the source releases them.
+
+The present `ForkArena` batch is a contiguous suffix of a region-local vector
+of logical blocks. Its detach and rollback receipts, dependency floors,
+checkpoint cursors, and chunk-position indexing all assume that vector has no
+holes. Selecting older child blocks while retaining later page blocks thus
+requires a segmented ownership envelope. Each segment must carry its original
+pool-stable coordinates, exact initialized ranges, and paired node/annex
+ownership. Preflight must validate the supplied unique closure authority,
+account for nodes from both owners inside one physical block, reserve
+destination metadata, and validate every rollback and checkpoint boundary
+before any mutation. Commit
+then changes only segment ownership and the region index; rollback restores
+the same segments to their original positions. Neither path may relocate a
+node, copy an annex word, retain a foreign coordinate, or introduce a
+per-node reference count.
+
+Opening construction in an isolated region is another valid route for newly
+built boxes, provided ordinary page effects still publish to the page region
+and nested boxes and operation rollback can address both owners. It does not
+by itself solve `\lastbox`, whose selected child closure already belongs to
+the page before the assignment command begins. That case still needs the
+exclusive-range extraction above or an equivalent prior ownership boundary.
+
 An empty closure build, such as a void `\setbox` operand, rolls back without
 changing a retained shared tail when its length, seal state, and sequence
 summary still match the build mark. A changed tail continues to require an
