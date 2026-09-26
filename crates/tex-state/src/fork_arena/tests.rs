@@ -2924,7 +2924,7 @@ fn consumed_window_head_edge_restores_after_rejected_and_reversed_transfer() {
     let source = list(&mut page, &mut pool, [11, 22, 33]);
     page.seal_boundary(&mut pool).expect("sealed source");
     let selected = page
-        .slice_list(&mut pool, source, 1..2, &mut Vec::new())
+        .slice_list(&mut pool, source, 1..2)
         .expect("middle source window");
     let mut occupied = page.empty_lane::<PageLane>();
     let mut occupied_builder = occupied.begin_builder(&mut pool).expect("occupied builder");

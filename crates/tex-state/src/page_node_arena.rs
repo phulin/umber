@@ -32,6 +32,7 @@ type PreflightedBoxBody = (Node<PageListId>, Vec<Range<usize>>, Vec<Range<usize>
 mod consumed_source;
 pub use consumed_source::{
     ConsumedPageSource, ConsumedPageWindow, GeneratedLineBody, PageDirectChunkSelection,
+    PublishedGeneratedBoxBody,
 };
 
 /// Opaque typed-annex coordinate for page-owned intervals excluded from a box.
@@ -2769,7 +2770,7 @@ impl<'a> PageMaterialArena<'a> {
     /// Binds a published positive sidecar to the actual isolated wrapper.
     /// A stamp is provenance only: consuming the wrapper and preparing the
     /// cut-boundary transfer are separate ownership requirements.
-    pub fn stamp_generated_box_body(
+    pub(crate) fn stamp_generated_box_body(
         &mut self,
         root: PageListId,
         key: PageBoxPositiveKey,

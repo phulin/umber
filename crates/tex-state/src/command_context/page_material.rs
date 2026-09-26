@@ -393,20 +393,24 @@ impl<'a, G> CommandContext<'a, G> {
         &mut self,
         body: crate::page_node_arena::GeneratedLineBody,
         final_child: crate::page_node_arena::PageListId,
-    ) -> Option<crate::page_node_arena::PageBoxPositiveKey> {
+    ) -> Option<crate::page_node_arena::PublishedGeneratedBoxBody> {
+        if !body.matches_final_child(final_child) {
+            return None;
+        }
         self.page_nodes
             .publish_generated_line_body_descriptor(body, final_child)
-            .ok()
-            .flatten()
+            .expect(
+                "matched generated line receipt must publish or decline its unsupported geometry",
+            )
     }
 
     pub fn stamp_generated_box_body(
         &mut self,
         root: crate::page_node_arena::PageListId,
-        key: crate::page_node_arena::PageBoxPositiveKey,
+        publication: crate::page_node_arena::PublishedGeneratedBoxBody,
     ) {
         self.page_nodes
-            .stamp_generated_box_body(root, key)
+            .stamp_published_generated_box_body(root, publication)
             .expect("generated box wrapper binds its positive selection");
     }
 

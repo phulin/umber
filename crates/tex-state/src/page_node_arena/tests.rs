@@ -1239,7 +1239,7 @@ fn consumed_window_plan_keeps_only_complete_interior_chunks() {
     assert!(interior_plan.cut_records.is_empty());
 
     let sliced = arena
-        .slice_sequence(source, 3..35, &mut Vec::new())
+        .slice_sequence(source, 3..35)
         .expect("head and tail share source chunks");
     let mut sliced_slot = arena.admit_span(sliced).expect("sliced semantic slot");
     let mut sliced_owner = arena
@@ -1270,7 +1270,7 @@ fn generated_inline_descriptor_matches_only_its_final_child_chain() {
         .publish_owned(penalties(&(0..12).collect::<Vec<_>>()))
         .expect("source");
     let child = arena
-        .slice_sequence(source, 3..7, &mut Vec::new())
+        .slice_sequence(source, 3..7)
         .expect("generated line borrows one source cut");
     let direct = arena
         .direct_root_chunk_selection(child)
@@ -1310,14 +1310,14 @@ fn generated_inline_mixed_cuts_move_interior_and_restore_siblings() {
         .publish_owned(penalties(&(0..40).collect::<Vec<_>>()))
         .expect("three source chunks");
     let left = arena
-        .slice_sequence(source, 0..3, &mut Vec::new())
+        .slice_sequence(source, 0..3)
         .expect("older sibling prefix");
     let child = arena
-        .slice_sequence(source, 3..35, &mut Vec::new())
+        .slice_sequence(source, 3..35)
         .expect("generated line with two cut boundaries");
     let child_identity = child.semantic_identity().expect("identity enabled");
     let right = arena
-        .slice_sequence(source, 35..40, &mut Vec::new())
+        .slice_sequence(source, 35..40)
         .expect("later sibling suffix");
     let direct = arena
         .direct_root_chunk_selection(child)
@@ -1408,6 +1408,44 @@ fn generated_line_receipt_rejects_unrelated_final_root() {
         consumed.partition_window(1..2).is_none(),
         "window cannot be minted twice"
     );
+}
+
+#[test]
+fn generated_publication_rejects_a_different_wrapper_child() {
+    page_arena!(arena, pool, state, 512);
+    let source = arena.publish_owned(penalties(&[10, 20])).expect("source");
+    let mut slot = arena.admit_span(source).expect("semantic slot");
+    let mut consumed = arena
+        .take_generated_mode_source(&mut slot)
+        .expect("remove semantic owner");
+    arena
+        .index_consumed_source(&mut consumed)
+        .expect("index direct records");
+    let window = consumed.partition_window(0..2).expect("one window");
+    let mut suffix = PageMaterialActiveListBuilder::vacant();
+    arena.open_active_list(&mut suffix).expect("open suffix");
+    arena
+        .push_active_list(&mut suffix, Node::Penalty(30))
+        .expect("suffix record");
+    let suffix = arena
+        .finalize_generated_active_segment(&mut suffix)
+        .expect("fresh suffix");
+    let (assembled, body) = arena
+        .append_generated_line_body(window, suffix)
+        .expect("owned line body");
+    let publication = arena
+        .publish_generated_line_body_descriptor(body, assembled)
+        .expect("valid body geometry")
+        .expect("inline body selection");
+    arena.rotate_box_wrapper_tail().expect("isolate wrapper");
+    let unrelated = arena.publish_owned(penalties(&[90])).expect("other child");
+    let wrapper = arena.publish_owned([boxed(unrelated)]).expect("wrapper");
+    assert!(matches!(
+        arena.stamp_published_generated_box_body(wrapper, publication),
+        Err(ForkArenaError::InvalidRegion)
+    ));
+    assert!(arena.box_migration_metadata(wrapper).is_none());
+    assert_eq!(resolved(&arena, assembled), penalties(&[10, 20, 30]));
 }
 
 #[test]

@@ -59,6 +59,22 @@ pub struct GeneratedLineBody {
     assembled: PageListId,
 }
 
+/// One-shot authority to bind an authenticated body selection to the exact
+/// generated child root that supplied its construction receipt.
+pub struct PublishedGeneratedBoxBody {
+    key: super::PageBoxPositiveKey,
+    final_child: PageListId,
+}
+
+impl GeneratedLineBody {
+    /// A later migration or packing projection changes the child root and
+    /// invalidates this exact direct-chain receipt without invalidating the
+    /// still-live page list.
+    pub fn matches_final_child(&self, child: PageListId) -> bool {
+        self.assembled == child
+    }
+}
+
 /// Exact direct-record geometry of one consumed source window. A full chunk
 /// may be loaned only after nested dependencies and diagnostic aliases are
 /// separately accounted for. Cut ranges are logical record offsets in the
@@ -168,7 +184,7 @@ impl PageMaterialArena<'_> {
         &mut self,
         body: GeneratedLineBody,
         final_child: PageListId,
-    ) -> Result<Option<super::PageBoxPositiveKey>, ForkArenaError> {
+    ) -> Result<Option<PublishedGeneratedBoxBody>, ForkArenaError> {
         if body.assembled != final_child {
             return Err(ForkArenaError::InvalidRegion);
         }
@@ -186,7 +202,28 @@ impl PageMaterialArena<'_> {
             &selected.cut_chunks,
             &[],
         )
-        .map(Some)
+        .map(|key| Some(PublishedGeneratedBoxBody { key, final_child }))
+    }
+
+    pub fn stamp_published_generated_box_body(
+        &mut self,
+        root: PageListId,
+        publication: PublishedGeneratedBoxBody,
+    ) -> Result<PageBoxMigrationMetadata, ForkArenaError> {
+        let child = match self
+            .node_cursor(root)?
+            .get(0)
+            .ok_or(ForkArenaError::InvalidRange)?
+        {
+            crate::node_view::NodeView::HList(boxed) | crate::node_view::NodeView::VList(boxed) => {
+                boxed.children
+            }
+            _ => return Err(ForkArenaError::InvalidRange),
+        };
+        if child != publication.final_child {
+            return Err(ForkArenaError::InvalidRegion);
+        }
+        self.stamp_generated_box_body(root, publication.key)
     }
 
     /// Consumes actual fresh unique output segments and the prior semantic

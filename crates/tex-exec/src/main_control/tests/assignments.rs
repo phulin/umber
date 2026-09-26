@@ -108,6 +108,99 @@ fn lastbox_from_completed_paragraph_preserves_earlier_vertical_material() {
 }
 
 #[test]
+fn lastbox_from_second_paragraph_line_keeps_first_line_and_avoids_fallback() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_cmr10_as(&mut control, stores, "cmr10.tfm");
+        register_source(
+            &mut control,
+            br"\font\f=cmr10 \f\setbox0=\vbox{\noindent A\penalty-10000 B\par\global\setbox1=\lastbox}\end",
+        );
+        run_to_end(&mut control, stores);
+
+        let remaining = box_child_nodes(stores, 0);
+        let first = remaining
+            .iter()
+            .find_map(|node| match node {
+                Node::HList(boxed) => Some(boxed.children),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("first line remains in the vertical list: {remaining:?}"));
+        assert!(
+            stores
+                .page_node_list(first)
+                .expect("first line remains live")
+                .nodes()
+                .iter()
+                .any(|node| matches!(node, tex_state::NodeView::Char { ch: 'A', .. }))
+        );
+        let moved = box_child_nodes(stores, 1);
+        assert!(
+            moved
+                .iter()
+                .any(|node| matches!(node, Node::Char { ch: 'B', .. }))
+        );
+        assert_eq!(
+            stores.page_region_counters().page_to_durable_nodes_copied,
+            0
+        );
+        assert_eq!(
+            stores
+                .page_closure_transition_counters()
+                .interleaved_prefix_fallbacks,
+            0
+        );
+    });
+}
+
+#[test]
+fn paragraph_migrations_keep_the_line_when_generated_receipt_is_invalidated() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_cmr10_as(&mut control, stores, "cmr10.tfm");
+        register_source(
+            &mut control,
+            br"\font\f=cmr10 \f\setbox0=\vbox{\hsize=200pt\noindent A\insert0{\hbox{I}}\vadjust{\kern1pt} B\par}\end",
+        );
+        run_to_end(&mut control, stores);
+
+        let children = box_child_nodes(stores, 0);
+        let line = children
+            .iter()
+            .find_map(|node| match node {
+                Node::HList(boxed) => Some(boxed.children),
+                _ => None,
+            })
+            .expect("paragraph line survives migration");
+        let line_nodes = stores
+            .page_node_list(line)
+            .expect("line remains live")
+            .nodes();
+        assert!(
+            line_nodes
+                .iter()
+                .any(|node| matches!(node, tex_state::NodeView::Char { ch: 'A', .. }))
+        );
+        assert!(
+            line_nodes
+                .iter()
+                .any(|node| matches!(node, tex_state::NodeView::Char { ch: 'B', .. })),
+            "line nodes: {line_nodes:?}; vbox children: {children:?}"
+        );
+        assert!(
+            children.iter().any(|node| matches!(node, Node::Ins { .. })),
+            "insertion migrates beside the line: {children:?}"
+        );
+        assert!(
+            children.iter().any(
+                |node| matches!(node, Node::Kern { amount, .. } if amount.raw() == Scaled::UNITY)
+            ),
+            "adjustment migrates beside the line: {children:?}"
+        );
+    });
+}
+
+#[test]
 fn lastbox_from_paragraph_keeps_leader_children_and_sibling() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);
