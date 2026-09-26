@@ -12,6 +12,7 @@ pub(crate) use node_copy_eligibility::{
 };
 pub use node_copy_eligibility::{
     NodeCopyEligibilityCensus, NodeCopyEligibilityLane, node_copy_eligibility_census,
+    record_vsplit_source_copy,
 };
 
 pub use box_fallback::{BoxFallbackCensus, box_fallback_census, enable_box_fallback_census};

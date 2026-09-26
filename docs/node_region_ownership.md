@@ -273,6 +273,10 @@ once as a denominator; failed calls after rollback are excluded. This is an
 opportunity measure, not an admission token: it does not certify current
 serials, annex coverage, or destination relocation, and production copying
 never branches on it.
+The same report separately attributes the already completed source copy at
+`\vsplit`, including a copied source that later takes an error or recovery
+path. This origin count is a subset of explicit durable-to-page copies and
+does not imply that destructive splitting can always take a durable owner.
 
 ## Production cutover
 

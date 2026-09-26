@@ -51,6 +51,10 @@ pub struct NodeCopyEligibilityCensus {
     pub explicit_to_page: NodeCopyEligibilityLane,
     pub history_to_page: NodeCopyEligibilityLane,
     pub durable_owner: NodeCopyEligibilityLane,
+    /// Successful materializations at the destructive `\vsplit` source read.
+    /// These calls and nodes are also included in `explicit_to_page`.
+    pub vsplit_source_calls: u64,
+    pub vsplit_source_nodes: u64,
 }
 
 impl NodeCopyEligibilityCensus {
@@ -70,6 +74,12 @@ impl NodeCopyEligibilityCensus {
                 .history_to_page
                 .saturating_sub(baseline.history_to_page),
             durable_owner: self.durable_owner.saturating_sub(baseline.durable_owner),
+            vsplit_source_calls: self
+                .vsplit_source_calls
+                .saturating_sub(baseline.vsplit_source_calls),
+            vsplit_source_nodes: self
+                .vsplit_source_nodes
+                .saturating_sub(baseline.vsplit_source_nodes),
         }
     }
 }
@@ -80,12 +90,21 @@ static MARKED_CALLS: [AtomicU64; 3] = [const { AtomicU64::new(0) }; 3];
 static MARKED_NODES: [AtomicU64; 3] = [const { AtomicU64::new(0) }; 3];
 static ALL_REGION_CALLS: AtomicU64 = AtomicU64::new(0);
 static ALL_REGION_NODES: AtomicU64 = AtomicU64::new(0);
+static VSPLIT_SOURCE_CALLS: AtomicU64 = AtomicU64::new(0);
+static VSPLIT_SOURCE_NODES: AtomicU64 = AtomicU64::new(0);
 
 /// Records one completed region-copy entrypoint. Recursive child visits are
 /// already included in `copied_nodes` and never call this function separately.
 pub(crate) fn record_region_copy(copied_nodes: usize) {
     ALL_REGION_CALLS.fetch_add(1, Ordering::Relaxed);
     ALL_REGION_NODES.fetch_add(copied_nodes as u64, Ordering::Relaxed);
+}
+
+/// Charges the copy performed before `\vsplit` examines or mutates its
+/// source. Later TeX error or recovery does not erase that completed work.
+pub fn record_vsplit_source_copy(copied_nodes: u64) {
+    VSPLIT_SOURCE_CALLS.fetch_add(1, Ordering::Relaxed);
+    VSPLIT_SOURCE_NODES.fetch_add(copied_nodes, Ordering::Relaxed);
 }
 
 pub(crate) fn record_durable_source_copy(
@@ -118,5 +137,7 @@ pub fn node_copy_eligibility_census() -> NodeCopyEligibilityCensus {
         explicit_to_page: lane(0),
         history_to_page: lane(1),
         durable_owner: lane(2),
+        vsplit_source_calls: VSPLIT_SOURCE_CALLS.load(Ordering::Relaxed),
+        vsplit_source_nodes: VSPLIT_SOURCE_NODES.load(Ordering::Relaxed),
     }
 }

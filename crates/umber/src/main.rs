@@ -292,7 +292,7 @@ impl Drop for HotCoreProfilingReport {
         let copy = tex_state::measurement::node_copy_eligibility_census()
             .saturating_sub(self.node_copy_eligibility_before);
         eprintln!(
-            "NODE_COPY_PROVENANCE_CENSUS all_region_calls={} all_region_nodes={} explicit_calls={} explicit_nodes={} explicit_marked_calls={} explicit_marked_nodes={} history_calls={} history_nodes={} history_marked_calls={} history_marked_nodes={} durable_owner_calls={} durable_owner_nodes={} durable_owner_marked_calls={} durable_owner_marked_nodes={}",
+            "NODE_COPY_PROVENANCE_CENSUS all_region_calls={} all_region_nodes={} explicit_calls={} explicit_nodes={} explicit_marked_calls={} explicit_marked_nodes={} history_calls={} history_nodes={} history_marked_calls={} history_marked_nodes={} durable_owner_calls={} durable_owner_nodes={} durable_owner_marked_calls={} durable_owner_marked_nodes={} vsplit_source_calls={} vsplit_source_nodes={}",
             copy.all_region_calls,
             copy.all_region_nodes,
             copy.explicit_to_page.calls,
@@ -307,6 +307,8 @@ impl Drop for HotCoreProfilingReport {
             copy.durable_owner.nodes,
             copy.durable_owner.marked_calls,
             copy.durable_owner.marked_nodes,
+            copy.vsplit_source_calls,
+            copy.vsplit_source_nodes,
         );
         let storage = tex_state::measurement::node_pool_storage_census();
         eprintln!(

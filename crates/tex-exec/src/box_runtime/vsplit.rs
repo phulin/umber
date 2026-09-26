@@ -30,10 +30,19 @@ pub(crate) fn split_vbox_register<G>(
         .glue_param(GlueParam::SPLIT_TOP_SKIP)
         .map_or(GlueSpec::ZERO, |id| stores.glue(id));
     let split_max_depth = stores.dimen_param(DimenParam::SPLIT_MAX_DEPTH);
+    #[cfg(feature = "profiling")]
+    let copied_before = stores.page_material_counters().source_nodes_copied;
     let Some(source) = stores.copy_box_to_page(index) else {
         clear_split_marks(stores);
         return Ok(None);
     };
+    #[cfg(feature = "profiling")]
+    tex_state::measurement::record_vsplit_source_copy(
+        stores
+            .page_material_counters()
+            .source_nodes_copied
+            .saturating_sub(copied_before),
+    );
     let source_node = stores
         .page_node_list(source)
         .expect("copied box belongs to the live page arena")
