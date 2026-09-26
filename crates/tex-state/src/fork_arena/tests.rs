@@ -301,6 +301,220 @@ fn sealed_short_packed_chunks_share_one_physical_superblock() {
 }
 
 #[test]
+fn sealed_short_optional_chunks_share_one_physical_superblock() {
+    let mut pool = ChunkPool::<u64>::with_chunk_bytes(128);
+    let mut keys = Vec::new();
+    for value in 1..=1_000_u64 {
+        let key = pool.payload.allocate(7, 9).expect("optional chunk");
+        *pool
+            .payload
+            .reserve(key, 7, 9, None, None, false)
+            .expect("optional slot")
+            .slot = Some(value);
+        pool.payload.seal(key, 7).expect("seal short chunk");
+        keys.push(key);
+    }
+    assert_eq!(pool.page_count(), 1, "short nodes pack by physical use");
+    for (index, key) in keys.into_iter().enumerate() {
+        assert_eq!(pool.payload.get(key, 7, 0), Some(&(index as u64 + 1)));
+    }
+}
+
+#[test]
+fn optional_rollback_moves_noncopy_values_once() {
+    let drops = Rc::new(RefCell::new(Vec::new()));
+    let did_panic = Rc::new(Cell::new(false));
+    let tracked = |value| DropTracked {
+        value,
+        drops: Rc::clone(&drops),
+        panic_on: u32::MAX,
+        did_panic: Rc::clone(&did_panic),
+    };
+    let mut pool = ChunkPool::<DropTracked>::with_chunk_bytes(512);
+    let first = pool.payload.allocate(7, 9).expect("original tail");
+    *pool
+        .payload
+        .reserve(first, 7, 9, None, None, false)
+        .expect("first slot")
+        .slot = Some(tracked(11));
+    let original_physical = pool.payload.mapping(first).expect("original mapping");
+    pool.payload.seal(first, 7).expect("seal original tail");
+    let other = pool.payload.allocate(8, 10).expect("later owner");
+    *pool
+        .payload
+        .reserve(other, 8, 10, None, None, false)
+        .expect("other slot")
+        .slot = Some(tracked(22));
+    pool.payload.seal(other, 8).expect("seal later owner");
+    pool.payload
+        .restore_sealed(first, 7, 9, false)
+        .expect("rollback moves original value");
+    let replacement = pool.payload.mapping(first).expect("new mapping");
+    assert_eq!(replacement.0, original_physical.0);
+    assert_ne!(replacement.1, original_physical.1);
+    assert_eq!(
+        pool.payload.get(first, 7, 0).map(|value| value.value),
+        Some(11)
+    );
+    assert_eq!(
+        pool.payload.get(other, 8, 0).map(|value| value.value),
+        Some(22)
+    );
+    assert!(
+        drops.borrow().is_empty(),
+        "relocation never drops a live value"
+    );
+    pool.payload.release(first, 7).expect("retire first owner");
+    pool.payload.release(other, 8).expect("retire second owner");
+    let mut actual = drops.borrow().clone();
+    actual.sort_unstable();
+    assert_eq!(actual, [11, 22], "each non-Copy value drops exactly once");
+}
+
+#[test]
+fn optional_rollback_moves_noncopy_values_across_physical_blocks() {
+    let drops = Rc::new(RefCell::new(Vec::new()));
+    let did_panic = Rc::new(Cell::new(false));
+    let tracked = |value| DropTracked {
+        value,
+        drops: Rc::clone(&drops),
+        panic_on: u32::MAX,
+        did_panic: Rc::clone(&did_panic),
+    };
+    let mut pool = ChunkPool::<DropTracked>::with_chunk_bytes(32_768);
+    let first = pool.payload.allocate(7, 9).expect("original tail");
+    *pool
+        .payload
+        .reserve(first, 7, 9, None, None, false)
+        .expect("first slot")
+        .slot = Some(tracked(11));
+    let original_physical = pool.payload.mapping(first).expect("original mapping");
+    pool.payload.seal(first, 7).expect("compact original tail");
+
+    let other = pool.payload.allocate(8, 10).expect("intervening chunk");
+    let capacity = pool.chunk_capacity();
+    for value in 0..capacity {
+        *pool
+            .payload
+            .reserve(other, 8, 10, None, None, false)
+            .expect("fill intervening chunk")
+            .slot = Some(tracked(1_000 + value as u32));
+    }
+    pool.payload.seal(other, 8).expect("seal full chunk");
+    pool.payload
+        .restore_sealed(first, 7, 9, false)
+        .expect("relocate into a different physical block");
+    let replacement = pool.payload.mapping(first).expect("new mapping");
+    assert_ne!(replacement.0.slot, original_physical.0.slot);
+    assert_eq!(
+        pool.payload.get(first, 7, 0).map(|value| value.value),
+        Some(11)
+    );
+    assert_eq!(
+        pool.payload
+            .get(other, 8, capacity as u32 - 1)
+            .map(|value| value.value),
+        Some(1_000 + capacity as u32 - 1)
+    );
+    assert!(drops.borrow().is_empty(), "moving never drops a live value");
+    pool.payload.release(first, 7).expect("retire moved owner");
+    pool.payload.release(other, 8).expect("retire other owner");
+    let mut actual = drops.borrow().clone();
+    actual.sort_unstable();
+    assert_eq!(actual.len(), capacity + 1);
+    assert_eq!(actual[0], 11);
+    for value in 0..capacity {
+        assert_eq!(actual[value + 1], 1_000 + value as u32);
+    }
+}
+
+#[test]
+fn short_optional_extent_churn_stays_bounded_with_a_fixed_survivor() {
+    let mut pool = ChunkPool::<u64>::with_chunk_bytes(128);
+    let survivor = pool.payload.allocate(7, 9).expect("survivor chunk");
+    *pool
+        .payload
+        .reserve(survivor, 7, 9, None, None, false)
+        .expect("survivor slot")
+        .slot = Some(7);
+    pool.payload.seal(survivor, 7).expect("seal survivor");
+    for round in 0..12 {
+        let mut transient = Vec::new();
+        for value in 0..1_000_u64 {
+            let key = pool.payload.allocate(8, 10).expect("transient chunk");
+            *pool
+                .payload
+                .reserve(key, 8, 10, None, None, false)
+                .expect("transient slot")
+                .slot = Some(round * 1_000 + value);
+            pool.payload.seal(key, 8).expect("seal transient");
+            transient.push(key);
+        }
+        for key in transient {
+            pool.payload.release(key, 8).expect("retire transient");
+        }
+        assert_eq!(pool.payload.get(survivor, 7, 0), Some(&7));
+        assert!(
+            pool.page_count() <= 2,
+            "round {round}: a fixed live set must reuse whole vacant blocks"
+        );
+    }
+}
+
+#[test]
+fn optional_cached_root_and_cursor_refresh_after_rollback_remap() {
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(64);
+    let mut first_owner = ForkArena::<u32, ActiveLane>::new();
+    let first = first_owner
+        .append_unsealed_list(&mut pool, [11])
+        .expect("open first tail");
+    let mark = first_owner.operation_mark(&pool);
+    let admitted = first_owner
+        .admit_owned_root(&pool, first)
+        .expect("admit original root");
+    let mut cursor = first_owner
+        .admitted_tail_chunk_from_root(&pool, first, admitted)
+        .expect("admit original tail")
+        .expect("nonempty tail");
+    let original = pool
+        .payload
+        .mapping(first.head.raw)
+        .expect("original mapping");
+    first_owner
+        .seal_boundary(&mut pool)
+        .expect("compact first tail");
+    let mut other_owner = ForkArena::<u32, ActiveLane>::new();
+    let other = list(&mut other_owner, &mut pool, [22]);
+    other_owner
+        .seal_boundary(&mut pool)
+        .expect("seal later owner");
+    first_owner
+        .restore_operation(&mut pool, mark)
+        .expect("rollback remaps optional chunk");
+    let replacement = pool.payload.mapping(first.head.raw).expect("new mapping");
+    assert_eq!(replacement.0, original.0);
+    assert_ne!(replacement.1, original.1);
+    assert_eq!(
+        first_owner
+            .admitted_view(&pool, first, admitted)
+            .expect("cached root refreshes")
+            .first(),
+        Some(&11)
+    );
+    assert_eq!(
+        first_owner
+            .admitted_next_chunk_value(&pool, &mut cursor)
+            .expect("cached cursor refreshes")
+            .1,
+        &11
+    );
+    assert_eq!(
+        other_owner.list(&pool, other).expect("other owner").first(),
+        Some(&22)
+    );
+}
+
+#[test]
 fn rollback_regrows_sealed_packed_tail_without_changing_logical_key() {
     let mut pool = ChunkPool::<u32>::with_node_pool_packed_chunk_bytes(
         4_096,
@@ -311,6 +525,9 @@ fn rollback_regrows_sealed_packed_tail_without_changing_logical_key() {
         .append_unsealed_list(&mut pool, [11])
         .expect("open first tail");
     let mark = first_owner.operation_mark(&pool);
+    // At saturation the cached and current epochs stay equal even after the
+    // physical remap; readers must still re-admit their physical position.
+    pool.payload.admission_epoch = u64::MAX;
     let admitted = first_owner
         .admit_owned_root(&pool, first)
         .expect("admit original root");
@@ -342,6 +559,7 @@ fn rollback_regrows_sealed_packed_tail_without_changing_logical_key() {
     first_owner
         .restore_operation(&mut pool, mark)
         .expect("rollback regrows marked tail");
+    assert_eq!(pool.payload.admission_epoch, u64::MAX);
     let restored = first_owner.operation_mark(&pool);
     assert_eq!(restored.payload_chunks, mark.payload_chunks);
     assert_eq!(restored.payload_tail_used, mark.payload_tail_used);

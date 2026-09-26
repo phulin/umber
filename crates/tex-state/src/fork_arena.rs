@@ -20,7 +20,7 @@ use crate::node_sequence::SemanticSequenceIdentity;
 mod batch_transfer;
 mod checkpoint_lifecycle;
 mod compound_transfer;
-mod packed_storage;
+mod physical_extents;
 mod sparse_chunks;
 mod whole_region_transfer;
 
@@ -1145,9 +1145,9 @@ impl<T> ChunkStorage<T> {
         // Retired ranges from an earlier physical incarnation may remain in
         // this stack. Pop each at most once; a stale entry cannot match a
         // recycled block's incremented incarnation.
-        // Packed tails are preferred while they have room: after a short
-        // chunk seals, its returned suffix can serve the next reservation.
-        if self.layout == ChunkStorageLayout::OptionalSlots || tail.is_none() {
+        // A sealed short chunk returns its unused physical suffix. Prefer the
+        // current tail so both optional and packed chunks share that space.
+        if tail.is_none() {
             while let Some((key, base)) = self.free_ranges.pop() {
                 if let Ok(block) = self.dense_block_mut(key) {
                     if block.live_chunks == 0 {
@@ -1693,7 +1693,7 @@ impl<T> ChunkStorage<T> {
         let meta = self.validate_mut(key, arena)?;
         meta.sealed = true;
         let unused = capacity.saturating_sub(meta.used as usize);
-        self.compact_packed_tail(key);
+        self.compact_sealed_tail(key);
         Ok(unused)
     }
 
@@ -1711,7 +1711,7 @@ impl<T> ChunkStorage<T> {
         debug_assert!(meta.lineages.iter().any(|entry| entry.id == lineage));
         meta.sealed = true;
         let unused = capacity.saturating_sub(meta.used as usize);
-        self.compact_packed_tail(key);
+        self.compact_sealed_tail(key);
         unused
     }
 
@@ -1741,7 +1741,7 @@ impl<T> ChunkStorage<T> {
         }
         let next_epoch = self.admission_epoch.saturating_add(1);
         if used as usize != self.slots_per_chunk {
-            self.restore_full_packed_extent(key)?;
+            self.restore_full_extent(key)?;
         }
         let (physical, base) = self.mapping(key)?;
         match self.dense_block_mut(physical)?.payload_mut() {
@@ -1781,7 +1781,7 @@ impl<T> ChunkStorage<T> {
             return Err(ForkArenaError::InvalidOperationMark);
         }
         if !sealed {
-            self.restore_full_packed_extent(key)?;
+            self.restore_full_extent(key)?;
         }
         let meta = self.validate_exclusive_lineage_mut(key, arena, lineage)?;
         meta.sealed = sealed;
