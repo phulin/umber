@@ -77,9 +77,13 @@ fn fixed_batch_keeps_independent_keys_across_chunk_rotation_and_rollback() {
         &[40, 41, 42],
         &[50, 51, 52],
     ];
+    let mut words: Vec<u32> = bodies
+        .iter()
+        .flat_map(|body| std::iter::once(0).chain(body.iter().copied()))
+        .collect();
     let keys = annex
         .writer()
-        .append_fixed_batch(bodies)
+        .append_fixed_flat(&mut words, &[4; 5])
         .expect("batch fixed publication");
     assert_eq!(keys.len(), bodies.len());
     for (key, body) in keys.iter().zip(bodies) {

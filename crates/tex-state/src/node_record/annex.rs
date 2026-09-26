@@ -495,29 +495,35 @@ impl<'a> NodeAnnexWriter<'a> {
         crate::page_node_arena::PageBoxMigrationKey::from_words(key.words())
     }
 
-    /// Publishes independent typed fixed records through one or more admitted
-    /// physical word runs. Every record keeps its own serial and exact root.
-    pub(crate) fn append_fixed_batch<'b>(
+    /// Publishes independent, already-staged fixed bodies through admitted
+    /// physical word runs. Each leading placeholder becomes a fresh serial;
+    /// every returned key names only its own authenticated record.
+    pub(crate) fn append_fixed_flat(
         &mut self,
-        bodies: impl IntoIterator<Item = &'b [u32]>,
+        words: &mut [u32],
+        lengths: &[u16],
     ) -> Result<SmallVec<[AnnexKey<()>; 16]>, ForkArenaError> {
-        let mut words = SmallVec::<[u32; 1024]>::new();
-        let mut lengths = SmallVec::<[u16; 16]>::new();
         let mut serials = SmallVec::<[u32; 16]>::new();
-        for body in bodies {
-            if body.len() > MAX_FIXED_COPY_BODY_WORDS {
+        let mut offset = 0usize;
+        for &len in lengths {
+            let len = usize::from(len);
+            if len == 0 || len > MAX_FIXED_COPY_BODY_WORDS + 1 {
                 return Err(ForkArenaError::InvalidRange);
             }
             let serial = self.pool.next_publication_serial();
+            *words.get_mut(offset).ok_or(ForkArenaError::InvalidRange)? = serial;
             serials.push(serial);
-            lengths.push((body.len() + 1) as u16);
-            words.push(serial);
-            words.extend_from_slice(body);
+            offset = offset
+                .checked_add(len)
+                .ok_or(ForkArenaError::InvalidRange)?;
+        }
+        if offset != words.len() {
+            return Err(ForkArenaError::InvalidRange);
         }
         let mut keys = SmallVec::<[AnnexKey<()>; 16]>::new();
         let mut first_list = None;
         self.arena
-            .append_unsealed_fixed_batch_copy_parts(self.pool, &words, &lengths, |list| {
+            .append_unsealed_fixed_batch_copy_parts(self.pool, words, lengths, |list| {
                 first_list.get_or_insert(list);
                 keys.push(AnnexKey::from_list(list, serials[keys.len()]));
             })?;
