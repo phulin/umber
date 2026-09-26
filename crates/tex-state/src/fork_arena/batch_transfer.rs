@@ -103,10 +103,10 @@ impl<T, Lane> ForkArena<T, Lane> {
         // Every producer settles direct child floors while publishing its
         // payload. An unfinished reservation is not a transferable batch;
         // sealing must not repair it by scanning already published values.
-        for position in mark.payload_start as usize..self.live_payload_len() {
-            let Some(key) = self.live_key_at(position) else {
-                continue;
-            };
+        for (_, key) in self
+            .live_positions()
+            .filter(|(position, _)| *position >= mark.payload_start as usize)
+        {
             if !pool
                 .payload
                 .validate_lineage(key, self.owner, self.lineage)?
@@ -140,7 +140,6 @@ impl<T, Lane> ForkArena<T, Lane> {
     /// Mutation-free closure preflight for a build suffix whose final tails
     /// have not yet been sealed. This lets semantic rejection preserve even
     /// lifecycle counters and sealed-capacity state.
-    #[allow(dead_code)] // Production carriers currently retain the compatibility receipt.
     pub(crate) fn preflight_batch_closure(
         &self,
         pool: &ChunkPool<T>,
@@ -221,10 +220,10 @@ impl<T, Lane> ForkArena<T, Lane> {
         for list in lists {
             self.validate_list_endpoints_in_suffix(pool, *list, mark.payload_start as usize)?;
         }
-        for position in mark.payload_start as usize..payload_end {
-            let Some(key) = self.live_key_at(position) else {
-                continue;
-            };
+        for (_, key) in self
+            .live_positions()
+            .filter(|(position, _)| *position >= mark.payload_start as usize)
+        {
             let meta = pool
                 .payload
                 .validate_lineage(key, self.owner, self.lineage)?;

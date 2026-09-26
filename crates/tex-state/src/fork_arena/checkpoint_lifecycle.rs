@@ -85,10 +85,10 @@ impl<T, Lane> ForkArena<T, Lane> {
         if !self.validates_checkpoint(mark) {
             return Err(ForkArenaError::InvalidCheckpoint);
         }
-        for position in self.base_payload_chunks as usize..mark.payload_chunks as usize {
-            let Some(key) = self.live_key_at(position) else {
-                continue;
-            };
+        for (_, key) in self
+            .live_positions()
+            .take_while(|(position, _)| *position < mark.payload_chunks as usize)
+        {
             let used = pool.payload.used(key, self.owner)?;
             for offset in 0..used {
                 visit(
@@ -114,10 +114,10 @@ impl<T, Lane> ForkArena<T, Lane> {
         if !self.can_begin_checkpoint_candidate(mark) {
             return Err(ForkArenaError::InvalidCheckpoint);
         }
-        for position in mark.payload_chunks as usize..self.live_payload_len() {
-            let Some(key) = self.live_key_at(position) else {
-                continue;
-            };
+        for (_, key) in self
+            .live_positions()
+            .filter(|(position, _)| *position >= mark.payload_chunks as usize)
+        {
             let used = pool.payload.used(key, self.owner)?;
             for offset in 0..used {
                 visit(
@@ -190,10 +190,10 @@ impl<T, Lane> ForkArena<T, Lane> {
         {
             return Err(ForkArenaError::InvalidCheckpoint);
         }
-        for position in mark.payload_chunks as usize..self.live_payload_len() {
-            let Some(key) = self.live_key_at(position) else {
-                continue;
-            };
+        for (_, key) in self
+            .live_positions()
+            .filter(|(position, _)| *position >= mark.payload_chunks as usize)
+        {
             let used = pool.payload.used(key, self.owner)?;
             for offset in 0..used {
                 visit(
@@ -219,12 +219,12 @@ impl<T, Lane> ForkArena<T, Lane> {
         let ForkOwnership::Forked { detached_prior, .. } = &self.ownership else {
             return Err(ForkArenaError::NotForked);
         };
-        for key in &detached_prior.payload {
-            let used = pool.payload.used(*key, self.owner)?;
+        for (_, key) in detached_prior.payload.iter_live_with_positions() {
+            let used = pool.payload.used(key, self.owner)?;
             for offset in 0..used {
                 let value = pool
                     .payload
-                    .get_mut(*key, self.owner, self.lineage, offset)
+                    .get_mut(key, self.owner, self.lineage, offset)
                     .ok_or(ForkArenaError::InvalidChunk)?;
                 visit(value);
             }
@@ -380,8 +380,8 @@ impl<T, Lane> ForkArena<T, Lane> {
                 .payload
                 .split_off((mark.payload_chunks - self.base_payload_chunks) as usize),
         };
-        for key in &detached_prior.payload {
-            self.unindex_chunk(pool, *key);
+        for (_, key) in detached_prior.payload.iter_live_with_positions() {
+            self.unindex_chunk(pool, key);
         }
         self.ownership = ForkOwnership::Forked {
             prefix: accepted,
@@ -530,7 +530,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             .counters
             .obsolete_chunks_pruned
             .saturating_add(pruned as u64);
-        prefix.payload.extend(current.payload);
+        prefix.payload.append(current.payload);
         self.ownership = ForkOwnership::Accepted(prefix);
         self.invalidate_live_tail_hint();
         Ok(())

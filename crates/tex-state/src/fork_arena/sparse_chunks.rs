@@ -107,38 +107,55 @@ impl SparseChunks {
             })
     }
 
-    fn rebuild_gap_prefixes(&mut self) {
-        let mut count = 0;
-        for gap in &mut self.gaps {
+    fn rebuild_gap_prefixes_from(&mut self, first: usize) {
+        let mut count = if first == 0 {
+            0
+        } else {
+            self.gaps[first - 1].vacant_through
+        };
+        for gap in &mut self.gaps[first..] {
             count += gap.end - gap.start;
             gap.vacant_through = count;
         }
-        debug_assert_eq!(self.live.len() + count, self.logical_len);
+        debug_assert_eq!(
+            self.live.len() + self.gaps.last().map_or(0, |gap| gap.vacant_through),
+            self.logical_len
+        );
+    }
+
+    fn rebuild_gap_prefixes(&mut self) {
+        self.rebuild_gap_prefixes_from(0);
     }
 
     fn insert_gap(&mut self, start: usize, end: usize) {
         if start == end {
             return;
         }
-        self.gaps.push(Gap {
-            start,
-            end,
-            vacant_through: 0,
-        });
-        self.gaps.sort_unstable_by_key(|gap| gap.start);
-        let mut merged: Vec<Gap> = Vec::with_capacity(self.gaps.len());
-        for gap in self.gaps.drain(..) {
-            if let Some(last) = merged.last_mut()
-                && gap.start <= last.end
-            {
-                assert!(gap.start >= last.end, "vacant ranges cannot overlap");
-                last.end = gap.end;
-            } else {
-                merged.push(gap);
-            }
+        let first = self.gaps.partition_point(|gap| gap.end < start);
+        let mut merged_start = start;
+        let mut merged_end = end;
+        while self
+            .gaps
+            .get(first)
+            .is_some_and(|gap| gap.start <= merged_end)
+        {
+            let gap = self.gaps.remove(first);
+            assert!(
+                gap.end <= merged_start || gap.start >= merged_end,
+                "vacant ranges cannot overlap"
+            );
+            merged_start = merged_start.min(gap.start);
+            merged_end = merged_end.max(gap.end);
         }
-        self.gaps = merged;
-        self.rebuild_gap_prefixes();
+        self.gaps.insert(
+            first,
+            Gap {
+                start: merged_start,
+                end: merged_end,
+                vacant_through: 0,
+            },
+        );
+        self.rebuild_gap_prefixes_from(first);
     }
 
     /// Removes an entirely live logical interval and returns its keys in

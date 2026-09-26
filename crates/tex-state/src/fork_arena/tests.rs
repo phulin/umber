@@ -2608,6 +2608,41 @@ fn unique_successor_adoption_keeps_sparse_suffix_positions() {
 }
 
 #[test]
+fn sparse_checkpoint_candidate_reattaches_only_live_prior_slots() {
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(4);
+    let mut page = ForkArena::<u32, ActiveLane>::new();
+    let _prefix = list(&mut page, &mut pool, [1]);
+    let boundary = page.seal_boundary(&mut pool).expect("sealed checkpoint");
+    let selected = page.checkpoint_mark(boundary).expect("retained checkpoint");
+    let moved = list(&mut page, &mut pool, [2]);
+    let prior = list(&mut page, &mut pool, [3]);
+    page.seal_boundary(&mut pool).expect("transfer boundary");
+    let mut durable = page.empty_lane::<PageLane>();
+    page.transfer_interior_interval(&mut pool, &mut durable, 1, 2)
+        .expect("middle box moves before candidate fork");
+    page.begin_checkpoint_candidate(&mut pool, selected)
+        .expect("sparse accepted suffix detaches");
+    page.visit_detached_checkpoint_suffix_mut(&mut pool, |value| *value += 10)
+        .expect("visit only live detached prior");
+    let _candidate = list(&mut page, &mut pool, [4]);
+    let settlement = page.seal_boundary(&mut pool).expect("candidate boundary");
+    page.reject_checkpoint_candidate(&mut pool, settlement)
+        .expect("sparse prior reattaches");
+    assert_eq!(page.live_key_at(1), None);
+    assert_eq!(
+        page.list(&pool, prior).expect("restored prior").get(0),
+        Some(&13)
+    );
+    assert_eq!(
+        durable
+            .list(&pool, super::rebrand_list(moved, durable.owner))
+            .expect("moved box remains independent")
+            .get(0),
+        Some(&2)
+    );
+}
+
+#[test]
 fn logical_positions_are_pool_stable_and_foreign_spaces_fail_closed() {
     let mut pool = ChunkPool::<u32>::with_chunk_bytes(16);
     let mut arena = ForkArena::<u32, ActiveLane>::new();

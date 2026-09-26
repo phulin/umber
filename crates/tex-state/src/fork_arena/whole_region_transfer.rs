@@ -237,10 +237,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         if let Some(root) = root {
             self.validate_list_in_suffix(pool, root, 0)?;
         }
-        for position in self.base_payload_chunks as usize..self.live_payload_len() {
-            let Some(key) = self.live_key_at(position) else {
-                continue;
-            };
+        for (_, key) in self.live_positions() {
             let meta = pool
                 .payload
                 .validate_lineage(key, self.owner, self.lineage)?;

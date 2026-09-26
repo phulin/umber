@@ -3099,10 +3099,10 @@ impl<T, Lane> ForkArena<T, Lane> {
         source_paired_start: usize,
         destination_paired_start: usize,
     ) -> Result<(), ForkArenaError> {
-        for position in payload_start..self.live_payload_len() {
-            let Some(key) = self.live_key_at(position) else {
-                continue;
-            };
+        for (_, key) in self
+            .live_positions()
+            .filter(|(position, _)| *position >= payload_start)
+        {
             let meta =
                 pool.payload
                     .validate_exclusive_lineage_mut(key, self.owner, self.lineage)?;
@@ -3126,10 +3126,10 @@ impl<T, Lane> ForkArena<T, Lane> {
         payload_start: usize,
         source_start: usize,
     ) -> Result<(), ForkArenaError> {
-        for position in payload_start..self.live_payload_len() {
-            let Some(key) = self.live_key_at(position) else {
-                continue;
-            };
+        for (_, key) in self
+            .live_positions()
+            .filter(|(position, _)| *position >= payload_start)
+        {
             let meta =
                 pool.payload
                     .validate_exclusive_lineage_mut(key, self.owner, self.lineage)?;
@@ -3166,6 +3166,23 @@ impl<T, Lane> ForkArena<T, Lane> {
                     prefix, current, ..
                 } => prefix.payload.len() + current.payload.len(),
             }
+    }
+
+    fn live_positions(&self) -> impl Iterator<Item = (usize, LogicalChunkId)> + '_ {
+        let base = self.base_payload_chunks as usize;
+        let sets: [Option<(&SparseChunks, usize)>; 2] = match &self.ownership {
+            ForkOwnership::Accepted(chunks) => [Some((&chunks.payload, base)), None],
+            ForkOwnership::Forked {
+                prefix, current, ..
+            } => [
+                Some((&prefix.payload, base)),
+                Some((&current.payload, base + prefix.payload.len())),
+            ],
+        };
+        sets.into_iter().flatten().flat_map(|(set, offset)| {
+            set.iter_live_with_positions()
+                .map(move |(position, key)| (offset + position, key))
+        })
     }
 
     /// Exclusive logical end, including the current unsealed tail chunk.
@@ -4202,10 +4219,10 @@ impl<T, Lane> ForkArena<T, Lane> {
         // build boundary, even when the selected root does not reach it. The
         // later rebasing step visits that entire envelope, so preflight must
         // prove the paired floor for every block it will rebase.
-        for position in payload_start..self.live_payload_len() {
-            let Some(key) = self.live_key_at(position) else {
-                continue;
-            };
+        for (_, key) in self
+            .live_positions()
+            .filter(|(position, _)| *position >= payload_start)
+        {
             let floor = pool
                 .payload
                 .validate_lineage(key, self.owner, self.lineage)?
