@@ -122,6 +122,7 @@ impl<'a> CopyContext<'a> {
             }
             let mut dependency_floor = usize::MAX;
             let mut paired_floor = usize::MAX;
+            let mut defer_fixed_publication = false;
             for index in 0..records.len() {
                 let record = &mut records[index];
                 if record.is_inline_leaf() {
@@ -165,6 +166,10 @@ impl<'a> CopyContext<'a> {
                         count = count.saturating_add(child_count);
                     }
                     if has_nonempty_child {
+                        defer_fixed_publication |= matches!(
+                            record.kind(),
+                            Some(crate::node::NodeKind::HList | crate::node::NodeKind::VList)
+                        );
                         let (child_floor, child_annex_floor) = self
                             .destination
                             .dependency_floors_for_region_lists(self.pool, |visit| {
@@ -181,6 +186,14 @@ impl<'a> CopyContext<'a> {
                         paired_floor = paired_floor.min(child_annex_floor.unwrap_or(usize::MAX));
                     }
                     pending.push((index, (body_len + 1) as u16));
+                    if !defer_fixed_publication && pending.len() == 16 {
+                        self.publish_fixed_batch(
+                            &mut records,
+                            &mut pending,
+                            batch_start,
+                            &mut paired_floor,
+                        )?;
+                    }
                     continue;
                 }
                 let mut children = SmallVec::<[PageListId; 4]>::new();

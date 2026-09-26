@@ -98,11 +98,12 @@ relocation without retaining source coordinates or introducing a destination
 lookup table. Publication serials and paired dependency floors are still
 established by the ordinary annex writer.
 
-Fixed bodies are staged for one source node chunk while all its child closures
-are copied. The paired annex writer then publishes groups of at most 16 through
-one admitted physical run per available block segment. Publishing after all
-child copies lets the caller stamp each copied box with its exact child
+Fixed bodies publish in groups of at most 16 through one admitted physical run
+per available block segment. Once a copied box has a nonempty owned child
+closure, remaining fixed bodies in that source node chunk wait until all child
+copies finish. This lets the caller stamp that box with its exact child
 envelope and final wrapper position before a later child can seal its annex.
+Boxes with empty children require no transferred body or stamp.
 A record remains inside one logical block; a segment rotates before the next
 record when space is insufficient.
 Each resulting key names only that record's exact word range, and its serial
