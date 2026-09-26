@@ -86,3 +86,66 @@ Ownership counters and semantic tests establish their local effects; matched
 production runs are the separate performance evidence. Native tests do not
 substitute for the original book: exercising the consuming path there exposed
 a transfer preflight bug absent from the earlier routine suite.
+
+## Fixed-fuel book heap attribution
+
+The original `2606.24937` book was materialized from its authenticated source
+archive using the command, format, distribution, and source-date epoch in the
+[original result receipt](../target/arxiv-pdf-wave3-final/rows/2606.24937/result.json).
+All runs retained the 120-second, 1,536-MiB, and 10-million-step guards and
+used CPU 10. Every tabulated fixed-fuel run ended with the exact fuel-exhaustion
+diagnostic. Profiling builds are used only for storage counters, not shipping
+CPU comparisons. Full commands, hashes, logs, time records, and heaptrack data
+are under `.worktrees/slot-3/target/perf-heap-retention/`.
+
+| Profiling build | Fuel actions | Peak RSS KiB | Peak live annex blocks | Annex blocks at output census | Used annex words | Stranded annex words |
+| --------------- | -----------: | -----------: | ---------------------: | ----------------------------: | ---------------: | -------------------: |
+| Before packing  |   50,000,000 |      248,360 |                    578 |                           290 |           88,998 |            4,662,362 |
+| Before packing  |  100,000,000 |      460,456 |                  2,031 |                         1,883 |          790,728 |           30,060,344 |
+| Before packing  |  200,000,000 |      635,304 |                  2,031 |                         1,883 |          790,728 |           30,060,344 |
+| Packed annexes  |  100,000,000 |      432,796 |                    271 |                           125 |          790,728 |            1,257,272 |
+| Packed annexes  |  200,000,000 |      573,980 |                    271 |                            83 |        1,266,406 |               93,466 |
+
+The 100-million-action output census holds the same 790,728 annex words in both
+builds. Before packing, every one of its 1,883 physical annex blocks was
+partial and no block was shared between logical chunks. After packing, all 125
+sampled physical blocks are shared; stranded capacity falls from 30.1 million
+to 1.26 million words. The 200-million-action output censuses select different
+largest-output boundaries, so their used-word values are not a matched
+semantic snapshot. The peak-live counter measures a different instant from the
+output census and must not be added to its block count.
+
+Heaptrack of the frozen shipping baseline identifies a separate growing owner:
+
+| Fuel actions | Peak RSS KiB under heaptrack | Annex superblock allocation site | PDF version-index allocation site |
+| -----------: | ---------------------------: | -------------------------------: | --------------------------------: |
+|   50,000,000 |                      256,248 |                         37.88 MB |                  Below top report |
+|  100,000,000 |                      470,496 |                        133.10 MB |                         100.66 MB |
+|  200,000,000 |                      646,116 |                        133.10 MB |                         201.33 MB |
+
+The version-index allocation is the persistent `Vec<PdfVersionIndexNode>` in
+`PdfState`. Its reported peak grows by 100.67 MB between 100 and 200 million
+actions, while the annex superblock site remains flat. Other measured growth
+includes token-list payloads and verified resource artifacts. Heaptrack site
+peaks are allocation-site observations, not simultaneously live values to sum
+into RSS. The PDF index's 64-level path copying is a distinct follow-up from
+annex packing.
+
+The pool did return retired regions: from 100 to 200 million actions the old
+annex pool made no new physical allocation, while reuse events rose from
+26,460 to 63,358 and release events from 28,413 to 65,299. With packed
+annexes, physical allocations stay at 271 over the same interval. The zero
+live-block gauges printed on fuel failure are after engine teardown; the peak
+and output censuses establish in-run retention. Warm vacant superblocks remain
+available for reuse rather than being returned to the system at each region
+retirement.
+
+A shipping-build A/B/B/A sequence at 200 million actions used baseline binary
+SHA-256 `da06fc9ad71202377133c74a50eb6f861309b7805a9483fa4652c6d75c55f4b7`
+and packed binary SHA-256
+`a47b912f2912d4108aea9ba13a33f74ae1797cb1098c967c9e7b0b4a750cb2a9`.
+Peak RSS was 634,780 and 635,548 KiB before packing versus 574,624 and
+574,876 KiB after packing: a median reduction of 60,414 KiB. Other builds
+competed for CPU during this sequence, so its user and wall times do not
+establish a speed change. The reported 4.7-GB run has no authenticated receipt;
+these bounded runs do not reproduce it or identify every byte it may have held.
