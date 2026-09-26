@@ -139,10 +139,9 @@ fn tracing_display_does_not_repeat_successors_rendered_with_a_discretionary_clus
 }
 
 #[test]
-fn tracing_display_includes_automatic_discretionary_replacement_after_font_kern() {
-    // TeX82's reconstitution can leave the replaced ligature in the
-    // discretionary after a font kern; §851 displays that replacement before
-    // reporting the feasible discretionary.
+fn tracing_display_skips_automatic_discretionary_replacement_after_font_kern() {
+    // TeX82 §§174/851 displays pre/post material and hides the replacement
+    // linked after an automatic discretionary.
     let mut universe = TestState::new();
     let empty = universe.publish_page_nodes(&[]);
     let replace = universe.publish_page_nodes(&[rule(2)]);
@@ -174,13 +173,74 @@ fn tracing_display_includes_automatic_discretionary_replacement_after_font_kern(
         trace.iter().any(|event| matches!(
             event,
             LineBreakTrace::Feasible {
-                display_suffix: Some(suffix),
+                display,
                 breakpoint: TraceBreakpoint::Discretionary,
                 ..
-            } if *suffix == replace
+            } if display == &(0..4)
         )),
         "{trace:?}"
     );
+}
+
+#[test]
+fn tracing_display_preserves_later_discs_in_flattened_replacement_spans() {
+    // TeX82 §§851/855 keeps each discretionary available for its own trace.
+    // The semantic projection clusters them while its physical replacements
+    // extend across later positions, so the printed cursor must resume at
+    // the next disc even when the previous trace slice reached past it.
+    let mut universe = TestState::new();
+    let empty = universe.publish_page_nodes(&[]);
+    let first_replace = universe.publish_page_nodes(&[kern(1), rule(1)]);
+    let second_replace = universe.publish_page_nodes(&[rule(2)]);
+    let nodes = vec![
+        rule(1),
+        Node::Kern {
+            amount: sp(1),
+            kind: KernKind::Font,
+        },
+        Node::Disc {
+            kind: DiscKind::AutomaticHyphen,
+            pre: empty,
+            post: empty,
+            replace: first_replace,
+            physical_replace_count: 2,
+        },
+        Node::Disc {
+            kind: DiscKind::AutomaticHyphen,
+            pre: empty,
+            post: empty,
+            replace: second_replace,
+            physical_replace_count: 3,
+        },
+        kern(1),
+        rule(1),
+        Node::Disc {
+            kind: DiscKind::AutomaticHyphen,
+            pre: empty,
+            post: empty,
+            replace: empty,
+            physical_replace_count: 0,
+        },
+        Node::Penalty(EJECT_PENALTY),
+    ];
+    let mut parameters = params(100);
+    parameters.pretolerance = 10_000;
+    let (_, trace) = try_line_break_without_hyphenation_traced(&universe, &nodes, &parameters);
+    let displays = trace
+        .iter()
+        .filter_map(|event| match event {
+            LineBreakTrace::Feasible {
+                display,
+                breakpoint: TraceBreakpoint::Discretionary,
+                ..
+            } if !display.is_empty() => Some(display.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert!(displays.contains(&(0..5)), "{trace:?}");
+    assert!(displays.contains(&(3..7)), "{trace:?}");
+    assert!(displays.contains(&(6..7)), "{trace:?}");
 }
 
 #[test]

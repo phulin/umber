@@ -193,11 +193,53 @@ fn short_display_physical_count_is_independent_of_empty_side_list() {
 }
 
 #[test]
+fn line_trace_hides_all_linked_replacements_when_side_list_is_shorter() {
+    // TeX82 §§174/851 follows the disc's physical replace_count. A
+    // reconstituted ligature can occupy one side-list node while the linked
+    // physical replacement occupies three nodes.
+    crate::test_harness::with_nonstop_universe(|universe| {
+        let mut stores = universe.command_context().expect("test state is admitted");
+        let font = tex_state::font::NULL_FONT;
+        let chars = |text: &str| {
+            text.chars()
+                .map(|ch| Node::Char {
+                    font,
+                    ch,
+                    origin: tex_state::token::OriginId::UNKNOWN,
+                })
+                .collect::<Vec<_>>()
+        };
+        let pre = stores.publish_page_nodes(chars("B-"));
+        let post = stores.publish_page_nodes(chars("BBB"));
+        let replace = stores.publish_page_nodes(chars("X"));
+        let mut nodes = vec![Node::Disc {
+            kind: DiscKind::AutomaticHyphen,
+            pre,
+            post,
+            replace,
+            physical_replace_count: 3,
+        }];
+        nodes.extend(chars("XYZM"));
+
+        assert_eq!(
+            ShortDisplayRenderer::new().render_node_range(
+                &stores,
+                tex_state::node_view::NodeCursor::owned(&nodes),
+                0..nodes.len(),
+            ),
+            format!(
+                "{} B-BBBM",
+                crate::node_dump::font_identifier(&stores, font)
+            )
+        );
+    });
+}
+
+#[test]
 fn line_trace_projection_renders_detached_replacement_content() {
-    // TRIP's line trace supplies a detached slice: the side list is empty
-    // while its three replacement characters remain in the displayed
-    // projection. Applying the frozen list's physical count would incorrectly
-    // reduce TeX82's `B-BBB` to `B-B`.
+    // A detached source can have no linked replacement even when its node
+    // retains a physical count. Keep this as the negative control for the
+    // linked trace path above.
     crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         let font = tex_state::font::NULL_FONT;
@@ -220,9 +262,14 @@ fn line_trace_projection_renders_detached_replacement_content() {
             physical_replace_count: 3,
         }];
         nodes.extend(chars("BBB"));
+        let list = stores.publish_page_nodes(nodes);
 
         assert_eq!(
-            ShortDisplayRenderer::new().render_nodes(&stores, &nodes),
+            ShortDisplayRenderer::new().render_list_with_layout(
+                &stores,
+                list,
+                DiagnosticListLayout::DetachedProjection,
+            ),
             format!("{} B-BBB", crate::node_dump::font_identifier(&stores, font))
         );
     });

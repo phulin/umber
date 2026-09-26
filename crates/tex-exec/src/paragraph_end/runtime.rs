@@ -1634,25 +1634,18 @@ fn report_line_break_trace<G>(
             .map(|event| match event {
                 LineBreakTrace::Pass(_) => {
                     short_display.reset();
-                    (None, None)
+                    None
                 }
-                LineBreakTrace::Feasible {
-                    display,
-                    display_suffix,
-                    ..
-                } if !display.is_empty() => (
-                    Some(short_display.render_node_range(stores, nodes, display.clone())),
-                    display_suffix.as_ref().map(|suffix| {
-                        short_display.render_line_break_trace_suffix(stores, *suffix)
-                    }),
-                ),
-                _ => (None, None),
+                LineBreakTrace::Feasible { display, .. } if !display.is_empty() => {
+                    Some(short_display.render_node_range(stores, nodes, display.clone()))
+                }
+                _ => None,
             })
             .collect::<Vec<_>>()
     };
     let mut diagnostic = stores.begin_diagnostic(diagnostic_effects);
     let mut next_warning = 0;
-    for (event, (rendered_display, rendered_suffix)) in trace.iter().zip(rendered_trace) {
+    for (event, rendered_display) in trace.iter().zip(rendered_trace) {
         if let LineBreakTrace::Feasible { display, .. } = event {
             while missing_hyphens
                 .get(next_warning)
@@ -1689,9 +1682,6 @@ fn report_line_break_trace<G>(
             } => {
                 if let Some(rendered) = rendered_display {
                     diagnostic.print_nl("").print_rendered(&rendered);
-                }
-                if let Some(rendered) = rendered_suffix {
-                    diagnostic.print_rendered(&rendered);
                 }
                 diagnostic.print_nl("@");
                 match breakpoint {

@@ -1681,8 +1681,7 @@ impl<'output, 'word, 'projection, 'vectors>
         stores: &mut CommandContext<'_, G>,
         diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
         position: usize,
-        source_start: usize,
-        full_branch: bool,
+        full_branch_start: Option<usize>,
         fuel: &mut tex_command::CommandFuel,
         tfm_work: &mut crate::box_runtime::hmode::LigatureWorkList,
     ) -> Result<tex_state::page_node_arena::PageListId, ExecError> {
@@ -1691,6 +1690,8 @@ impl<'output, 'word, 'projection, 'vectors>
         // current reconstitution segment. At a font-kern boundary the prior
         // glyph is parked for the discretionary's replacement, so its whole
         // source span still belongs to the pre-break branch.
+        let full_branch = full_branch_start.is_some();
+        let source_start = full_branch_start.unwrap_or(position - 1);
         let mut source = pending_word_range(self.word, source_start..position);
         let Some(ch) = automatic_hyphen_char(
             stores,
@@ -1765,13 +1766,10 @@ impl<'output, 'word, 'projection, 'vectors>
             return Ok(());
         }
         self.suspend_main(stores);
-        let preceding_in_replacement = replacement
-            .as_ref()
-            .is_some_and(|(glyph, _, _)| glyph.is_some());
-        let source_start = replacement
+        let full_branch_start = replacement
             .as_ref()
             .and_then(|(glyph, _, _)| glyph.as_ref())
-            .map_or(position - 1, |glyph| {
+            .map(|glyph| {
                 position
                     .checked_sub(glyph.provenance.len)
                     .expect("parked glyph source precedes hyphen boundary")
@@ -1780,8 +1778,7 @@ impl<'output, 'word, 'projection, 'vectors>
             stores,
             diagnostic_effects,
             position,
-            source_start,
-            preceding_in_replacement,
+            full_branch_start,
             fuel,
             tfm_work,
         ) {
@@ -1831,8 +1828,7 @@ impl<'output, 'word, 'projection, 'vectors>
             stores,
             diagnostic_effects,
             position,
-            self.char_start,
-            true,
+            Some(self.char_start),
             fuel,
             tfm_work,
         ) {

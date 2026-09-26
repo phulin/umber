@@ -234,7 +234,6 @@ struct BreakSite {
 struct TraceSpan {
     display_end: usize,
     next_start: usize,
-    display_suffix: Option<PageListId>,
     breakpoint: TraceBreakpoint,
 }
 
@@ -413,7 +412,6 @@ pub enum LineBreakTrace {
     Pass(LineBreakPass),
     Feasible {
         display: core::ops::Range<usize>,
-        display_suffix: Option<PageListId>,
         breakpoint: TraceBreakpoint,
         via: usize,
         badness: Option<i32>,
@@ -1008,7 +1006,6 @@ fn run_pass<S: TypesetState>(
                         TraceSpan {
                             display_end,
                             next_start: trace_display_next_start(state, nodes, bp, display_end),
-                            display_suffix: trace_display_suffix(nodes, bp),
                             breakpoint: trace_breakpoint(nodes, bp),
                         }
                     });
@@ -1023,7 +1020,6 @@ fn run_pass<S: TypesetState>(
                             // discretionaries (their pre/post lists), even though
                             // width accounting stops before those nodes.
                             display: displayed_through..trace_span.display_end,
-                            display_suffix: trace_span.display_suffix,
                             breakpoint: trace_span.breakpoint,
                             via: active_candidate.passive.map_or(0, |id| passive[id].serial),
                             badness: (b <= INF_BAD).then_some(b),
@@ -1191,10 +1187,10 @@ fn run_pass<S: TypesetState>(
     Some(reconstruct(active[chosen], &passive, last_line_fit, memory))
 }
 
-fn trace_display_suffix(nodes: NodeCursor<'_>, bp: Breakpoint) -> Option<PageListId> {
-    // §903's boundary-kern reconstitution keeps the displaced ligature in
-    // the automatic discretionary's side list. TeX82's linked list exposes
-    // it to §851; Umber carries it as this detached trace suffix instead.
+fn has_boundary_kern_replacement(nodes: NodeCursor<'_>, bp: Breakpoint) -> bool {
+    // §903's boundary-kern reconstitution can leave replacement material
+    // after the discretionary in the flattened semantic projection. §855
+    // advances the printed cursor past that material without displaying it.
     if !matches!(
         bp.position
             .checked_sub(2)
@@ -1204,17 +1200,17 @@ fn trace_display_suffix(nodes: NodeCursor<'_>, bp: Breakpoint) -> Option<PageLis
             ..
         })
     ) {
-        return None;
+        return false;
     }
-    let NodeView::Disc {
-        kind: tex_state::node::DiscKind::AutomaticHyphen,
-        replace,
-        ..
-    } = nodes.get(bp.position.checked_sub(1)?)?
-    else {
-        return None;
-    };
-    Some(replace)
+    matches!(
+        bp.position
+            .checked_sub(1)
+            .and_then(|index| nodes.get(index)),
+        Some(NodeView::Disc {
+            kind: tex_state::node::DiscKind::AutomaticHyphen,
+            ..
+        })
+    )
 }
 
 fn trace_display_end(state: &impl TypesetState, nodes: NodeCursor<'_>, bp: Breakpoint) -> usize {
@@ -1237,7 +1233,7 @@ fn trace_display_end(state: &impl TypesetState, nodes: NodeCursor<'_>, bp: Break
         // The flattened paragraph retains both the boundary kern and the
         // displaced replacement after the discretionary. The trace slice
         // consumes the kern; `trace_display_next_start` advances over the
-        // replacement after its detached suffix has been rendered.
+        // hidden replacement while preserving a later discretionary.
         return bp
             .position
             .saturating_add(state.page_nodes(replace).len())
@@ -1272,7 +1268,14 @@ fn trace_display_next_start(
     bp: Breakpoint,
     display_end: usize,
 ) -> usize {
-    if trace_display_suffix(nodes, bp).is_some() {
+    // §855 advances beyond replacement nodes after one trace, but a later
+    // discretionary in the semantic projection still needs its own §851
+    // display. Retain the first such node even if this span reached past it.
+    if let Some(next_disc) = (bp.position..=display_end.min(nodes.len().saturating_sub(1)))
+        .find(|&index| matches!(nodes.get(index), Some(NodeView::Disc { .. })))
+    {
+        next_disc
+    } else if has_boundary_kern_replacement(nodes, bp) {
         display_end.saturating_add(1).min(nodes.len())
     } else if let Some(NodeView::Disc { replace, .. }) = bp
         .position

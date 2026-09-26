@@ -266,11 +266,7 @@ pub(crate) fn hpack_page_list_with_diagnostics<G>(
     }
     let short_diagnostic_children = diagnostic_children
         .map(|physical| project_short_diagnostic_discs_list(stores, physical, children));
-    let diagnostic_list_layout = if short_diagnostic_children.is_some() {
-        crate::pack_report::DiagnosticListLayout::DetachedProjection
-    } else {
-        crate::pack_report::DiagnosticListLayout::FrozenList
-    };
+    let diagnostic_list_layout = crate::pack_report::DiagnosticListLayout::FrozenList;
     packed.node.allocator_high_cell_overlap = if diagnostic_children.is_some() {
         allocator_high_cell_overlap
     } else {

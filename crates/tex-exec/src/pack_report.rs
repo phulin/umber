@@ -60,11 +60,12 @@ pub(crate) enum PackedDirection {
 
 /// Representation of discretionary replacement nodes in a diagnostic list.
 ///
-/// Storage in the node arena does not determine this: paragraph diagnostics
-/// freeze a detached projection before reporting, while ordinary packed lists
-/// are frozen engine lists with TeX's physical replacement counts.
+/// Production diagnostics preserve TeX's linked replacement counts. The
+/// detached projection remains a test control for lists without linked
+/// replacement nodes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DiagnosticListLayout {
+    #[cfg(test)]
     DetachedProjection,
     FrozenList,
 }
@@ -312,19 +313,11 @@ impl ShortDisplayRenderer {
             nodes,
             range.start,
             range.end,
-            DiscReplacementLayout::DetachedProjection,
+            DiscReplacementLayout::FrozenList,
             &mut self.font,
             &mut out,
         );
         out
-    }
-
-    pub(crate) fn render_line_break_trace_suffix<G>(
-        &mut self,
-        stores: &CommandContext<'_, G>,
-        list: tex_state::page_node_arena::PageListId,
-    ) -> String {
-        self.render_list_with_layout(stores, list, DiagnosticListLayout::FrozenList)
     }
 
     #[cfg(test)]
@@ -365,6 +358,7 @@ fn append_short_display<G>(
         0,
         nodes.len(),
         match list_layout {
+            #[cfg(test)]
             DiagnosticListLayout::DetachedProjection => DiscReplacementLayout::DetachedProjection,
             DiagnosticListLayout::FrozenList => DiscReplacementLayout::FrozenList,
         },
@@ -375,9 +369,9 @@ fn append_short_display<G>(
 
 #[derive(Clone, Copy)]
 enum DiscReplacementLayout {
-    /// Paragraph tracing projects TeX's mutable linked list into a detached
-    /// slice. Its immutable side-list length identifies the projected nodes
-    /// hidden after a discretionary.
+    /// Test control for a detached list without physically linked
+    /// replacement nodes; its side-list length describes the projected span.
+    #[cfg(test)]
     DetachedProjection,
     /// A frozen engine list carries TeX's actual `replace_count` explicitly.
     FrozenList,
@@ -452,6 +446,7 @@ fn append_short_display_cursor<G>(
                 physical_replace_count,
                 ..
             } => {
+                let _ = replace;
                 append_short_display(
                     stores,
                     pre,
@@ -467,11 +462,10 @@ fn append_short_display_cursor<G>(
                     out,
                 );
                 // TeX82 §174 advances past the replacement nodes linked after
-                // the discretionary. Frozen engine lists carry that count
-                // explicitly; paragraph tracing instead supplies a detached
-                // projection whose hidden suffix is described by the
-                // immutable replacement side list.
+                // the discretionary. The test-only detached projection uses
+                // its side list to model a list without linked replacements.
                 let replacement_count = match disc_layout {
+                    #[cfg(test)]
                     DiscReplacementLayout::DetachedProjection => stores
                         .page_node_list(replace)
                         .expect("discretionary replacement belongs to the live page arena")
