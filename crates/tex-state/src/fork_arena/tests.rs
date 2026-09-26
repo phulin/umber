@@ -3186,14 +3186,22 @@ fn interleaved_constructed_runs_resume_their_own_tail() {
     let mut arena = ForkArena::<u32, PageMaterialLane>::new();
     let mut first = ArenaListId::empty();
     let mut second = ArenaListId::empty();
-    arena
-        .append_constructed_list_run(&mut pool, &mut first, &[11], None, None)
-        .expect("first");
-    arena
-        .append_constructed_list_run(&mut pool, &mut second, &[22], None, None)
-        .expect("second");
-    arena
-        .append_constructed_list_run(&mut pool, &mut first, &[33], None, None)
+    let first_run = arena
+        .reserve_constructed_list_run(&mut pool, &mut first, 1)
+        .expect("reserve first");
+    assert_eq!(first_run.position_of(0), Some(0));
+    first_run.publish(&[11], None, None).expect("first");
+    let second_run = arena
+        .reserve_constructed_list_run(&mut pool, &mut second, 1)
+        .expect("reserve second");
+    assert_eq!(second_run.position_of(0), Some(1));
+    second_run.publish(&[22], None, None).expect("second");
+    let resumed_run = arena
+        .reserve_constructed_list_run(&mut pool, &mut first, 1)
+        .expect("reserve resumed first");
+    assert_eq!(resumed_run.position_of(0), Some(2));
+    resumed_run
+        .publish(&[33], None, None)
         .expect("resume first");
     arena
         .finish_constructed_list(&mut pool, first)
@@ -3218,5 +3226,36 @@ fn interleaved_constructed_runs_resume_their_own_tail() {
             .copied()
             .collect::<Vec<_>>(),
         [22]
+    );
+}
+
+#[test]
+fn constructed_run_reserves_actual_positions_across_chunks() {
+    use super::{ArenaListId, PageMaterialLane};
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(64);
+    let mut arena = ForkArena::<u32, PageMaterialLane>::new();
+    let mut root = ArenaListId::empty();
+    let capacity = pool.payload.chunk_capacity();
+    let values: Vec<u32> = (0..(2 * capacity + 1) as u32).collect();
+    let reservation = arena
+        .reserve_constructed_list_run(&mut pool, &mut root, values.len())
+        .expect("reserve across chunks");
+    assert_eq!(reservation.position_of(0), Some(0));
+    assert_eq!(reservation.position_of(capacity - 1), Some(0));
+    assert_eq!(reservation.position_of(capacity), Some(1));
+    assert_eq!(reservation.position_of(2 * capacity), Some(2));
+    assert_eq!(reservation.position_of(values.len()), None);
+    reservation.publish(&values, None, None).expect("publish");
+    arena
+        .finish_constructed_list(&mut pool, root)
+        .expect("completed list");
+    assert_eq!(
+        arena
+            .list(&pool, root)
+            .expect("reserved list")
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        values
     );
 }

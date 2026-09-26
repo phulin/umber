@@ -1895,16 +1895,8 @@ pub(crate) fn copy_region_root_into<Source, Destination>(
     }
     let operation = destination.pub_arena.operation_mark(&pool.chunks);
     let annex_operation = destination.annex_arena.operation_mark(&pool.annex_chunks);
-    let copied = copy::CopyContext::new(
-        &mut pool.chunks,
-        &mut pool.annex_chunks,
-        &source.pub_arena,
-        &source.annex_arena,
-        &mut destination.pub_arena,
-        &mut destination.annex_arena,
-        semantic_identity_enabled,
-    )
-    .copy_list(root.list);
+    let copied = copy::CopyContext::new(pool, source, destination, semantic_identity_enabled)
+        .copy_list(root.list);
     let (list, count) = match copied {
         Ok(copied) => copied,
         Err(error) => {

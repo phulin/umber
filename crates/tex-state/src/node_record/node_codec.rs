@@ -232,10 +232,15 @@ impl NodeRecord<PageMaterialLane> {
             if matches!(self.kind(), Some(NodeKind::HList | NodeKind::VList)) {
                 let payload = annex
                     .resolve_fixed_array::<BoxPayload, BOX_PAYLOAD_WORDS>(key_from_record(self))?;
-                let key: [u32; 7] = payload[36..].try_into().ok()?;
-                if key.iter().any(|word| *word != 0) {
+                if let BoxConstructionDescriptor::Original {
+                    migrations: Some(key),
+                    ..
+                } = decode_box_construction_descriptor(&payload)?
+                {
                     visit(
-                        annex.key_block_range(AnnexKey::<BoxMigrationSegments>::from_words(key))?,
+                        annex.key_block_range(AnnexKey::<BoxMigrationSegments>::from_words(
+                            key.words(),
+                        ))?,
                     );
                 }
             }

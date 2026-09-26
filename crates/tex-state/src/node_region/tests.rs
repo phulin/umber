@@ -1165,6 +1165,52 @@ fn copied_parent_chunks_keep_order_and_independent_children_after_source_retirem
 }
 
 #[test]
+fn copied_sibling_boxes_stamp_before_multiple_annex_blocks_seal() {
+    let mut pool = NodePool::with_chunk_bytes(512);
+    let mut source = pool.start_region::<DurableRole>().expect("source");
+    let leaf = source
+        .publish_owned(&mut pool, [Node::Penalty(73)])
+        .expect("shared source child");
+    // Four hundred 44-word box annex records cross a 64 KiB physical block.
+    // Earlier records are sealed before later parent chunks are published.
+    let parent = source
+        .publish_owned(&mut pool, (0..400).map(|_| boxed(leaf.list)))
+        .expect("source siblings");
+    let mut destination = pool.start_region::<PageRole>().expect("destination");
+    let copied = copy_region_root_into(&mut pool, &source, parent, &mut destination, false)
+        .expect("copy siblings");
+    let records = destination
+        .pub_arena
+        .list(&pool.chunks, copied.list.coordinate())
+        .expect("copied records");
+    let annex =
+        crate::node_record::NodeAnnexView::new(&pool.annex_chunks, &destination.annex_arena);
+    let children = records
+        .iter()
+        .map(|record| {
+            assert!(
+                record.copied_box_body_stamp(annex).is_some(),
+                "every copied box carries its own authenticated child envelope"
+            );
+            let Node::HList(box_node) = record.decode_owned(annex).expect("copied box") else {
+                panic!("copied box shape");
+            };
+            box_node.children
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(children.len(), 400);
+    pool.retire_region(source)
+        .map_err(|(error, _)| error)
+        .expect("retire source");
+    for child in children {
+        assert_eq!(
+            resident_nodes(&destination, &pool, child),
+            [Node::Penalty(73)]
+        );
+    }
+}
+
+#[test]
 fn long_flat_copy_uses_bounded_rust_stack() {
     std::thread::Builder::new()
         .stack_size(128 * 1024)

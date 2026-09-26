@@ -1,8 +1,26 @@
 //! Chunk-batched explicit copies between independently owned node regions.
 
 use super::*;
-use crate::node_record::NodeAnnexWriter;
+use crate::node_record::{CopiedBoxBodyStamp, NodeAnnexWriter};
 use smallvec::SmallVec;
+
+struct CopiedBoxEnvelope {
+    index: usize,
+    child_node_start: u32,
+    child_node_end: u32,
+    child_annex_start: u32,
+    child_annex_end: u32,
+}
+
+/// Publishes one bounded group of fixed bodies while the node reservation
+/// owns the disjoint node arena. The callback fills copied-box metadata before
+/// the selected annex logical chunk can become sealed.
+struct FixedBatchPublisher<'a> {
+    pool: &'a mut ChunkPool<u32>,
+    arena: &'a mut ForkArena<u32, NodeAnnexLane>,
+    words: &'a mut Vec<u32>,
+    region: NodeRegionId,
+}
 
 pub(super) struct CopyContext<'a> {
     pool: &'a mut ChunkPool<RegionNode>,
@@ -11,23 +29,28 @@ pub(super) struct CopyContext<'a> {
     source_annex: &'a ForkArena<u32, NodeAnnexLane>,
     destination: &'a mut ForkArena<RegionNode, PageMaterialLane>,
     destination_annex: &'a mut ForkArena<u32, NodeAnnexLane>,
+    destination_region: NodeRegionId,
     stack: Vec<PageListId>,
     fixed_words: Vec<u32>,
     semantic_identity_enabled: bool,
 }
 
-impl<'a> CopyContext<'a> {
-    fn publish_fixed_batch(
+impl FixedBatchPublisher<'_> {
+    fn publish(
         &mut self,
         records: &mut [RegionNode],
         pending: &mut SmallVec<[(usize, u16); 16]>,
         batch_start: usize,
         paired_floor: &mut usize,
+        reservation: Option<
+            &crate::fork_arena::ConstructedRunReservation<'_, RegionNode, PageMaterialLane>,
+        >,
+        box_envelopes: &[CopiedBoxEnvelope],
     ) -> Result<(), ForkArenaError> {
         if pending.is_empty() {
             return Ok(());
         }
-        let mut writer = NodeAnnexWriter::new(self.annex_pool, self.destination_annex);
+        let mut writer = NodeAnnexWriter::new(self.pool, self.arena);
         let mut offset = batch_start;
         for group in pending.chunks(16) {
             let lengths = group
@@ -35,7 +58,33 @@ impl<'a> CopyContext<'a> {
                 .map(|(_, len)| *len)
                 .collect::<SmallVec<[u16; 16]>>();
             let end = offset + lengths.iter().map(|&len| usize::from(len)).sum::<usize>();
-            let keys = writer.append_fixed_flat(&mut self.fixed_words[offset..end], &lengths)?;
+            let keys = writer.append_fixed_flat(
+                &mut self.words[offset..end],
+                &lengths,
+                |item, annex_position, body| {
+                    let index = group[item].0;
+                    let Ok(box_index) =
+                        box_envelopes.binary_search_by_key(&index, |envelope| envelope.index)
+                    else {
+                        return Ok(());
+                    };
+                    let envelope = &box_envelopes[box_index];
+                    let node_position = reservation
+                        .and_then(|reservation| reservation.position_of(index))
+                        .ok_or(ForkArenaError::InvalidRange)?;
+                    let stamp = CopiedBoxBodyStamp::new(
+                        self.region,
+                        envelope.child_node_start as usize..envelope.child_node_end as usize,
+                        envelope.child_annex_start as usize..envelope.child_annex_end as usize,
+                        node_position,
+                        annex_position,
+                    )
+                    .ok_or(ForkArenaError::InvalidRange)?;
+                    stamp
+                        .write_flat_body(body)
+                        .ok_or(ForkArenaError::InvalidRange)
+                },
+            )?;
             if keys.len() != group.len() {
                 return Err(ForkArenaError::InvalidRange);
             }
@@ -48,26 +97,38 @@ impl<'a> CopyContext<'a> {
         }
         *paired_floor = (*paired_floor).min(writer.dependency_floor().unwrap_or(usize::MAX));
         pending.clear();
-        self.fixed_words.truncate(batch_start);
+        self.words.truncate(batch_start);
         Ok(())
     }
+}
 
-    pub(super) fn new(
-        pool: &'a mut ChunkPool<RegionNode>,
-        annex_pool: &'a mut ChunkPool<u32>,
-        source: &'a ForkArena<RegionNode, PageMaterialLane>,
-        source_annex: &'a ForkArena<u32, NodeAnnexLane>,
-        destination: &'a mut ForkArena<RegionNode, PageMaterialLane>,
-        destination_annex: &'a mut ForkArena<u32, NodeAnnexLane>,
+impl<'a> CopyContext<'a> {
+    fn paired_boundary(&mut self) -> Result<(u32, u32), ForkArenaError> {
+        let node = self.destination.begin_batch(self.pool)?.payload_start();
+        let annex = self
+            .destination_annex
+            .begin_batch(self.annex_pool)?
+            .payload_start();
+        Ok((
+            u32::try_from(node).map_err(|_| ForkArenaError::CapacityOverflow)?,
+            u32::try_from(annex).map_err(|_| ForkArenaError::CapacityOverflow)?,
+        ))
+    }
+
+    pub(super) fn new<Source, Destination>(
+        pool: &'a mut NodePool,
+        source: &'a NodeRegion<Source>,
+        destination: &'a mut NodeRegion<Destination>,
         semantic_identity_enabled: bool,
     ) -> Self {
         Self {
-            pool,
-            annex_pool,
-            source,
-            source_annex,
-            destination,
-            destination_annex,
+            pool: &mut pool.chunks,
+            annex_pool: &mut pool.annex_chunks,
+            source: &source.pub_arena,
+            source_annex: &source.annex_arena,
+            destination_region: destination.id,
+            destination: &mut destination.pub_arena,
+            destination_annex: &mut destination.annex_arena,
             stack: Vec::new(),
             fixed_words: Vec::new(),
             semantic_identity_enabled,
@@ -123,6 +184,7 @@ impl<'a> CopyContext<'a> {
             let mut dependency_floor = usize::MAX;
             let mut paired_floor = usize::MAX;
             let mut defer_fixed_publication = false;
+            let mut box_envelopes = SmallVec::<[CopiedBoxEnvelope; 4]>::new();
             for index in 0..records.len() {
                 let record = &mut records[index];
                 if record.is_inline_leaf() {
@@ -146,7 +208,11 @@ impl<'a> CopyContext<'a> {
                     ) {
                         self.fixed_words[body_start + 28..body_start + body_len].fill(0);
                     }
-                    let mut copied_children = [PageListId::empty(); 4];
+                    let is_box = matches!(
+                        record.kind(),
+                        Some(crate::node::NodeKind::HList | crate::node::NodeKind::VList)
+                    );
+                    let mut source_children = [PageListId::empty(); 4];
                     let mut has_nonempty_child = false;
                     for (child_index, &offset) in fields.offsets().iter().enumerate() {
                         let start = body_start + usize::from(offset);
@@ -156,20 +222,40 @@ impl<'a> CopyContext<'a> {
                                 .map_err(|_| ForkArenaError::InvalidRange)?,
                         )
                         .ok_or(ForkArenaError::InvalidRange)?;
+                        has_nonempty_child |= !source_child.is_empty();
+                        source_children[child_index] = source_child;
+                    }
+                    let child_start = if is_box && has_nonempty_child {
+                        defer_fixed_publication = true;
+                        Some(self.paired_boundary()?)
+                    } else {
+                        None
+                    };
+                    let mut copied_children = [PageListId::empty(); 4];
+                    for (child_index, &source_child) in source_children
+                        .iter()
+                        .take(fields.offsets().len())
+                        .enumerate()
+                    {
                         let (copied, child_count) = if source_child.is_empty() {
                             (PageListId::empty(), 0)
                         } else {
-                            has_nonempty_child = true;
                             self.copy_list(source_child)?
                         };
                         copied_children[child_index] = copied;
                         count = count.saturating_add(child_count);
                     }
+                    if let Some((child_node_start, child_annex_start)) = child_start {
+                        let (child_node_end, child_annex_end) = self.paired_boundary()?;
+                        box_envelopes.push(CopiedBoxEnvelope {
+                            index,
+                            child_node_start,
+                            child_node_end,
+                            child_annex_start,
+                            child_annex_end,
+                        });
+                    }
                     if has_nonempty_child {
-                        defer_fixed_publication |= matches!(
-                            record.kind(),
-                            Some(crate::node::NodeKind::HList | crate::node::NodeKind::VList)
-                        );
                         let (child_floor, child_annex_floor) = self
                             .destination
                             .dependency_floors_for_region_lists(self.pool, |visit| {
@@ -187,11 +273,19 @@ impl<'a> CopyContext<'a> {
                     }
                     pending.push((index, (body_len + 1) as u16));
                     if !defer_fixed_publication && pending.len() == 16 {
-                        self.publish_fixed_batch(
+                        FixedBatchPublisher {
+                            pool: self.annex_pool,
+                            arena: self.destination_annex,
+                            words: &mut self.fixed_words,
+                            region: self.destination_region,
+                        }
+                        .publish(
                             &mut records,
                             &mut pending,
                             batch_start,
                             &mut paired_floor,
+                            None,
+                            &box_envelopes,
                         )?;
                     }
                     continue;
@@ -235,16 +329,32 @@ impl<'a> CopyContext<'a> {
                 dependency_floor = dependency_floor.min(child_floor.unwrap_or(usize::MAX));
                 paired_floor = paired_floor.min(child_annex_floor.unwrap_or(usize::MAX));
             }
-            self.publish_fixed_batch(&mut records, &mut pending, batch_start, &mut paired_floor)?;
+            let reservation = self.destination.reserve_constructed_list_run(
+                self.pool,
+                &mut root,
+                records.len(),
+            )?;
+            FixedBatchPublisher {
+                pool: self.annex_pool,
+                arena: self.destination_annex,
+                words: &mut self.fixed_words,
+                region: self.destination_region,
+            }
+            .publish(
+                &mut records,
+                &mut pending,
+                batch_start,
+                &mut paired_floor,
+                Some(&reservation),
+                &box_envelopes,
+            )?;
             if let Some(identity) = &mut computed_identity {
                 let annex = NodeAnnexView::new(self.annex_pool, self.destination_annex);
                 for record in &records {
                     identity.push_back(record.semantic_identity(annex));
                 }
             }
-            self.destination.append_constructed_list_run(
-                self.pool,
-                &mut root,
+            reservation.publish(
                 &records,
                 (dependency_floor != usize::MAX).then_some(dependency_floor),
                 (paired_floor != usize::MAX).then_some(paired_floor),

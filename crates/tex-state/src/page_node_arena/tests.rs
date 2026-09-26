@@ -1406,6 +1406,39 @@ fn durable_copy_is_recursive_and_counts_only_the_selected_closure() {
 }
 
 #[test]
+fn copied_box_wrapper_selects_only_its_stamped_child_blocks() {
+    page_arena!(arena, pool, region, 64);
+    let leaf = arena.publish_owned(penalties(&[43])).expect("page leaf");
+    let original = arena.publish_owned([boxed(leaf)]).expect("original box");
+    let durable_source = arena
+        .copy_page_root_to_durable(original)
+        .expect("durable source");
+    let copied = arena
+        .copy_durable_to_page(&durable_source)
+        .expect("copied box");
+    let metadata = arena
+        .box_migration_metadata(copied)
+        .expect("copied child envelope");
+    assert!(metadata.wrapper_rebuild);
+    assert!(arena.can_finish_interleaved_page_box(copied, &metadata, false));
+    let (moved, loan) = arena
+        .finish_interleaved_page_box(copied, metadata, false)
+        .expect("selected copied child transfers");
+    assert!(
+        arena.contains(copied),
+        "shared wrapper chunk stays page-owned"
+    );
+    assert!(arena.contains(original));
+    let mut moved = Some(moved);
+    arena
+        .rollback_interleaved_page_box(&mut moved, loan)
+        .expect("rollback restores copied body");
+    assert!(moved.is_none());
+    assert!(arena.contains(copied));
+    arena.retire_durable(durable_source).expect("retire source");
+}
+
+#[test]
 fn durable_lifetime_copies_preserve_enabled_semantic_identity() {
     page_arena!(arena, pool, region, 64);
     arena.enable_semantic_identity();

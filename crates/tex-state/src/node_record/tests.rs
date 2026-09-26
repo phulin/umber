@@ -83,7 +83,7 @@ fn fixed_batch_keeps_independent_keys_across_chunk_rotation_and_rollback() {
         .collect();
     let keys = annex
         .writer()
-        .append_fixed_flat(&mut words, &[4; 5])
+        .append_fixed_flat(&mut words, &[4; 5], |_, _, _| Ok(()))
         .expect("batch fixed publication");
     assert_eq!(keys.len(), bodies.len());
     for (key, body) in keys.iter().zip(bodies) {

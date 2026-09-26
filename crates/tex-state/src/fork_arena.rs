@@ -495,6 +495,60 @@ pub(crate) struct ConstructedRunValue {
     pub(crate) paired_dependency_floor: Option<usize>,
 }
 
+/// Actual destination blocks reserved for one unpublished constructed run.
+/// The caller must finish or roll back its paired operation before any other
+/// node publication; the private root is not exposed during that interval.
+pub(crate) struct ConstructedRunReservation<'a, T, Lane> {
+    arena: &'a mut ForkArena<T, Lane>,
+    pool: &'a mut ChunkPool<T>,
+    root: &'a mut ArenaListId<Lane>,
+    plan: ConstructedRunPlan,
+}
+
+struct ConstructedRunPlan {
+    runs: Vec<ConstructedRunSegment>,
+    len: usize,
+}
+
+struct ConstructedRunSegment {
+    key: LogicalChunkId,
+    start: u32,
+    count: usize,
+    position: usize,
+}
+
+impl<T, Lane> ConstructedRunReservation<'_, T, Lane> {
+    pub(crate) fn position_of(&self, index: usize) -> Option<usize> {
+        let mut first = 0;
+        for run in &self.plan.runs {
+            if index < first + run.count {
+                return Some(run.position);
+            }
+            first += run.count;
+        }
+        None
+    }
+
+    pub(crate) fn publish(
+        self,
+        values: &[T],
+        dependency_floor: Option<usize>,
+        paired_dependency_floor: Option<usize>,
+    ) -> Result<(), ForkArenaError>
+    where
+        T: Copy,
+    {
+        self.arena.publish_reserved_constructed_list_run(
+            self.pool,
+            self.root,
+            values,
+            dependency_floor,
+            paired_dependency_floor,
+            self.plan,
+        )
+    }
+}
+
 impl<T> ChunkStorage<T> {
     fn reserve_optional_run(
         &mut self,
@@ -3310,19 +3364,27 @@ impl<T, Lane> ForkArena<T, Lane> {
         let key = match reusable {
             Some(key) => key,
             None => {
-                self.bind_pool(pool)?;
                 let previous = (!root.is_empty()).then_some((root.tail.raw, root.tail.offset));
-                let key = pool
-                    .payload
-                    .allocate_list_block(self.owner, self.lineage, previous)?;
-                self.current_chunks_mut().payload.push(key);
-                self.counters.direct_blocks_allocated =
-                    self.counters.direct_blocks_allocated.saturating_add(1);
-                let position = self.live_payload_len() - 1;
-                self.index_chunk(pool, key, position);
-                key
+                self.allocate_payload_successor(pool, previous)?
             }
         };
+        Ok(key)
+    }
+
+    fn allocate_payload_successor(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        previous: Option<(LogicalChunkId, u32)>,
+    ) -> Result<LogicalChunkId, ForkArenaError> {
+        self.bind_pool(pool)?;
+        let key = pool
+            .payload
+            .allocate_list_block(self.owner, self.lineage, previous)?;
+        self.current_chunks_mut().payload.push(key);
+        self.counters.direct_blocks_allocated =
+            self.counters.direct_blocks_allocated.saturating_add(1);
+        let position = self.live_payload_len() - 1;
+        self.index_chunk(pool, key, position);
         Ok(key)
     }
 
@@ -3982,8 +4044,9 @@ impl<T, Lane> ForkArena<T, Lane> {
     pub(crate) fn append_unsealed_fixed_batch_copy_parts(
         &mut self,
         pool: &mut ChunkPool<T>,
-        words: &[T],
+        words: &mut [T],
         lengths: &[u16],
+        mut prepare: impl FnMut(usize, usize, &mut [T]) -> Result<(), ForkArenaError>,
         mut published: impl FnMut(ArenaListId<Lane>),
     ) -> Result<(), ForkArenaError>
     where
@@ -4031,6 +4094,19 @@ impl<T, Lane> ForkArena<T, Lane> {
                     .unused_sealed_bytes
                     .saturating_add((unused * pool.payload.resident_slot_bytes()) as u64);
                 continue;
+            }
+            let position = self
+                .resolved_position(pool, key)
+                .ok_or(ForkArenaError::InvalidRange)?;
+            let mut record_word = word;
+            for (index, &len) in lengths[item..next_item].iter().enumerate() {
+                let len = usize::from(len);
+                prepare(
+                    item + index,
+                    position,
+                    &mut words[record_word..record_word + len],
+                )?;
+                record_word += len;
             }
             let (start, became_full) = {
                 let mut run =
@@ -4596,20 +4672,16 @@ impl<T, Lane> ForkArena<T, Lane> {
         Ok(count)
     }
 
-    /// Appends an already relocated compact run to an unpublished copy root.
-    /// Recursive child construction may allocate between runs of this list.
-    /// The caller owns the paired rollback mark and supplies validated floors.
-    pub(crate) fn append_constructed_list_run(
-        &mut self,
-        pool: &mut ChunkPool<T>,
-        root: &mut ArenaListId<Lane>,
-        values: &[T],
-        dependency_floor: Option<usize>,
-        paired_dependency_floor: Option<usize>,
-    ) -> Result<(), ForkArenaError>
-    where
-        T: Copy,
-    {
+    /// Reserves the actual node chunks of an unpublished relocated run before
+    /// its annex bodies are published. Annex construction may use the returned
+    /// positions, but no node publication may intervene before consumption.
+    /// The caller owns the paired rollback mark for cancellation.
+    pub(crate) fn reserve_constructed_list_run<'a>(
+        &'a mut self,
+        pool: &'a mut ChunkPool<T>,
+        root: &'a mut ArenaListId<Lane>,
+        len: usize,
+    ) -> Result<ConstructedRunReservation<'a, T, Lane>, ForkArenaError> {
         self.bind_pool(pool)?;
         if self.active_builder {
             return Err(ForkArenaError::ActiveBuilder);
@@ -4617,18 +4689,74 @@ impl<T, Lane> ForkArena<T, Lane> {
         if self.pending_batch.is_some() {
             return Err(ForkArenaError::ActiveBatch);
         }
-        let mut remaining = values;
-        while !remaining.is_empty() {
-            if remaining.len() > (u32::MAX - root.len) as usize {
+        if len > (u32::MAX - root.len) as usize {
+            return Err(ForkArenaError::CapacityOverflow);
+        }
+        let mut runs: Vec<ConstructedRunSegment> = Vec::new();
+        let mut remaining = len;
+        while remaining != 0 {
+            let key = if let Some(previous) = runs.last() {
+                self.allocate_payload_successor(
+                    pool,
+                    Some((previous.key, previous.start + previous.count as u32)),
+                )?
+            } else {
+                self.payload_reservation_target(pool, root)?
+            };
+            let start = pool.payload.used(key, self.owner)?;
+            let count = remaining.min(pool.payload.chunk_capacity() - start as usize);
+            if count == 0 {
                 return Err(ForkArenaError::CapacityOverflow);
             }
-            let key = self.payload_reservation_target(pool, root)?;
+            let position = self
+                .resolved_position(pool, key)
+                .ok_or(ForkArenaError::InvalidRange)?;
+            runs.push(ConstructedRunSegment {
+                key,
+                start,
+                count,
+                position,
+            });
+            remaining -= count;
+        }
+        Ok(ConstructedRunReservation {
+            arena: self,
+            pool,
+            root,
+            plan: ConstructedRunPlan { runs, len },
+        })
+    }
+
+    /// Consumes the exclusive node reservation after annex scratch has been
+    /// stamped and published. Only initialized runs become root-visible.
+    fn publish_reserved_constructed_list_run(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        root: &mut ArenaListId<Lane>,
+        values: &[T],
+        dependency_floor: Option<usize>,
+        paired_dependency_floor: Option<usize>,
+        plan: ConstructedRunPlan,
+    ) -> Result<(), ForkArenaError>
+    where
+        T: Copy,
+    {
+        if values.len() != plan.len {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        let mut first = 0;
+        for segment in plan.runs {
             let (start, count, became_full) = {
-                let mut run =
-                    pool.payload
-                        .admit_untracked_append_run(key, self.owner, self.lineage)?;
+                let mut run = pool.payload.admit_untracked_append_run(
+                    segment.key,
+                    self.owner,
+                    self.lineage,
+                )?;
                 let start = run.offset;
-                let count = run.extend_copy_parts(None, remaining);
+                if start != segment.start {
+                    return Err(ForkArenaError::InvalidRange);
+                }
+                let count = run.extend_copy_parts(None, &values[first..first + segment.count]);
                 run.meta.dependency_floor = run
                     .meta
                     .dependency_floor
@@ -4643,15 +4771,18 @@ impl<T, Lane> ForkArena<T, Lane> {
             if count == 0 {
                 return Err(ForkArenaError::CapacityOverflow);
             }
+            if count != segment.count {
+                return Err(ForkArenaError::InvalidRange);
+            }
             self.complete_admitted_payload_run(
                 root,
-                key,
+                segment.key,
                 start,
                 count as u32,
                 became_full,
                 pool.payload.logical_space(),
             );
-            remaining = &remaining[count..];
+            first += count;
         }
         // A recursive child may allocate before the next parent run. Leaving
         // this non-current tail unsealed would escape seal_boundary, which

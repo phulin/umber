@@ -668,6 +668,7 @@ impl<'a> NodeAnnexWriter<'a> {
         &mut self,
         words: &mut [u32],
         lengths: &[u16],
+        mut prepare_body: impl FnMut(usize, usize, &mut [u32]) -> Result<(), ForkArenaError>,
     ) -> Result<SmallVec<[AnnexKey<()>; 16]>, ForkArenaError> {
         let mut serials = SmallVec::<[u32; 16]>::new();
         let mut offset = 0usize;
@@ -688,11 +689,16 @@ impl<'a> NodeAnnexWriter<'a> {
         }
         let mut keys = SmallVec::<[AnnexKey<()>; 16]>::new();
         let mut first_list = None;
-        self.arena
-            .append_unsealed_fixed_batch_copy_parts(self.pool, words, lengths, |list| {
+        self.arena.append_unsealed_fixed_batch_copy_parts(
+            self.pool,
+            words,
+            lengths,
+            |index, position, fixed| prepare_body(index, position, &mut fixed[1..]),
+            |list| {
                 first_list.get_or_insert(list);
                 keys.push(AnnexKey::from_list(list, serials[keys.len()]));
-            })?;
+            },
+        )?;
         if let Some(first_list) = first_list {
             let position = self
                 .arena

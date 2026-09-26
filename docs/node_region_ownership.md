@@ -104,6 +104,22 @@ closure, remaining fixed bodies in that source node chunk wait until all child
 copies finish. This lets the caller stamp that box with its exact child
 envelope and final wrapper position before a later child can seal its annex.
 Boxes with empty children require no transferred body or stamp.
+The copy walk seals paired logical boundaries around a nonempty box's child
+copies. After every child in a source node chunk is complete, the node arena
+reserves the exact parent append runs and lends their owner-relative positions
+while the parent root remains private. The reservation retains exclusive
+mutable borrows of the node arena, node pool, and private root until it is
+consumed; no other node publication can intervene. Annex publication then selects each
+record's actual destination logical chunk, writes a typed copied-body stamp
+into the flat words before their block copy, and publishes an independent
+serial and key. The reserved node run finally accepts those keyed records and
+seals the parent tail. This order never mutates a sealed annex block, including
+when hundreds of copied boxes cross annex chunk boundaries. The caller's
+paired operation marks cancel node reservations, annex words, and stamps
+together on any failure before the completed root becomes observable.
+The stamp binds the actual wrapper positions to the exact child interval, so
+sibling wrappers may share the parent chunk. Unique consumption moves only
+that child interval and reconstructs one wrapper.
 A record remains inside one logical block; a segment rotates before the next
 record when space is insufficient.
 Each resulting key names only that record's exact word range, and its serial
