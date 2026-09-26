@@ -69,6 +69,24 @@ it is neither a retained traversal cache nor a second ownership topology. During
 while child coordinates are rewritten, avoiding a second decode of the newly
 published record; the same destination-list validation remains authoritative.
 
+## Copy construction
+
+Explicit copies keep source and destination regions independent. The copy
+walk admits the selected source chunk chain once into temporary coordinate
+scratch. It then stages one chunk of compact records at a time, copies each
+record's children, relocates its annex, and appends the finished record run to
+the destination. Child copies may allocate between consecutive parent runs;
+continuing a parent list must therefore use its own tail key, never another
+list's tail merely because the offsets happen to match.
+
+The destination root remains private to copy construction until its complete
+child closure has been rewritten and its tail sealed. Each run settles child
+and paired-annex dependency floors once. Only compact chunk scratch and child
+coordinates are temporary: no whole-list owned-node vector, source alias, or
+retained relocation cache is created. Failure restores the paired destination
+operation marks. Semantic identities are preserved from the source when
+available and otherwise accumulated from the relocated records.
+
 ## Production cutover
 
 As of 2026-08-28, ordinary execution uses these owners rather than retaining

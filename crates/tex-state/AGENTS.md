@@ -301,6 +301,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   32-byte `NodeRecord` and region-owned typed `u32` annex settle together;
   there is no descriptor lane, pool-global annex arena, or resident owned-node
   fallback.
+- `src/node_region/copy.rs`: Explicit recursive closure copies, one source
+  chunk admission and one destination run settlement per copied chunk, with
+  temporary compact record scratch and independently relocated children.
 - `src/page_node_arena.rs` and `src/page_node_arena/tests.rs`: Page-semantic
   identity facade, checked destination construction, and focused warmed
   1/4,096-node allocation/copy/chunk-work proof over the live page-material

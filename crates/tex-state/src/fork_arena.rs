@@ -3182,7 +3182,7 @@ impl<T, Lane> ForkArena<T, Lane> {
                         .used(*key, self.owner)
                         .ok()
                         .is_some_and(|used| {
-                            (root.is_empty() || used == root.tail.offset)
+                            (root.is_empty() || (*key == root.tail.raw && used == root.tail.offset))
                                 && used as usize != pool.payload.chunk_capacity()
                         })
             });
@@ -4395,34 +4395,73 @@ impl<T, Lane> ForkArena<T, Lane> {
         Ok(count)
     }
 
-    pub(crate) fn append_constructed_active_list_value(
+    /// Appends an already relocated compact run to an unpublished copy root.
+    /// Recursive child construction may allocate between runs of this list.
+    /// The caller owns the paired rollback mark and supplies validated floors.
+    pub(crate) fn append_constructed_list_run(
         &mut self,
         pool: &mut ChunkPool<T>,
-        builder: &mut ActiveListBuilder<T, Lane>,
-        value: T,
+        root: &mut ArenaListId<Lane>,
+        values: &[T],
         dependency_floor: Option<usize>,
         paired_dependency_floor: Option<usize>,
-    ) -> Result<(), ForkArenaError> {
-        let mut root = self.active_list_open_mut(builder)?.root;
-        self.append_payload_value_with_dependency(
-            pool,
-            &mut root,
-            value,
-            None,
-            dependency_floor,
-            true,
-        )?;
-        if let Some(paired_dependency_floor) = paired_dependency_floor {
-            let meta = pool.payload.validate_exclusive_lineage_mut(
-                root.tail.raw,
-                self.owner,
-                self.lineage,
-            )?;
-            meta.paired_dependency_floor =
-                meta.paired_dependency_floor.min(paired_dependency_floor);
+    ) -> Result<(), ForkArenaError>
+    where
+        T: Copy,
+    {
+        self.bind_pool(pool)?;
+        if self.active_builder {
+            return Err(ForkArenaError::ActiveBuilder);
         }
-        self.active_list_open_mut(builder)?.root = root;
+        if self.pending_batch.is_some() {
+            return Err(ForkArenaError::ActiveBatch);
+        }
+        let mut remaining = values;
+        while !remaining.is_empty() {
+            if remaining.len() > (u32::MAX - root.len) as usize {
+                return Err(ForkArenaError::CapacityOverflow);
+            }
+            let key = self.payload_reservation_target(pool, root)?;
+            let (start, count, became_full) = {
+                let mut run =
+                    pool.payload
+                        .admit_untracked_append_run(key, self.owner, self.lineage)?;
+                let start = run.offset;
+                let count = run.extend_copy_parts(None, remaining);
+                run.meta.dependency_floor = run
+                    .meta
+                    .dependency_floor
+                    .min(dependency_floor.unwrap_or(usize::MAX));
+                run.meta.paired_dependency_floor = run
+                    .meta
+                    .paired_dependency_floor
+                    .min(paired_dependency_floor.unwrap_or(usize::MAX));
+                run.meta.dependency_metadata_complete = true;
+                (start, count, run.is_full())
+            };
+            if count == 0 {
+                return Err(ForkArenaError::CapacityOverflow);
+            }
+            self.complete_admitted_payload_run(
+                root,
+                key,
+                start,
+                count as u32,
+                became_full,
+                pool.payload.logical_space(),
+            );
+            remaining = &remaining[count..];
+        }
         Ok(())
+    }
+
+    pub(crate) fn finish_constructed_list(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        root: ArenaListId<Lane>,
+    ) -> Result<(), ForkArenaError> {
+        self.seal_direct_tail(pool, root)?;
+        self.validate_list(pool, root)
     }
 
     pub(crate) fn append_validated_active_list(

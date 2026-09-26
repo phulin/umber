@@ -2720,3 +2720,45 @@ fn forward_walks_keep_stack_usage_bounded_for_long_chunk_chains() {
         .join()
         .expect("bounded-stack traversal");
 }
+
+#[test]
+fn interleaved_constructed_runs_resume_their_own_tail() {
+    use super::{ArenaListId, PageMaterialLane};
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(64);
+    let mut arena = ForkArena::<u32, PageMaterialLane>::new();
+    let mut first = ArenaListId::empty();
+    let mut second = ArenaListId::empty();
+    arena
+        .append_constructed_list_run(&mut pool, &mut first, &[11], None, None)
+        .expect("first");
+    arena
+        .append_constructed_list_run(&mut pool, &mut second, &[22], None, None)
+        .expect("second");
+    arena
+        .append_constructed_list_run(&mut pool, &mut first, &[33], None, None)
+        .expect("resume first");
+    arena
+        .finish_constructed_list(&mut pool, first)
+        .expect("first complete");
+    arena
+        .finish_constructed_list(&mut pool, second)
+        .expect("second complete");
+    assert_eq!(
+        arena
+            .list(&pool, first)
+            .expect("first list")
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        [11, 33]
+    );
+    assert_eq!(
+        arena
+            .list(&pool, second)
+            .expect("second list")
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        [22]
+    );
+}

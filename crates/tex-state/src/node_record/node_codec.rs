@@ -1,6 +1,28 @@
 use super::*;
 
 impl NodeRecord<PageMaterialLane> {
+    /// Inline leaves contain neither node-region children nor annex coordinates.
+    /// Their complete record may cross an explicit copy boundary unchanged.
+    pub(crate) fn is_inline_leaf(self) -> bool {
+        match self.kind() {
+            Some(
+                NodeKind::Char
+                | NodeKind::Kern
+                | NodeKind::MarginKern
+                | NodeKind::Penalty
+                | NodeKind::Rule
+                | NodeKind::Mark
+                | NodeKind::MathOn
+                | NodeKind::MathOff
+                | NodeKind::Direction
+                | NodeKind::MathStyle
+                | NodeKind::Nonscript,
+            ) => true,
+            Some(NodeKind::Glue) => !matches!(self.flags() & 3, 2 | 3),
+            _ => false,
+        }
+    }
+
     pub(crate) fn direct_font(self, annex: NodeAnnexView<'_>) -> Option<FontId> {
         match self.kind()? {
             NodeKind::Char => self.character().map(|(font, _, _)| font),

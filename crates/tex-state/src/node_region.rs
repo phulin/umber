@@ -10,9 +10,9 @@ use core::marker::PhantomData;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::fork_arena::{
-    ActiveListBuilder, AdmittedListChunkCursor, BatchMark, CheckpointMark, ChunkPool,
-    DetachedBatch, ForkArena, ForkArenaCounters, ForkArenaError, NodePoolStorageClass,
-    PageMaterialLane, RegionValue, SealedBoundary, SequenceSummaryWork,
+    AdmittedListChunkCursor, BatchMark, CheckpointMark, ChunkPool, DetachedBatch, ForkArena,
+    ForkArenaCounters, ForkArenaError, NodePoolStorageClass, PageMaterialLane, RegionValue,
+    SealedBoundary, SequenceSummaryWork,
 };
 
 #[cfg(feature = "profiling")]
@@ -27,6 +27,8 @@ use crate::page_node_arena::PageListId;
 #[cfg(test)]
 #[path = "node_region/tests.rs"]
 mod tests;
+
+mod copy;
 
 pub(crate) type RegionNode = NodeRecord<PageMaterialLane>;
 
@@ -1315,17 +1317,16 @@ pub(crate) fn copy_region_root_into<Source, Destination>(
     }
     let operation = destination.pub_arena.operation_mark(&pool.chunks);
     let annex_operation = destination.annex_arena.operation_mark(&pool.annex_chunks);
-    let copied = copy_list_recursive::<Source, Destination>(
+    let copied = copy::CopyContext::new(
         &mut pool.chunks,
         &mut pool.annex_chunks,
         &source.pub_arena,
         &source.annex_arena,
         &mut destination.pub_arena,
         &mut destination.annex_arena,
-        root.list,
-        &mut Vec::new(),
         semantic_identity_enabled,
-    );
+    )
+    .copy_list(root.list);
     let (list, count) = match copied {
         Ok(copied) => copied,
         Err(error) => {
@@ -1385,186 +1386,6 @@ pub(crate) fn structural_copy_fallback<Source, Destination>(
     };
     *reason_counter = reason_counter.saturating_add(1);
     Ok(copied)
-}
-
-#[allow(clippy::too_many_arguments)] // Keeps both paired stores and owners explicit during recursive copy.
-fn copy_list_recursive<Source, Destination>(
-    pool: &mut ChunkPool<RegionNode>,
-    annex_pool: &mut ChunkPool<u32>,
-    source: &ForkArena<RegionNode, PageMaterialLane>,
-    source_annex: &ForkArena<u32, NodeAnnexLane>,
-    destination: &mut ForkArena<RegionNode, PageMaterialLane>,
-    destination_annex: &mut ForkArena<u32, NodeAnnexLane>,
-    list: PageListId,
-    stack: &mut Vec<PageListId>,
-    semantic_identity_enabled: bool,
-) -> Result<(PageListId, usize), ForkArenaError> {
-    let _roles = PhantomData::<fn(Source) -> Destination>;
-    if list.is_empty() {
-        return Ok((PageListId::empty(), 0));
-    }
-    if stack.contains(&list) {
-        return Err(ForkArenaError::InvalidRegion);
-    }
-    let admitted = source.admit_owned_root(pool, list.coordinate())?;
-    let mut source_children = Vec::new();
-    if let Some(tail) = source.admitted_tail_chunk_from_root(pool, list.coordinate(), admitted)? {
-        collect_copy_children(
-            pool,
-            annex_pool,
-            source,
-            source_annex,
-            tail,
-            &mut source_children,
-        )?;
-    }
-    stack.push(list);
-    let mut copied_count = list.len();
-    for child in &mut source_children {
-        match copy_list_recursive::<Source, Destination>(
-            pool,
-            annex_pool,
-            source,
-            source_annex,
-            destination,
-            destination_annex,
-            *child,
-            stack,
-            semantic_identity_enabled,
-        ) {
-            Ok((copied, count)) => {
-                *child = copied;
-                copied_count = copied_count.saturating_add(count);
-            }
-            Err(error) => {
-                stack.pop();
-                return Err(error);
-            }
-        }
-    }
-    stack.pop();
-
-    let mut copied_children = source_children.into_iter();
-    let mut builder = ActiveListBuilder::vacant();
-    destination.open_active_list(pool, &mut builder)?;
-    if let Some(tail) = source.admitted_tail_chunk_from_root(pool, list.coordinate(), admitted)? {
-        copy_record_chunk_prefix(
-            pool,
-            annex_pool,
-            source,
-            source_annex,
-            destination,
-            destination_annex,
-            tail,
-            &mut builder,
-            &mut copied_children,
-        )?;
-    }
-    let coordinate = destination.finish_active_list(pool, &mut builder).publish();
-    if copied_children.next().is_some() {
-        return Err(ForkArenaError::InvalidRegion);
-    }
-    let identity = if semantic_identity_enabled {
-        match list.semantic_identity() {
-            Some(hash) => Some(SemanticSequenceIdentity::from_raw(hash, list.len())),
-            None => {
-                let annex = NodeAnnexView::new(annex_pool, destination_annex);
-                let mut identity = SemanticSequenceIdentity::empty();
-                destination.list(pool, coordinate)?.for_each(|record| {
-                    identity.push_back(record.semantic_identity(annex));
-                });
-                Some(identity)
-            }
-        }
-    } else {
-        None
-    };
-    Ok((PageListId::from_parts(coordinate, identity), copied_count))
-}
-
-#[allow(clippy::too_many_arguments)]
-fn collect_copy_children(
-    pool: &ChunkPool<RegionNode>,
-    annex_pool: &ChunkPool<u32>,
-    source: &ForkArena<RegionNode, PageMaterialLane>,
-    source_annex: &ForkArena<u32, NodeAnnexLane>,
-    mut cursor: AdmittedListChunkCursor<PageMaterialLane>,
-    children: &mut Vec<PageListId>,
-) -> Result<(), ForkArenaError> {
-    if let Some(previous) = source.admitted_previous_chunk(pool, &cursor)? {
-        collect_copy_children(pool, annex_pool, source, source_annex, previous, children)?;
-    }
-    let annex = NodeAnnexView::new(annex_pool, source_annex);
-    let Some((_, records)) = source.admitted_remaining_chunk(pool, &mut cursor) else {
-        return Ok(());
-    };
-    let mut valid = true;
-    records.for_each(|record| {
-        valid &= record
-            .visit_node_lists(annex, |child| children.push(child))
-            .is_some();
-    });
-    if !valid {
-        return Err(ForkArenaError::InvalidRange);
-    }
-    Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-fn copy_record_chunk_prefix(
-    pool: &mut ChunkPool<RegionNode>,
-    annex_pool: &mut ChunkPool<u32>,
-    source: &ForkArena<RegionNode, PageMaterialLane>,
-    source_annex: &ForkArena<u32, NodeAnnexLane>,
-    destination: &mut ForkArena<RegionNode, PageMaterialLane>,
-    destination_annex: &mut ForkArena<u32, NodeAnnexLane>,
-    mut cursor: AdmittedListChunkCursor<PageMaterialLane>,
-    builder: &mut ActiveListBuilder<RegionNode, PageMaterialLane>,
-    copied_children: &mut impl Iterator<Item = PageListId>,
-) -> Result<(), ForkArenaError> {
-    if let Some(previous) = source.admitted_previous_chunk(pool, &cursor)? {
-        copy_record_chunk_prefix(
-            pool,
-            annex_pool,
-            source,
-            source_annex,
-            destination,
-            destination_annex,
-            previous,
-            builder,
-            copied_children,
-        )?;
-    }
-    while let Some((_, record)) = source.admitted_next_chunk_value(pool, &mut cursor) {
-        let record = *record;
-        let mut reencoded = None;
-        let (dependency_floor, child_annex_dependency_floor) = destination
-            .dependency_floors_for_region_lists(pool, |visit| {
-                reencoded = record.reencode_between_regions(
-                    annex_pool,
-                    source_annex,
-                    destination_annex,
-                    |_| {
-                        let child = copied_children.next()?;
-                        visit(child.coordinate());
-                        Some(child)
-                    },
-                );
-                reencoded.as_ref().map(|_| ())
-            })?;
-        let (record, annex_dependency_floor) = reencoded.ok_or(ForkArenaError::InvalidRange)?;
-        destination.append_constructed_active_list_value(
-            pool,
-            builder,
-            record,
-            dependency_floor,
-            [annex_dependency_floor, child_annex_dependency_floor]
-                .into_iter()
-                .flatten()
-                .min(),
-        )?;
-    }
-    Ok(())
 }
 
 impl RegionValue<PageMaterialLane> for RegionNode {

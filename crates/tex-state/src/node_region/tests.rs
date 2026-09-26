@@ -988,3 +988,66 @@ fn shared_pool_retires_transferred_source_and_rejects_stale_id() {
     let replacement = pool.start_region::<PageRole>().expect("replacement");
     assert_ne!(replacement.id(), stale);
 }
+
+#[test]
+fn copied_parent_chunks_keep_order_and_independent_children_after_source_retirement() {
+    let mut pool = NodePool::with_chunk_bytes(64);
+    let mut source = pool.start_region::<DurableRole>().expect("source");
+    let leaf = source
+        .publish_owned(&mut pool, [Node::Penalty(73)])
+        .expect("leaf");
+    let parent = source
+        .publish_owned(&mut pool, (0..9).map(|_| boxed(leaf.list)))
+        .expect("parent");
+    let mut destination = pool.start_region::<PageRole>().expect("destination");
+    let copy =
+        copy_region_root_into(&mut pool, &source, parent, &mut destination, true).expect("copy");
+    let mut child_roots = Vec::new();
+    for node in destination.list(&pool, copy).expect("copied parent").iter() {
+        let crate::NodeView::HList(node) = node else {
+            panic!("box child");
+        };
+        assert_ne!(node.children, leaf.list);
+        assert!(
+            !child_roots.contains(&node.children),
+            "each semantic occurrence owns its copy"
+        );
+        child_roots.push(node.children);
+    }
+    assert_eq!(child_roots.len(), 9);
+    pool.retire_region(source)
+        .map_err(|(error, _)| error)
+        .expect("retire source");
+    for child in child_roots {
+        assert_eq!(
+            resident_nodes(&destination, &pool, child),
+            [Node::Penalty(73)]
+        );
+    }
+}
+
+#[test]
+fn long_flat_copy_uses_bounded_rust_stack() {
+    std::thread::Builder::new()
+        .stack_size(128 * 1024)
+        .spawn(|| {
+            let mut pool = NodePool::with_chunk_bytes(64);
+            let mut source = pool.start_region::<DurableRole>().expect("source");
+            let root = source
+                .publish_owned(&mut pool, (0..16_384).map(Node::Penalty))
+                .expect("source list");
+            let mut destination = pool.start_region::<PageRole>().expect("destination");
+            let copied = copy_region_root_into(&mut pool, &source, root, &mut destination, false)
+                .expect("copy");
+            let view = destination.list(&pool, copied).expect("copied list");
+            assert_eq!(view.len(), 16_384);
+            assert!(
+                view.iter()
+                    .enumerate()
+                    .all(|(index, node)| node == crate::NodeView::Penalty(index as i32))
+            );
+        })
+        .expect("small-stack worker")
+        .join()
+        .expect("bounded-stack copy");
+}
