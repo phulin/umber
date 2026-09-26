@@ -51,6 +51,9 @@ pub struct PdfContentRectangle {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PdfContentRule {
     pub x: Scaled,
+    /// Bottom of the rule measured down from the page or form's top edge.
+    /// pdfTeX rounds a stroke's center before converting to PDF coordinates.
+    pub top_down_y: Scaled,
     pub y: Scaled,
     pub width: Scaled,
     pub height: Scaled,

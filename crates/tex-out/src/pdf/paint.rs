@@ -212,14 +212,19 @@ impl PdfPainter {
     fn rule(&mut self, rule: &PdfContentRule) {
         // pdftex.web §691 (`pdf_set_rule`) uses strokes for rules no thicker
         // than one bp. It selects horizontal strokes first, centers the path
-        // with scaled integer arithmetic, and uses a filled rectangle only
+        // with scaled arithmetic, and uses a filled rectangle only
         // when both dimensions exceed that threshold.
         const ONE_BP: i32 = 65_782;
 
         self.end_text();
         self.save();
         if rule.height.raw() <= ONE_BP {
-            let center_y = i64::from(rule.y.raw()) + (i64::from(rule.height.raw()) + 1) / 2;
+            // WEB's `/` becomes floating division in generated C. The whole
+            // top-down coordinate is then truncated on conversion to `scaled`;
+            // rounding the positive offset first changes even-height rules.
+            let top_down_y = i64::from(rule.top_down_y.raw());
+            let center_top_down = (2 * top_down_y - (i64::from(rule.height.raw()) + 1)) / 2;
+            let center_y = i64::from(rule.y.raw()) + top_down_y - center_top_down;
             self.rule_origin(i64::from(rule.x.raw()), center_y, rule.decimal_digits);
             self.stroke_rule(
                 scaled_to_bp(rule.height, rule.decimal_digits),
@@ -227,7 +232,7 @@ impl PdfPainter {
                 0.0,
             );
         } else if rule.width.raw() <= ONE_BP {
-            let center_x = i64::from(rule.x.raw()) + (i64::from(rule.width.raw()) + 1) / 2;
+            let center_x = (2 * i64::from(rule.x.raw()) + i64::from(rule.width.raw()) + 1) / 2;
             self.rule_origin(center_x, i64::from(rule.y.raw()), rule.decimal_digits);
             self.stroke_rule(
                 scaled_to_bp(rule.width, rule.decimal_digits),

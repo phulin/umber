@@ -6,6 +6,7 @@ fn canonical_rule(width: i32, height: i32) -> PdfContentOperation {
     PdfContentOperation::Rule(PdfContentRule {
         x: Scaled::from_raw(10 * ONE_BP),
         y: Scaled::from_raw(20 * ONE_BP),
+        top_down_y: Scaled::from_raw(20 * ONE_BP),
         width: Scaled::from_raw(width),
         height: Scaled::from_raw(height),
         decimal_digits: 3,
@@ -70,6 +71,58 @@ fn canonical_rule_paint_selects_strokes_and_fills_at_one_bp() {
         assert_eq!(
             String::from_utf8(ordered_page_content(&[operation])).expect("ASCII content"),
             expected,
+        );
+    }
+}
+
+#[test]
+fn canonical_rule_stroke_center_truncates_the_complete_coordinate() {
+    // pdftex.web §691 passes the entire `y-(h+1)/2` or `x+(w+1)/2`
+    // expression to a scaled parameter. Generated C uses real division and
+    // truncates the complete result toward zero, including negative origins.
+    let rule = |x, y, top_down_y, width, height| {
+        PdfContentOperation::Rule(PdfContentRule {
+            x: Scaled::from_raw(x),
+            y: Scaled::from_raw(y),
+            top_down_y: Scaled::from_raw(top_down_y),
+            width: Scaled::from_raw(width),
+            height: Scaled::from_raw(height),
+            decimal_digits: 3,
+        })
+    };
+    let cases = [
+        // The first coordinate is the live 2606.07320 rule. One sp changes
+        // the serialized PDF ordinate from 338.357 to the reference 338.358.
+        (
+            rule(0, 22_244_644, 33_136_346, 131_564, 26_214),
+            "1 0 0 1 0 338.358 cm",
+        ),
+        (
+            rule(0, 22_244_644, -33_136_346, 131_564, 26_214),
+            "1 0 0 1 0 338.357 cm",
+        ),
+        (
+            rule(0, 22_244_644, 33_136_346, 131_564, 26_215),
+            "1 0 0 1 0 338.358 cm",
+        ),
+        (
+            rule(22_244_644, 0, 0, 26_214, 131_564),
+            "1 0 0 1 338.357 0 cm",
+        ),
+        (
+            rule(-22_299_935, 0, 0, 26_214, 131_564),
+            "1 0 0 1 -338.799 0 cm",
+        ),
+        (
+            rule(-22_299_935, 0, 0, 26_215, 131_564),
+            "1 0 0 1 -338.799 0 cm",
+        ),
+    ];
+    for (operation, expected) in cases {
+        let content = String::from_utf8(ordered_page_content(&[operation])).expect("ASCII content");
+        assert!(
+            content.contains(expected),
+            "expected {expected} in {content}"
         );
     }
 }

@@ -78,16 +78,20 @@ pub(in crate::pdf::finalize) fn append_content_objects(
         for event in positioned.events {
             match event {
                 PositionedEvent::Rule(rule) => {
+                    let top_down_y = rule
+                        .y
+                        .checked_add(record.v_origin())
+                        .and_then(|value| value.checked_add(rule.height))
+                        .ok_or(PdfBuildError::PageGeometryOverflow)?;
                     content_operations.push(PdfContentOperation::Rule(PdfContentRule {
                         x: rule
                             .x
                             .checked_add(record.h_origin())
                             .ok_or(PdfBuildError::PageGeometryOverflow)?,
                         y: page_height
-                            .checked_sub(rule.y)
-                            .and_then(|value| value.checked_sub(record.v_origin()))
-                            .and_then(|value| value.checked_sub(rule.height))
+                            .checked_sub(top_down_y)
                             .ok_or(PdfBuildError::PageGeometryOverflow)?,
+                        top_down_y,
                         width: rule.width,
                         height: rule.height,
                         decimal_digits: parameters.decimal_digits as u8,
@@ -643,12 +647,16 @@ pub(in crate::pdf::finalize) fn append_content_objects(
         for event in positioned.events {
             match event {
                 PositionedEvent::Rule(rule) => {
+                    let top_down_y = rule
+                        .y
+                        .checked_add(rule.height)
+                        .ok_or(PdfBuildError::PageGeometryOverflow)?;
                     operations.push(PdfContentOperation::Rule(PdfContentRule {
                         x: rule.x,
                         y: total_height
-                            .checked_sub(rule.y)
-                            .and_then(|value| value.checked_sub(rule.height))
+                            .checked_sub(top_down_y)
                             .ok_or(PdfBuildError::PageGeometryOverflow)?,
+                        top_down_y,
                         width: rule.width,
                         height: rule.height,
                         decimal_digits: parameters.decimal_digits as u8,
