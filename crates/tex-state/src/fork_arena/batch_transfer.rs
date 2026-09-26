@@ -34,12 +34,22 @@ impl<T, Lane> ForkArena<T, Lane> {
         if mark.arena != self.owner {
             return Err(ForkArenaError::InvalidRegion);
         }
+        // Every producer settles direct child floors while publishing its
+        // payload. An unfinished reservation is not a transferable batch;
+        // sealing must not repair it by scanning already published values.
+        for position in mark.payload_start as usize..self.live_payload_len() {
+            let key = self
+                .live_key_at(position)
+                .ok_or(ForkArenaError::InvalidChunk)?;
+            if !pool
+                .payload
+                .validate_lineage(key, self.owner, self.lineage)?
+                .dependency_metadata_complete
+            {
+                return Err(ForkArenaError::InvalidRegion);
+            }
+        }
         let boundary = self.seal_boundary(pool)?;
-        self.complete_legacy_suffix_dependencies(
-            pool,
-            mark.payload_start as usize,
-            boundary.payload_chunks as usize,
-        )?;
         for list in &lists {
             self.validate_list_in_suffix(pool, *list, mark.payload_start as usize)?;
         }
@@ -59,56 +69,6 @@ impl<T, Lane> ForkArena<T, Lane> {
             payload_end: boundary.payload_chunks,
             lists,
         })
-    }
-
-    /// Completes metadata for the old generic value-returning builder.
-    ///
-    /// Production page nodes publish dependency floors beside their final
-    /// resident slot and never enter this compatibility path. Generic arena
-    /// tests may still use `ForkArenaBuilder::push`; scanning that freshly
-    /// sealed construction suffix once keeps transfer and lookup metadata-only
-    /// without introducing another node representation.
-    pub(super) fn complete_legacy_suffix_dependencies(
-        &mut self,
-        pool: &mut ChunkPool<T>,
-        start: usize,
-        end: usize,
-    ) -> Result<(), ForkArenaError>
-    where
-        T: RegionValue<Lane>,
-    {
-        for position in start..end {
-            let key = self
-                .live_key_at(position)
-                .ok_or(ForkArenaError::InvalidChunk)?;
-            if pool
-                .payload
-                .validate_lineage(key, self.owner, self.lineage)?
-                .dependency_metadata_complete
-            {
-                continue;
-            }
-            let used = pool.payload.used(key, self.owner)?;
-            let mut dependency_floor = None;
-            for offset in 0..used {
-                let value = pool
-                    .payload
-                    .get(key, self.owner, offset)
-                    .ok_or(ForkArenaError::InvalidChunk)?;
-                if let Some(floor) = self.region_value_dependency_floor(pool, value)? {
-                    dependency_floor =
-                        Some(dependency_floor.map_or(floor, |old: usize| old.min(floor)));
-                }
-            }
-            let meta =
-                pool.payload
-                    .validate_exclusive_lineage_mut(key, self.owner, self.lineage)?;
-            if let Some(floor) = dependency_floor {
-                meta.dependency_floor = meta.dependency_floor.min(floor);
-            }
-            meta.dependency_metadata_complete = true;
-        }
-        Ok(())
     }
 
     /// Mutation-free closure preflight for a build suffix whose final tails

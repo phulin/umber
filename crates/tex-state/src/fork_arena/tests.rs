@@ -88,6 +88,12 @@ impl super::RegionValue<ActiveLane> for u32 {
     fn rebrand_region_lists(&mut self, _destination_arena: u32) {}
 }
 
+impl super::RegionValue<PageLane> for u32 {
+    fn visit_region_lists(&self, _visit: &mut dyn FnMut(super::ArenaListId<PageLane>)) {}
+
+    fn rebrand_region_lists(&mut self, _destination_arena: u32) {}
+}
+
 impl super::RegionValue<ActiveLane> for u64 {
     fn visit_region_lists(&self, _visit: &mut dyn FnMut(super::ArenaListId<ActiveLane>)) {}
 
@@ -1637,6 +1643,32 @@ fn shared_tail_noop_rollback_keeps_exclusive_mutation_rejected() {
         Err(ForkArenaError::ChunkShared),
         "a real change still requires exclusive ownership"
     );
+}
+
+#[test]
+fn batch_sealing_rejects_unfinished_dependency_metadata() {
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(32);
+    let mut arena = ForkArena::<u32, ActiveLane>::new();
+    let mark = arena.begin_batch(&mut pool).expect("batch boundary");
+    let root = list(&mut arena, &mut pool, [41]);
+    pool.payload
+        .validate_exclusive_lineage_mut(root.tail.raw, arena.owner, arena.lineage)
+        .expect("owned chunk")
+        .dependency_metadata_complete = false;
+
+    assert_eq!(
+        arena.seal_batch(&mut pool, mark, vec![root]).map(|_| ()),
+        Err(ForkArenaError::InvalidRegion),
+        "an incomplete publication cannot be repaired at seal time"
+    );
+    pool.payload
+        .validate_exclusive_lineage_mut(root.tail.raw, arena.owner, arena.lineage)
+        .expect("owned chunk")
+        .dependency_metadata_complete = true;
+    let batch = arena
+        .seal_batch(&mut pool, mark, vec![root])
+        .expect("completed publication seals");
+    arena.cancel_batch(batch).expect("cancel sealed test batch");
 }
 
 #[test]

@@ -81,6 +81,17 @@ pub struct OutputLedger {
 
 pub(crate) enum OutputLane {}
 
+// Prepared pages own output plans and effects, not child lists in this ledger.
+impl tex_state::fork_arena::RegionValue<OutputLane> for crate::PreparedDviPage {
+    fn visit_region_lists(
+        &self,
+        _visit: &mut dyn FnMut(tex_state::fork_arena::ArenaListId<OutputLane>),
+    ) {
+    }
+
+    fn rebrand_region_lists(&mut self, _destination_arena: u32) {}
+}
+
 /// Fixed rooted coordinate into the one accepted output lineage.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct OutputLedgerCheckpoint {

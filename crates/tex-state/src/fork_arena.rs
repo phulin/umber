@@ -398,7 +398,6 @@ impl<T> AdmittedAppendRun<'_, T> {
         self.offset += 1;
         self.meta.used = self.offset;
         self.meta.sealed = self.offset == self.end;
-        self.meta.dependency_metadata_complete = false;
     }
 
     #[allow(dead_code)] // Used by the opt-in iterator-shaped benchmark adapter.
@@ -452,7 +451,6 @@ impl<T> AdmittedAppendRun<'_, T> {
         self.offset += count as u32;
         self.meta.used = self.offset;
         self.meta.sealed = self.offset == self.end;
-        self.meta.dependency_metadata_complete = false;
         count
     }
 }
@@ -1432,6 +1430,7 @@ impl<T> ChunkStorage<T> {
         &mut self,
         cursor: &mut AdmittedAppendBlock,
         value: T,
+        dependency_floor: Option<usize>,
     ) -> (u32, bool) {
         let offset = cursor.offset;
         let next_offset = offset + 1;
@@ -1446,7 +1445,9 @@ impl<T> ChunkStorage<T> {
         debug_assert!(!meta.sealed && meta.sequence_summary.is_none());
         meta.used = next_offset;
         meta.sealed = became_full;
-        meta.dependency_metadata_complete = false;
+        if let Some(dependency_floor) = dependency_floor {
+            meta.dependency_floor = meta.dependency_floor.min(dependency_floor);
+        }
 
         cursor.index += 1;
         cursor.offset = next_offset;
@@ -2558,6 +2559,20 @@ pub trait RegionValue<Lane> {
     fn rebrand_region_lists(&mut self, destination_arena: u32);
 }
 
+/// Values whose representation cannot contain a same-region list coordinate.
+/// This bound admits contiguous bulk publication without a per-value child
+/// lookup. Other values use the builder path, which records child floors as it
+/// publishes each value.
+#[doc(hidden)]
+pub trait LeafRegionValue<Lane>: RegionValue<Lane> + Copy + leaf_region_value::Sealed {}
+
+mod leaf_region_value {
+    pub trait Sealed {}
+    impl Sealed for u32 {}
+}
+
+impl<Lane> LeafRegionValue<Lane> for u32 where u32: RegionValue<Lane> {}
+
 pub struct BatchMark<Lane> {
     arena: u32,
     payload_start: u32,
@@ -3118,8 +3133,11 @@ impl<T, Lane> ForkArena<T, Lane> {
         pool: &'pool mut ChunkPool<T>,
         root: &mut ArenaListId<Lane>,
         item_identity: Option<u64>,
-    ) -> Result<&'pool mut Option<T>, ForkArenaError> {
-        self.reserve_payload_slot_with_dependency(pool, root, item_identity, None, false)
+    ) -> Result<&'pool mut Option<T>, ForkArenaError>
+    where
+        T: LeafRegionValue<Lane>,
+    {
+        self.reserve_payload_slot_with_dependency(pool, root, item_identity, None, true)
     }
 
     fn reserve_payload_slot_with_dependency<'pool>(
@@ -3665,7 +3683,10 @@ impl<T, Lane> ForkArena<T, Lane> {
         &mut self,
         pool: &mut ChunkPool<T>,
         values: impl IntoIterator<Item = T>,
-    ) -> Result<ArenaListId<Lane>, ForkArenaError> {
+    ) -> Result<ArenaListId<Lane>, ForkArenaError>
+    where
+        T: LeafRegionValue<Lane>,
+    {
         self.bind_pool(pool)?;
         if self.active_builder {
             return Err(ForkArenaError::ActiveBuilder);
@@ -3683,7 +3704,10 @@ impl<T, Lane> ForkArena<T, Lane> {
         pool: &mut ChunkPool<T>,
         values: impl IntoIterator<Item = T>,
         operation: OperationMark<Lane>,
-    ) -> Result<ArenaListId<Lane>, ForkArenaError> {
+    ) -> Result<ArenaListId<Lane>, ForkArenaError>
+    where
+        T: LeafRegionValue<Lane>,
+    {
         let mut root = ArenaListId::empty();
         let logical_space = pool.payload.logical_space();
         let mut values = values.into_iter();
@@ -3740,7 +3764,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         body: &[T],
     ) -> Result<ArenaListId<Lane>, ForkArenaError>
     where
-        T: Copy,
+        T: LeafRegionValue<Lane>,
     {
         self.bind_pool(pool)?;
         if self.active_builder {
@@ -3761,7 +3785,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         operation: OperationMark<Lane>,
     ) -> Result<ArenaListId<Lane>, ForkArenaError>
     where
-        T: Copy,
+        T: LeafRegionValue<Lane>,
     {
         let logical_space = pool.payload.logical_space();
         let mut root = ArenaListId::empty();
@@ -3822,7 +3846,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         body: &[T],
     ) -> Result<ArenaListId<Lane>, ForkArenaError>
     where
-        T: Copy,
+        T: LeafRegionValue<Lane>,
     {
         self.bind_pool(pool)?;
         if self.active_builder {
@@ -3863,48 +3887,11 @@ impl<T, Lane> ForkArena<T, Lane> {
         &mut self,
         pool: &mut ChunkPool<T>,
         values: impl IntoIterator<Item = T>,
-    ) -> Result<ArenaListId<Lane>, ForkArenaError> {
+    ) -> Result<ArenaListId<Lane>, ForkArenaError>
+    where
+        T: LeafRegionValue<Lane>,
+    {
         self.append_unsealed_list(pool, values)
-    }
-
-    /// Appends one independently addressed fixed record wholly within one
-    /// logical chunk, rotating a short tail before publication when needed.
-    #[allow(dead_code)] // Compatibility helper for non-slice test payloads.
-    pub(crate) fn append_unsealed_fixed_list(
-        &mut self,
-        pool: &mut ChunkPool<T>,
-        values: impl IntoIterator<Item = T>,
-    ) -> Result<ArenaListId<Lane>, ForkArenaError> {
-        self.bind_pool(pool)?;
-        if self.active_builder {
-            return Err(ForkArenaError::ActiveBuilder);
-        }
-        if self.pending_batch.is_some() {
-            return Err(ForkArenaError::ActiveBatch);
-        }
-        let values = values.into_iter();
-        let (needed, upper) = values.size_hint();
-        if upper != Some(needed) {
-            return Err(ForkArenaError::InvalidRange);
-        }
-        if needed > pool.payload.chunk_capacity() {
-            return Err(ForkArenaError::CapacityOverflow);
-        }
-        let operation = self.operation_mark(pool);
-        if let Some(key) = self.live_key_at(self.live_payload_len().saturating_sub(1)) {
-            let used = pool.payload.used(key, self.owner)? as usize;
-            if !pool.payload.is_sealed(key, self.owner)?
-                && pool.payload.chunk_capacity().saturating_sub(used) < needed
-            {
-                let unused = pool.payload.seal(key, self.owner)?;
-                self.counters.chunks_sealed = self.counters.chunks_sealed.saturating_add(1);
-                self.counters.unused_sealed_bytes = self
-                    .counters
-                    .unused_sealed_bytes
-                    .saturating_add((unused * pool.payload.resident_slot_bytes()) as u64);
-            }
-        }
-        self.append_unsealed_list_from_mark(pool, values, operation)
     }
 
     /// Opens a persistent coordinate-only builder. The builder may outlive
@@ -3954,10 +3941,21 @@ impl<T, Lane> ForkArena<T, Lane> {
         pool: &mut ChunkPool<T>,
         builder: &mut ActiveListBuilder<T, Lane>,
         value: T,
-    ) -> Result<(), ForkArenaError> {
+    ) -> Result<(), ForkArenaError>
+    where
+        T: RegionValue<Lane>,
+    {
+        let dependency_floor = self.region_value_dependency_floor(pool, &value)?;
         self.counters.whole_payload_moves = self.counters.whole_payload_moves.saturating_add(1);
         let mut root = self.active_list_open_mut(builder)?.root;
-        self.append_payload_value_with_dependency(pool, &mut root, value, None, None, false)?;
+        self.append_payload_value_with_dependency(
+            pool,
+            &mut root,
+            value,
+            None,
+            dependency_floor,
+            true,
+        )?;
         self.active_list_open_mut(builder)?.root = root;
         Ok(())
     }
@@ -4119,7 +4117,10 @@ impl<T, Lane> ForkArena<T, Lane> {
         pool: &'pool mut ChunkPool<T>,
         builder: &mut ActiveListBuilder<T, Lane>,
         item_identity: Option<u64>,
-    ) -> Result<&'pool mut Option<T>, ForkArenaError> {
+    ) -> Result<&'pool mut Option<T>, ForkArenaError>
+    where
+        T: LeafRegionValue<Lane>,
+    {
         let mut root = self.active_list_open_mut(builder)?.root;
         let slot = self.reserve_payload_slot(pool, &mut root, item_identity)?;
         self.active_list_open_mut(builder)?.root = root;
@@ -5437,7 +5438,13 @@ impl<T, Lane> ForkArenaBuilder<'_, T, Lane> {
         self.pool.payload.validation_reads()
     }
 
-    pub fn push(&mut self, value: T) -> Result<(), ForkArenaError> {
+    pub fn push(&mut self, value: T) -> Result<(), ForkArenaError>
+    where
+        T: RegionValue<Lane>,
+    {
+        let dependency_floor = self
+            .arena
+            .region_value_dependency_floor(self.pool, &value)?;
         if self.append_block.is_none() {
             if self.root.len == u32::MAX {
                 return Err(ForkArenaError::CapacityOverflow);
@@ -5456,7 +5463,10 @@ impl<T, Lane> ForkArenaBuilder<'_, T, Lane> {
             .as_mut()
             .expect("append block is admitted before construction");
         let key = append.key;
-        let (offset, became_full) = self.pool.payload.append_admitted_untracked(append, value);
+        let (offset, became_full) =
+            self.pool
+                .payload
+                .append_admitted_untracked(append, value, dependency_floor);
         self.arena.complete_admitted_payload_reservation(
             &mut self.root,
             key,
@@ -5523,7 +5533,10 @@ impl<T, Lane> ForkArenaBuilder<'_, T, Lane> {
         &mut self,
         value: T,
         item_identity: u64,
-    ) -> Result<(), ForkArenaError> {
+    ) -> Result<(), ForkArenaError>
+    where
+        T: RegionValue<Lane>,
+    {
         self.push_with_identity(value, Some(item_identity))
     }
 
@@ -5532,15 +5545,21 @@ impl<T, Lane> ForkArenaBuilder<'_, T, Lane> {
         &mut self,
         value: T,
         item_identity: Option<u64>,
-    ) -> Result<(), ForkArenaError> {
+    ) -> Result<(), ForkArenaError>
+    where
+        T: RegionValue<Lane>,
+    {
         self.append_block = None;
+        let dependency_floor = self
+            .arena
+            .region_value_dependency_floor(self.pool, &value)?;
         self.arena.append_payload_value_with_dependency(
             self.pool,
             &mut self.root,
             value,
             item_identity,
-            None,
-            false,
+            dependency_floor,
+            true,
         )?;
         match (&mut self.sequence_summary, item_identity) {
             (Some(summary), Some(item_identity)) => summary.push_back(item_identity),

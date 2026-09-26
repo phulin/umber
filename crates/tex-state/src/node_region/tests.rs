@@ -219,6 +219,25 @@ fn void_closure_build_preserves_shared_successor_tail() {
 }
 
 #[test]
+fn typed_annex_bulk_publication_completes_dependency_metadata() {
+    let mut pool = NodePool::with_chunk_bytes(64);
+    let mut region = pool.start_region::<PageRole>().expect("page region");
+    let build = region
+        .begin_closure_build(&mut pool)
+        .expect("annex publication boundary");
+    {
+        let mut writer = NodeAnnexWriter::new(&mut pool.annex_chunks, &mut region.annex_arena);
+        writer.append_fixed::<()>(&[1, 2]);
+        writer.append_span::<()>(&(0..80).collect::<Vec<_>>());
+        writer.append_span_iter::<()>(80..160);
+    }
+
+    region
+        .can_share_sealed_prefix(&pool, &build, [])
+        .expect("every bulk-published annex block has complete child metadata");
+}
+
+#[test]
 fn suffix_transfer_preflights_and_rebrands_the_whole_nested_closure() {
     let mut chunks = ChunkPool::<Node<PageListId>>::with_chunk_bytes(64);
     let mut source = ForkArena::<Node<PageListId>, PageMaterialLane>::new();

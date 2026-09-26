@@ -95,6 +95,11 @@ The transfer rebases that entire suffix. If any block still depends on annex
 data before the build boundary, the selected closure takes the structural-copy
 fallback while the source suffix remains in its page region.
 
+An empty closure build, such as a void `\setbox` operand, rolls back without
+changing a retained shared tail when its length, seal state, and sequence
+summary still match the build mark. A changed tail continues to require an
+exclusive lineage.
+
 ## TeX82 ownership baseline
 
 TeX82 implements its own fixed-address heap inside the global `mem` array.
@@ -219,6 +224,15 @@ suffix shares neither tail block with the retained prefix. Publication folds
 child-node and annex dependency floors into block metadata. Closure sealing
 can therefore prove suffix locality from roots, predecessor ranges, and block
 metadata without scanning node records or annex payloads.
+
+Publication completes dependency metadata before a chunk becomes transferable.
+Generic builders resolve each value's same-region child floor as they append.
+Compact node records publish direct child and paired-annex floors beside their
+final resident slot. Typed annex words are childless scalars, so their bulk
+copy publishes complete metadata while retaining contiguous block writes.
+Temporary destination reservations may be incomplete only until their value
+and floors are committed or the operation rolls back. Sealing validates these
+facts; it does not repair missing floors by scanning a construction suffix.
 
 Unique moves detach and attach this paired envelope through one prepared
 receipt. The `PageListId` remains byte-for-byte unchanged; only the typed

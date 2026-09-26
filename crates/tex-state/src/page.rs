@@ -608,6 +608,17 @@ enum PageInverse {
     },
 }
 
+// Page inverses can hold page-node spans, but no journal-lane child lists.
+impl crate::fork_arena::RegionValue<PageBuilderJournalLane> for PageInverse {
+    fn visit_region_lists(
+        &self,
+        _visit: &mut dyn FnMut(crate::fork_arena::ArenaListId<PageBuilderJournalLane>),
+    ) {
+    }
+
+    fn rebrand_region_lists(&mut self, _destination_arena: u32) {}
+}
+
 #[derive(Clone, Copy, Debug)]
 struct PageScalars {
     dimensions: [Scaled; 8],

@@ -167,7 +167,10 @@ All production mutation of live TeX state should pass through `Universe` or simi
   marks, exclusive batch promotion, and exactly accepted-versus-forked
   settlement. Generated region values initialize their final resident slot
   before identity and direct-child dependency completion; rejection truncates
-  that exact unpublished reservation.
+  that exact unpublished reservation. Generic builder publication records
+  same-lane child floors per value; typed childless annex words keep direct
+  packed bulk copies. Batch and whole-region sealing validate complete
+  metadata and never repair it by scanning a published suffix.
 - `src/fork_arena/checkpoint_lifecycle.rs`: Sealed checkpoint marks, exact
   candidate settlement, accepted-prefix release, and borrowed suffix visits
   on the existing arena lane.

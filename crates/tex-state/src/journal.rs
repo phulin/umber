@@ -405,6 +405,17 @@ pub(crate) struct CheckpointDelta<G> {
     pub(crate) alternate_save_serial: u64,
 }
 
+// Checkpoint deltas may own state words, but never a list in their journal lane.
+impl<G> crate::fork_arena::RegionValue<DenseJournalLane> for CheckpointDelta<G> {
+    fn visit_region_lists(
+        &self,
+        _visit: &mut dyn FnMut(crate::fork_arena::ArenaListId<DenseJournalLane>),
+    ) {
+    }
+
+    fn rebrand_region_lists(&mut self, _destination_arena: u32) {}
+}
+
 /// Accepted checkpoint material temporarily detached while the current
 /// candidate owns the live dense state. The group journal is deliberately not
 /// part of this owner: accepted checkpoints are captured at level zero with an

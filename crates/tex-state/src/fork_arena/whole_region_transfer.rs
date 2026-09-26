@@ -45,6 +45,13 @@ impl<T, Lane> ForkArena<T, Lane> {
             let key = self
                 .live_key_at(position)
                 .ok_or(ForkArenaError::InvalidRegion)?;
+            if !pool
+                .payload
+                .validate_lineage(key, self.owner, self.lineage)?
+                .dependency_metadata_complete
+            {
+                return Err(ForkArenaError::InvalidRegion);
+            }
             let used = pool.payload.used(key, self.owner)?;
             for offset in 0..used {
                 let value = pool
@@ -78,7 +85,6 @@ impl<T, Lane> ForkArena<T, Lane> {
             return Err(ForkArenaError::AlreadyForked);
         }
         let boundary = self.seal_boundary(pool)?;
-        self.complete_legacy_suffix_dependencies(pool, 0, boundary.payload_chunks as usize)?;
         let serial = self.next_batch_serial;
         self.next_batch_serial = serial
             .checked_add(1)

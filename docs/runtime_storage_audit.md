@@ -38,6 +38,21 @@ history, and cannot move a region suffix whose other node blocks depend on
 annex data outside that suffix. Those are real ownership constraints, not
 compatibility fallbacks.
 
+The consuming path also exposed a void-box rollback against a node block
+shared with retained page history. The saved and current tail metadata were
+identical, but rollback requested an exclusive write and failed. It now leaves
+that unchanged tail alone; actual tail changes still require exclusive
+ownership.
+
+Region sealing previously completed missing child-dependency metadata by
+scanning a construction suffix. Production typed-annex bulk writes marked
+childless words incomplete, so this compatibility repair entered the book's
+normal box path. Generic builders now record child floors when publishing each
+value; the annex bulk path is restricted to childless scalar words and marks
+its chunks complete during contiguous writes. Sealing no longer scans payload
+to repair metadata, while incomplete reservations remain invalid until their
+construction finishes or rolls back.
+
 Conditional branch skipping requested rich command objects merely to inspect
 a static command kind. It now uses the same compact raw delivery path as other
 hot consumers. Reader advancement, fuel, alignment interception, scanner
