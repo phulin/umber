@@ -159,6 +159,9 @@ pub struct CommandState<G> {
     /// resident input; token-local suppression and outerness arrive directly
     /// from the settled hot command.
     pub(crate) delivery_mode: DeliveryMode,
+    /// Reusable capacity for TeX82 §372's `\csname` name buffer. It is empty
+    /// between uses and never part of command semantics or snapshots.
+    pub(crate) csname_scratch: String,
     /// Assertion-bearing proof that ordinary input bypasses out-parameter
     /// interception. Shipping builds contain neither the counters nor updates.
     #[cfg(test)]
@@ -313,6 +316,7 @@ impl<G> Default for CommandState<G> {
             scratch: crate::execution_scratch::ExecutionScratch::default(),
             active_attempt_operation: None,
             delivery_mode: DeliveryMode::default(),
+            csname_scratch: String::new(),
             #[cfg(test)]
             raw_delivery_path_counters: RawDeliveryPathCounters::default(),
             #[cfg(test)]
@@ -2510,6 +2514,19 @@ impl<G> CommandState<G> {
             retirement,
             trace,
         )
+    }
+
+    /// Lends the reusable `\csname` name buffer. A nested name scan finds
+    /// the slot empty and allocates its own; the larger buffer is kept.
+    pub(crate) fn take_csname_scratch(&mut self) -> String {
+        std::mem::take(&mut self.csname_scratch)
+    }
+
+    pub(crate) fn recycle_csname_scratch(&mut self, mut name: String) {
+        name.clear();
+        if name.capacity() > self.csname_scratch.capacity() {
+            self.csname_scratch = name;
+        }
     }
 
     pub(crate) fn record_csname_buffer_usage(&mut self, name_len: usize) {

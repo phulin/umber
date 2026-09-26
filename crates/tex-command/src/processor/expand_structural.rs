@@ -157,8 +157,10 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// owns every nested expansion; no caller or operand phase is retained in
     /// command scratch.
     pub(super) fn expand_csname(&mut self, opener: OriginId) -> Result<(), CommandError> {
-        let name = self.scan_csname_characters(String::new())?;
+        let buffer = self.command.take_csname_scratch();
+        let name = self.scan_csname_characters(buffer)?;
         let symbol = self.state.intern_relaxed_control_sequence(&name);
+        self.command.recycle_csname_scratch(name);
         self.back_input_token(TracedTokenWord::pack(Token::Cs(symbol), opener))
     }
 

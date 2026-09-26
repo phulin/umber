@@ -663,11 +663,14 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     #[inline(never)]
     fn evaluate_ifcsname_operand(&mut self) -> Result<bool, CommandError> {
-        let name = self.scan_csname_characters(String::new())?;
-        Ok(self
+        let buffer = self.command.take_csname_scratch();
+        let name = self.scan_csname_characters(buffer)?;
+        let defined = self
             .state
             .known_control_sequence(&name)
-            .is_some_and(|symbol| self.state.meaning(symbol) != Meaning::Undefined))
+            .is_some_and(|symbol| self.state.meaning(symbol) != Meaning::Undefined);
+        self.command.recycle_csname_scratch(name);
+        Ok(defined)
     }
 
     /// e-TeX's compact `\\unless` path. The operand is a raw token, so it is
