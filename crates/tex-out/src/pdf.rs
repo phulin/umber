@@ -178,7 +178,7 @@ pub enum PdfContentOperation {
     /// identity and resource graph detached from binary floating-point state.
     ImportedPdfPage {
         matrix: [PdfNumber; 6],
-        origin: [PdfNumber; 2],
+        exact_position: PdfContentTextPosition,
         name: Vec<u8>,
     },
 }

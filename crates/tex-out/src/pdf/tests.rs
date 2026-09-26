@@ -1335,12 +1335,16 @@ fn imported_pdf_content_operation_emits_fixed_cm_operands() {
             number(-891018, 3),
             number(-1332506, 3),
         ],
-        origin: [number(-10, 0), number(20, 0)],
+        exact_position: PdfContentTextPosition {
+            h: -58_612_732,
+            v: -87_654_590,
+            decimal_digits: 3,
+        },
         name: b"Fm1".to_vec(),
     }]);
     assert_eq!(
         String::from_utf8(bytes).expect("ASCII content"),
-        "q\n0 1 -1 0 -891.018 -1332.506 cm\n1 0 0 1 -10 20 cm\n/Fm1 Do\nQ"
+        "q\n0 1 -1 0 -891.018 -1332.506 cm\n/Fm1 Do\nQ"
     );
 }
 
@@ -1370,12 +1374,57 @@ fn imported_pdf_content_operation_subtracts_the_retained_fixed_origin() {
                 number(30, 0),
                 number(40, 0),
             ],
-            origin: [number(-2, 0), number(-3, 0)],
+            exact_position: PdfContentTextPosition {
+                h: 1_973_453,
+                v: 2_631_270,
+                decimal_digits: 3,
+            },
             name: b"Im1".to_vec(),
         },
     ]);
     assert_eq!(
         String::from_utf8(bytes).expect("ASCII content"),
-        "1 0 0 1 10 20 cm\nORIGIN\nq\n1 0 0 1 20 20 cm\n1 0 0 1 -2 -3 cm\n/Im1 Do\nQ"
+        "1 0 0 1 10 20 cm\nORIGIN\nq\n1 0 0 1 20 20 cm\n/Im1 Do\nQ"
     );
+}
+
+#[test]
+fn imported_pdf_crop_offset_is_rounded_after_retained_origin_subtraction() {
+    // pdftex.web `out_image` subtracts the current scaled PDF origin and
+    // scaled crop offset before printing one PDF translation. Rounding each
+    // absolute position first would emit -119.329 instead of -119.33.
+    let number = |coefficient, decimal_places| {
+        PdfNumber::new(coefficient, decimal_places).expect("valid fixed number")
+    };
+    let bytes = ordered_page_content(&[
+        PdfContentOperation::Literal {
+            mode: crate::PdfLiteralMode::Origin,
+            x: 113.217,
+            y: 0.0,
+            exact_position: Some(PdfContentTextPosition {
+                h: 7_447_646,
+                v: 0,
+                decimal_digits: 3,
+            }),
+            bytes: Vec::new(),
+        },
+        PdfContentOperation::ImportedPdfPage {
+            matrix: [
+                number(1, 0),
+                number(0, 0),
+                number(0, 0),
+                number(1, 0),
+                number(-6_112, 3),
+                number(0, 0),
+            ],
+            exact_position: PdfContentTextPosition {
+                h: -402_091,
+                v: 0,
+                decimal_digits: 3,
+            },
+            name: b"Im1".to_vec(),
+        },
+    ]);
+    let content = String::from_utf8(bytes).expect("ASCII content");
+    assert!(content.contains("1 0 0 1 -119.33 0 cm"), "{content}");
 }

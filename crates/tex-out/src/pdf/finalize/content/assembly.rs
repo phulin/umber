@@ -464,8 +464,8 @@ pub(in crate::pdf::finalize) fn append_content_objects(
                             match image.metadata {
                                 PdfImageMetadataInput::PdfPage {
                                     page_box, rotation, ..
-                                } => PdfContentOperation::ImportedPdfPage {
-                                    matrix: imported_pdf_page_matrix(
+                                } => {
+                                    let (matrix, exact_position) = imported_pdf_page_matrix(
                                         raw_x,
                                         image_y,
                                         width,
@@ -473,13 +473,13 @@ pub(in crate::pdf::finalize) fn append_content_objects(
                                         page_box,
                                         rotation,
                                         parameters.decimal_digits,
-                                    )?,
-                                    origin: imported_pdf_page_origin(
-                                        page_box,
-                                        parameters.decimal_digits,
-                                    )?,
-                                    name,
-                                },
+                                    )?;
+                                    PdfContentOperation::ImportedPdfPage {
+                                        matrix,
+                                        exact_position,
+                                        name,
+                                    }
+                                }
                                 PdfImageMetadataInput::Raster { .. } => {
                                     PdfContentOperation::ImageXObject {
                                         x: x(),
@@ -749,8 +749,8 @@ pub(in crate::pdf::finalize) fn append_content_objects(
                             match image.metadata {
                                 PdfImageMetadataInput::PdfPage {
                                     page_box, rotation, ..
-                                } => PdfContentOperation::ImportedPdfPage {
-                                    matrix: imported_pdf_page_matrix(
+                                } => {
+                                    let (matrix, exact_position) = imported_pdf_page_matrix(
                                         raw_x,
                                         image_y,
                                         width,
@@ -758,13 +758,13 @@ pub(in crate::pdf::finalize) fn append_content_objects(
                                         page_box,
                                         rotation,
                                         parameters.decimal_digits,
-                                    )?,
-                                    origin: imported_pdf_page_origin(
-                                        page_box,
-                                        parameters.decimal_digits,
-                                    )?,
-                                    name,
-                                },
+                                    )?;
+                                    PdfContentOperation::ImportedPdfPage {
+                                        matrix,
+                                        exact_position,
+                                        name,
+                                    }
+                                }
                                 PdfImageMetadataInput::Raster { .. } => {
                                     PdfContentOperation::ImageXObject {
                                         x: x(),

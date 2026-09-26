@@ -455,10 +455,10 @@ coordinates for dimension queries and the selected PDF `f64` coordinate bits
 for the imported Form `/BBox` and rotation `/Matrix`. The latter remain exact
 until pdfTeX's eight-place formatting, including rotation sums and
 differences. In
-`pdftoepdf.cc::write_epdf`, page rotation belongs to the Form, while the page
-content stream applies scaling and a separate translation by the selected box
-origin. Keeping those transforms separate avoids rounding their composed
-translation to one TeX scaled coordinate. Form Matrix operands use fixed PDF
+`pdftoepdf.cc::write_epdf`, page rotation belongs to the Form. The page content
+stream applies scaling; `pdftex.web`'s `out_image` first subtracts the scaled
+crop origin from the destination in TeX scaled points, then rounds the composed
+translation once for the PDF content stream. Form Matrix operands use fixed PDF
 numbers directly because `pdf_writer`'s matrix helper narrows them to `f32`.
 Imported-page records are runtime image state and are absent from saved TeX
 formats.

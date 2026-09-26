@@ -129,19 +129,6 @@ pub(in crate::pdf::finalize) fn rotation_swaps_axes(rotation: PdfPageRotationInp
     )
 }
 
-pub(in crate::pdf::finalize) fn imported_pdf_page_origin(
-    page_box: crate::pdf::PdfPageBoxInput,
-    decimal_digits: i32,
-) -> Result<[PdfNumber; 2], PdfBuildError> {
-    Ok([
-        negate_pdf_number(scaled_to_bp_number_checked(page_box.left, decimal_digits)?)?,
-        negate_pdf_number(scaled_to_bp_number_checked(
-            page_box.bottom,
-            decimal_digits,
-        )?)?,
-    ])
-}
-
 pub(in crate::pdf::finalize) fn imported_pdf_page_matrix(
     base_x: Scaled,
     base_y: Scaled,
@@ -150,7 +137,7 @@ pub(in crate::pdf::finalize) fn imported_pdf_page_matrix(
     page_box: crate::pdf::PdfPageBoxInput,
     rotation: PdfPageRotationInput,
     decimal_digits: i32,
-) -> Result<[PdfNumber; 6], PdfBuildError> {
+) -> Result<([PdfNumber; 6], PdfContentTextPosition), PdfBuildError> {
     let box_width = page_box
         .right
         .checked_sub(page_box.left)
@@ -171,28 +158,34 @@ pub(in crate::pdf::finalize) fn imported_pdf_page_matrix(
     };
     let width_scale = scaled_ratio_number(width, natural_width)?;
     let height_scale = scaled_ratio_number(total_height, natural_height)?;
-    // pdfTeX places the selected box using a scale and a subsequent origin
-    // translation. Its page rotation remains on the imported Form object.
+    // pdftex.web's `out_image` subtracts the scaled crop origin from the
+    // destination before `pdf_print_bp` rounds the final translation. The
+    // source Form's precise BBox and rotation Matrix remain independent.
+    let x = base_x
+        .checked_sub(scaled_product_divide(width, page_box.left, natural_width)?)
+        .ok_or(PdfBuildError::PageGeometryOverflow)?;
+    let y = base_y
+        .checked_sub(scaled_product_divide(
+            total_height,
+            page_box.bottom,
+            natural_height,
+        )?)
+        .ok_or(PdfBuildError::PageGeometryOverflow)?;
     let zero = PdfNumber::new(0, 0)?;
-    Ok([
-        width_scale,
-        zero,
-        zero,
-        height_scale,
-        scaled_to_bp_number_checked(base_x, decimal_digits)?,
-        scaled_to_bp_number_checked(base_y, decimal_digits)?,
-    ])
-}
-
-pub(in crate::pdf::finalize) fn negate_pdf_number(
-    value: PdfNumber,
-) -> Result<PdfNumber, PdfBuildError> {
-    PdfNumber::new(
-        value
-            .coefficient()
-            .checked_neg()
-            .ok_or(PdfBuildError::PageGeometryOverflow)?,
-        value.decimal_places(),
-    )
-    .map_err(Into::into)
+    Ok((
+        [
+            width_scale,
+            zero,
+            zero,
+            height_scale,
+            scaled_to_bp_number_checked(x, decimal_digits)?,
+            scaled_to_bp_number_checked(y, decimal_digits)?,
+        ],
+        PdfContentTextPosition {
+            h: i64::from(x.raw()),
+            v: i64::from(y.raw()),
+            decimal_digits: u8::try_from(decimal_digits)
+                .map_err(|_| PdfBuildError::PageGeometryOverflow)?,
+        },
+    ))
 }

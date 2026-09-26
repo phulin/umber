@@ -194,10 +194,10 @@ impl PdfPainter {
             } => self.xobject([*width, 0.0, 0.0, *height, *x, *y], name),
             PdfContentOperation::ImportedPdfPage {
                 matrix,
-                origin,
+                exact_position,
                 name,
             } => {
-                self.fixed_xobject(matrix, origin, name);
+                self.fixed_xobject(matrix, *exact_position, name);
             }
         }
     }
@@ -534,13 +534,20 @@ impl PdfPainter {
     fn fixed_xobject(
         &mut self,
         matrix: &[super::PdfNumber; 6],
-        origin: &[super::PdfNumber; 2],
+        exact_position: super::PdfContentTextPosition,
         name: &[u8],
     ) {
         self.end_text();
         self.save();
         let mut matrix = *matrix;
-        if let Some((origin_x, origin_y)) = self.fixed_origin {
+        if let Some(origin) = self.exact_origin {
+            matrix[4] =
+                fixed_scaled_number(exact_position.h - origin.h, exact_position.decimal_digits)
+                    .expect("admitted PDF image coordinate has valid precision");
+            matrix[5] =
+                fixed_scaled_number(exact_position.v - origin.v, exact_position.decimal_digits)
+                    .expect("admitted PDF image coordinate has valid precision");
+        } else if let Some((origin_x, origin_y)) = self.fixed_origin {
             if let Some(relative_x) = subtract_fixed_numbers(matrix[4], origin_x) {
                 matrix[4] = relative_x;
             }
@@ -557,13 +564,6 @@ impl PdfPainter {
                 operation.operand(Raw(fixed_number_bytes(*number, &mut buffer)));
             }
             drop(operation);
-        }
-        if *origin != [zero, zero] {
-            let mut translation = self.content.op("cm");
-            for number in [one, zero, zero, one, origin[0], origin[1]] {
-                translation.operand(Raw(fixed_number_bytes(number, &mut buffer)));
-            }
-            drop(translation);
         }
         self.content.x_object(Name(name));
         self.restore();

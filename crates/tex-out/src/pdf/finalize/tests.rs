@@ -170,6 +170,36 @@ fn imported_form_rotation_rounds_after_double_coordinate_arithmetic() {
 }
 
 #[test]
+fn imported_page_crop_offset_is_composed_before_pdf_rounding() {
+    // pdftex.web `out_image`: the scaled crop offset is subtracted from the
+    // destination before `pdf_print_bp`. At this boundary, rounding the
+    // 198.5855 bp source origin first changes the emitted placement by .001 bp.
+    let page_box = super::super::PdfPageBoxInput {
+        left: Scaled::from_raw(0),
+        bottom: Scaled::from_raw(13_063_304),
+        right: Scaled::from_raw(6_578_176),
+        top: Scaled::from_raw(19_641_480),
+        source: [
+            0.0_f64.to_bits(),
+            198.5855_f64.to_bits(),
+            100.0_f64.to_bits(),
+            298.5855_f64.to_bits(),
+        ],
+    };
+    let (matrix, _) = imported_pdf_page_matrix(
+        Scaled::from_raw(0),
+        Scaled::from_raw(-100),
+        Scaled::from_raw(6_578_176),
+        Scaled::from_raw(6_578_176),
+        page_box,
+        PdfPageRotationInput::None,
+        3,
+    )
+    .expect("valid imported page placement");
+    assert_eq!(matrix[5], PdfNumber::new(-198_587, 3).expect("translation"));
+}
+
+#[test]
 fn imported_page_corners_follow_clockwise_pdf_rotation_and_destination_scaling() {
     // Corner order is lower-left, lower-right, upper-right, upper-left.
     // These permutations describe visible clockwise rotation, independently
@@ -213,10 +243,9 @@ fn imported_page_corners_follow_clockwise_pdf_rotation_and_destination_scaling()
         } else {
             (20, 78)
         };
-        let placement =
+        let (placement, _) =
             imported_pdf_page_matrix(pt(7), pt(-5), pt(width), pt(height), page_box, rotation, 4)
                 .expect("valid imported page matrix");
-        let origin = imported_pdf_page_origin(page_box, 4).expect("valid source origin");
         let form = imported_pdf_form_matrix(
             page_box,
             PdfImageMetadataInput::PdfPage {
@@ -241,13 +270,12 @@ fn imported_page_corners_follow_clockwise_pdf_rotation_and_destination_scaling()
             |n: PdfNumber| n.coefficient() as f64 / 10_f64.powi(i32::from(n.decimal_places()));
         let [a, b, c, d, e, f] = placement.map(real);
         let [fa, fb, fc, fd, fe, ff] = form.map(real);
-        let [ox, oy] = origin.map(real);
         let [left, bottom, right, top] = page_box.source.map(f64::from_bits);
         for ([x, y], [u, v]) in [[left, bottom], [right, bottom], [right, top], [left, top]]
             .into_iter()
             .zip(corners)
         {
-            let rotated = [fa * x + fc * y + fe + ox, fb * x + fd * y + ff + oy];
+            let rotated = [fa * x + fc * y + fe, fb * x + fd * y + ff];
             let actual = [
                 a * rotated[0] + c * rotated[1] + e,
                 b * rotated[0] + d * rotated[1] + f,

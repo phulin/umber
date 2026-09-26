@@ -2,6 +2,23 @@
 
 use super::*;
 
+pub(super) fn scaled_product_divide(
+    value: Scaled,
+    factor: Scaled,
+    divisor: Scaled,
+) -> Result<Scaled, PdfBuildError> {
+    let denominator = i128::from(divisor.raw());
+    if denominator <= 0 {
+        return Err(PdfBuildError::PageGeometryOverflow);
+    }
+    let numerator = i128::from(value.raw())
+        .checked_mul(i128::from(factor.raw()))
+        .ok_or(PdfBuildError::PageGeometryOverflow)?;
+    let result = round_divide_away_from_zero(numerator, denominator)?;
+    let result = i32::try_from(result).map_err(|_| PdfBuildError::PageGeometryOverflow)?;
+    Ok(Scaled::from_raw(result))
+}
+
 pub(super) fn scaled_ratio_number(
     value: Scaled,
     divisor: Scaled,
