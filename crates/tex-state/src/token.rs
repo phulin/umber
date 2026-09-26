@@ -329,6 +329,13 @@ impl TokenWord {
         }
     }
 
+    /// Whether this word spells an ordinary (non-frozen) control sequence.
+    #[must_use]
+    #[inline(always)]
+    pub const fn is_control_sequence(self) -> bool {
+        self.0 >> Self::KIND_SHIFT == Self::KIND_CS
+    }
+
     pub const fn raw(self) -> u32 {
         self.0
     }

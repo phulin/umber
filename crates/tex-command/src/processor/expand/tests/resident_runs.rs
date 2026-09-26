@@ -1,18 +1,31 @@
 use super::*;
 
 #[test]
-fn skipped_resident_run_settles_its_first_control_sequence_once() {
+fn skipped_resident_run_settles_its_first_conditional_delimiter_once() {
     crate::test_harness::with_universe(|universe| {
         let relax = install_static(universe, "relaxing", Meaning::Relax);
+        let fi = install_static(
+            universe,
+            "fiish",
+            Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::Fi),
+        );
         let mut command = CommandState::default();
+        // TeX82 §494 discards every ordinary skipped command; only the
+        // `fi_or_else` delimiter leaves the run and is materialized.
         crate::test_harness::push(
             &mut command,
             (0..4_096)
-                .map(|_| Token::Char {
-                    ch: 'x',
-                    cat: Catcode::Letter,
+                .map(|index| {
+                    if index % 2 == 0 {
+                        Token::Char {
+                            ch: 'x',
+                            cat: Catcode::Letter,
+                        }
+                    } else {
+                        relax
+                    }
                 })
-                .chain([relax]),
+                .chain([fi]),
         );
         let mut capabilities = CommandHostCapabilities::default();
         let mut fuel = crate::CommandFuelLedger::new(4_097).expect("skip fuel");
@@ -34,7 +47,9 @@ fn skipped_resident_run_settles_its_first_control_sequence_once() {
         );
         assert_eq!(
             destination.expect("boundary command").static_meaning(),
-            Some(Meaning::Relax)
+            Some(Meaning::ExpandablePrimitive(
+                tex_state::meaning::ExpandablePrimitive::Fi
+            ))
         );
         drop(processor);
         assert_eq!(fuel.burned(), 4_097);

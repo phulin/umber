@@ -137,8 +137,12 @@ impl<G> CommandProcessor<'_, '_, G> {
         };
         #[cfg(any(test, feature = "profiling"))]
         let argument = matches!(row.storage, ResidentTokenStorage::MacroArgument(_));
-        #[cfg(not(any(test, feature = "profiling")))]
-        let _ = row;
+        // A `\noexpand`-marked frame settles its control sequence through
+        // the ordinary reader; every other resident control sequence is
+        // classified by one meaning lookup below.
+        let classify_meanings = !row.header.frame.flags().contains(
+            tex_state::packed_input::InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE,
+        );
         if self.fuel.remaining() == 0 {
             return self.get_next_hot_into(destination);
         }
@@ -146,18 +150,24 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.pending_diagnostic_location = None;
         let mut consumed = 0_u32;
         let fuel = &mut *self.fuel;
+        let state = &*self.state;
         let selected = Self::read_resident_run(self.command, |word, _| {
-            let plain = matches!(
-                word.literal_catcode(),
-                Some(cat)
-                    if !matches!(
-                        cat,
-                        tex_state::token::Catcode::Active
-                            | tex_state::token::Catcode::BeginGroup
-                            | tex_state::token::Catcode::EndGroup
-                    )
-            );
-            if !plain {
+            let transparent = match word.literal_catcode() {
+                Some(
+                    tex_state::token::Catcode::BeginGroup | tex_state::token::Catcode::EndGroup,
+                ) => false,
+                Some(tex_state::token::Catcode::Active) => {
+                    classify_meanings && Self::skipped_meaning_is_transparent(state, word)
+                }
+                Some(_) => true,
+                // Parameters and frozen tokens keep their input transitions.
+                None => {
+                    word.is_control_sequence()
+                        && classify_meanings
+                        && Self::skipped_meaning_is_transparent(state, word)
+                }
+            };
+            if !transparent {
                 return Ok(ResidentAdmission::Boundary);
             }
             fuel.charge()?;
@@ -222,6 +232,45 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
             }
             ControlFlow::Break(()) => self.get_next_hot_into(destination),
+        }
+    }
+
+    /// TeX82 §494 `pass_text` inspects only `cur_cmd`: a conditional
+    /// (`if_test`) or delimiter (`fi_or_else`) ends or nests the skip, and
+    /// §336's `check_outer_validity` owns an outer macro or `\endtemplate`.
+    /// Every other skipped command is discarded without settlement, so its
+    /// word needs one dense meaning lookup and no delivery record.
+    #[inline(always)]
+    fn skipped_meaning_is_transparent(
+        state: &tex_state::CommandContext<'_, G>,
+        word: tex_state::token::TokenWord,
+    ) -> bool {
+        let mut meaning = TokenMeaning::empty();
+        state.write_packed_token_command_into(word, &mut meaning);
+        if meaning.is_outer() {
+            return false;
+        }
+        match meaning.word {
+            MeaningWord::Static(word) => {
+                !matches!(
+                    Meaning::runtime_word_class(word),
+                    tex_state::meaning::StaticCommandClass::Expandable
+                ) || !matches!(
+                    tex_state::meaning::ExpandablePrimitive::from_operand(
+                        Meaning::runtime_word_operand(word)
+                    ),
+                    Some(primitive)
+                        if crate::conditionals::ConditionalKind::from_primitive(primitive)
+                            .is_some()
+                            || matches!(
+                                primitive,
+                                tex_state::meaning::ExpandablePrimitive::Fi
+                                    | tex_state::meaning::ExpandablePrimitive::Else
+                                    | tex_state::meaning::ExpandablePrimitive::Or
+                            )
+                )
+            }
+            MeaningWord::Macro { .. } | MeaningWord::Font(_) => true,
         }
     }
 
