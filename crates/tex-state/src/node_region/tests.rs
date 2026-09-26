@@ -1557,3 +1557,61 @@ fn rejected_mixed_generated_rollback_keeps_both_owners_unchanged() {
         (3..35).map(Node::Penalty).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn rejected_generated_hole_transfer_restores_source_head_and_floors() {
+    let mut pool = NodePool::with_chunk_bytes(512);
+    let mut source = pool.start_region::<PageRole>().expect("page source");
+    let source_root = source
+        .publish_owned(&mut pool, (0..32).map(Node::Penalty).collect::<Vec<_>>())
+        .expect("two source chunks");
+    source
+        .seal_checkpoint_boundary(&mut pool)
+        .expect("immutable direct chunks");
+    let selected = PageListId::from_parts(
+        source
+            .pub_arena
+            .slice_list(&mut pool.chunks, source_root.list.coordinate(), 16..32)
+            .expect("complete second chunk"),
+        None,
+    );
+    let start = source
+        .pub_arena
+        .owner_relative_head_position(&pool.chunks, source_root.list.coordinate())
+        .expect("first source chunk");
+    let mut destination = pool
+        .start_region::<DurableRole>()
+        .expect("durable destination");
+    destination
+        .pub_arena
+        .reserve_vacant_prefix_until(&pool.chunks, start + 1)
+        .expect("reserve source-relative prefix");
+    let occupied = destination
+        .publish_owned(&mut pool, [Node::Penalty(99)])
+        .expect("occupy the selected hole");
+    destination
+        .seal_checkpoint_boundary(&mut pool)
+        .expect("occupied hole is sealed");
+    assert_eq!(
+        transfer_page_generated_inline_selected(
+            &mut pool,
+            &mut source,
+            &[GeneratedInlinePiece::Full(selected)],
+            &[start + 1..start + 2],
+            false,
+            &mut destination,
+        )
+        .map(|_| ()),
+        Err(ForkArenaError::InvalidRegion),
+        "the occupied destination rejects after source head and floors detach"
+    );
+    assert_eq!(
+        resident_nodes(&source, &pool, source_root.list),
+        (0..32).map(Node::Penalty).collect::<Vec<_>>(),
+        "forward rejection restores the complete source chain"
+    );
+    assert_eq!(
+        resident_nodes(&destination, &pool, occupied.list),
+        vec![Node::Penalty(99)]
+    );
+}

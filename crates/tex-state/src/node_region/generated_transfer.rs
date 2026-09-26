@@ -184,32 +184,49 @@ pub(super) fn rollback_generated_selected(
         &destination.annex_arena,
         &empty_annex,
     )?;
+    // A rejected forward hole preflight leaves the detached floors and heads
+    // in their source owner. Only a committed hole loan moves them to the
+    // destination. Check every inverse condition before restoring either
+    // owner, including the empty paired lane receipt.
     if let Some(holes) = &holes {
         source.pub_arena.preflight_rollback_interior_holes(
             &pool.chunks,
             &destination.pub_arena,
             holes,
         )?;
-    }
-    if let Some(floors) = &floors {
-        destination
-            .pub_arena
-            .preflight_consumed_inline_floor_inverse(&pool.chunks, floors)?;
-    }
-    for head in &heads {
-        destination.pub_arena.preflight_consumed_head_inverse(
-            &pool.chunks,
-            &head.loan,
-            head.bound_prefix,
-        )?;
-    }
-    for head in heads.iter().rev() {
-        if let Some(prefix) = head.bound_prefix {
-            destination.pub_arena.unbind_consumed_head_from_prefix(
-                &mut pool.chunks,
+        if let Some(floors) = &floors {
+            destination
+                .pub_arena
+                .preflight_consumed_inline_floor_inverse(&pool.chunks, floors)?;
+        }
+        for head in &heads {
+            destination.pub_arena.preflight_consumed_head_inverse(
+                &pool.chunks,
                 &head.loan,
-                prefix,
+                head.bound_prefix,
             )?;
+        }
+    } else {
+        if let Some(floors) = &floors {
+            source
+                .pub_arena
+                .preflight_consumed_inline_floor_inverse(&pool.chunks, floors)?;
+        }
+        for head in &heads {
+            source
+                .pub_arena
+                .preflight_consumed_head_inverse(&pool.chunks, &head.loan, None)?;
+        }
+    }
+    if holes.is_some() {
+        for head in heads.iter().rev() {
+            if let Some(prefix) = head.bound_prefix {
+                destination.pub_arena.unbind_consumed_head_from_prefix(
+                    &mut pool.chunks,
+                    &head.loan,
+                    prefix,
+                )?;
+            }
         }
     }
     if let Some(holes) = holes {
