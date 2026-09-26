@@ -810,6 +810,40 @@ fn builder_drop_and_partial_operation_mark_truncate_without_payload_copy() {
 }
 
 #[test]
+fn typed_copy_operation_rejects_foreign_owner_and_restores_prior_spans_on_failure() {
+    let mut pool = ChunkPool::<u32>::with_packed_chunk_bytes(64);
+    let mut arena = ForkArena::<u32, ActiveLane>::new();
+    let retained = arena
+        .append_unsealed_copy_parts(&mut pool, 1, &[7, 8], None)
+        .expect("retained span");
+    let retained_end = arena.payload_position_end();
+    let operation = arena.begin_unsealed_copy_operation(&pool);
+    let mut foreign = ForkArena::<u32, ActiveLane>::new();
+    assert_eq!(
+        foreign.append_unsealed_copy_parts(&mut pool, 2, &[9], Some(operation)),
+        Err(ForkArenaError::InvalidOperationMark)
+    );
+    let first = arena
+        .append_unsealed_copy_parts(&mut pool, 3, &[11, 12], Some(operation))
+        .expect("first unpublished span");
+    assert_eq!(
+        arena.append_unsealed_fixed_copy_parts(&mut pool, 4, &[29; 20], Some(operation)),
+        Err(ForkArenaError::CapacityOverflow)
+    );
+    assert_eq!(arena.payload_position_end(), retained_end);
+    assert!(arena.list(&pool, first).is_err());
+    assert_eq!(
+        arena
+            .list(&pool, retained)
+            .expect("retained span survives")
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        vec![1, 7, 8]
+    );
+}
+
+#[test]
 fn consuming_builder_finish_performs_no_dynamic_revalidation() {
     let mut pool = ChunkPool::<u32>::with_chunk_bytes(64);
     let mut arena = ForkArena::<u32, ActiveLane>::new();

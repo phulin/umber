@@ -292,7 +292,11 @@ impl NodeRecord<PageMaterialLane> {
         map_child: impl FnMut(PageListId) -> Option<PageListId>,
     ) -> Option<(Self, Option<usize>)> {
         let mut annex = NodeAnnexCopier::same_region(pool, arena);
-        self.reencode_into(&mut annex, map_child)
+        let relocated = self.reencode_into(&mut annex, map_child);
+        if relocated.is_some() {
+            annex.commit_reencoded();
+        }
+        relocated
     }
 
     pub(crate) fn reencode_between_regions(
@@ -303,7 +307,11 @@ impl NodeRecord<PageMaterialLane> {
         map_child: impl FnMut(PageListId) -> Option<PageListId>,
     ) -> Option<(Self, Option<usize>)> {
         let mut annex = NodeAnnexCopier::between_regions(pool, source, destination);
-        self.reencode_into(&mut annex, map_child)
+        let relocated = self.reencode_into(&mut annex, map_child);
+        if relocated.is_some() {
+            annex.commit_reencoded();
+        }
+        relocated
     }
 
     fn reencode_into(

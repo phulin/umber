@@ -2511,6 +2511,21 @@ pub struct OperationMark<Lane> {
     _lane: PhantomData<fn(Lane) -> Lane>,
 }
 
+/// One unpublished typed-copy append scope. Its mark is bound to the exact
+/// arena lineage and pool space; callers never receive a raw rollback mark.
+pub(crate) struct UnsealedCopyOperation<Lane> {
+    mark: OperationMark<Lane>,
+    lineage: u32,
+    pool_space: u32,
+}
+
+impl<Lane> Clone for UnsealedCopyOperation<Lane> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<Lane> Copy for UnsealedCopyOperation<Lane> {}
+
 impl<Lane> Clone for OperationMark<Lane> {
     fn clone(&self) -> Self {
         *self
@@ -3771,6 +3786,29 @@ impl<T, Lane> ForkArena<T, Lane> {
         }
     }
 
+    pub(crate) fn begin_unsealed_copy_operation(
+        &self,
+        pool: &ChunkPool<T>,
+    ) -> UnsealedCopyOperation<Lane> {
+        UnsealedCopyOperation {
+            mark: self.operation_mark(pool),
+            lineage: self.lineage,
+            pool_space: pool.payload.logical_space(),
+        }
+    }
+
+    pub(crate) fn restore_unsealed_copy_operation(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        operation: UnsealedCopyOperation<Lane>,
+    ) -> Result<(), ForkArenaError> {
+        if operation.lineage != self.lineage || operation.pool_space != pool.payload.logical_space()
+        {
+            return Err(ForkArenaError::InvalidOperationMark);
+        }
+        self.restore_operation(pool, operation.mark)
+    }
+
     pub fn restore_operation(
         &mut self,
         pool: &mut ChunkPool<T>,
@@ -3964,6 +4002,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         pool: &mut ChunkPool<T>,
         header: T,
         body: &[T],
+        operation: Option<UnsealedCopyOperation<Lane>>,
     ) -> Result<ArenaListId<Lane>, ForkArenaError>
     where
         T: LeafRegionValue<Lane>,
@@ -3975,8 +4014,15 @@ impl<T, Lane> ForkArena<T, Lane> {
         if self.pending_batch.is_some() {
             return Err(ForkArenaError::ActiveBatch);
         }
-        let operation = self.operation_mark(pool);
-        self.append_unsealed_copy_parts_from_mark(pool, header, body, operation)
+        let operation = operation.unwrap_or_else(|| self.begin_unsealed_copy_operation(pool));
+        if operation.mark.arena != self.owner
+            || operation.mark.payload_chunks as usize > self.live_payload_len()
+            || operation.lineage != self.lineage
+            || operation.pool_space != pool.payload.logical_space()
+        {
+            return Err(ForkArenaError::InvalidOperationMark);
+        }
+        self.append_unsealed_copy_parts_from_mark(pool, header, body, operation.mark)
     }
 
     fn append_unsealed_copy_parts_from_mark(
@@ -4046,6 +4092,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         pool: &mut ChunkPool<T>,
         header: T,
         body: &[T],
+        operation: Option<UnsealedCopyOperation<Lane>>,
     ) -> Result<ArenaListId<Lane>, ForkArenaError>
     where
         T: LeafRegionValue<Lane>,
@@ -4057,28 +4104,43 @@ impl<T, Lane> ForkArena<T, Lane> {
         if self.pending_batch.is_some() {
             return Err(ForkArenaError::ActiveBatch);
         }
-        let needed = body
-            .len()
-            .checked_add(1)
-            .ok_or(ForkArenaError::CapacityOverflow)?;
-        if needed > pool.payload.chunk_capacity() {
-            return Err(ForkArenaError::CapacityOverflow);
+        let operation = operation.unwrap_or_else(|| self.begin_unsealed_copy_operation(pool));
+        if operation.mark.arena != self.owner
+            || operation.mark.payload_chunks as usize > self.live_payload_len()
+            || operation.lineage != self.lineage
+            || operation.pool_space != pool.payload.logical_space()
+        {
+            return Err(ForkArenaError::InvalidOperationMark);
         }
-        let operation = self.operation_mark(pool);
-        if let Some(key) = self.live_key_at(self.live_payload_len().saturating_sub(1)) {
-            let used = pool.payload.used(key, self.owner)? as usize;
-            if !pool.payload.is_sealed(key, self.owner)?
-                && pool.payload.chunk_capacity().saturating_sub(used) < needed
-            {
-                let unused = pool.payload.seal(key, self.owner)?;
-                self.counters.chunks_sealed = self.counters.chunks_sealed.saturating_add(1);
-                self.counters.unused_sealed_bytes = self
-                    .counters
-                    .unused_sealed_bytes
-                    .saturating_add((unused * pool.payload.resident_slot_bytes()) as u64);
+        let prepared = (|| {
+            let needed = body
+                .len()
+                .checked_add(1)
+                .ok_or(ForkArenaError::CapacityOverflow)?;
+            if needed > pool.payload.chunk_capacity() {
+                return Err(ForkArenaError::CapacityOverflow);
             }
+            if let Some(key) = self.live_key_at(self.live_payload_len().saturating_sub(1)) {
+                let used = pool.payload.used(key, self.owner)? as usize;
+                if !pool.payload.is_sealed(key, self.owner)?
+                    && pool.payload.chunk_capacity().saturating_sub(used) < needed
+                {
+                    let unused = pool.payload.seal(key, self.owner)?;
+                    self.counters.chunks_sealed = self.counters.chunks_sealed.saturating_add(1);
+                    self.counters.unused_sealed_bytes = self
+                        .counters
+                        .unused_sealed_bytes
+                        .saturating_add((unused * pool.payload.resident_slot_bytes()) as u64);
+                }
+            }
+            Ok::<(), ForkArenaError>(())
+        })();
+        if let Err(error) = prepared {
+            self.restore_unsealed_copy_operation(pool, operation)
+                .expect("fixed copy preparation restores its operation mark");
+            return Err(error);
         }
-        self.append_unsealed_copy_parts_from_mark(pool, header, body, operation)
+        self.append_unsealed_copy_parts_from_mark(pool, header, body, operation.mark)
     }
 
     /// Publishes several independent fixed leaf lists from one flat word run.

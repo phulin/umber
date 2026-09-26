@@ -201,6 +201,7 @@ fn typed_annex_copy_preserves_contiguous_and_cross_chunk_spans() {
                 .detach_span(AnnexKey::<Fixed>::from_words(wrong_serial))
                 .is_none()
         );
+        copier.commit_reencoded();
         copies
     };
     for ((_, body), destination_key) in sources.iter().zip(copies) {
@@ -222,6 +223,67 @@ fn typed_annex_copy_preserves_contiguous_and_cross_chunk_spans() {
             .as_slice(),
         sources[1].1
     );
+}
+
+#[test]
+fn typed_annex_copy_rolls_back_all_unpublished_spans_and_keeps_serials_fresh() {
+    use super::annex::{
+        AnnexKey, NodeAnnexCopier, NodeAnnexCopyReader, NodeAnnexView, NodeAnnexWriter,
+    };
+
+    enum Span {}
+    let mut pool = crate::fork_arena::ChunkPool::with_packed_chunk_bytes(64);
+    let source = crate::fork_arena::ForkArena::new();
+    let mut destination = crate::fork_arena::ForkArena::new();
+    let retained = NodeAnnexWriter::new(&mut pool, &mut destination).append_span::<Span>(&[7, 8]);
+    let retained_end = destination.payload_position_end();
+    let mut reader = NodeAnnexCopyReader::new(&source);
+    let (first, crossing) = {
+        let mut copier = NodeAnnexCopier::between_regions(&mut pool, &mut reader, &mut destination);
+        let first = copier.append_span::<Span>(&[11, 12, 13, 14]);
+        let crossing = copier.append_span::<Span>(&[29; 40]);
+        assert_ne!(crossing.words()[..2], crossing.words()[3..5]);
+        copier
+            .rollback_unpublished()
+            .expect("failed record restores its entire annex tail");
+        assert_eq!(copier.dependency_floor(), None);
+        (first, crossing)
+    };
+    assert_eq!(destination.payload_position_end(), retained_end);
+    let view = NodeAnnexView::new(&pool, &destination);
+    assert_eq!(view.detach_span(retained), Some(vec![7, 8]));
+    assert_eq!(view.detach_span(first), None);
+    assert_eq!(view.detach_span(crossing), None);
+
+    let replacement =
+        NodeAnnexWriter::new(&mut pool, &mut destination).append_span::<Span>(&[11, 12, 13, 14]);
+    assert_eq!(first.words()[..6], replacement.words()[..6]);
+    assert_ne!(first.words()[6], replacement.words()[6]);
+    assert_eq!(
+        NodeAnnexView::new(&pool, &destination).detach_span(replacement),
+        Some(vec![11, 12, 13, 14])
+    );
+    assert_eq!(
+        NodeAnnexView::new(&pool, &destination)
+            .detach_span(AnnexKey::<Span>::from_words(first.words())),
+        None
+    );
+}
+
+#[test]
+fn typed_annex_copy_unwind_restores_unpublished_tail() {
+    let mut pool = crate::fork_arena::ChunkPool::with_packed_chunk_bytes(64);
+    let source = crate::fork_arena::ForkArena::new();
+    let mut destination = crate::fork_arena::ForkArena::new();
+    let mut reader = NodeAnnexCopyReader::new(&source);
+    let before = destination.payload_position_end();
+    let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut copier = NodeAnnexCopier::between_regions(&mut pool, &mut reader, &mut destination);
+        copier.append_span::<Fixed>(&[41; 40]);
+        panic!("abort typed record before its node becomes visible");
+    }));
+    assert!(unwound.is_err());
+    assert_eq!(destination.payload_position_end(), before);
 }
 
 #[test]

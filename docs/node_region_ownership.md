@@ -113,6 +113,24 @@ relocation without retaining source coordinates or introducing a destination
 lookup table. Publication serials and paired dependency floors are still
 established by the ordinary annex writer.
 
+When a typed record publishes several annex spans, its copier owns one opaque,
+lineage- and pool-bound append operation. The ordinary annex writer uses its
+private mark for each span and final fixed wrapper, so a later failure truncates the
+entire unpublished record's annex tail. The scope holds the destination arena
+exclusively; no other writer can interleave between its first append and
+completion. Successful reencoding commits the scope; a failed return or unwind
+restores its mark before the unfinished record can become visible. Child
+mapping for fixed payloads finishes before their first append. The copier
+exposes the relocated record and its dependency floor only after all nested
+keys have been published. Publication serials still advance on rollback,
+preventing a failed key from naming a later record. Rollback uses
+the arena's normal truncation, including physical remap and admission-epoch
+refresh; the independent immutable-source reader re-admits if those coordinates
+change. General annex writers keep their per-append marks because their keys
+may already be visible between calls. Allocator counters continue to measure
+attempted writes and truncations, while the restored live tail is authoritative
+for ownership and memory accounting.
+
 Fixed bodies publish in groups of at most 16 through one admitted physical run
 per available block segment. Once a copied box has a nonempty owned child
 closure, remaining fixed bodies in that source node chunk wait until all child

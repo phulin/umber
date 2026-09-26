@@ -3,6 +3,7 @@ use super::*;
 
 use crate::fork_arena::{
     ArenaListId, ChunkPool, ForkArena, ForkArenaError, PackedSourceChunkReader,
+    UnsealedCopyOperation,
 };
 use crate::node_region::NodeAnnexLane;
 use smallvec::SmallVec;
@@ -93,6 +94,7 @@ pub struct NodeAnnexWriter<'a> {
     pool: &'a mut ChunkPool<u32>,
     arena: &'a mut ForkArena<u32, NodeAnnexLane>,
     dependency_floor: usize,
+    operation: Option<UnsealedCopyOperation<NodeAnnexLane>>,
 }
 
 pub(super) enum NodeAnnexCopySource<'a, 'source> {
@@ -105,6 +107,16 @@ pub(super) struct NodeAnnexCopier<'a, 'source> {
     source: NodeAnnexCopySource<'a, 'source>,
     destination: &'a mut ForkArena<u32, NodeAnnexLane>,
     dependency_floor: usize,
+    operation: Option<UnsealedCopyOperation<NodeAnnexLane>>,
+}
+
+impl Drop for NodeAnnexCopier<'_, '_> {
+    fn drop(&mut self) {
+        if self.operation.is_some() {
+            self.rollback_unpublished()
+                .expect("unfinished annex re-encode restores its operation mark");
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -435,6 +447,20 @@ impl<'a> NodeAnnexWriter<'a> {
             pool,
             arena,
             dependency_floor: usize::MAX,
+            operation: None,
+        }
+    }
+
+    fn with_copy_operation(
+        pool: &'a mut ChunkPool<u32>,
+        arena: &'a mut ForkArena<u32, NodeAnnexLane>,
+        operation: UnsealedCopyOperation<NodeAnnexLane>,
+    ) -> Self {
+        Self {
+            pool,
+            arena,
+            dependency_floor: usize::MAX,
+            operation: Some(operation),
         }
     }
 
@@ -454,7 +480,7 @@ impl<'a> NodeAnnexWriter<'a> {
         let publication_serial = self.pool.next_publication_serial();
         let list = self
             .arena
-            .append_unsealed_fixed_copy_parts(self.pool, publication_serial, body)
+            .append_unsealed_fixed_copy_parts(self.pool, publication_serial, body, self.operation)
             .expect("fixed typed annex publication fits one paired-region chunk");
         let position = self
             .arena
@@ -597,7 +623,7 @@ impl<'a> NodeAnnexWriter<'a> {
         let publication_serial = self.pool.next_publication_serial();
         let list = self
             .arena
-            .append_unsealed_copy_parts(self.pool, publication_serial, body)
+            .append_unsealed_copy_parts(self.pool, publication_serial, body, self.operation)
             .expect("typed annex publication fits its paired region");
         let position = self
             .arena
@@ -925,6 +951,7 @@ impl<'a, 'source> NodeAnnexCopier<'a, 'source> {
             source: NodeAnnexCopySource::SameRegion,
             destination: arena,
             dependency_floor: usize::MAX,
+            operation: None,
         }
     }
 
@@ -938,7 +965,28 @@ impl<'a, 'source> NodeAnnexCopier<'a, 'source> {
             source: NodeAnnexCopySource::OtherRegion(source),
             destination,
             dependency_floor: usize::MAX,
+            operation: None,
         }
+    }
+
+    fn copy_operation(&mut self) -> UnsealedCopyOperation<NodeAnnexLane> {
+        *self
+            .operation
+            .get_or_insert_with(|| self.destination.begin_unsealed_copy_operation(self.pool))
+    }
+
+    pub(super) fn rollback_unpublished(&mut self) -> Option<()> {
+        if let Some(operation) = self.operation.take() {
+            self.destination
+                .restore_unsealed_copy_operation(self.pool, operation)
+                .ok()?;
+            self.dependency_floor = usize::MAX;
+        }
+        Some(())
+    }
+
+    pub(super) fn commit_reencoded(&mut self) {
+        self.operation = None;
     }
 
     pub(super) fn source_view(&self) -> NodeAnnexView<'_> {
@@ -990,7 +1038,9 @@ impl<'a, 'source> NodeAnnexCopier<'a, 'source> {
     }
 
     pub(super) fn append_fixed<Kind>(&mut self, body: &[u32]) -> AnnexKey<Kind> {
-        let mut writer = NodeAnnexWriter::new(self.pool, self.destination);
+        let operation = self.copy_operation();
+        let mut writer =
+            NodeAnnexWriter::with_copy_operation(self.pool, self.destination, operation);
         let key = writer.append_fixed(body);
         if let Some(floor) = writer.dependency_floor() {
             self.dependency_floor = self.dependency_floor.min(floor);
@@ -999,7 +1049,9 @@ impl<'a, 'source> NodeAnnexCopier<'a, 'source> {
     }
 
     pub(super) fn append_span<Kind>(&mut self, body: &[u32]) -> AnnexKey<Kind> {
-        let mut writer = NodeAnnexWriter::new(self.pool, self.destination);
+        let operation = self.copy_operation();
+        let mut writer =
+            NodeAnnexWriter::with_copy_operation(self.pool, self.destination, operation);
         let key = writer.append_span(body);
         if let Some(floor) = writer.dependency_floor() {
             self.dependency_floor = self.dependency_floor.min(floor);
