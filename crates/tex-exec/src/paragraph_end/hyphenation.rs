@@ -1681,20 +1681,17 @@ impl<'output, 'word, 'projection, 'vectors>
         stores: &mut CommandContext<'_, G>,
         diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
         position: usize,
+        source_start: usize,
         full_branch: bool,
         fuel: &mut tex_command::CommandFuel,
         tfm_work: &mut crate::box_runtime::hmode::LigatureWorkList,
     ) -> Result<tex_state::page_node_arena::PageListId, ExecError> {
         let previous = self.word[position - 1];
-        let through_glyph = self.char_start < position;
-        let mut source = if through_glyph {
-            // TeX82 §§913--915 start this alternative at `l`, the start
-            // of the current reconstitution segment. Earlier glyphs have
-            // already been linked into the main list.
-            pending_word_range(self.word, self.char_start..position)
-        } else {
-            pending_word_range(self.word, position - 1..position)
-        };
+        // TeX82 §§913--915 start this alternative at `l`, the start of the
+        // current reconstitution segment. At a font-kern boundary the prior
+        // glyph is parked for the discretionary's replacement, so its whole
+        // source span still belongs to the pre-break branch.
+        let mut source = pending_word_range(self.word, source_start..position);
         let Some(ch) = automatic_hyphen_char(
             stores,
             previous.font,
@@ -1771,10 +1768,19 @@ impl<'output, 'word, 'projection, 'vectors>
         let preceding_in_replacement = replacement
             .as_ref()
             .is_some_and(|(glyph, _, _)| glyph.is_some());
+        let source_start = replacement
+            .as_ref()
+            .and_then(|(glyph, _, _)| glyph.as_ref())
+            .map_or(position - 1, |glyph| {
+                position
+                    .checked_sub(glyph.provenance.len)
+                    .expect("parked glyph source precedes hyphen boundary")
+            });
         let pre = match self.automatic_pre(
             stores,
             diagnostic_effects,
             position,
+            source_start,
             preceding_in_replacement,
             fuel,
             tfm_work,
@@ -1821,14 +1827,21 @@ impl<'output, 'word, 'projection, 'vectors>
         self.suspend_main(stores);
         let position = self.positions[self.position_index];
         let end = self.char_start.saturating_add(glyph.provenance.len);
-        let pre =
-            match self.automatic_pre(stores, diagnostic_effects, position, true, fuel, tfm_work) {
-                Ok(pre) => pre,
-                Err(error) => {
-                    self.resume_main(stores);
-                    return Err(error);
-                }
-            };
+        let pre = match self.automatic_pre(
+            stores,
+            diagnostic_effects,
+            position,
+            self.char_start,
+            true,
+            fuel,
+            tfm_work,
+        ) {
+            Ok(pre) => pre,
+            Err(error) => {
+                self.resume_main(stores);
+                return Err(error);
+            }
+        };
         let (physical_replace_count, physical_post) = match physical_projection_for_glyph(
             stores,
             diagnostic_effects,
@@ -2532,6 +2545,118 @@ mod tests {
                     Node::Char { ch: '-', .. },
                 ] if amount.raw() == -2_345
             ));
+        });
+    }
+
+    #[test]
+    fn pre_break_reconstitutes_the_whole_parked_ligature_at_a_font_kern() {
+        // TeX82 §§913--915: the parked bb ligature belongs to the
+        // replacement, so pre_break starts at its first source character.
+        crate::test_harness::with_nonstop_plain_universe(|universe| {
+            let mut stores = universe.command_context().expect("test state is admitted");
+            let mut characters = vec![None; 256];
+            for code in *b"-bx" {
+                characters[usize::from(code)] = Some(tex_state::font::CharMetrics {
+                    width: Scaled::from_raw(Scaled::UNITY),
+                    height: Scaled::from_raw(0),
+                    depth: Scaled::from_raw(0),
+                    italic_correction: Scaled::from_raw(0),
+                    tag: tex_state::font::CharTag::None,
+                });
+            }
+            for (code, program_index) in [(b'b', 0), (b'x', 1)] {
+                characters[usize::from(code)]
+                    .as_mut()
+                    .expect("test glyph exists")
+                    .tag = tex_state::font::CharTag::LigKern {
+                    program_index,
+                    start_index: u16::from(program_index),
+                };
+            }
+            let program = vec![
+                tex_fonts::LigKernInstruction {
+                    skip_byte: 128,
+                    next_char: b'b',
+                    command: Some(tex_fonts::LigKernCommand::Ligature(
+                        tex_fonts::LigatureCommand {
+                            replacement: b'x',
+                            delete_current: true,
+                            delete_next: true,
+                            pass_over: 0,
+                        },
+                    )),
+                },
+                tex_fonts::LigKernInstruction {
+                    skip_byte: 128,
+                    next_char: b'b',
+                    command: Some(tex_fonts::LigKernCommand::Kern(Scaled::from_raw(12_345))),
+                },
+            ];
+            let size = Scaled::from_raw(10 * Scaled::UNITY);
+            let font = stores.intern_font(tex_state::font::LoadedFont::new(
+                "parked-ligature",
+                "parked-ligature.tfm",
+                tex_fonts::font_content_hash(b"parked-ligature"),
+                0,
+                size,
+                size,
+                vec![Scaled::from_raw(0); 7],
+                tex_state::font::FontMetrics::new(characters, program, None, None, Vec::new()),
+            ));
+            stores.set_font_hyphen_char(font, i32::from(b'-'));
+            stores.add_hyphenation_exception_for_language(
+                0,
+                ExceptionSpec {
+                    word: "bbbb".into(),
+                    positions: vec![2],
+                },
+            );
+            for parameter in [IntParam::LEFT_HYPHEN_MIN, IntParam::RIGHT_HYPHEN_MIN] {
+                stores
+                    .assign_int_param(parameter, 1, tex_state::AssignmentScope::Global)
+                    .expect("hyphen minimum");
+            }
+            let mut source = vec![Node::Glue {
+                origin: tex_state::node::GlueSpecOrigin::Owned,
+                spec: tex_state::glue::GlueSpec::ZERO,
+                kind: tex_state::node::GlueKind::Normal,
+                leader: None,
+            }];
+            source.extend("bbbb".chars().map(|ch| character(font, ch)));
+            source.push(Node::Penalty(0));
+            let source = stores.publish_page_nodes(source);
+            let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut scratch = crate::mode::HorizontalModeScratch::default();
+            let mut fuel = tex_command::CommandFuelLedger::new(10_000).expect("bounded fuel");
+            let result = hyphenated_hlist_with_fuel(
+                &mut stores,
+                &mut effects,
+                source,
+                &mut scratch,
+                fuel.fuel_mut(),
+            )
+            .expect("ligature reconstitution");
+            for list in [result.semantic, result.physical] {
+                let nodes = stores.page_nodes(list).expect("hyphenated list");
+                let pre = nodes
+                    .iter()
+                    .find_map(|node| match node {
+                        tex_state::NodeView::Disc { pre, .. } => Some(pre),
+                        _ => None,
+                    })
+                    .expect("automatic discretionary");
+                let pre_chars: String = stores
+                    .page_nodes(pre)
+                    .expect("pre-break branch")
+                    .iter()
+                    .flat_map(|node| match node {
+                        tex_state::NodeView::Char { ch, .. } => vec![ch],
+                        tex_state::NodeView::Lig { orig, .. } => orig.to_vec(),
+                        _ => Vec::new(),
+                    })
+                    .collect();
+                assert_eq!(pre_chars, "bb-");
+            }
         });
     }
 
