@@ -2148,6 +2148,22 @@ impl<'a, G> CommandContext<'a, G> {
         })
     }
 
+    /// TeX82 §1055 changes the current box node itself, without assigning a
+    /// new register binding or recursively copying its child closure.
+    pub fn set_durable_box_dimension(
+        &mut self,
+        index: u16,
+        dimension: BoxDimension,
+        value: Scaled,
+    ) -> bool {
+        if index == u16::from(u8::MAX) && !self.page.output_box().is_empty() {
+            return false;
+        }
+        self.durable_boxes
+            .set_box_dimension(&mut self.page_nodes, index, dimension, value)
+            .expect("durable box root dimension mutation")
+    }
+
     #[must_use]
     pub fn box_margin_kern(&self, index: u16, side: crate::node::MarginKernSide) -> Option<Scaled> {
         if index == u16::from(u8::MAX) && !self.page.output_box().is_empty() {

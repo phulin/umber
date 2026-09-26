@@ -1127,6 +1127,43 @@ impl<Role> OwnedNodeClosure<Role> {
     }
 }
 
+impl OwnedNodeClosure<DurableRole> {
+    pub(crate) fn set_root_box_dimension(
+        &mut self,
+        pool: &mut NodePool,
+        dimension: crate::command_context::BoxDimension,
+        value: crate::scaled::Scaled,
+    ) -> Result<crate::scaled::Scaled, ForkArenaError> {
+        pool.validate_region(&self.region)?;
+        if self.root.list.len() != 1 {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        let record = *self
+            .region
+            .pub_arena
+            .list(&pool.chunks, self.root.list.coordinate())?
+            .get(0)
+            .ok_or(ForkArenaError::InvalidRange)?;
+        let previous = crate::node_record::set_root_box_dimension(
+            record,
+            &mut pool.annex_chunks,
+            &mut self.region.annex_arena,
+            dimension,
+            value,
+        )?;
+        if self.root.list.semantic_identity().is_some() {
+            let annex = crate::node_record::NodeAnnexView::new(
+                &pool.annex_chunks,
+                &self.region.annex_arena,
+            );
+            let mut identity = crate::node_sequence::SemanticSequenceIdentity::empty();
+            identity.push_back(record.semantic_identity(annex));
+            self.root.list = PageListId::from_parts(self.root.list.coordinate(), Some(identity));
+        }
+        Ok(previous)
+    }
+}
+
 /// Commits a detached construction suffix into a destination region. Failed
 /// destination validation returns the move-only suffix loan unchanged.
 #[allow(clippy::result_large_err)] // Failure returns the move-only closure loan without allocation.

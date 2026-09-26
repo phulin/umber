@@ -1353,6 +1353,15 @@ impl<'a> PageMaterialArena<'a> {
         closure.list(self.pool)
     }
 
+    pub(crate) fn set_durable_root_box_dimension(
+        &mut self,
+        closure: &mut DurableNodeClosure,
+        dimension: crate::command_context::BoxDimension,
+        value: crate::scaled::Scaled,
+    ) -> Result<crate::scaled::Scaled, ForkArenaError> {
+        closure.set_root_box_dimension(self.pool, dimension, value)
+    }
+
     pub(crate) fn durable_child_list<'b>(
         &'b self,
         closure: &'b DurableNodeClosure,

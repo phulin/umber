@@ -1400,6 +1400,29 @@ fn etex_sparse_box_dimension_assignment_is_visible_to_internal_scans() {
         assert_eq!(stores.count(0).expect("count register"), 1);
     });
 }
+
+#[test]
+fn box_dimension_write_inside_group_changes_the_same_outer_box() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\setbox0=\hbox{\kern1pt}{\wd0=3pt\ht0=4pt\dp0=5pt}\ifdim\wd0=3pt\count0=1\fi\end",
+        );
+        run_to_end(&mut control, stores);
+        assert_eq!(stores.count(0).expect("condition result"), 1);
+        for (dimension, raw) in [
+            (tex_state::BoxDimension::Width, 3),
+            (tex_state::BoxDimension::Height, 4),
+            (tex_state::BoxDimension::Depth, 5),
+        ] {
+            assert_eq!(
+                admitted!(stores, |context| context.box_dimension(0, dimension)),
+                Some(Scaled::from_raw(raw * Scaled::UNITY))
+            );
+        }
+    });
+}
 #[test]
 fn etex_identical_local_code_reassignment_is_a_save_stack_noop() {
     // e-TeX §275 applies the `eq_word_define` reassignment shortcut to every

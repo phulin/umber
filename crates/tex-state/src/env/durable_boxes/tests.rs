@@ -1,7 +1,11 @@
 use super::*;
+use crate::command_context::BoxDimension;
+use crate::glue::Order;
 use crate::node::Node;
+use crate::node::{BoxLr, BoxNode, BoxNodeFields, Sign};
 use crate::node_region::NodePool;
 use crate::page_node_arena::PageMaterialRegion;
+use crate::scaled::{GlueSetRatio, Scaled};
 
 macro_rules! page_arena {
     ($arena:ident, $pool:ident, $state:ident, $bytes:expr) => {
@@ -18,6 +22,335 @@ fn owner(arena: &mut PageMaterialArena, penalty: i32) -> DurableNodeClosure {
     arena
         .copy_page_root_to_durable(root)
         .expect("durable owner")
+}
+
+fn boxed_owner(arena: &mut PageMaterialArena) -> DurableNodeClosure {
+    let child = arena
+        .publish_owned([Node::Penalty(47)])
+        .expect("child list");
+    let boxed = Node::HList(BoxNode::new(BoxNodeFields {
+        width: Scaled::from_raw(10),
+        height: Scaled::from_raw(20),
+        depth: Scaled::from_raw(3),
+        shift: Scaled::from_raw(0),
+        box_lr: BoxLr::Normal,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children: child,
+    }));
+    let root = arena.publish_owned([boxed]).expect("box root");
+    arena.copy_page_root_to_durable(root).expect("durable box")
+}
+
+fn dimensions(
+    state: &DurableBoxState,
+    arena: &PageMaterialArena,
+    index: u16,
+) -> (Scaled, Scaled, Scaled) {
+    let list = arena
+        .durable_list(state.value(index).expect("occupied box"))
+        .expect("durable list");
+    let crate::NodeView::HList(node) = list.get(0).expect("root node") else {
+        panic!("hbox root")
+    };
+    (node.width, node.height, node.depth)
+}
+
+fn assign_box(state: &mut DurableBoxState, arena: &mut PageMaterialArena, index: u16) {
+    let boxed = boxed_owner(arena);
+    state
+        .assign(
+            arena,
+            index,
+            Some(boxed),
+            super::super::AssignmentScope::Global,
+            LEVEL_ONE,
+        )
+        .expect("box assignment");
+}
+
+#[test]
+fn scalar_box_root_mutation_preserves_closure_and_rolls_back() {
+    page_arena!(arena, pool, region, 64);
+    arena.enable_semantic_identity();
+    let mut state = DurableBoxState::new();
+    assert!(state.enable_semantic_identity());
+    let boxed = boxed_owner(&mut arena);
+    state
+        .assign(
+            &mut arena,
+            8,
+            Some(boxed),
+            super::super::AssignmentScope::Global,
+            LEVEL_ONE,
+        )
+        .expect("box assignment");
+    let original_region = current_region(&state, 8);
+    let original_identity = state.semantic_identity_root();
+    let before = arena.durable_transition_counters();
+    let operation = state.begin_operation();
+    for (dimension, raw) in [
+        (BoxDimension::Width, 40),
+        (BoxDimension::Height, 50),
+        (BoxDimension::Depth, 6),
+    ] {
+        state
+            .set_box_dimension(&mut arena, 8, dimension, Scaled::from_raw(raw))
+            .expect("scalar edit");
+    }
+    assert_eq!(current_region(&state, 8), original_region);
+    assert_eq!(
+        dimensions(&state, &arena, 8),
+        (
+            Scaled::from_raw(40),
+            Scaled::from_raw(50),
+            Scaled::from_raw(6)
+        )
+    );
+    assert_ne!(state.semantic_identity_root(), original_identity);
+    assert_eq!(
+        arena
+            .durable_transition_counters()
+            .history_preservation_nodes_copied,
+        before.history_preservation_nodes_copied
+    );
+    state.rollback_operation(&mut arena, operation);
+    assert_eq!(
+        dimensions(&state, &arena, 8),
+        (
+            Scaled::from_raw(10),
+            Scaled::from_raw(20),
+            Scaled::from_raw(3)
+        )
+    );
+    assert_eq!(current_region(&state, 8), original_region);
+    assert_eq!(state.semantic_identity_root(), original_identity);
+    state.retire_all(&mut arena);
+}
+
+#[test]
+fn checkpoint_scalar_history_restores_through_overwrite_and_destructive_take() {
+    page_arena!(arena, pool, region, 64);
+    let mut state = DurableBoxState::new();
+    assign_box(&mut state, &mut arena, 8);
+    let original = current_region(&state, 8);
+    let checkpoint = state.checkpoint_cursor();
+    let before = arena.durable_transition_counters();
+    state
+        .set_box_dimension(&mut arena, 8, BoxDimension::Width, Scaled::from_raw(40))
+        .expect("width edit");
+    state
+        .set_box_dimension(&mut arena, 8, BoxDimension::Width, Scaled::from_raw(50))
+        .expect("coalesced width edit");
+    assert_eq!(current_region(&state, 8), original);
+    assert_eq!(
+        state.scalar_entries.len(),
+        1,
+        "checkpoint stores only the first old width"
+    );
+    assert_eq!(
+        arena
+            .durable_transition_counters()
+            .history_preservation_nodes_copied,
+        before.history_preservation_nodes_copied
+    );
+    let replacement = boxed_owner(&mut arena);
+    state
+        .replace(&mut arena, 8, Some(replacement))
+        .expect("overwrite");
+    state.restore(&mut arena, checkpoint);
+    assert_eq!(current_region(&state, 8), original);
+    assert_eq!(dimensions(&state, &arena, 8).0, Scaled::from_raw(10));
+
+    let checkpoint = state.checkpoint_cursor();
+    state
+        .set_box_dimension(&mut arena, 8, BoxDimension::Height, Scaled::from_raw(60))
+        .expect("height edit");
+    let operation = state.begin_operation();
+    let _ = state
+        .take_to_page(&mut arena, 8)
+        .expect("take")
+        .expect("nonvoid box");
+    state.commit_operation(&mut arena, operation);
+    assert!(state.value(8).is_none());
+    state.restore(&mut arena, checkpoint);
+    assert_eq!(dimensions(&state, &arena, 8).1, Scaled::from_raw(20));
+    state.retire_all(&mut arena);
+}
+
+#[test]
+fn scalar_checkpoint_candidate_reject_and_accept_keep_separate_root_values() {
+    page_arena!(arena, pool, region, 64);
+    let mut state = DurableBoxState::new();
+    assign_box(&mut state, &mut arena, 9);
+    let accepted_region = current_region(&state, 9);
+    let checkpoint = state.checkpoint_cursor();
+    state
+        .set_box_dimension(&mut arena, 9, BoxDimension::Width, Scaled::from_raw(40))
+        .expect("accepted edit");
+    let tail = state
+        .begin_checkpoint_candidate(&mut arena, checkpoint)
+        .expect("fork");
+    assert_ne!(current_region(&state, 9), accepted_region);
+    assert_eq!(dimensions(&state, &arena, 9).0, Scaled::from_raw(10));
+    state
+        .set_box_dimension(&mut arena, 9, BoxDimension::Height, Scaled::from_raw(60))
+        .expect("candidate edit");
+    state.reject_checkpoint_candidate(&mut arena, checkpoint, tail);
+    assert_eq!(current_region(&state, 9), accepted_region);
+    assert_eq!(
+        dimensions(&state, &arena, 9),
+        (
+            Scaled::from_raw(40),
+            Scaled::from_raw(20),
+            Scaled::from_raw(3)
+        )
+    );
+
+    let tail = state
+        .begin_checkpoint_candidate(&mut arena, checkpoint)
+        .expect("second fork");
+    let candidate_region = current_region(&state, 9);
+    state.accept_checkpoint_candidate(&mut arena, tail);
+    assert_eq!(current_region(&state, 9), candidate_region);
+    assert_ne!(candidate_region, accepted_region);
+    assert_eq!(dimensions(&state, &arena, 9).0, Scaled::from_raw(10));
+    state.retire_all(&mut arena);
+}
+
+#[test]
+fn rolled_back_scalar_first_touch_can_be_recorded_again() {
+    page_arena!(arena, pool, region, 64);
+    let mut state = DurableBoxState::new();
+    assign_box(&mut state, &mut arena, 10);
+    let checkpoint = state.checkpoint_cursor();
+    let operation = state.begin_operation();
+    state
+        .set_box_dimension(&mut arena, 10, BoxDimension::Depth, Scaled::from_raw(8))
+        .expect("transient edit");
+    state.rollback_operation(&mut arena, operation);
+    assert!(state.scalar_entries.is_empty());
+    state
+        .set_box_dimension(&mut arena, 10, BoxDimension::Depth, Scaled::from_raw(9))
+        .expect("lasting edit");
+    assert_eq!(state.scalar_entries.len(), 1);
+    state.restore(&mut arena, checkpoint);
+    assert_eq!(dimensions(&state, &arena, 10).2, Scaled::from_raw(3));
+    state.retire_all(&mut arena);
+}
+
+#[test]
+fn earlier_checkpoint_skips_later_box_lineage_scalar_inverse() {
+    page_arena!(arena, pool, region, 64);
+    let mut state = DurableBoxState::new();
+    assign_box(&mut state, &mut arena, 11);
+    let original = current_region(&state, 11);
+    let first = state.checkpoint_cursor();
+    state
+        .set_box_dimension(&mut arena, 11, BoxDimension::Width, Scaled::from_raw(40))
+        .expect("original edit");
+    let replacement = boxed_owner(&mut arena);
+    state
+        .replace(&mut arena, 11, Some(replacement))
+        .expect("new box");
+    let second = state.checkpoint_cursor();
+    state
+        .set_box_dimension(&mut arena, 11, BoxDimension::Height, Scaled::from_raw(60))
+        .expect("new box edit");
+    state.restore(&mut arena, second);
+    assert_eq!(
+        dimensions(&state, &arena, 11),
+        (
+            Scaled::from_raw(10),
+            Scaled::from_raw(20),
+            Scaled::from_raw(3)
+        )
+    );
+    state
+        .set_box_dimension(&mut arena, 11, BoxDimension::Height, Scaled::from_raw(70))
+        .expect("second edit");
+    state.restore(&mut arena, first);
+    assert_eq!(current_region(&state, 11), original);
+    assert_eq!(
+        dimensions(&state, &arena, 11),
+        (
+            Scaled::from_raw(10),
+            Scaled::from_raw(20),
+            Scaled::from_raw(3)
+        )
+    );
+    state.retire_all(&mut arena);
+}
+
+#[test]
+fn earlier_void_checkpoint_skips_later_box_scalar_inverse() {
+    page_arena!(arena, pool, region, 64);
+    let mut state = DurableBoxState::new();
+    let first = state.checkpoint_cursor();
+    assign_box(&mut state, &mut arena, 12);
+    let second = state.checkpoint_cursor();
+    state
+        .set_box_dimension(&mut arena, 12, BoxDimension::Width, Scaled::from_raw(30))
+        .expect("later scalar edit");
+    state.restore(&mut arena, first);
+    assert!(state.value(12).is_none());
+    assert!(!state.validates_cursor(second));
+    state.retire_all(&mut arena);
+}
+
+#[test]
+fn fork_rejection_preserves_intermediate_checkpoint_box_dimensions() {
+    page_arena!(arena, pool, region, 64);
+    let mut state = DurableBoxState::new();
+    assign_box(&mut state, &mut arena, 13);
+    let first = state.checkpoint_cursor();
+    state
+        .set_box_dimension(&mut arena, 13, BoxDimension::Height, Scaled::from_raw(10))
+        .expect("first scalar edit");
+    let second = state.checkpoint_cursor();
+    let later = boxed_owner(&mut arena);
+    state
+        .replace(&mut arena, 13, Some(later))
+        .expect("later binding");
+    let tail = state
+        .begin_checkpoint_candidate(&mut arena, first)
+        .expect("fork at first");
+    assert_eq!(dimensions(&state, &arena, 13).1, Scaled::from_raw(20));
+    state.reject_checkpoint_candidate(&mut arena, first, tail);
+    state.restore(&mut arena, second);
+    assert_eq!(dimensions(&state, &arena, 13).1, Scaled::from_raw(10));
+    state.retire_all(&mut arena);
+}
+
+#[test]
+fn fork_acceptance_discards_superseded_scalar_and_binding_history() {
+    page_arena!(arena, pool, region, 64);
+    let mut state = DurableBoxState::new();
+    assign_box(&mut state, &mut arena, 14);
+    let original = current_region(&state, 14).expect("initial region");
+    let first = state.checkpoint_cursor();
+    state
+        .set_box_dimension(&mut arena, 14, BoxDimension::Height, Scaled::from_raw(10))
+        .expect("accepted edit");
+    let second = state.checkpoint_cursor();
+    let later = boxed_owner(&mut arena);
+    let later_region = later.region_id();
+    state
+        .replace(&mut arena, 14, Some(later))
+        .expect("accepted binding");
+    let tail = state
+        .begin_checkpoint_candidate(&mut arena, first)
+        .expect("fork");
+    let candidate = current_region(&state, 14).expect("candidate region");
+    assert_ne!(candidate, original);
+    state.accept_checkpoint_candidate(&mut arena, tail);
+    assert_eq!(current_region(&state, 14), Some(candidate));
+    assert_eq!(dimensions(&state, &arena, 14).1, Scaled::from_raw(20));
+    assert!(!arena.durable_region_is_live(original));
+    assert!(!arena.durable_region_is_live(later_region));
+    assert!(!state.validates_cursor(second));
+    state.retire_all(&mut arena);
 }
 
 fn current_region(state: &DurableBoxState, index: u16) -> Option<NodeRegionId> {
@@ -277,6 +610,58 @@ fn active_operation_take_uses_a_rollbackable_zero_copy_loan() {
 }
 
 #[test]
+fn open_groups_without_a_saved_current_owner_keep_destructive_take_unique() {
+    page_arena!(arena, pool, region, 64);
+    let mut state = DurableBoxState::new();
+    state.begin_group(2);
+    state.begin_group(3);
+    let boxed = owner(&mut arena, 35);
+    let address = arena
+        .durable_list(&boxed)
+        .expect("source box")
+        .testing_node_address(0);
+    state
+        .assign(
+            &mut arena,
+            8,
+            Some(boxed),
+            super::super::AssignmentScope::Global,
+            3,
+        )
+        .expect("box assignment");
+    let operation = state.begin_operation();
+    let before = arena.durable_transition_counters();
+    let page = state
+        .take_to_page(&mut arena, 8)
+        .expect("destructive transfer")
+        .expect("occupied register");
+    assert_eq!(
+        arena
+            .node_cursor(page)
+            .expect("page list")
+            .testing_node_address(0),
+        address
+    );
+    assert_eq!(
+        arena
+            .durable_transition_counters()
+            .history_preservation_nodes_copied,
+        before.history_preservation_nodes_copied
+    );
+    state.rollback_operation(&mut arena, operation);
+    assert_eq!(
+        arena
+            .durable_list(state.value(8).expect("restored source"))
+            .expect("restored list")
+            .testing_node_address(0),
+        address
+    );
+    state.end_group(&mut arena, 3).expect("inner group");
+    state.end_group(&mut arena, 2).expect("outer group");
+    state.retire_all(&mut arena);
+}
+
+#[test]
 fn operation_rollback_restores_the_maintained_semantic_root() {
     page_arena!(arena, pool, region, 64);
     arena.enable_semantic_identity();
@@ -498,7 +883,10 @@ fn released_checkpoint_prefix_retires_only_obsolete_alternates_and_rebases_curso
         .release_checkpoint_prefix(&mut arena, Some(floor), None)
         .expect("durable prefix release");
 
-    assert_eq!(released.checkpoint_entries, 2);
+    assert_eq!(
+        released.checkpoint_entries, 1,
+        "pre-checkpoint assignment needs no historical alternate"
+    );
     assert_eq!(released.retained_groups, 0);
     assert!(!state.validates_cursor(root));
     assert!(state.validates_cursor(floor));

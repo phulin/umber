@@ -88,6 +88,11 @@ pub(in crate::main_control) fn assign_box_dimension<G>(
     dimension: tex_state::BoxDimension,
     value: Scaled,
 ) {
+    // box255 can be the output routine's page-owned box; keep that page-root
+    // path until it is promoted. Ordinary durable roots edit one scalar word.
+    if stores.set_durable_box_dimension(index, dimension, value) {
+        return;
+    }
     let Some(root) = stores.copy_box_to_page(index) else {
         return;
     };

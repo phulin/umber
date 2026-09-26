@@ -30,6 +30,29 @@ mod whatsit_codec;
 pub(crate) use annex::{AnnexKey, NodeAnnexView, NodeAnnexWriter};
 pub(crate) use layout::NodeRecord;
 
+/// Rewrites only a durable root box's scalar annex word. The caller owns the
+/// exclusive region and journals the returned old value before any rollback.
+pub(crate) fn set_root_box_dimension(
+    record: NodeRecord<crate::fork_arena::PageMaterialLane>,
+    pool: &mut crate::fork_arena::ChunkPool<u32>,
+    arena: &mut crate::fork_arena::ForkArena<u32, crate::node_region::NodeAnnexLane>,
+    dimension: crate::command_context::BoxDimension,
+    value: Scaled,
+) -> Result<Scaled, crate::fork_arena::ForkArenaError> {
+    if !matches!(record.kind(), Some(NodeKind::HList | NodeKind::VList))
+        || record.subtype() != 0
+        || record.flags() != 0
+    {
+        return Err(crate::fork_arena::ForkArenaError::InvalidRange);
+    }
+    let offset = match dimension {
+        crate::command_context::BoxDimension::Width => 1,
+        crate::command_context::BoxDimension::Height => 2,
+        crate::command_context::BoxDimension::Depth => 3,
+    };
+    annex::set_fixed_box_word(pool, arena, annex::key_from_record(record), offset, value)
+}
+
 pub(crate) trait NodeRecordEncoder {
     fn encode_node(&mut self, node: Node) -> NodeRecord;
 

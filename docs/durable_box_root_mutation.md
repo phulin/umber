@@ -23,16 +23,27 @@ requires a history-preservation copy. Explicit `\copy`, `\unhcopy`, and
 
 Box dimension writes mutate exactly one scalar in the root box payload. The
 durable owner and all child coordinates remain the same. An operation records
-the old scalar for reverse-order rollback. If a retained checkpoint still
-needs the old value of that current owner, the first write moves the old owner
-to history and gives the live cell an independent copy before changing its
-root. A group save does not turn an unscoped dimension write into a local
-assignment: it already owns the box from before the local binding. In
-particular, mutating a box through an unchanged outer binding inside a group
-persists after that group closes.
+the old scalar for reverse-order rollback. A retained checkpoint records the
+first old value of each dimension of its then-current box; repeated writes in
+one checkpoint epoch update the same root without another closure copy or
+checkpoint entry. A stable semantic lineage distinguishes a historical copy
+of that box from a later unrelated box assigned to the same register.
+
+On checkpoint restore, binding inverses run first, then scalar inverses apply
+only to the restored box lineage. This order lets an edited box be overwritten
+or destructively consumed before restore: its checkpoint-owned historical
+copy receives the old dimension after it becomes current again. A candidate
+fork copies a closure only when accepted and candidate branches both need the
+same current owner with different scalar values; acceptance or rejection
+retires the losing branch. A group save does not turn an unscoped dimension
+write into a local assignment: it already owns the box from before the local
+binding. Mutating a box through an unchanged outer binding inside a group
+therefore persists after that group closes.
 
 The ownership decision uses the current cell's checkpoint and group save
 state. It does not scan the box closure or count node references. The only
 mutable storage seam is a validated fixed annex word belonging to the live
-durable region. No page-root copy is required for an ordinary dimension
-write, and no node alias, refcount, or copy-on-write owner is introduced.
+durable region. No page-root copy is required for an ordinary durable box
+dimension write, and no node alias, refcount, or copy-on-write owner is
+introduced. The page-owned automatic output box 255 remains on the separate
+page-root promotion path until it becomes a durable register owner.

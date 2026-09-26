@@ -195,8 +195,8 @@ fn destructive_unbox_transfers_nested_structural_children() {
         );
         assert_eq!(
             after.history_preservation_nodes_copied - before.history_preservation_nodes_copied,
-            6,
-            "a retained execution boundary preserves both three-node closures"
+            0,
+            "an execution run without a retained checkpoint owns neither source after transfer"
         );
 
         assert!(stores.copy_box_to_page(0).is_none());
@@ -216,6 +216,24 @@ fn destructive_unbox_moves_unique_closure_without_recursive_copy() {
         assert_eq!(counters.tex_copy_nodes_copied, 0);
         assert_eq!(counters.history_preservation_nodes_copied, 0);
         assert!(stores.box_register(0).is_none());
+    });
+}
+
+#[test]
+fn destructive_box_and_unbox_in_open_groups_keep_unique_closures() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"{\setbox0=\vbox{\vbox{\kern1pt}}\setbox1=\box0\unvbox1}",
+        );
+        run_to_end(&mut control, stores);
+
+        let counters = stores.page_region_counters();
+        assert_eq!(counters.tex_copy_nodes_copied, 0);
+        assert_eq!(counters.history_preservation_nodes_copied, 0);
+        assert!(stores.box_register(0).is_none());
+        assert!(stores.box_register(1).is_none());
     });
 }
 #[test]

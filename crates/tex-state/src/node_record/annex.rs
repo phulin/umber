@@ -134,6 +134,32 @@ pub(super) fn key_from_record<Kind>(record: NodeRecord) -> AnnexKey<Kind> {
     AnnexKey::from_words(words)
 }
 
+pub(super) fn set_fixed_box_word(
+    pool: &mut ChunkPool<u32>,
+    arena: &mut ForkArena<u32, NodeAnnexLane>,
+    key: AnnexKey<BoxPayload>,
+    offset: usize,
+    value: Scaled,
+) -> Result<Scaled, crate::fork_arena::ForkArenaError> {
+    use crate::fork_arena::ForkArenaError;
+
+    // Validate the complete typed fixed record before taking a mutable
+    // single-word view. The sealed list coordinate and child fields stay put.
+    NodeAnnexView::new(pool, arena)
+        .fixed_words(key, 28)
+        .ok_or(ForkArenaError::InvalidRange)?;
+    let list = key
+        .list(pool.logical_space(), pool.chunk_capacity())
+        .ok_or(ForkArenaError::InvalidRange)?;
+    let mut scratch = Vec::new();
+    let word = arena.slice_list(pool, list, offset..offset + 1, &mut scratch)?;
+    arena.with_single_value_mut(pool, word, |old| {
+        let previous = Scaled::from_raw(*old as i32);
+        *old = value.raw() as u32;
+        previous
+    })
+}
+
 pub(super) fn encode_page_list(destination: &mut Vec<u32>, list: PageListId) {
     append_words(destination, list.words());
 }
