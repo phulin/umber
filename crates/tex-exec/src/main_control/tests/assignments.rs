@@ -92,6 +92,18 @@ fn lastbox_from_completed_paragraph_preserves_earlier_vertical_material() {
                 .any(|node| matches!(node, Node::Char { ch: 'A', .. })),
             "the consumed paragraph line retains its text: {moved:?}"
         );
+        assert_eq!(
+            stores.page_region_counters().page_to_durable_nodes_copied,
+            0,
+            "a consumed generated line uses its authenticated cut descriptor"
+        );
+        assert_eq!(
+            stores
+                .page_closure_transition_counters()
+                .interleaved_prefix_fallbacks,
+            0,
+            "the generated paragraph line never enters whole-closure fallback"
+        );
     });
 }
 

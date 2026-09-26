@@ -138,7 +138,7 @@ fn generated_box_positive_ranges_bind_to_wrapper_and_reject_invalid_geometry() {
     );
     assert!(metadata.wrapper_rebuild);
     assert_eq!(arena.box_migration_metadata(root), Some(metadata.clone()));
-    assert!(!arena.can_finish_interleaved_page_box(root, &metadata, false));
+    assert!(arena.can_finish_interleaved_page_box(root, &metadata, false));
 
     let empty = 2..2;
     let invalid =
@@ -1258,8 +1258,189 @@ fn consumed_window_plan_keeps_only_complete_interior_chunks() {
         .expect("final direct child geometry");
     assert_eq!(direct.full_node_chunks.len(), 1);
     assert_eq!(direct.cut_chunks.len(), 2);
-    assert_eq!(direct.cut_chunks[0].1, 3..16);
-    assert_eq!(direct.cut_chunks[1].1, 0..3);
+    assert_eq!(direct.cut_chunks[0].local, 3..16);
+    assert_eq!(direct.cut_chunks[1].local, 0..3);
+    assert!(direct.inline_only);
+}
+
+#[test]
+fn generated_inline_descriptor_matches_only_its_final_child_chain() {
+    page_arena!(arena, pool, state, 512);
+    let source = arena
+        .publish_owned(penalties(&(0..12).collect::<Vec<_>>()))
+        .expect("source");
+    let child = arena
+        .slice_sequence(source, 3..7, &mut Vec::new())
+        .expect("generated line borrows one source cut");
+    let direct = arena
+        .direct_root_chunk_selection(child)
+        .expect("final direct geometry");
+    assert!(direct.inline_only);
+    assert!(direct.full_node_chunks.is_empty());
+    assert_eq!(direct.cut_chunks.len(), 1);
+    let key = arena
+        .publish_generated_box_body_ranges(&[], &[], &direct.cut_chunks, &[])
+        .expect("publish authenticated cut");
+    arena.rotate_box_wrapper_tail().expect("wrapper isolation");
+    let root = arena.publish_owned([boxed(child)]).expect("wrapper");
+    let metadata = arena
+        .stamp_generated_box_body(root, key)
+        .expect("bind positive descriptor");
+    assert_eq!(
+        arena
+            .preflight_generated_inline_box(root, &metadata)
+            .expect("exact final child selection"),
+        child
+    );
+    let mut tampered = metadata;
+    tampered.positive.as_mut().expect("positive").node_cuts[0]
+        .local
+        .start += 1;
+    assert_eq!(
+        arena.preflight_generated_inline_box(root, &tampered),
+        Err(ForkArenaError::InvalidRegion),
+    );
+}
+
+#[test]
+fn generated_inline_mixed_cuts_move_interior_and_restore_siblings() {
+    page_arena!(arena, pool, state, 512);
+    arena.enable_semantic_identity();
+    let source = arena
+        .publish_owned(penalties(&(0..40).collect::<Vec<_>>()))
+        .expect("three source chunks");
+    let left = arena
+        .slice_sequence(source, 0..3, &mut Vec::new())
+        .expect("older sibling prefix");
+    let child = arena
+        .slice_sequence(source, 3..35, &mut Vec::new())
+        .expect("generated line with two cut boundaries");
+    let child_identity = child.semantic_identity().expect("identity enabled");
+    let right = arena
+        .slice_sequence(source, 35..40, &mut Vec::new())
+        .expect("later sibling suffix");
+    let direct = arena
+        .direct_root_chunk_selection(child)
+        .expect("direct geometry");
+    assert_eq!(direct.cut_chunks.len(), 2);
+    assert_eq!(direct.full_node_chunks.len(), 1);
+    let key = arena
+        .publish_generated_box_body_ranges(&direct.full_node_chunks, &[], &direct.cut_chunks, &[])
+        .expect("typed generated descriptor");
+    arena.rotate_box_wrapper_tail().expect("isolated wrapper");
+    let root = arena
+        .publish_owned([boxed(child)])
+        .expect("generated wrapper");
+    let metadata = arena
+        .stamp_generated_box_body(root, key)
+        .expect("stamp wrapper");
+    assert!(arena.can_finish_interleaved_page_box(root, &metadata, false));
+    let copied_before = arena.durable_transitions.page_to_durable_nodes_copied;
+
+    let (owner, loan) = arena
+        .finish_interleaved_page_box(root, metadata, false)
+        .expect("project cuts and move complete interior");
+    let moved = owner
+        .list(arena.pool)
+        .expect("moved wrapper remains admitted")
+        .first()
+        .expect("one wrapper")
+        .to_owned();
+    assert!(matches!(
+        moved,
+        Node::HList(boxed) if boxed.children.semantic_identity() == Some(child_identity)
+    ));
+    assert_eq!(
+        arena.durable_transitions.page_to_durable_nodes_copied, copied_before,
+        "bounded cut projection does not enter recursive structural copy"
+    );
+    assert_eq!(resolved(&arena, left), penalties(&[0, 1, 2]));
+    assert_eq!(resolved(&arena, right), penalties(&[35, 36, 37, 38, 39]));
+    let mut owner = Some(owner);
+    arena
+        .rollback_interleaved_page_box(&mut owner, loan)
+        .expect("restore head edges, floors, holes, and cut projection");
+    assert!(owner.is_none());
+    assert_eq!(
+        resolved(&arena, child),
+        penalties(&(3..35).collect::<Vec<_>>())
+    );
+    assert_eq!(child.semantic_identity(), Some(child_identity));
+    assert_eq!(resolved(&arena, left), penalties(&[0, 1, 2]));
+    assert_eq!(resolved(&arena, right), penalties(&[35, 36, 37, 38, 39]));
+}
+
+#[test]
+fn generated_line_receipt_rejects_unrelated_final_root() {
+    page_arena!(arena, pool, state, 512);
+    let source = arena
+        .publish_owned(penalties(&[10, 20, 30]))
+        .expect("mode source");
+    let mut slot = arena.admit_span(source).expect("semantic mode slot");
+    let mut consumed = arena
+        .take_generated_mode_source(&mut slot)
+        .expect("consume slot");
+    arena
+        .index_consumed_source(&mut consumed)
+        .expect("index source");
+    let window = consumed.partition_window(1..3).expect("one line window");
+    let mut suffix = PageMaterialActiveListBuilder::vacant();
+    arena
+        .open_active_list(&mut suffix)
+        .expect("fresh suffix builder");
+    arena
+        .push_active_list(&mut suffix, Node::Penalty(40))
+        .expect("suffix");
+    let suffix = arena
+        .finalize_generated_active_segment(&mut suffix)
+        .expect("fresh receipt");
+    let (assembled, body) = arena
+        .append_generated_line_body(window, suffix)
+        .expect("exact body");
+    let unrelated = arena.publish_owned(penalties(&[90])).expect("other root");
+    assert!(matches!(
+        arena.publish_generated_line_body_descriptor(body, unrelated),
+        Err(ForkArenaError::InvalidRegion)
+    ));
+    assert_eq!(resolved(&arena, assembled), penalties(&[20, 30, 40]));
+    assert_eq!(resolved(&arena, source), penalties(&[10, 20, 30]));
+    assert!(
+        consumed.partition_window(1..2).is_none(),
+        "window cannot be minted twice"
+    );
+}
+
+#[test]
+fn constructed_transform_consumes_old_source_and_fresh_segments_once() {
+    page_arena!(arena, pool, state, 512);
+    let original = arena
+        .publish_owned(penalties(&[5, 6]))
+        .expect("mode source");
+    let mut slot = arena.admit_span(original).expect("semantic mode slot");
+    let consumed = arena
+        .take_generated_mode_source(&mut slot)
+        .expect("consume original");
+    let mut transformed = PageMaterialActiveListBuilder::vacant();
+    arena
+        .open_active_list(&mut transformed)
+        .expect("replacement builder");
+    arena
+        .push_active_list(&mut transformed, Node::Penalty(7))
+        .expect("replacement record");
+    let segment = arena
+        .finalize_generated_active_segment(&mut transformed)
+        .expect("fresh segment");
+    let (replacement, consumed) = arena
+        .finish_generated_source_segments(Some(consumed), vec![segment])
+        .expect("actual constructed successor");
+    let mut consumed = consumed.expect("successor authority");
+    assert_eq!(consumed.source(), replacement);
+    arena
+        .index_consumed_source(&mut consumed)
+        .expect("index replacement once");
+    assert!(consumed.partition_window(0..1).is_some());
+    assert_eq!(resolved(&arena, original), penalties(&[5, 6]));
+    assert_eq!(resolved(&arena, replacement), penalties(&[7]));
 }
 
 #[test]

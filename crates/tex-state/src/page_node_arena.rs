@@ -30,7 +30,9 @@ type SelectedBoxBodyRanges = (Vec<Range<usize>>, Vec<Range<usize>>);
 type PreflightedBoxBody = (Node<PageListId>, Vec<Range<usize>>, Vec<Range<usize>>);
 
 mod consumed_source;
-pub use consumed_source::{ConsumedPageSource, ConsumedPageWindow};
+pub use consumed_source::{
+    ConsumedPageSource, ConsumedPageWindow, GeneratedLineBody, PageDirectChunkSelection,
+};
 
 /// Opaque typed-annex coordinate for page-owned intervals excluded from a box.
 #[derive(Clone, Copy, Debug)]
@@ -468,6 +470,20 @@ pub struct UniquePageList {
     identity: Option<SemanticSequenceIdentity>,
 }
 
+/// Freshly finalized active-list segment for a generated semantic tape.
+/// Unlike a reclaimed unlinked head, this can only come from a builder that
+/// owned and published its direct records in the current operation.
+pub struct FreshGeneratedSegment {
+    unique: UniquePageList,
+}
+
+impl FreshGeneratedSegment {
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.unique.is_empty()
+    }
+}
+
 /// One semantic box consumption grants one shallow projection of its children.
 /// A linked physical head is valid here; it only rules out a direct splice.
 pub struct ConsumedBoxChildren {
@@ -482,6 +498,11 @@ impl ConsumedBoxChildren {
 }
 
 impl UniquePageList {
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.coordinate.is_empty()
+    }
+
     pub(crate) fn list(&self) -> PageListId {
         PageListId::from_parts(self.coordinate.coordinate(), self.identity)
     }
@@ -1007,6 +1028,19 @@ impl PageMaterialRegion {
 }
 
 impl<'a> PageMaterialArena<'a> {
+    pub fn finalize_generated_active_segment(
+        &mut self,
+        builder: &mut PageMaterialActiveListBuilder,
+    ) -> Result<FreshGeneratedSegment, ForkArenaError> {
+        Ok(FreshGeneratedSegment {
+            unique: self.finalize_unique_active_list(builder)?,
+        })
+    }
+
+    pub fn closure_transition_counters(&self) -> crate::node_region::ClosureTransitionCounters {
+        self.pool.closure_transition_counters()
+    }
+
     pub fn new(pool: &'a mut NodePool, state: &'a mut PageMaterialRegion) -> Self {
         Self {
             pool,
@@ -1336,7 +1370,24 @@ impl<'a> PageMaterialArena<'a> {
         ForkArenaError,
     > {
         if metadata.positive.is_some() {
-            return Err(ForkArenaError::InvalidRegion);
+            let mut durable = self.pool.start_region::<DurableRole>()?;
+            let result =
+                self.finish_generated_inline_box(root, &metadata, reset_shift, &mut durable);
+            let (durable_root, loan) = match result {
+                Ok(value) => value,
+                Err(error) => {
+                    assert!(self.pool.retire_region(durable).is_ok());
+                    return Err(error);
+                }
+            };
+            self.durable_transitions.interleaved_box_wrappers_built = self
+                .durable_transitions
+                .interleaved_box_wrappers_built
+                .saturating_add(1);
+            let owner = durable
+                .into_closure(self.pool, durable_root)
+                .unwrap_or_else(|(error, _)| panic!("preflighted generated root: {error:?}"));
+            return Ok((owner, loan));
         }
         if self.box_migration_metadata(root).as_ref() != Some(&metadata) {
             return Err(ForkArenaError::InvalidRegion);
@@ -1470,8 +1521,8 @@ impl<'a> PageMaterialArena<'a> {
         reset_shift: bool,
     ) -> bool {
         if metadata.positive.is_some() {
-            // Cut boundary chunks require the generated-box prepared transfer.
-            return false;
+            let _ = reset_shift;
+            return self.preflight_generated_inline_box(root, metadata).is_ok();
         }
         if self.box_migration_metadata(root).as_ref() != Some(metadata) {
             return false;
@@ -2682,7 +2733,7 @@ impl<'a> PageMaterialArena<'a> {
     /// Publishes non-owning selected ranges for a generated box. The source
     /// may share cut boundary chunks; ownership is proved only when the
     /// consumed wrapper enters prepared transfer.
-    pub fn publish_generated_box_body_ranges(
+    pub(crate) fn publish_generated_box_body_ranges(
         &mut self,
         nodes: &[Range<usize>],
         annex: &[Range<usize>],

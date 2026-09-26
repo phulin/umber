@@ -10,9 +10,10 @@ use core::marker::PhantomData;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::fork_arena::{
-    AdmittedListChunkCursor, BatchMark, CheckpointMark, ChunkPool, DetachedBatch, ForkArena,
-    ForkArenaCounters, ForkArenaError, NodePoolStorageClass, PageMaterialLane, RegionValue,
-    SealedBoundary, SequenceSummaryWork, TransferredIntervals,
+    AdmittedListChunkCursor, BatchMark, CheckpointMark, ChunkPool, ConsumedHeadEdgeLoan,
+    ConsumedInlineFloorLoan, DetachedBatch, ForkArena, ForkArenaCounters, ForkArenaError,
+    NodePoolStorageClass, PageMaterialLane, RegionValue, SealedBoundary, SequenceSummaryWork,
+    TransferredHoleIntervals, TransferredIntervals,
 };
 
 #[cfg(feature = "profiling")]
@@ -27,6 +28,10 @@ use crate::page_node_arena::PageListId;
 mod tests;
 
 mod consumed_cut;
+mod generated_transfer;
+pub(crate) use generated_transfer::{
+    GeneratedInlinePiece, transfer_page_generated_inline_selected,
+};
 mod copy;
 pub(crate) use consumed_cut::copy_consumed_direct_cut_into;
 
@@ -65,6 +70,13 @@ enum PageInteriorTransferredChunks {
     Partitioned {
         nodes: TransferredIntervals<PageMaterialLane>,
         annex: TransferredIntervals<NodeAnnexLane>,
+    },
+    GeneratedSelected {
+        empty_nodes: TransferredIntervals<PageMaterialLane>,
+        empty_annex: TransferredIntervals<NodeAnnexLane>,
+        holes: Option<TransferredHoleIntervals<PageMaterialLane>>,
+        heads: Vec<generated_transfer::GeneratedInlineHead>,
+        floors: Option<ConsumedInlineFloorLoan<PageMaterialLane>>,
     },
 }
 
@@ -1746,6 +1758,22 @@ pub(crate) fn rollback_page_interior_closure(
                 annex,
             )
         }
+        PageInteriorTransferredChunks::GeneratedSelected {
+            empty_nodes,
+            empty_annex,
+            holes,
+            heads,
+            floors,
+        } => generated_transfer::rollback_generated_selected(
+            pool,
+            source,
+            destination,
+            empty_nodes,
+            empty_annex,
+            holes,
+            heads,
+            floors,
+        ),
     }
 }
 

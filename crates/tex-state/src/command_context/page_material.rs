@@ -262,6 +262,15 @@ impl<'a, G> CommandContext<'a, G> {
             .expect("page active-list builder belongs to its live owner")
     }
 
+    pub fn finalize_generated_page_active_segment(
+        &mut self,
+        builder: &mut crate::page_node_arena::PageMaterialActiveListBuilder,
+    ) -> crate::page_node_arena::FreshGeneratedSegment {
+        self.page_nodes
+            .finalize_generated_active_segment(builder)
+            .expect("generated segment is finalized by its active builder")
+    }
+
     pub fn finalize_page_active_span(
         &mut self,
         builder: &mut crate::page_node_arena::PageMaterialActiveListBuilder,
@@ -326,6 +335,19 @@ impl<'a, G> CommandContext<'a, G> {
             .expect("consumed mode source belongs to the live page arena")
     }
 
+    pub fn finish_generated_source_segments(
+        &mut self,
+        old: Option<crate::page_node_arena::ConsumedPageSource>,
+        segments: Vec<crate::page_node_arena::FreshGeneratedSegment>,
+    ) -> (
+        crate::page_node_arena::PageListId,
+        Option<crate::page_node_arena::ConsumedPageSource>,
+    ) {
+        self.page_nodes
+            .finish_generated_source_segments(old, segments)
+            .expect("fresh generated source segments belong to the live page region")
+    }
+
     /// Indexes the final consumed semantic source only when its tape retains
     /// the original removed root.
     pub fn index_consumed_page_source(
@@ -335,6 +357,57 @@ impl<'a, G> CommandContext<'a, G> {
         self.page_nodes
             .index_consumed_source(source)
             .expect("consumed source remains in the live page region");
+    }
+
+    pub fn page_closure_transition_counters(
+        &self,
+    ) -> crate::node_region::ClosureTransitionCounters {
+        self.page_nodes.closure_transition_counters()
+    }
+
+    /// Captures the final generated child chain's direct chunk geometry.
+    #[must_use]
+    pub fn generated_box_direct_chunk_selection(
+        &self,
+        root: crate::page_node_arena::PageListId,
+    ) -> crate::page_node_arena::PageDirectChunkSelection {
+        self.page_nodes
+            .direct_root_chunk_selection(root)
+            .expect("generated child root remains in the live page region")
+    }
+
+    pub fn append_generated_line_body(
+        &mut self,
+        window: crate::page_node_arena::ConsumedPageWindow,
+        suffix: crate::page_node_arena::FreshGeneratedSegment,
+    ) -> (
+        crate::page_node_arena::PageListId,
+        crate::page_node_arena::GeneratedLineBody,
+    ) {
+        self.page_nodes
+            .append_generated_line_body(window, suffix)
+            .expect("generated line source window and suffix belong to the page")
+    }
+
+    pub fn publish_generated_line_body_descriptor(
+        &mut self,
+        body: crate::page_node_arena::GeneratedLineBody,
+        final_child: crate::page_node_arena::PageListId,
+    ) -> Option<crate::page_node_arena::PageBoxPositiveKey> {
+        self.page_nodes
+            .publish_generated_line_body_descriptor(body, final_child)
+            .ok()
+            .flatten()
+    }
+
+    pub fn stamp_generated_box_body(
+        &mut self,
+        root: crate::page_node_arena::PageListId,
+        key: crate::page_node_arena::PageBoxPositiveKey,
+    ) {
+        self.page_nodes
+            .stamp_generated_box_body(root, key)
+            .expect("generated box wrapper binds its positive selection");
     }
 
     #[must_use]

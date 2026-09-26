@@ -1072,6 +1072,12 @@ impl Default for PageRegionHistory {
 }
 
 impl PageRegionHistory {
+    pub(crate) fn closure_transition_counters(
+        &self,
+    ) -> crate::node_region::ClosureTransitionCounters {
+        self.pool.closure_transition_counters()
+    }
+
     pub(crate) fn current(&self) -> &PageRegion {
         self.regions
             .last()

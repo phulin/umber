@@ -3522,6 +3522,13 @@ impl<G> Universe<G> {
         self.page_region.current().counters()
     }
 
+    #[must_use]
+    pub fn page_closure_transition_counters(
+        &self,
+    ) -> crate::node_region::ClosureTransitionCounters {
+        self.page_region.closure_transition_counters()
+    }
+
     /// Demand-free page-material ownership counters for lifecycle gates.
     #[must_use]
     pub fn page_material_counters(&self) -> crate::fork_arena::ForkArenaCounters {

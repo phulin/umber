@@ -16,6 +16,7 @@ struct HyphenationProjection<'a> {
 
 pub(super) struct HyphenatedHlist {
     pub(super) semantic: tex_state::page_node_arena::PageListId,
+    pub(super) consumed_source: Option<tex_state::page_node_arena::ConsumedPageSource>,
     pub(super) physical: tex_state::page_node_arena::PageListId,
     pub(super) physical_boundaries: Vec<usize>,
     pub(super) missing_hyphens: Vec<MissingHyphenDiagnostic>,
@@ -63,7 +64,7 @@ impl HyphenationScanNode {
 
 struct HyphenationWalk<'walk, 'projection> {
     out: &'walk mut tex_state::page_node_arena::PageMaterialActiveListBuilder,
-    out_segments: &'walk mut Vec<tex_state::page_node_arena::PageListId>,
+    out_segments: &'walk mut Vec<tex_state::page_node_arena::FreshGeneratedSegment>,
     tfm_work: &'walk mut crate::box_runtime::hmode::LigatureWorkList,
     fuel: &'walk mut tex_command::CommandFuel,
     projection: &'walk mut HyphenationProjection<'projection>,
@@ -219,11 +220,19 @@ fn hyphenated_hlist_with_projections<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     source: tex_state::page_node_arena::PageListId,
+    consumed_source: Option<tex_state::page_node_arena::ConsumedPageSource>,
     initial_context: HyphenationContext,
     tfm_work: &mut crate::box_runtime::hmode::LigatureWorkList,
     fuel: &mut tex_command::CommandFuel,
     projection: &mut HyphenationProjection<'_>,
-) -> Result<(tex_state::page_node_arena::PageListId, HyphenationContext), ExecError> {
+) -> Result<
+    (
+        tex_state::page_node_arena::PageListId,
+        Option<tex_state::page_node_arena::ConsumedPageSource>,
+        HyphenationContext,
+    ),
+    ExecError,
+> {
     // TeX82 §919 initializes the trie on entry to the first hyphenation pass,
     // even when this particular paragraph ultimately supplies no candidate.
     stores.close_hyphenation_patterns();
@@ -267,17 +276,15 @@ fn hyphenated_hlist_with_projections<G>(
     if retained_start < source.len() {
         stores.append_page_active_span_range(&mut out, source.span(), retained_start..source.len());
     }
-    let tail = stores.finalize_page_active_list(&mut out);
+    let tail = stores.finalize_generated_page_active_segment(&mut out);
     if !tail.is_empty() {
         out_segments.push(tail);
     }
-    let output = match out_segments.as_slice() {
-        [] => tex_state::page_node_arena::PageListId::empty(),
-        [only] => *only,
-        segments => stores.compose_page_node_sequences(segments),
-    };
+    let (output, consumed_source) =
+        stores.finish_generated_source_segments(consumed_source, out_segments);
     Ok((
         output,
+        consumed_source,
         HyphenationContext {
             language,
             left,
@@ -295,6 +302,7 @@ pub(crate) fn hyphenated_hlist_with_initial_context<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     source: tex_state::page_node_arena::PageListId,
+    consumed_source: Option<tex_state::page_node_arena::ConsumedPageSource>,
     initial_context: (u8, u8, u8),
     scratch: &mut crate::mode::HorizontalModeScratch,
     fuel: &mut tex_command::CommandFuel,
@@ -306,10 +314,11 @@ pub(crate) fn hyphenated_hlist_with_initial_context<G>(
         physical_post_overrides: &mut physical_post_overrides,
         missing_hyphens: &mut missing_hyphens,
     };
-    let (semantic, _) = match hyphenated_hlist_with_projections(
+    let (semantic, consumed_source, _) = match hyphenated_hlist_with_projections(
         stores,
         diagnostic_effects,
         source,
+        consumed_source,
         HyphenationContext {
             language: initial_context.0,
             left: usize::from(initial_context.1),
@@ -343,10 +352,13 @@ pub(crate) fn hyphenated_hlist_with_initial_context<G>(
             return Err(error);
         }
     };
-    let semantic = scratch.reshape_open_type_runs_list(stores, semantic);
+    let reshaped = scratch.reshape_open_type_runs_list(stores, semantic);
+    let consumed_source = (reshaped == semantic).then_some(consumed_source).flatten();
+    let semantic = reshaped;
     let physical_boundaries = compacted_physical_boundaries(stores, semantic, physical.len());
     Ok(HyphenatedHlist {
         semantic,
+        consumed_source,
         physical,
         physical_boundaries,
         missing_hyphens,
@@ -366,6 +378,7 @@ fn hyphenated_hlist_with_fuel<G>(
         stores,
         diagnostic_effects,
         source,
+        None,
         initial,
         scratch,
         fuel,
@@ -650,7 +663,7 @@ fn hyphenate_candidate_after_glue<G>(
     start: usize,
     candidate: HyphenationCandidate,
     out: &mut tex_state::page_node_arena::PageMaterialActiveListBuilder,
-    out_segments: &mut Vec<tex_state::page_node_arena::PageListId>,
+    out_segments: &mut Vec<tex_state::page_node_arena::FreshGeneratedSegment>,
     tfm_work: &mut crate::box_runtime::hmode::LigatureWorkList,
     output_len: &mut usize,
     fuel: &mut tex_command::CommandFuel,
@@ -739,7 +752,7 @@ fn hyphenate_candidate_after_glue<G>(
     // before it links the discretionary into the reconstituted main list.
     // Seal the retained source segment before that nested construction, then
     // resume a fresh main-list segment for the generated word.
-    let segment = stores.finalize_page_active_list(out);
+    let segment = stores.finalize_generated_page_active_segment(out);
     if !segment.is_empty() {
         out_segments.push(segment);
     }
@@ -1643,7 +1656,7 @@ fn physical_projection_for_glyph<G>(
 
 struct HyphenationReconstitutionCursor<'output, 'word, 'projection, 'vectors> {
     output: &'output mut tex_state::page_node_arena::PageMaterialActiveListBuilder,
-    out_segments: &'output mut Vec<tex_state::page_node_arena::PageListId>,
+    out_segments: &'output mut Vec<tex_state::page_node_arena::FreshGeneratedSegment>,
     word: &'word [WordChar],
     positions: &'word [usize],
     right_boundary: LigatureRightBoundary,
@@ -1666,7 +1679,7 @@ impl<'output, 'word, 'projection, 'vectors>
     HyphenationReconstitutionCursor<'output, 'word, 'projection, 'vectors>
 {
     fn suspend_main<G>(&mut self, stores: &mut CommandContext<'_, G>) {
-        let segment = stores.finalize_page_active_list(self.output);
+        let segment = stores.finalize_generated_page_active_segment(self.output);
         if !segment.is_empty() {
             self.out_segments.push(segment);
         }
@@ -2032,7 +2045,7 @@ fn append_hyphenated_word<G>(
     no_left_boundary: bool,
     right_boundary: HyphenationRightBoundary,
     output: &mut tex_state::page_node_arena::PageMaterialActiveListBuilder,
-    out_segments: &mut Vec<tex_state::page_node_arena::PageListId>,
+    out_segments: &mut Vec<tex_state::page_node_arena::FreshGeneratedSegment>,
     output_len: &mut usize,
     fuel: &mut tex_command::CommandFuel,
     projection: &mut HyphenationProjection<'_>,
@@ -3126,6 +3139,7 @@ mod tests {
                 &mut stores,
                 &mut effects,
                 source,
+                None,
                 (2, 1, 1),
                 &mut scratch,
                 fuel.fuel_mut(),
@@ -3204,6 +3218,7 @@ mod tests {
                     &mut stores,
                     &mut effects,
                     source,
+                    None,
                     (0, 2, 2),
                     &mut scratch,
                     fuel.fuel_mut(),
@@ -3380,10 +3395,11 @@ mod tests {
                 physical_post_overrides: &mut physical_post_overrides,
                 missing_hyphens: &mut missing_hyphens,
             };
-            let (_, final_context) = hyphenated_hlist_with_projections(
+            let (_, _, final_context) = hyphenated_hlist_with_projections(
                 &mut stores,
                 &mut diagnostic_effects,
                 source,
+                None,
                 HyphenationContext {
                     language: 0,
                     left: 2,
@@ -3612,10 +3628,11 @@ mod tests {
                 let mut ledger =
                     tex_command::CommandFuelLedger::new(100_000).expect("bounded fuel");
                 let mut scratch = crate::mode::HorizontalModeScratch::default();
-                let (output, context) = hyphenated_hlist_with_projections(
+                let (output, _, context) = hyphenated_hlist_with_projections(
                     &mut stores,
                     &mut effects,
                     source,
+                    None,
                     HyphenationContext {
                         language: 0,
                         left: 2,

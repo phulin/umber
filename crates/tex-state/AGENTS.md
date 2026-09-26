@@ -192,6 +192,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/fork_arena/consumed_window.rs`: Reversible consumed-window head edge
   detachment and rebinding that restores both its predecessor and exact paired
   dependency floor after rejected transfers.
+- `src/fork_arena/hole_transfer.rs`: Exact selected-chunk moves into vacant
+  destination positions between shallow cut projections, with an inverse
+  receipt that preserves both owners' sparse logical coordinates.
 - `src/fork_arena/whole_region_transfer.rs`: Whole-region closure proofs,
   coordinate validation, and exact suffix detachment for that same lane.
 - `src/format.rs` and `src/format/tests.rs`: Consuming destination-stamped
@@ -324,8 +327,11 @@ All production mutation of live TeX state should pass through `Universe` or simi
   `benchmarks/tex-state/timing`; that timing package excludes profiling
   counters.
 - `src/node_region/consumed_cut.rs`: Bounded shallow selected-record projection
-  from one consumed logical chunk, with child-coordinate mapping and paired
-  destination-mark rollback on rejection.
+  from one consumed logical chunk into a durable owner, with child-coordinate
+  mapping and paired destination-mark rollback on rejection.
+- `src/node_region/generated_transfer.rs`: Prepared generated inline-body
+  projection and complete-chunk hole transfer, including the inverse receipt
+  for links, floors, sparse owner positions, and projected cuts.
 - `src/page_node_arena.rs` and `src/page_node_arena/tests.rs`: Page-semantic
   identity facade, checked destination construction, and focused warmed
   1/4,096-node allocation/copy/chunk-work proof over the live page-material

@@ -37,7 +37,7 @@ struct ArenaPostLineChannel {
 
 struct ArenaBrokenLine {
     nodes: tex_state::page_node_arena::PageListId,
-    source_window: Option<tex_state::page_node_arena::ConsumedPageWindow>,
+    body_receipt: Option<tex_state::page_node_arena::GeneratedLineBody>,
     material_start: usize,
     diagnostic_nodes: Option<tex_state::page_node_arena::PageListId>,
     allocator_high_cell_overlap: u32,
@@ -104,18 +104,18 @@ impl ArenaPostLineMaterializer {
         let material_start = usize::from(self.params.left_skip != GlueSpec::ZERO)
             + self.semantic.active_directions.len();
         let source_start = self.semantic.position;
-        let (nodes, plain_source_run) = self.semantic.materialize(
+        let source_window = self.consumed_source.as_mut().and_then(|source| {
+            source.partition_window(source_start..decision.position.min(self.semantic.source.len()))
+        });
+        let (nodes, body_receipt) = self.semantic.materialize(
             stores,
             decision,
             &self.params,
             Some(&self.actions),
             self.par_fill_override,
             &mut self.semantic_lineage_scratch,
+            source_window,
         );
-        let source_window = self.consumed_source.as_mut().and_then(|source| {
-            source.partition_window(source_start..decision.position.min(self.semantic.source.len()))
-        });
-        let source_window = plain_source_run.then_some(source_window).flatten();
         let diagnostic = self.diagnostic.as_mut().map(|diagnostic| {
             diagnostic
                 .materialize(
@@ -125,6 +125,7 @@ impl ArenaPostLineMaterializer {
                     None,
                     self.par_fill_override,
                     &mut self.diagnostic_lineage_scratch,
+                    None,
                 )
                 .0
         });
@@ -143,7 +144,7 @@ impl ArenaPostLineMaterializer {
         self.line_no += 1;
         Some(ArenaBrokenLine {
             nodes,
-            source_window,
+            body_receipt,
             material_start,
             diagnostic_nodes: diagnostic,
             allocator_high_cell_overlap,
@@ -177,7 +178,12 @@ impl ArenaPostLineChannel {
         actions: Option<&[tex_typeset::linebreak::MaterializationAction]>,
         par_fill_override: Option<GlueSpec>,
         output_lineages: &mut Vec<tex_state::node_sequence::DirectHighCellLineage>,
-    ) -> (tex_state::page_node_arena::PageListId, bool) {
+        source_window: Option<tex_state::page_node_arena::ConsumedPageWindow>,
+    ) -> (
+        tex_state::page_node_arena::PageListId,
+        Option<tex_state::page_node_arena::GeneratedLineBody>,
+    ) {
+        let source_start = self.position;
         let end = decision.position.min(self.source.len());
         let plain_source_run = params.left_skip == GlueSpec::ZERO
             && self.active_directions.is_empty()
@@ -212,22 +218,44 @@ impl ArenaPostLineChannel {
             for absolute in self.position..end {
                 output_lineages.extend(self.lineages[absolute].iter().cloned());
             }
-            let retained = stores.slice_page_node_span(self.source.span(), self.position..end);
             self.position = end;
-            let suffix = stores.publish_unique_page_nodes(vec![Node::Glue {
-                origin: tex_state::node::GlueSpecOrigin::from_trapped_parameter(params.right_skip),
-                spec: params.right_skip,
-                kind: GlueKind::RightSkip,
-                leader: None,
-            }]);
-            let output = stores.append_unique_page_nodes(retained, suffix).list();
+            let (output, receipt) = if let Some(window) = source_window {
+                let mut suffix =
+                    tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
+                stores.open_page_active_list(&mut suffix);
+                stores.construct_page_active_list(&mut suffix, |destination| {
+                    destination.glue(
+                        params.right_skip,
+                        GlueKind::RightSkip,
+                        tex_state::node::GlueSpecOrigin::from_trapped_parameter(params.right_skip),
+                        None,
+                    );
+                });
+                let suffix = stores.finalize_generated_page_active_segment(&mut suffix);
+                let (output, receipt) = stores.append_generated_line_body(window, suffix);
+                (output, Some(receipt))
+            } else {
+                let retained = stores.slice_page_node_span(self.source.span(), source_start..end);
+                let suffix = stores.publish_unique_page_nodes(vec![Node::Glue {
+                    origin: tex_state::node::GlueSpecOrigin::from_trapped_parameter(
+                        params.right_skip,
+                    ),
+                    spec: params.right_skip,
+                    kind: GlueKind::RightSkip,
+                    leader: None,
+                }]);
+                (
+                    stores.append_unique_page_nodes(retained, suffix).list(),
+                    None,
+                )
+            };
             self.position = skip_post_line_discardable(
                 stores
                     .admitted_page_nodes(self.source)
                     .expect("paragraph source remains live"),
                 self.position,
             );
-            return (output, true);
+            return (output, receipt);
         }
         let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
         stores.open_page_active_list(&mut output);
@@ -417,7 +445,7 @@ impl ArenaPostLineChannel {
                 .expect("paragraph source remains live"),
             self.position,
         );
-        (stores.finalize_page_active_list(&mut output), false)
+        (stores.finalize_page_active_list(&mut output), None)
     }
 }
 
@@ -717,11 +745,12 @@ pub(crate) fn break_current_paragraph<G>(
                 .nodes(),
         )?;
     }
-    let (mut decisions, trace, missing_hyphens) = break_hlist_with_trace(
+    let (mut decisions, trace, missing_hyphens, consumed_source) = break_hlist_with_trace(
         nest,
         stores,
         diagnostic_effects,
         hlist,
+        consumed_source,
         line_params,
         initial_hyphen_context,
         fuel,
@@ -822,7 +851,18 @@ pub(crate) fn break_current_paragraph<G>(
         last_line = Some(line);
         append_migrated_contributions(nest, stores, pre_migrated);
         let line_node = Node::HList(line);
-        append_node_to_current_list(nest, stores, diagnostic_effects, line_node, fuel)?;
+        if let Some(body_receipt) = broken.body_receipt {
+            crate::box_runtime::append_generated_inline_box(
+                nest,
+                stores,
+                diagnostic_effects,
+                line_node,
+                body_receipt,
+                fuel,
+            )?;
+        } else {
+            append_node_to_current_list(nest, stores, diagnostic_effects, line_node, fuel)?;
+        }
         append_migrated_contributions(nest, stores, migrated);
         if let Some(penalty) = broken.penalty_after {
             let penalty = Node::Penalty(penalty);
@@ -1548,6 +1588,7 @@ fn break_hlist_with_trace<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     hlist: tex_state::page_node_arena::PageListId,
+    consumed_source: Option<tex_state::page_node_arena::ConsumedPageSource>,
     line_params: LineBreakParams,
     initial_hyphen_context: (u8, u8, u8),
     fuel: &mut tex_command::CommandFuel,
@@ -1557,6 +1598,7 @@ fn break_hlist_with_trace<G>(
         LineBreakResult,
         Vec<LineBreakTrace>,
         Vec<super::hyphenation::MissingHyphenDiagnostic>,
+        Option<tex_state::page_node_arena::ConsumedPageSource>,
     ),
     ExecError,
 > {
@@ -1589,6 +1631,7 @@ fn break_hlist_with_trace<G>(
             tex_typeset::linebreak::plan_with_tape(first, tape),
             trace,
             Vec::new(),
+            consumed_source,
         ))
     } else {
         drop(tape);
@@ -1596,6 +1639,7 @@ fn break_hlist_with_trace<G>(
             stores,
             diagnostic_effects,
             hlist,
+            consumed_source,
             initial_hyphen_context,
             nest.horizontal_mode_scratch_mut(),
             fuel,
@@ -1628,6 +1672,7 @@ fn break_hlist_with_trace<G>(
             tex_typeset::linebreak::plan_with_tape(plan, tape),
             trace,
             hyphenated.missing_hyphens,
+            hyphenated.consumed_source,
         ))
     }
 }

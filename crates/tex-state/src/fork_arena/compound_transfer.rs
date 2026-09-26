@@ -183,22 +183,6 @@ impl<T, Lane> ForkArena<T, Lane> {
         self.transfer_interior_intervals_inner(pool, destination, ranges, false)
     }
 
-    /// Appends exact source intervals after a private destination boundary
-    /// projection. The destination has already reserved vacant positions up
-    /// to the first source interval, so moved chunks keep their original
-    /// logical positions and their direct dependency floors remain valid.
-    pub(crate) fn transfer_interior_intervals_after_prefix<Destination>(
-        &mut self,
-        pool: &mut ChunkPool<T>,
-        destination: &mut ForkArena<T, Destination>,
-        ranges: &[Range<usize>],
-    ) -> Result<TransferredIntervals<Lane>, ForkArenaError>
-    where
-        T: RegionValue<Lane>,
-    {
-        self.transfer_interior_intervals_inner(pool, destination, ranges, true)
-    }
-
     fn transfer_interior_intervals_inner<Destination>(
         &mut self,
         pool: &mut ChunkPool<T>,

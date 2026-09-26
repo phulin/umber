@@ -1,6 +1,27 @@
 # Generated paragraph and alignment box ownership
 
-Status: implementation design, 2026-09-26.
+Status: inline direct-chain transfer implemented; child-bearing records and
+alignment publication remain in progress, 2026-09-26.
+
+The first production path consumes the paragraph mode-list owner and, when
+hyphenation replaces its semantic tape, consumes fresh active-list segment
+receipts together with the old move-only token. Plain post-line materialization partitions
+that tape into monotonically disjoint windows. The final line wrapper carries
+an authenticated positive descriptor of its actual child-chain chunks and
+cut records. A unique `\lastbox` of an inline-only line can then move complete
+logical chunks into vacant durable positions and shallow-copy just selected
+records from shared cut chunks. The prepared transfer records old predecessors,
+direct and paired dependency floors, and sparse positions. Rollback restores
+those exact values before releasing projected cuts and the wrapper. Diagnostic
+views remain page-readable until wrapper consumption.
+
+Inline-only means every direct record has no nested child list or annex
+dependency. The current prepared transfer refuses child-bearing records, which
+still take the structural-copy fallback. Alignment rows do not yet publish
+positive descriptors. Neither case is covered by the inline performance
+claim. A direct source run can have a cut at each boundary; multiple runs may
+create more than two cuts in one box. Projection cost is bounded by selected
+cut records, while complete interior chunks retain their physical payload.
 
 Paragraph completion and alignment setting construct boxes from earlier page
 lists. Their wrapper is new, but its child list can contain coordinates from
@@ -45,10 +66,10 @@ source window, after all outputs from that source have been built.
 The receipt is minted by swapping the actual mode-list span after its mutation
 journal records the old root. No public constructor from a copyable list key
 grants move authority. A semantic rewrite that replaces the removed root
-invalidates this direct-source receipt until that rewrite supplies its own
-consumption proof. Once the final tape retains the removed root, a transient
-direct-chunk index is built once; monotonically partitioned line windows
-binary-search that index instead of rescanning the paragraph suffix.
+consumes the old receipt and mints its successor only from fresh builder
+segment receipts. The transient direct-chunk index is built once for that final tape;
+monotonically partitioned line windows binary-search the index instead of
+rescanning the paragraph suffix.
 
 Immediately before wrapper publication, the builder closes the selected
 node-and-annex body intervals, excludes obsolete source projections and page

@@ -13,7 +13,161 @@ pub(crate) struct ConsumedHeadEdgeLoan<Lane> {
     _lane: PhantomData<fn(Lane) -> Lane>,
 }
 
+/// Exact old paired floors for complete inline-only chunks. A consumed
+/// window can inherit an annex floor from an excluded predecessor even when
+/// none of its own direct records uses the annex lane.
+pub(crate) struct ConsumedInlineFloorLoan<Lane> {
+    owner: u32,
+    lineage: u32,
+    floors: Vec<(LogicalChunkId, usize, usize)>,
+    _lane: PhantomData<fn(Lane) -> Lane>,
+}
+
 impl<T, Lane> ForkArena<T, Lane> {
+    /// Read-only exclusive/sealed proof used by generated-box eligibility.
+    pub(crate) fn preflight_consumed_inline_floors(
+        &self,
+        pool: &ChunkPool<T>,
+        ranges: &[Range<usize>],
+    ) -> Result<(), ForkArenaError> {
+        self.validate_pool(pool)?;
+        let mut previous_end = 0;
+        for range in ranges {
+            if range.start < previous_end || range.start >= range.end {
+                return Err(ForkArenaError::InvalidRange);
+            }
+            for position in range.clone() {
+                let key = self
+                    .live_key_at(position)
+                    .ok_or(ForkArenaError::InvalidRange)?;
+                let meta = pool
+                    .payload
+                    .validate_lineage(key, self.owner, self.lineage)?;
+                if !meta.sealed
+                    || !meta.dependency_metadata_complete
+                    || meta.lineages.iter().filter(|entry| entry.id != 0).count() != 1
+                {
+                    return Err(ForkArenaError::InvalidRegion);
+                }
+            }
+            previous_end = range.end;
+        }
+        Ok(())
+    }
+
+    /// Clears inherited paired floors on caller-proved complete inline-only
+    /// chunks. The typed node layer first verifies every selected direct
+    /// record has no annex dependency; this method records every old scalar
+    /// so a rejected operation restores exact source metadata.
+    pub(crate) fn detach_consumed_inline_floors(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        ranges: &[Range<usize>],
+    ) -> Result<ConsumedInlineFloorLoan<Lane>, ForkArenaError> {
+        self.preflight_consumed_inline_floors(pool, ranges)?;
+        let mut floors = Vec::new();
+        for range in ranges {
+            if range.start >= range.end {
+                return Err(ForkArenaError::InvalidRange);
+            }
+            for position in range.clone() {
+                let key = self
+                    .live_key_at(position)
+                    .ok_or(ForkArenaError::InvalidRange)?;
+                let meta =
+                    pool.payload
+                        .validate_exclusive_lineage_mut(key, self.owner, self.lineage)?;
+                if !meta.sealed || !meta.dependency_metadata_complete {
+                    return Err(ForkArenaError::InvalidRegion);
+                }
+                floors.push((key, meta.dependency_floor, meta.paired_dependency_floor));
+            }
+        }
+        for &(key, _, _) in &floors {
+            let meta =
+                pool.payload
+                    .validate_exclusive_lineage_mut(key, self.owner, self.lineage)?;
+            meta.dependency_floor = usize::MAX;
+            meta.paired_dependency_floor = usize::MAX;
+        }
+        Ok(ConsumedInlineFloorLoan {
+            owner: self.owner,
+            lineage: self.lineage,
+            floors,
+            _lane: PhantomData,
+        })
+    }
+
+    pub(crate) fn restore_consumed_inline_floors(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        loan: ConsumedInlineFloorLoan<Lane>,
+    ) -> Result<(), ForkArenaError> {
+        if loan.owner != self.owner || loan.lineage != self.lineage {
+            return Err(ForkArenaError::InvalidRegion);
+        }
+        for &(key, _, _) in &loan.floors {
+            let meta =
+                pool.payload
+                    .validate_exclusive_lineage_mut(key, self.owner, self.lineage)?;
+            if meta.dependency_floor != usize::MAX || meta.paired_dependency_floor != usize::MAX {
+                return Err(ForkArenaError::InvalidRegion);
+            }
+        }
+        for (key, old_dependency, old_paired) in loan.floors {
+            let meta =
+                pool.payload
+                    .validate_exclusive_lineage_mut(key, self.owner, self.lineage)?;
+            meta.dependency_floor = old_dependency;
+            meta.paired_dependency_floor = old_paired;
+        }
+        Ok(())
+    }
+
+    /// Checks the destination-owned moved chunks before rollback begins.
+    /// Their scalar floors must still be the isolated values recorded by the
+    /// prepared inline loan; return to the source then only changes owner.
+    pub(crate) fn preflight_consumed_inline_floor_inverse<SourceLane>(
+        &self,
+        pool: &ChunkPool<T>,
+        loan: &ConsumedInlineFloorLoan<SourceLane>,
+    ) -> Result<(), ForkArenaError> {
+        for &(key, _, _) in &loan.floors {
+            let meta = pool
+                .payload
+                .validate_lineage(key, self.owner, self.lineage)?;
+            if meta.lineages.iter().filter(|entry| entry.id != 0).count() != 1
+                || meta.dependency_floor != usize::MAX
+                || meta.paired_dependency_floor != usize::MAX
+            {
+                return Err(ForkArenaError::InvalidRegion);
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn preflight_consumed_head_inverse<SourceLane>(
+        &self,
+        pool: &ChunkPool<T>,
+        loan: &ConsumedHeadEdgeLoan<SourceLane>,
+        prefix: Option<ArenaListId<Lane>>,
+    ) -> Result<(), ForkArenaError> {
+        if let Some(prefix) = prefix {
+            self.validate_list(pool, prefix)?;
+        }
+        let meta = pool
+            .payload
+            .validate_lineage(loan.head, self.owner, self.lineage)?;
+        if meta.lineages.iter().filter(|entry| entry.id != 0).count() != 1
+            || meta.paired_dependency_floor != loan.detached_floor
+            || pool.payload.previous_in_list(loan.head, self.owner)?
+                != prefix.map(|prefix| (prefix.tail.raw, prefix.tail.offset))
+        {
+            return Err(ForkArenaError::InvalidRegion);
+        }
+        Ok(())
+    }
+
     /// Reads only the selected local records of one authenticated chunk.
     /// The returned fixed-size values are shallow; child lists remain keys
     /// and must be mapped by the typed destination publisher.
@@ -146,37 +300,6 @@ impl<T, Lane> ForkArena<T, Lane> {
                 .validate_exclusive_lineage_mut(loan.head, self.owner, self.lineage)?;
         meta.paired_dependency_floor = loan.paired_floor;
         Ok(())
-    }
-
-    /// Links an already transferred head to its private projected prefix.
-    /// The source edge loan remains live for rollback and is not consumed.
-    pub(crate) fn bind_consumed_head_to_prefix<SourceLane>(
-        &mut self,
-        pool: &mut ChunkPool<T>,
-        loan: &ConsumedHeadEdgeLoan<SourceLane>,
-        prefix: ArenaListId<Lane>,
-    ) -> Result<(), ForkArenaError> {
-        self.validate_list(pool, prefix)?;
-        if prefix.is_empty()
-            || pool
-                .payload
-                .previous_in_list(loan.head, self.owner)?
-                .is_some()
-        {
-            return Err(ForkArenaError::InvalidRegion);
-        }
-        let head =
-            pool.payload
-                .validate_exclusive_lineage_mut(loan.head, self.owner, self.lineage)?;
-        if head.paired_dependency_floor != loan.detached_floor {
-            return Err(ForkArenaError::InvalidRegion);
-        }
-        pool.payload.set_previous_in_list(
-            loan.head,
-            self.owner,
-            self.lineage,
-            Some((prefix.tail.raw, prefix.tail.offset)),
-        )
     }
 
     /// Reverses the private prefix link before the selected chunks return to

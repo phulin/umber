@@ -393,6 +393,52 @@ pub(crate) fn append_box_node_to_current_list<G>(
     Ok(wrapper)
 }
 
+/// Publishes the final direct child chain of a consumed generated line as an
+/// authenticated positive selection. The narrow inline case has no nested
+/// child or annex closure; richer generated records use the ordinary append
+/// until their construction receipts are carried through materialization.
+pub(crate) fn append_generated_inline_box<G>(
+    nest: &mut ModeNest,
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
+    node: Node,
+    body_receipt: tex_state::page_node_arena::GeneratedLineBody,
+    fuel: &mut tex_command::CommandFuel,
+) -> Result<(), ExecError> {
+    let mut prepared = prepare_box_append(nest.current_mode(), stores, node);
+    let vertical = matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical);
+    append_prepared_box_pre_migrations(nest, stores, &mut prepared);
+    if vertical {
+        append_prepared_box_baseline_glue(nest, stores, &prepared)?;
+    }
+    let key = if !is_outer_vertical(nest) {
+        match prepared.node.as_ref() {
+            Some(Node::HList(boxed) | Node::VList(boxed)) => {
+                stores.publish_generated_line_body_descriptor(body_receipt, boxed.children)
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
+    if key.is_some() {
+        stores.rotate_page_box_wrapper_tail();
+    }
+    let root = append_prepared_box_wrapper(
+        nest,
+        stores,
+        diagnostic_effects,
+        &mut prepared,
+        vertical,
+        fuel,
+    )?;
+    if let (Some(root), Some(key)) = (root, key) {
+        stores.stamp_generated_box_body(root, key);
+    }
+    append_prepared_box_post_migrations(nest, stores, prepared);
+    Ok(())
+}
+
 /// Publishes a uniquely constructed box and its page-owned splices as
 /// separate sealed intervals. The wrapper is last in the stamped envelope;
 /// earlier baseline glue and pre-adjustments stay with the parent list.
