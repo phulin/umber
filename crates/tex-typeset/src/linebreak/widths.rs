@@ -272,6 +272,7 @@ pub(super) fn add_direct_node_width_value<S: TypesetState>(
                 widths,
                 state,
                 &replace,
+                next,
                 include_font_expansion,
                 discretionary_widths,
             );
@@ -287,11 +288,15 @@ fn add_nested_list_widths<S: TypesetState>(
     widths: &mut Widths,
     state: &S,
     owner: &PageListId,
+    successor: Option<DirectNodeView<'_>>,
     include_font_expansion: bool,
     discretionary_widths: DiscretionaryWidths,
 ) {
-    let mut stack = vec![(*owner, 0usize)];
-    while let Some((owner, index)) = stack.last_mut() {
+    // A discretionary's replacement is physically linked into the main
+    // list in pdftex.web §821. A final font kern in that replacement can
+    // therefore see the next main-list glyph when expansion is measured.
+    let mut stack = vec![(*owner, 0usize, successor)];
+    while let Some((owner, index, successor)) = stack.last_mut() {
         let cursor = state.page_nodes(*owner);
         if *index >= cursor.len() {
             let _ = stack.pop();
@@ -318,7 +323,10 @@ fn add_nested_list_widths<S: TypesetState>(
                         .checked_sub(1)
                         .and_then(|index| cursor.get_direct(index))
                         .and_then(direct_glyph);
-                    let next = cursor.get_direct(current + 1).and_then(direct_glyph);
+                    let next = cursor
+                        .get_direct(current + 1)
+                        .or(*successor)
+                        .and_then(direct_glyph);
                     if let (Some((left_font, left)), Some((right_font, right))) = (previous, next) {
                         add_font_kern_capacity(
                             state, widths, left_font, left, right_font, right, amount,
@@ -337,7 +345,8 @@ fn add_nested_list_widths<S: TypesetState>(
             HorizontalNode::Disc(replace)
                 if discretionary_widths == DiscretionaryWidths::Replacement =>
             {
-                stack.push((replace, 0));
+                let following = cursor.get_direct(current + 1).or(*successor);
+                stack.push((replace, 0, following));
             }
             HorizontalNode::Disc(_) | HorizontalNode::Rule(None) | HorizontalNode::Ignored => {}
         }

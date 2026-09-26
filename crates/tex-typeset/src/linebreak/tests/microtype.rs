@@ -83,6 +83,55 @@ fn pdftex_font_kern_without_tfm_pair_uses_zero_expanded_endpoint() {
     assert_eq!(no_stretch.font_shrink.raw(), 0);
 }
 
+/// pdftex.web §§821, 914 scan the two replacement nodes as an inline
+/// character and font kern. The kern's next glyph remains after the
+/// discretionary, but still contributes to expansion capacity.
+#[test]
+fn font_kern_at_replacement_tail_sees_following_main_glyph() {
+    let mut universe = TestState::new();
+    let font = universe.intern_font(microtype_kern_font("disc-kern-boundary", 1_000, 100));
+    universe
+        .configure_font_expansion(
+            font,
+            FontExpansion {
+                stretch: 500,
+                shrink: 500,
+                step: 100,
+                auto_expand: true,
+            },
+        )
+        .expect("font expansion configuration is valid");
+    for code in *b"AB" {
+        universe.set_pdf_font_code(tex_state::PdfFontCode::Ef, font, code, 1_000);
+    }
+    let empty = universe.publish_page_nodes(&[]);
+    let replacement = universe.publish_page_nodes(&[
+        microtype_char(font, 'A'),
+        Node::Kern {
+            amount: sp(100),
+            kind: KernKind::Font,
+        },
+    ]);
+    let disc = Node::Disc {
+        kind: DiscKind::AutomaticHyphen,
+        pre: empty,
+        post: empty,
+        replace: replacement,
+        physical_replace_count: 2,
+    };
+    let physical = [
+        microtype_char(font, 'A'),
+        Node::Kern {
+            amount: sp(100),
+            kind: KernKind::Font,
+        },
+        microtype_char(font, 'B'),
+    ];
+    let expanded = line_widths_nodes(&universe, &[disc, microtype_char(font, 'B')]);
+    assert_eq!(expanded, line_widths_nodes(&universe, &physical));
+    assert_eq!(expanded.font_shrink.raw(), 1_050);
+}
+
 /// pdftex.web §823 ignores a discretionary node while the final
 /// `hpack(..., cal_expand_ratio)` measures the replacement nodes that
 /// post-line-break processing has already placed in the physical line.

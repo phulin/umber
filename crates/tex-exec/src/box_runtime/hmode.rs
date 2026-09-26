@@ -1481,6 +1481,24 @@ impl LigatureWorkList {
         &self.provenance[span.start..span.end()]
     }
 
+    /// Whether a just-emitted glyph is followed immediately by a font kern.
+    /// Hyphenation may need to put both into one discretionary replacement.
+    pub(crate) fn next_is_font_kern(&self, current: usize) -> bool {
+        self.nodes
+            .get(current)
+            .and_then(|node| node.next)
+            .and_then(|next| self.nodes.get(next))
+            .is_some_and(|node| {
+                matches!(
+                    node.cell.as_ref(),
+                    Some(LigatureWorkCell::Kern {
+                        kind: KernKind::Font,
+                        ..
+                    })
+                )
+            })
+    }
+
     /// Reports whether the remaining physical main branch has a glyph
     /// boundary at `boundary`, including zero-source kerns at that boundary.
     pub(crate) fn physical_boundary_present(
