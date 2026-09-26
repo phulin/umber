@@ -912,28 +912,21 @@ impl<G> CommandProcessor<'_, '_, G> {
         let mut delivery = None;
 
         loop {
-            // Delimiters are inactive inside a balanced group. At depth zero
-            // with no pending delimiter prefix, a word other than the
-            // delimiter's first token cannot start a match either. Consume
-            // such ordinary words in place and return to scalar delivery only
-            // at a semantic boundary.
-            if !self.is_observed() {
-                let stop_word = if tokens.brace_depth() != 0 {
-                    Some(None)
-                } else if self
+            // Delimiters are inactive inside a balanced group, and at depth
+            // zero with no pending delimiter prefix a word other than the
+            // delimiter's first token cannot start a match. Consume such
+            // ordinary words in place and return to scalar delivery only at a
+            // semantic boundary. A held prefix exists only at depth zero.
+            if !self.is_observed()
+                && self
                     .command
                     .scratch
                     .delimiter_prefix_len(&tokens)
                     .map_err(|_| CommandError::input_invariant())?
                     == 0
-                {
-                    Some(Some(plan.delimiter_word(delimiter, 0)?))
-                } else {
-                    None
-                };
-                if let Some(stop_word) = stop_word
-                    && self.consume_argument_run(&mut tokens, paragraph_token, stop_word)? != 0
-                {
+            {
+                let stop_word = plan.delimiter_word(delimiter, 0)?;
+                if self.consume_argument_run(&mut tokens, paragraph_token, Some(stop_word))? != 0 {
                     continue;
                 }
             }
@@ -1070,7 +1063,16 @@ impl<G> CommandProcessor<'_, '_, G> {
         paragraph_token: Option<TokenWord>,
         stop_word: Option<TokenWord>,
     ) -> Result<u32, CommandError> {
-        let admission = ArgumentRunAdmission::with_commands(self.state, paragraph_token, stop_word);
+        // An undelimited argument (no delimiter stop word) ends at its own
+        // closing brace; a delimited argument may close any group it opened.
+        let close_floor = u32::from(stop_word.is_none());
+        let admission = ArgumentRunAdmission::with_commands(
+            self.state,
+            paragraph_token,
+            stop_word,
+            tokens.brace_depth(),
+            close_floor,
+        );
         let admission = if self.command.delivery_mode.alignment_active()
             || self.outer_recovered_while_matching
         {

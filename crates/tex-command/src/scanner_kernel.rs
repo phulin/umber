@@ -70,20 +70,6 @@ impl ScannerCursor {
         self.brace_depth
     }
 
-    /// Settles a run whose admission predicate proved that every word is an
-    /// ordinary non-brace character and not a paragraph command. The output
-    /// sink and this cursor consequently advance once for the complete run.
-    #[inline(always)]
-    pub(crate) fn settle_plain_run(&mut self, count: u32) {
-        if count == 0 {
-            return;
-        }
-        if self.word_count == 0 || self.brace_depth == 0 {
-            self.outer_group_candidate = false;
-        }
-        self.word_count = self.word_count.saturating_add(count);
-    }
-
     /// TeX82 §477 balanced-body transition. The closing token which reaches
     /// depth zero belongs to the delimiter and is not written to the sink.
     #[inline(always)]

@@ -466,7 +466,8 @@ impl MacroWordLane {
         origin_run: &mut u32,
         destination: &mut MacroAppendPosition,
         limit: usize,
-        admission: &ArgumentRunAdmission<'_, '_, G>,
+        admission: &mut ArgumentRunAdmission<'_, '_, G>,
+        cursor: &mut crate::scanner_kernel::ScannerCursor,
     ) -> Result<u32, ScratchError> {
         let mut consumed = 0_u32;
         let start = source
@@ -487,6 +488,7 @@ impl MacroWordLane {
                 break;
             }
             self.append_at(destination, TracedTokenWord::from_parts(word, origin))?;
+            cursor.settle_argument_word(word, false);
             consumed += 1;
         }
         Ok(consumed)
@@ -889,10 +891,10 @@ impl<G> ExecutionScratch<G> {
 
     /// Appends one already-classified ordinary span to the resident writer.
     ///
-    /// Callers stop before braces, delimiters, paragraph commands, control
-    /// sequences, and input transitions, so every word in this run has the
-    /// same no-boundary settlement. Provenance is represented once by the
-    /// run origin and retained by the existing sparse origin lane.
+    /// Callers stop before argument-closing braces, delimiters, paragraph
+    /// commands, outer control sequences, and input transitions, so each word
+    /// settles as ordinary argument material. Provenance is represented once
+    /// by the run origin and retained by the existing sparse origin lane.
     pub(crate) fn append_plain_argument_cell_span(
         &mut self,
         writer: &mut MacroArgumentWriter<G>,
@@ -902,10 +904,11 @@ impl<G> ExecutionScratch<G> {
         if writer.holdback_len != 0 {
             return Err(ScratchError::InvalidCoordinate);
         }
-        let count = self
-            .macro_words
+        self.macro_words
             .append_cell_run_at(&mut writer.append, words, origin)?;
-        writer.cursor.settle_plain_run(count);
+        for word in words {
+            writer.cursor.settle_argument_word(word.get(), false);
+        }
         writer.visible_end = writer.append.absolute;
         Ok(())
     }
@@ -921,7 +924,7 @@ impl<G> ExecutionScratch<G> {
         origin_run: &mut u32,
         writer: &mut MacroArgumentWriter<G>,
         limit: usize,
-        admission: &ArgumentRunAdmission<'_, '_, G>,
+        admission: &mut ArgumentRunAdmission<'_, '_, G>,
     ) -> Result<u32, ScratchError> {
         if writer.holdback_len != 0 {
             return Err(ScratchError::InvalidCoordinate);
@@ -933,8 +936,8 @@ impl<G> ExecutionScratch<G> {
             &mut writer.append,
             limit,
             admission,
+            &mut writer.cursor,
         )?;
-        writer.cursor.settle_plain_run(count);
         writer.visible_end = writer.append.absolute;
         Ok(count)
     }
@@ -1587,21 +1590,29 @@ impl<G> ExecutionScratch<G> {
 }
 
 /// Decides which raw words a batched macro-argument run may consume without
-/// a delivery.
+/// a delivery, tracking the brace depth the run reaches.
 ///
 /// TeX82 §§392--399 only inspect each matched token's spelling, except that
 /// §336 validates an outer control sequence, §395 counts braces, and §396
 /// rejects `\par` in a non-long argument. A word that raises none of those
 /// cases settles exactly like a plain character: its spelling is appended and
-/// the scanner cursor advances. Braces, alignment tab characters, parameters,
-/// frozen tokens, the paragraph token, an outer meaning, and the caller's
-/// delimiter stop word all return the run to scalar delivery. Without a
-/// command context only literal non-active characters are admitted.
+/// the scanner cursor advances. Interior braces only move the depth (and
+/// §347's `align_state`, which the caller settles once from the run's net
+/// brace change). Parameters, frozen tokens, the paragraph token, an outer
+/// meaning, a brace that would close the argument, and the delimiter's first
+/// token at depth zero return the run to scalar delivery. Without a command
+/// context only literal non-brace, non-active characters are admitted.
 #[derive(Clone, Copy)]
 pub(crate) struct ArgumentRunAdmission<'a, 'admission, G> {
     state: Option<&'a tex_state::CommandContext<'admission, G>>,
     paragraph_token: Option<TokenWord>,
     stop_word: Option<TokenWord>,
+    depth: u32,
+    /// The lowest depth a closing brace may leave: 1 inside an undelimited
+    /// argument's group, whose final brace ends the argument, and 0 for a
+    /// delimited argument.
+    close_floor: u32,
+    brace_delta: i32,
 }
 
 impl<'a, 'admission, G> ArgumentRunAdmission<'a, 'admission, G> {
@@ -1609,11 +1620,16 @@ impl<'a, 'admission, G> ArgumentRunAdmission<'a, 'admission, G> {
         state: &'a tex_state::CommandContext<'admission, G>,
         paragraph_token: Option<TokenWord>,
         stop_word: Option<TokenWord>,
+        depth: u32,
+        close_floor: u32,
     ) -> Self {
         Self {
             state: Some(state),
             paragraph_token,
             stop_word,
+            depth,
+            close_floor,
+            brace_delta: 0,
         }
     }
 
@@ -1626,12 +1642,27 @@ impl<'a, 'admission, G> ArgumentRunAdmission<'a, 'admission, G> {
         }
     }
 
+    /// Net `align_state` change of the braces admitted so far.
+    pub(crate) const fn brace_delta(&self) -> i32 {
+        self.brace_delta
+    }
+
     #[inline(always)]
-    pub(crate) fn admits(&self, word: TokenWord) -> bool {
-        if Some(word) == self.stop_word {
+    pub(crate) fn admits(&mut self, word: TokenWord) -> bool {
+        if self.depth == 0 && Some(word) == self.stop_word {
             return false;
         }
         match word.literal_catcode() {
+            Some(Catcode::BeginGroup) if self.state.is_some() => {
+                self.depth += 1;
+                self.brace_delta += 1;
+                true
+            }
+            Some(Catcode::EndGroup) if self.state.is_some() && self.depth > self.close_floor => {
+                self.depth -= 1;
+                self.brace_delta -= 1;
+                true
+            }
             Some(Catcode::BeginGroup | Catcode::EndGroup | Catcode::AlignmentTab) => false,
             Some(Catcode::Active) => self.admits_command(word),
             Some(_) => true,

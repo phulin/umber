@@ -1104,7 +1104,7 @@ impl<G> crate::CommandState<G> {
         &mut self,
         writer: &mut crate::execution_scratch::MacroArgumentWriter<G>,
         fuel: &mut crate::fuel::CommandFuel,
-        admission: crate::execution_scratch::ArgumentRunAdmission<'_, '_, G>,
+        mut admission: crate::execution_scratch::ArgumentRunAdmission<'_, '_, G>,
     ) -> Result<u32, crate::CommandError> {
         let Some(resident_index) = self.roots.input.levels.top.checked_sub(1) else {
             return Ok(0);
@@ -1120,7 +1120,7 @@ impl<G> crate::CommandState<G> {
         let frame_remaining = (row.header.frame.limit() - position) as usize;
         // A `\noexpand`-marked frame settles its control sequences through
         // ordinary delivery.
-        let admission = if row.header.frame.flags().contains(
+        admission = if row.header.frame.flags().contains(
             tex_state::packed_input::InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE,
         ) {
             admission.characters_only()
@@ -1170,7 +1170,7 @@ impl<G> crate::CommandState<G> {
                         &mut argument.origin_run,
                         writer,
                         available,
-                        &admission,
+                        &mut admission,
                     )
                     .map_err(|_| crate::CommandError::input_invariant())?;
                 (consumed, true)
@@ -1200,6 +1200,13 @@ impl<G> crate::CommandState<G> {
             if boundary && row.header.frame.position() < row.header.frame.limit() {
                 body.body.advance_chunk_cold(row.header.frame.position());
             }
+        }
+        // TeX82 §347 counts the run's interior braces in `align_state`; no
+        // alignment is active when the admission accepts braces.
+        if admission.brace_delta() != 0 {
+            self.timeline
+                .record_delivery_align_state(self.roots.alignment.align_state);
+            self.roots.alignment.align_state += admission.brace_delta();
         }
         fuel.charge_run(consumed)?;
         #[cfg(feature = "profiling")]
