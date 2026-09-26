@@ -704,9 +704,12 @@ impl PdfPainter {
             .text_matrix
             .expect("an open PDF text object has a text matrix");
         if horizontal_scale != 1.0 || matrix.horizontal_scale != 1.0 {
-            let (x, baseline, exact) = exact_position
-                .map(pdftex_absolute_text_position)
-                .unwrap_or((x, baseline, None));
+            let (x, baseline, exact) = match (exact_position, self.exact_origin) {
+                (Some(position), Some(origin)) => {
+                    pdftex_text_position_from_origin(position, origin)
+                }
+                _ => (x, baseline, None),
+            };
             self.content.set_text_matrix([
                 horizontal_scale,
                 0.0,
@@ -890,12 +893,24 @@ struct PdfSetTextPosition {
     exact_h: Option<i64>,
 }
 
-fn pdftex_absolute_text_position(
+fn pdftex_text_position_from_origin(
     position: super::PdfContentTextPosition,
+    origin: PdfExactTextPosition,
 ) -> (f64, f64, Option<PdfExactTextPosition>) {
-    let (x, h) = pdftex_text_coordinate(position.h, position.decimal_digits);
-    let (baseline, v) = pdftex_text_coordinate(position.v, position.decimal_digits);
-    (x, baseline, Some(PdfExactTextPosition { h, v }))
+    // pdftex.web §690 prints the text matrix relative to the retained PDF
+    // origin. A previous origin translation can leave a scaled-point residue
+    // even when its printed coefficient returns to zero. Keep that residue
+    // when reconstructing the exact text cursor from the printed matrix.
+    let (x, h) = pdftex_text_coordinate(position.h - origin.h, position.decimal_digits);
+    let (baseline, v) = pdftex_text_coordinate(position.v - origin.v, position.decimal_digits);
+    (
+        x,
+        baseline,
+        Some(PdfExactTextPosition {
+            h: origin.h + h,
+            v: origin.v + v,
+        }),
+    )
 }
 
 fn pdftex_text_coordinate(delta: i64, decimal_digits: u8) -> (f64, i64) {

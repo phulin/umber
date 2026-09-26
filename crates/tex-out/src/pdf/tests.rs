@@ -248,6 +248,63 @@ fn exact_origin_ignores_sub_precision_scaled_motion() {
 }
 
 #[test]
+fn expanded_text_matrix_uses_the_retained_origin_for_its_exact_cursor() {
+    // pdftex.web §690: two rounded graphics translations leave a 1sp origin
+    // when text begins at zero. The printed Tm coordinate is unchanged, but
+    // its exact cursor includes that residue. A 1sp difference changes the
+    // first expanded-font TJ adjustment at this rounding boundary.
+    let origin = |h| PdfContentOperation::Literal {
+        mode: crate::PdfLiteralMode::Origin,
+        x: h as f32 / 65_782.0,
+        y: 0.0,
+        exact_position: Some(PdfContentTextPosition {
+            h,
+            v: 0,
+            decimal_digits: 3,
+        }),
+        bytes: b"x".to_vec(),
+    };
+    let content = String::from_utf8(ordered_page_content(&[
+        origin(14_535_740),
+        origin(28_327_764),
+        PdfContentOperation::Text(PdfContentTextRun {
+            x: 76.268,
+            exact_position: Some(PdfContentTextPosition {
+                h: 5_017_076,
+                v: 0,
+                decimal_digits: 3,
+            }),
+            raster: Some(PdfContentTextRaster {
+                serialized_x: 76.268,
+                position_x: 76.268,
+                font_size: 8.9664,
+                exact: Some(PdfContentTextExactRaster {
+                    font_size: 589_825,
+                    expansion_ratio: -20,
+                }),
+                glyphs: vec![PdfContentGlyphRaster {
+                    position_x: 76.263,
+                    advance: 4.3935,
+                    position_raw: 5_016_756,
+                    width_raw: 289_014,
+                }],
+            }),
+            baseline: 0.0,
+            font_name: b"F1".to_vec(),
+            font_size: 8.9664,
+            horizontal_scale: 0.98,
+            bytes: b"d".to_vec(),
+            advance: Some(4.3935),
+        }),
+    ]))
+    .expect("ASCII content");
+    assert!(
+        content.contains("0.98 0 0 1 76.268 0 Tm\n[1 (d)] TJ"),
+        "{content}"
+    );
+}
+
+#[test]
 fn exact_vertical_origin_prints_the_chart_translation() {
     // The two positions print as 481.908 and 369.782 bp. pdftex.web §690
     // subtracts their retained scaled values, yielding -112.126 bp;
