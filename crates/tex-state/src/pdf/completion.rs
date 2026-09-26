@@ -263,7 +263,7 @@ pub struct DetachedPdfCompletion {
     font_configuration: PdfFontConfiguration,
     pages: Vec<DetachedPdfPage>,
     forms: Vec<DetachedPdfForm>,
-    engine_font_identities: Vec<tex_fonts::FontSourceIdentity>,
+    engine_font_identities: Vec<tex_fonts::RealizedFontIdentity>,
     fonts: Vec<DetachedPdfFontResource>,
     font_operations: Vec<DetachedPdfFontOperation>,
     images: Vec<PdfExternalImageRecord>,
@@ -303,7 +303,7 @@ impl DetachedPdfCompletion {
     /// Immutable font identities in engine `font_ptr` order, including
     /// `nullfont` at index zero.
     #[must_use]
-    pub fn engine_font_identities(&self) -> &[tex_fonts::FontSourceIdentity] {
+    pub fn engine_font_identities(&self) -> &[tex_fonts::RealizedFontIdentity] {
         &self.engine_font_identities
     }
     #[must_use]
@@ -382,7 +382,7 @@ impl DetachedPdfCompletion {
 }
 
 pub(crate) struct PdfCompletionScalars {
-    pub engine_font_identities: Vec<tex_fonts::FontSourceIdentity>,
+    pub engine_font_identities: Vec<tex_fonts::RealizedFontIdentity>,
     pub font_configuration: PdfFontConfiguration,
     pub pages_entries: Vec<u8>,
     pub include_info_dictionary: bool,

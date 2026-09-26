@@ -767,7 +767,7 @@ impl std::error::Error for PdfObjectCapacityError {}
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct PdfFontResourceRecord {
     font: FontId,
-    source_identity: tex_fonts::FontSourceIdentity,
+    source_identity: tex_fonts::RealizedFontIdentity,
     resource_number: u32,
     object_number: u32,
     identity: tex_fonts::PdfFontResourceIdentity,
@@ -2974,7 +2974,7 @@ impl<G> PdfState<G> {
     pub(crate) fn ensure_font_resource(
         &mut self,
         font: FontId,
-        source_identity: tex_fonts::FontSourceIdentity,
+        source_identity: tex_fonts::RealizedFontIdentity,
         identity: tex_fonts::PdfFontResourceIdentity,
     ) -> Result<PdfFontResourceRecord, PdfObjectCapacityError> {
         if let Some(record) = self
@@ -4912,7 +4912,7 @@ pub fn profile_pdf_fork_family(
                 .font_resources
                 .extend((0..rows).map(|row| PdfFontResourceRecord {
                     font: FontId::testing_new(row as u32),
-                    source_identity: tex_fonts::FontSourceIdentity::from_bytes([row as u8; 8]),
+                    source_identity: tex_fonts::RealizedFontIdentity::from_bytes([row as u8; 8]),
                     resource_number: row as u32,
                     object_number: row as u32 + 1,
                     identity: tex_fonts::PdfFontResourceIdentity::new(

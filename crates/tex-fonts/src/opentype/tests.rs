@@ -166,6 +166,14 @@ fn stix_math_is_identical_from_woff2_and_native_sfnt() {
         size,
         native.clone(),
     );
+    for font in [&web_loaded, &native_loaded] {
+        for ratio in [-500, -20, 0, 20, 1000] {
+            assert_eq!(
+                font.expanded_realized_identity(ratio),
+                font.expanded(ratio).realized_identity()
+            );
+        }
+    }
     let crate::MathMetricsSource::OpenType(web_metrics) = web_loaded.math_metrics_source() else {
         panic!("web MATH metrics");
     };
@@ -360,7 +368,7 @@ fn mapped_tfm_identity_records_policy_map_and_classic_math_authority() {
         crate::FontLayoutPolicy::OpenTypePreferred
     );
     assert!(first.character_exists('A'));
-    assert_ne!(first.source_identity(), second.source_identity());
+    assert_ne!(first.realized_identity(), second.realized_identity());
     assert!(matches!(
         first.math_metrics_source(),
         crate::MathMetricsSource::ClassicTfmExact

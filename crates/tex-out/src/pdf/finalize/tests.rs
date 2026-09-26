@@ -588,7 +588,7 @@ fn resident_program_keeps_distinct_font_widths_without_embedding() {
         layout_policy: tex_fonts::FontLayoutPolicy::ClassicTfmExact,
         mapping_fallback: None,
         opentype: None,
-        semantic_identity: tex_fonts::FontSourceIdentity::from_bytes([1; 8]),
+        semantic_identity: tex_fonts::RealizedFontIdentity::from_bytes([1; 8]),
         construction: crate::FontResourceConstruction::Loaded,
     };
     let mut metrics = PdfFontMetricsInput {
@@ -621,7 +621,7 @@ fn resident_program_keeps_distinct_font_widths_without_embedding() {
         metrics.widths[usize::from(b'A')] = Scaled::from_raw(width);
         font_input.metrics = metrics.clone();
         font_input.artifact_resource.semantic_identity =
-            tex_fonts::FontSourceIdentity::from_bytes(identity);
+            tex_fonts::RealizedFontIdentity::from_bytes(identity);
         let ids = PdfFontObjectIds {
             font: object_id(object).expect("font object id"),
             descriptor: None,

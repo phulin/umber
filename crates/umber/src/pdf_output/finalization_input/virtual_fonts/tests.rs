@@ -1,9 +1,9 @@
 use super::{FontNumberTimeline, LocalInstance, load_local_instance};
-use tex_fonts::FontSourceIdentity;
+use tex_fonts::RealizedFontIdentity;
 
 #[test]
 fn later_engine_font_reuses_vf_local_font_number() {
-    let identity = |byte| FontSourceIdentity::from_bytes([byte; 8]);
+    let identity = |byte| RealizedFontIdentity::from_bytes([byte; 8]);
     let engine = [identity(0), identity(1), identity(3), identity(4)];
     let mut timeline = FontNumberTimeline::new(&engine);
 
@@ -74,7 +74,7 @@ fn detached_vf_local_instance_inherits_parent_expansion() {
         },
     );
     let parent = LocalInstance {
-        identity: FontSourceIdentity::from_bytes([9; 8]),
+        identity: RealizedFontIdentity::from_bytes([9; 8]),
         name: "root".into(),
         size: tex_arith::Scaled::from_raw(10 * tex_arith::Scaled::UNITY),
         expansion_ratio: 30,
@@ -88,6 +88,6 @@ fn detached_vf_local_instance_inherits_parent_expansion() {
     assert!(matches!(
         leaf.construction(),
         tex_fonts::FontConstruction::Expanded { source, ratio }
-            if *source == base.source_identity() && *ratio == 30
+            if *source == base.realized_identity() && *ratio == 30
     ));
 }

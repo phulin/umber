@@ -550,6 +550,19 @@ fn terminal_completion_values_forbid_live_and_publication_handles() {
         let body = &source[start + declaration.len()..];
         body.split_once("\n}").expect("field block closes").0
     }
+    fn contains_type_identifier(fields: &str, identifier: &str) -> bool {
+        fields
+            .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+            .any(|word| word == identifier)
+    }
+    assert!(contains_type_identifier(
+        "fonts: Vec<tex_state::FontId>",
+        "FontId"
+    ));
+    assert!(!contains_type_identifier(
+        "fonts: Vec<tex_fonts::RealizedFontIdentity>",
+        "FontId"
+    ));
     let engine_source = include_str!("../engine_completion.rs");
     let pdf_source = include_str!("../../../tex-state/src/pdf/completion.rs");
     for fields in [
@@ -564,13 +577,16 @@ fn terminal_completion_values_forbid_live_and_publication_handles() {
             "FontId",
             "EffectPos",
             "ArtifactPublication",
-            "Arc<",
-            "&",
+            "Arc",
         ] {
             assert!(
-                !fields.contains(forbidden),
+                !contains_type_identifier(fields, forbidden),
                 "terminal DTO field leaked {forbidden}: {fields}"
             );
         }
+        assert!(
+            !fields.contains('&'),
+            "terminal DTO field retained a borrow: {fields}"
+        );
     }
 }

@@ -178,11 +178,6 @@ impl RealizedFontIdentity {
     }
 }
 
-/// Compatibility name for the identity formerly described only as source
-/// provenance. The digest also binds metrics, size, layout/fallback policy,
-/// selected OpenType program/instance, and generated-font ancestry.
-pub type FontSourceIdentity = RealizedFontIdentity;
-
 /// pdfTeX-compatible identity of a font-dictionary/subset resource.
 ///
 /// The selected size and generated-font ancestry remain part of
@@ -236,15 +231,15 @@ impl PdfFontResourceIdentity {
 pub enum FontConstruction {
     Loaded,
     Copied {
-        source: FontSourceIdentity,
+        source: RealizedFontIdentity,
     },
     Letterspaced {
-        source: FontSourceIdentity,
+        source: RealizedFontIdentity,
         amount: i16,
         no_ligatures: bool,
     },
     Expanded {
-        source: FontSourceIdentity,
+        source: RealizedFontIdentity,
         ratio: i16,
     },
 }
@@ -904,6 +899,19 @@ impl LoadedFont {
     /// Deterministic, host-neutral identity for generated-font ancestry.
     #[must_use]
     pub fn realized_identity(&self) -> RealizedFontIdentity {
+        self.identity_with_construction(&self.construction)
+    }
+
+    /// Identity of an expanded instance without allocating or projecting its metrics.
+    #[must_use]
+    pub fn expanded_realized_identity(&self, ratio: i16) -> RealizedFontIdentity {
+        self.identity_with_construction(&FontConstruction::Expanded {
+            source: self.realized_identity(),
+            ratio,
+        })
+    }
+
+    fn identity_with_construction(&self, construction: &FontConstruction) -> RealizedFontIdentity {
         let mut hasher = AHash64Hasher::new(HashDomain::RealizedFont);
         hasher.write(b"umber-font-source-v2");
         hasher.write((self.name.len() as u64).to_le_bytes());
@@ -941,7 +949,7 @@ impl LoadedFont {
                     .bytes(),
             );
         }
-        match self.construction {
+        match construction {
             FontConstruction::Loaded => hasher.write([0]),
             FontConstruction::Copied { source } => {
                 hasher.write([1]);
@@ -955,7 +963,7 @@ impl LoadedFont {
                 hasher.write([2]);
                 hasher.write(source.bytes());
                 hasher.write(amount.to_le_bytes());
-                hasher.write([u8::from(no_ligatures)]);
+                hasher.write([u8::from(*no_ligatures)]);
             }
             FontConstruction::Expanded { source, ratio } => {
                 hasher.write([3]);
@@ -964,12 +972,6 @@ impl LoadedFont {
             }
         }
         RealizedFontIdentity(hasher.finish().to_le_bytes())
-    }
-
-    /// Compatibility spelling retained for existing state and artifact APIs.
-    #[must_use]
-    pub fn source_identity(&self) -> FontSourceIdentity {
-        self.realized_identity()
     }
 
     /// Canonical format-specific view used for pdfTeX font-object reuse.
@@ -1010,7 +1012,7 @@ impl LoadedFont {
     /// because pdfTeX copies mutable `font_info` rather than rereading the TFM.
     #[must_use]
     pub fn copied(&self, parameters: Vec<Scaled>) -> Self {
-        let source = self.source_identity();
+        let source = self.realized_identity();
         let mut copied = self.clone();
         copied.parameters = parameters;
         copied.parameters.resize(
@@ -1041,7 +1043,7 @@ impl LoadedFont {
         no_ligatures: bool,
     ) -> Result<Self, FontConstructionError> {
         debug_assert!((-1000..=1000).contains(&i32::from(amount)));
-        let source = self.source_identity();
+        let source = self.realized_identity();
         let mut generated = self.clone();
         generated.parameters = self.source_parameters.clone();
         if generated.parameters[5].raw() == 0 && current_quad.raw() > 0 {
@@ -1070,7 +1072,7 @@ impl LoadedFont {
     #[must_use]
     pub fn expanded(&self, ratio: i16) -> Self {
         debug_assert!((-500..=1000).contains(&i32::from(ratio)));
-        let source = self.source_identity();
+        let source = self.realized_identity();
         let mut generated = self.clone();
         generated.metrics = generated.metrics.with_expansion_ratio(ratio);
         generated.construction = FontConstruction::Expanded { source, ratio };

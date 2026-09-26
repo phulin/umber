@@ -1103,7 +1103,7 @@ pub(crate) fn font_identifier_raw<G>(
             ratio,
         } => (
             stores
-                .font_id_for_source_identity(source_identity)
+                .font_id_for_realized_identity(source_identity)
                 .unwrap_or(font),
             Some(ratio),
         ),

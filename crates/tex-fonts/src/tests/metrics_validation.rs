@@ -59,8 +59,18 @@ fn generated_fonts_preserve_source_ancestry_and_pdftex_rounding() {
     else {
         panic!("letterspaced construction metadata")
     };
-    assert_eq!(*ancestry, copied.source_identity());
-    assert_ne!(source.source_identity(), copied.source_identity());
+    assert_eq!(*ancestry, copied.realized_identity());
+    assert_ne!(source.realized_identity(), copied.realized_identity());
+
+    // The allocation-free lookup key must match publication for every ancestry kind.
+    for font in [&source, &copied, &letterspaced, &source.expanded(20)] {
+        for ratio in [-500, -20, 0, 20, 1000] {
+            assert_eq!(
+                font.expanded_realized_identity(ratio),
+                font.expanded(ratio).realized_identity()
+            );
+        }
+    }
 
     let expanded = source.expanded(100);
     let expanded_metrics = expanded

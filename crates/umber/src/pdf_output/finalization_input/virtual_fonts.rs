@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
 
 use tex_arith::{FontSizeSpec, Scaled, tfm_fix_word_to_scaled};
-use tex_fonts::{FontSourceIdentity, VfCommand};
+use tex_fonts::{RealizedFontIdentity, VfCommand};
 use tex_out::pdf::{PdfFontInput, PdfFontMetricsInput, PdfFontProgramInput};
 use tex_out::{FontResource, FontResourceConstruction};
 use tex_state::{
@@ -17,7 +17,7 @@ use crate::PdfBuildError;
 
 #[derive(Clone, Debug)]
 struct LocalInstance {
-    identity: FontSourceIdentity,
+    identity: RealizedFontIdentity,
     name: String,
     size: Scaled,
     expansion_ratio: i16,
@@ -32,7 +32,7 @@ struct PendingCharacter {
 }
 
 pub(super) struct DestinationFontUse {
-    pub(super) identity: FontSourceIdentity,
+    pub(super) identity: RealizedFontIdentity,
     pub(super) code: u8,
     pub(super) font_watermark: u32,
 }
@@ -44,15 +44,15 @@ pub(super) struct DestinationFontUse {
 /// the engine order separately and let a later engine definition reuse an
 /// identity that destination-time VF loading already installed.
 struct FontNumberTimeline<'a> {
-    engine_identities: &'a [FontSourceIdentity],
-    numbers_by_identity: BTreeMap<FontSourceIdentity, u32>,
+    engine_identities: &'a [RealizedFontIdentity],
+    numbers_by_identity: BTreeMap<RealizedFontIdentity, u32>,
     engine_numbers: Vec<u32>,
     engine_watermark: u32,
     next_number: u32,
 }
 
 impl<'a> FontNumberTimeline<'a> {
-    fn new(engine_identities: &'a [FontSourceIdentity]) -> Self {
+    fn new(engine_identities: &'a [RealizedFontIdentity]) -> Self {
         let nullfont = *engine_identities
             .first()
             .expect("the detached engine font timeline contains nullfont");
@@ -78,7 +78,7 @@ impl<'a> FontNumberTimeline<'a> {
         Ok(())
     }
 
-    fn register(&mut self, identity: FontSourceIdentity) -> Result<u32, PdfBuildError> {
+    fn register(&mut self, identity: RealizedFontIdentity) -> Result<u32, PdfBuildError> {
         if let Some(number) = self.numbers_by_identity.get(&identity) {
             return Ok(*number);
         }
@@ -91,7 +91,7 @@ impl<'a> FontNumberTimeline<'a> {
         Ok(number)
     }
 
-    fn number(&self, identity: FontSourceIdentity) -> u32 {
+    fn number(&self, identity: RealizedFontIdentity) -> u32 {
         *self
             .numbers_by_identity
             .get(&identity)
@@ -118,7 +118,7 @@ pub(super) fn materialize_destination_font_instances(
     resources: &crate::PdfVirtualFontResources,
     driver_dpi: i32,
     artifact_font_uses: &[DestinationFontUse],
-    fonts: &mut BTreeMap<FontSourceIdentity, PdfFontInput>,
+    fonts: &mut BTreeMap<RealizedFontIdentity, PdfFontInput>,
     next_object: &mut u32,
 ) -> Result<(), PdfBuildError> {
     let roots = artifact_font_uses
@@ -283,7 +283,7 @@ fn materialize_local_instance(
     glyph_mappings: &[&tex_state::PdfGlyphToUnicode],
     parent: &LocalInstance,
     number: i32,
-    fonts: &mut BTreeMap<FontSourceIdentity, PdfFontInput>,
+    fonts: &mut BTreeMap<RealizedFontIdentity, PdfFontInput>,
     font_numbers: &FontNumberTimeline<'_>,
     next_object: &mut u32,
 ) -> Result<LocalInstance, PdfBuildError> {
@@ -297,7 +297,7 @@ fn materialize_local_instance(
     let resource_number = font_numbers.number(identity);
     let name = name.clone();
     if !fonts.contains_key(&identity) {
-        let source_identity = base.as_ref().map(tex_fonts::LoadedFont::source_identity);
+        let source_identity = base.as_ref().map(tex_fonts::LoadedFont::realized_identity);
         let construction =
             source_identity.map_or(FontArtifactConstructionRecipe::Loaded, |source_identity| {
                 FontArtifactConstructionRecipe::Expanded {
@@ -512,7 +512,7 @@ fn load_local_instance(
     } else {
         (base.expanded(parent.expansion_ratio), Some(base))
     };
-    let identity = loaded.source_identity();
+    let identity = loaded.realized_identity();
     Ok((
         LocalInstance {
             identity,

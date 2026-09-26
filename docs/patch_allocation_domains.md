@@ -1,6 +1,11 @@
 # Private revision allocation domains
 
-Status: ownership and lifecycle foundation for Beads issue `umber2-3v8z.2`.
+Status: historical design for `umber2-3v8z.2`, superseded by
+[Runtime storage lifetimes](runtime_storage_lifetimes.md) and
+[Node-region ownership](node_region_ownership.md). The `NodeListRef`, private
+domain, and typed resource-continuation descriptions below are not the current
+runtime API. See the [runtime allocation audit](runtime_storage_audit.md) for
+current production owners.
 
 This document defines the allocation boundary used by private incremental
 revisions. It complements the semantic identity contract in

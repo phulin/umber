@@ -191,20 +191,20 @@ impl Reader<'_> {
             };
             let (semantic_identity, construction) = {
                 let semantic_identity =
-                    tex_fonts::FontSourceIdentity::from_bytes(self.ahash64_identity()?);
+                    tex_fonts::RealizedFontIdentity::from_bytes(self.ahash64_identity()?);
                 let tag = self.u8()?;
                 let construction = match tag {
                     wire::font_construction::LOADED => FontResourceConstruction::Loaded,
                     wire::font_construction::COPIED => FontResourceConstruction::Copied {
                         source_font_id: self.u32()?,
-                        source_identity: tex_fonts::FontSourceIdentity::from_bytes(
+                        source_identity: tex_fonts::RealizedFontIdentity::from_bytes(
                             self.ahash64_identity()?,
                         ),
                     },
                     wire::font_construction::LETTERSPACED => {
                         FontResourceConstruction::Letterspaced {
                             source_font_id: self.u32()?,
-                            source_identity: tex_fonts::FontSourceIdentity::from_bytes(
+                            source_identity: tex_fonts::RealizedFontIdentity::from_bytes(
                                 self.ahash64_identity()?,
                             ),
                             amount: self.u16()? as i16,
@@ -222,7 +222,7 @@ impl Reader<'_> {
                     }
                     wire::font_construction::EXPANDED => FontResourceConstruction::Expanded {
                         source_font_id: self.u32()?,
-                        source_identity: tex_fonts::FontSourceIdentity::from_bytes(
+                        source_identity: tex_fonts::RealizedFontIdentity::from_bytes(
                             self.ahash64_identity()?,
                         ),
                         ratio: self.u16()? as i16,

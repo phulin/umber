@@ -168,7 +168,7 @@ pub enum ArtifactValidationError {
     InvalidFontLayoutIdentity { font_id: u32 },
     MissingFont { font_id: u32 },
     MissingFontSource { font_id: u32, source_font_id: u32 },
-    FontSourceIdentityMismatch { font_id: u32, source_font_id: u32 },
+    RealizedFontIdentityMismatch { font_id: u32, source_font_id: u32 },
     MissingEffect { effect_index: u32 },
     CharacterOutOfRange { ch: u32 },
     InvalidLigatureSourceLength { count: usize },
@@ -236,7 +236,7 @@ pub struct FontResource {
     pub layout_policy: tex_fonts::FontLayoutPolicy,
     pub mapping_fallback: Option<tex_fonts::FontMappingFallbackPolicy>,
     pub opentype: Option<OpenTypeFontResource>,
-    pub semantic_identity: tex_fonts::FontSourceIdentity,
+    pub semantic_identity: tex_fonts::RealizedFontIdentity,
     pub construction: FontResourceConstruction,
 }
 
@@ -245,17 +245,17 @@ pub enum FontResourceConstruction {
     Loaded,
     Copied {
         source_font_id: u32,
-        source_identity: tex_fonts::FontSourceIdentity,
+        source_identity: tex_fonts::RealizedFontIdentity,
     },
     Letterspaced {
         source_font_id: u32,
-        source_identity: tex_fonts::FontSourceIdentity,
+        source_identity: tex_fonts::RealizedFontIdentity,
         amount: i16,
         no_ligatures: bool,
     },
     Expanded {
         source_font_id: u32,
-        source_identity: tex_fonts::FontSourceIdentity,
+        source_identity: tex_fonts::RealizedFontIdentity,
         ratio: i16,
     },
 }
@@ -751,7 +751,7 @@ fn validate_artifact(
                 });
             };
             if *actual != source_identity {
-                return Err(ArtifactValidationError::FontSourceIdentityMismatch {
+                return Err(ArtifactValidationError::RealizedFontIdentityMismatch {
                     font_id: font.font_id,
                     source_font_id,
                 });

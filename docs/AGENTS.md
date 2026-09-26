@@ -1,5 +1,8 @@
 # Docs Guidance
 
+`font_identity_lookup.md` defines immutable generated-font lookup, its
+rollback-coupled derived index, and the current realized-font identity API.
+
 `semantic_testing.md` defines the focused command-minifixture projection
 boundary, independent reference channel authority, and negative controls for
 removing implementation identities from conformance claims.
@@ -363,3 +366,6 @@ two-backend architecture and phase exit criteria remain fixed by
 stack-language compiler/VM, its separation from the Biber-compatible pipeline,
 shared raw-input and orchestration boundaries, compatibility fixtures, bounded
 execution model, phased integration, and exit criteria.
+
+- `runtime_storage_audit.md`: Production allocation owners, intentional shared
+  payloads, and profile-led integration gaps found in the arXiv book audit.

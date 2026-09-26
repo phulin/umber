@@ -1564,7 +1564,11 @@ fn checkpoint_capture_and_restore_do_not_scan_font_bearing_roots() {
         }
 
         let first = fonts[0];
-        let source_identity = universe.command_retained.fonts.get(first).source_identity();
+        let source_identity = universe
+            .command_retained
+            .fonts
+            .get(first)
+            .realized_identity();
         let font_address = std::ptr::from_ref(universe.command_retained.fonts.get(first));
         let mut children = universe.publish_page_nodes(&[Node::Char {
             font: first,
@@ -1625,7 +1629,7 @@ fn checkpoint_capture_and_restore_do_not_scan_font_bearing_roots() {
             universe
                 .command_context()
                 .expect("context")
-                .font_id_for_source_identity(source_identity),
+                .font_id_for_realized_identity(source_identity),
             Some(first),
             "generated-source lookup remains available from the retained prefix"
         );

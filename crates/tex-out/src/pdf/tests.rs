@@ -808,7 +808,7 @@ fn auto_expanded_font_uses_its_pdftex_horizontal_text_matrix_scale() {
     // and `pdf_set_text_pos` writes `(1000 + ratio) / 1000` as Tm's a value.
     let construction = crate::FontResourceConstruction::Expanded {
         source_font_id: 1,
-        source_identity: tex_fonts::FontSourceIdentity::from_bytes([7; 8]),
+        source_identity: tex_fonts::RealizedFontIdentity::from_bytes([7; 8]),
         ratio: -20,
     };
     assert_eq!(super::finalize::font_horizontal_scale(&construction), 0.98);
@@ -847,10 +847,10 @@ fn expanded_virtual_font_propagates_its_ratio_to_a_real_leaf() {
         std::path::PathBuf::from("cmr10.tfm"),
         tex_fonts::font_content_hash(bytes),
     );
-    let base = loaded.source_identity();
+    let base = loaded.realized_identity();
     let parent = crate::FontResourceConstruction::Expanded {
         source_font_id: 1,
-        source_identity: tex_fonts::FontSourceIdentity::from_bytes([3; 8]),
+        source_identity: tex_fonts::RealizedFontIdentity::from_bytes([3; 8]),
         ratio: -20,
     };
 
@@ -883,7 +883,7 @@ fn expanded_glyph_end_exposes_internal_font_kerns() {
     // than absorbing that kern into the adjustment before the next word.
     let construction = crate::FontResourceConstruction::Expanded {
         source_font_id: 1,
-        source_identity: tex_fonts::FontSourceIdentity::from_bytes([7; 8]),
+        source_identity: tex_fonts::RealizedFontIdentity::from_bytes([7; 8]),
         ratio: 20,
     };
     let glyph_end = super::finalize::positioned_char_end(

@@ -1274,7 +1274,7 @@ fn page() -> crate::PageArtifact {
         layout_policy: tex_fonts::FontLayoutPolicy::ClassicTfmExact,
         mapping_fallback: None,
         opentype: None,
-        semantic_identity: tex_fonts::FontSourceIdentity::from_bytes([7; 8]),
+        semantic_identity: tex_fonts::RealizedFontIdentity::from_bytes([7; 8]),
         construction: crate::FontResourceConstruction::Loaded,
     };
     UnvalidatedPageArtifact {

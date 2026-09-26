@@ -9,8 +9,8 @@ use std::sync::Arc;
 
 use tex_arith::Scaled;
 use tex_fonts::{
-    FontSourceIdentity, PdfEncoding, PdfFontMapEntry, PdfPkFont, PdfPkFontRequest,
-    PdfTrueTypeProgram, PdfType1Program, TfmFont, VfProgram,
+    PdfEncoding, PdfFontMapEntry, PdfPkFont, PdfPkFontRequest, PdfTrueTypeProgram, PdfType1Program,
+    RealizedFontIdentity, TfmFont, VfProgram,
 };
 
 use crate::{ContentHash, FontResource};
@@ -32,7 +32,7 @@ pub struct PdfFinalizationInput {
     pub document: PdfDocumentInput,
     pub pages: Vec<PdfCommittedPageInput>,
     pub forms: BTreeMap<u32, PdfFormInput>,
-    pub fonts: BTreeMap<FontSourceIdentity, PdfFontInput>,
+    pub fonts: BTreeMap<RealizedFontIdentity, PdfFontInput>,
     pub virtual_fonts: BTreeMap<Vec<u8>, PdfVirtualFontInput>,
     pub images: BTreeMap<u32, PdfExternalImageInput>,
     pub raw_objects: Vec<PdfRawObjectInput>,

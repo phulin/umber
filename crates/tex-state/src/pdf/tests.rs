@@ -37,14 +37,14 @@ fn aliased_pdf_fonts_enumerate_one_terminal_resource_object() {
     let first = state
         .ensure_font_resource(
             crate::ids::FontId::testing_new(1),
-            tex_fonts::FontSourceIdentity::from_bytes([1; 8]),
+            tex_fonts::RealizedFontIdentity::from_bytes([1; 8]),
             identity,
         )
         .expect("first PDF font resource");
     let alias = state
         .ensure_font_resource(
             crate::ids::FontId::testing_new(2),
-            tex_fonts::FontSourceIdentity::from_bytes([2; 8]),
+            tex_fonts::RealizedFontIdentity::from_bytes([2; 8]),
             identity,
         )
         .expect("aliased PDF font resource");
@@ -69,14 +69,14 @@ fn equal_tfm_bytes_with_distinct_names_keep_distinct_pdf_outlines() {
     let first = state
         .ensure_font_resource(
             crate::ids::FontId::testing_new(1),
-            tex_fonts::FontSourceIdentity::from_bytes([1; 8]),
+            tex_fonts::RealizedFontIdentity::from_bytes([1; 8]),
             tex_fonts::PdfFontResourceIdentity::new(metrics, "xyatip10", None),
         )
         .expect("first Xy-pic font resource");
     let second = state
         .ensure_font_resource(
             crate::ids::FontId::testing_new(2),
-            tex_fonts::FontSourceIdentity::from_bytes([2; 8]),
+            tex_fonts::RealizedFontIdentity::from_bytes([2; 8]),
             tex_fonts::PdfFontResourceIdentity::new(metrics, "xybtip10", None),
         )
         .expect("second Xy-pic font resource");
@@ -92,8 +92,8 @@ fn terminal_pdf_completion_retains_every_scaled_font_alias_recipe() {
     let identity = tex_fonts::PdfFontResourceIdentity::new([7; 8], "cmr10", None);
     let base = crate::ids::FontId::testing_new(1);
     let scaled = crate::ids::FontId::testing_new(2);
-    let base_identity = tex_fonts::FontSourceIdentity::from_bytes([1; 8]);
-    let scaled_identity = tex_fonts::FontSourceIdentity::from_bytes([2; 8]);
+    let base_identity = tex_fonts::RealizedFontIdentity::from_bytes([1; 8]);
+    let scaled_identity = tex_fonts::RealizedFontIdentity::from_bytes([2; 8]);
     let first = state
         .ensure_font_resource(base, base_identity, identity)
         .expect("base PDF font resource");
@@ -105,7 +105,7 @@ fn terminal_pdf_completion_retains_every_scaled_font_alias_recipe() {
         &state,
         completion::PdfCompletionScalars {
             engine_font_identities: vec![
-                tex_fonts::FontSourceIdentity::from_bytes([0; 8]),
+                tex_fonts::RealizedFontIdentity::from_bytes([0; 8]),
                 base_identity,
                 scaled_identity,
             ],
@@ -159,7 +159,7 @@ fn terminal_pdf_completion_retains_every_scaled_font_alias_recipe() {
     assert_eq!(
         completion.engine_font_identities(),
         [
-            tex_fonts::FontSourceIdentity::from_bytes([0; 8]),
+            tex_fonts::RealizedFontIdentity::from_bytes([0; 8]),
             base_identity,
             scaled_identity,
         ]
@@ -471,7 +471,7 @@ fn checkpoint_fork_reuses_append_only_metadata_prefix_allocations() {
     let mut state = PdfState::<()>::default();
     state.font_resources.push(PdfFontResourceRecord {
         font: FontId::testing_new(7),
-        source_identity: tex_fonts::FontSourceIdentity::from_bytes([7; 8]),
+        source_identity: tex_fonts::RealizedFontIdentity::from_bytes([7; 8]),
         resource_number: 7,
         object_number: 11,
         identity: tex_fonts::PdfFontResourceIdentity::new([8; 8], "test-font", None),

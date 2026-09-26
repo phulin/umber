@@ -10,8 +10,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 pub use tex_fonts::metrics::{
     CharMetrics, CharTag, ExtensibleRecipe, FontConstruction, FontContentHash, FontMetrics,
-    FontMetricsSource, FontMetricsValidationError, FontSourceIdentity, LigKernChar, LigKernCommand,
-    LigKernInstruction, LigKernIter, LigKernStep, LigatureCommand, LoadedFont,
+    FontMetricsSource, FontMetricsValidationError, LigKernChar, LigKernCommand, LigKernInstruction,
+    LigKernIter, LigKernStep, LigatureCommand, LoadedFont, RealizedFontIdentity,
 };
 
 /// TeX's predefined null font.
@@ -48,15 +48,15 @@ pub struct FontExpansion {
 pub enum FontArtifactConstructionRecipe {
     Loaded,
     Copied {
-        source_identity: FontSourceIdentity,
+        source_identity: RealizedFontIdentity,
     },
     Letterspaced {
-        source_identity: FontSourceIdentity,
+        source_identity: RealizedFontIdentity,
         amount: i16,
         no_ligatures: bool,
     },
     Expanded {
-        source_identity: FontSourceIdentity,
+        source_identity: RealizedFontIdentity,
         ratio: i16,
     },
 }
@@ -90,7 +90,7 @@ pub struct FontArtifactRecipe {
     pub layout_policy: tex_fonts::FontLayoutPolicy,
     pub mapping_fallback: Option<tex_fonts::FontMappingFallbackPolicy>,
     pub opentype: Option<OpenTypeArtifactRecipe>,
-    pub semantic_identity: FontSourceIdentity,
+    pub semantic_identity: RealizedFontIdentity,
     pub construction: FontArtifactConstructionRecipe,
 }
 
@@ -293,6 +293,7 @@ struct AcceptedFontBlock {
     expansion_writes: Arc<Vec<ExpansionWrite>>,
     expansion_writes_len: usize,
     by_key: Arc<BTreeMap<FontKey, FontId>>,
+    by_realized_identity: Arc<BTreeMap<RealizedFontIdentity, FontId>>,
     hash_fragments: Arc<Vec<StateHashFragment>>,
     hash_fragments_by_key: Arc<BTreeMap<FontHashFragmentKey, usize>>,
     font_hash_fragments: Arc<Vec<StateHashFragment>>,
@@ -397,6 +398,20 @@ impl AcceptedFontBlock {
             .or_else(|| self.parent.as_ref()?.by_key(key))
     }
 
+    fn by_realized_identity(&self, identity: RealizedFontIdentity) -> Option<FontId> {
+        self.parent
+            .as_ref()
+            .and_then(|parent| parent.by_realized_identity(identity))
+            .or_else(|| {
+                self.by_realized_identity
+                    .get(&identity)
+                    .copied()
+                    .filter(|id| {
+                        (id.raw() as usize) < self.total_len && (id.raw() as usize) >= self.base()
+                    })
+            })
+    }
+
     fn cached_fragment(&self, key: &FontHashFragmentKey) -> Option<StateHashFragment> {
         self.hash_fragments_by_key
             .get(key)
@@ -429,6 +444,7 @@ pub(crate) struct FontStore {
     expansion_writes: Arc<Vec<ExpansionWrite>>,
     expansion_writes_base: usize,
     by_key: Arc<BTreeMap<FontKey, FontId>>,
+    by_realized_identity: Arc<BTreeMap<RealizedFontIdentity, FontId>>,
     /// Append-only derived fragments keyed by semantic content. Rollback only
     /// truncates the live slot-to-fragment mapping, so a later equivalent load
     /// can reuse its domain-separated fingerprint.
@@ -447,6 +463,7 @@ pub(crate) struct AcceptedFontStoreTail {
     expansion_specs: Vec<Option<FontExpansion>>,
     expansion_writes: Vec<ExpansionWrite>,
     by_key: Vec<(FontKey, FontId)>,
+    by_realized_identity: Vec<(RealizedFontIdentity, FontId)>,
     font_hash_fragments: Vec<StateHashFragment>,
     complete_hash_fragments: Vec<StateHashFragment>,
     non_parameter_font_info_words: usize,
@@ -469,6 +486,7 @@ impl Clone for FontStore {
             expansion_writes: Arc::clone(&self.expansion_writes),
             expansion_writes_base: self.expansion_writes_base,
             by_key: Arc::clone(&self.by_key),
+            by_realized_identity: Arc::clone(&self.by_realized_identity),
             hash_fragments: Arc::clone(&self.hash_fragments),
             hash_fragments_by_key: Arc::clone(&self.hash_fragments_by_key),
             font_hash_fragments: Arc::clone(&self.font_hash_fragments),
@@ -532,6 +550,7 @@ impl FontStore {
         let hash_fragment = font_hash_fragment(&null);
         let complete_hash_fragment = complete_font_hash_fragment(hash_fragment, None);
         let mut payloads = FontPayloadArena::default();
+        let null_identity = null.realized_identity();
         let null_payload = payloads.push(null);
         Self {
             accepted: None,
@@ -547,6 +566,7 @@ impl FontStore {
             expansion_writes: Arc::new(Vec::new()),
             expansion_writes_base: 0,
             by_key: Arc::new(BTreeMap::new()),
+            by_realized_identity: Arc::new(BTreeMap::from([(null_identity, NULL_FONT)])),
             hash_fragments: Arc::new(vec![hash_fragment]),
             hash_fragments_by_key: Arc::new(BTreeMap::from([(hash_fragment_key, 0)])),
             font_hash_fragments: Arc::new(vec![hash_fragment]),
@@ -657,19 +677,19 @@ impl FontStore {
             let construction = match construction {
                 FormatFontConstruction::Loaded => FontConstruction::Loaded,
                 FormatFontConstruction::Copied { source } => FontConstruction::Copied {
-                    source: FontSourceIdentity::from_bytes(source),
+                    source: RealizedFontIdentity::from_bytes(source),
                 },
                 FormatFontConstruction::Letterspaced {
                     source,
                     amount,
                     no_ligatures,
                 } => FontConstruction::Letterspaced {
-                    source: FontSourceIdentity::from_bytes(source),
+                    source: RealizedFontIdentity::from_bytes(source),
                     amount,
                     no_ligatures,
                 },
                 FormatFontConstruction::Expanded { source, ratio } => FontConstruction::Expanded {
-                    source: FontSourceIdentity::from_bytes(source),
+                    source: RealizedFontIdentity::from_bytes(source),
                     ratio,
                 },
             };
@@ -731,6 +751,7 @@ impl FontStore {
         }
         let identities = IdentityAllocator::from_frozen_len(1, count);
         let mut by_key = BTreeMap::new();
+        let mut by_realized_identity = BTreeMap::new();
         let mut hash_fragments = Vec::new();
         let mut hash_fragments_by_key = BTreeMap::new();
         let mut font_hash_fragments = Vec::with_capacity(fonts.len());
@@ -777,6 +798,14 @@ impl FontStore {
                 font.font_info_words()
                     .saturating_sub(font.parameters().len()),
             );
+            let id = FontId::from_identity(
+                identities
+                    .identity_at(raw as u32)
+                    .expect("frozen font slot is live"),
+            );
+            by_realized_identity
+                .entry(font.realized_identity())
+                .or_insert(id);
             if raw != 0 && matches!(font.construction(), FontConstruction::Loaded) {
                 let key = FontKey {
                     name: font.name().to_owned(),
@@ -809,6 +838,7 @@ impl FontStore {
             expansion_writes: Arc::new(Vec::new()),
             expansion_writes_base: 0,
             by_key: Arc::new(by_key),
+            by_realized_identity: Arc::new(by_realized_identity),
             hash_fragments: Arc::new(hash_fragments),
             hash_fragments_by_key: Arc::new(hash_fragments_by_key),
             font_hash_fragments: Arc::new(font_hash_fragments),
@@ -849,6 +879,7 @@ impl FontStore {
         if self.len() >= MAX_FONT_COUNT {
             return Err(FontStoreCapacityError);
         }
+        let realized_identity = view.realized_identity();
         let hash_fragment_key = FontHashFragmentKey::from(view);
         let hash_fragment = match self.cached_fragment(&hash_fragment_key) {
             Some(fragment) => fragment,
@@ -889,6 +920,9 @@ impl FontStore {
                 )),
             );
         }
+        Arc::make_mut(&mut self.by_realized_identity)
+            .entry(realized_identity)
+            .or_insert(id);
         if deduplicate {
             Arc::make_mut(&mut self.by_key).insert(key, id);
         }
@@ -1034,7 +1068,7 @@ impl FontStore {
             layout_policy: font.layout_policy(),
             mapping_fallback: font.mapping_fallback(),
             opentype,
-            semantic_identity: font.source_identity(),
+            semantic_identity: font.realized_identity(),
             construction,
         }
     }
@@ -1106,13 +1140,11 @@ impl FontStore {
     }
 
     #[must_use]
-    pub(crate) fn by_source_identity(&self, identity: FontSourceIdentity) -> Option<FontId> {
-        (0..self.len()).find_map(|raw| {
-            let id = self
-                .id_at(raw as u32)
-                .expect("live font slot has an identity");
-            (self.get(id).source_identity() == identity).then_some(id)
-        })
+    pub(crate) fn by_realized_identity(&self, identity: RealizedFontIdentity) -> Option<FontId> {
+        self.accepted
+            .as_ref()
+            .and_then(|block| block.by_realized_identity(identity))
+            .or_else(|| self.by_realized_identity.get(&identity).copied())
     }
 
     pub(crate) fn hash_fragment(&self, id: FontId) -> &StateHashFragment {
@@ -1256,6 +1288,7 @@ impl FontStore {
         Arc::make_mut(&mut self.font_hash_fragments).truncate(local_len);
         Arc::make_mut(&mut self.complete_hash_fragments).truncate(local_len);
         Arc::make_mut(&mut self.by_key).retain(|_, id| id.raw() < mark.len);
+        Arc::make_mut(&mut self.by_realized_identity).retain(|_, id| id.raw() < mark.len);
         self.reachable_state_identity = mark.reachable_state_identity;
     }
 
@@ -1278,6 +1311,16 @@ impl FontStore {
                 true
             } else {
                 by_key.push((key.clone(), *id));
+                false
+            }
+        });
+
+        let mut by_realized_identity = Vec::new();
+        Arc::make_mut(&mut self.by_realized_identity).retain(|key, id| {
+            if id.raw() < mark.len {
+                true
+            } else {
+                by_realized_identity.push((*key, *id));
                 false
             }
         });
@@ -1350,6 +1393,7 @@ impl FontStore {
             expansion_specs,
             expansion_writes,
             by_key,
+            by_realized_identity,
             font_hash_fragments,
             complete_hash_fragments,
             non_parameter_font_info_words,
@@ -1370,6 +1414,7 @@ impl FontStore {
         Arc::make_mut(&mut self.font_hash_fragments).append(&mut tail.font_hash_fragments);
         Arc::make_mut(&mut self.complete_hash_fragments).append(&mut tail.complete_hash_fragments);
         Arc::make_mut(&mut self.by_key).extend(tail.by_key);
+        Arc::make_mut(&mut self.by_realized_identity).extend(tail.by_realized_identity);
         self.non_parameter_font_info_words = tail.non_parameter_font_info_words;
 
         for write in &tail.identifier_writes {
@@ -1417,6 +1462,7 @@ impl FontStore {
                 expansion_writes: Arc::clone(&self.expansion_writes),
                 expansion_writes_len,
                 by_key: Arc::clone(&self.by_key),
+                by_realized_identity: Arc::clone(&self.by_realized_identity),
                 hash_fragments: Arc::clone(&self.hash_fragments),
                 hash_fragments_by_key: Arc::clone(&self.hash_fragments_by_key),
                 font_hash_fragments: Arc::clone(&self.font_hash_fragments),
@@ -1443,6 +1489,7 @@ impl FontStore {
             expansion_writes: Arc::new(Vec::new()),
             expansion_writes_base: mark.expansion_writes_len as usize,
             by_key: Arc::new(BTreeMap::new()),
+            by_realized_identity: Arc::new(BTreeMap::new()),
             hash_fragments: Arc::new(Vec::new()),
             hash_fragments_by_key: Arc::new(BTreeMap::new()),
             font_hash_fragments: Arc::new(Vec::new()),
@@ -1588,6 +1635,8 @@ impl Default for FontStore {
 
 #[cfg(test)]
 mod tests {
+    mod realized_identity;
+
     use super::*;
     use crate::state_hash::StateHasher;
 

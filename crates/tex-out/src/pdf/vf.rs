@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use tex_arith::{FontSizeSpec, Scaled, tfm_fix_word_to_scaled};
-use tex_fonts::{FontMetrics, FontSourceIdentity, TfmFont, VfCommand, VfProgram};
+use tex_fonts::{FontMetrics, RealizedFontIdentity, TfmFont, VfCommand, VfProgram};
 
 use crate::positioned::{
     PositionedEvent, PositionedPage, PositionedPdfGraphics, PositionedRule, PositionedTextRun,
@@ -49,12 +49,12 @@ pub(super) fn lower_pages(
 struct Lowerer<'a> {
     input: &'a PdfFinalizationInput,
     programs: BTreeMap<Vec<u8>, Arc<VfProgram>>,
-    instances: BTreeMap<(FontSourceIdentity, i32), FontSourceIdentity>,
-    instance_metrics: BTreeMap<FontSourceIdentity, FontMetrics>,
-    font_programs: BTreeMap<FontSourceIdentity, (Vec<u8>, Arc<VfProgram>)>,
-    real_fonts: BTreeSet<FontSourceIdentity>,
-    active: Vec<(FontSourceIdentity, u32)>,
-    page_font_ids: BTreeMap<FontSourceIdentity, u32>,
+    instances: BTreeMap<(RealizedFontIdentity, i32), RealizedFontIdentity>,
+    instance_metrics: BTreeMap<RealizedFontIdentity, FontMetrics>,
+    font_programs: BTreeMap<RealizedFontIdentity, (Vec<u8>, Arc<VfProgram>)>,
+    real_fonts: BTreeSet<RealizedFontIdentity>,
+    active: Vec<(RealizedFontIdentity, u32)>,
+    page_font_ids: BTreeMap<RealizedFontIdentity, u32>,
     commands: usize,
     output_operations: usize,
     special_bytes: usize,
@@ -149,7 +149,7 @@ impl Lowerer<'_> {
         &mut self,
         page: &mut PositionedPage,
         output: &mut Vec<PositionedEvent>,
-        font: FontSourceIdentity,
+        font: RealizedFontIdentity,
         code: u8,
         origin: (Scaled, Scaled),
         depth: usize,
@@ -214,7 +214,7 @@ impl Lowerer<'_> {
         page: &mut PositionedPage,
         output: &mut Vec<PositionedEvent>,
         name: &[u8],
-        parent_font: FontSourceIdentity,
+        parent_font: RealizedFontIdentity,
         size: Scaled,
         program: Arc<VfProgram>,
         code: u32,
@@ -337,11 +337,11 @@ impl Lowerer<'_> {
     fn local_instance(
         &mut self,
         program: &VfProgram,
-        parent_font: FontSourceIdentity,
+        parent_font: RealizedFontIdentity,
         parent: &[u8],
         parent_size: Scaled,
         number: i32,
-    ) -> Result<FontSourceIdentity, PdfBuildError> {
+    ) -> Result<RealizedFontIdentity, PdfBuildError> {
         let key = (parent_font, number);
         if let Some(font) = self.instances.get(&key) {
             return Ok(*font);
@@ -409,7 +409,7 @@ impl Lowerer<'_> {
             .get(&parent_font)
             .ok_or_else(|| PdfBuildError::MissingFontResource(parent_display.clone()))?;
         let loaded = virtual_local_font(loaded, &parent_resource.artifact_resource.construction);
-        let identity = loaded.source_identity();
+        let identity = loaded.realized_identity();
         if !self.input.fonts.contains_key(&identity) {
             return Err(PdfBuildError::MissingFontResource(name));
         }
@@ -423,7 +423,7 @@ impl Lowerer<'_> {
         &mut self,
         page: &mut PositionedPage,
         output: &mut Vec<PositionedEvent>,
-        font: FontSourceIdentity,
+        font: RealizedFontIdentity,
         code: u8,
         x: Scaled,
         baseline: Scaled,
@@ -514,7 +514,11 @@ impl Lowerer<'_> {
         Ok(())
     }
 
-    fn character_width(&self, font: FontSourceIdentity, code: u8) -> Result<Scaled, PdfBuildError> {
+    fn character_width(
+        &self,
+        font: RealizedFontIdentity,
+        code: u8,
+    ) -> Result<Scaled, PdfBuildError> {
         self.instance_metrics
             .get(&font)
             .and_then(|metrics| metrics.character(code))

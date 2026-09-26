@@ -1432,7 +1432,7 @@ fn font_resource(font_id: u32, name: &str) -> FontResource {
         layout_policy: tex_fonts::FontLayoutPolicy::ClassicTfmExact,
         mapping_fallback: None,
         opentype: None,
-        semantic_identity: tex_fonts::FontSourceIdentity::from_bytes([font_id as u8; 8]),
+        semantic_identity: tex_fonts::RealizedFontIdentity::from_bytes([font_id as u8; 8]),
         construction: crate::FontResourceConstruction::Loaded,
     }
 }

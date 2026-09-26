@@ -136,6 +136,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
   sidecars are never serialized.
 - `src/etex_tracing.rs` and `src/etex_tracing/tests.rs`: e-TeX 2.6's `\tracinggroups` group-enter/leave transcript trace, printed through the shared `\tracing*` diagnostic channel; `\tracingassigns`'s value rendering lives in `tex-exec` instead, against the primitives declared here, and `\tracingifs` renders directly in `tex-command` through the same channel.
 - `src/file_framing.rs` and `src/file_framing/tests.rs`: tex.web §54's `open_parens` and the §537/§362/§1335 prints that maintain it, held as print-adjacent `World` state so the command core can close a file's paren at §362's own point, ahead of the `check_outer_validity` diagnostic that follows it.
+- `src/font/tests/realized_identity.rs`: Immutable font lookup ownership tests for
+  duplicates, rollback, retained prefixes, and frozen restoration.
 - `src/font.rs`: Generation-owned fixed-capacity immutable font-context chunks,
   rollback-coupled logical font handles, null font, missing-character records,
   fixed checkpoint marks, and handle-free artifact-facing recipes whose

@@ -1469,7 +1469,7 @@ fn font_resource_id<G>(
             source_identity, ..
         } => {
             let source = stores
-                .font_id_for_source_identity(source_identity)
+                .font_id_for_realized_identity(source_identity)
                 .expect("validated generated font source is live");
             font_resource_id(stores, source, emission)
         }
@@ -1506,7 +1506,7 @@ fn glyph_projection<G>(
         });
     };
     let source_font = stores
-        .font_id_for_source_identity(source_identity)
+        .font_id_for_realized_identity(source_identity)
         .expect("validated letterspaced font source is live");
     let code = u8::try_from(ch).map_err(|_| ExecError::UnsupportedShipoutNode {
         node: "non-byte generated font character",
@@ -1629,7 +1629,7 @@ fn register_font_resource<G>(
         FontArtifactConstructionRecipe::Loaded => FontResourceConstruction::Loaded,
         FontArtifactConstructionRecipe::Copied { source_identity } => {
             let source_font = stores
-                .font_id_for_source_identity(source_identity)
+                .font_id_for_realized_identity(source_identity)
                 .expect("validated copied font source is live");
             FontResourceConstruction::Copied {
                 source_font_id: register_font_resource(stores, source_font, emission),
@@ -1642,7 +1642,7 @@ fn register_font_resource<G>(
             no_ligatures,
         } => {
             let source_font = stores
-                .font_id_for_source_identity(source_identity)
+                .font_id_for_realized_identity(source_identity)
                 .expect("validated letterspaced font source is live");
             FontResourceConstruction::Letterspaced {
                 source_font_id: register_font_resource(stores, source_font, emission),
@@ -1656,7 +1656,7 @@ fn register_font_resource<G>(
             ratio,
         } => {
             let source_font = stores
-                .font_id_for_source_identity(source_identity)
+                .font_id_for_realized_identity(source_identity)
                 .expect("validated expanded font source is live");
             FontResourceConstruction::Expanded {
                 source_font_id: register_font_resource(stores, source_font, emission),

@@ -2259,11 +2259,11 @@ impl<'a, G> CommandContext<'a, G> {
     /// Resolves a generated font's semantic source inside this admitted
     /// episode.  The returned runtime id never enters the detached recipe.
     #[must_use]
-    pub fn font_id_for_source_identity(
+    pub fn font_id_for_realized_identity(
         &self,
-        identity: tex_fonts::FontSourceIdentity,
+        identity: tex_fonts::RealizedFontIdentity,
     ) -> Option<crate::ids::FontId> {
-        self.resident.fonts.by_source_identity(identity)
+        self.resident.fonts.by_realized_identity(identity)
     }
 
     #[must_use]
@@ -2434,14 +2434,15 @@ impl<'a, G> CommandContext<'a, G> {
         if ratio == 0 {
             return Ok(source);
         }
-        let generated = self.resident.fonts.get(source).expanded(ratio);
-        if let Some(existing) = self
+        let identity = self
             .resident
             .fonts
-            .by_source_identity(generated.source_identity())
-        {
+            .get(source)
+            .expanded_realized_identity(ratio);
+        if let Some(existing) = self.resident.fonts.by_realized_identity(identity) {
             return Ok(existing);
         }
+        let generated = self.resident.fonts.get(source).expanded(ratio);
         self.try_intern_derived_font(generated, source, true, true, false)
     }
 

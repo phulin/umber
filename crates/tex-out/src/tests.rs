@@ -196,9 +196,9 @@ fn pdf_article_thread_effects_round_trip_reserved_tags() {
 fn generated_font_constructions_round_trip_with_source_identity() {
     let mut artifact = sample_artifact();
     let loaded = artifact.fonts[0].clone();
-    let copied_identity = tex_fonts::FontSourceIdentity::from_bytes([5; 8]);
-    let letterspaced_identity = tex_fonts::FontSourceIdentity::from_bytes([6; 8]);
-    let expanded_identity = tex_fonts::FontSourceIdentity::from_bytes([7; 8]);
+    let copied_identity = tex_fonts::RealizedFontIdentity::from_bytes([5; 8]);
+    let letterspaced_identity = tex_fonts::RealizedFontIdentity::from_bytes([6; 8]);
+    let expanded_identity = tex_fonts::RealizedFontIdentity::from_bytes([7; 8]);
     artifact.testing_mut().fonts.extend([
         FontResource {
             font_id: 2,
@@ -1059,7 +1059,7 @@ fn sample_artifact() -> PageArtifact {
                 encoding_map_identity: Some([12; 8]),
                 fontdimen_synthesis_version: Some(tex_fonts::OPENTYPE_FONTDIMEN_SYNTHESIS_VERSION),
             }),
-            semantic_identity: tex_fonts::FontSourceIdentity::from_bytes([4; 8]),
+            semantic_identity: tex_fonts::RealizedFontIdentity::from_bytes([4; 8]),
             construction: crate::FontResourceConstruction::Loaded,
         }],
         counts: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
