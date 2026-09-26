@@ -609,19 +609,18 @@ fn append_unboxed<G>(
                     }
             )
         });
-    if !has_margin_kern {
-        if let Some(retained) = stores
+    if !has_margin_kern
+        && let Some(retained) = stores
             .reclaim_unlinked_page_list(children)
             .expect("unboxed children belong to the admitted page owner")
-        {
-            if is_outer_vertical(nest) {
-                stores.append_unique_page_contributions(retained);
-            } else {
-                nest.current_list_mutation()
-                    .append_unique_list(stores, retained);
-            }
-            return Ok(());
+    {
+        if is_outer_vertical(nest) {
+            stores.append_unique_page_contributions(retained);
+        } else {
+            nest.current_list_mutation()
+                .append_unique_list(stores, retained);
         }
+        return Ok(());
     }
     let mut retained = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
     stores.open_page_active_list(&mut retained);
