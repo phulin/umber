@@ -4167,6 +4167,27 @@ impl<T, Lane> ForkArena<T, Lane> {
             .ok_or(ForkArenaError::InvalidRange)
     }
 
+    #[allow(dead_code)] // Paired migration codec uses this after branch integration.
+    pub(crate) fn owner_relative_list_block_range(
+        &self,
+        pool: &ChunkPool<T>,
+        list: ArenaListId<Lane>,
+    ) -> Result<std::ops::Range<usize>, ForkArenaError> {
+        self.validate_list(pool, list)?;
+        if list.is_empty() {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        let head = self
+            .resolved_position(pool, list.head.raw)
+            .ok_or(ForkArenaError::InvalidRange)?;
+        let tail = self
+            .resolved_position(pool, list.tail.raw)
+            .ok_or(ForkArenaError::InvalidRange)?;
+        (head <= tail)
+            .then_some(head..tail + 1)
+            .ok_or(ForkArenaError::InvalidRange)
+    }
+
     pub(crate) fn preflight_paired_dependency_floor(
         &self,
         pool: &ChunkPool<T>,
