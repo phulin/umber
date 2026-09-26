@@ -1045,6 +1045,80 @@ fn text_boundary_font_glue_scaling_and_cache_matrix() {
 }
 
 #[test]
+fn sentence_space_adds_font_extra_to_explicit_spaceskip() {
+    // TeX82 §1222 adds fontdimen7 after selecting either font glue or
+    // explicit spaceskip. A nonzero xspaceskip bypasses app_space entirely.
+    with_run(
+        br"\font\f=cmr10 \f \fontdimen7\f=2pt
+          \spaceskip=4pt plus2pt minus1pt
+          \setbox0=\hbox{A\spacefactor=1000\relax{} X}
+          \setbox1=\hbox{A\spacefactor=1999\relax{} X}
+          \setbox2=\hbox{A\spacefactor=2000\relax{} X}
+          \setbox3=\hbox{A\spacefactor=3000\relax{} X}
+          \xspaceskip=9pt plus3pt minus2pt
+          \setbox4=\hbox{A\spacefactor=3000\relax{} X}",
+        true,
+        |_, universe| {
+            for (register, width, stretch, shrink, kind) in [
+                (
+                    0,
+                    4 * Scaled::UNITY,
+                    2 * Scaled::UNITY,
+                    Scaled::UNITY,
+                    GlueKind::SpaceSkip,
+                ),
+                (1, 4 * Scaled::UNITY, 262_012, 32_784, GlueKind::SpaceSkip),
+                (
+                    2,
+                    6 * Scaled::UNITY,
+                    4 * Scaled::UNITY,
+                    Scaled::UNITY / 2,
+                    GlueKind::SpaceSkip,
+                ),
+                (
+                    3,
+                    6 * Scaled::UNITY,
+                    6 * Scaled::UNITY,
+                    21_845,
+                    GlueKind::SpaceSkip,
+                ),
+                (
+                    4,
+                    9 * Scaled::UNITY,
+                    3 * Scaled::UNITY,
+                    2 * Scaled::UNITY,
+                    GlueKind::XSpaceSkip,
+                ),
+            ] {
+                let nodes = boxed_children(universe, register);
+                let [
+                    Node::Char { ch: 'A', .. },
+                    Node::Glue {
+                        spec,
+                        kind: actual_kind,
+                        ..
+                    },
+                    Node::Char { ch: 'X', .. },
+                ] = nodes.as_slice()
+                else {
+                    panic!("box {register} has one interword glue: {nodes:?}")
+                };
+                assert_eq!(
+                    (
+                        spec.width.raw(),
+                        spec.stretch.raw(),
+                        spec.shrink.raw(),
+                        *actual_kind
+                    ),
+                    (width, stretch, shrink, kind),
+                    "box {register}"
+                );
+            }
+        },
+    );
+}
+
+#[test]
 fn text_outer_vertical_math_illegal_meaning_and_trigger_provenance_matrix() {
     // TeX82 §§1032--1044: a character starts a paragraph in outer vertical
     // mode and becomes a math noad in math mode; `\noboundary` is illegal in

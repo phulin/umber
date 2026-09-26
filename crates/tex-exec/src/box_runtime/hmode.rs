@@ -2292,24 +2292,24 @@ pub(crate) fn space_skip_or_font_space<G>(
     let override_spec = stores
         .glue_param(GlueParam::SPACE_SKIP)
         .map_or(GlueSpec::ZERO, |id| stores.glue(id));
-    if override_spec != GlueSpec::ZERO {
-        // TeX82 §1042 scales nonzero `\spaceskip` through `app_space`.
-        let mut spec = override_spec;
-        if space_factor != 1000 {
-            spec.stretch = scale_by_factor(spec.stretch, space_factor, 1000);
-            spec.shrink = scale_by_factor(spec.shrink, 1000, space_factor);
-        }
-        return (spec, GlueKind::SpaceSkip);
-    }
     let font = stores.current_font();
-    let mut spec = GlueSpec {
-        width: stores.font_parameter(font, 2),
-        stretch: stores.font_parameter(font, 3),
-        stretch_order: Order::Normal,
-        shrink: stores.font_parameter(font, 4),
-        shrink_order: Order::Normal,
+    let (mut spec, kind) = if override_spec != GlueSpec::ZERO {
+        (override_spec, GlueKind::SpaceSkip)
+    } else {
+        (
+            GlueSpec {
+                width: stores.font_parameter(font, 2),
+                stretch: stores.font_parameter(font, 3),
+                stretch_order: Order::Normal,
+                shrink: stores.font_parameter(font, 4),
+                shrink_order: Order::Normal,
+            },
+            GlueKind::Normal,
+        )
     };
     if space_factor >= 2000 {
+        // TeX82 §1222 adds fontdimen7 even when the base is explicit
+        // `\spaceskip`; only nonzero `\xspaceskip` bypasses `app_space`.
         spec.width = spec
             .width
             .checked_add(stores.font_parameter(font, 7))
@@ -2319,7 +2319,7 @@ pub(crate) fn space_skip_or_font_space<G>(
         spec.stretch = scale_by_factor(spec.stretch, space_factor, 1000);
         spec.shrink = scale_by_factor(spec.shrink, 1000, space_factor);
     }
-    (spec, GlueKind::Normal)
+    (spec, kind)
 }
 
 pub(crate) fn scale_by_factor(value: Scaled, num: i32, den: i32) -> Scaled {
