@@ -348,27 +348,37 @@ fn definition_target_projection_uses_spelling_and_active_map() {
         );
 
         assert_eq!(
-            processor.project_definition_target(&ordinary_without_metadata),
+            processor.project_definition_target(&crate::command::HotCommand::from_current_ref(
+                &ordinary_without_metadata
+            )),
             super::DefinitionTargetProjection::Target(target)
         );
         assert_eq!(
-            processor.project_definition_target(&active_with_metadata),
+            processor.project_definition_target(&crate::command::HotCommand::from_current_ref(
+                &active_with_metadata
+            )),
             super::DefinitionTargetProjection::Target(active_existing)
         );
         assert_eq!(processor.state.active_character_symbol('^'), None);
-        let first = processor.project_definition_target(&active_without_metadata);
+        let first = processor.project_definition_target(
+            &crate::command::HotCommand::from_current_ref(&active_without_metadata),
+        );
         let active_interned = processor
             .state
             .active_character_symbol('^')
             .expect("active target is interned");
-        let second = processor.project_definition_target(&active_without_metadata);
+        let second = processor.project_definition_target(
+            &crate::command::HotCommand::from_current_ref(&active_without_metadata),
+        );
         assert_eq!(
             first,
             super::DefinitionTargetProjection::Target(active_interned)
         );
         assert_eq!(second, first, "active target is reused after first intern");
         assert_eq!(
-            processor.project_definition_target(&malformed),
+            processor.project_definition_target(&crate::command::HotCommand::from_current_ref(
+                &malformed
+            )),
             super::DefinitionTargetProjection::Malformed
         );
     });

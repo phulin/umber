@@ -138,7 +138,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// needs to make that cell addressable. No fuel is charged here.
     fn project_definition_target(
         &mut self,
-        command: &crate::CurrentCommand<G>,
+        command: &crate::command::HotCommand<G>,
     ) -> DefinitionTargetProjection {
         match command.spelling().semantic_token() {
             Token::Cs(symbol) => {
@@ -182,12 +182,14 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn scan_definition_target(&mut self) -> Result<tex_state::interner::Symbol, CommandError> {
         let mut destination = None;
         loop {
-            let command = match self.next_non_space_raw_into(&mut destination)? {
+            let command = match self.next_non_space_raw_hot_into(&mut destination)? {
                 DeliveryStatus::Command => {
                     destination.take().ok_or(CommandError::input_invariant())?
                 }
                 DeliveryStatus::End => {
-                    if self.next_non_space_raw_into(&mut destination)? != DeliveryStatus::Command {
+                    if self.next_non_space_raw_hot_into(&mut destination)?
+                        != DeliveryStatus::Command
+                    {
                         return Err(CommandError::input_invariant());
                     }
                     destination.take().ok_or(CommandError::input_invariant())?
@@ -207,7 +209,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 command.spelling().semantic_token(),
                 tex_state::token::Token::Frozen(_)
             ) {
-                self.back_input(command)?;
+                self.back_input_hot(command)?;
             }
             let inaccessible =
                 Token::Cs(self.state.intern_internal_control_sequence("inaccessible"));

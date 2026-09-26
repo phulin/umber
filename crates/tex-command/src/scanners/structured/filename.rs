@@ -374,13 +374,15 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// TeX82 §1215's `repeat get_token until cur_tok<>space_token`.
     ///
     /// This tests the raw spelling, not `cur_cmd`: a control sequence whose
-    /// current meaning is a space remains a legal definition target.
-    pub(super) fn next_non_space_raw_into(
+    /// current meaning is a space remains a legal definition target. The
+    /// token stays a compact delivery because callers inspect only its
+    /// spelling and meaning.
+    pub(super) fn next_non_space_raw_hot_into(
         &mut self,
-        destination: &mut Option<CurrentCommand<G>>,
+        destination: &mut Option<crate::command::HotCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
         loop {
-            let delivery = self.get_token_into(destination)?;
+            let delivery = self.get_token_hot_into(destination)?;
             if delivery == DeliveryStatus::End {
                 return Ok(DeliveryStatus::End);
             }

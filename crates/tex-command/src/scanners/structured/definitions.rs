@@ -138,40 +138,45 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         future: bool,
     ) -> Result<(Symbol, ResolvedMeaning<G>), CommandError> {
+        // §1221 inspects only each token's spelling and meaning, so every
+        // operand stays in its compact delivery.
         let mut destination = None;
         let target = self.scan_definition_target()?;
         let meaning = if future {
             let mut first_destination = None;
-            if self.get_token_into(&mut first_destination)? != DeliveryStatus::Command {
+            if self.get_token_hot_into(&mut first_destination)? != DeliveryStatus::Command {
                 return Err(CommandError::input_invariant());
             }
             let mut second_destination = None;
-            if self.get_token_into(&mut second_destination)? != DeliveryStatus::Command {
+            if self.get_token_hot_into(&mut second_destination)? != DeliveryStatus::Command {
                 return Err(CommandError::input_invariant());
             }
             let second = second_destination
                 .take()
                 .ok_or(CommandError::input_invariant())?;
-            let meaning = second.meaning();
-            self.back_input(second)?;
+            let meaning = second.resolved_meaning();
+            self.back_input_hot(second)?;
             let first = first_destination
                 .take()
                 .ok_or(CommandError::input_invariant())?;
-            self.back_input_saved(first)?;
+            self.back_input_saved_hot(first)?;
             meaning
         } else {
-            let mut source = loop {
-                if self.get_token_into(&mut destination)? != DeliveryStatus::Command {
-                    return Err(CommandError::input_invariant());
-                }
-                let source = destination.take().ok_or(CommandError::input_invariant())?;
-                if !matches!(
-                    source.meaning_ref(),
-                    ResolvedMeaning::Static(Meaning::CharToken {
+            let is_space = |command: &crate::command::HotCommand<G>| {
+                matches!(
+                    command.static_meaning(),
+                    Some(Meaning::CharToken {
                         cat: Catcode::Space,
                         ..
                     })
-                ) {
+                )
+            };
+            let mut source = loop {
+                if self.get_token_hot_into(&mut destination)? != DeliveryStatus::Command {
+                    return Err(CommandError::input_invariant());
+                }
+                let source = destination.take().ok_or(CommandError::input_invariant())?;
+                if !is_space(&source) {
                     break source;
                 }
             };
@@ -182,24 +187,18 @@ impl<G> CommandProcessor<'_, '_, G> {
                     cat: Catcode::Other
                 }
             ) {
-                if self.get_token_into(&mut destination)? != DeliveryStatus::Command {
+                if self.get_token_hot_into(&mut destination)? != DeliveryStatus::Command {
                     return Err(CommandError::input_invariant());
                 }
                 source = destination.take().ok_or(CommandError::input_invariant())?;
-                if matches!(
-                    source.meaning_ref(),
-                    ResolvedMeaning::Static(Meaning::CharToken {
-                        cat: Catcode::Space,
-                        ..
-                    })
-                ) {
-                    if self.get_token_into(&mut destination)? != DeliveryStatus::Command {
+                if is_space(&source) {
+                    if self.get_token_hot_into(&mut destination)? != DeliveryStatus::Command {
                         return Err(CommandError::input_invariant());
                     }
                     source = destination.take().ok_or(CommandError::input_invariant())?;
                 }
             }
-            source.into_meaning()
+            source.resolved_meaning()
         };
         Ok((target, meaning))
     }

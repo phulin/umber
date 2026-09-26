@@ -38,6 +38,19 @@ impl<G> CommandProcessor<'_, '_, G> {
         if !self.delivery_stamp_is_fresh(command.delivery_stamp()) {
             return Err(CommandError::StaleDelivery);
         }
+        self.back_input_hot_unchecked(command)
+    }
+
+    /// [`Self::back_input_saved`] for a compact delivery: TeX82 §326's
+    /// restoration of a token saved before a later delivery superseded it.
+    pub(crate) fn back_input_saved_hot(
+        &mut self,
+        command: HotCommand<G>,
+    ) -> Result<(), CommandError> {
+        self.back_input_hot_unchecked(command)
+    }
+
+    fn back_input_hot_unchecked(&mut self, command: HotCommand<G>) -> Result<(), CommandError> {
         self.invalidate_delivery_freshness();
         self.conserve_input_stack_for_descendant()?;
         let previous_align_state = self.command.alignment.align_state;

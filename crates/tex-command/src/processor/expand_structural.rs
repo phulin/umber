@@ -3,6 +3,7 @@
 use tex_state::meaning::ExpandablePrimitive;
 use tex_state::token::{OriginId, Token, TracedTokenWord};
 
+use crate::command::{CommandClass, HotCommand};
 use crate::input::{
     BackedUpToken, BackupTreatment, PackedTokenSpanHandle, ReplayTrace, RetirementBehavior,
     TokenBehavior,
@@ -13,7 +14,6 @@ use crate::observation::{
 use crate::processor::status::{ScannerStatus, ScannerStatusVisibility};
 use crate::{CommandError, CurrentCommand};
 
-use super::expand::is_expandable_command;
 use super::expand_render::print_esc_text;
 use super::{CommandProcessor, DeliveryStatus};
 
@@ -63,8 +63,10 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// input. The first delivery is intentionally replayed through an
     /// explicit backed-up level because it is no longer the latest delivery.
     pub(super) fn expand_expandafter(&mut self) -> Result<(), CommandError> {
+        // TeX82 §368 only compares `cur_cmd` with `max_command`, so both
+        // tokens stay in their compact deliveries.
         let mut first = None;
-        match self.get_token_into(&mut first)? {
+        match self.get_token_hot_into(&mut first)? {
             DeliveryStatus::End => return Err(CommandError::input_invariant()),
             DeliveryStatus::Command => {}
             _ => unreachable!("ordinary token delivery returns only commands"),
@@ -73,23 +75,21 @@ impl<G> CommandProcessor<'_, '_, G> {
             .take()
             .expect("command status initializes destination");
         let mut second = None;
-        match self.get_token_into(&mut second)? {
+        match self.get_token_hot_into(&mut second)? {
             DeliveryStatus::End => return Err(CommandError::input_invariant()),
             DeliveryStatus::Command => {}
             _ => unreachable!("ordinary token delivery returns only commands"),
         }
-        if second.as_ref().is_none_or(is_expandable_command) {
-            self.request_expansion_into(&mut second, true)?;
-            self.replay_expandafter_first(first)?;
+        if second.as_ref().is_none_or(is_expandable_hot_command) {
+            self.request_expansion_hot(&mut second, true)?;
         } else {
-            self.back_input(
+            self.back_input_hot(
                 second
                     .take()
                     .expect("unexpandable second command remains in its destination"),
             )?;
-            self.replay_expandafter_first(first)?;
         }
-        Ok(())
+        self.replay_expandafter_first(first)
     }
 
     /// Collects TeX82 §372's expanded character list through `\\endcsname`.
@@ -162,9 +162,12 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.back_input_token(TracedTokenWord::pack(Token::Cs(symbol), opener))
     }
 
-    fn replay_expandafter_first(&mut self, command: CurrentCommand<G>) -> Result<(), CommandError> {
+    fn replay_expandafter_first(&mut self, command: HotCommand<G>) -> Result<(), CommandError> {
         self.conserve_input_stack_for_descendant()?;
-        self.undo_alignment_delivery(&command);
+        self.command.record_alignment_phase();
+        self.command
+            .alignment
+            .undo_delivery(command.alignment_adjustment());
         self.invalidate_delivery_freshness();
         let level = self.command.push_token_level(
             PackedTokenSpanHandle::backed_up([BackedUpToken {
@@ -188,9 +191,24 @@ impl<G> CommandProcessor<'_, '_, G> {
             }));
             self.observe(CommandObservation::Recovery(RecoveryRecord {
                 kind: RecoveryKind::Backup,
-                tokens: vec![self.observed_command_spelling(&command)],
+                tokens: vec![self.observed_hot_command_spelling(&command)],
             }));
         }
         Ok(())
+    }
+}
+
+/// TeX82 §366's `cur_cmd>max_command` test on a compact delivery, matching
+/// [`super::expand::is_expandable_command`]: `\endcsname` is unexpandable, while an
+/// undefined control sequence expands into its error.
+fn is_expandable_hot_command<G>(command: &HotCommand<G>) -> bool {
+    let word = command.command_word();
+    match word.class() {
+        CommandClass::Macro => true,
+        CommandClass::Expandable => {
+            word.expandable_primitive() != Some(ExpandablePrimitive::EndCsName)
+        }
+        CommandClass::Undefined => !matches!(command.spelling().semantic_token(), Token::Param(_)),
+        _ => false,
     }
 }

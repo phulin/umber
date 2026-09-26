@@ -1188,13 +1188,6 @@ impl<G> CurrentCommand<G> {
         &self.meaning
     }
 
-    /// Consumes this delivered command and returns its already-resolved
-    /// meaning without acquiring another immutable-definition owner.
-    #[must_use]
-    pub(crate) fn into_meaning(self) -> ResolvedMeaning<G> {
-        self.meaning
-    }
-
     /// Returns the control-sequence identity, if this spelling resolves via
     /// a control-sequence meaning cell.
     #[must_use]
