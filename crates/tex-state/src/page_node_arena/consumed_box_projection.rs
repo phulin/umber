@@ -62,14 +62,32 @@ impl<'a> PageMaterialArena<'a> {
             remove_margin_kerns,
         };
         if let Some(tail) = self.span_tail_chunk(span)? {
-            self.append_reencoded_chunk_range(
-                builder,
-                tail,
-                &selected,
-                &mut selected_identity,
-                &mut copied,
-                options,
-            )?;
+            // The source edge points backward. Stop before the selected
+            // window and reverse only its cursors into semantic order. Inline
+            // scratch covers short lists; longer lists grow by chunk count,
+            // not by the number or size of payload records.
+            let mut selected_chunks = smallvec::SmallVec::<[PageListChunkCursor; 8]>::new();
+            let mut cursor = Some(tail);
+            while let Some(chunk) = cursor {
+                let chunk_end = chunk.inner.logical_start() + chunk.inner.len();
+                if chunk_end <= selected.start {
+                    break;
+                }
+                cursor = self.span_previous_chunk(&chunk)?;
+                if chunk.inner.logical_start() < selected.end {
+                    selected_chunks.push(chunk);
+                }
+            }
+            while let Some(chunk) = selected_chunks.pop() {
+                self.append_reencoded_one_chunk(
+                    builder,
+                    chunk,
+                    &selected,
+                    &mut selected_identity,
+                    &mut copied,
+                    options,
+                )?;
+            }
         }
         if !remove_margin_kerns && copied != selected.len() {
             return Err(ForkArenaError::InvalidRange);
@@ -92,7 +110,7 @@ impl<'a> PageMaterialArena<'a> {
         Ok(())
     }
 
-    fn append_reencoded_chunk_range(
+    fn append_reencoded_one_chunk(
         &mut self,
         builder: &mut PageMaterialActiveListBuilder,
         cursor: PageListChunkCursor,
@@ -101,16 +119,6 @@ impl<'a> PageMaterialArena<'a> {
         copied: &mut usize,
         options: ProjectionOptions,
     ) -> Result<(), ForkArenaError> {
-        if let Some(previous) = self.span_previous_chunk(&cursor)? {
-            self.append_reencoded_chunk_range(
-                builder,
-                previous,
-                selected,
-                selected_identity,
-                copied,
-                options,
-            )?;
-        }
         let chunk_start = cursor.inner.logical_start();
         let chunk_end = chunk_start + cursor.inner.len();
         let start = selected.start.max(chunk_start);

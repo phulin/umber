@@ -255,6 +255,73 @@ fn positive_box_cuts_survive_repeated_filtered_unbox_with_sibling() {
 }
 
 #[test]
+fn selected_suffix_projection_visits_only_its_chunk_window() {
+    page_arena!(arena, pool, state, 4_096);
+    let values: Vec<i32> = (0..8_000).collect();
+    let source = arena
+        .publish_owned(penalties(&values))
+        .expect("long source list");
+    let span = arena.admit_span(source).expect("admitted source");
+    let mut builder = PageMaterialActiveListBuilder::vacant();
+    arena
+        .open_active_list(&mut builder)
+        .expect("destination builder");
+    let before = arena.counters().source_nodes_copied;
+    let forward_before = arena
+        .region
+        .pub_arena
+        .validated_list(&arena.pool.chunks, source.coordinate())
+        .expect("source traversal counters")
+        .traversal_counters()
+        .2;
+    arena
+        .append_reencoded_span_range(&mut builder, span, 7_990..8_000, false, false, false)
+        .expect("selected tail projection");
+    let forward_after = arena
+        .region
+        .pub_arena
+        .validated_list(&arena.pool.chunks, source.coordinate())
+        .expect("source traversal counters")
+        .traversal_counters()
+        .2;
+    assert!(
+        forward_after - forward_before <= 2,
+        "selected suffix skips the unrelated prefix"
+    );
+    let projected = arena
+        .finalize_active_list(&mut builder)
+        .expect("selected tail");
+    assert_eq!(resolved(&arena, projected), penalties(&values[7_990..]));
+    assert_eq!(arena.counters().source_nodes_copied - before, 10);
+}
+
+#[test]
+fn whole_source_projection_keeps_a_bounded_stack_across_many_chunks() {
+    std::thread::Builder::new()
+        .stack_size(128 * 1024)
+        .spawn(|| {
+            page_arena!(arena, pool, state, 512);
+            let values: Vec<i32> = (0..30_000).collect();
+            let source = arena
+                .publish_owned(penalties(&values))
+                .expect("long source");
+            let mut builder = PageMaterialActiveListBuilder::vacant();
+            arena.open_active_list(&mut builder).expect("builder");
+            arena
+                .append_to_active_list(&mut builder, source)
+                .expect("whole copy");
+            let copied = arena
+                .finalize_active_list(&mut builder)
+                .expect("copied list");
+            assert_eq!(copied.len(), values.len());
+            assert_eq!(resolved(&arena, copied), penalties(&values));
+        })
+        .expect("small-stack thread")
+        .join()
+        .expect("projection stays within the small stack");
+}
+
+#[test]
 fn consumed_unbox_projection_rebinds_sibling_boxes_without_copying_their_bodies() {
     page_arena!(arena, pool, state, 65_536);
     let mut nested = Vec::new();
@@ -917,10 +984,20 @@ fn shared_source_scaling_clones_each_node_directly_at_required_sizes() {
         );
         assert_eq!(after.new_semantic_nodes - before.new_semantic_nodes, 1);
         let allocation_calls = allocation_after.calls - allocation_before.calls;
-        assert_eq!(allocation_calls, 0);
-        assert_eq!(
-            allocation_after.requested_bytes - allocation_before.requested_bytes,
-            0
+        let source_chunks = size.div_ceil(arena.pool.chunks.chunk_capacity());
+        let max_growth_calls = 1 + (source_chunks / 8).max(1).next_power_of_two().ilog2() as u64;
+        let scratch_bytes = allocation_after.requested_bytes - allocation_before.requested_bytes;
+        assert!(
+            allocation_calls <= max_growth_calls,
+            "cursor scratch grows geometrically by source chunks"
+        );
+        assert!(
+            scratch_bytes
+                <= u64::try_from(
+                    4 * source_chunks * core::mem::size_of::<super::PageListChunkCursor>()
+                )
+                .expect("test scratch bound fits u64"),
+            "cursor scratch is bounded by chunk count, not source payload size"
         );
         eprintln!(
             "PAGE_SHARED_COPY_SCALE nodes={size} copied_nodes={} allocation_calls={allocation_calls} allocation_bytes={}",
