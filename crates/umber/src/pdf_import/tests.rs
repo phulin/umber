@@ -255,11 +255,47 @@ fn crop_box_is_clipped_to_media_box_before_pdf_inclusion() {
 }
 
 #[test]
-fn page_box_scaled_conversion_rounds_ties_away_from_zero() {
+fn page_box_scaled_conversion_rounds_after_float_narrowing() {
     let scale = 6_578_176.0 / 100.0;
     let tie = 0.5 / scale;
-    assert_eq!(pdf_bp_to_scaled(tie).expect("positive tie").raw(), 1);
-    assert_eq!(pdf_bp_to_scaled(-tie).expect("negative tie").raw(), -1);
+    let below = tie as f32;
+    let above = f32::from_bits(below.to_bits() + 1);
+    assert_eq!(
+        pdf_bp_to_scaled(f64::from(below)).expect("below tie").raw(),
+        0
+    );
+    assert_eq!(
+        pdf_bp_to_scaled(f64::from(above)).expect("above tie").raw(),
+        1
+    );
+    assert_eq!(
+        pdf_bp_to_scaled(-f64::from(below))
+            .expect("below negative tie")
+            .raw(),
+        0
+    );
+    assert_eq!(
+        pdf_bp_to_scaled(-f64::from(above))
+            .expect("above negative tie")
+            .raw(),
+        -1
+    );
+}
+
+#[test]
+fn page_box_dimensions_pass_through_pdftex_float_fields_before_scaling() {
+    // pdftex-common.h declares epdf_width/height as float. These operands
+    // come from the independent PDF MediaBox in arXiv 2606.27434; converting
+    // the parsed doubles directly would give 59_774_017 and 38_938_276 sp.
+    assert_eq!(pdf_bp_to_scaled(908.6716).expect("width").raw(), 59_774_015);
+    assert_eq!(
+        pdf_bp_to_scaled(591.9312).expect("height").raw(),
+        38_938_277
+    );
+    assert_eq!(
+        pdf_bp_to_scaled(-908.6716).expect("origin").raw(),
+        -59_774_015
+    );
 }
 
 #[test]

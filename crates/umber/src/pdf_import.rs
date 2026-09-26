@@ -240,10 +240,13 @@ fn parse_pdf_number(source: &[u8]) -> Result<f64, String> {
         .map_err(|_| "selected PDF page box contains an invalid number".to_owned())
 }
 
-/// Converts one already-normalized PDF big-point value using pdfTeX's
-/// `writeimg.c::bp2int` rounding operation.
+/// Converts one TeX-facing PDF page-box origin or extent. pdfTeX stores the
+/// double-precision page-box result in a `float` `epdf_*` field before
+/// `writeimg.c::bp2int` rounds it to scaled points. Source-space Form geometry
+/// keeps the original double-precision coordinates separately.
 pub(crate) fn pdf_bp_to_scaled(value: f64) -> Result<Scaled, String> {
-    let rounded = (value * (6_578_176.0 / 100.0)).round();
+    let epdf_value = f64::from(value as f32);
+    let rounded = (epdf_value * (6_578_176.0 / 100.0)).round();
     if !rounded.is_finite() || rounded < f64::from(i32::MIN) || rounded > f64::from(i32::MAX) {
         return Err("selected PDF page box number is out of range".to_owned());
     }
