@@ -28,6 +28,33 @@ are under
 This later growth is outside the earlier 100–200 million-action heap captures;
 those captures cannot establish full-book peak memory or reclamation.
 
+A full diagnostic run at `7ef1d1e6f`, with heaptrack and explicitly increased
+900-second, 6,144 MiB, and two-billion-action limits, completed all 588 pages.
+Requested heap peaked at 2,442,937,472 bytes; RSS peaked at 2,241,328 KiB.
+Node and annex pool backing accounted for only about 36.4 MB at their combined
+individual peaks. The large late consumers include canonical page artifacts,
+PDF page artifacts, source provenance, and clones of the detached completion.
+At that checkpoint, the consuming client finalization kept the incremental
+session's shared completion alive while extracting an owned completion, forcing
+a deep copy. The recorded stacks attribute about 480 MB to that finalization
+path. The consuming handoff now releases the incremental session after reading
+its statistics, before extracting the owned completion. An ownership test checks
+that both canonical and PDF page allocations survive that handoff unchanged;
+this removes the clone without changing retained-session reuse semantics.
+The resulting whole-book memory reduction still needs measurement.
+The raw capture, heap report, and allocation timeline are under
+`target/perf-tex-copy-plan/late-book-heaptrack-7ef/fuel-2000000000/`.
+Its 545.78-second instrumented runtime is not a shipping speed measurement.
+
+All 588 pages have identical extracted text to the reference, but pages 141,
+161, 323, and 516 differ in exact raster comparison. The earlier `bf4a6a7ba`
+shipping build also completes under diagnostic limits and produces identical
+per-page raster and text hashes to `7ef1d1e6f` on all 588 pages. Thus these four
+differences predate the direct durable-register handoff. They remain parity
+failures; no raster tolerance was changed. The earlier build's full receipt is
+`target/perf-tex-copy-plan/ownership-annex-full-diagnostic/summary.json`.
+Neither diagnostic completion satisfies the original acceptance guards.
+
 ## Current CPU attribution and copy scope
 
 A shipping CPU profile at `84367177d` reached the authenticated

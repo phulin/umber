@@ -1265,6 +1265,9 @@ impl<'store> VirtualCompileSession<'store> {
             CompileError::Incremental("the accepted incremental session is missing".to_owned())
         })?;
         let expansion_stats = session.accepted_expansion_stats();
+        // A consumed session cannot reuse its accepted completion. Release its
+        // shared owner before extracting the owned pages for finalization.
+        drop(session);
         let accepted = self.accepted_engine_output.ok_or_else(|| {
             CompileError::Incremental("the accepted detached completion is missing".to_owned())
         })?;

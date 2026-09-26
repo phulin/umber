@@ -431,6 +431,60 @@ fn accepted_finalization_transfers_uncommitted_engine_state() {
 }
 
 #[test]
+fn accepted_finalization_moves_page_allocations_out_of_consumed_session() {
+    let mut session = VirtualCompileSession::new(SessionOptions {
+        engine: EngineMode::PdfTex,
+        outputs: OutputCapabilitySet::PDF,
+        ..SessionOptions::default()
+    })
+    .expect("PDF session");
+    session
+        .add_user_file(
+            "main.tex",
+            br"\pdfoutput=1 \shipout\hbox{\vrule width1pt height1pt}\end".to_vec(),
+        )
+        .expect("main source");
+    let attempt = session.compile_attempt();
+    assert!(
+        matches!(attempt, CompileAttemptResult::Complete(_)),
+        "{attempt:?}"
+    );
+    let accepted = session
+        .accepted_engine_output
+        .as_ref()
+        .expect("accepted output");
+    let artifact = accepted.pages()[0].artifact().bytes();
+    let pdf_artifact = &accepted.pdf().expect("PDF completion").pages()[0].artifact_bytes;
+    assert!(!artifact.is_empty());
+    assert!(!pdf_artifact.is_empty());
+    let artifact_allocation = artifact.as_ptr();
+    let pdf_allocation = pdf_artifact.as_ptr();
+    let expected_artifact = artifact.to_vec();
+    let expected_pdf_artifact = pdf_artifact.clone();
+
+    let finalization = session.into_accepted_finalization().expect("finalization");
+    let artifact = finalization.completion.pages()[0].artifact().bytes();
+    let pdf_artifact = &finalization
+        .completion
+        .pdf()
+        .expect("PDF completion")
+        .pages()[0]
+        .artifact_bytes;
+    assert_eq!(artifact, expected_artifact);
+    assert_eq!(pdf_artifact, &expected_pdf_artifact);
+    assert_eq!(
+        artifact.as_ptr(),
+        artifact_allocation,
+        "one-shot handoff must move canonical pages"
+    );
+    assert_eq!(
+        pdf_artifact.as_ptr(),
+        pdf_allocation,
+        "one-shot handoff must move PDF pages"
+    );
+}
+
+#[test]
 fn accepted_finalization_keeps_openout_page_unpublished() {
     let mut session = session(
         "\\setbox0=\\hbox{\\openout2=original.out \\write2{x}\\closeout2}\
