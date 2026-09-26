@@ -168,6 +168,31 @@ target/profiling/umber run --profiling-stats \
   --expansion-fuel 6000000 <the unchanged pinned run arguments>
 ```
 
+## Interpreter primitive microbenchmark
+
+`scripts/interp-microbench.py` measures the per-primitive cost of the
+interpreter core. Each case runs a preamble loop that calls one snippet (for
+example `\advance\count2 by 1`, `\begingroup\endgroup`, or `\setbox2\hbox{}`)
+inside `\iter`, whose own body is an `\ifnum` test, an `\advance`, and an
+`\expandafter` self-call. The script runs every case at zero and N iterations
+and reports the difference in user-space instructions per iteration, so
+startup and format loading cancel. The `base` row is the loop alone; other rows
+are the snippet's cost above `base`.
+
+```sh
+python3 scripts/interp-microbench.py --sudo \
+  --umber before=target/bench/umber-before \
+  --umber after=target/profiling/umber --pdftex
+```
+
+Repeat `--umber LABEL=PATH` to compare builds; the ratio column divides the
+first engine by the last. `--pdftex` adds the pinned pdfTeX oracle, which makes
+the ratio the distance from TeX's own cost. Distribution and format paths come
+from an arXiv row's `result.json` authority record (`--authority`, defaulting
+to the 500-page book row). Instruction counts are near-deterministic, so they
+remain meaningful on a shared host where wall time is not. `--sudo` runs
+`perf` through `sudo -n` when `perf_event_paranoid` forbids user counting.
+
 ## Main-control hot-core structural census
 
 A `profiling` build of the `umber` CLI also emits one `HOT_CORE_CENSUS`

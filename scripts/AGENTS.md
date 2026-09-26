@@ -99,6 +99,11 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   JSON/JSONL inner-metric support; verify clean worktree/revision and binary
   identities, run serialized AB/BA warm-up pairs, and publish JSONL timing and
   semantic-validation receipts without invoking Cargo.
+- `interp-microbench.py`: per-primitive interpreter microbenchmark; runs a
+  LaTeX preamble loop around one snippet at zero and N iterations and reports
+  user-space instructions per iteration for each given Umber executable and,
+  with `--pdftex`, the pinned pdfTeX oracle, using an arXiv row's authority
+  record for the distribution and formats.
 - `test-paired-measure.py`: hermetic mock-executable contract tests for the
   paired measurement runner's identity, failure, validation, and summary
   behavior.
