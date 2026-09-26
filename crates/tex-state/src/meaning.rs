@@ -1743,6 +1743,7 @@ impl Meaning {
     /// Classifies a validated runtime word without decoding a [`Meaning`].
     #[doc(hidden)]
     #[must_use]
+    #[inline]
     pub const fn runtime_word_class(word: u64) -> StaticCommandClass {
         match (word >> OPCODE_SHIFT) as u8 {
             OP_UNDEFINED => StaticCommandClass::Undefined,
@@ -1758,6 +1759,7 @@ impl Meaning {
     /// Returns the operand of a validated runtime word without semantic decode.
     #[doc(hidden)]
     #[must_use]
+    #[inline]
     pub const fn runtime_word_operand(word: u64) -> u64 {
         word & OPERAND_MASK
     }
@@ -1770,12 +1772,14 @@ impl Meaning {
     /// or arbitrary-integer constructor.
     #[doc(hidden)]
     #[must_use]
+    #[inline]
     pub const fn from_runtime_word(word: u64) -> Self {
         Self::decode_stored(word)
     }
 
     /// Encodes this meaning into `opcode:8 | flags:8 | operand:48`.
     #[must_use]
+    #[inline]
     pub const fn encode(self) -> u64 {
         match self {
             Self::Undefined => pack(OP_UNDEFINED, MeaningFlags::EMPTY, 0),
@@ -1834,6 +1838,7 @@ impl Meaning {
 
     /// Decodes a stored `opcode:8 | flags:8 | operand:48` word.
     #[must_use]
+    #[inline]
     pub(crate) const fn decode_stored(word: u64) -> Self {
         let op = (word >> OPCODE_SHIFT) as u8;
         let flags = MeaningFlags::from_bits((word >> FLAGS_SHIFT) as u8);
@@ -1909,6 +1914,7 @@ impl Meaning {
     }
 }
 
+#[inline]
 const fn pack(op: u8, flags: MeaningFlags, operand: u64) -> u64 {
     assert!(operand <= OPERAND_MASK, "meaning operand exceeds 48 bits");
     ((op as u64) << OPCODE_SHIFT) | ((flags.bits() as u64) << FLAGS_SHIFT) | operand
