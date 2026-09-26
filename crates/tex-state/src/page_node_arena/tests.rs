@@ -82,10 +82,10 @@ fn stamped_box_interval_moves_and_rollback_restores_original_nodes() {
     let metadata = arena
         .box_migration_metadata(root)
         .expect("original metadata");
-    assert!(arena.can_finish_interleaved_page_box(root, &metadata));
+    assert!(arena.can_finish_interleaved_page_box(root, &metadata, false));
 
     let (owner, loan) = arena
-        .finish_interleaved_page_box(root, metadata)
+        .finish_interleaved_page_box(root, metadata, false)
         .expect("exclusive interval moves");
     assert!(!arena.contains(root));
     assert!(arena.contains(neighbor));

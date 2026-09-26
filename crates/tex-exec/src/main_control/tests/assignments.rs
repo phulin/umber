@@ -2626,6 +2626,33 @@ fn internal_vertical_lastbox_preserves_earlier_baseline_glue() {
 }
 
 #[test]
+fn shifted_lastbox_resets_shift_while_moving_unique_children() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\setbox0=\vbox{\moveleft3pt\hbox{\kern1pt}\global\setbox1=\lastbox}\end",
+        );
+        run_to_end(&mut control, stores);
+
+        assert_eq!(
+            stores.page_region_counters().page_to_durable_nodes_copied,
+            0
+        );
+        let copied = stores.copy_box_to_page(1).expect("lastbox assigned");
+        let root = page_vec(stores, copied);
+        let [Node::HList(boxed)] = root.as_slice() else {
+            panic!("shifted hbox survives lastbox");
+        };
+        assert_eq!(boxed.shift, Scaled::from_raw(0));
+        assert!(matches!(
+            page_vec(stores, boxed.children).as_slice(),
+            [Node::Kern { .. }]
+        ));
+    });
+}
+
+#[test]
 fn unique_lastbox_from_box_register_copy_vsplit_and_unbox_avoids_second_copy() {
     let cases: [(&str, &[u8]); 5] = [
         (

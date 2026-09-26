@@ -138,7 +138,7 @@ fn page_loan_then_dimension_edit_replays_scalar_before_returning_interval() {
         .box_migration_metadata(root)
         .expect("original metadata");
     let (owner, loan) = arena
-        .finish_interleaved_page_box(root, metadata)
+        .finish_interleaved_page_box(root, metadata, false)
         .expect("move page interval");
     state
         .assign_with_page_loan(

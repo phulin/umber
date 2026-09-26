@@ -2468,7 +2468,7 @@ pub(in crate::main_control) fn apply<G>(
                 if let Some(removed) = &removed
                     && let (Some(root), Some(metadata)) =
                         (removed.root, removed.migration_metadata.as_ref())
-                    && stores.can_transfer_interleaved_page_box(root, metadata)
+                    && stores.can_transfer_interleaved_page_box(root, metadata, removed.shift_reset)
                 {
                     commit_interleaved_set_box_target(
                         PendingSetBox {
@@ -2477,6 +2477,7 @@ pub(in crate::main_control) fn apply<G>(
                         },
                         root,
                         metadata.clone(),
+                        removed.shift_reset,
                         stores,
                         command,
                     );

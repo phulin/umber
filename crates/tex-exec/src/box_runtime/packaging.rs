@@ -17,6 +17,7 @@ pub(crate) struct RemovedLastBox {
     pub(crate) node: Node,
     pub(crate) root: Option<PageListId>,
     pub(crate) migration_metadata: Option<PageBoxMigrationMetadata>,
+    pub(crate) shift_reset: bool,
 }
 
 pub(crate) fn take_last_box<G, F>(
@@ -87,12 +88,21 @@ where
                 return Ok(None);
             }
             let removed = stores.remove_page_contribution_range(tail.removal_range());
+            let root = removed.list();
+            let original = stores.page_carrier_node(&removed).to_owned();
+            let shift_reset = matches!(
+                original,
+                Node::HList(ref boxed) | Node::VList(ref boxed)
+                    if boxed.shift != tex_state::scaled::Scaled::from_raw(0)
+            );
+            let migration_metadata = stores.page_box_migration_metadata(root);
             let result = reset_removed_box_shift(stores.page_carrier_node(&removed));
             stores.discard_page_node(removed);
             Ok(result.map(|node| RemovedLastBox {
                 node,
-                root: None,
-                migration_metadata: None,
+                root: Some(root),
+                migration_metadata,
+                shift_reset,
             }))
         }
         Mode::InternalVertical | Mode::Horizontal | Mode::RestrictedHorizontal => {
@@ -129,7 +139,8 @@ where
             Ok(reset_removed_box_shift(node).map(|node| RemovedLastBox {
                 node,
                 root: Some(removed),
-                migration_metadata: migration_metadata.filter(|_| zero_shift),
+                migration_metadata,
+                shift_reset: !zero_shift,
             }))
         }
     }

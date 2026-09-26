@@ -1232,6 +1232,7 @@ impl<'a> PageMaterialArena<'a> {
         &mut self,
         root: PageListId,
         metadata: PageBoxMigrationMetadata,
+        reset_shift: bool,
     ) -> Result<
         (
             DurableNodeClosure,
@@ -1245,7 +1246,8 @@ impl<'a> PageMaterialArena<'a> {
         let segment = metadata.segment;
         let source_root = self.region.root(self.pool, root)?;
         let mut durable = self.pool.start_region::<DurableRole>()?;
-        let partitioned = metadata.wrapper_rebuild || !metadata.exclusions.is_empty();
+        let partitioned =
+            reset_shift || metadata.wrapper_rebuild || !metadata.exclusions.is_empty();
         let whole = if partitioned {
             Err(ForkArenaError::InvalidRegion)
         } else {
@@ -1259,7 +1261,7 @@ impl<'a> PageMaterialArena<'a> {
             )
         };
         let result = if partitioned {
-            let (wrapper, nodes, annex) =
+            let (mut wrapper, nodes, annex) =
                 match self.preflight_partitioned_box_body(root, &metadata, &durable) {
                     Ok(value) => value,
                     Err(error) => {
@@ -1267,6 +1269,14 @@ impl<'a> PageMaterialArena<'a> {
                         return Err(error);
                     }
                 };
+            if reset_shift {
+                match &mut wrapper {
+                    Node::HList(boxed) | Node::VList(boxed) => {
+                        boxed.shift = crate::scaled::Scaled::from_raw(0);
+                    }
+                    _ => unreachable!("preflighted box wrapper"),
+                }
+            }
             transfer_page_interior_intervals(self.pool, self.region, &nodes, &annex, &mut durable)
                 .and_then(|loan| {
                     match durable.publish_box_wrapper(self.pool, wrapper, root.sequence_identity())
@@ -1359,6 +1369,7 @@ impl<'a> PageMaterialArena<'a> {
         &mut self,
         root: PageListId,
         metadata: &PageBoxMigrationMetadata,
+        reset_shift: bool,
     ) -> bool {
         if self.box_migration_metadata(root).as_ref() != Some(metadata) {
             return false;
@@ -1370,7 +1381,8 @@ impl<'a> PageMaterialArena<'a> {
         let Ok(destination) = self.pool.start_region::<DurableRole>() else {
             return false;
         };
-        let result = if !metadata.wrapper_rebuild && metadata.exclusions.is_empty() {
+        let result = if !reset_shift && !metadata.wrapper_rebuild && metadata.exclusions.is_empty()
+        {
             preflight_page_interior_closure(
                 self.pool,
                 self.region,
@@ -1382,16 +1394,18 @@ impl<'a> PageMaterialArena<'a> {
         } else {
             Err(ForkArenaError::InvalidRegion)
         };
-        let eligible = ((metadata.wrapper_rebuild || !metadata.exclusions.is_empty())
-            && self
-                .preflight_partitioned_box_body(root, metadata, &destination)
-                .is_ok())
-            || result.is_ok()
-            || self
-                .preflight_interleaved_box_body(root, segment, &destination)
-                .is_ok()
-                && metadata.exclusions.is_empty()
-                && !metadata.wrapper_rebuild;
+        let eligible =
+            ((reset_shift || metadata.wrapper_rebuild || !metadata.exclusions.is_empty())
+                && self
+                    .preflight_partitioned_box_body(root, metadata, &destination)
+                    .is_ok())
+                || result.is_ok()
+                || self
+                    .preflight_interleaved_box_body(root, segment, &destination)
+                    .is_ok()
+                    && metadata.exclusions.is_empty()
+                    && !metadata.wrapper_rebuild
+                    && !reset_shift;
         assert!(self.pool.retire_region(destination).is_ok());
         eligible
     }

@@ -362,9 +362,10 @@ impl<'a, G> CommandContext<'a, G> {
         &mut self,
         root: crate::page_node_arena::PageListId,
         metadata: &crate::page_node_arena::PageBoxMigrationMetadata,
+        reset_shift: bool,
     ) -> bool {
         self.page_nodes
-            .can_finish_interleaved_page_box(root, metadata)
+            .can_finish_interleaved_page_box(root, metadata, reset_shift)
     }
 
     /// Releases a complete structural suffix after its survivor has been

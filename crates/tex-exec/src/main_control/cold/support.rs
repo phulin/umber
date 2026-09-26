@@ -706,60 +706,15 @@ pub(in crate::main_control) fn apply_box_shift<G>(
             } else {
                 BoxShiftAxis::Vertical
             };
-            let kind = ReplayBoxKind::from_scanned(construction.kind);
-            let packing = match construction.packing {
-                ScannedPackingSpec::Natural => PackSpec::Natural,
-                ScannedPackingSpec::Exactly(size) => PackSpec::Exactly(size),
-                ScannedPackingSpec::Spread(size) => PackSpec::Spread(size),
-            };
-            // TeX82 §1083 selects `adjusted_hbox_group` only for an hbox
-            // whose append-like box context is being built in vertical
-            // mode. A `\raise`/`\lower` hbox is necessarily reached from
-            // horizontal or math mode and therefore uses `hbox_group`;
-            // `\moveleft`/`\moveright` in vertical mode uses the adjusted
-            // group so migrated adjustments can be appended afterward.
-            let group_kind = if kind == ReplayBoxKind::HBox
-                && matches!(
-                    modes.current_mode(),
-                    Mode::Vertical | Mode::InternalVertical
-                ) {
-                GroupKind::AdjustedHBox
-            } else {
-                kind.group_kind()
-            };
-            enter_group(
-                stores,
-                command.state,
-                command.diagnostic_effects,
-                group_kind,
-            );
-            modes.push_at_line(
-                if kind.horizontal() {
-                    Mode::RestrictedHorizontal
-                } else {
-                    Mode::InternalVertical
-                },
-                i32::try_from(command.state.current_file_line_number()).unwrap_or(i32::MAX),
-            )?;
-            if !kind.horizontal() {
-                commit_box_normal_paragraph(modes, stores, command);
-            }
-            boxes.active_boxes.push(ActiveReplayBox {
-                target: None,
-                shipout_region: None,
-                box_segment_start: None,
-                migration_segment_start: None,
-                migration_segments: Vec::new(),
-                kind,
-                group_kind,
-                packing,
-                leader_kind: None,
-                shift: Some(ReplayBoxShift {
-                    delta: shift.delta,
-                    axis,
-                }),
+            begin_replay_box(*construction, None, None, modes, stores, boxes, command)?;
+            boxes
+                .active_boxes
+                .last_mut()
+                .expect("shifted construction opened its box")
+                .shift = Some(ReplayBoxShift {
+                delta: shift.delta,
+                axis,
             });
-            schedule_everybox(command.state, stores, kind.horizontal());
             Ok(ReplayStep::Continue)
         }
     }
@@ -906,6 +861,7 @@ pub(in crate::main_control) fn commit_interleaved_set_box_target<G>(
     pending: PendingSetBox,
     root: tex_state::page_node_arena::PageListId,
     metadata: tex_state::page_node_arena::PageBoxMigrationMetadata,
+    reset_shift: bool,
     stores: &mut tex_state::CommandContext<'_, G>,
     command: &mut CommandMachine<'_, '_, G>,
 ) {
@@ -920,6 +876,7 @@ pub(in crate::main_control) fn commit_interleaved_set_box_target<G>(
                     target.index,
                     root,
                     metadata,
+                    reset_shift,
                     region,
                     assignment_scope(target.global),
                 )
