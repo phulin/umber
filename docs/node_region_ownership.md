@@ -643,9 +643,10 @@ block shared solely by the accepted/candidate fork remains live until that
 aggregate transaction settles; no semantic owner adds another share. Reuse
 advances logical and physical incarnations, so retiring prior before current
 or current before prior releases exactly the unreachable blocks. Last-lineage
-release returns the exact 64 KiB backing immediately while preserving only the
-stable physical slot and its incarnation; later reuse allocates new backing in
-that slot and cannot revive a stale coordinate. A third view is
+release truncates the exact 64 KiB block to an empty initialized prefix and
+keeps its backing in the pool's vacant-block list. Later reuse takes that
+backing with a new incarnation and cannot revive a stale coordinate. The
+vacant backing is released when the pool drops. A third view is
 unconstructible. A successor root
 which crosses the build boundary or was not published through the checked
 dependency-folding seam retains the explicit structural-copy fallback. The

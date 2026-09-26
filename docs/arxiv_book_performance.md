@@ -365,3 +365,39 @@ packing-report and reference-diagnostic tests remain the behavior authority.
 Shipout normalization also clones the detached open context only for an
 `OpenOut` whatsit, instead of cloning it before inspecting every whatsit.
 These changes have not yet been assigned a measured runtime saving.
+
+## Node-pool retention at fixed fuel
+
+A profiling-feature build of `c8c6a2397` ran the original book source and
+authenticated 2025 distribution/format on CPU 10. Both diagnostic runs kept
+the 120-second, 1,536 MiB, 10,000,000-step, and two-second termination guards;
+only expansion fuel changed. Each ended with the exact fuel-exhaustion
+diagnostic. These figures describe this profiling build, not shipping latency.
+
+| Fuel actions | Peak RSS KiB | Fresh node/annex blocks | Reused node/annex blocks | Peak sampled live node/annex blocks |
+| ------------ | ------------ | ----------------------- | ------------------------ | ----------------------------------- |
+| 100 million  | 464,684      | 1,599 / 577             | 12,554 / 2,929           | 454 / 430                           |
+| 200 million  | 534,184      | 1,599 / 577             | 29,467 / 6,997           | 454 / 430                           |
+
+The pool's 2,176 fresh exact 64 KiB allocations represent 136 MiB of backing.
+That allocation high-water stays flat as fuel doubles, while block reuse grows.
+The peak owner census, sampled at checkpoint and page-output boundaries, also
+stays flat. At its peak sample, only 11 node and two annex blocks are classified
+as durable or other, and one block in each lane belongs to checkpoint history.
+These are peak observations, not a snapshot at the instant of fuel exhaustion.
+The final zero-live-block gauge is printed after the engine drops and cannot
+establish its live ownership at the fuel boundary.
+
+Peak RSS rises by 69,500 KiB across the two runs. Since fresh node-pool backing
+and its sampled live high-water do not grow, this increment is not caused by
+new node-pool superblocks. The source of the remaining growth is unassigned by
+these counters. An empty superblock keeps its 64 KiB allocation in the pool's
+vacant list for direct reuse until the pool drops; retirement removes its
+semantic owner but does not return the backing to the allocator immediately.
+The bounded pool high-water does not support changing that reuse policy for
+this workload. No 4.7 GiB full-book memory result was reproduced in this audit.
+
+Commands, binary and source hashes, exact diagnostics, and census reports are
+under `.worktrees/slot-3/target/perf-retention-evidence/fuel-100000000/` and
+`fuel-200000000/`. The profiling binary SHA-256 is
+`0238a2bdb41d4a049bdb8fdd38be092ced82144d07216553c4e443bcf3ed8212`.
