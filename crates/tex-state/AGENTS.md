@@ -343,7 +343,6 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/pdf/outline.rs`: Immediately allocated, checkpointed PDF outline entries owning their attributes, title, action, and action/item/title identities.
 - `src/pdf/object.rs`: Copy-on-write raw PDF object reservations, coordinate-valued initialization payloads, and last-object state.
 - `src/pdf/document.rs`: Copy-on-write coordinate-valued raw document dictionary and trailer fragments in source order.
-- `src/page/sequence.rs`: Direct page-lifetime current-page suffix buffer.
 - `src/page/state_hash.rs`: Handle-free bounded page semantic cursors and direct
   component framing; no page COW root is retained for hash reuse.
 - `src/page_node_arena.rs` and `src/page_node_arena/tests.rs`: Runtime

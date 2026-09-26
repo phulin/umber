@@ -25,7 +25,9 @@ allocator: exact shared payloads, dense mutable banks, and detached output have
 different release requirements. No old/new command, definition, or node-storage
 feature switch was found in the inspected production paths. The private
 native-batch token program and frame stack were already removed; they are not
-an alternative implementation to reconnect.
+an alternative implementation to reconnect. The unreferenced
+`page/sequence.rs` implementation of an owned-node page buffer was also removed;
+it had no module declaration or callers and was not part of the compiled engine.
 
 ## Gaps found in execution
 
