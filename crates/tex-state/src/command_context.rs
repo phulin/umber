@@ -1868,6 +1868,24 @@ impl<'a, G> CommandContext<'a, G> {
             && self.durable_boxes.has_unique_current(source)
     }
 
+    /// Classifies a declined direct take at the same scanner boundary that
+    /// supplies the built-box origin. The label is carried to the eventual
+    /// structural fallback, so unrelated empty-register probes are excluded.
+    #[cfg(feature = "profiling")]
+    pub fn profile_box_register_take_decline(
+        &self,
+        source: u16,
+    ) -> crate::page_node_arena::BuiltBoxOrigin {
+        use crate::page_node_arena::BuiltBoxOrigin;
+        if source == u16::from(u8::MAX) && !self.page.output_box().is_empty() {
+            BuiltBoxOrigin::SetBoxRegisterTakeOutputCarrier
+        } else if self.durable_boxes.value(source).is_some() {
+            BuiltBoxOrigin::SetBoxRegisterTakeRetainedDurable
+        } else {
+            BuiltBoxOrigin::SetBoxRegisterTakeMissingSource
+        }
+    }
+
     pub fn clear_box_preserving_level(&mut self, index: u16) {
         if index == u16::from(u8::MAX) && !self.page.output_box().is_empty() {
             self.page.clear_output_box();

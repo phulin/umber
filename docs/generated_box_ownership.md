@@ -35,7 +35,7 @@ producer-owned receipts, but do not themselves grant transfer authority.
 The authenticated 200-million-action book prefix attributes 698,707 of
 791,159 remaining interleaved-prefix copied nodes to
 `\setbox<destination>=\box<source>` with a nested box payload. Both operands
-are durable box-register owners. For an exclusively current source, its owner
+can be durable box-register owners. For an exclusively current durable source, its owner
 can move directly from the source cell to the destination cell; the page
 roundtrip and replacement wrapper are unnecessary. The source cell keeps its
 TeX §1079 level when cleared. The destination still goes through the ordinary
@@ -47,6 +47,18 @@ between cells or history. A checkpoint-retained source remains on the
 historical copy path until its independent owner can be proven and moved.
 Tracing may materialize a separate diagnostic projection only when enabled.
 The page-owned output-box carrier stays on its existing path.
+
+A second authenticated 200-million-action run after direct durable handoff
+classified the actual rejected take at the scanner and carried that label to
+the structural-copy event. All 108 register-take fallbacks, totaling 698,707
+copied nodes, consume the live page-owned box255 output carrier. None is a
+checkpoint-retained or missing durable source. The direct durable handoff
+therefore preserves these book-prefix counts, while remaining useful for
+ordinary uniquely current register-to-register moves. Removing the dominant
+fallback requires a consumed `PageBuilderState` output-carrier receipt that
+selects the packaged page prefix without taking held-over page material or
+checkpoint history. The page builder owns the source; a bare `PageListId`
+cannot mint that authority.
 The setbox scanner completes operand expansion and classifies the register
 take before opening the page construction mark. The direct-take branch only
 reads the durable source and removes the pending target before it cancels

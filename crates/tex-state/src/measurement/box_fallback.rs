@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crate::page_node_arena::BuiltBoxOrigin;
 
-const ORIGINS: usize = 7;
+const ORIGINS: usize = 10;
 const SHAPES: usize = 8;
 const CELLS: usize = ORIGINS * SHAPES;
 
@@ -54,6 +54,9 @@ impl BoxFallbackCensus {
         "lastbox",
         "pdf_form",
         "other",
+        "setbox_register_take_output_carrier",
+        "setbox_register_take_retained_durable",
+        "setbox_register_take_missing_source",
     ];
     pub const SHAPE_NAMES: [&'static str; SHAPES] = [
         "inline",

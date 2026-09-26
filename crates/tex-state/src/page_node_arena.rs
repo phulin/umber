@@ -931,6 +931,12 @@ pub enum BuiltBoxOrigin {
     LastBox,
     PdfForm,
     Other,
+    #[cfg(feature = "profiling")]
+    SetBoxRegisterTakeOutputCarrier,
+    #[cfg(feature = "profiling")]
+    SetBoxRegisterTakeRetainedDurable,
+    #[cfg(feature = "profiling")]
+    SetBoxRegisterTakeMissingSource,
 }
 
 /// Demand-free observations of explicit durable lifetime transitions.

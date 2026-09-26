@@ -2539,7 +2539,14 @@ pub(in crate::main_control) fn apply<G>(
                             .origin = if *copy {
                             tex_state::page_node_arena::BuiltBoxOrigin::SetBoxRegisterCopy
                         } else {
-                            tex_state::page_node_arena::BuiltBoxOrigin::SetBoxRegisterTake
+                            #[cfg(feature = "profiling")]
+                            {
+                                stores.profile_box_register_take_decline(*index)
+                            }
+                            #[cfg(not(feature = "profiling"))]
+                            {
+                                tex_state::page_node_arena::BuiltBoxOrigin::SetBoxRegisterTake
+                            }
                         };
                         let id = read_box_register(*index, *copy, stores, command);
                         let node = crate::box_runtime::first_box_node(stores, id);
