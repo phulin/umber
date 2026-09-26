@@ -190,6 +190,10 @@ and durable regions, TeX move/copy transitions, two-lineage suffix settlement,
 held-over evacuation, and the static prohibition on naked owning list
 coordinates. It supersedes page-batch dependency/refcount designs.
 
+`durable_box_root_mutation.md` records the TeX82 basis for scalar box-root
+mutation and destructive box/unbox transfer through current, group, checkpoint,
+and operation owners.
+
 `fork_arena_dense_prefix_emplacement.md` is the approved measured-implementation
 physical-storage design below that ownership contract. It separates semantic
 lifetimes from exactly 64 KiB dense typed superblocks, limits the isolated
