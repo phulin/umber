@@ -146,6 +146,17 @@ pub(super) fn apply<G>(
     modes: &mut ModeNest,
     command: &mut CommandMachine<'_, '_, G>,
 ) -> Result<ReplayStep, ExecError> {
+    // TeX82 §§1034--1038 finishes the character/ligature loop when its
+    // lookahead reaches any unexpandable command.  These common assignments
+    // are applied through the hot path, so they must end the pending run just
+    // as a group boundary does.  In particular, a `\let` between two glyphs
+    // must expose the first glyph's right font boundary before the next one.
+    crate::box_runtime::flush_pending_hchars_with_fuel(
+        modes,
+        stores,
+        command.diagnostic_effects,
+        command.fuel,
+    )?;
     let mut stores = LinearCommandContext::new(stores);
     let stores = &mut stores;
     match operation {
@@ -165,13 +176,11 @@ pub(super) fn apply<G>(
             value,
             global,
         } => apply_catcode(*character, *value, *global, stores, command),
-        HotOperation::EnterGroup(kind) => flush_group_boundary(modes, stores, command).map(|()| {
+        HotOperation::EnterGroup(kind) => {
             enter_group(stores, command.state, command.diagnostic_effects, *kind);
-            ReplayStep::Continue
-        }),
-        HotOperation::LeaveGroup { kind, context } => {
-            leave_group(*kind, context, modes, stores, command)
+            Ok(ReplayStep::Continue)
         }
+        HotOperation::LeaveGroup { kind, context } => leave_group(*kind, context, stores, command),
     }
 }
 
@@ -372,27 +381,12 @@ fn catcode_from_value(value: i32) -> Result<Catcode, ExecError> {
     }
 }
 
-fn flush_group_boundary<G>(
-    modes: &mut ModeNest,
-    stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut CommandMachine<'_, '_, G>,
-) -> Result<(), ExecError> {
-    crate::box_runtime::flush_pending_hchars_with_fuel(
-        modes,
-        stores,
-        command.diagnostic_effects,
-        command.fuel,
-    )
-}
-
 fn leave_group<G>(
     kind: GroupKind,
     context: &'static str,
-    modes: &mut ModeNest,
     stores: &mut LinearCommandContext<'_, '_, G>,
     command: &mut CommandMachine<'_, '_, G>,
 ) -> Result<ReplayStep, ExecError> {
-    flush_group_boundary(modes, stores, command)?;
     warn_cross_file_group_close(stores, command);
     let aftergroup = leave_group_payloads(stores, command.state, command.diagnostic_effects, kind)
         .map_err(|_| ExecError::MissingToken { context })?;

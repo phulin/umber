@@ -84,6 +84,44 @@ fn text_material_preserves_ligature_space_factor_and_font_glue() {
         assert_eq!(sentence.shrink.raw(), 24_272);
     });
 }
+
+#[test]
+fn hot_assignments_end_the_character_ligature_loop() {
+    // TeX82 §§1034--1038: unexpandable assignments stop character lookahead,
+    // while an expandable macro may supply the next character of a ligature.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_cmr10_as(&mut control, stores, "cmr10.tfm");
+        register_source(
+            &mut control,
+            br"\font\f=cmr10 \f
+               \def\letteri{i}
+               \setbox0=\hbox{f\let\unused\relax i}
+               \setbox1=\hbox{f\def\unused{}i}
+               \setbox2=\hbox{f\catcode`\@=12 i}
+               \setbox3=\hbox{f\letteri}\end",
+        );
+
+        run_to_end(&mut control, stores);
+
+        for register in 0..=2 {
+            let nodes = box_child_nodes(stores, register);
+            assert!(
+                matches!(
+                    nodes.as_slice(),
+                    [Node::Char { ch: 'f', .. }, Node::Char { ch: 'i', .. }]
+                ),
+                "assignment in box {register} must interrupt the fi ligature: {nodes:?}"
+            );
+        }
+        let expanded = box_child_nodes(stores, 3);
+        assert!(
+            matches!(expanded.as_slice(), [Node::Lig { orig, .. }] if orig.as_slice() == ['f', 'i']),
+            "expandable macro must remain inside character lookahead: {expanded:?}"
+        );
+    });
+}
+
 #[test]
 fn paragraph_boundaries_run_everypar_in_outer_and_internal_vertical_modes() {
     // TeX82 §§1088--1096: both outer and internal vertical paragraph entry
