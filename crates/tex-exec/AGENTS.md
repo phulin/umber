@@ -222,7 +222,8 @@ Command operands are scanned by `tex-command` into typed request and result valu
   capacity remains with the operation owner.
 - `src/mode.rs` and `src/mode/`: mode nest, page-arena list roots with detached
   active builders, checked `PageListSpan` live roots carried only within their
-  admitting `PageRegion`, a journaled move-only removal seam for generated
+  admitting `PageRegion`, an owned mode-list slot that downgrades restored or
+  journal-retained roots, a journaled move-only removal seam for generated
   paragraph and alignment source ownership, direct-value paragraph/alignment glue, copy-only
   pending-character provenance, rootless retained summaries, and the
   same-region operation-local rollback journal. Restart

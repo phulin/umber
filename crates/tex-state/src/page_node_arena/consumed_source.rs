@@ -160,6 +160,42 @@ impl ConsumedPageWindow {
 }
 
 impl PageMaterialArena<'_> {
+    pub fn append_fresh_mode_segment(
+        &mut self,
+        slot: &mut super::ModePageListSlot,
+        suffix: super::FreshGeneratedSegment,
+    ) -> Result<(), ForkArenaError> {
+        let move_enabled = slot.move_enabled || slot.span.is_empty();
+        slot.span = self.append_unique_to_span(slot.span, suffix.unique)?;
+        slot.move_enabled = move_enabled;
+        Ok(())
+    }
+
+    pub fn replace_mode_with_fresh_segment(
+        &mut self,
+        slot: &mut super::ModePageListSlot,
+        segment: super::FreshGeneratedSegment,
+    ) -> Result<(), ForkArenaError> {
+        slot.span = self.append_unique_to_span(PageListSpan::empty(), segment.unique)?;
+        slot.move_enabled = true;
+        Ok(())
+    }
+
+    pub fn truncate_mode_slot(
+        &mut self,
+        slot: &mut super::ModePageListSlot,
+        end: usize,
+    ) -> Result<(), ForkArenaError> {
+        if end > slot.span.len() {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        slot.span = self.slice_span(slot.span, 0..end)?;
+        if slot.span.is_empty() {
+            slot.move_enabled = true;
+        }
+        Ok(())
+    }
+
     pub(crate) fn append_generated_line_body(
         &mut self,
         window: ConsumedPageWindow,
@@ -461,18 +497,20 @@ impl PageMaterialArena<'_> {
     /// hyphenation may replace the source before line materialization.
     pub(crate) fn take_generated_mode_source(
         &self,
-        slot: &mut PageListSpan,
-    ) -> Result<ConsumedPageSource, ForkArenaError> {
+        slot: &mut super::ModePageListSlot,
+    ) -> Result<(PageListId, Option<ConsumedPageSource>), ForkArenaError> {
         let source = slot.list();
         self.admit_span(source)?;
-        let removed = core::mem::take(slot);
+        let move_enabled = slot.move_enabled;
+        let removed = slot.take();
         debug_assert_eq!(removed.list(), source);
-        Ok(ConsumedPageSource {
+        let consumed = move_enabled.then_some(ConsumedPageSource {
             source,
             next_unclaimed: 0,
             chunks: Vec::new(),
             indexed: false,
-        })
+        });
+        Ok((source, consumed))
     }
 
     /// Builds one transient direct-chunk index after the final semantic tape

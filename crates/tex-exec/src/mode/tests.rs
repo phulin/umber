@@ -794,7 +794,7 @@ fn compact_inverse_layout_and_representative_recorded_bytes_are_exact() {
     let layout = super::journal::inverse_layout_for_test();
     assert_eq!(
         layout,
-        [16, 40, 112, 64, 144, 48, 8, 24, 40, 600],
+        [16, 40, 112, 64, 144, 48, 8, 24, 40, 616],
         "descriptor, list root, alignment, fraction, display interrupt, equation number, previous depth, structural pending projection, pending value, and popped level layouts"
     );
     let [
@@ -1512,7 +1512,7 @@ fn nested_mode_lifecycle_keeps_one_page_region_and_stable_source_addresses() {
         assert_eq!(context.page_node_region_id(), owner);
         assert!(
             context
-                .page_node_span(nest.storage.levels[1].list.nodes)
+                .page_node_span(nest.storage.levels[1].list.nodes.span())
                 .is_ok()
         );
         let mut nested = nest.pop().expect("pop nested mode");
@@ -1557,7 +1557,7 @@ fn mode_operation_rollback_restores_owner_relative_root_after_failure() {
         assert_eq!(nest.depth(), 1);
         assert!(
             context
-                .page_node_span(nest.storage.levels[0].list.nodes)
+                .page_node_span(nest.storage.levels[0].list.nodes.span())
                 .is_ok()
         );
         assert_eq!(nest_nodes(&nest, context), [kern(23)]);
@@ -1584,7 +1584,10 @@ fn foreign_cross_generation_mode_span_is_rejected_before_succession() {
     });
     with_context(|context| {
         let mut nest = ModeNest::new();
-        nest.storage.levels[0].list.nodes = foreign_root;
+        nest.storage.levels[0]
+            .list
+            .nodes
+            .replace_retained(foreign_root);
 
         assert!(
             nest.preflight_page_region_succession(context).is_none(),
@@ -1641,6 +1644,26 @@ fn page_region_succession_preflight_rejects_rollback_restorable_mode_root() {
         nest.rollback_journal(operation)
             .expect("operation rollback restores the mode root");
         assert_eq!(nest_nodes(&nest, context), [kern(41)]);
+    });
+}
+
+#[test]
+fn generated_source_declines_a_rollback_restorable_mode_root() {
+    with_context(|context| {
+        let mut nest = ModeNest::new();
+        nest.current_list_mutation().push(context, kern(47));
+        nest.reset_journal_for_test();
+        let operation = nest.begin_journal();
+
+        let (root, authority) = nest.current_list_mutation().take_generated_source(context);
+        assert!(!root.is_empty());
+        assert!(authority.is_none(), "journal history retains this root");
+
+        nest.rollback_journal(operation)
+            .expect("operation rollback restores historical owner");
+        assert_eq!(nest_nodes(&nest, context), [kern(47)]);
+        let (_, authority) = nest.current_list_mutation().take_generated_source(context);
+        assert!(authority.is_none(), "restored coordinates remain history");
     });
 }
 

@@ -2937,8 +2937,9 @@ fn consumed_window_head_edge_restores_after_rejected_and_reversed_transfer() {
     let edge = page
         .detach_consumed_head_edge(&mut pool, selected, usize::MAX)
         .expect("exclusive consumed head");
+    let selected_range = 1..2;
     assert_eq!(
-        page.preflight_interior_intervals(&pool, &occupied, &[1..2]),
+        page.preflight_interior_intervals(&pool, &occupied, std::slice::from_ref(&selected_range)),
         Err(ForkArenaError::InvalidRegion),
         "a rejected destination cannot consume the detached source"
     );
@@ -2951,7 +2952,11 @@ fn consumed_window_head_edge_restores_after_rejected_and_reversed_transfer() {
         .detach_consumed_head_edge(&mut pool, selected, usize::MAX)
         .expect("retry detaches same head");
     let loan = page
-        .transfer_interior_intervals(&mut pool, &mut durable, &[1..2])
+        .transfer_interior_intervals(
+            &mut pool,
+            &mut durable,
+            std::slice::from_ref(&selected_range),
+        )
         .expect("selected middle chunk moves");
     assert!(
         page.audit_owned_list(&pool, source).is_err(),

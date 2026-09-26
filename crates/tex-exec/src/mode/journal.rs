@@ -36,7 +36,7 @@ impl ListProjection {
     fn capture(id: u64, list: &ModeList) -> Self {
         Self {
             id,
-            root: list.nodes,
+            root: list.nodes.span(),
             inverse_positions: [UNRECORDED; FIELD_COUNT],
         }
     }
@@ -587,7 +587,7 @@ impl ModeNestStorage {
         for index in frame.projection_start..self.journal.projections.len() {
             let projection = self.journal.projections[index];
             let level = self.level_by_id_mut(projection.id);
-            level.list.nodes = projection.root;
+            level.list.nodes.replace_retained(projection.root);
         }
         self.journal.projections.truncate(frame.projection_start);
         self.scratch.clear();
@@ -602,7 +602,10 @@ impl ModeNestStorage {
         match inverse.kind {
             InverseKind::ListRoot => {
                 let old = pop_lane(&mut self.journal.inverse_lanes.list_roots, inverse.payload);
-                self.level_by_id_mut(level_id).list.nodes = old;
+                self.level_by_id_mut(level_id)
+                    .list
+                    .nodes
+                    .replace_retained(old);
             }
             #[cfg(test)]
             InverseKind::AlignState => {

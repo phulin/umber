@@ -333,7 +333,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
   projection and complete-chunk hole transfer, including the inverse receipt
   for links, floors, sparse owner positions, and projected cuts.
 - `src/page_node_arena.rs` and `src/page_node_arena/tests.rs`: Page-semantic
-  identity facade, checked destination construction, and focused warmed
+  identity facade, checked destination construction, move-only mode-list slot
+  and fresh-builder receipts, and focused warmed
   1/4,096-node allocation/copy/chunk-work proof over the live page-material
   owner. Public page reads return borrowed cursors; cold detachment is explicit.
 - `src/page_node_arena/consumed_box_projection.rs`: Consumed unbox child

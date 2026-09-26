@@ -63,11 +63,15 @@ source's move authority. The existing source chain remains readable during
 line and row construction. Only removal of the last wrapper may detach its
 source window, after all outputs from that source have been built.
 
-The receipt is minted by swapping the actual mode-list span after its mutation
-journal records the old root. No public constructor from a copyable list key
-grants move authority. A semantic rewrite that replaces the removed root
-consumes the old receipt and mints its successor only from fresh builder
-segment receipts. The transient direct-chunk index is built once for that final tape;
+The receipt is minted by draining the actual `ModePageListSlot` after its mutation
+journal records the old root. A copied span, restored journal projection, or
+live rollback frame makes that slot retained history and cannot grant move
+authority. Appending a segment from a fresh active builder preserves authority;
+appending a reclaimed unique list does not. The builder refuses to issue a
+fresh segment after it has spliced such a list. A semantic rewrite that replaces
+the removed root consumes the old receipt and mints its successor only from
+fresh builder segment receipts. Fresh direct records alone do not grant ownership
+of nested children named by those records. The transient direct-chunk index is built once for that final tape;
 monotonically partitioned line windows binary-search the index instead of
 rescanning the paragraph suffix.
 

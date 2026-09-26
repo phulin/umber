@@ -424,6 +424,7 @@ pub struct PageMaterialActiveListBuilder {
     inner: ActiveListBuilder<PageMaterialNode, PageMaterialLane>,
     identity: Option<SemanticSequenceIdentity>,
     identity_work: crate::fork_arena::SequenceSummaryWork,
+    fresh_only: bool,
 }
 
 impl Default for PageMaterialActiveListBuilder {
@@ -441,6 +442,7 @@ impl PageMaterialActiveListBuilder {
                 hashed_values: 0,
                 combined_summaries: 0,
             },
+            fresh_only: true,
         }
     }
 
@@ -682,6 +684,93 @@ const _: () = assert!(core::mem::size_of::<PageListId>() <= 40);
 /// endpoint proof. Full chain audits remain at cold transfer and test ingress.
 pub struct PageListSpan {
     list: PageListId,
+}
+
+/// The executor's actual semantic mode-list slot. Retained journal and
+/// checkpoint projections may carry the same copyable span, but they cannot
+/// carry this slot's direct-record move authority. Raw restoration marks the
+/// slot conservative until a new empty or freshly constructed list replaces
+/// that history.
+pub struct ModePageListSlot {
+    span: PageListSpan,
+    move_enabled: bool,
+}
+
+impl Default for ModePageListSlot {
+    fn default() -> Self {
+        Self {
+            span: PageListSpan::empty(),
+            move_enabled: true,
+        }
+    }
+}
+
+impl core::fmt::Debug for ModePageListSlot {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("ModePageListSlot")
+            .field("span", &self.span)
+            .field("move_enabled", &self.move_enabled)
+            .finish()
+    }
+}
+
+impl PartialEq for ModePageListSlot {
+    fn eq(&self, other: &Self) -> bool {
+        self.span == other.span
+    }
+}
+
+impl ModePageListSlot {
+    #[must_use]
+    pub const fn span(&self) -> PageListSpan {
+        self.span
+    }
+
+    #[must_use]
+    pub const fn list(&self) -> PageListId {
+        self.span.list()
+    }
+
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.span.len()
+    }
+
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.span.is_empty()
+    }
+
+    /// A copyable historical root remains readable but cannot authorize a
+    /// later generated-box move merely by being restored to a live mode.
+    #[must_use]
+    pub const fn retained_snapshot(span: PageListSpan) -> Self {
+        Self {
+            span,
+            move_enabled: false,
+        }
+    }
+
+    pub fn replace_retained(&mut self, span: PageListSpan) {
+        self.span = span;
+        self.move_enabled = false;
+    }
+
+    #[must_use]
+    pub fn take(&mut self) -> PageListSpan {
+        let old = self.span;
+        *self = Self::default();
+        old
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn synthetic_semantic_source(span: PageListSpan) -> Self {
+        Self {
+            span,
+            move_enabled: true,
+        }
+    }
 }
 
 /// Operation-local page-list admission. Unlike retained [`PageListSpan`]
@@ -1033,6 +1122,9 @@ impl<'a> PageMaterialArena<'a> {
         &mut self,
         builder: &mut PageMaterialActiveListBuilder,
     ) -> Result<FreshGeneratedSegment, ForkArenaError> {
+        if !builder.fresh_only {
+            return Err(ForkArenaError::InvalidActiveListBuilder);
+        }
         Ok(FreshGeneratedSegment {
             unique: self.finalize_unique_active_list(builder)?,
         })
@@ -2018,6 +2110,7 @@ impl<'a> PageMaterialArena<'a> {
         self.region.active_annex_operation = Some(annex_operation);
         builder.identity = (*self.semantic_identity_enabled).then(SemanticSequenceIdentity::empty);
         builder.identity_work = crate::fork_arena::SequenceSummaryWork::default();
+        builder.fresh_only = true;
         Ok(())
     }
 
@@ -2121,6 +2214,7 @@ impl<'a> PageMaterialArena<'a> {
             &mut builder.inner,
             coordinate,
         )?;
+        builder.fresh_only = false;
         if let Some(identity) = &mut builder.identity {
             *identity = identity
                 .concat(appended_identity.expect("demand-enabled unique list carries identity"));
@@ -2212,6 +2306,7 @@ impl<'a> PageMaterialArena<'a> {
             .pub_arena
             .record_identity_work(builder.identity_work);
         builder.identity_work = crate::fork_arena::SequenceSummaryWork::default();
+        builder.fresh_only = true;
         Ok(UniquePageList {
             coordinate,
             identity: builder.identity.take(),
@@ -2252,6 +2347,7 @@ impl<'a> PageMaterialArena<'a> {
             .restore_operation(&mut self.pool.annex_chunks, annex_operation)?;
         builder.identity = None;
         builder.identity_work = crate::fork_arena::SequenceSummaryWork::default();
+        builder.fresh_only = true;
         Ok(())
     }
 

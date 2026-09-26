@@ -8,7 +8,7 @@ use tex_state::math::FractionThickness;
 use tex_state::node::{BoxNode, Node, NodeTokenKey};
 use tex_state::node_view::NodeCursor;
 use tex_state::page_node_arena::PageListId;
-use tex_state::page_node_arena::{PageListSpan, PageMaterialActiveListBuilder};
+use tex_state::page_node_arena::{ModePageListSlot, PageListSpan, PageMaterialActiveListBuilder};
 use tex_state::scaled::Scaled;
 use tex_state::token::OriginId;
 use tex_state::{CommandContext, EngineBoundaryHasher, EngineMode, Universe};
@@ -136,7 +136,7 @@ impl ModeNest {
 /// The list-under-construction owned by one mode level.
 #[derive(Default)]
 pub struct ModeList {
-    nodes: PageListSpan,
+    nodes: ModePageListSlot,
     active: PageMaterialActiveListBuilder,
     align_state: Option<AlignState>,
     incomplete_fraction: Option<IncompleteFraction>,
@@ -158,7 +158,7 @@ impl ModeList {
     fn clone_operation_projection(&self) -> Self {
         assert!(self.active.is_vacant(), "mode clone requires a sealed list");
         Self {
-            nodes: self.nodes,
+            nodes: ModePageListSlot::retained_snapshot(self.nodes.span()),
             active: PageMaterialActiveListBuilder::vacant(),
             align_state: self.align_state.clone(),
             incomplete_fraction: self.incomplete_fraction.clone(),
@@ -243,7 +243,7 @@ impl ModeList {
 
     fn validate_page_region<G>(&self, stores: &CommandContext<'_, G>) -> bool {
         let admits = |span| stores.page_node_span(span).is_ok();
-        admits(self.nodes)
+        admits(self.nodes.span())
             && self
                 .incomplete_fraction
                 .as_ref()
@@ -290,7 +290,7 @@ impl ModeList {
     #[must_use]
     pub fn nodes<'a, G>(&self, stores: &'a CommandContext<'_, G>) -> NodeCursor<'a> {
         stores
-            .page_node_span(self.nodes)
+            .page_node_span(self.nodes.span())
             .expect("mode list belongs to the live page arena")
     }
 
@@ -310,13 +310,13 @@ impl ModeList {
         let index = self.nodes.len().checked_sub(1)?;
         Some(
             stores
-                .slice_page_node_span(self.nodes, index..index + 1)
+                .slice_page_node_span(self.nodes.span(), index..index + 1)
                 .list(),
         )
     }
 
     fn take_span(&mut self) -> PageListSpan {
-        std::mem::take(&mut self.nodes)
+        self.nodes.take()
     }
 
     #[must_use]
@@ -328,8 +328,8 @@ impl ModeList {
         assert!(self.admit_page_region(stores));
         stores.open_page_active_list(&mut self.active);
         stores.push_page_active_list(&mut self.active, node);
-        let suffix = stores.finalize_unique_page_active_list(&mut self.active);
-        self.nodes = stores.append_unique_page_nodes(self.nodes, suffix);
+        let suffix = stores.finalize_generated_page_active_segment(&mut self.active);
+        stores.append_fresh_mode_segment(&mut self.nodes, suffix);
         assert!(self.admit_page_region(stores));
     }
 
@@ -341,8 +341,8 @@ impl ModeList {
         assert!(self.admit_page_region(stores));
         stores.open_page_active_list(&mut self.active);
         stores.construct_page_active_list(&mut self.active, initialize);
-        let suffix = stores.finalize_unique_page_active_list(&mut self.active);
-        self.nodes = stores.append_unique_page_nodes(self.nodes, suffix);
+        let suffix = stores.finalize_generated_page_active_segment(&mut self.active);
+        stores.append_fresh_mode_segment(&mut self.nodes, suffix);
         assert!(self.admit_page_region(stores));
     }
 
@@ -354,8 +354,12 @@ impl ModeList {
         assert!(self.admit_page_region(stores));
         let nodes = nodes.into_iter().collect::<Vec<_>>();
         if !nodes.is_empty() {
-            let suffix = stores.publish_unique_page_nodes(nodes);
-            self.nodes = stores.append_unique_page_nodes(self.nodes, suffix);
+            stores.open_page_active_list(&mut self.active);
+            for node in nodes {
+                stores.push_page_active_list(&mut self.active, node);
+            }
+            let suffix = stores.finalize_generated_page_active_segment(&mut self.active);
+            stores.append_fresh_mode_segment(&mut self.nodes, suffix);
         }
         assert!(self.admit_page_region(stores));
     }
@@ -366,7 +370,8 @@ impl ModeList {
         nodes: tex_state::page_node_arena::UniquePageList,
     ) {
         assert!(self.admit_page_region(stores));
-        self.nodes = stores.append_unique_page_nodes(self.nodes, nodes);
+        let appended = stores.append_unique_page_nodes(self.nodes.span(), nodes);
+        self.nodes.replace_retained(appended);
         assert!(self.admit_page_region(stores));
     }
 
@@ -382,20 +387,21 @@ impl ModeList {
             return None;
         }
         let mut node = stores
-            .page_node_span(self.nodes)
+            .page_node_span(self.nodes.span())
             .ok()?
             .get(index)?
             .to_owned();
         let result = mutate(&mut node);
         stores.open_page_active_list(&mut self.active);
-        stores.append_page_active_span_range(&mut self.active, self.nodes, 0..index);
+        stores.append_page_active_span_range(&mut self.active, self.nodes.span(), 0..index);
         stores.push_page_active_list(&mut self.active, node);
         stores.append_page_active_span_range(
             &mut self.active,
-            self.nodes,
+            self.nodes.span(),
             index + 1..self.nodes.len(),
         );
-        self.nodes = stores.finalize_page_active_span(&mut self.active);
+        let replacement = stores.finalize_generated_page_active_segment(&mut self.active);
+        stores.replace_mode_with_fresh_segment(&mut self.nodes, replacement);
         assert!(self.admit_page_region(stores));
         Some(result)
     }
@@ -409,9 +415,11 @@ impl ModeList {
         let mut nodes = self.nodes(stores).iter().cloned().collect::<Vec<_>>();
         let result = mutate(&mut nodes);
         let published = stores.publish_page_nodes(nodes);
-        self.nodes = stores
-            .admit_page_node_span(published)
-            .expect("published test mode list admits a checked span");
+        self.nodes.replace_retained(
+            stores
+                .admit_page_node_span(published)
+                .expect("published test mode list admits a checked span"),
+        );
         result
     }
 
@@ -549,13 +557,18 @@ impl ModeList {
         if !self.admit_page_region(stores) {
             return None;
         }
-        match stores.page_node_span(self.nodes).ok()?.last() {
+        match stores.page_node_span(self.nodes.span()).ok()?.last() {
             Some(tex_state::node_view::NodeView::HList(_))
             | Some(tex_state::node_view::NodeView::VList(_)) => {}
             _ => return None,
         }
-        let mut node = stores.page_node_span(self.nodes).ok()?.last()?.to_owned();
-        self.nodes = stores.slice_page_node_span(self.nodes, 0..self.nodes.len() - 1);
+        let mut node = stores
+            .page_node_span(self.nodes.span())
+            .ok()?
+            .last()?
+            .to_owned();
+        let end = self.nodes.len() - 1;
+        stores.truncate_mode_slot(&mut self.nodes, end);
         match &mut node {
             Node::HList(box_node) | Node::VList(box_node) => {
                 box_node.shift = Scaled::from_raw(0);
@@ -569,8 +582,13 @@ impl ModeList {
         if !self.admit_page_region(stores) {
             return None;
         }
-        let node = stores.page_node_span(self.nodes).ok()?.last()?.to_owned();
-        self.nodes = stores.slice_page_node_span(self.nodes, 0..self.nodes.len() - 1);
+        let node = stores
+            .page_node_span(self.nodes.span())
+            .ok()?
+            .last()?
+            .to_owned();
+        let end = self.nodes.len() - 1;
+        stores.truncate_mode_slot(&mut self.nodes, end);
         Some(node)
     }
 
@@ -582,18 +600,23 @@ impl ModeList {
         assert!(self.admit_page_region(stores));
         let start = *range.start();
         let end = range.end().saturating_add(1);
-        let removed = stores.slice_page_node_span(self.nodes, start..end);
+        let removed = stores.slice_page_node_span(self.nodes.span(), start..end);
         if end == self.nodes.len() {
             // A removed suffix leaves its predecessor's published records
             // untouched. In particular, an older box keeps the segment
             // stamped on its original wrapper for a later \lastbox.
-            self.nodes = stores.slice_page_node_span(self.nodes, 0..start);
+            stores.truncate_mode_slot(&mut self.nodes, start);
             return removed.list();
         }
         stores.open_page_active_list(&mut self.active);
-        stores.append_page_active_span_range(&mut self.active, self.nodes, 0..start);
-        stores.append_page_active_span_range(&mut self.active, self.nodes, end..self.nodes.len());
-        self.nodes = stores.finalize_page_active_span(&mut self.active);
+        stores.append_page_active_span_range(&mut self.active, self.nodes.span(), 0..start);
+        stores.append_page_active_span_range(
+            &mut self.active,
+            self.nodes.span(),
+            end..self.nodes.len(),
+        );
+        let replacement = stores.finalize_generated_page_active_segment(&mut self.active);
+        stores.replace_mode_with_fresh_segment(&mut self.nodes, replacement);
         removed.list()
     }
 
@@ -671,7 +694,7 @@ impl ModeList {
         // assignments before the closing `$$`, but no additional material.
         debug_assert!(!self.display_alignment);
         debug_assert!(self.nodes.is_empty());
-        self.nodes = nodes;
+        self.nodes.replace_retained(nodes);
         self.prev_depth = prev_depth;
         self.display_alignment = true;
     }
@@ -803,8 +826,8 @@ impl ModeListMutation<'_> {
         let result = produce(stores, source, shaping, tfm_work, &mut list.active);
         match result {
             Ok(()) => {
-                let suffix = stores.finalize_unique_page_active_list(&mut list.active);
-                list.nodes = stores.append_unique_page_nodes(list.nodes, suffix);
+                let suffix = stores.finalize_generated_page_active_segment(&mut list.active);
+                stores.append_fresh_mode_segment(&mut list.nodes, suffix);
                 assert!(list.admit_page_region(stores));
                 Ok(())
             }
@@ -827,9 +850,16 @@ impl ModeListMutation<'_> {
     pub(crate) fn take_generated_source<G>(
         &mut self,
         stores: &mut CommandContext<'_, G>,
-    ) -> tex_state::page_node_arena::ConsumedPageSource {
+    ) -> (
+        PageListId,
+        Option<tex_state::page_node_arena::ConsumedPageSource>,
+    ) {
+        let journal_retains_root = self.journal_is_active();
         self.record_nodes();
         let ModeListBorrow::Direct(list) = &mut self.list;
+        if journal_retains_root {
+            list.nodes.replace_retained(list.nodes.span());
+        }
         stores.take_generated_mode_source(&mut list.nodes)
     }
 
@@ -1272,7 +1302,7 @@ impl ModeListMutation<'_> {
             if !needs_nodes {
                 return;
             }
-            let old = self.list.nodes;
+            let old = self.list.nodes.span();
             if let Some(mut journal) = self.list_journal() {
                 journal.record_nodes(old);
             }
@@ -1289,7 +1319,7 @@ impl ModeListMutation<'_> {
         if !needs_nodes {
             return;
         }
-        let old = self.list.nodes;
+        let old = self.list.nodes.span();
         if let Some(mut journal) = self.list_journal() {
             journal.record_nodes(old);
         }

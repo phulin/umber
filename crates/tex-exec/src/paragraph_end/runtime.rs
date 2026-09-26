@@ -728,8 +728,7 @@ pub(crate) fn break_current_paragraph<G>(
     let mut level = commit_current_list(nest, stores, diagnostic_effects, fuel)?;
     let initial_hyphen_context = level.list().initial_hyphen_context();
     let paragraph_diagnostic_context = diagnostic_context.with_pack_begin_line(level.entry_line());
-    let consumed_source = level.list_mutation().take_generated_source(stores);
-    let original_source = consumed_source.source();
+    let (original_source, consumed_source) = level.list_mutation().take_generated_source(stores);
     let hlist = crate::math::finish_math_lists_owned(
         stores,
         diagnostic_effects,
@@ -737,7 +736,7 @@ pub(crate) fn break_current_paragraph<G>(
         original_source,
         true,
     );
-    let mut consumed_source = (hlist == original_source).then_some(consumed_source);
+    let mut consumed_source = consumed_source.filter(|_| hlist == original_source);
     let tracing = stores.int_param(IntParam::TRACING_PARAGRAPHS) > 0;
     let hlist = normalize_paragraph_infinite_shrink(
         stores,

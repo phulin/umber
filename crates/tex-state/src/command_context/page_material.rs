@@ -328,11 +328,44 @@ impl<'a, G> CommandContext<'a, G> {
     /// mode-list slot after journaling its prior value, not a copied span.
     pub fn take_generated_mode_source(
         &mut self,
-        slot: &mut crate::page_node_arena::PageListSpan,
-    ) -> crate::page_node_arena::ConsumedPageSource {
+        slot: &mut crate::page_node_arena::ModePageListSlot,
+    ) -> (
+        crate::page_node_arena::PageListId,
+        Option<crate::page_node_arena::ConsumedPageSource>,
+    ) {
         self.page_nodes
             .take_generated_mode_source(slot)
             .expect("consumed mode source belongs to the live page arena")
+    }
+
+    pub fn append_fresh_mode_segment(
+        &mut self,
+        slot: &mut crate::page_node_arena::ModePageListSlot,
+        suffix: crate::page_node_arena::FreshGeneratedSegment,
+    ) {
+        self.page_nodes
+            .append_fresh_mode_segment(slot, suffix)
+            .expect("fresh mode suffix belongs to the live page region");
+    }
+
+    pub fn replace_mode_with_fresh_segment(
+        &mut self,
+        slot: &mut crate::page_node_arena::ModePageListSlot,
+        segment: crate::page_node_arena::FreshGeneratedSegment,
+    ) {
+        self.page_nodes
+            .replace_mode_with_fresh_segment(slot, segment)
+            .expect("fresh replacement belongs to the live page region");
+    }
+
+    pub fn truncate_mode_slot(
+        &mut self,
+        slot: &mut crate::page_node_arena::ModePageListSlot,
+        end: usize,
+    ) {
+        self.page_nodes
+            .truncate_mode_slot(slot, end)
+            .expect("truncated mode root belongs to the live page region");
     }
 
     pub fn finish_generated_source_segments(

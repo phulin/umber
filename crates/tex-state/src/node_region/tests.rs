@@ -1513,11 +1513,12 @@ fn rejected_mixed_generated_rollback_keeps_both_owners_unchanged() {
     let mut destination = pool
         .start_region::<DurableRole>()
         .expect("durable destination");
+    let selected_range = start + 1..start + 2;
     let (projected, mut loan) = transfer_page_generated_inline_selected(
         &mut pool,
         &mut source,
         &pieces,
-        &[start + 1..start + 2],
+        std::slice::from_ref(&selected_range),
         false,
         &mut destination,
     )
@@ -1592,12 +1593,13 @@ fn rejected_generated_hole_transfer_restores_source_head_and_floors() {
     destination
         .seal_checkpoint_boundary(&mut pool)
         .expect("occupied hole is sealed");
+    let selected_range = start + 1..start + 2;
     assert_eq!(
         transfer_page_generated_inline_selected(
             &mut pool,
             &mut source,
             &[GeneratedInlinePiece::Full(selected)],
-            &[start + 1..start + 2],
+            std::slice::from_ref(&selected_range),
             false,
             &mut destination,
         )

@@ -1,6 +1,6 @@
 use super::{
-    PageBoxCutRange, PageBoxPositiveKey, PageListId, PageListSpan, PageMaterialActiveListBuilder,
-    PageMaterialArena, PageMaterialRegion,
+    ConsumedPageSource, ModePageListSlot, PageBoxCutRange, PageBoxPositiveKey, PageListId,
+    PageListSpan, PageMaterialActiveListBuilder, PageMaterialArena, PageMaterialRegion,
 };
 use crate::fork_arena::ForkArenaError;
 use crate::glue::Order;
@@ -17,6 +17,20 @@ macro_rules! page_arena {
         let mut $state = PageMaterialRegion::new(&mut $pool);
         let mut $arena = PageMaterialArena::new(&mut $pool, &mut $state);
     };
+}
+
+fn synthetic_mode_slot(arena: &PageMaterialArena<'_>, root: PageListId) -> ModePageListSlot {
+    ModePageListSlot::synthetic_semantic_source(arena.admit_span(root).expect("test source admits"))
+}
+
+fn take_synthetic_source(
+    arena: &PageMaterialArena<'_>,
+    slot: &mut ModePageListSlot,
+) -> ConsumedPageSource {
+    let (_, source) = arena
+        .take_generated_mode_source(slot)
+        .expect("synthetic semantic owner consumes its slot");
+    source.expect("synthetic slot grants one source authority")
 }
 
 type PageMaterialNode = Node<PageListId>;
@@ -50,6 +64,60 @@ fn boxed(children: PageListId) -> PageMaterialNode {
         glue_order: Order::Normal,
         children,
     }))
+}
+
+#[test]
+fn generated_mode_source_requires_a_fresh_owned_segment() {
+    page_arena!(arena, pool, state, 65_536);
+    let historical = arena.publish_owned(penalties(&[7])).expect("history root");
+    let snapshot = arena.admit_span(historical).expect("history admits");
+    let mut restored = ModePageListSlot::retained_snapshot(snapshot);
+    let (removed, authority) = arena
+        .take_generated_mode_source(&mut restored)
+        .expect("retained root remains readable");
+    assert_eq!(removed, historical);
+    assert!(
+        authority.is_none(),
+        "a copied coordinate cannot mint move authority"
+    );
+
+    let mut builder = PageMaterialActiveListBuilder::vacant();
+    arena.open_active_list(&mut builder).expect("fresh builder");
+    arena
+        .push_active_list(&mut builder, Node::Penalty(9))
+        .expect("fresh node");
+    let suffix = arena
+        .finalize_generated_active_segment(&mut builder)
+        .expect("fresh segment");
+    let mut live = ModePageListSlot::default();
+    arena
+        .append_fresh_mode_segment(&mut live, suffix)
+        .expect("actual slot append");
+    let (_, authority) = arena
+        .take_generated_mode_source(&mut live)
+        .expect("actual slot removal");
+    assert!(authority.is_some());
+}
+
+#[test]
+fn generated_segment_rejects_reclaimed_unique_source() {
+    page_arena!(arena, pool, state, 65_536);
+    let historical = arena.publish_owned(penalties(&[3])).expect("history root");
+    let reclaimed = arena
+        .reclaim_unique_span(arena.admit_span(historical).expect("history span"))
+        .expect("unlinked head can be reclaimed");
+    let mut builder = PageMaterialActiveListBuilder::vacant();
+    arena.open_active_list(&mut builder).expect("builder");
+    arena
+        .append_unique_active_list(&mut builder, reclaimed)
+        .expect("reclaimed list append");
+    assert!(matches!(
+        arena.finalize_generated_active_segment(&mut builder),
+        Err(ForkArenaError::InvalidActiveListBuilder)
+    ));
+    arena
+        .finalize_unique_active_list(&mut builder)
+        .expect("ordinary builder remains valid");
 }
 
 #[test]
@@ -1202,10 +1270,8 @@ fn consumed_window_plan_keeps_only_complete_interior_chunks() {
     let source = arena
         .publish_owned(penalties(&(0..40).collect::<Vec<_>>()))
         .expect("source spans three logical chunks");
-    let mut source_slot = arena.admit_span(source).expect("semantic source slot");
-    let mut consumed = arena
-        .take_generated_mode_source(&mut source_slot)
-        .expect("index direct chunks once after consuming source");
+    let mut source_slot = synthetic_mode_slot(&arena, source);
+    let mut consumed = take_synthetic_source(&arena, &mut source_slot);
     assert!(source_slot.is_empty());
     arena
         .index_consumed_source(&mut consumed)
@@ -1224,10 +1290,8 @@ fn consumed_window_plan_keeps_only_complete_interior_chunks() {
     assert!(second_plan.full_node_chunks.is_empty());
     assert_eq!(second_plan.cut_records, [18..32, 32..35]);
 
-    let mut independent_slot = arena.admit_span(source).expect("independent test slot");
-    let mut independent = arena
-        .take_generated_mode_source(&mut independent_slot)
-        .expect("independent test source index");
+    let mut independent_slot = synthetic_mode_slot(&arena, source);
+    let mut independent = take_synthetic_source(&arena, &mut independent_slot);
     arena
         .index_consumed_source(&mut independent)
         .expect("index independent final source");
@@ -1241,10 +1305,8 @@ fn consumed_window_plan_keeps_only_complete_interior_chunks() {
     let sliced = arena
         .slice_sequence(source, 3..35)
         .expect("head and tail share source chunks");
-    let mut sliced_slot = arena.admit_span(sliced).expect("sliced semantic slot");
-    let mut sliced_owner = arena
-        .take_generated_mode_source(&mut sliced_slot)
-        .expect("index the sliced source");
+    let mut sliced_slot = synthetic_mode_slot(&arena, sliced);
+    let mut sliced_owner = take_synthetic_source(&arena, &mut sliced_slot);
     arena
         .index_consumed_source(&mut sliced_owner)
         .expect("index sliced final source");
@@ -1376,10 +1438,8 @@ fn generated_line_receipt_rejects_unrelated_final_root() {
     let source = arena
         .publish_owned(penalties(&[10, 20, 30]))
         .expect("mode source");
-    let mut slot = arena.admit_span(source).expect("semantic mode slot");
-    let mut consumed = arena
-        .take_generated_mode_source(&mut slot)
-        .expect("consume slot");
+    let mut slot = synthetic_mode_slot(&arena, source);
+    let mut consumed = take_synthetic_source(&arena, &mut slot);
     arena
         .index_consumed_source(&mut consumed)
         .expect("index source");
@@ -1414,10 +1474,8 @@ fn generated_line_receipt_rejects_unrelated_final_root() {
 fn generated_publication_rejects_a_different_wrapper_child() {
     page_arena!(arena, pool, state, 512);
     let source = arena.publish_owned(penalties(&[10, 20])).expect("source");
-    let mut slot = arena.admit_span(source).expect("semantic slot");
-    let mut consumed = arena
-        .take_generated_mode_source(&mut slot)
-        .expect("remove semantic owner");
+    let mut slot = synthetic_mode_slot(&arena, source);
+    let mut consumed = take_synthetic_source(&arena, &mut slot);
     arena
         .index_consumed_source(&mut consumed)
         .expect("index direct records");
@@ -1454,10 +1512,8 @@ fn constructed_transform_consumes_old_source_and_fresh_segments_once() {
     let original = arena
         .publish_owned(penalties(&[5, 6]))
         .expect("mode source");
-    let mut slot = arena.admit_span(original).expect("semantic mode slot");
-    let consumed = arena
-        .take_generated_mode_source(&mut slot)
-        .expect("consume original");
+    let mut slot = synthetic_mode_slot(&arena, original);
+    let consumed = take_synthetic_source(&arena, &mut slot);
     let mut transformed = PageMaterialActiveListBuilder::vacant();
     arena
         .open_active_list(&mut transformed)
