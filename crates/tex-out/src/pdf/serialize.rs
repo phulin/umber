@@ -60,6 +60,7 @@ pub enum PdfSerializeError {
     ObjectStreamsRequirePdf15,
     ObjectIdSpaceExhausted,
     CompressionFilterConflict(PdfObjectId),
+    InvalidIndexedPalette,
     Compression(std::io::ErrorKind),
 }
 
@@ -286,7 +287,7 @@ impl PdfDocument {
                     image,
                     dictionary,
                     data,
-                } => write_image_xobject(&mut pdf, reference, *image, dictionary, data)?,
+                } => write_image_xobject(&mut pdf, reference, image, dictionary, data)?,
             }
         }
 
@@ -361,7 +362,7 @@ impl PdfDocument {
 fn write_image_xobject(
     pdf: &mut Pdf,
     reference: Ref,
-    image: PdfImageXObject,
+    image: &PdfImageXObject,
     dictionary: &PdfDictionary,
     data: &[u8],
 ) -> Result<(), PdfSerializeError> {
@@ -375,7 +376,7 @@ fn write_image_xobject(
         .width(width)
         .height(height)
         .bits_per_component(i32::from(image.bits_per_component));
-    match image.color_space {
+    match &image.color_space {
         PdfImageColorSpace::DeviceGray => {
             writer.color_space_name(Name(b"DeviceGray"));
         }
@@ -384,6 +385,18 @@ fn write_image_xobject(
         }
         PdfImageColorSpace::DeviceCmyk => {
             writer.color_space_name(Name(b"DeviceCMYK"));
+        }
+        PdfImageColorSpace::IndexedRgb(palette) => {
+            if palette.is_empty() || palette.len() > 256 * 3 || palette.len() % 3 != 0 {
+                return Err(PdfSerializeError::InvalidIndexedPalette);
+            }
+            let mut syntax = format!("[/Indexed /DeviceRGB {} <", palette.len() / 3 - 1);
+            for component in palette {
+                use std::fmt::Write as _;
+                write!(syntax, "{component:02X}").expect("writing to String cannot fail");
+            }
+            syntax.push_str(">]");
+            writer.pair(Name(b"ColorSpace"), Raw(syntax.as_bytes()));
         }
         PdfImageColorSpace::IndirectObject(object) => {
             let syntax = format!("{object} 0 R");

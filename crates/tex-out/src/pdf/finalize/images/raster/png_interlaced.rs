@@ -1,4 +1,4 @@
-//! Adam7 decoding into ordinary PDF color and soft-mask sample planes.
+//! Adam7 decoding into indexed or device-color PDF sample planes and soft masks.
 
 use super::*;
 
@@ -22,7 +22,13 @@ pub(super) fn streams(
     decoder.set_limits(png::Limits {
         bytes: MAX_IMPORTED_PDF_STREAM_BYTES,
     });
-    decoder.set_transformations(png::Transformations::EXPAND);
+    let preserve_palette =
+        metadata.png_color_type == Some(3) && png_chunk(bytes, b"tRNS").is_none();
+    decoder.set_transformations(if preserve_palette {
+        png::Transformations::IDENTITY
+    } else {
+        png::Transformations::EXPAND
+    });
     let mut reader = decoder.read_info().map_err(|_| PdfBuildError::InvalidPng)?;
     let info = reader.info();
     if info.width != metadata.width
@@ -59,10 +65,34 @@ pub(super) fn streams(
         png::ColorType::GrayscaleAlpha => (PdfImageColorSpace::DeviceGray, 1, true),
         png::ColorType::Rgb => (PdfImageColorSpace::DeviceRgb, 3, false),
         png::ColorType::Rgba => (PdfImageColorSpace::DeviceRgb, 3, true),
+        png::ColorType::Indexed if preserve_palette => {
+            let palette = png_chunk(bytes, b"PLTE").ok_or(PdfBuildError::InvalidPng)?;
+            if palette.is_empty()
+                || palette.len() > 256 * 3
+                || palette.len() % 3 != 0
+                || palette.len() / 3 > 1 << metadata.bits_per_component
+            {
+                return Err(PdfBuildError::InvalidPng);
+            }
+            let bits = usize::from(metadata.bits_per_component);
+            let row_bytes = (metadata.width as usize * bits).div_ceil(8);
+            let mask = (1u16 << bits) - 1;
+            for row in samples.chunks_exact(row_bytes) {
+                for pixel in 0..metadata.width as usize {
+                    let bit = pixel * bits;
+                    let index =
+                        usize::from((u16::from(row[bit / 8]) >> (8 - bits - bit % 8)) & mask);
+                    if index >= palette.len() / 3 {
+                        return Err(PdfBuildError::InvalidPng);
+                    }
+                }
+            }
+            (PdfImageColorSpace::IndexedRgb(palette.to_vec()), 1, false)
+        }
         png::ColorType::Indexed => return Err(PdfBuildError::InvalidPng),
     };
     let bits = output.bit_depth as u8;
-    if !matches!(bits, 8 | 16) {
+    if !matches!(bits, 1 | 2 | 4 | 8 | 16) {
         return Err(PdfBuildError::InvalidPng);
     }
     let started = std::time::Instant::now();

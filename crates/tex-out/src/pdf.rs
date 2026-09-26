@@ -628,11 +628,13 @@ pub struct PdfNamesObject {
     pub raw_entries: Vec<u8>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PdfImageColorSpace {
     DeviceGray,
     DeviceRgb,
     DeviceCmyk,
+    /// PNG palette lookup bytes, three RGB components per entry.
+    IndexedRgb(Vec<u8>),
     /// pdftex.web §1550's unchecked `colorspace` object operand.
     IndirectObject(i32),
 }
@@ -644,7 +646,7 @@ pub enum PdfImageFilter {
     FlatePngPredictor { colors: u8 },
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PdfImageXObject {
     pub width: u32,
     pub height: u32,
@@ -1284,13 +1286,17 @@ fn hash_object(object: &PdfObject, hasher: &mut CanonicalHasher) {
             hasher.u32(image.width);
             hasher.u32(image.height);
             hasher.byte(image.bits_per_component);
-            match image.color_space {
+            match &image.color_space {
                 PdfImageColorSpace::DeviceGray => hasher.byte(0),
                 PdfImageColorSpace::DeviceRgb => hasher.byte(1),
                 PdfImageColorSpace::DeviceCmyk => hasher.byte(2),
+                PdfImageColorSpace::IndexedRgb(palette) => {
+                    hasher.byte(4);
+                    hasher.bytes(palette);
+                }
                 PdfImageColorSpace::IndirectObject(object) => {
                     hasher.byte(3);
-                    hasher.i64(i64::from(object));
+                    hasher.i64(i64::from(*object));
                 }
             }
             match image.filter {

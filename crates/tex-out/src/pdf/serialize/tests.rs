@@ -152,6 +152,51 @@ fn sample_document(order: &[u32]) -> PdfDocument {
 }
 
 #[test]
+fn indexed_image_serializes_palette_lookup_and_index_depth() {
+    let mut input = sample_input(&[1, 2, 3, 4, 5]);
+    input.objects.push(PdfIndirectObject {
+        id: id(6),
+        object: PdfObject::ImageXObject {
+            image: PdfImageXObject {
+                width: 3,
+                height: 1,
+                bits_per_component: 8,
+                color_space: PdfImageColorSpace::IndexedRgb(vec![10, 20, 30, 40, 50, 60]),
+                filter: PdfImageFilter::Flate,
+                soft_mask: None,
+            },
+            dictionary: PdfDictionary::new(),
+            data: vec![1, 2, 3],
+        },
+    });
+    let bytes = input
+        .validate()
+        .expect("valid image graph")
+        .to_pdf_bytes()
+        .expect("indexed image serializes");
+    let parsed = query(&bytes);
+    let image = parsed.object(query_id(6)).expect("indexed image object");
+    let image = query_stream(&image, "indexed image stream");
+    assert_eq!(image.raw, [1, 2, 3]);
+    let color_space = image
+        .dictionary
+        .get(b"ColorSpace")
+        .and_then(|value| value.array())
+        .expect("indexed color-space array");
+    let entries = color_space.iter().collect::<Vec<_>>();
+    assert_eq!(entries[0].name().as_deref(), Some(b"Indexed".as_slice()));
+    assert_eq!(entries[1].name().as_deref(), Some(b"DeviceRGB".as_slice()));
+    assert_eq!(entries[2].number(), Some(1.0));
+    assert_eq!(
+        entries[3]
+            .string()
+            .expect("palette lookup string")
+            .as_bytes(),
+        [10, 20, 30, 40, 50, 60]
+    );
+}
+
+#[test]
 fn image_attributes_precede_the_imported_page_group() {
     // pdftex.web §776 writes the `\pdfximage` attribute list before the image
     // backend. The PDF importer then writes the selected page's Group entry,

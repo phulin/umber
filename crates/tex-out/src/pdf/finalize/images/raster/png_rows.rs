@@ -268,14 +268,26 @@ pub(super) fn split_available_png_rows(
     Ok(rows)
 }
 
+pub(super) struct IndexedPngStreams {
+    pub(super) color: Vec<u8>,
+    pub(super) alpha: Option<Vec<u8>>,
+    pub(super) palette: Vec<u8>,
+}
+
 #[allow(clippy::disallowed_methods)] // Process telemetry; PDF content never observes it.
 pub(super) fn png_indexed_streams(
     bytes: &[u8],
     metadata: RasterMetadata,
+    expand_rgb: bool,
     telemetry: &mut ImageImportTelemetry,
-) -> Result<(Vec<u8>, Option<Vec<u8>>), PdfBuildError> {
+) -> Result<IndexedPngStreams, PdfBuildError> {
     let palette = png_chunk(bytes, b"PLTE").ok_or(PdfBuildError::InvalidPng)?;
-    if palette.len() % 3 != 0 || !matches!(metadata.bits_per_component, 1 | 2 | 4 | 8) {
+    if palette.is_empty()
+        || palette.len() > 256 * 3
+        || palette.len() % 3 != 0
+        || !matches!(metadata.bits_per_component, 1 | 2 | 4 | 8)
+        || palette.len() / 3 > 1 << metadata.bits_per_component
+    {
         return Err(PdfBuildError::InvalidPng);
     }
     let transparency = png_chunk(bytes, b"tRNS");
@@ -302,22 +314,30 @@ pub(super) fn png_indexed_streams(
     let started = std::time::Instant::now();
     let mut previous = vec![0u8; row_bytes];
     let mut current = vec![0u8; row_bytes];
-    let mut color = Vec::with_capacity(width * height * 3);
+    let mut color = Vec::with_capacity(if expand_rgb {
+        width * height * 3
+    } else {
+        row_bytes * height
+    });
     let mut alpha = transparency.map(|_| Vec::with_capacity(width * height));
     let bits = metadata.bits_per_component;
     let mask = (1u16 << bits) - 1;
     for row in filtered.chunks_exact(row_bytes + 1) {
         unfilter_png_row(row[0], &row[1..], &previous, &mut current, 1)?;
+        if !expand_rgb {
+            color.extend_from_slice(&current);
+        }
         for pixel in 0..width {
             let bit = pixel * usize::from(bits);
             let shift = 8 - usize::from(bits) - (bit % 8);
             let index = usize::from((u16::from(current[bit / 8]) >> shift) & mask);
             let start = index.checked_mul(3).ok_or(PdfBuildError::InvalidPng)?;
-            color.extend_from_slice(
-                palette
-                    .get(start..start + 3)
-                    .ok_or(PdfBuildError::InvalidPng)?,
-            );
+            let rgb = palette
+                .get(start..start + 3)
+                .ok_or(PdfBuildError::InvalidPng)?;
+            if expand_rgb {
+                color.extend_from_slice(rgb);
+            }
             if let Some(alpha) = &mut alpha {
                 alpha.push(
                     transparency
@@ -333,7 +353,11 @@ pub(super) fn png_indexed_streams(
     let started = std::time::Instant::now();
     let streams = (zlib(&color)?, alpha.map(|data| zlib(&data)).transpose()?);
     telemetry.encode_ns += started.elapsed().as_nanos();
-    Ok(streams)
+    Ok(IndexedPngStreams {
+        color: streams.0,
+        alpha: streams.1,
+        palette: palette.to_vec(),
+    })
 }
 
 pub(super) fn png_chunk<'a>(bytes: &'a [u8], wanted: &[u8; 4]) -> Option<&'a [u8]> {
@@ -411,3 +435,6 @@ pub(super) fn zlib(bytes: &[u8]) -> Result<Vec<u8>, PdfBuildError> {
         .map_err(|_| PdfBuildError::InvalidPng)?;
     encoder.finish().map_err(|_| PdfBuildError::InvalidPng)
 }
+
+#[cfg(test)]
+mod tests;

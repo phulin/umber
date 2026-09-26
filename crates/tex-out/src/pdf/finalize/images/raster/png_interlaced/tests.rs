@@ -2,7 +2,14 @@ use super::*;
 
 // PNG specification: seven Adam7 passes, each with its own packed scanlines.
 // Construct the transport independently of the production decoder.
-fn adam7_png(width: u32, height: u32, bits: u8, color: u8, pixels: &[u8]) -> Vec<u8> {
+fn adam7_png(
+    width: u32,
+    height: u32,
+    bits: u8,
+    color: u8,
+    pixels: &[u8],
+    transparent_palette: bool,
+) -> Vec<u8> {
     let components = match color {
         0 | 3 => 1,
         2 => 3,
@@ -53,7 +60,9 @@ fn adam7_png(width: u32, height: u32, bits: u8, color: u8, pixels: &[u8]) -> Vec
     chunk(&mut png, b"IHDR", &header);
     if color == 3 {
         chunk(&mut png, b"PLTE", &[10, 20, 30, 40, 50, 60]);
-        chunk(&mut png, b"tRNS", &[0, 123]);
+        if transparent_palette {
+            chunk(&mut png, b"tRNS", &[0, 123]);
+        }
     }
     chunk(
         &mut png,
@@ -122,7 +131,7 @@ fn adam7_color_and_alpha_samples_preserve_coordinates_and_precision() {
                 let pixels: Vec<u8> = (0..width * height * pixel_bytes as u32)
                     .map(|index| (index.wrapping_mul(37) % 256) as u8)
                     .collect();
-                let png = adam7_png(width, height, bits, color_type, &pixels);
+                let png = adam7_png(width, height, bits, color_type, &pixels, false);
                 let result = lower(&png, metadata(width, height, bits, color_type))
                     .expect("valid PNG sample stream");
                 assert_eq!(result.2, bits);
@@ -154,7 +163,7 @@ fn adam7_color_and_alpha_samples_preserve_coordinates_and_precision() {
 
 #[test]
 fn adam7_packed_palette_expands_color_and_transparency() {
-    let png = adam7_png(9, 2, 1, 3, &[0b0101_0101, 0, 0b1010_1010, 128]);
+    let png = adam7_png(9, 2, 1, 3, &[0b0101_0101, 0, 0b1010_1010, 128], true);
     let result = lower(&png, metadata(9, 2, 1, 3)).expect("valid PNG sample stream");
     let indices = (0..18).map(|index| (index % 9 + index / 9) % 2);
     let color: Vec<u8> = indices
@@ -179,8 +188,22 @@ fn adam7_packed_palette_expands_color_and_transparency() {
 }
 
 #[test]
+fn adam7_opaque_palette_keeps_packed_indices() {
+    let packed = [0b0101_0101, 0, 0b1010_1010, 128];
+    let png = adam7_png(9, 2, 1, 3, &packed, false);
+    let result = lower(&png, metadata(9, 2, 1, 3)).expect("valid indexed PNG");
+    assert_eq!(result.2, 1);
+    assert_eq!(
+        result.3,
+        PdfImageColorSpace::IndexedRgb(vec![10, 20, 30, 40, 50, 60])
+    );
+    assert_eq!(inflate(&result.0).expect("valid image stream"), packed);
+    assert!(result.4.is_none());
+}
+
+#[test]
 fn adam7_high_color_policy_strips_both_color_and_alpha_low_bytes() {
-    let png = adam7_png(1, 1, 16, 4, &[42, 99, 123, 10]);
+    let png = adam7_png(1, 1, 16, 4, &[42, 99, 123, 10], false);
     let result = raster_image_streams(
         &png,
         metadata(1, 1, 16, 4),
@@ -204,7 +227,7 @@ fn adam7_high_color_policy_strips_both_color_and_alpha_low_bytes() {
 
 #[test]
 fn adam7_rejects_truncation_crc_damage_and_metadata_mismatch() {
-    let png = adam7_png(1, 1, 8, 6, &[1, 2, 3, 4]);
+    let png = adam7_png(1, 1, 8, 6, &[1, 2, 3, 4], false);
     for length in [0, 8, png.len() - 1, png.len() - 12] {
         assert!(lower(&png[..length], metadata(1, 1, 8, 6)).is_err());
     }

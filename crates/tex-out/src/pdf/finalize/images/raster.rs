@@ -95,13 +95,25 @@ pub(in crate::pdf::finalize) fn raster_image_streams(
             png_interlaced::streams(bytes, metadata, telemetry)
         }
         PdfRasterFormatInput::Png if metadata.png_color_type == Some(3) => {
-            let (color, alpha) = png_indexed_streams(bytes, metadata, telemetry)?;
+            // pdfTeX writepng.c's write_png_palette writes indices for opaque
+            // palettes. tRNS is expanded by libpng to RGBA before dispatch,
+            // then write_png_rgb_alpha writes RGB samples and a soft mask.
+            let expand_rgb = png_chunk(bytes, b"tRNS").is_some();
+            let indexed = png_indexed_streams(bytes, metadata, expand_rgb, telemetry)?;
             Ok((
-                color,
+                indexed.color,
                 PdfImageFilter::Flate,
-                8,
-                PdfImageColorSpace::DeviceRgb,
-                alpha.map(|alpha| (alpha, PdfImageFilter::Flate)),
+                if expand_rgb {
+                    8
+                } else {
+                    metadata.bits_per_component
+                },
+                if expand_rgb {
+                    PdfImageColorSpace::DeviceRgb
+                } else {
+                    PdfImageColorSpace::IndexedRgb(indexed.palette)
+                },
+                indexed.alpha.map(|alpha| (alpha, PdfImageFilter::Flate)),
             ))
         }
         PdfRasterFormatInput::Png if metadata.alpha => {
@@ -151,6 +163,10 @@ pub(in crate::pdf::finalize) fn raster_image_streams(
         }
     }
     if metadata.format == PdfRasterFormatInput::Png && parameters.apply_gamma {
+        if let PdfImageColorSpace::IndexedRgb(palette) = &mut streams.3 {
+            apply_png_gamma(palette, bytes, 8, parameters)?;
+            return Ok(streams);
+        }
         let mut samples = match streams.1 {
             PdfImageFilter::FlatePngPredictor { .. } => png_opaque_samples(bytes, metadata)?,
             PdfImageFilter::Flate => inflate(&streams.0)?,
