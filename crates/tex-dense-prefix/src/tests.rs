@@ -157,6 +157,50 @@ fn destructor_panic_continues_draining_without_retry() {
 }
 
 #[test]
+fn bulk_constructor_panic_preserves_exact_initialized_prefix() {
+    let dropped = Arc::new(Mutex::new(Vec::new()));
+    let mut block = Superblock::<DropRecord>::try_new().expect("block");
+    let mut next = 0;
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        block.extend_with(5, || {
+            assert_ne!(next, 3, "requested construction panic");
+            let record = DropRecord {
+                id: next,
+                panic_at: None,
+                dropped: Arc::clone(&dropped),
+            };
+            next += 1;
+            record
+        })
+    }));
+    assert!(result.is_err());
+    assert_eq!(block.len(), 3);
+    assert_eq!(block.get(2).expect("last completed value").id, 2);
+    assert!(block.get(3).is_none());
+    drop(block);
+    assert_eq!(*dropped.lock().expect("drop log"), [2, 1, 0]);
+}
+
+#[test]
+fn bulk_construction_checks_capacity_before_calling_factory() {
+    let mut block = Superblock::<u32>::try_new().expect("block");
+    assert!(
+        block
+            .extend_with(Superblock::<u32>::capacity() + 1, || {
+                panic!("factory must not run beyond capacity")
+            })
+            .is_err()
+    );
+    assert!(block.is_empty());
+    block.extend_with(3, || 17).expect("three values");
+    assert_eq!(block.initialized(), &[17, 17, 17]);
+    block
+        .extend_with(0, || panic!("empty factory"))
+        .expect("empty");
+    assert_eq!(block.len(), 3);
+}
+
+#[test]
 fn mutable_access_is_confined_to_initialized_prefix() {
     let mut block = Superblock::<u32>::try_new().expect("block");
     block.push_with(|slot| slot.insert(3)).expect("push");

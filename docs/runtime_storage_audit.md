@@ -78,6 +78,12 @@ an atomic diagnostic counter adds linear work with no ownership effect. Types
 with destructors still drain in reverse order, including the remaining suffix
 after a destructor panics.
 
+Bulk superblock initialization likewise accounts for a whole run once. It
+publishes each successfully constructed value into the initialized prefix, so
+a factory panic leaves earlier values owned and counted. Node and annex chunk
+reservation can use this operation instead of paying an atomic counter update
+for every vacant slot.
+
 ## Evidence and limits
 
 [Book performance investigation](arxiv_book_performance.md) records the original

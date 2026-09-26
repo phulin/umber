@@ -257,6 +257,31 @@ impl<T> Superblock<T> {
         Ok(())
     }
 
+    /// Initializes a run, publishing each completed value into the prefix.
+    /// If the factory panics, already initialized values remain owned by this
+    /// block. Diagnostic accounting is aggregated even on that unwind path.
+    pub fn extend_with(
+        &mut self,
+        count: usize,
+        mut make: impl FnMut() -> T,
+    ) -> Result<(), CapacityError> {
+        let new_len = self.len.checked_add(count).ok_or(CapacityError)?;
+        if new_len > Self::capacity() {
+            return Err(CapacityError);
+        }
+        let mut constructed = ConstructedValues(0);
+        while self.len < new_len {
+            let value = make();
+            // SAFETY: the capacity check covers this next unpublished slot.
+            // The exclusive block borrow prevents aliasing, and `make` returned
+            // an owned value. Publish the prefix immediately after the write.
+            unsafe { self.slot_pointer(self.len).as_ptr().write(value) };
+            self.len += 1;
+            constructed.0 += 1;
+        }
+        Ok(())
+    }
+
     pub fn push_with<F>(&mut self, build: F) -> Result<&mut T, CapacityError>
     where
         F: for<'slot> FnOnce(VacantSlot<'slot, T>) -> InitializedSlot<'slot, T>,
@@ -343,6 +368,16 @@ impl<T> Drop for InitializedSlot<'_, T> {
             // SAFETY: an armed guard uniquely owns the valid `T` written by
             // `VacantSlot::insert`; it has not been published into the prefix.
             unsafe { self.pointer.as_ptr().drop_in_place() };
+        }
+    }
+}
+
+struct ConstructedValues(u64);
+
+impl Drop for ConstructedValues {
+    fn drop(&mut self) {
+        if self.0 != 0 {
+            VALUES_CONSTRUCTED.fetch_add(self.0, Ordering::Relaxed);
         }
     }
 }
