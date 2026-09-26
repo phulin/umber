@@ -80,12 +80,10 @@ struct RegionSlot {
 
 /// The one pool-stable logical node space shared by all node regions.
 ///
-/// During the owned-enum transition, `ChunkPool` is a private resolver from
-/// logical positions to the existing stable chunk allocation. No page root,
-/// child, predecessor, checkpoint, format, or output value can observe its
-/// physical key. The atomic compact-record cutover replaces that adapter with
-/// one `BlockStore<NodeRecord>` and `AcceptedBlockTable<NodeRecord>`; it does
-/// not add another resident node representation.
+/// `ChunkPool<NodeRecord>` and its paired annex pool own the physical blocks.
+/// Page and durable regions own disjoint envelopes over pool-stable logical
+/// coordinates; no page root, child, checkpoint, format, or output value
+/// exposes a physical block key or retains an owned-node representation.
 pub struct NodePool {
     id: u64,
     pub(crate) chunks: ChunkPool<RegionNode>,
@@ -268,6 +266,7 @@ impl NodePool {
         source.pub_arena.preflight_paired_dependency_floor(
             &self.chunks,
             &coordinates,
+            mark.batch.payload_start(),
             mark.annex_batch.payload_start(),
         )?;
         let arena = source
@@ -649,6 +648,7 @@ impl<Role> NodeRegion<Role> {
         self.pub_arena.preflight_paired_dependency_floor(
             &pool.chunks,
             &coordinates,
+            mark.batch.payload_start(),
             mark.annex_batch.payload_start(),
         )
     }
@@ -725,6 +725,7 @@ impl<Role> NodeRegion<Role> {
         self.pub_arena.preflight_paired_dependency_floor(
             &pool.chunks,
             &coordinates,
+            mark.batch.payload_start(),
             mark.annex_batch.payload_start(),
         )?;
         self.annex_arena.preflight_unique_successor_adoption(
@@ -809,6 +810,7 @@ impl<Role> NodeRegion<Role> {
         if let Err(error) = self.pub_arena.preflight_paired_dependency_floor(
             &pool.chunks,
             &[root.list.coordinate()],
+            mark.batch.payload_start(),
             mark.annex_batch.payload_start(),
         ) {
             return Err(ClosureSealError { error, mark });

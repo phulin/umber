@@ -307,7 +307,6 @@ impl UniquePageList {
 }
 
 impl PageListId {
-    #[allow(dead_code)] // Used by the nonresident compact-node codec until its atomic cutover.
     pub(crate) const fn words(self) -> [u32; 10] {
         let coordinate = self.coordinate.words();
         let identity = match (self.coordinate.is_empty(), self.semantic_identity) {
@@ -328,7 +327,6 @@ impl PageListId {
         ]
     }
 
-    #[allow(dead_code)] // Used by the nonresident compact-node codec until its atomic cutover.
     pub(crate) fn from_words(words: [u32; 10]) -> Option<Self> {
         let coordinate = ArenaListId::from_words([
             words[0], words[1], words[2], words[3], words[4], words[5], words[6], words[7],
@@ -981,10 +979,10 @@ impl<'a> PageMaterialArena<'a> {
 
     /// Cold-copies a page root into a fresh self-contained durable region.
     ///
-    /// Page-region carrier migration will replace this explicit transition
-    /// with whole-envelope movement when the selected closure is independently
-    /// transferable. The current compatibility page region is larger than one
-    /// box, so treating this as a move would create a cross-owner coordinate.
+    /// Callers use this when the selected list is already part of the shared
+    /// page region and cannot be detached independently. Fresh box/form
+    /// construction instead opens a closure suffix and transfers its paired
+    /// node-and-annex envelope without copying.
     pub(crate) fn copy_page_root_to_durable(
         &mut self,
         root: PageListId,

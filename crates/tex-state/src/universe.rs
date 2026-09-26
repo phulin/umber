@@ -2678,9 +2678,8 @@ impl<G> Universe<G> {
 
     /// Obtains TeX's logical box copy as a page coordinate.
     ///
-    /// Ordinary runtime boxes already live in the page arena and only rebrand
-    /// their coordinate. A box loaded from a detached format is materialized
-    /// once into the destination arena on first use.
+    /// The durable owner remains live while an independent page closure is
+    /// copied, matching `\copy` and other nonconsuming box operations.
     pub fn copy_box_to_page(&mut self, index: u16) -> Option<PageListId> {
         self.durable_boxes
             .copy_to_page(&mut self.page_region.nodes_mut(), index)

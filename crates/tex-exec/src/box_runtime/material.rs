@@ -52,9 +52,9 @@ where
         primitive,
         UnexpandablePrimitive::UnHBox | UnexpandablePrimitive::UnVBox
     );
-    let Some(register) = stores.copy_box_to_page(index) else {
+    if stores.box_register(index).is_none() {
         return Ok(());
-    };
+    }
     // TeX82 §1110 first returns for a void register, then refuses every
     // nonvoid box in math mode before testing its horizontal/vertical kind.
     // In particular, a matching hbox still cannot be opened in an mlist.
@@ -63,27 +63,31 @@ where
         report_incompatible_unbox(stores, diagnostic_effects, &error_context)?;
         return Ok(());
     }
-    let Some(node) = first_box_node(stores, Some(register)) else {
-        let error_context = error_context(stores)?;
-        report_incompatible_unbox(stores, diagnostic_effects, &error_context)?;
-        return Ok(());
+    let expected_kind = match primitive {
+        UnexpandablePrimitive::UnHBox | UnexpandablePrimitive::UnHCopy => {
+            tex_state::CommandBoxKind::Horizontal
+        }
+        UnexpandablePrimitive::UnVBox | UnexpandablePrimitive::UnVCopy => {
+            tex_state::CommandBoxKind::Vertical
+        }
+        _ => unreachable!("caller restricts unbox primitives"),
     };
-    if !unbox_kind_matches(primitive, &node) {
+    if stores.box_kind(index) != Some(expected_kind) {
         let error_context = error_context(stores)?;
         report_incompatible_unbox(stores, diagnostic_effects, &error_context)?;
         return Ok(());
     }
+    let register = if destructive {
+        stores.take_box_to_page(index)
+    } else {
+        stores.copy_box_to_page(index)
+    }
+    .expect("admitted box register remains live");
+    let node = first_box_node(stores, Some(register)).expect("admitted box kind remains valid");
     let children = match node {
         Node::HList(node) | Node::VList(node) => node.children,
         _ => unreachable!(),
     };
-    if destructive {
-        // The durable register closure was copied into page-lifetime storage
-        // above. Clearing the dense register cell now changes only its TeX
-        // equivalent at the existing level; the copied children remain owned
-        // by the current page arena while they are spliced into the mode list.
-        stores.clear_box_preserving_level(index);
-    }
     append_unboxed(nest, stores, diagnostic_effects, Some(children), fuel)
 }
 
@@ -451,19 +455,6 @@ fn append_unboxed<G>(
             .append_unique_list(stores, retained);
     }
     Ok(())
-}
-
-fn unbox_kind_matches(primitive: UnexpandablePrimitive, node: &Node) -> bool {
-    matches!(
-        (primitive, node),
-        (
-            UnexpandablePrimitive::UnHBox | UnexpandablePrimitive::UnHCopy,
-            Node::HList(_)
-        ) | (
-            UnexpandablePrimitive::UnVBox | UnexpandablePrimitive::UnVCopy,
-            Node::VList(_)
-        )
-    )
 }
 
 /// TeX.web §1110's `unpackage` refusal, which leaves the register alone.

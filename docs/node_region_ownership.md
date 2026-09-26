@@ -82,6 +82,19 @@ counters distinguish aggregate envelope movement, metadata-only closure checks, 
 history-preservation copies, structural page-to-durable copies, held-over
 fallback copies, region starts/retention/drops, and cross-region rejection.
 
+Destructive unboxing checks the borrowed durable box kind and current mode
+before consuming a register. Once admitted, `\unhbox` and `\unvbox` use the
+same rollbackable transfer as `\box`; retained checkpoint or group history
+selects the existing preservation-copy path. `\unhcopy` and `\unvcopy`
+continue to copy the independent closure, while a rejected kind or mode leaves
+the register and its region untouched.
+
+Closure transfer preflights the paired-annex dependency floor of every node
+block in the detached suffix, including blocks outside the selected root.
+The transfer rebases that entire suffix. If any block still depends on annex
+data before the build boundary, the selected closure takes the structural-copy
+fallback while the source suffix remains in its page region.
+
 ## TeX82 ownership baseline
 
 TeX82 implements its own fixed-address heap inside the global `mem` array.

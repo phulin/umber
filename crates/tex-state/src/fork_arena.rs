@@ -3962,16 +3962,23 @@ impl<T, Lane> ForkArena<T, Lane> {
         &self,
         pool: &ChunkPool<T>,
         lists: &[ArenaListId<Lane>],
+        payload_start: usize,
         paired_start: usize,
     ) -> Result<(), ForkArenaError> {
         for list in lists {
             self.validate_list(pool, *list)?;
-            if list.is_empty() {
-                continue;
-            }
+        }
+        // A detached envelope includes every payload block opened since the
+        // build boundary, even when the selected root does not reach it. The
+        // later rebasing step visits that entire envelope, so preflight must
+        // prove the paired floor for every block it will rebase.
+        for position in payload_start..self.live_payload_len() {
+            let key = self
+                .live_key_at(position)
+                .ok_or(ForkArenaError::InvalidChunk)?;
             let floor = pool
                 .payload
-                .validate(list.tail.raw, self.owner)?
+                .validate_lineage(key, self.owner, self.lineage)?
                 .paired_dependency_floor;
             if floor < paired_start {
                 return Err(ForkArenaError::InvalidRegion);

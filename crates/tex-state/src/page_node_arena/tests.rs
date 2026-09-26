@@ -1255,6 +1255,35 @@ fn built_durable_copy_preserves_page_root_created_in_construction_suffix() {
 }
 
 #[test]
+fn built_closure_with_unrelated_prior_annex_dependency_copies_selected_root() {
+    page_arena!(arena, pool, region, 64);
+    let leaf = arena.publish_owned([Node::Penalty(50)]).expect("old leaf");
+    let prior = arena.publish_owned([boxed(leaf)]).expect("old box");
+    let build = arena.begin_closure_build().expect("open closure build");
+    let _unrelated = arena
+        .publish_owned([boxed(prior)])
+        .expect("temporary suffix node borrows old annex");
+    let selected = arena
+        .publish_owned([Node::Penalty(52)])
+        .expect("independent selected root");
+
+    let durable = arena
+        .finish_built_page_root_to_durable(build, selected)
+        .expect("paired dependency selects structural copy");
+    assert_eq!(resolved(&arena, prior), [boxed(leaf)]);
+    assert_eq!(
+        arena
+            .durable_list(&durable)
+            .expect("durable selected root")
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>(),
+        [Node::Penalty(52)]
+    );
+    arena.retire_durable(durable).expect("retire result");
+}
+
+#[test]
 fn durable_copy_is_recursive_and_counts_only_the_selected_closure() {
     page_arena!(arena, pool, region, 64);
     let leaf = arena.publish_owned([Node::Penalty(43)]).expect("page leaf");

@@ -178,6 +178,7 @@ fn destructive_unbox_transfers_nested_structural_children() {
             br"\setbox0=\hbox{\hbox{\kern1pt}}\setbox1=\vbox{\vbox{\kern2pt}}",
         );
         run_to_end(&mut control, stores);
+        let before = stores.page_region_counters();
 
         let mut control = MainControl::tex82_initex(stores);
         register_source(
@@ -185,11 +186,36 @@ fn destructive_unbox_transfers_nested_structural_children() {
             br"\setbox2=\hbox{\unhbox0}\setbox3=\vbox{\unvbox1}",
         );
         run_to_end(&mut control, stores);
+        let after = stores.page_region_counters();
+
+        assert_eq!(
+            after.tex_copy_nodes_copied - before.tex_copy_nodes_copied,
+            0,
+            "destructive unboxing leaves only the group-history copies"
+        );
+        assert_eq!(
+            after.history_preservation_nodes_copied - before.history_preservation_nodes_copied,
+            6,
+            "a retained execution boundary preserves both three-node closures"
+        );
 
         assert!(stores.copy_box_to_page(0).is_none());
         assert!(stores.copy_box_to_page(1).is_none());
         assert!(stores.copy_box_to_page(2).is_some());
         assert!(stores.copy_box_to_page(3).is_some());
+    });
+}
+#[test]
+fn destructive_unbox_moves_unique_closure_without_recursive_copy() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(&mut control, br"\setbox0=\vbox{\vbox{\kern1pt}}\unvbox0");
+        run_to_end(&mut control, stores);
+
+        let counters = stores.page_region_counters();
+        assert_eq!(counters.tex_copy_nodes_copied, 0);
+        assert_eq!(counters.history_preservation_nodes_copied, 0);
+        assert!(stores.box_register(0).is_none());
     });
 }
 #[test]
