@@ -9,7 +9,7 @@ use tex_state::scaled::Scaled;
 use tex_typeset::{HpackParams, PackSpec, PackedBox, VpackParams};
 
 use crate::pack_report::{
-    DiagnosticListLayout, ExecutionDiagnosticContext, PackedDirection, report_pack_diagnostics,
+    DiagnosticListLayout, PackDiagnosticContext, PackedDirection, report_pack_diagnostics,
 };
 
 #[cfg(test)]
@@ -37,7 +37,7 @@ pub(crate) fn hpack<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     geometry: &mut dyn crate::geometry::PackGeometrySink,
-    context: &ExecutionDiagnosticContext,
+    context: &PackDiagnosticContext,
     list: PageListId,
     spec: PackSpec,
     params: HpackParams,
@@ -156,7 +156,7 @@ fn recover_frozen_texxet_directions<G>(
 pub(crate) fn report_hpack<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
-    context: &ExecutionDiagnosticContext,
+    context: &PackDiagnosticContext,
     packed: &PackedBox,
     lr_problems: Option<(usize, usize)>,
 ) {
@@ -186,7 +186,7 @@ pub(crate) fn vpack<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     geometry: &mut dyn crate::geometry::PackGeometrySink,
-    context: &ExecutionDiagnosticContext,
+    context: &PackDiagnosticContext,
     list: PageListId,
     spec: PackSpec,
     params: VpackParams,
@@ -215,7 +215,7 @@ pub(crate) fn vtop<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     geometry: &mut dyn crate::geometry::PackGeometrySink,
-    context: &ExecutionDiagnosticContext,
+    context: &PackDiagnosticContext,
     list: PageListId,
     spec: PackSpec,
     params: VpackParams,

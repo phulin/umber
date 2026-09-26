@@ -104,7 +104,7 @@ pub(crate) fn split_vbox_register<G>(
             stores,
             diagnostic_effects,
             geometry,
-            diagnostic_context,
+            &diagnostic_context.packing(),
             split_list,
             PackSpec::Exactly(height),
             params,

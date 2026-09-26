@@ -45,14 +45,22 @@ pub(in crate::main_control) const fn assignment_scope(
     }
 }
 
+pub(in crate::main_control) fn command_pack_context<G>(
+    command: &CommandMachine<'_, '_, G>,
+) -> crate::pack_report::PackDiagnosticContext {
+    crate::pack_report::PackDiagnosticContext {
+        current_line: i32::try_from(command.state.current_file_line_number()).unwrap_or(i32::MAX),
+        pack_begin_line: 0,
+        output_routine_active: command.output_routine_active,
+    }
+}
+
 pub(in crate::main_control) fn command_diagnostic_context<G>(
     command: &CommandMachine<'_, '_, G>,
     stores: &tex_state::CommandContext<'_, G>,
 ) -> crate::diagnostics::ExecutionDiagnosticContext {
-    // TeX82 §§660--661 formats standalone box diagnostics with the live
-    // input `line` when `pack_begin_line=0`.  Detach that scalar together
-    // with the rendered error context: treating this command-owned context
-    // as source-free changes a line-one `\hbox` report to "line 0".
+    // Error paths that outlive this command borrow need detached input text.
+    // Packing alone uses command_pack_context and never requests that text.
     crate::diagnostics::ExecutionDiagnosticContext::new(
         i32::try_from(command.state.current_file_line_number()).unwrap_or(i32::MAX),
         0,
@@ -1095,8 +1103,7 @@ pub(in crate::main_control) fn apply_accent_nodes<G>(
         modes.current_list_mutation().push(stores, accent_node);
     } else {
         let children = stores.publish_page_nodes(vec![accent_node]);
-        let diagnostic_context =
-            crate::diagnostics::ExecutionDiagnosticContext::source_free("accent placement");
+        let diagnostic_context = crate::pack_report::PackDiagnosticContext::default();
         let mut boxed = crate::box_runtime::hpack_with_overfull_rule(
             stores,
             diagnostic_effects,
@@ -1321,7 +1328,7 @@ pub(in crate::main_control) fn finish_insert_or_adjust_group<G>(
         stores,
         command.diagnostic_effects,
         &mut geometry,
-        &diagnostic_context,
+        &diagnostic_context.packing(),
         content,
         PackSpec::Natural,
         params,

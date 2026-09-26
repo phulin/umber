@@ -224,7 +224,7 @@ pub(crate) fn vpack_natural<G>(
         stores,
         diagnostic_effects,
         geometry,
-        diagnostic_context,
+        &diagnostic_context.packing(),
         content,
         PackSpec::Natural,
         VpackParams {

@@ -3329,7 +3329,7 @@ pub(in crate::main_control) fn apply<G>(
             // fuzz, and overfull-rule parameters authoritative. Max depth is
             // the exception: `package` saved it above before `unsave`.
             let node = if box_kind.horizontal() {
-                let diagnostic_context = command_diagnostic_context(command, stores);
+                let diagnostic_context = command_pack_context(command);
                 let mut geometry = pack_geometry_sink(command.state, command.observations);
                 Node::HList(crate::box_runtime::hpack_with_overfull_rule(
                     stores,
@@ -3342,7 +3342,7 @@ pub(in crate::main_control) fn apply<G>(
             } else {
                 Node::VList(match box_kind {
                     ReplayBoxKind::VBox | ReplayBoxKind::VCenter => {
-                        let diagnostic_context = command_diagnostic_context(command, stores);
+                        let diagnostic_context = command_pack_context(command);
                         let mut params = crate::packing_params::vpack_params(stores);
                         params.box_max_depth = box_max_depth;
                         let mut geometry = pack_geometry_sink(command.state, command.observations);
@@ -3358,7 +3358,7 @@ pub(in crate::main_control) fn apply<G>(
                         .node
                     }
                     ReplayBoxKind::VTop => {
-                        let diagnostic_context = command_diagnostic_context(command, stores);
+                        let diagnostic_context = command_pack_context(command);
                         let mut params = crate::packing_params::vpack_params(stores);
                         params.box_max_depth = box_max_depth;
                         let mut geometry = pack_geometry_sink(command.state, command.observations);

@@ -347,3 +347,21 @@ additional improvement over the preceding engine, measured on a book prefix;
 it does not establish full-book completion or attribute gains to individual
 changes. Receipts are in `verified_ab_ba_200m/` under the artifact directory
 above. The remaining dominant work is token expansion and node copying.
+
+## Packing diagnostic context
+
+The current write path already renders an input-stack context only when write
+expansion is unbalanced. A page must still detach context for errors discovered
+after its input borrow ends. The previous book profile instead attributes most
+`render_context_for_levels` samples to ordinary box packing, including the
+`BoxEndGroup` paths. TeX82 §§660–661 and 674 use only the current line, packing
+start line, and output-routine flag for those reports; they do not invoke
+`show_context`.
+
+Packing now accepts a scalar `PackDiagnosticContext`, and command-side box
+completion constructs it without rendering input. Callers that already need a
+full error context project only these scalars into packing. Existing exact
+packing-report and reference-diagnostic tests remain the behavior authority.
+Shipout normalization also clones the detached open context only for an
+`OpenOut` whatsit, instead of cloning it before inspecting every whatsit.
+These changes have not yet been assigned a measured runtime saving.

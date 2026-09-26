@@ -519,7 +519,7 @@ fn batch_mode_routes_pack_headline_and_box_dump_to_log_only() {
         universe.set_interaction_mode(tex_state::InteractionMode::Batch);
         let mut stores = universe.command_context().expect("test state is admitted");
         let mut diagnostic_effects = DiagnosticEffects::new();
-        let context = ExecutionDiagnosticContext::source_free("");
+        let context = PackDiagnosticContext::default();
         let packed = empty_hbox(&mut stores);
 
         report_pack_diagnostics(
@@ -561,7 +561,7 @@ fn nonstop_mode_keeps_pack_headline_before_dump_on_both_channels() {
                 tex_state::AssignmentScope::Global,
             )
             .expect("parameter");
-        let context = ExecutionDiagnosticContext::source_free("");
+        let context = PackDiagnosticContext::default();
         let packed = empty_hbox(&mut stores);
 
         report_pack_diagnostics(
@@ -600,7 +600,11 @@ fn output_active_vbox_dump_supplies_the_headline_newline() {
         crate::test_harness::with_nonstop_tex82_universe(|universe| {
             let mut stores = universe.command_context().expect("test state is admitted");
             let mut diagnostic_effects = DiagnosticEffects::new();
-            let context = ExecutionDiagnosticContext::new(0, 0, output_active, "");
+            let context = PackDiagnosticContext {
+                current_line: 0,
+                pack_begin_line: 0,
+                output_routine_active: output_active,
+            };
             let packed = empty_hbox(&mut stores);
 
             report_pack_diagnostics(
@@ -658,8 +662,11 @@ fn pack_diagnostic_origin_contexts() {
                 universe.set_interaction_mode(mode);
                 let mut stores = universe.command_context().expect("test state is admitted");
                 let mut diagnostic_effects = DiagnosticEffects::new();
-                let context =
-                    ExecutionDiagnosticContext::new(29, pack_begin_line, output_active, "");
+                let context = PackDiagnosticContext {
+                    current_line: 29,
+                    pack_begin_line,
+                    output_routine_active: output_active,
+                };
                 let packed = empty_hbox(&mut stores);
 
                 report_pack_diagnostics(

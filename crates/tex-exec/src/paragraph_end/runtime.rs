@@ -774,7 +774,7 @@ pub(crate) fn break_current_paragraph<G>(
             stores,
             diagnostic_effects,
             geometry,
-            &paragraph_diagnostic_context,
+            &paragraph_diagnostic_context.packing(),
             broken.nodes,
             if needs_physical_diagnostic {
                 Some(diagnostic_nodes.expect("physical diagnostic was compared above"))

@@ -38,6 +38,15 @@ use crate::node_dump::{DumpConfig, dump_node_slice};
 
 pub(crate) use crate::diagnostics::ExecutionDiagnosticContext;
 
+/// TeX82 §§660–661 and 674 report packing origins from these scalars.
+/// They do not print the input stack (`show_context`).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct PackDiagnosticContext {
+    pub(crate) current_line: i32,
+    pub(crate) pack_begin_line: i32,
+    pub(crate) output_routine_active: bool,
+}
+
 /// Which of §660's and §674's two reporting sites is speaking.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum PackedDirection {
@@ -84,7 +93,7 @@ impl PackedDirection {
 pub(crate) fn report_pack_diagnostics<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
-    context: &ExecutionDiagnosticContext,
+    context: &PackDiagnosticContext,
     direction: PackedDirection,
     diagnostics: &[PackDiagnostic],
     packed: &Node,
@@ -108,7 +117,7 @@ pub(crate) fn report_pack_diagnostics<G>(
 pub(crate) fn report_lr_problems<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
-    context: &ExecutionDiagnosticContext,
+    context: &PackDiagnosticContext,
     missing: usize,
     extra: usize,
     packed: &Node,
@@ -138,7 +147,7 @@ pub(crate) fn report_lr_problems<G>(
 fn report_one<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
-    context: &ExecutionDiagnosticContext,
+    context: &PackDiagnosticContext,
     direction: PackedDirection,
     diagnostic: &PackDiagnostic,
     packed: &Node,
@@ -213,7 +222,7 @@ fn report_one<G>(
 }
 
 /// §663's and §675's shared `<Finish issuing a diagnostic message...>`.
-fn origin_text(context: &ExecutionDiagnosticContext) -> String {
+fn origin_text(context: &PackDiagnosticContext) -> String {
     if context.output_routine_active {
         return ") has occurred while \\output is active".to_owned();
     }

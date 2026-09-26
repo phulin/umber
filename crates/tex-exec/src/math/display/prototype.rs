@@ -262,7 +262,7 @@ pub(super) fn package_directed_display_line<G>(
         stores,
         diagnostic_effects,
         geometry,
-        diagnostic_context,
+        &diagnostic_context.packing(),
         list,
         PackSpec::Natural,
         hpack_params(stores),

@@ -30,6 +30,14 @@ pub(crate) struct ExecutionDiagnosticContext {
 }
 
 impl ExecutionDiagnosticContext {
+    pub(crate) const fn packing(&self) -> crate::pack_report::PackDiagnosticContext {
+        crate::pack_report::PackDiagnosticContext {
+            current_line: self.current_line,
+            pack_begin_line: self.pack_begin_line,
+            output_routine_active: self.output_routine_active,
+        }
+    }
+
     pub(crate) fn new(
         current_line: i32,
         pack_begin_line: i32,

@@ -157,7 +157,7 @@ pub(crate) fn prepare_box255<G>(
         stores,
         diagnostic_effects,
         geometry,
-        diagnostic_context,
+        &diagnostic_context.packing(),
         distributed.page_nodes,
         PackSpec::Exactly(fire_up.best_size()),
         VpackParams {

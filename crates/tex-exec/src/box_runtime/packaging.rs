@@ -129,7 +129,7 @@ pub(crate) fn hpack_with_overfull_rule<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     geometry: &mut dyn crate::geometry::PackGeometrySink,
-    context: &crate::pack_report::ExecutionDiagnosticContext,
+    context: &crate::pack_report::PackDiagnosticContext,
     children: tex_state::page_node_arena::PageListId,
     spec: PackSpec,
 ) -> tex_state::node::BoxNode {
@@ -169,7 +169,7 @@ pub(crate) fn hpack_page_list_with_diagnostics<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     geometry: &mut dyn crate::geometry::PackGeometrySink,
-    context: &crate::pack_report::ExecutionDiagnosticContext,
+    context: &crate::pack_report::PackDiagnosticContext,
     children: PageListId,
     diagnostic_children: Option<PageListId>,
     direction_scratch: &mut Vec<tex_state::node::Direction>,

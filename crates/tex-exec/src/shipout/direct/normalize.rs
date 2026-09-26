@@ -979,12 +979,12 @@ fn append_whatsit_effect<G>(
     };
     let NormalizeLocation { in_hlist, depth } = location;
     let announce_openout = overlay.announce_openout;
-    let output_open_context = overlay.output_open_context.clone();
     let effects = &mut overlay.effects;
     let open_out_occurrences = &mut overlay.open_out_occurrences;
     let running_thread_depth = &mut overlay.running_thread_depth;
     match whatsit {
         Whatsit::OpenOut { slot, path } if !suppress_deferred_streams => {
+            let output_open_context = overlay.output_open_context.clone();
             // TeX82 §1374 closes the old stream before it attempts the
             // replacement, even when every subsequent open attempt fails.
             stores

@@ -176,7 +176,7 @@ fn set_running_rule<G>(
         stores,
         diagnostic_effects,
         geometry,
-        diagnostic_context,
+        &diagnostic_context.packing(),
         list,
         tex_typeset::PackSpec::Natural,
         crate::packing_params::hpack_params(stores),

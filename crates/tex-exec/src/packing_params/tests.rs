@@ -29,7 +29,7 @@ fn ordinary_hpack_reports_once_without_decorating_its_list() {
         let mut stores = universe.command_context().expect("test state is admitted");
         let mut diagnostic_effects = DiagnosticEffects::new();
         let mut geometry = crate::geometry::IgnorePackGeometry;
-        let context = crate::pack_report::ExecutionDiagnosticContext::source_free("");
+        let context = crate::pack_report::PackDiagnosticContext::default();
         let list = stores.publish_page_nodes(vec![Node::Kern {
             amount: Scaled::from_raw(2 * Scaled::UNITY),
             kind: KernKind::Explicit,
@@ -71,7 +71,11 @@ fn vtop_readjusts_leading_glue_height_and_depth() {
         let mut stores = universe.command_context().expect("test state is admitted");
         let mut diagnostic_effects = DiagnosticEffects::new();
         let mut geometry = crate::geometry::IgnorePackGeometry;
-        let context = crate::pack_report::ExecutionDiagnosticContext::new(330, 0, false, "");
+        let context = crate::pack_report::PackDiagnosticContext {
+            current_line: 330,
+            pack_begin_line: 0,
+            output_routine_active: false,
+        };
         let glue = GlueSpec {
             width: NEGATIVE_THREE_MM,
             ..GlueSpec::ZERO
