@@ -222,6 +222,61 @@ consumer comparisons for TeX Live 2023–2026, recorded in
 `target/arxiv-pdf-wave2-font-rotation-representatives-render/summary.json`. These small
 format-loading checks retain their limited scope.
 
+The integrated capture in `target/arxiv-pdf-wave3-final/` uses commit
+`8dd33323c` and the frozen Umber executable with SHA-256
+`fb3d9e353b42e526c78c272da0bbed3642c597be3fe7581ab72c6e5ab7233cb5`.
+Its run identity records the unchanged 100-paper source lock (SHA-256
+`680b4fe6a3622ea5178d963b308262ac95546ce84c426175721c68186700bb69`),
+archive inputs, selected standard formats, and PDF comparator. Four workers
+per phase retain the 120-second, 1,536 MiB, 500-million expansion-fuel, and
+10-million execution-step guards. The source lock, comparator, selected
+format/runtime authorities, output mode, and all four guards have the same
+identities as the `0252a4e96` repair capture.
+
+The independent consumer result in
+`target/arxiv-pdf-wave3-final-render/summary.json` records all 100 rows.
+All 93 successful Umber PDFs match the reference at 144 dpi and in extracted
+text, covering 1,678 pages on each side with equal page counts and no consumer
+errors. All 21 papers that differed in the earlier repair capture are now
+exact in both channels, and its 72 exact papers remain exact. Reference page
+raster and text hashes agree with that capture for all 93 pairs. The six
+reference-ineligible or unsupported rows are unchanged. `2606.24937`, the
+588-page book, still reaches the unchanged 120-second Umber limit, so the
+consumer verdict is `PARTIAL` for one unavailable PDF. The strict PDF graph
+projection still differs for all 93 completed pairs; raster and text equality
+do not establish PDF byte or graph equality. A separate `--verify-only` pass
+authenticated and reused all 100 saved corpus rows; its structural verdict
+remains `DIVERGED`.
+
+The integrated repairs follow the TeX82 and pdfTeX rules behind the earlier
+visible differences. Paragraph breaking retains its entry language and
+hyphen minima, carries later language changes through glue
+lookahead and display resumption, and ends ligature lookahead at assignments.
+Discretionary reconstruction includes the preceding glyph and following
+kerns; font expansion treats absent kern pairs as zero. Math edge cleanup and
+sentence spacing with explicit `\spaceskip` also use the canonical packed box
+and font extra space rules. These changes correct real line breaks and glyph
+placement.
+
+PDF lowering retains the selected imported-page box and rotation at source
+precision while using pdfTeX's narrower dimension boundary for TeX layout.
+Imported-page translations, thin-rule centers, and expanded text positions
+use canonical scaled coordinates and the retained graphics origin. A graphics
+restore retains its logical origin, and subpixel baseline drift no longer
+starts a spurious text position. Font resources distinguish names that select
+different outlines despite identical TFM bytes. Opaque indexed PNGs retain
+their palette and packed indices, including Adam7 input. Focused regressions
+and guarded original-paper replays cover these rules. The integrated tree also
+passed `cargo test -q --tests` and all four default `scripts/check.sh` gates.
+
+The same frozen executable passes the eight one-page LaTeX/pdfLaTeX
+representatives for TeX Live 2023–2026. The independent consumer receipt at
+`target/arxiv-pdf-wave3-final-representatives-render/summary.json` reports
+eight exact raster and extracted-text matches at 144 dpi, with no errors. The
+strict graph projection differs for all eight; their consumer equality is
+specific to these small format-loading documents. The saved corpus receipts
+also pass `--verify-only` authentication.
+
 ## Dated-source DVI baseline
 
 The dated-source parity front selects the TeX Live year from each archive's
