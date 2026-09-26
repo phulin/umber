@@ -541,6 +541,7 @@ fn project_token_cursor<G>(
             }
         }
         PackedTokenSpanHandle::AttemptList { .. } => return None,
+        PackedTokenSpanHandle::Word(word) => project_token(hash, word.semantic_token(), state)?,
     }
     Some(())
 }

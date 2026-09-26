@@ -240,6 +240,18 @@ impl<G> CommandProcessor<'_, '_, G> {
                     &mut loaded,
                 )
             }
+            ResidentTokenStorage::BackedUpWord(word) => {
+                let word = *word;
+                read_selected_run(
+                    || {
+                        next_word_from_current_frame(&mut row.header.frame, |position| {
+                            (position == 0).then(|| (word.token_word(), word.origin()))
+                        })
+                    },
+                    &mut admit,
+                    &mut loaded,
+                )
+            }
             ResidentTokenStorage::Durable(list) => {
                 #[cfg(test)]
                 {
@@ -386,6 +398,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 ResidentTokenStorage::MacroBody(body) => Some(body.arguments),
                 ResidentTokenStorage::MacroArgument(_) => None,
                 ResidentTokenStorage::Replay { .. }
+                | ResidentTokenStorage::BackedUpWord(_)
                 | ResidentTokenStorage::Durable(_)
                 | ResidentTokenStorage::Attempt(_) => Some(None),
             };

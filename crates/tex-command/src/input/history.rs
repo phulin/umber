@@ -2036,7 +2036,8 @@ impl<G> InputStack<G> {
                     super::ResidentTokenStorage::MacroBody(_) => {
                         InputLevelInlineState::macro_body(position)
                     }
-                    super::ResidentTokenStorage::Durable(_)
+                    super::ResidentTokenStorage::BackedUpWord(_)
+                    | super::ResidentTokenStorage::Durable(_)
                     | super::ResidentTokenStorage::Attempt(_) => {
                         InputLevelInlineState::token_position(position)
                     }

@@ -312,7 +312,8 @@ impl<G> CommandState<G> {
         let (macro_body, arguments, replay) = match &row.storage {
             ResidentTokenStorage::MacroBody(body) => (true, body.arguments, None),
             ResidentTokenStorage::Replay { replay, .. } => (false, None, Some(*replay)),
-            ResidentTokenStorage::Durable(_)
+            ResidentTokenStorage::BackedUpWord(_)
+            | ResidentTokenStorage::Durable(_)
             | ResidentTokenStorage::Attempt(_)
             | ResidentTokenStorage::MacroArgument(_) => (false, None, None),
         };
@@ -377,22 +378,24 @@ impl<G> CommandState<G> {
     pub fn transient_dynamic_words(&self) -> usize {
         let arguments = self.scratch.argument_word_len();
         self.input.levels.iter().fold(arguments, |words, level| {
-            let InputLevel::Resident(ResidentTokenRow {
-                header,
-                storage: ResidentTokenStorage::Replay { replay, .. },
-            }) = level
-            else {
+            let InputLevel::Resident(ResidentTokenRow { header, storage }) = level else {
                 return words;
             };
-            let owned = if matches!(
-                self.input.replay.ownership(*replay),
-                Some(
-                    super::PackedTokenOwnership::Transient | super::PackedTokenOwnership::BackedUp
-                )
-            ) {
-                header.frame.limit() as usize
-            } else {
-                0
+            let owned = match storage {
+                // An inline backed-up word is one transient token node.
+                ResidentTokenStorage::BackedUpWord(_) => header.frame.limit() as usize,
+                ResidentTokenStorage::Replay { replay, .. }
+                    if matches!(
+                        self.input.replay.ownership(*replay),
+                        Some(
+                            super::PackedTokenOwnership::Transient
+                                | super::PackedTokenOwnership::BackedUp
+                        )
+                    ) =>
+                {
+                    header.frame.limit() as usize
+                }
+                _ => 0,
             };
             words.saturating_add(owned)
         })
@@ -500,6 +503,10 @@ impl<G> CommandState<G> {
                     storage: ResidentTokenStorage::Attempt(list),
                 })
             }
+            PackedTokenSpanHandle::Word(word) => InputLevel::Resident(ResidentTokenRow {
+                header,
+                storage: ResidentTokenStorage::BackedUpWord(word),
+            }),
         };
         self.push_input_level(level);
         identity
@@ -668,7 +675,8 @@ impl<G> CommandState<G> {
 
         let replay = match &row.storage {
             ResidentTokenStorage::Replay { replay, .. } => Some(*replay),
-            ResidentTokenStorage::Durable(_)
+            ResidentTokenStorage::BackedUpWord(_)
+            | ResidentTokenStorage::Durable(_)
             | ResidentTokenStorage::Attempt(_)
             | ResidentTokenStorage::MacroArgument(_) => None,
             ResidentTokenStorage::MacroBody(_) => unreachable!("macro body returned above"),
@@ -772,7 +780,8 @@ impl<G> CommandState<G> {
         let reason = input_retirement_reason(&row.header.behavior(), &row.trace());
         let replay = match &row.storage {
             ResidentTokenStorage::Replay { replay, .. } => Some(*replay),
-            ResidentTokenStorage::Durable(_)
+            ResidentTokenStorage::BackedUpWord(_)
+            | ResidentTokenStorage::Durable(_)
             | ResidentTokenStorage::Attempt(_)
             | ResidentTokenStorage::MacroArgument(_) => None,
             ResidentTokenStorage::MacroBody(_) => unreachable!("macro body returned above"),

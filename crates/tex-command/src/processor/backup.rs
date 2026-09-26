@@ -59,9 +59,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.command.alignment.undo_delivery(adjustment);
 
         let level = self.command.push_token_level(
-            PackedTokenSpanHandle::backed_up([BackedUpToken {
-                spelling: command.spelling(),
-            }]),
+            PackedTokenSpanHandle::Word(command.spelling()),
             TokenBehavior::BackedUp(BackupTreatment::Ordinary),
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,
@@ -226,6 +224,17 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// that is available must have its own adjustment reversed, not one
     /// recomputed from the token.
     pub fn back_input_token(&mut self, spelling: TracedTokenWord) -> Result<(), CommandError> {
+        self.push_backed_up_token(spelling, PackedTokenSpanHandle::Word(spelling))
+    }
+
+    /// Shared §326 insertion for [`Self::back_input_token`]. The level's
+    /// storage is the caller's: an inline word, or a replay-lane list when
+    /// e-TeX will link further `\aftergroup` tokens onto it.
+    fn push_backed_up_token(
+        &mut self,
+        spelling: TracedTokenWord,
+        storage: impl crate::input::PackedTokenSpanSource<G>,
+    ) -> Result<(), CommandError> {
         self.invalidate_delivery_freshness();
         self.conserve_input_stack_for_descendant()?;
         self.command
@@ -234,7 +243,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 spelling.semantic_token(),
             ));
         let level = self.command.push_token_level(
-            PackedTokenSpanHandle::backed_up([BackedUpToken { spelling }]),
+            storage,
             TokenBehavior::BackedUp(BackupTreatment::Ordinary),
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,
@@ -270,8 +279,13 @@ impl<G> CommandProcessor<'_, '_, G> {
         let Some(last) = tokens.pop() else {
             return Ok(());
         };
-        self.back_input_token(last)?;
         if self.profile().capabilities().supports_etex() {
+            // e-TeX links the remaining tokens onto this same backed-up
+            // list, so it must live in the replay lane.
+            self.push_backed_up_token(
+                last,
+                PackedTokenSpanHandle::backed_up([BackedUpToken { spelling: last }]),
+            )?;
             let prepended = tokens.len();
             for spelling in tokens.iter().rev() {
                 self.command.record_alignment_phase();
@@ -323,6 +337,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 return Err(CommandError::input_invariant());
             }
         } else {
+            self.back_input_token(last)?;
             for spelling in tokens.into_iter().rev() {
                 self.back_input_token(spelling)?;
             }
@@ -383,9 +398,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.undo_alignment_delivery(&command);
 
         let level = self.command.push_token_level(
-            PackedTokenSpanHandle::backed_up([BackedUpToken {
-                spelling: command.spelling(),
-            }]),
+            PackedTokenSpanHandle::Word(command.spelling()),
             TokenBehavior::BackedUp(treatment),
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,

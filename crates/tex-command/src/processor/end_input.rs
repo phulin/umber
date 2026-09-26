@@ -316,28 +316,27 @@ impl<G> CommandProcessor<'_, '_, G> {
         if !matches!(
             row.storage,
             crate::input::ResidentTokenStorage::Replay { .. }
+                | crate::input::ResidentTokenStorage::BackedUpWord(_)
         ) {
             return Ok(());
         }
-        let crate::input::ResidentTokenStorage::Replay { replay, .. } = row.storage else {
-            unreachable!()
-        };
+        let sources =
+            PackedTokenSources::new(&self.command.input.replay, self.command.attempt.arena());
         if !matches!(row.header.behavior(), TokenBehavior::BackedUp(_))
             || level
-                .stored_indexed_token_at_cold(
-                    PackedTokenSources::new(
-                        &self.command.input.replay,
-                        self.command.attempt.arena(),
-                    ),
-                    self.state,
-                )
+                .stored_indexed_token_at_cold(sources, self.state)
                 .is_some()
             || !matches!(
-                self.command
-                    .input
-                    .replay
-                    .indexed_get_cold(replay, 0)
-                    .map(|spelling| spelling.semantic_token()),
+                level
+                    .stored_span_cold()
+                    .and_then(|span| {
+                        PackedTokenSources::new(
+                            &self.command.input.replay,
+                            self.command.attempt.arena(),
+                        )
+                        .indexed_token_at_cold(&span, 0)
+                    })
+                    .map(|(word, _)| word.semantic_token()),
                 Some(Token::Char {
                     cat: Catcode::EndGroup,
                     ..

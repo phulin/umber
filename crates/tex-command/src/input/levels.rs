@@ -255,6 +255,10 @@ pub(crate) enum ResidentTokenStorage<G> {
         replay: ReplayPayloadId<G>,
         cursor: ResidentReplayCursor,
     },
+    /// TeX82 §325's `back_input` of one delivered token. The single backed-up
+    /// word lives inline in its row, so pushing and retiring the level admits
+    /// and releases nothing in the replay lane.
+    BackedUpWord(TracedTokenWord),
     Durable(tex_state::TokenListId<G>),
     Attempt(AttemptTokenListId),
     MacroBody(MacroBodyCursor<G>),
@@ -449,6 +453,7 @@ impl<G> InputLevel<G> {
             | Self::Resident(ResidentTokenRow {
                 storage:
                     ResidentTokenStorage::Replay { .. }
+                    | ResidentTokenStorage::BackedUpWord(_)
                     | ResidentTokenStorage::Durable(_)
                     | ResidentTokenStorage::Attempt(_)
                     | ResidentTokenStorage::MacroArgument(_),
@@ -527,6 +532,10 @@ impl<G> InputLevel<G> {
                 list: *list,
                 len: header.frame.limit(),
             }),
+            Self::Resident(ResidentTokenRow {
+                storage: ResidentTokenStorage::BackedUpWord(word),
+                ..
+            }) => Some(PackedTokenSpanHandle::Word(*word)),
             Self::Source(_)
             | Self::Resident(ResidentTokenRow {
                 storage: ResidentTokenStorage::MacroBody(_) | ResidentTokenStorage::MacroArgument(_),
@@ -573,6 +582,8 @@ pub(crate) enum PackedTokenSpanHandle<G> {
     },
     /// One attempt-local token list, replayed literally by range.
     AttemptList { list: AttemptTokenListId, len: u32 },
+    /// One inline backed-up word.
+    Word(TracedTokenWord),
 }
 
 impl<G> Clone for PackedTokenSpanHandle<G> {
@@ -590,6 +601,7 @@ impl<G> Clone for PackedTokenSpanHandle<G> {
                 list: *list,
                 len: *len,
             },
+            Self::Word(word) => Self::Word(*word),
         }
     }
 }
@@ -640,6 +652,9 @@ impl<'a, G> PackedTokenSources<'a, G> {
             PackedTokenSpanHandle::DurableList { list, .. } => {
                 list.word_at(index).map(|word| (word, OriginId::UNKNOWN))
             }
+            PackedTokenSpanHandle::Word(word) => {
+                (index == 0).then(|| (word.token_word(), word.origin()))
+            }
         }
     }
 
@@ -662,6 +677,9 @@ impl<'a, G> PackedTokenSources<'a, G> {
                 .map(|word| (word.token_word(), word.origin())),
             PackedTokenSpanHandle::DurableList { list, .. } => {
                 list.word_at(index).map(|word| (word, OriginId::UNKNOWN))
+            }
+            PackedTokenSpanHandle::Word(word) => {
+                (index == 0).then(|| (word.token_word(), word.origin()))
             }
         }
     }
@@ -2196,6 +2214,7 @@ impl<G> PackedTokenSpanHandle<G> {
             Self::Replay { len, .. } => *len as usize,
             Self::DurableList { len, .. } => *len as usize,
             Self::AttemptList { len, .. } => *len as usize,
+            Self::Word(_) => 1,
         }
     }
 }

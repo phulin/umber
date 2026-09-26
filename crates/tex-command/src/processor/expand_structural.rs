@@ -5,8 +5,7 @@ use tex_state::token::{OriginId, Token, TracedTokenWord};
 
 use crate::command::{CommandClass, HotCommand};
 use crate::input::{
-    BackedUpToken, BackupTreatment, PackedTokenSpanHandle, ReplayTrace, RetirementBehavior,
-    TokenBehavior,
+    BackupTreatment, PackedTokenSpanHandle, ReplayTrace, RetirementBehavior, TokenBehavior,
 };
 use crate::observation::{
     CommandObservation, InputReason, InputRecord, InputTransition, RecoveryKind, RecoveryRecord,
@@ -172,9 +171,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .undo_delivery(command.alignment_adjustment());
         self.invalidate_delivery_freshness();
         let level = self.command.push_token_level(
-            PackedTokenSpanHandle::backed_up([BackedUpToken {
-                spelling: command.spelling(),
-            }]),
+            PackedTokenSpanHandle::Word(command.spelling()),
             TokenBehavior::BackedUp(BackupTreatment::Ordinary),
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,

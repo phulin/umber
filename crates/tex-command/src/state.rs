@@ -1976,6 +1976,13 @@ impl<G> CommandState<G> {
                         == Some(crate::input::PackedTokenOwnership::BackedUp)
                     && header.frame.position() >= header.frame.limit()
             }
+            InputLevel::Resident(crate::input::ResidentTokenRow {
+                header,
+                storage: crate::input::ResidentTokenStorage::BackedUpWord(_),
+            }) => {
+                matches!(header.behavior(), TokenBehavior::BackedUp(_))
+                    && header.frame.position() >= header.frame.limit()
+            }
             _ => false,
         };
         if exhausted_backed_up_endv

@@ -1005,6 +1005,12 @@ generation's segmented replay lane. Its traced words and optional source
 provenance are written once at admission. Popping the level releases exactly
 the top entry and returns whole unused segments to reusable high-water storage;
 snapshot roots share immutable active segments and never relocate live words.
+A single backed-up token (TeX82 §325's `back_input`, §326's saved-token
+insertion, and `\expandafter`'s first token) instead owns its one traced word
+inline in its row, so pushing and retiring it admit and release no replay
+entry; the transient-word census still counts it as one token node. e-TeX's
+`\aftergroup` linkage, which extends the backed-up level after its push, keeps
+that level in the replay lane.
 The input-stack vector may keep capacity for reuse, but it must not keep the
 popped source backing.
 
