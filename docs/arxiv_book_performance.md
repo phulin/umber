@@ -278,3 +278,72 @@ PDFs. The binary hash in every receipt is the candidate above. Results are in
 `parity-93/summary.json`; the two rollback regressions also have independent
 receipts in `repro-two/`. These are rendered-output and text parity results,
 not byte-identical PDFs or identical internal PDF object graphs.
+
+## Batched delivery and admitted node reads
+
+The next engine, `99f75a4d9`, extends the existing resident reader to discard
+eligible literal runs during conditional skipping under one frame admission.
+The 4,096-character regression requires one admission, while preserving exact
+per-token fuel and the next unread token. Observed, traced, active-alignment,
+source, brace, and control-sequence boundaries keep their canonical settlement.
+The first ordinary unobserved macro in main-control preflight also activates
+directly from its resolved input, using the expansion loop's shared admission.
+
+The original book exposed an important batch boundary: a returned parameter
+marker has already advanced its replacement cursor. Discarding that transition
+loses the argument, including any conditional delimiters inside it. The fixed
+reader continues through the existing charged parameter transition; scalar and
+batched reads also share replay and alignment continuation. Stored and source
+regressions cover delimiters in arguments, empty arguments, and nested
+forwarding, comparing fuel against observed scalar delivery.
+
+Node reads now borrow contiguous fixed annex payloads after ordinary root and
+publication validation. Recursive copies collect child dependency floors while
+rewriting those children, instead of decoding the destination record again.
+Borrowed traversal reuses its admitted physical blocks. Forward walks use
+short-lived chunk-coordinate scratch with bounded Rust-stack usage; a long-chain
+test on a 128 KiB thread stack guards against recursive stack growth. Single-chunk
+walks and order-independent reverse validity checks remain allocation-free.
+
+The shipping binary SHA-256 is
+`da06fc9ad71202377133c74a50eb6f861309b7805a9483fa4652c6d75c55f4b7`.
+Its predecessor is the `50a8f37a` binary above. The final full native suite and
+quality gate report seven stages passed, zero failed or blocked, and no coverage
+reductions. Original-source replay preserves all 93 papers and 1,678 pages in
+rendered pixels and extracted text. Eight additional LaTeX/pdfLaTeX cases also
+match across TeX Live 2023–2026. Replay authenticates the original source archive,
+reference PDF, and format hashes before running.
+
+The full book still reaches the unchanged 120-second guard (114.59 user seconds,
+120.35 elapsed seconds, 1,225,108 KiB peak RSS). The fresh `cycles:u` profile
+collected 11,891 samples with zero lost samples and 99% process CPU. Expanded
+token delivery remains the largest named family at 28.67% inclusive; conditional
+skipping is 4.85%, durable-to-page copying 9.28%, and page-to-durable copying
+5.28%. These inclusive shares overlap. Inlining and the amount of work reached
+within a fixed time also change sample shares, so they are not speedup estimates.
+
+Frozen binaries, commands, hashes, comparisons, gate logs, and profiles live under
+`.worktrees/slot-2/target/perf-big-cuts/`. The successful corpus results are in
+`parity-93/` and `representatives/`; `full-book/` and `full-book-profile/` retain
+the unchanged-guard runs. The earlier `ab_ba_200m/` candidate failed before the
+fuel endpoint and is not performance evidence. The final paired run validates
+the actual fuel-exhaustion diagnostic, not just the process exit code.
+
+The final isolated A/B/B/A comparison used CPU 11 after builds and corpus runs
+finished. Every run reached the same 200,000,000-action fuel endpoint on the
+original book inputs and format.
+
+| Run          | User CPU seconds | Elapsed seconds | Peak RSS KiB |
+| ------------ | ---------------- | --------------- | ------------ |
+| Baseline A1  | 46.28            | 48.70           | 635,416      |
+| Candidate B1 | 44.20            | 46.68           | 635,156      |
+| Candidate B2 | 43.51            | 45.93           | 635,032      |
+| Baseline A2  | 46.23            | 48.66           | 635,028      |
+
+Median user CPU fell from 46.255 to 43.855 seconds, a 5.2% reduction;
+median elapsed time fell from 48.68 to 46.305 seconds, a 4.9% reduction.
+Peak memory at this fixed-work endpoint is effectively unchanged. This is an
+additional improvement over the preceding engine, measured on a book prefix;
+it does not establish full-book completion or attribute gains to individual
+changes. Receipts are in `verified_ab_ba_200m/` under the artifact directory
+above. The remaining dominant work is token expansion and node copying.

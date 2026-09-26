@@ -86,10 +86,13 @@ Page and mode append-heavy owners retain checked left roots and consume fresh
 `UniquePageList` suffixes. Tail and append are O(1); reverse traversal is
 O(nodes inspected + actual block crossings), with no descriptor lookup or
 binary search. Long forward scans use the ranged callback boundary: it follows
-the sole predecessor chain once, retains that temporary continuation on the
-Rust stack, and invokes the callback in logical order. Its work is O(nodes
-inspected + actual block crossings), with no heap allocation, successor
-metadata, traversal cache, or second topology. Compatibility iterators retain
+the sole predecessor chain once, retaining temporary chunk coordinates inline
+for short walks and spilling for long walks. Callback order remains logical
+order, with O(nodes inspected + actual block crossings) work and bounded Rust
+stack usage. Scratch allocation scales with chunks, not nodes, and is dropped
+at the end of the walk; there is no retained successor metadata, traversal
+cache, or second ownership topology. Single-chunk walks remain allocation-free.
+Order-independent decodability checks walk backward without scratch. Compatibility iterators retain
 an admitted owner-relative cursor inside a packed block, but consumers that
 need a long forward scan must use the callback boundary rather than repeatedly
 resolving the next block from the tail. A scan that must append between source
