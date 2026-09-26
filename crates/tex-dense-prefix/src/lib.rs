@@ -291,6 +291,13 @@ impl<T> Superblock<T> {
         let old_len = self.len;
         self.len = new_len;
         SUPERBLOCKS_TRUNCATED.fetch_add(1, Ordering::Relaxed);
+        if !core::mem::needs_drop::<T>() {
+            // No removed value has drop glue. The shortened initialized prefix
+            // is the complete retirement operation; account for it once rather
+            // than touching every slot solely to increment a diagnostic counter.
+            VALUES_DROPPED.fetch_add((old_len - new_len) as u64, Ordering::Relaxed);
+            return;
+        }
         let mut drain = DrainGuard::<T> {
             allocation: self.allocation,
             next: old_len,

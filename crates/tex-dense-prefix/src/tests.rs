@@ -116,6 +116,23 @@ fn truncate_shortens_first_and_drains_once_in_reverse_order() {
 }
 
 #[test]
+fn trivial_suffix_retirement_preserves_prefix_and_allows_reinitialization() {
+    let mut block = Superblock::<u32>::try_new().expect("block");
+    for value in 0..128 {
+        block.push_with(|slot| slot.insert(value)).expect("push");
+    }
+    block.truncate(2);
+    assert_eq!(block.initialized(), &[0, 1]);
+    assert!(block.get(2).is_none());
+    block.push_with(|slot| slot.insert(999)).expect("reuse");
+    assert_eq!(block.initialized(), &[0, 1, 999]);
+    block.truncate(0);
+    assert!(block.is_empty());
+    block.push_with(|slot| slot.insert(7)).expect("reuse empty");
+    assert_eq!(block.initialized(), &[7]);
+}
+
+#[test]
 fn destructor_panic_continues_draining_without_retry() {
     let dropped = Arc::new(Mutex::new(Vec::new()));
     let mut block = Superblock::<DropRecord>::try_new().expect("block");

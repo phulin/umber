@@ -71,6 +71,13 @@ caller-owned scanner state. Removing those based on names alone would not
 simplify runtime ownership. PDF resource identity is likewise intentionally
 different from realized-font identity.
 
+Superblock retirement distinguishes values with drop glue from plain records.
+For a type without drop glue, shortening the initialized prefix and adding the
+removed count once is sufficient; visiting every removed slot only to update
+an atomic diagnostic counter adds linear work with no ownership effect. Types
+with destructors still drain in reverse order, including the remaining suffix
+after a destructor panics.
+
 ## Evidence and limits
 
 [Book performance investigation](arxiv_book_performance.md) records the original
