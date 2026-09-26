@@ -735,9 +735,19 @@ impl<'a> NodeAnnexCopier<'a> {
     }
 
     pub(super) fn detach_span<Kind>(&self, key: AnnexKey<Kind>) -> Option<SmallVec<[u32; 64]>> {
+        let view = self.source_view().list(key)?;
         let mut words = SmallVec::new();
-        self.source_view()
-            .visit_span(key, |word| words.push(word))?;
+        if let Some(source) = view.contiguous_packed_slice() {
+            words.extend_from_slice(source.get(1..)?);
+        } else {
+            view.visit_range_chunks(1..view.len(), |chunk| {
+                if let Some(source) = chunk.packed_slice() {
+                    words.extend_from_slice(source);
+                } else {
+                    chunk.for_each(|word| words.push(*word));
+                }
+            });
+        }
         Some(words)
     }
 

@@ -5985,6 +5985,15 @@ impl<'a, T> ArenaChunkSlice<'a, T> {
         self.cells.iter()
     }
 
+    /// Borrows the initialized words of a packed block without per-value
+    /// iteration. Optional storage keeps using the checked visitor below.
+    pub(crate) fn packed_slice(&self) -> Option<&'a [T]> {
+        match self.cells {
+            DenseBlockSlice::Packed(cells) => Some(cells),
+            DenseBlockSlice::Optional(_) => None,
+        }
+    }
+
     /// Visits the already-admitted initialized cells without rebuilding an
     /// element-stepping arena iterator.
     pub fn for_each(self, mut visit: impl FnMut(&'a T)) {
@@ -6220,6 +6229,19 @@ impl<'a, T, Lane> ArenaListView<'a, T, Lane> {
     pub fn visit_chunks(&self, mut visit: impl FnMut(ArenaChunkSlice<'a, T>)) {
         let _: core::ops::ControlFlow<core::convert::Infallible> =
             self.try_visit_range_chunks(0..self.len(), |_, cells| {
+                visit(ArenaChunkSlice { cells });
+                core::ops::ControlFlow::Continue(())
+            });
+    }
+
+    /// Visits the selected logical range in initialized chunk slices.
+    pub(crate) fn visit_range_chunks(
+        &self,
+        selected: Range<usize>,
+        mut visit: impl FnMut(ArenaChunkSlice<'a, T>),
+    ) {
+        let _: core::ops::ControlFlow<core::convert::Infallible> =
+            self.try_visit_range_chunks(selected, |_, cells| {
                 visit(ArenaChunkSlice { cells });
                 core::ops::ControlFlow::Continue(())
             });

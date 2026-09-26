@@ -109,6 +109,25 @@ fn fixed_batch_keeps_independent_keys_across_chunk_rotation_and_rollback() {
 }
 
 #[test]
+fn typed_annex_copy_preserves_contiguous_and_cross_chunk_spans() {
+    let mut pool = crate::fork_arena::ChunkPool::with_packed_chunk_bytes(64);
+    let mut source = crate::fork_arena::ForkArena::new();
+    let mut destination = crate::fork_arena::ForkArena::new();
+    for len in [8, 40] {
+        let body: Vec<u32> = (0..len).map(|word| word * 17 + 3).collect();
+        let source_key = NodeAnnexWriter::new(&mut pool, &mut source).append_span::<Fixed>(&body);
+        let mut copier = NodeAnnexCopier::between_regions(&mut pool, &source, &mut destination);
+        let copied_body = copier.detach_span(source_key).expect("source span");
+        let destination_key = copier.append_span::<Fixed>(&copied_body);
+        assert_eq!(copied_body.as_slice(), body);
+        assert_eq!(
+            NodeAnnexView::new(&pool, &destination).detach_span(destination_key),
+            Some(body)
+        );
+    }
+}
+
+#[test]
 fn box_reencoding_clears_construction_stamp_in_both_copy_paths() {
     let mut source = AnnexHarness::new();
     let stamp = crate::node_region::PageBoxSegment::from_words([1, 0, 0, 1, 1, 2, 1, 2])
