@@ -179,6 +179,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
   transfers; dense owners retain direct vector indexing.
 - `src/fork_arena/batch_transfer.rs`: Exclusive batch closure, detachment,
   reattachment, adoption, and promotion of the existing arena lane.
+- `src/fork_arena/compound_transfer.rs`: Exact disjoint interval ownership
+  proof, move, and operation rollback with stable sparse logical positions.
 - `src/fork_arena/whole_region_transfer.rs`: Whole-region closure proofs,
   coordinate validation, and exact suffix detachment for that same lane.
 - `src/format.rs` and `src/format/tests.rs`: Consuming destination-stamped

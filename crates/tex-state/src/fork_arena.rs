@@ -19,6 +19,7 @@ use crate::node_sequence::SemanticSequenceIdentity;
 
 mod batch_transfer;
 mod checkpoint_lifecycle;
+mod compound_transfer;
 mod sparse_chunks;
 mod whole_region_transfer;
 
@@ -2288,7 +2289,6 @@ impl<Lane> ArenaListId<Lane> {
         self.tail.logical_position(self.space)
     }
 
-    #[allow(dead_code)] // Used by the nonresident compact-node codec until its atomic cutover.
     pub(crate) const fn words(self) -> [u32; 8] {
         [
             self.space,
@@ -2302,7 +2302,6 @@ impl<Lane> ArenaListId<Lane> {
         ]
     }
 
-    #[allow(dead_code)] // Used by the nonresident compact-node codec until its atomic cutover.
     pub(crate) const fn from_words(words: [u32; 8]) -> Option<Self> {
         if words[7] == 0 {
             return if words[0] == 0
@@ -2737,6 +2736,19 @@ pub(crate) struct TransferredInterval<Lane> {
     source: u32,
     destination: u32,
     start: u32,
+    end: u32,
+    _lane: PhantomData<fn(Lane) -> Lane>,
+}
+
+/// One operation-local loan of several disjoint chunk intervals. Vacancies
+/// between the selected intervals retain their original logical positions.
+pub(crate) struct TransferredIntervals<Lane> {
+    source: u32,
+    destination: u32,
+    ranges: Vec<std::ops::Range<u32>>,
+    live_counts: Vec<u32>,
+    source_current_start: u32,
+    base: u32,
     end: u32,
     _lane: PhantomData<fn(Lane) -> Lane>,
 }

@@ -24,7 +24,6 @@ impl SparseChunks {
         self.logical_len
     }
 
-    #[cfg(test)]
     pub(super) fn live_len(&self) -> usize {
         self.live.len()
     }
@@ -180,6 +179,107 @@ impl SparseChunks {
         keys
     }
 
+    /// Detaches a logical interval whose existing vacancies stay vacant in
+    /// both envelopes. Only its live keys change semantic owner.
+    pub(super) fn take_range(&mut self, start: usize, end: usize) -> Self {
+        assert!(start <= end && end <= self.logical_len);
+        let physical_start = start - self.vacant_before(start);
+        let physical_end = end - self.vacant_before(end);
+        let live = self.live.drain(physical_start..physical_end).collect();
+        let mut selected_gaps = Vec::new();
+        let mut remaining_gaps = Vec::with_capacity(self.gaps.len() + 1);
+        for gap in self.gaps.drain(..) {
+            let clipped_start = gap.start.max(start);
+            let clipped_end = gap.end.min(end);
+            if clipped_start < clipped_end {
+                selected_gaps.push(Gap {
+                    start: clipped_start - start,
+                    end: clipped_end - start,
+                    vacant_through: 0,
+                });
+            }
+            if gap.start < start {
+                remaining_gaps.push(Gap {
+                    start: gap.start,
+                    end: gap.end.min(start),
+                    vacant_through: 0,
+                });
+            }
+            if gap.end > end {
+                remaining_gaps.push(Gap {
+                    start: gap.start.max(end),
+                    end: gap.end,
+                    vacant_through: 0,
+                });
+            }
+        }
+        let mut vacant = 0;
+        for gap in &mut remaining_gaps {
+            vacant += gap.end - gap.start;
+            gap.vacant_through = vacant;
+        }
+        self.gaps = remaining_gaps;
+        self.insert_gap(start, end);
+        let mut selected = Self {
+            live,
+            gaps: selected_gaps,
+            logical_len: end - start,
+        };
+        selected.rebuild_gap_prefixes();
+        selected
+    }
+
+    /// Returns a sparse loan to its original vacant interval without filling
+    /// holes that belonged to other independently moved owners.
+    pub(super) fn restore_sparse_range(&mut self, start: usize, selected: Self) {
+        let end = start + selected.logical_len;
+        if start == end {
+            return;
+        }
+        let gap_index = self.gap_after_or_at(start);
+        let gap = *self
+            .gaps
+            .get(gap_index)
+            .expect("reverse sparse loan names a vacant interval");
+        assert!(gap.start <= start && end <= gap.end);
+        let physical_start = start - self.vacant_before(start);
+        self.live
+            .splice(physical_start..physical_start, selected.live);
+        let mut replacement = Vec::with_capacity(selected.gaps.len() + 2);
+        if gap.start < start {
+            replacement.push(Gap {
+                start: gap.start,
+                end: start,
+                vacant_through: 0,
+            });
+        }
+        replacement.extend(selected.gaps.into_iter().map(|gap| Gap {
+            start: start + gap.start,
+            end: start + gap.end,
+            vacant_through: 0,
+        }));
+        if end < gap.end {
+            replacement.push(Gap {
+                start: end,
+                end: gap.end,
+                vacant_through: 0,
+            });
+        }
+        self.gaps.splice(gap_index..=gap_index, replacement);
+        let mut merged: Vec<Gap> = Vec::with_capacity(self.gaps.len());
+        for gap in self.gaps.drain(..) {
+            if let Some(last) = merged.last_mut()
+                && last.end == gap.start
+            {
+                last.end = gap.end;
+            } else {
+                merged.push(gap);
+            }
+        }
+        self.gaps = merged;
+        self.rebuild_gap_prefixes();
+    }
+
     /// Fills the exact vacant interval named by a reverse ownership loan.
     pub(super) fn restore_range(&mut self, start: usize, keys: Vec<LogicalChunkId>) {
         let end = start + keys.len();
@@ -231,6 +331,15 @@ impl SparseChunks {
         for key in keys {
             self.push(key);
         }
+    }
+
+    pub(super) fn extend_vacant(&mut self, count: usize) {
+        if count == 0 {
+            return;
+        }
+        let start = self.logical_len;
+        self.logical_len += count;
+        self.insert_gap(start, self.logical_len);
     }
 
     pub(super) fn append(&mut self, mut suffix: Self) {

@@ -186,6 +186,14 @@ follows the build mark. The selected node and annex ranges move together under
 one receipt, and all predecessor and child coordinates must still resolve
 through the destination's sole owner after the source releases them.
 
+An interval loan may name several disjoint selected ranges. Its destination
+retains the source's logical spacing: excluded page-owned migrations and
+already consumed nested boxes occupy compact vacant ranges, not copied
+payload. A reverse loan restores only the live selected keys and leaves those
+other vacancies untouched. A candidate's private current suffix may move;
+its retained checkpoint prefix cannot, because the retained owner still
+needs the earlier payload.
+
 The arena records vacant logical slots when an older interval moves out. Its
 authoritative owner envelope stores live chunk keys densely and compresses
 vacancies as ordered, nonoverlapping logical ranges. A gap contributes to the

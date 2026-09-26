@@ -2637,6 +2637,248 @@ fn sparse_checkpoint_candidate_reattaches_only_live_prior_slots() {
 }
 
 #[test]
+fn compound_intervals_keep_excluded_page_chunks_and_rollback_exactly() {
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(4);
+    let mut page = ForkArena::<u32, ActiveLane>::new();
+    let _prefix = list(&mut page, &mut pool, [1]);
+    let _second_prefix = list(&mut page, &mut pool, [2]);
+    let first = list(&mut page, &mut pool, [3]);
+    let excluded = list(&mut page, &mut pool, [4]);
+    let last = list(&mut page, &mut pool, [5]);
+    page.seal_boundary(&mut pool)
+        .expect("all source chunks sealed");
+    let mut durable = page.empty_lane::<PageLane>();
+    let ranges = [2..3, 4..5];
+    let mut visited = Vec::new();
+    page.visit_interval_values(&pool, &ranges, |value| {
+        visited.push(*value);
+        Ok(())
+    })
+    .expect("selected direct values visit");
+    assert_eq!(visited, [3, 5]);
+    let loan = page
+        .transfer_interior_intervals(&mut pool, &mut durable, &ranges)
+        .expect("disjoint exclusive intervals move");
+    assert_eq!(durable.payload_base_position(), 2);
+    assert_eq!(durable.payload_position_end(), 5);
+    assert_eq!(durable.live_key_at(3), None);
+    assert_eq!(
+        page.list(&pool, excluded)
+            .expect("excluded root stays page")
+            .get(0),
+        Some(&4)
+    );
+    assert_eq!(
+        durable
+            .list(&pool, super::rebrand_list(first, durable.owner))
+            .expect("first selected root")
+            .get(0),
+        Some(&3)
+    );
+    assert_eq!(
+        durable
+            .list(&pool, super::rebrand_list(last, durable.owner))
+            .expect("last selected root")
+            .get(0),
+        Some(&5)
+    );
+    let _temporary_wrapper = {
+        let mut builder = durable.begin_builder(&mut pool).expect("wrapper builder");
+        builder.push(9).expect("wrapper append");
+        builder.finish()
+    };
+    page.rollback_interior_intervals(&mut pool, &mut durable, loan)
+        .expect("exact disjoint loan reverses and drops wrapper suffix");
+    assert_eq!(durable.payload_position_end(), 0);
+    assert_eq!(
+        page.list(&pool, first)
+            .expect("first page root restored")
+            .get(0),
+        Some(&3)
+    );
+    assert_eq!(
+        page.list(&pool, last)
+            .expect("last page root restored")
+            .get(0),
+        Some(&5)
+    );
+    assert_eq!(
+        page.list(&pool, excluded)
+            .expect("excluded page root remains")
+            .get(0),
+        Some(&4)
+    );
+}
+
+#[test]
+fn compound_interval_preserves_nested_consumed_box_hole() {
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(4);
+    let mut page = ForkArena::<u32, ActiveLane>::new();
+    let _prefix = list(&mut page, &mut pool, [1]);
+    let first = list(&mut page, &mut pool, [2]);
+    let nested = list(&mut page, &mut pool, [3]);
+    let last = list(&mut page, &mut pool, [4]);
+    page.seal_boundary(&mut pool)
+        .expect("isolated boxes sealed");
+    let mut nested_durable = page.empty_lane::<PageLane>();
+    page.transfer_interior_interval(&mut pool, &mut nested_durable, 2, 3)
+        .expect("nested box consumes its own chunk");
+    let mut outer_durable = page.empty_lane::<PageLane>();
+    let outer_body = 1..4;
+    let loan = page
+        .transfer_interior_intervals(
+            &mut pool,
+            &mut outer_durable,
+            std::slice::from_ref(&outer_body),
+        )
+        .expect("outer body moves around nested vacant slot");
+    assert_eq!(outer_durable.live_key_at(2), None);
+    assert_eq!(outer_durable.payload_base_position(), 1);
+    assert_eq!(outer_durable.payload_position_end(), 4);
+    page.rollback_interior_intervals(&mut pool, &mut outer_durable, loan)
+        .expect("outer interval restores without filling nested hole");
+    assert_eq!(page.live_key_at(2), None);
+    assert_eq!(
+        page.list(&pool, first).expect("first restored").get(0),
+        Some(&2)
+    );
+    assert_eq!(
+        page.list(&pool, last).expect("last restored").get(0),
+        Some(&4)
+    );
+    assert_eq!(
+        nested_durable
+            .list(&pool, super::rebrand_list(nested, nested_durable.owner))
+            .expect("nested box still owns its chunk")
+            .get(0),
+        Some(&3)
+    );
+}
+
+#[test]
+fn compound_preflight_rejects_predecessor_in_excluded_gap() {
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(4);
+    let mut page = ForkArena::<u32, ActiveLane>::new();
+    let root = list(&mut page, &mut pool, [10, 20, 30]);
+    page.seal_boundary(&mut pool).expect("source sealed");
+    let durable = page.empty_lane::<PageLane>();
+    assert_eq!(
+        page.preflight_interior_intervals(&pool, &durable, &[0..1, 2..3]),
+        Err(ForkArenaError::InvalidRegion)
+    );
+    assert_eq!(
+        page.list(&pool, root).expect("source unchanged").get(1),
+        Some(&20)
+    );
+}
+
+#[test]
+fn compound_preflight_rejects_direct_child_in_excluded_gap() {
+    let mut pool = ChunkPool::<ChildTracked>::with_chunk_bytes(8);
+    let mut page = ForkArena::<ChildTracked, ActiveLane>::new();
+    let child = region_list(
+        &mut page,
+        &mut pool,
+        [ChildTracked {
+            value: 1,
+            child: super::ArenaListId::empty(),
+        }],
+    );
+    let _parent = region_list(&mut page, &mut pool, [ChildTracked { value: 2, child }]);
+    page.seal_boundary(&mut pool).expect("source sealed");
+    let durable = page.empty_lane::<PageLane>();
+    let parent_only = 1..2;
+    assert_eq!(
+        page.preflight_interior_intervals(&pool, &durable, std::slice::from_ref(&parent_only)),
+        Err(ForkArenaError::InvalidRegion)
+    );
+}
+
+#[test]
+fn empty_compound_loan_discards_later_destination_wrapper() {
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(4);
+    let mut page = ForkArena::<u32, ActiveLane>::new();
+    let source = list(&mut page, &mut pool, [1]);
+    let mut durable = page.empty_lane::<PageLane>();
+    let loan = page
+        .transfer_interior_intervals(&mut pool, &mut durable, &[])
+        .expect("empty body needs no chunk transfer");
+    {
+        let mut builder = durable.begin_builder(&mut pool).expect("wrapper builder");
+        builder.push(9).expect("wrapper append");
+        builder.finish();
+    }
+    page.rollback_interior_intervals(&mut pool, &mut durable, loan)
+        .expect("empty loan drops constructed wrapper");
+    assert_eq!(durable.payload_position_end(), 0);
+    assert_eq!(
+        page.list(&pool, source).expect("source retained").get(0),
+        Some(&1)
+    );
+}
+
+#[test]
+fn compound_current_suffix_moves_without_touching_retained_prefix() {
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(4);
+    let mut page = ForkArena::<u32, ActiveLane>::new();
+    let prefix = list(&mut page, &mut pool, [1]);
+    let boundary = page.seal_boundary(&mut pool).expect("prefix sealed");
+    let checkpoint = page.checkpoint_mark(boundary).expect("checkpoint");
+    page.begin_checkpoint_candidate(&mut pool, checkpoint)
+        .expect("candidate fork");
+    let candidate = list(&mut page, &mut pool, [2]);
+    page.seal_boundary(&mut pool).expect("candidate sealed");
+    let mut durable = page.empty_lane::<PageLane>();
+    let candidate_only = 1..2;
+    let loan = page
+        .transfer_interior_intervals(
+            &mut pool,
+            &mut durable,
+            std::slice::from_ref(&candidate_only),
+        )
+        .expect("private current suffix moves");
+    assert_eq!(
+        page.list(&pool, prefix).expect("prefix retained").get(0),
+        Some(&1)
+    );
+    page.rollback_interior_intervals(&mut pool, &mut durable, loan)
+        .expect("candidate move reverses");
+    assert_eq!(
+        page.list(&pool, candidate)
+            .expect("candidate restored")
+            .get(0),
+        Some(&2)
+    );
+}
+
+#[test]
+fn compound_rejects_retained_checkpoint_prefix_box() {
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(4);
+    let mut page = ForkArena::<u32, ActiveLane>::new();
+    let retained_box = list(&mut page, &mut pool, [1]);
+    let boundary = page.seal_boundary(&mut pool).expect("checkpoint boundary");
+    let checkpoint = page.checkpoint_mark(boundary).expect("retained checkpoint");
+    page.begin_checkpoint_candidate(&mut pool, checkpoint)
+        .expect("candidate starts");
+    let durable = page.empty_lane::<PageLane>();
+    let retained_prefix = 0..1;
+    assert_eq!(
+        page.preflight_interior_intervals(&pool, &durable, std::slice::from_ref(&retained_prefix)),
+        Err(ForkArenaError::InvalidRegion),
+        "a retained prefix needs history-preserving copy"
+    );
+    let settlement = page.seal_boundary(&mut pool).expect("candidate settlement");
+    page.reject_checkpoint_candidate(&mut pool, settlement)
+        .expect("retained checkpoint restores");
+    assert_eq!(
+        page.list(&pool, retained_box)
+            .expect("retained box still admitted")
+            .get(0),
+        Some(&1)
+    );
+}
+
+#[test]
 fn logical_positions_are_pool_stable_and_foreign_spaces_fail_closed() {
     let mut pool = ChunkPool::<u32>::with_chunk_bytes(16);
     let mut arena = ForkArena::<u32, ActiveLane>::new();
