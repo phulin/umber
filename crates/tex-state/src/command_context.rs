@@ -1833,7 +1833,7 @@ impl<'a, G> CommandContext<'a, G> {
         source: u16,
         destination: u16,
     ) -> Result<Option<UniqueBoxRegisterTake>, crate::NodePromotionError> {
-        if !self.can_assign_unique_box_register_take(source) {
+        if !self.can_take_unique_box_source(source) {
             return Ok(None);
         }
         self.promote_output_box_if_needed(destination)?;
@@ -1862,8 +1862,10 @@ impl<'a, G> CommandContext<'a, G> {
             .map_err(|_| crate::NodePromotionError::Values(crate::PromotionError::AllocationFailed))
     }
 
+    /// Whether the current durable box can be consumed without preserving it
+    /// for checkpoint history or a live page-output carrier.
     #[must_use]
-    pub fn can_assign_unique_box_register_take(&self, source: u16) -> bool {
+    pub fn can_take_unique_box_source(&self, source: u16) -> bool {
         (source != u16::from(u8::MAX) || self.page.output_box().is_empty())
             && self.durable_boxes.has_unique_current(source)
     }

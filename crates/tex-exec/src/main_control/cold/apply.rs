@@ -2524,7 +2524,7 @@ pub(in crate::main_control) fn apply<G>(
                         report_improper_setbox(context, stores, command.diagnostic_effects)?;
                     }
                     ScannedBoxShiftPayload::BoxRegister { index, copy } => {
-                        if !*copy && stores.can_assign_unique_box_register_take(*index) {
+                        if !*copy && stores.can_take_unique_box_source(*index) {
                             let pending = boxes
                                 .pending_setbox
                                 .take()

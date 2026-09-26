@@ -642,6 +642,11 @@ fn vsplit_void_nonvbox_pruning_marks_and_packaging_matrix() {
         },
     );
 
+    let construction_copies = with_run(
+        br"\setbox0=\vbox{\hrule height3pt}\end",
+        false,
+        |_, source| source.page_material_counters().source_nodes_copied,
+    );
     with_run(
         br"\setbox0=\vbox{\hrule height3pt}\setbox1=\vsplit0 to30pt",
         false,
@@ -649,6 +654,11 @@ fn vsplit_void_nonvbox_pruning_marks_and_packaging_matrix() {
             assert_eq!(register_shapes(complete, 0), None);
             assert!(
                 matches!(register_shapes(complete, 1).as_deref(), Some([Shape::VBox { height, children, .. }]) if *height == 30 * Scaled::UNITY && matches!(children.as_slice(), [Shape::Rule(_, Some(h), _) ] if *h == 3 * Scaled::UNITY))
+            );
+            assert_eq!(
+                complete.page_material_counters().source_nodes_copied - construction_copies,
+                2,
+                "only the returned box construction copies its wrapper and rule"
             );
         },
     );

@@ -2,13 +2,13 @@
 
 use std::collections::BTreeMap;
 
-use tex_state::CommandContext;
 use tex_state::diagnostic::DiagnosticEffects;
 use tex_state::env::banks::{DimenParam, GlueParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::Node;
 use tex_state::page::PageMark;
 use tex_state::scaled::Scaled;
+use tex_state::{CommandBoxKind, CommandContext};
 use tex_typeset::{PackSpec, VerticalBreakError, vert_break};
 
 use crate::ExecError;
@@ -32,20 +32,34 @@ pub(crate) fn split_vbox_register<G>(
     let split_max_depth = stores.dimen_param(DimenParam::SPLIT_MAX_DEPTH);
     #[cfg(feature = "profiling")]
     let copied_before = stores.page_material_counters().source_nodes_copied;
-    let Some(source) = stores.copy_box_to_page(index) else {
+    // TeX82 §977 consumes a vbox, but a non-vbox diagnostic must leave its
+    // source intact. Borrow the kind before opening the durable-to-page loan.
+    // The unique-current gate excludes checkpoint-retained owners and the
+    // live page-output carrier; those still need an independent source copy.
+    let can_move_source = stores.box_kind(index) == Some(CommandBoxKind::Vertical)
+        && stores.can_take_unique_box_source(index);
+    let source = if can_move_source {
+        stores.take_box_to_page(index)
+    } else {
+        stores.copy_box_to_page(index)
+    };
+    let Some(source) = source else {
         clear_split_marks(stores);
         return Ok(None);
     };
     #[cfg(feature = "profiling")]
-    tex_state::measurement::record_vsplit_source_copy(
-        stores
+    {
+        let copied_nodes = stores
             .page_material_counters()
             .source_nodes_copied
-            .saturating_sub(copied_before),
-    );
+            .saturating_sub(copied_before);
+        if copied_nodes != 0 {
+            tex_state::measurement::record_vsplit_source_copy(copied_nodes);
+        }
+    }
     let source_node = stores
         .page_node_list(source)
-        .expect("copied box belongs to the live page arena")
+        .expect("materialized box belongs to the live page arena")
         .get(0)
         .map(|node| node.to_owned());
     let Some(source_node) = source_node else {

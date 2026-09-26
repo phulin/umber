@@ -278,6 +278,40 @@ The same report separately attributes the already completed source copy at
 path. This origin count is a subset of explicit durable-to-page copies and
 does not imply that destructive splitting can always take a durable owner.
 
+### Unique `\vsplit` source transfer
+
+TeX82 §§977–979 consume a vertical box register and replace it with the
+pruned remainder, while returning a newly packed prefix. An hbox operand
+instead reports an error and leaves the register unchanged. A void operand
+clears split marks without creating either box. The source's current group
+level must survive replacement, and a saved outer binding or checkpoint
+history must still restore its exact old owner. Split marks, saved discards,
+infinite-shrink diagnostics, and the breakpoint belong to the same command
+operation as the register change.
+
+The vertical kind can be read through the admitted current box before any
+destructive action. Only an authenticated current durable owner that the box
+bank identifies as unique may move to the page; a live page output-box carrier
+and a checkpoint-retained owner continue through the independent semantic
+copy path. A group save of an earlier binding does not retain the current
+owner. The bank's existing `take_to_page` operation records a binding inverse
+and an exact durable-to-page transfer loan. The ordinary operation commit
+retires the old durable slot after the split remainder has been installed.
+On an error after the take but before remainder publication, rollback reverses
+the replacement binding, returns the loan's paired chunks to that exact slot,
+and restores the source cell before truncating the page suffix. A recoverable
+non-vbox error takes the old copy path and never opens the transfer loan.
+
+The moved source remains page-owned while `vert_break` selects a direct-record
+prefix and remainder. Existing slicing, top pruning, mark updates, and packing
+operate on those page coordinates. Publishing the remainder uses the existing
+page-to-durable copy, so its register closure is independent of the returned
+prefix even when source child references repeat. This is a unique _move_ of
+one semantic source, not a certificate for bulk cloning or aliasing. The
+operation tests must cover the non-vbox preservation path, successful partial
+and complete splits, group restoration, retained checkpoint fallback, and a
+failure after the loan opens.
+
 ## Production cutover
 
 As of 2026-08-28, ordinary execution uses these owners rather than retaining
