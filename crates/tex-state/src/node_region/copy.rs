@@ -1,7 +1,7 @@
 //! Chunk-batched explicit copies between independently owned node regions.
 
 use super::*;
-use crate::node_record::{CopiedBoxBodyStamp, NodeAnnexFixedCopyReader, NodeAnnexWriter};
+use crate::node_record::{CopiedBoxBodyStamp, NodeAnnexCopyReader, NodeAnnexWriter};
 use smallvec::SmallVec;
 
 struct CopiedBoxEnvelope {
@@ -27,7 +27,7 @@ pub(super) struct CopyContext<'a> {
     annex_pool: &'a mut ChunkPool<u32>,
     source: &'a ForkArena<RegionNode, PageMaterialLane>,
     source_annex: &'a ForkArena<u32, NodeAnnexLane>,
-    fixed_source: NodeAnnexFixedCopyReader<'a>,
+    annex_reader: NodeAnnexCopyReader<'a>,
     destination: &'a mut ForkArena<RegionNode, PageMaterialLane>,
     destination_annex: &'a mut ForkArena<u32, NodeAnnexLane>,
     destination_region: NodeRegionId,
@@ -161,7 +161,7 @@ impl<'a> CopyContext<'a> {
             annex_pool: &mut pool.annex_chunks,
             source: &source.pub_arena,
             source_annex: &source.annex_arena,
-            fixed_source: NodeAnnexFixedCopyReader::new(&source.annex_arena),
+            annex_reader: NodeAnnexCopyReader::new(&source.annex_arena),
             destination_region: destination.id,
             destination: &mut destination.pub_arena,
             destination_annex: &mut destination.annex_arena,
@@ -234,7 +234,7 @@ impl<'a> CopyContext<'a> {
                 if record.has_fixed_copy_payload() {
                     let (body_start, body_len, fields) = record
                         .with_cached_fixed_copy_body(
-                            &mut self.fixed_source,
+                            &mut self.annex_reader,
                             self.annex_pool,
                             |body, fields| {
                                 let start = self.fixed_words.len();
@@ -355,7 +355,7 @@ impl<'a> CopyContext<'a> {
                     .dependency_floors_for_region_lists(self.pool, |visit| {
                         reencoded = record.reencode_between_regions(
                             self.annex_pool,
-                            self.source_annex,
+                            &mut self.annex_reader,
                             self.destination_annex,
                             |_| {
                                 let child = children.next()?;

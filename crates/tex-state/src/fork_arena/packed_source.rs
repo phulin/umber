@@ -1,4 +1,4 @@
-//! Short-borrow fixed-body reads from an immutable source owner.
+//! Short-borrow packed body and span reads from an immutable source owner.
 
 use super::*;
 
@@ -16,12 +16,12 @@ struct CachedPackedChunk {
 /// The source arena borrow excludes retirement and append while this reader
 /// exists. Destination publication can still grow or remap the shared pool,
 /// so the cache owns only scalar coordinates and reborrows payload on demand.
-pub(crate) struct FixedPackedChunkReader<'a, T, Lane> {
+pub(crate) struct PackedSourceChunkReader<'a, T, Lane> {
     arena: &'a ForkArena<T, Lane>,
     cached: Option<CachedPackedChunk>,
 }
 
-impl<'a, T, Lane> FixedPackedChunkReader<'a, T, Lane> {
+impl<'a, T, Lane> PackedSourceChunkReader<'a, T, Lane> {
     pub(crate) const fn new(arena: &'a ForkArena<T, Lane>) -> Self {
         Self {
             arena,
@@ -29,7 +29,11 @@ impl<'a, T, Lane> FixedPackedChunkReader<'a, T, Lane> {
         }
     }
 
-    /// Lends one exact body in a single logical packed chunk. The caller must
+    pub(crate) const fn arena(&self) -> &'a ForkArena<T, Lane> {
+        self.arena
+    }
+
+    /// Lends one exact range in a single logical packed chunk. The caller must
     /// separately authenticate the publication serial stored in its first
     /// word; every other key bound is checked here on every read.
     pub(crate) fn inspect<'p, R>(

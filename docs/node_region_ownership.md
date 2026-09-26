@@ -84,16 +84,19 @@ the body directly into bounded, flat operation scratch. A descriptor records the
 body's offset and child-field offsets without owning another copy of the body.
 Within one copy operation, a source reader may retain one authenticated logical
 annex chunk to avoid repeating owner and endpoint admission for every fixed
-body in that chunk. The reader borrows the immutable source arena for its whole
+body or short span in that chunk. The reader borrows the immutable source arena for its whole
 lifetime and keeps only the logical key, initialized bound, physical position,
 and pool admission epoch as scalar state. Destination publication may grow the
 shared pool, so each body takes a fresh short immutable pool borrow; no payload
 slice or pointer survives publication or recursion. A changed epoch or its
 saturated terminal value forces full re-admission before a cached physical
-position is used. Every body independently checks the exact same-chunk head,
-tail, length, initialized bound, and publication serial. The reader and its
-cache die with the copy context, and source retirement requires the exclusive
-borrow that the reader prevents.
+position is used. Every fixed body or short span independently checks its exact
+same-chunk head, tail, length, initialized bound, and publication serial.
+Spans crossing logical chunk boundaries take the canonical admitted-list
+visitor, which authenticates both endpoints and each visited chunk. The same
+typed annex reencoder handles both cases; only its source read policy changes.
+The reader and its cache die with the copy context, and source retirement
+requires the exclusive borrow that the reader prevents.
 Each occurrence of each nonempty child is copied independently; the copied
 coordinates replace those fields in the flat scratch. Empty child coordinates
 already name the same empty list in either region. The annex writer gives each

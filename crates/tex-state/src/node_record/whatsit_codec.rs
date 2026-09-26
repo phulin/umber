@@ -433,7 +433,7 @@ impl NodeRecord<PageMaterialLane> {
 
     pub(super) fn reencode_whatsit(
         self,
-        annex: &mut NodeAnnexCopier<'_>,
+        annex: &mut NodeAnnexCopier<'_, '_>,
     ) -> Option<(Self, Option<usize>)> {
         let subtype = self.subtype();
         let flags = self.flags();

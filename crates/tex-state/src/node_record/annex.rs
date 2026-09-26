@@ -2,7 +2,7 @@ use super::box_descriptor::{decode_box_construction_descriptor, valid_box_exclus
 use super::*;
 
 use crate::fork_arena::{
-    ArenaListId, ChunkPool, FixedPackedChunkReader, ForkArena, ForkArenaError,
+    ArenaListId, ChunkPool, ForkArena, ForkArenaError, PackedSourceChunkReader,
 };
 use crate::node_region::NodeAnnexLane;
 use smallvec::SmallVec;
@@ -55,12 +55,16 @@ impl<Kind> AnnexKey<Kind> {
         ])
     }
 
+    fn same_chunk(self) -> bool {
+        self.words[0] == self.words[3] && self.words[1] == self.words[4]
+    }
+
     fn list(self, space: u32, chunk_capacity: usize) -> Option<ArenaListId<NodeAnnexLane>> {
         let chunk_capacity = u32::try_from(chunk_capacity).ok()?;
         let head_offset = self.words[2];
         let len = self.words[5];
         let end = head_offset.checked_add(len)?;
-        let tail_offset = if self.words[0] == self.words[3] && self.words[1] == self.words[4] {
+        let tail_offset = if self.same_chunk() {
             end
         } else {
             match end % chunk_capacity {
@@ -91,14 +95,14 @@ pub struct NodeAnnexWriter<'a> {
     dependency_floor: usize,
 }
 
-pub(super) enum NodeAnnexCopySource<'a> {
+pub(super) enum NodeAnnexCopySource<'a, 'source> {
     SameRegion,
-    OtherRegion(&'a ForkArena<u32, NodeAnnexLane>),
+    OtherRegion(&'a mut NodeAnnexCopyReader<'source>),
 }
 
-pub(super) struct NodeAnnexCopier<'a> {
+pub(super) struct NodeAnnexCopier<'a, 'source> {
     pool: &'a mut ChunkPool<u32>,
-    source: NodeAnnexCopySource<'a>,
+    source: NodeAnnexCopySource<'a, 'source>,
     destination: &'a mut ForkArena<u32, NodeAnnexLane>,
     dependency_floor: usize,
 }
@@ -109,11 +113,11 @@ pub struct NodeAnnexView<'a> {
     arena: &'a ForkArena<u32, NodeAnnexLane>,
 }
 
-/// Operation-scoped fixed-body source admission. The borrowed source arena
+/// Operation-scoped body and short-span source admission. The borrowed source arena
 /// cannot retire while this reader exists; only scalar chunk state survives
 /// destination publication into the shared pool.
-pub(crate) struct NodeAnnexFixedCopyReader<'a> {
-    chunks: FixedPackedChunkReader<'a, u32, NodeAnnexLane>,
+pub(crate) struct NodeAnnexCopyReader<'a> {
+    chunks: PackedSourceChunkReader<'a, u32, NodeAnnexLane>,
 }
 
 pub(super) enum LigaturePayload {}
@@ -624,10 +628,10 @@ impl<'a> NodeAnnexWriter<'a> {
     }
 }
 
-impl<'a> NodeAnnexFixedCopyReader<'a> {
+impl<'a> NodeAnnexCopyReader<'a> {
     pub(crate) const fn new(arena: &'a ForkArena<u32, NodeAnnexLane>) -> Self {
         Self {
-            chunks: FixedPackedChunkReader::new(arena),
+            chunks: PackedSourceChunkReader::new(arena),
         }
     }
 
@@ -638,14 +642,36 @@ impl<'a> NodeAnnexFixedCopyReader<'a> {
         body_words: usize,
         inspect: impl FnOnce(&[u32]) -> Option<R>,
     ) -> Option<R> {
+        self.inspect_words(pool, key, body_words.checked_add(1)?, inspect)
+    }
+
+    fn inspect_span<Kind, R>(
+        &mut self,
+        pool: &ChunkPool<u32>,
+        key: AnnexKey<Kind>,
+        inspect: impl FnOnce(&[u32]) -> Option<R>,
+    ) -> Option<R> {
+        self.inspect_words(pool, key, key.words[5] as usize, inspect)
+    }
+
+    fn inspect_words<Kind, R>(
+        &mut self,
+        pool: &ChunkPool<u32>,
+        key: AnnexKey<Kind>,
+        expected_words: usize,
+        inspect: impl FnOnce(&[u32]) -> Option<R>,
+    ) -> Option<R> {
         let list = key.list(pool.logical_space(), pool.chunk_capacity())?;
-        self.chunks
-            .inspect(pool, list, body_words.checked_add(1)?, |words| {
-                if words.first()? != &key.words[6] {
-                    return None;
-                }
-                inspect(words)
-            })
+        self.chunks.inspect(pool, list, expected_words, |words| {
+            if words.first()? != &key.words[6] {
+                return None;
+            }
+            inspect(words)
+        })
+    }
+
+    fn source_arena(&self) -> &ForkArena<u32, NodeAnnexLane> {
+        self.chunks.arena()
     }
 }
 
@@ -889,7 +915,7 @@ impl<'a> NodeAnnexView<'a> {
     }
 }
 
-impl<'a> NodeAnnexCopier<'a> {
+impl<'a, 'source> NodeAnnexCopier<'a, 'source> {
     pub(super) fn same_region(
         pool: &'a mut ChunkPool<u32>,
         arena: &'a mut ForkArena<u32, NodeAnnexLane>,
@@ -904,7 +930,7 @@ impl<'a> NodeAnnexCopier<'a> {
 
     pub(super) fn between_regions(
         pool: &'a mut ChunkPool<u32>,
-        source: &'a ForkArena<u32, NodeAnnexLane>,
+        source: &'a mut NodeAnnexCopyReader<'source>,
         destination: &'a mut ForkArena<u32, NodeAnnexLane>,
     ) -> Self {
         Self {
@@ -916,21 +942,37 @@ impl<'a> NodeAnnexCopier<'a> {
     }
 
     pub(super) fn source_view(&self) -> NodeAnnexView<'_> {
-        let arena = match self.source {
+        let arena = match &self.source {
             NodeAnnexCopySource::SameRegion => &*self.destination,
-            NodeAnnexCopySource::OtherRegion(arena) => arena,
+            NodeAnnexCopySource::OtherRegion(reader) => reader.source_arena(),
         };
         NodeAnnexView::new(&*self.pool, arena)
     }
 
     pub(super) fn resolve_fixed_array<Kind, const N: usize>(
-        &self,
+        &mut self,
         key: AnnexKey<Kind>,
     ) -> Option<[u32; N]> {
-        self.source_view().resolve_fixed_array(key)
+        match &mut self.source {
+            NodeAnnexCopySource::SameRegion => {
+                NodeAnnexView::new(&*self.pool, &*self.destination).resolve_fixed_array(key)
+            }
+            NodeAnnexCopySource::OtherRegion(reader) => {
+                reader.inspect_fixed(&*self.pool, key, N, |words| words.get(1..)?.try_into().ok())
+            }
+        }
     }
 
-    pub(super) fn detach_span<Kind>(&self, key: AnnexKey<Kind>) -> Option<SmallVec<[u32; 64]>> {
+    pub(super) fn detach_span<Kind>(&mut self, key: AnnexKey<Kind>) -> Option<SmallVec<[u32; 64]>> {
+        if key.same_chunk()
+            && let NodeAnnexCopySource::OtherRegion(reader) = &mut self.source
+        {
+            return reader.inspect_span(&*self.pool, key, |source| {
+                let mut words = SmallVec::new();
+                words.extend_from_slice(source.get(1..)?);
+                Some(words)
+            });
+        }
         let view = self.source_view().list(key)?;
         let mut words = SmallVec::new();
         if let Some(source) = view.contiguous_packed_slice() {

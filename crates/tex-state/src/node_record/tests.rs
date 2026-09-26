@@ -69,7 +69,7 @@ fn fixed_copy_reader_reuses_only_its_authenticated_source_chunk() {
     let first = source.writer().append_fixed::<Fixed>(&[11, 12]);
     let second = source.writer().append_fixed::<Fixed>(&[21, 22]);
     assert_eq!(first.words()[..2], second.words()[..2]);
-    let mut reader = NodeAnnexFixedCopyReader::new(&source.arena);
+    let mut reader = NodeAnnexCopyReader::new(&source.arena);
     assert_eq!(
         reader.inspect_fixed(&source.pool, first, 2, |words| Some(words[1..].to_vec())),
         Some(vec![11, 12])
@@ -173,18 +173,55 @@ fn typed_annex_copy_preserves_contiguous_and_cross_chunk_spans() {
     let mut pool = crate::fork_arena::ChunkPool::with_packed_chunk_bytes(64);
     let mut source = crate::fork_arena::ForkArena::new();
     let mut destination = crate::fork_arena::ForkArena::new();
-    for len in [8, 40] {
-        let body: Vec<u32> = (0..len).map(|word| word * 17 + 3).collect();
-        let source_key = NodeAnnexWriter::new(&mut pool, &mut source).append_span::<Fixed>(&body);
-        let mut copier = NodeAnnexCopier::between_regions(&mut pool, &source, &mut destination);
-        let copied_body = copier.detach_span(source_key).expect("source span");
-        let destination_key = copier.append_span::<Fixed>(&copied_body);
-        assert_eq!(copied_body.as_slice(), body);
+    let sources: Vec<_> = [4, 4, 40]
+        .into_iter()
+        .map(|len| {
+            let body: Vec<u32> = (0..len).map(|word| word * 17 + 3).collect();
+            let key = NodeAnnexWriter::new(&mut pool, &mut source).append_span::<Fixed>(&body);
+            (key, body)
+        })
+        .collect();
+    assert_eq!(sources[0].0.words()[..2], sources[1].0.words()[..2]);
+    assert_ne!(sources[2].0.words()[..2], sources[2].0.words()[3..5]);
+    let mut reader = NodeAnnexCopyReader::new(&source);
+    let copies = {
+        let mut copier = NodeAnnexCopier::between_regions(&mut pool, &mut reader, &mut destination);
+        let copies: Vec<_> = sources
+            .iter()
+            .map(|(key, body)| {
+                let copied_body = copier.detach_span(*key).expect("source span");
+                assert_eq!(copied_body.as_slice(), body);
+                copier.append_span::<Fixed>(&copied_body)
+            })
+            .collect();
+        let mut wrong_serial = sources[1].0.words();
+        wrong_serial[6] ^= 1;
+        assert!(
+            copier
+                .detach_span(AnnexKey::<Fixed>::from_words(wrong_serial))
+                .is_none()
+        );
+        copies
+    };
+    for ((_, body), destination_key) in sources.iter().zip(copies) {
         assert_eq!(
             NodeAnnexView::new(&pool, &destination).detach_span(destination_key),
-            Some(body)
+            Some(body.clone())
         );
     }
+    destination
+        .retire_region(&mut pool)
+        .expect("destination retirement changes the pool epoch");
+    let mut later_destination = crate::fork_arena::ForkArena::new();
+    let mut copier =
+        NodeAnnexCopier::between_regions(&mut pool, &mut reader, &mut later_destination);
+    assert_eq!(
+        copier
+            .detach_span(sources[1].0)
+            .expect("re-admitted span")
+            .as_slice(),
+        sources[1].1
+    );
 }
 
 #[test]
@@ -215,8 +252,9 @@ fn box_reencoding_clears_construction_stamp_in_both_copy_paths() {
         assert_eq!(record.box_segment(source.view()), Some(stamp));
 
         let mut destination = crate::fork_arena::ForkArena::new();
+        let mut reader = NodeAnnexCopyReader::new(&source.arena);
         let (between, _) = record
-            .reencode_between_regions(&mut source.pool, &source.arena, &mut destination, Some)
+            .reencode_between_regions(&mut source.pool, &mut reader, &mut destination, Some)
             .expect("cross-region box re-encode");
         let destination_view = NodeAnnexView::new(&source.pool, &destination);
         let between_body = destination_view
@@ -286,8 +324,9 @@ fn box_migration_sidecar_decodes_multiple_exclusions_and_copies_clear_key() {
         .expect("structural copy");
     assert!(copy.box_migration_metadata(source.view()).is_none());
     let mut destination = crate::fork_arena::ForkArena::new();
+    let mut reader = NodeAnnexCopyReader::new(&source.arena);
     let (cross_region, _) = record
-        .reencode_between_regions(&mut source.pool, &source.arena, &mut destination, Some)
+        .reencode_between_regions(&mut source.pool, &mut reader, &mut destination, Some)
         .expect("cross-region structural copy");
     let destination_view = NodeAnnexView::new(&source.pool, &destination);
     assert!(

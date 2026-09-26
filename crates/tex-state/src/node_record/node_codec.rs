@@ -131,7 +131,7 @@ impl NodeRecord<PageMaterialLane> {
     /// chunk admission. The source body borrow ends before destination writes.
     pub(crate) fn with_cached_fixed_copy_body<R>(
         self,
-        annex: &mut NodeAnnexFixedCopyReader<'_>,
+        annex: &mut NodeAnnexCopyReader<'_>,
         pool: &crate::fork_arena::ChunkPool<u32>,
         visit: impl FnOnce(&[u32], FixedCopyFields) -> R,
     ) -> Option<R> {
@@ -298,7 +298,7 @@ impl NodeRecord<PageMaterialLane> {
     pub(crate) fn reencode_between_regions(
         self,
         pool: &mut crate::fork_arena::ChunkPool<u32>,
-        source: &crate::fork_arena::ForkArena<u32, crate::node_region::NodeAnnexLane>,
+        source: &mut NodeAnnexCopyReader<'_>,
         destination: &mut crate::fork_arena::ForkArena<u32, crate::node_region::NodeAnnexLane>,
         map_child: impl FnMut(PageListId) -> Option<PageListId>,
     ) -> Option<(Self, Option<usize>)> {
@@ -308,7 +308,7 @@ impl NodeRecord<PageMaterialLane> {
 
     fn reencode_into(
         self,
-        annex: &mut NodeAnnexCopier<'_>,
+        annex: &mut NodeAnnexCopier<'_, '_>,
         mut map_child: impl FnMut(PageListId) -> Option<PageListId>,
     ) -> Option<(Self, Option<usize>)> {
         if self.has_fixed_copy_payload() {

@@ -177,8 +177,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/fork_arena/physical_extents.rs`: Optional and packed physical suffix
   compaction on sealing, bounded full-width range reuse, and exclusive
   same-owner rollback regrowth behind stable logical chunk keys.
-- `src/fork_arena/fixed_source.rs`: Operation-scoped packed source chunk
-  admission with epoch refresh and exact fixed-body bounds under an immutable
+- `src/fork_arena/packed_source.rs`: Operation-scoped packed source chunk
+  admission with epoch refresh and exact body/span bounds under an immutable
   source owner borrow.
 - `src/fork_arena/sparse_chunks.rs`: Compact authoritative owner envelopes
   with stable logical positions and merged vacancy ranges after interior
