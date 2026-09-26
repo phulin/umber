@@ -97,22 +97,24 @@ impl<T, Lane> ForkArena<T, Lane> {
                         return Err(ForkArenaError::InvalidRegion);
                     }
                 }
-                let used = pool.payload.used(key, self.owner)?;
-                for offset in 0..used {
-                    let value = pool
-                        .payload
-                        .get(key, self.owner, offset)
-                        .ok_or(ForkArenaError::InvalidChunk)?;
-                    let mut dependency_error = None;
-                    value.visit_region_lists(&mut |list| {
-                        if dependency_error.is_none() {
-                            dependency_error = self
-                                .validate_list_endpoints_in_intervals(pool, list, ranges)
-                                .err();
+                if T::HAS_INLINE_REGION_LISTS {
+                    let used = pool.payload.used(key, self.owner)?;
+                    for offset in 0..used {
+                        let value = pool
+                            .payload
+                            .get(key, self.owner, offset)
+                            .ok_or(ForkArenaError::InvalidChunk)?;
+                        let mut dependency_error = None;
+                        value.visit_region_lists(&mut |list| {
+                            if dependency_error.is_none() {
+                                dependency_error = self
+                                    .validate_list_endpoints_in_intervals(pool, list, ranges)
+                                    .err();
+                            }
+                        });
+                        if let Some(error) = dependency_error {
+                            return Err(error);
                         }
-                    });
-                    if let Some(error) = dependency_error {
-                        return Err(error);
                     }
                 }
             }
@@ -166,34 +168,28 @@ impl<T, Lane> ForkArena<T, Lane> {
         let end = ranges.last().map_or(0, |range| range.end);
         destination.base_payload_chunks = base as u32;
         let source_base = self.current_payload_start();
-        let mut cursor = base;
-        let mut live_counts = Vec::with_capacity(ranges.len());
-        for range in ranges {
-            let moved = self
-                .current_chunks_mut()
-                .payload
-                .take_range(range.start - source_base, range.end - source_base);
-            live_counts.push(moved.live_len() as u32);
-            destination
-                .current_chunks_mut()
-                .payload
-                .extend_vacant(range.start - cursor);
-            for (offset, key) in moved.iter_live_with_positions() {
-                self.unindex_chunk(pool, key);
-                pool.payload
-                    .transfer(
-                        key,
-                        self.owner,
-                        self.lineage,
-                        destination.owner,
-                        destination.lineage,
-                    )
-                    .expect("compound chunk ownership was preflighted");
-                destination.index_chunk(pool, key, range.start + offset);
-            }
-            destination.current_chunks_mut().payload.append(moved);
-            cursor = range.end;
+        let relative_ranges = ranges
+            .iter()
+            .map(|range| range.start - source_base..range.end - source_base)
+            .collect::<Vec<_>>();
+        let (moved, live_counts) = self
+            .current_chunks_mut()
+            .payload
+            .take_selected_ranges(&relative_ranges);
+        for (offset, key) in moved.iter_live_with_positions() {
+            self.unindex_chunk(pool, key);
+            pool.payload
+                .transfer(
+                    key,
+                    self.owner,
+                    self.lineage,
+                    destination.owner,
+                    destination.lineage,
+                )
+                .expect("compound chunk ownership was preflighted");
+            destination.index_chunk(pool, key, base + offset);
         }
+        destination.current_chunks_mut().payload.append(moved);
         Ok(TransferredIntervals {
             source: self.owner,
             destination: destination.owner,
@@ -201,7 +197,7 @@ impl<T, Lane> ForkArena<T, Lane> {
                 .iter()
                 .map(|range| range.start as u32..range.end as u32)
                 .collect(),
-            live_counts,
+            live_counts: live_counts.into_iter().map(|count| count as u32).collect(),
             source_current_start: source_base as u32,
             base: base as u32,
             end: end as u32,
@@ -268,26 +264,23 @@ impl<T, Lane> ForkArena<T, Lane> {
             pool.payload
                 .release_lineage(key, destination.owner, destination.lineage)?;
         }
-        let mut selected = destination.detach_suffix(base)?;
+        let selected = destination.detach_suffix(base)?;
         let source_base = self.current_payload_start();
-        for range in loan.ranges {
-            let start = range.start as usize;
-            let end = range.end as usize;
-            let moved = selected.take_range(start - base, end - base);
-            for (offset, key) in moved.iter_live_with_positions() {
-                destination.unindex_chunk(pool, key);
-                pool.payload.transfer(
-                    key,
-                    destination.owner,
-                    destination.lineage,
-                    self.owner,
-                    self.lineage,
-                )?;
-                self.index_chunk(pool, key, start + offset);
-            }
+        for (offset, key) in selected.iter_live_with_positions() {
+            destination.unindex_chunk(pool, key);
+            pool.payload.transfer(
+                key,
+                destination.owner,
+                destination.lineage,
+                self.owner,
+                self.lineage,
+            )?;
+            self.index_chunk(pool, key, base + offset);
+        }
+        if !loan.ranges.is_empty() {
             self.current_chunks_mut()
                 .payload
-                .restore_sparse_range(start - source_base, moved);
+                .restore_sparse_overlay(base - source_base, selected);
         }
         destination.base_payload_chunks = 0;
         Ok(())

@@ -2538,6 +2538,11 @@ impl<Lane> core::fmt::Debug for BatchTransferError<Lane> {
 /// stored by the payload value.
 #[doc(hidden)]
 pub trait RegionValue<Lane> {
+    /// Whether same-lane list coordinates are stored inline in each value.
+    /// A false implementation must have no inline list coordinates; any
+    /// separately encoded paired references need a typed caller preflight.
+    const HAS_INLINE_REGION_LISTS: bool = true;
+
     fn visit_region_lists(&self, visit: &mut dyn FnMut(ArenaListId<Lane>));
     fn rebrand_region_lists(&mut self, destination_arena: u32);
 }
@@ -5976,6 +5981,12 @@ impl<Lane> AdmittedListChunkCursor<Lane> {
     #[must_use]
     pub(crate) const fn logical_start(&self) -> usize {
         self.logical_start
+    }
+
+    /// Logical owner slot of this chunk in the admitted direct list.
+    #[must_use]
+    pub(crate) const fn owner_position(&self) -> usize {
+        self.position
     }
 }
 

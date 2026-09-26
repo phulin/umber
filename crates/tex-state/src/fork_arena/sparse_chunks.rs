@@ -1,6 +1,7 @@
 //! Authoritative owner-relative chunk slots with compact vacancy ranges.
 
 use super::{LogicalChunkId, VACANT_LOGICAL_CHUNK};
+use std::ops::Range;
 
 #[derive(Clone, Copy, Debug)]
 struct Gap {
@@ -20,10 +21,23 @@ pub(super) struct SparseChunks {
 }
 
 impl SparseChunks {
+    fn push_gap(gaps: &mut Vec<Gap>, start: usize, end: usize) {
+        if start == end {
+            return;
+        }
+        let vacant_through = gaps.last().map_or(0, |gap| gap.vacant_through) + end - start;
+        gaps.push(Gap {
+            start,
+            end,
+            vacant_through,
+        });
+    }
+
     pub(super) fn len(&self) -> usize {
         self.logical_len
     }
 
+    #[cfg(test)]
     pub(super) fn live_len(&self) -> usize {
         self.live.len()
     }
@@ -179,105 +193,111 @@ impl SparseChunks {
         keys
     }
 
-    /// Detaches a logical interval whose existing vacancies stay vacant in
-    /// both envelopes. Only its live keys change semantic owner.
-    pub(super) fn take_range(&mut self, start: usize, end: usize) -> Self {
-        assert!(start <= end && end <= self.logical_len);
-        let physical_start = start - self.vacant_before(start);
-        let physical_end = end - self.vacant_before(end);
-        let live = self.live.drain(physical_start..physical_end).collect();
+    /// Partitions every selected interval in one ordered pass. The returned
+    /// envelope retains the coordinates between intervals as vacancies, and
+    /// existing vacancies stay vacant in both owners.
+    pub(super) fn take_selected_ranges(&mut self, ranges: &[Range<usize>]) -> (Self, Vec<usize>) {
+        if ranges.is_empty() {
+            return (Self::default(), Vec::new());
+        }
+        let base = ranges[0].start;
+        let end = ranges.last().expect("nonempty ranges").end;
+        debug_assert!(base < end && end <= self.logical_len);
+        debug_assert!(ranges.windows(2).all(|pair| pair[0].end <= pair[1].start));
+        let original = std::mem::take(self);
+        let mut retained_live = Vec::with_capacity(original.live.len());
+        let mut selected_live = Vec::new();
+        let mut retained_gaps = Vec::new();
         let mut selected_gaps = Vec::new();
-        let mut remaining_gaps = Vec::with_capacity(self.gaps.len() + 1);
-        for gap in self.gaps.drain(..) {
-            let clipped_start = gap.start.max(start);
-            let clipped_end = gap.end.min(end);
-            if clipped_start < clipped_end {
-                selected_gaps.push(Gap {
-                    start: clipped_start - start,
-                    end: clipped_end - start,
-                    vacant_through: 0,
-                });
+        let mut retained_cursor = 0;
+        let mut selected_cursor = 0;
+        let mut range_index = 0;
+        let mut live_counts = vec![0; ranges.len()];
+        for (position, key) in original.iter_live_with_positions() {
+            while ranges
+                .get(range_index)
+                .is_some_and(|range| range.end <= position)
+            {
+                range_index += 1;
             }
-            if gap.start < start {
-                remaining_gaps.push(Gap {
-                    start: gap.start,
-                    end: gap.end.min(start),
-                    vacant_through: 0,
-                });
-            }
-            if gap.end > end {
-                remaining_gaps.push(Gap {
-                    start: gap.start.max(end),
-                    end: gap.end,
-                    vacant_through: 0,
-                });
+            if ranges
+                .get(range_index)
+                .is_some_and(|range| range.start <= position)
+            {
+                let relative = position - base;
+                Self::push_gap(&mut selected_gaps, selected_cursor, relative);
+                selected_live.push(key);
+                selected_cursor = relative + 1;
+                live_counts[range_index] += 1;
+            } else {
+                Self::push_gap(&mut retained_gaps, retained_cursor, position);
+                retained_live.push(key);
+                retained_cursor = position + 1;
             }
         }
-        let mut vacant = 0;
-        for gap in &mut remaining_gaps {
-            vacant += gap.end - gap.start;
-            gap.vacant_through = vacant;
-        }
-        self.gaps = remaining_gaps;
-        self.insert_gap(start, end);
-        let mut selected = Self {
-            live,
-            gaps: selected_gaps,
-            logical_len: end - start,
+        Self::push_gap(&mut retained_gaps, retained_cursor, original.logical_len);
+        Self::push_gap(&mut selected_gaps, selected_cursor, end - base);
+        *self = Self {
+            live: retained_live,
+            gaps: retained_gaps,
+            logical_len: original.logical_len,
         };
-        selected.rebuild_gap_prefixes();
-        selected
+        let selected = Self {
+            live: selected_live,
+            gaps: selected_gaps,
+            logical_len: end - base,
+        };
+        debug_assert_eq!(
+            self.live.len() + self.gaps.last().map_or(0, |gap| gap.vacant_through),
+            self.logical_len
+        );
+        debug_assert_eq!(
+            selected.live.len() + selected.gaps.last().map_or(0, |gap| gap.vacant_through),
+            selected.logical_len
+        );
+        (selected, live_counts)
     }
 
-    /// Returns a sparse loan to its original vacant interval without filling
-    /// holes that belonged to other independently moved owners.
-    pub(super) fn restore_sparse_range(&mut self, start: usize, selected: Self) {
-        let end = start + selected.logical_len;
-        if start == end {
-            return;
-        }
-        let gap_index = self.gap_after_or_at(start);
-        let gap = *self
-            .gaps
-            .get(gap_index)
-            .expect("reverse sparse loan names a vacant interval");
-        assert!(gap.start <= start && end <= gap.end);
-        let physical_start = start - self.vacant_before(start);
-        self.live
-            .splice(physical_start..physical_start, selected.live);
-        let mut replacement = Vec::with_capacity(selected.gaps.len() + 2);
-        if gap.start < start {
-            replacement.push(Gap {
-                start: gap.start,
-                end: start,
-                vacant_through: 0,
-            });
-        }
-        replacement.extend(selected.gaps.into_iter().map(|gap| Gap {
-            start: start + gap.start,
-            end: start + gap.end,
-            vacant_through: 0,
-        }));
-        if end < gap.end {
-            replacement.push(Gap {
-                start: end,
-                end: gap.end,
-                vacant_through: 0,
-            });
-        }
-        self.gaps.splice(gap_index..=gap_index, replacement);
-        let mut merged: Vec<Gap> = Vec::with_capacity(self.gaps.len());
-        for gap in self.gaps.drain(..) {
-            if let Some(last) = merged.last_mut()
-                && last.end == gap.start
-            {
-                last.end = gap.end;
+    /// Recombines a loan with its page owner in one ordered pass. Logical
+    /// vacancies that belonged to either owner remain vacant.
+    pub(super) fn restore_sparse_overlay(&mut self, base: usize, selected: Self) {
+        debug_assert!(base + selected.logical_len <= self.logical_len);
+        let retained = std::mem::take(self);
+        let mut retained_live = retained.iter_live_with_positions().peekable();
+        let mut selected_live = selected.iter_live_with_positions().peekable();
+        let mut live = Vec::with_capacity(retained.live.len() + selected.live.len());
+        let mut gaps = Vec::new();
+        let mut cursor = 0;
+        loop {
+            let from_selected = match (retained_live.peek(), selected_live.peek()) {
+                (Some((left, _)), Some((right, _))) => {
+                    debug_assert_ne!(*left, base + *right);
+                    *left > base + *right
+                }
+                (None, Some(_)) => true,
+                (Some(_), None) => false,
+                (None, None) => break,
+            };
+            let (position, key) = if from_selected {
+                let (relative, key) = selected_live.next().expect("selected position remains");
+                (base + relative, key)
             } else {
-                merged.push(gap);
-            }
+                retained_live.next().expect("retained position remains")
+            };
+            Self::push_gap(&mut gaps, cursor, position);
+            live.push(key);
+            cursor = position + 1;
         }
-        self.gaps = merged;
-        self.rebuild_gap_prefixes();
+        Self::push_gap(&mut gaps, cursor, retained.logical_len);
+        *self = Self {
+            live,
+            gaps,
+            logical_len: retained.logical_len,
+        };
+        debug_assert_eq!(
+            self.live.len() + self.gaps.last().map_or(0, |gap| gap.vacant_through),
+            self.logical_len
+        );
     }
 
     /// Fills the exact vacant interval named by a reverse ownership loan.
@@ -331,15 +351,6 @@ impl SparseChunks {
         for key in keys {
             self.push(key);
         }
-    }
-
-    pub(super) fn extend_vacant(&mut self, count: usize) {
-        if count == 0 {
-            return;
-        }
-        let start = self.logical_len;
-        self.logical_len += count;
-        self.insert_gap(start, self.logical_len);
     }
 
     pub(super) fn append(&mut self, mut suffix: Self) {
@@ -619,5 +630,46 @@ mod tests {
         );
         prefix.take_live_range(6, 8);
         assert_eq!(prefix.last_live_position(), Some(5));
+    }
+
+    #[test]
+    fn batch_partition_and_restore_preserve_exclusions_and_nested_vacancies() {
+        let mut page = SparseChunks::default();
+        let original = [
+            key(0),
+            key(1),
+            VACANT_LOGICAL_CHUNK,
+            key(3),
+            key(4),
+            VACANT_LOGICAL_CHUNK,
+            key(6),
+            key(7),
+            key(8),
+            VACANT_LOGICAL_CHUNK,
+            key(10),
+        ];
+        page.extend(original);
+        let ranges = [1..4, 6..8];
+        let (selected, counts) = page.take_selected_ranges(&ranges);
+        assert_eq!(counts, vec![2, 2]);
+        assert_eq!(page.live_len(), 4);
+        assert_eq!(page.gap_count(), 3);
+        assert_eq!(selected.len(), 7);
+        assert_eq!(selected.live_len(), 4);
+        assert_eq!(selected.gap_count(), 2);
+        assert_eq!(page.get(4), Some(&key(4)));
+        assert_eq!(selected.get(0), Some(&key(1)));
+        assert_eq!(selected.get(2), Some(&key(3)));
+        assert_eq!(selected.get(5), Some(&key(6)));
+        page.restore_sparse_overlay(1, selected);
+        assert_eq!(page.iter().copied().collect::<Vec<_>>(), original);
+        assert_eq!(page.gap_count(), 3);
+
+        let (vacant, counts) = page.take_selected_ranges(std::slice::from_ref(&(2..3)));
+        assert_eq!(counts, vec![0]);
+        assert_eq!(vacant.len(), 1);
+        assert_eq!(vacant.live_len(), 0);
+        page.restore_sparse_overlay(2, vacant);
+        assert_eq!(page.iter().copied().collect::<Vec<_>>(), original);
     }
 }
