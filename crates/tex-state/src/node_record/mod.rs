@@ -28,7 +28,7 @@ mod node_codec;
 mod semantic;
 mod whatsit_codec;
 
-pub(crate) use annex::{AnnexKey, NodeAnnexView, NodeAnnexWriter};
+pub(crate) use annex::{AnnexKey, NodeAnnexFixedCopyReader, NodeAnnexView, NodeAnnexWriter};
 pub(crate) use box_descriptor::{
     CopiedBoxBodyStamp, valid_box_exclusions, write_original_box_body, write_positive_box_body,
 };

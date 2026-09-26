@@ -1,7 +1,9 @@
 use super::box_descriptor::{decode_box_construction_descriptor, valid_box_exclusions};
 use super::*;
 
-use crate::fork_arena::{ArenaListId, ChunkPool, ForkArena, ForkArenaError};
+use crate::fork_arena::{
+    ArenaListId, ChunkPool, FixedPackedChunkReader, ForkArena, ForkArenaError,
+};
 use crate::node_region::NodeAnnexLane;
 use smallvec::SmallVec;
 
@@ -105,6 +107,13 @@ pub(super) struct NodeAnnexCopier<'a> {
 pub struct NodeAnnexView<'a> {
     pool: &'a ChunkPool<u32>,
     arena: &'a ForkArena<u32, NodeAnnexLane>,
+}
+
+/// Operation-scoped fixed-body source admission. The borrowed source arena
+/// cannot retire while this reader exists; only scalar chunk state survives
+/// destination publication into the shared pool.
+pub(crate) struct NodeAnnexFixedCopyReader<'a> {
+    chunks: FixedPackedChunkReader<'a, u32, NodeAnnexLane>,
 }
 
 pub(super) enum LigaturePayload {}
@@ -612,6 +621,31 @@ impl<'a> NodeAnnexWriter<'a> {
             .expect("new annex record belongs to its paired region");
         self.dependency_floor = self.dependency_floor.min(position);
         AnnexKey::from_list(list, publication_serial)
+    }
+}
+
+impl<'a> NodeAnnexFixedCopyReader<'a> {
+    pub(crate) const fn new(arena: &'a ForkArena<u32, NodeAnnexLane>) -> Self {
+        Self {
+            chunks: FixedPackedChunkReader::new(arena),
+        }
+    }
+
+    pub(crate) fn inspect_fixed<Kind, R>(
+        &mut self,
+        pool: &ChunkPool<u32>,
+        key: AnnexKey<Kind>,
+        body_words: usize,
+        inspect: impl FnOnce(&[u32]) -> Option<R>,
+    ) -> Option<R> {
+        let list = key.list(pool.logical_space(), pool.chunk_capacity())?;
+        self.chunks
+            .inspect(pool, list, body_words.checked_add(1)?, |words| {
+                if words.first()? != &key.words[6] {
+                    return None;
+                }
+                inspect(words)
+            })
     }
 }
 

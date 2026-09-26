@@ -1,7 +1,7 @@
 //! Chunk-batched explicit copies between independently owned node regions.
 
 use super::*;
-use crate::node_record::{CopiedBoxBodyStamp, NodeAnnexWriter};
+use crate::node_record::{CopiedBoxBodyStamp, NodeAnnexFixedCopyReader, NodeAnnexWriter};
 use smallvec::SmallVec;
 
 struct CopiedBoxEnvelope {
@@ -27,6 +27,7 @@ pub(super) struct CopyContext<'a> {
     annex_pool: &'a mut ChunkPool<u32>,
     source: &'a ForkArena<RegionNode, PageMaterialLane>,
     source_annex: &'a ForkArena<u32, NodeAnnexLane>,
+    fixed_source: NodeAnnexFixedCopyReader<'a>,
     destination: &'a mut ForkArena<RegionNode, PageMaterialLane>,
     destination_annex: &'a mut ForkArena<u32, NodeAnnexLane>,
     destination_region: NodeRegionId,
@@ -160,6 +161,7 @@ impl<'a> CopyContext<'a> {
             annex_pool: &mut pool.annex_chunks,
             source: &source.pub_arena,
             source_annex: &source.annex_arena,
+            fixed_source: NodeAnnexFixedCopyReader::new(&source.annex_arena),
             destination_region: destination.id,
             destination: &mut destination.pub_arena,
             destination_annex: &mut destination.annex_arena,
@@ -231,8 +233,9 @@ impl<'a> CopyContext<'a> {
                 }
                 if record.has_fixed_copy_payload() {
                     let (body_start, body_len, fields) = record
-                        .with_fixed_copy_body(
-                            NodeAnnexView::new(self.annex_pool, self.source_annex),
+                        .with_cached_fixed_copy_body(
+                            &mut self.fixed_source,
+                            self.annex_pool,
                             |body, fields| {
                                 let start = self.fixed_words.len();
                                 self.fixed_words.push(0);

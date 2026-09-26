@@ -64,6 +64,66 @@ fn rollback_reuse_rejects_old_publication_serial() {
 }
 
 #[test]
+fn fixed_copy_reader_reuses_only_its_authenticated_source_chunk() {
+    let mut source = AnnexHarness::new();
+    let first = source.writer().append_fixed::<Fixed>(&[11, 12]);
+    let second = source.writer().append_fixed::<Fixed>(&[21, 22]);
+    assert_eq!(first.words()[..2], second.words()[..2]);
+    let mut reader = NodeAnnexFixedCopyReader::new(&source.arena);
+    assert_eq!(
+        reader.inspect_fixed(&source.pool, first, 2, |words| Some(words[1..].to_vec())),
+        Some(vec![11, 12])
+    );
+    assert_eq!(
+        reader.inspect_fixed(&source.pool, second, 2, |words| Some(words[1..].to_vec())),
+        Some(vec![21, 22])
+    );
+
+    let mut forged_serial = second.words();
+    forged_serial[6] ^= 1;
+    assert!(
+        reader
+            .inspect_fixed(
+                &source.pool,
+                AnnexKey::<Fixed>::from_words(forged_serial),
+                2,
+                |_| Some(())
+            )
+            .is_none()
+    );
+    assert!(
+        reader
+            .inspect_fixed(&source.pool, second, 3, |_| Some(()))
+            .is_none()
+    );
+
+    let mut foreign = AnnexHarness::new();
+    let foreign_key = foreign.writer().append_fixed::<Fixed>(&[31, 32]);
+    assert_eq!(
+        first.words()[..2],
+        foreign_key.words()[..2],
+        "logical ordinals deliberately collide"
+    );
+    assert_ne!(source.pool.logical_space(), foreign.pool.logical_space());
+    assert!(
+        reader
+            .inspect_fixed(&foreign.pool, foreign_key, 2, |_| Some(()))
+            .is_none(),
+        "a warmed source admission cannot read a foreign pool"
+    );
+
+    let mut destination = crate::fork_arena::ForkArena::new();
+    NodeAnnexWriter::new(&mut source.pool, &mut destination).append_fixed::<Fixed>(&[41]);
+    destination
+        .retire_region(&mut source.pool)
+        .expect("foreign owner retirement changes pool epoch");
+    assert_eq!(
+        reader.inspect_fixed(&source.pool, second, 2, |words| Some(words[1..].to_vec())),
+        Some(vec![21, 22])
+    );
+}
+
+#[test]
 fn fixed_batch_keeps_independent_keys_across_chunk_rotation_and_rollback() {
     let mut annex = AnnexHarness {
         pool: crate::fork_arena::ChunkPool::with_packed_chunk_bytes(64),

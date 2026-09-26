@@ -20,7 +20,9 @@ use crate::node_sequence::SemanticSequenceIdentity;
 mod batch_transfer;
 mod checkpoint_lifecycle;
 mod compound_transfer;
+mod fixed_source;
 mod physical_extents;
+pub(crate) use fixed_source::FixedPackedChunkReader;
 mod sparse_chunks;
 mod whole_region_transfer;
 

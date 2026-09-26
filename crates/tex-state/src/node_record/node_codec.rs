@@ -119,7 +119,32 @@ impl NodeRecord<PageMaterialLane> {
         annex: NodeAnnexView<'_>,
         visit: impl FnOnce(&[u32], FixedCopyFields) -> R,
     ) -> Option<R> {
-        let len = match self.kind()? {
+        let len = self.fixed_copy_body_len()?;
+        annex.inspect_fixed(key_from_record::<()>(self), len, |words| {
+            let body = words.get(1..)?;
+            let fields = FixedCopyFields::new(self, body)?;
+            Some(visit(body, fields))
+        })
+    }
+
+    /// Uses the same typed child-field decoder after operation-scoped source
+    /// chunk admission. The source body borrow ends before destination writes.
+    pub(crate) fn with_cached_fixed_copy_body<R>(
+        self,
+        annex: &mut NodeAnnexFixedCopyReader<'_>,
+        pool: &crate::fork_arena::ChunkPool<u32>,
+        visit: impl FnOnce(&[u32], FixedCopyFields) -> R,
+    ) -> Option<R> {
+        let len = self.fixed_copy_body_len()?;
+        annex.inspect_fixed(pool, key_from_record::<()>(self), len, |words| {
+            let body = words.get(1..)?;
+            let fields = FixedCopyFields::new(self, body)?;
+            Some(visit(body, fields))
+        })
+    }
+
+    fn fixed_copy_body_len(self) -> Option<usize> {
+        Some(match self.kind()? {
             NodeKind::Glue if matches!(self.flags() & 3, 2 | 3) => 32,
             NodeKind::HList | NodeKind::VList => BOX_PAYLOAD_WORDS,
             NodeKind::Unset => 15,
@@ -130,11 +155,6 @@ impl NodeRecord<PageMaterialLane> {
             NodeKind::MathChoice => 40,
             NodeKind::MathList | NodeKind::Adjust => 10,
             _ => return None,
-        };
-        annex.inspect_fixed(key_from_record::<()>(self), len, |words| {
-            let body = words.get(1..)?;
-            let fields = FixedCopyFields::new(self, body)?;
-            Some(visit(body, fields))
         })
     }
 
