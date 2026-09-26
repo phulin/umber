@@ -1866,37 +1866,6 @@ impl<T> ChunkStorage<T> {
         }
     }
 
-    fn admitted_slice(
-        &self,
-        key: LogicalChunkId,
-        range: Range<u32>,
-    ) -> Option<DenseBlockSlice<'_, T>> {
-        self.physical(key).ok()?;
-        let meta = self.chunks.get(key.ordinal as usize)?;
-        debug_assert!(meta.live && meta.generation == key.incarnation);
-        if range.start > range.end || range.end > meta.used {
-            return None;
-        }
-        let (start_page, start) = self.slot_index(key, range.start as usize).ok()?;
-        let end = if range.is_empty() {
-            start
-        } else {
-            let (end_page, end) = self.slot_index(key, (range.end - 1) as usize).ok()?;
-            if end_page != start_page {
-                return None;
-            }
-            end + 1
-        };
-        match self.blocks.get(start_page)?.payload() {
-            DenseBlockPayload::Optional(block) => Some(DenseBlockSlice::Optional(
-                block.initialized().get(start..end)?,
-            )),
-            DenseBlockPayload::Packed(block) => Some(DenseBlockSlice::Packed(
-                block.initialized().get(start..end)?,
-            )),
-        }
-    }
-
     fn previous_in_list(
         &self,
         key: LogicalChunkId,
@@ -1960,12 +1929,6 @@ impl<'a, T> LogicalBlockView<'a, T> {
         match self {
             Self::Accepted(storage) | Self::Candidate(storage) => storage,
         }
-    }
-
-    fn slice(self, first: LogicalPosition, end: u32) -> Option<DenseBlockSlice<'a, T>> {
-        let storage = self.storage();
-        let (key, start) = storage.compact_position(first).ok()?;
-        storage.admitted_slice(key, start..end)
     }
 }
 
@@ -5803,6 +5766,24 @@ impl<'a, T, Lane> ArenaListView<'a, T, Lane> {
         self.get_cursor(cursor)
     }
 
+    /// Borrows a packed list contained in one admitted logical block.
+    /// The immutable pool borrow preserves admission and initialized bounds.
+    pub(crate) fn contiguous_packed_slice(&self) -> Option<&'a [T]> {
+        if self.is_empty() {
+            return Some(&[]);
+        }
+        if self.root.head.position != self.root.tail.position {
+            return None;
+        }
+        match self.payload.storage().admitted_dense_slice(
+            self.root.head.block,
+            self.root.head.offset..self.root.tail.offset,
+        )? {
+            DenseBlockSlice::Packed(values) => Some(values),
+            DenseBlockSlice::Optional(_) => None,
+        }
+    }
+
     /// Returns the first value directly from the admitted head coordinate.
     #[must_use]
     pub fn first(&self) -> Option<&'a T> {
@@ -5827,9 +5808,9 @@ impl<'a, T, Lane> ArenaListView<'a, T, Lane> {
     /// Builds a compatibility iterator for mixed or reverse traversal.
     ///
     /// Long forward consumers must use [`Self::for_each`] or
-    /// [`Self::try_for_each_range`], which retain the predecessor walk on the
-    /// Rust stack and cross each packed block once. The iterator cannot retain
-    /// that continuation between `next` calls without a second topology, so
+    /// [`Self::try_for_each_range`], which cross each packed block once using
+    /// temporary chunk coordinates. The iterator cannot retain
+    /// the temporary chunk walk between `next` calls, so
     /// each forward block boundary performs logical-index resolution.
     pub fn iter(&self) -> ArenaListIter<'a, T, Lane> {
         self.iter_from(0)
@@ -5950,41 +5931,33 @@ impl<'a, T, Lane> ArenaListView<'a, T, Lane> {
         }
     }
 
-    /// Visits the authoritative chunk slices in logical list order.
-    ///
-    /// The root was admitted in constant time when this view was created.
-    /// This walk follows the sole persistent predecessor chain once and calls
-    /// `visit` while that walk unwinds, so forward consumers perform no
-    /// per-value index resolution and allocate no traversal sidecar.
+    /// Visits initialized chunk slices in logical order. Traversal scratch
+    /// contains coordinates only, stays inline for short walks, and is dropped
+    /// before the immutable borrow ends.
     pub fn visit_chunks(&self, mut visit: impl FnMut(ArenaChunkSlice<'a, T>)) {
-        if self.is_empty() {
-            return;
-        }
-        self.visit_chunk_prefix(self.root.tail, &mut visit)
-            .expect("an admitted direct list remains valid during its immutable borrow");
+        let _: core::ops::ControlFlow<core::convert::Infallible> =
+            self.try_visit_range_chunks(0..self.len(), |_, cells| {
+                visit(ArenaChunkSlice { cells });
+                core::ops::ControlFlow::Continue(())
+            });
     }
 
-    /// Visits one logical range in forward order by walking the sole
-    /// predecessor chain once.
-    ///
-    /// This is the zero-allocation boundary for long forward walks. The Rust
-    /// call stack retains the predecessor path until callbacks run in logical
-    /// order, so no successor metadata, traversal cache, or second topology is
-    /// required. The callback may stop the walk early with [`ControlFlow`].
+    /// Visits a logical range in forward order with one predecessor walk.
+    /// Temporary chunk coordinates replace unbounded recursive call frames;
+    /// no payload is copied and no traversal topology is retained.
     pub fn try_for_each_range<B>(
         &self,
         selected: Range<usize>,
         mut visit: impl FnMut(usize, &'a T) -> core::ops::ControlFlow<B>,
     ) -> core::ops::ControlFlow<B> {
-        assert!(
-            selected.start <= selected.end && selected.end <= self.len(),
-            "arena-list traversal range must be in bounds"
-        );
-        if selected.is_empty() {
-            return core::ops::ControlFlow::Continue(());
-        }
-        self.visit_range_chunk_prefix(self.root.tail, self.len(), &selected, &mut visit)
-            .expect("an admitted direct list remains valid during its immutable borrow")
+        self.try_visit_range_chunks(selected, |first, cells| {
+            for (offset, value) in cells.iter().enumerate() {
+                if let core::ops::ControlFlow::Break(value) = visit(first + offset, value) {
+                    return core::ops::ControlFlow::Break(value);
+                }
+            }
+            core::ops::ControlFlow::Continue(())
+        })
     }
 
     /// Visits one logical range through the authoritative initialized slices.
@@ -5996,28 +5969,56 @@ impl<'a, T, Lane> ArenaListView<'a, T, Lane> {
             });
     }
 
-    fn visit_range_chunk_prefix<B>(
+    fn try_visit_range_chunks<B>(
         &self,
-        cursor: AdmittedChunkCursor<Lane>,
-        logical_end: usize,
-        selected: &Range<usize>,
-        visit: &mut impl FnMut(usize, &'a T) -> core::ops::ControlFlow<B>,
-    ) -> Result<core::ops::ControlFlow<B>, ForkArenaError> {
-        let start_offset = if cursor.position == self.root.head.position {
-            self.root.head.offset
-        } else {
-            0
-        };
-        if cursor.offset < start_offset {
-            return Err(ForkArenaError::InvalidRange);
+        selected: Range<usize>,
+        mut visit: impl FnMut(usize, DenseBlockSlice<'a, T>) -> core::ops::ControlFlow<B>,
+    ) -> core::ops::ControlFlow<B> {
+        assert!(
+            selected.start <= selected.end && selected.end <= self.len(),
+            "arena-list traversal range must be in bounds"
+        );
+        if selected.is_empty() {
+            return core::ops::ControlFlow::Continue(());
         }
-        let logical_start = logical_end
-            .checked_sub((cursor.offset - start_offset) as usize)
-            .ok_or(ForkArenaError::InvalidRange)?;
-        if selected.start < logical_start {
-            let previous = self
+        let mut pending =
+            smallvec::SmallVec::<[(AdmittedChunkCursor<Lane>, usize, usize); 8]>::new();
+        let mut cursor = self.root.tail;
+        let mut logical_end = self.len();
+        loop {
+            let start_offset = if cursor.position == self.root.head.position {
+                self.root.head.offset
+            } else {
+                0
+            };
+            let logical_start = logical_end
+                .checked_sub((cursor.offset - start_offset) as usize)
+                .expect("admitted chunk length fits its list prefix");
+            let first = selected.start.max(logical_start);
+            let end = selected.end.min(logical_end);
+            if first < end {
+                let mut selected_cursor = cursor;
+                selected_cursor.offset = start_offset + (first - logical_start) as u32;
+                if selected.start >= logical_start {
+                    let cells = self
+                        .payload
+                        .storage()
+                        .admitted_dense_slice(
+                            selected_cursor.block,
+                            selected_cursor.offset..selected_cursor.offset + (end - first) as u32,
+                        )
+                        .expect("admitted chunk range remains initialized");
+                    if let core::ops::ControlFlow::Break(value) = visit(first, cells) {
+                        return core::ops::ControlFlow::Break(value);
+                    }
+                    break;
+                }
+                pending.push((selected_cursor, first, end));
+            }
+            cursor = self
                 .previous_cursor(cursor)
-                .ok_or(ForkArenaError::InvalidRange)?;
+                .expect("admitted list has a predecessor before its head");
+            logical_end = logical_start;
             #[cfg(any(test, feature = "testing"))]
             self.pool.payload.admitted_forward_chunk_crossings.set(
                 self.pool
@@ -6026,71 +6027,21 @@ impl<'a, T, Lane> ArenaListView<'a, T, Lane> {
                     .get()
                     .saturating_add(1),
             );
-            if let core::ops::ControlFlow::Break(value) =
-                self.visit_range_chunk_prefix(previous, logical_start, selected, visit)?
-            {
-                return Ok(core::ops::ControlFlow::Break(value));
-            }
         }
-        let selected_start = selected.start.max(logical_start);
-        let selected_end = selected.end.min(logical_end);
-        if selected_start < selected_end {
-            let key = self
-                .arena
-                .live_key_at(cursor.position as usize)
-                .ok_or(ForkArenaError::InvalidRange)?;
-            let first = start_offset
-                .checked_add(
-                    u32::try_from(selected_start - logical_start)
-                        .map_err(|_| ForkArenaError::CapacityOverflow)?,
-                )
-                .ok_or(ForkArenaError::CapacityOverflow)?;
-            let last = start_offset
-                .checked_add(
-                    u32::try_from(selected_end - logical_start)
-                        .map_err(|_| ForkArenaError::CapacityOverflow)?,
-                )
-                .ok_or(ForkArenaError::CapacityOverflow)?;
-            let first = ChunkCursor::<Lane>::new(key, first).logical_position(self.list.space)?;
+        while let Some((cursor, first, end)) = pending.pop() {
             let cells = self
                 .payload
-                .slice(first, last)
-                .ok_or(ForkArenaError::InvalidRange)?;
-            for (offset, value) in cells.iter().enumerate() {
-                if let core::ops::ControlFlow::Break(value) = visit(selected_start + offset, value)
-                {
-                    return Ok(core::ops::ControlFlow::Break(value));
-                }
+                .storage()
+                .admitted_dense_slice(
+                    cursor.block,
+                    cursor.offset..cursor.offset + (end - first) as u32,
+                )
+                .expect("admitted chunk range remains initialized");
+            if let core::ops::ControlFlow::Break(value) = visit(first, cells) {
+                return core::ops::ControlFlow::Break(value);
             }
         }
-        Ok(core::ops::ControlFlow::Continue(()))
-    }
-
-    fn visit_chunk_prefix(
-        &self,
-        cursor: AdmittedChunkCursor<Lane>,
-        visit: &mut impl FnMut(ArenaChunkSlice<'a, T>),
-    ) -> Result<(), ForkArenaError> {
-        let start = if cursor.position == self.root.head.position {
-            self.root.head.offset
-        } else {
-            let previous = self
-                .previous_cursor(cursor)
-                .ok_or(ForkArenaError::InvalidRange)?;
-            self.visit_chunk_prefix(previous, visit)?;
-            0
-        };
-        let key = self
-            .arena
-            .live_key_at(cursor.position as usize)
-            .ok_or(ForkArenaError::InvalidRange)?;
-        let start = ChunkCursor::<Lane>::new(key, start).logical_position(self.list.space)?;
-        let cells = self
-            .payload
-            .slice(start, cursor.offset)
-            .ok_or(ForkArenaError::InvalidRange)?;
-        visit(ArenaChunkSlice { cells });
-        Ok(())
+        core::ops::ControlFlow::Continue(())
     }
 
     /// Visits every value in logical order through direct chunk slices.

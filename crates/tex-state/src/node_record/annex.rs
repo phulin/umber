@@ -452,33 +452,28 @@ impl<'a> NodeAnnexView<'a> {
         self.detach_span(key)
     }
 
+    fn fixed_words<Kind>(self, key: AnnexKey<Kind>, body_words: usize) -> Option<&'a [u32]> {
+        let list = key.list(self.pool.logical_space(), self.pool.chunk_capacity())?;
+        let view = self.arena.list(self.pool, list).ok()?;
+        let words = view.contiguous_packed_slice()?;
+        (words.len() == body_words.checked_add(1)? && words.first()? == &key.words[6])
+            .then_some(words)
+    }
+
     pub(super) fn inspect_fixed<Kind, Result>(
         self,
         key: AnnexKey<Kind>,
         body_words: usize,
-        inspect: impl FnOnce(crate::fork_arena::ArenaListView<'a, u32, NodeAnnexLane>) -> Option<Result>,
+        inspect: impl FnOnce(&'a [u32]) -> Option<Result>,
     ) -> Option<Result> {
-        let view = self.list(key)?;
-        (view.len() == body_words + 1).then_some(())?;
-        inspect(view)
+        inspect(self.fixed_words(key, body_words)?)
     }
 
     pub(super) fn resolve_fixed_array<Kind, const N: usize>(
         self,
         key: AnnexKey<Kind>,
     ) -> Option<[u32; N]> {
-        let view = self.list(key)?;
-        if view.len() != N + 1 {
-            return None;
-        }
-        let mut words = [0; N];
-        let mut written = 0_usize;
-        view.for_each_range(1..view.len(), |_, source| {
-            words[written] = *source;
-            written += 1;
-        });
-        debug_assert_eq!(written, N);
-        Some(words)
+        self.fixed_words(key, N)?.get(1..)?.try_into().ok()
     }
 
     pub(super) fn visit_span<Kind>(

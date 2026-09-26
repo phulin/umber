@@ -918,7 +918,15 @@ fn admitted_forward_callback_crosses_each_packed_block_once_at_required_sizes() 
         assert_eq!(crossings, expected_blocks.saturating_sub(1) as u64);
         assert_eq!(validations, 0);
         assert_eq!(links, 0);
-        assert_eq!(allocation, AllocationMeasurement::default());
+        if expected_blocks == 1 {
+            assert_eq!(allocation, AllocationMeasurement::default());
+        } else {
+            // Traversal scratch stores chunk coordinates, never node payloads.
+            // Geometric growth may allocate logarithmically, with total
+            // requested storage bounded linearly by the number of chunks.
+            assert!(allocation.calls <= u64::from(expected_blocks.ilog2()) + 1);
+            assert!(allocation.requested_bytes <= expected_blocks as u64 * 256);
+        }
         eprintln!(
             "ADMITTED_FORWARD_CALLBACK_SCALE values={values} packed_blocks={expected_blocks} index_resolutions={resolutions} index_predecessor_steps={index_steps} forward_block_crossings={crossings} owner_validations={validations} checked_predecessor_reads={links} allocation_calls={} allocation_bytes={}",
             allocation.calls, allocation.requested_bytes
@@ -2615,4 +2623,45 @@ where
         .finalize_active_list(pool, &mut builder)
         .expect("region seal");
     builder.take_sealed().expect("region root")
+}
+
+#[test]
+fn forward_walks_keep_stack_usage_bounded_for_long_chunk_chains() {
+    std::thread::Builder::new()
+        .stack_size(128 * 1024)
+        .spawn(|| {
+            let mut pool = ChunkPool::<u32>::with_packed_chunk_bytes(4);
+            let mut arena = ForkArena::<u32, ActiveLane>::new();
+            let root = {
+                let mut builder = arena.begin_builder(&mut pool).expect("long chain builder");
+                for value in 0..8192 {
+                    builder.push(value).expect("append chunk");
+                }
+                builder.finish()
+            };
+            let view = arena.list(&pool, root).expect("admitted long chain");
+            let mut next = 0;
+            view.visit_chunks(|chunk| {
+                chunk.for_each(|value| {
+                    assert_eq!(*value, next);
+                    next += 1;
+                })
+            });
+            assert_eq!(next, 8192);
+            let mut next = 100;
+            let stopped = view.try_for_each_range(100..8000, |index, value| {
+                assert_eq!(index, next);
+                assert_eq!(*value as usize, next);
+                next += 1;
+                if index == 7000 {
+                    core::ops::ControlFlow::Break(index)
+                } else {
+                    core::ops::ControlFlow::Continue(())
+                }
+            });
+            assert_eq!(stopped, core::ops::ControlFlow::Break(7000));
+        })
+        .expect("small-stack traversal thread")
+        .join()
+        .expect("bounded-stack traversal");
 }

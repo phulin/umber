@@ -1537,16 +1537,22 @@ fn copy_record_chunk_prefix(
     }
     while let Some((_, record)) = source.admitted_next_chunk_value(pool, &mut cursor) {
         let record = *record;
-        let (record, annex_dependency_floor) = record
-            .reencode_between_regions(annex_pool, source_annex, destination_annex, |_| {
-                copied_children.next()
-            })
-            .ok_or(ForkArenaError::InvalidRange)?;
-        let destination_annex_view = NodeAnnexView::new(annex_pool, destination_annex);
+        let mut reencoded = None;
         let (dependency_floor, child_annex_dependency_floor) = destination
             .dependency_floors_for_region_lists(pool, |visit| {
-                record.visit_node_lists(destination_annex_view, |child| visit(child.coordinate()))
+                reencoded = record.reencode_between_regions(
+                    annex_pool,
+                    source_annex,
+                    destination_annex,
+                    |_| {
+                        let child = copied_children.next()?;
+                        visit(child.coordinate());
+                        Some(child)
+                    },
+                );
+                reencoded.as_ref().map(|_| ())
             })?;
+        let (record, annex_dependency_floor) = reencoded.ok_or(ForkArenaError::InvalidRange)?;
         destination.append_constructed_active_list_value(
             pool,
             builder,

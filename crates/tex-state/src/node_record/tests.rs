@@ -64,6 +64,34 @@ fn rollback_reuse_rejects_old_publication_serial() {
 }
 
 #[test]
+fn fixed_reads_validate_size_publication_and_contiguous_bounds() {
+    let mut annex = AnnexHarness::new();
+    let mark = annex.arena.operation_mark(&annex.pool);
+    let stale = annex.writer().append_fixed::<Fixed>(&[3, 4]);
+    annex
+        .arena
+        .restore_operation(&mut annex.pool, mark)
+        .expect("restore annex");
+    let live = annex.writer().append_fixed::<Fixed>(&[8, 9]);
+    assert_eq!(annex.view().resolve_fixed_array::<_, 2>(live), Some([8, 9]));
+    assert!(annex.view().resolve_fixed_array::<_, 2>(stale).is_none());
+    assert!(annex.view().resolve_fixed_array::<_, 1>(live).is_none());
+    let foreign = AnnexHarness::new();
+    assert!(foreign.view().resolve_fixed_array::<_, 2>(live).is_none());
+
+    let capacity = annex.pool.chunk_capacity();
+    let _prefix = annex.writer().append_span::<()>(&vec![1; capacity - 5]);
+    let spanning = annex.writer().append_span::<Fixed>(&[7, 8, 9]);
+    assert_eq!(annex.view().detach_span(spanning), Some(vec![7, 8, 9]));
+    assert!(annex.view().resolve_fixed_array::<_, 3>(spanning).is_none());
+    let rotated = annex.writer().append_fixed::<Fixed>(&[10, 11, 12]);
+    assert_eq!(
+        annex.view().resolve_fixed_array::<_, 3>(rotated),
+        Some([10, 11, 12])
+    );
+}
+
+#[test]
 fn fixed_records_resolve_through_the_paired_annex_arena() {
     let mut annex = AnnexHarness::new();
     let fixed = annex.writer().append_fixed::<Fixed>(&[1, 2, 3]);

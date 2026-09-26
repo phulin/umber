@@ -56,6 +56,19 @@ typed lane is an operation result, not a page-liveness batch. It may remain
 move-only. It must not acquire dependencies, reference counts, checkpoint
 leases, or independent long-term ownership.
 
+Fixed annex records are published wholly inside one packed logical block.
+Readers authenticate their ordinary list root and publication serial, then
+borrow that initialized contiguous slice. They do not walk the general list
+iterator for each word. Variable-length annex spans retain the general chunk
+traversal. Borrowed traversals use their admitted physical block directly;
+re-resolving a logical coordinate cannot add authority while the immutable pool
+borrow prevents mutation. Forward walks collect only the selected chunk cursors
+in temporary inline storage, spilling for long walks. They do not consume one
+Rust call frame per chunk. This scratch is dropped at the end of the borrow;
+it is neither a retained traversal cache nor a second ownership topology. During recursive copying, child dependency floors are collected
+while child coordinates are rewritten, avoiding a second decode of the newly
+published record; the same destination-list validation remains authoritative.
+
 ## Production cutover
 
 As of 2026-08-28, ordinary execution uses these owners rather than retaining
@@ -323,8 +336,8 @@ Ordinary list processing is packed-block movement plus append-only output:
   `NodeCursor` views; mutation-interleaved compact page consumers use
   `PageMaterialNodeRef`, which borrows one 32-byte record and its admitted
   annex and decodes only requested fields; long forward consumers use the callback traversal that
-  follows the sole predecessor chain once and retains its continuation on the
-  Rust stack, mutation-interleaved operation consumers retain only a
+  follows the sole predecessor chain once and uses temporary chunk coordinates
+  with bounded Rust-stack usage, mutation-interleaved operation consumers retain only a
   coordinate-valued chunk continuation and end each node borrow before an
   append, compatibility iterators retain one admitted owner-relative cursor
   within each packed block, and genuinely positional semantic reads remain

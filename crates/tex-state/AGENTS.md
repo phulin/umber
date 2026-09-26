@@ -152,9 +152,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   resident-slot page payload publication, move-only
   detached active-list builders with explicit pool mutation, constant-time opaque-root admission into stable borrowed
   views whose ordinary reads carry owner-relative chunk/offset cursors without
-  repeating owner or incarnation validation, allocation-free logical-order
-  chunk-slice and ranged callback visitation over the sole predecessor chain,
-  linear forward callbacks whose Rust-stack continuation replaces successor
+  repeating owner or incarnation validation, logical-order chunk-slice and ranged callback visitation over the sole
+  predecessor chain, linear forward callbacks with bounded-stack temporary
+  chunk coordinates instead of recursive call frames or retained successor
   metadata, mutation-compatible coordinate-only chunk cursors whose short
   value borrows do not survive an append, sequential compatibility iterators
   that retain their owner-relative cursor within each packed block, explicit

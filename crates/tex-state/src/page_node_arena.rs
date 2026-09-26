@@ -2192,9 +2192,11 @@ fn page_list_is_decodable(
     view: ArenaListView<'_, PageMaterialNode, PageMaterialLane>,
     annex: NodeAnnexView<'_>,
 ) -> bool {
-    let mut valid = true;
-    view.for_each(|record| valid &= record.decode_owned(annex).is_some());
-    valid
+    // Decodability is order-independent. Follow the stored predecessor
+    // direction without allocating forward-traversal scratch.
+    view.iter()
+        .rev()
+        .all(|record| record.decode_owned(annex).is_some())
 }
 
 /// Read-only admitted access used by retained history and format capture.
