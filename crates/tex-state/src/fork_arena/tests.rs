@@ -2682,6 +2682,18 @@ fn compound_intervals_keep_excluded_page_chunks_and_rollback_exactly() {
             .get(0),
         Some(&5)
     );
+    page.preflight_rollback_interior_intervals(&pool, &durable, &loan)
+        .expect("both selected chunks can return");
+    let first_key = durable.live_key_at(2).expect("first selected chunk");
+    pool.payload.chunks[first_key.ordinal as usize].sealed = false;
+    assert_eq!(
+        page.preflight_rollback_interior_intervals(&pool, &durable, &loan),
+        Err(ForkArenaError::InvalidRegion),
+        "a bad selected chunk is rejected before any ownership changes"
+    );
+    assert_eq!(page.live_key_at(2), None);
+    assert_eq!(durable.live_key_at(2), Some(first_key));
+    pool.payload.chunks[first_key.ordinal as usize].sealed = true;
     let _temporary_wrapper = {
         let mut builder = durable.begin_builder(&mut pool).expect("wrapper builder");
         builder.push(9).expect("wrapper append");

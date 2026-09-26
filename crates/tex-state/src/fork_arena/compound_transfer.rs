@@ -205,13 +205,14 @@ impl<T, Lane> ForkArena<T, Lane> {
         })
     }
 
-    /// Returns every selected chunk to its exact page slot, after dropping
-    /// any destination construction suffix added around the loan.
-    pub(crate) fn rollback_interior_intervals<Source>(
-        &mut self,
-        pool: &mut ChunkPool<T>,
-        destination: &mut ForkArena<T, Source>,
-        loan: TransferredIntervals<Lane>,
+    /// A paired-region owner checks both lanes with this read-only proof
+    /// before reversing either lane, so a bad second receipt cannot leave a
+    /// half-restored box.
+    pub(crate) fn preflight_rollback_interior_intervals<Source>(
+        &self,
+        pool: &ChunkPool<T>,
+        destination: &ForkArena<T, Source>,
+        loan: &TransferredIntervals<Lane>,
     ) -> Result<(), ForkArenaError> {
         self.can_seal_boundary(pool)?;
         destination.can_seal_boundary(pool)?;
@@ -237,10 +238,25 @@ impl<T, Lane> ForkArena<T, Lane> {
             {
                 return Err(ForkArenaError::InvalidRegion);
             }
-            let actual_live = destination
+            let mut actual_live = 0;
+            for (position, key) in destination
                 .live_positions_from(start)
                 .take_while(|(position, _)| *position < end)
-                .count();
+            {
+                let meta =
+                    pool.payload
+                        .validate_lineage(key, destination.owner, destination.lineage)?;
+                if !meta.sealed
+                    || meta.lineages.iter().filter(|entry| entry.id != 0).count() != 1
+                    || pool
+                        .payload
+                        .arena_position(key, destination.owner, destination.lineage)
+                        != Some(position)
+                {
+                    return Err(ForkArenaError::InvalidRegion);
+                }
+                actual_live += 1;
+            }
             if actual_live != *expected_live as usize {
                 return Err(ForkArenaError::InvalidRegion);
             }
@@ -258,6 +274,32 @@ impl<T, Lane> ForkArena<T, Lane> {
                 return Err(ForkArenaError::InvalidRegion);
             }
         }
+        for (position, key) in destination.live_positions_from(end) {
+            pool.payload.mapping(key)?;
+            pool.payload
+                .validate_lineage(key, destination.owner, destination.lineage)?;
+            if pool
+                .payload
+                .arena_position(key, destination.owner, destination.lineage)
+                != Some(position)
+            {
+                return Err(ForkArenaError::InvalidRegion);
+            }
+        }
+        Ok(())
+    }
+
+    /// Returns every selected chunk to its exact page slot, after dropping
+    /// any destination construction suffix added around the loan.
+    pub(crate) fn rollback_interior_intervals<Source>(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        destination: &mut ForkArena<T, Source>,
+        loan: TransferredIntervals<Lane>,
+    ) -> Result<(), ForkArenaError> {
+        self.preflight_rollback_interior_intervals(pool, destination, &loan)?;
+        let base = loan.base as usize;
+        let end = loan.end as usize;
         let extra = destination.detach_suffix(end)?;
         for key in extra.into_live_keys() {
             destination.unindex_chunk(pool, key);
