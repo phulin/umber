@@ -1,5 +1,7 @@
 use smallvec::SmallVec;
 
+mod prefix;
+
 #[derive(Clone, Debug)]
 pub(super) struct MissingHyphenDiagnostic {
     pub(super) node_index: usize,
@@ -672,8 +674,23 @@ fn hyphenate_candidate_after_glue<G>(
         return Ok(index);
     }
 
-    stores.append_page_active_span_range(out, source.span(), start..word_start);
-    *output_len += word_start - start;
+    // TeX82 §914 removes `ha` together with the hyphenated word when `ha`
+    // is a glyph in the word's font. Reconstituting that preceding glyph
+    // restores ligatures and kerns across punctuation at the word boundary.
+    let leading = word_start.checked_sub(1).and_then(|preceding| {
+        stores
+            .admitted_page_nodes(source)
+            .expect("hyphenation source belongs to the live page arena")
+            .get(preceding)
+            .and_then(|node| prefix::preceding_glyph(node, word[0].font))
+    });
+    let retained_end = if leading.is_some() {
+        word_start - 1
+    } else {
+        word_start
+    };
+    stores.append_page_active_span_range(out, source.span(), start..retained_end);
+    *output_len += retained_end - start;
     let trailing_font_kern = stores
         .admitted_page_nodes(source)
         .expect("hyphenation source belongs to the live page arena")
@@ -687,20 +704,37 @@ fn hyphenate_candidate_after_glue<G>(
                 }
             )
         });
-    let no_left_boundary = word_start != 0
-        && stores
-            .admitted_page_nodes(source)
-            .expect("hyphenation source belongs to the live page arena")
-            .get(word_start - 1)
-            .is_some_and(|node| {
-                matches!(
-                    node,
-                    tex_state::node_view::NodeView::Kern {
-                        kind: KernKind::Font,
-                        ..
-                    }
-                )
-            });
+    let no_left_boundary = leading.as_ref().map_or_else(
+        || {
+            word_start != 0
+                && stores
+                    .admitted_page_nodes(source)
+                    .expect("hyphenation source belongs to the live page arena")
+                    .get(word_start - 1)
+                    .is_some_and(|node| {
+                        matches!(
+                            node,
+                            tex_state::node_view::NodeView::Kern {
+                                kind: KernKind::Font,
+                                ..
+                            }
+                        )
+                    })
+        },
+        |leading| leading.no_left_boundary,
+    );
+    let mut word = word;
+    let mut positions = positions;
+    if let Some(leading) = leading {
+        let shift = leading.chars.len();
+        let mut with_prefix = SmallVec::<[WordChar; 64]>::new();
+        with_prefix.extend(leading.chars);
+        with_prefix.extend_from_slice(&word);
+        word = with_prefix;
+        for position in &mut positions {
+            *position += shift;
+        }
+    }
     // TeX82 §§914--918 constructs each discretionary's three child lists
     // before it links the discretionary into the reconstituted main list.
     // Seal the retained source segment before that nested construction, then

@@ -164,6 +164,9 @@ Command operands are scanned by `tex-command` into typed request and result valu
   materialization, packing, migration,
   contribution, diagnostics, pretolerance memoization, and focused
   pointer/copy-accounting tests.
+- `src/paragraph_end/hyphenation/prefix.rs` and its `tests.rs`: TeX82 §914
+  preceding-glyph reconstruction for hyphenated words, including ligature
+  source preservation and font-kern boundary controls.
 - `src/output_provenance.rs` and `src/output_provenance/tests.rs`: explicitly
   demand-selected, budgeted `ArtifactSourceResolver` inversion for copying
   live node origins into artifact-owned `ArtifactSourceRecipe` values, plus
