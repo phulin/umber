@@ -6,11 +6,11 @@ mod durable_boxes;
 #[path = "env/meaning_bank.rs"]
 mod meaning_bank;
 mod restoration;
-pub use durable_boxes::DurableNodeMetadata;
 pub(crate) use durable_boxes::{
     AcceptedDurableBoxTail, DurableBoxCursor, DurableBoxOperation, DurableBoxState,
     DurableFormState, PageBoxAssignment,
 };
+pub use durable_boxes::{DurableNodeMetadata, UniqueBoxRegisterTake};
 mod font_runtime;
 #[path = "env/group.rs"]
 pub(crate) mod group;

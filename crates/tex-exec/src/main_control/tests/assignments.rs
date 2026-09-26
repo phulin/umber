@@ -2831,6 +2831,29 @@ fn internal_vertical_lastbox_preserves_earlier_baseline_glue() {
 }
 
 #[test]
+fn expanded_register_take_moves_nested_owner_without_page_copy() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\def\operand{\box7}\setbox7=\vbox{\hbox{\kern1pt}}\setbox8=\operand\end",
+        );
+        run_to_end(&mut control, stores);
+
+        assert!(stores.box_register(7).is_none());
+        assert!(stores.box_register(8).is_some());
+        assert_eq!(
+            stores.page_region_counters().page_to_durable_nodes_copied,
+            0
+        );
+        assert!(matches!(
+            box_child_nodes(stores, 8).as_slice(),
+            [Node::HList(_)]
+        ));
+    });
+}
+
+#[test]
 fn shifted_lastbox_resets_shift_while_moving_unique_children() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);

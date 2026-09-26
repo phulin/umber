@@ -32,6 +32,40 @@ This census is enabled only by the profiling-stats CLI flag; normal builds
 compile no shape traversal or counters. The classes identify where to add
 producer-owned receipts, but do not themselves grant transfer authority.
 
+The authenticated 200-million-action book prefix attributes 698,707 of
+791,159 remaining interleaved-prefix copied nodes to
+`\setbox<destination>=\box<source>` with a nested box payload. Both operands
+are durable box-register owners. For an exclusively current source, its owner
+can move directly from the source cell to the destination cell; the page
+roundtrip and replacement wrapper are unnecessary. The source cell keeps its
+TeX §1079 level when cleared. The destination still goes through the ordinary
+local/global binding and save journal. During an operation, the source-take
+inverse precedes the destination-binding inverse: rollback first swaps the
+destination's current owner into its binding inverse, then consumes that one
+owner from the inverse to restore the source. It never shares one owner ID
+between cells or history. A checkpoint-retained source remains on the
+historical copy path until its independent owner can be proven and moved.
+Tracing may materialize a separate diagnostic projection only when enabled.
+The page-owned output-box carrier stays on its existing path.
+The setbox scanner completes operand expansion and classifies the register
+take before opening the page construction mark. The direct-take branch only
+reads the durable source and removes the pending target before it cancels
+that mark, so no page node or annex payload can be published in its suffix.
+
+The handoff uses two phases because `make_box` clears `\box<source>` before
+TeX traces the destination assignment. The first phase removes the live
+source binding and leaves its owner in a move-only, state-bound operation
+receipt. A same-register assignment therefore traces a void old destination.
+The receipt names the exact destination and operation; a different state or
+target cannot finish it. If the operation rolls back before assignment, its
+pending action returns the owner directly to the source, with no destination
+inverse to consult. The second phase stages any checkpoint and group copies
+of the old destination before changing the destination binding or its journals.
+If either copy fails, the staged copy retires, the pending action disappears,
+and the source binding returns unchanged. Once the destination is installed,
+the ordinary binding inverse and the source-take inverse undo it in reverse
+order, without duplicating the exclusive owner.
+
 Paragraph completion and alignment setting construct boxes from earlier page
 lists. Their wrapper is new, but its child list can contain coordinates from
 the consumed paragraph or unset row. A construction mark opened immediately

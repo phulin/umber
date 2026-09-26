@@ -7,7 +7,9 @@ use crate::durable_arena::{
     DurableAllocationError, GlueId, ProvenanceId, TokenListBuilder, TokenListId, TokenListView,
 };
 use crate::env::banks::IntParam;
-use crate::env::{AssignmentScope, CodeTableKind, DurableNodeMetadata, StateError};
+use crate::env::{
+    AssignmentScope, CodeTableKind, DurableNodeMetadata, StateError, UniqueBoxRegisterTake,
+};
 use crate::env::{DurableBoxState, DurableFormState};
 use crate::font::FontStore;
 use crate::fork_arena::ForkArenaError;
@@ -1821,6 +1823,49 @@ impl<'a, G> CommandContext<'a, G> {
         self.durable_boxes
             .take_to_page(&mut self.page_nodes, index)
             .expect("box transfer allocation")
+    }
+
+    /// Transfers an exclusively current register box straight to another
+    /// register's binding. The output-box page carrier and checkpoint-retained
+    /// source keep their existing paths.
+    pub fn begin_unique_box_register_take(
+        &mut self,
+        source: u16,
+        destination: u16,
+    ) -> Result<Option<UniqueBoxRegisterTake>, crate::NodePromotionError> {
+        if !self.can_assign_unique_box_register_take(source) {
+            return Ok(None);
+        }
+        self.promote_output_box_if_needed(destination)?;
+        Ok(self
+            .durable_boxes
+            .begin_unique_register_take(source, destination))
+    }
+
+    pub fn finish_unique_box_register_take(
+        &mut self,
+        take: UniqueBoxRegisterTake,
+        destination: u16,
+        scope: AssignmentScope,
+    ) -> Result<(), crate::NodePromotionError> {
+        let current_level = self.admitted.state_ref().current_level();
+        let group_save_position = self.admitted.state_ref().save_stack_order_position();
+        self.durable_boxes
+            .finish_unique_register_take(
+                &mut self.page_nodes,
+                take,
+                destination,
+                scope,
+                current_level,
+                group_save_position,
+            )
+            .map_err(|_| crate::NodePromotionError::Values(crate::PromotionError::AllocationFailed))
+    }
+
+    #[must_use]
+    pub fn can_assign_unique_box_register_take(&self, source: u16) -> bool {
+        (source != u16::from(u8::MAX) || self.page.output_box().is_empty())
+            && self.durable_boxes.has_unique_current(source)
     }
 
     pub fn clear_box_preserving_level(&mut self, index: u16) {

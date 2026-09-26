@@ -209,7 +209,7 @@ pub use env::{
     FreshParameterInstallError, FreshParameterInstallation, FreshParameterProfile,
     GroupRestorationCell, GroupRestorationEntry, GroupRestorationFontRuntimeCell,
     GroupRestorationOutcome, GroupRestorationTraceState, GroupRestorationValue, GroupRestorations,
-    StateError,
+    StateError, UniqueBoxRegisterTake,
 };
 pub use font::PdfFontCode;
 pub use generation::GenerationBrand;

@@ -867,6 +867,33 @@ pub(in crate::main_control) fn commit_set_box_target<G>(
     command.retain_assignment_receipt(receipt);
 }
 
+pub(in crate::main_control) fn commit_unique_register_take_target<G>(
+    pending: PendingSetBox,
+    source: u16,
+    stores: &mut tex_state::CommandContext<'_, G>,
+    command: &mut CommandMachine<'_, '_, G>,
+) {
+    let PendingSetBox { target, region, .. } = pending;
+    // The scanner has already expanded and classified the complete operand
+    // before `apply` opened this mark. Between that mark and here, the direct
+    // register branch only checked the current durable binding and took its
+    // pending target; it has published no page node or annex payload.
+    stores
+        .release_page_node_region(region)
+        .expect("direct register handoff releases its empty page suffix");
+    let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
+        .box_register_unique_take(source, target.index, target.global, |stores, taken| {
+            stores
+                .finish_unique_box_register_take(
+                    taken,
+                    target.index,
+                    assignment_scope(target.global),
+                )
+                .expect("exclusive register handoff belongs to the live owner store");
+        });
+    command.retain_assignment_receipt(receipt);
+}
+
 pub(in crate::main_control) fn commit_interleaved_set_box_target<G>(
     pending: PendingSetBox,
     root: tex_state::page_node_arena::PageListId,

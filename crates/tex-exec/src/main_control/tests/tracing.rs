@@ -1073,6 +1073,29 @@ fn tracingassigns_reports_setbox_change_and_committed_box() {
         assert!(log.contains(trace), "{log:?}");
     });
 }
+
+#[test]
+fn tracingassigns_same_register_take_sees_void_after_source_clear() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let _initialized = MainControl::tex82_initex(stores);
+        tex_command::install_etex_expandable_primitives(stores);
+        crate::install_etex_unexpandable_primitives(stores);
+        let mut control = MainControl::with_profile(CommandProfile::ETEX26);
+        register_source(
+            &mut control,
+            br"\tracingonline=1\setbox0=\hbox{X}\tracingassigns=1{\setbox0=\box0}\showbox0\end",
+        );
+
+        run_to_end(&mut control, stores);
+
+        let terminal = pending_sink_text(stores, true);
+        let log = pending_sink_text(stores, false);
+        let trace = "{changing \\box0=void}\n{into \\box0=\n";
+        assert!(terminal.contains(trace), "{terminal:?}");
+        assert!(log.contains(trace), "{log:?}");
+        assert!(log.contains("\\box0=void"), "{log:?}");
+    });
+}
 #[test]
 fn tracingparagraphs_reports_exact_first_pass_break_sequence() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {

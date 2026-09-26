@@ -687,6 +687,47 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
             })
         }
     }
+
+    /// Commits a unique durable-register handoff. Tracing alone creates an
+    /// independent page projection for the usual before/after diagnostic;
+    /// ordinary writes move the durable owner without a page roundtrip.
+    pub(crate) fn box_register_unique_take<F>(
+        &mut self,
+        source: u16,
+        destination: u16,
+        global: bool,
+        write: F,
+    ) -> MutationReceipt
+    where
+        F: FnOnce(&mut CommandContext<'_, G>, tex_state::UniqueBoxRegisterTake),
+    {
+        let traced = (self.stores.int_param(IntParam::TRACING_ASSIGNS) > 0)
+            .then(|| self.stores.copy_box_to_page(source))
+            .flatten();
+        let taken = self
+            .stores
+            .begin_unique_box_register_take(source, destination)
+            .expect("unique register take preflight")
+            .expect("source remains uniquely occupied");
+        tracing::trace_box_write(
+            self.stores,
+            self.diagnostic_effects,
+            destination,
+            global,
+            traced.as_ref(),
+            |stores| write(stores, taken),
+        );
+        if destination <= 255 {
+            MutationReceipt::SILENT
+        } else {
+            MutationReceipt::observed(MutationRecord {
+                target: MutationTarget::Register,
+                key: ObservationValue::Name(format!("box:{destination}")),
+                value: ObservationValue::Name("occupied".into()),
+                global,
+            })
+        }
+    }
 }
 
 fn glue_value(value: &GlueSpec) -> ObservationValue {
