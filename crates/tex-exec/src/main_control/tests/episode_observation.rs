@@ -93,7 +93,9 @@ fn production_batch_commits_ordinary_prefix_before_terminal_transaction() {
         );
         assert_eq!(stores.count(0).expect("count register"), 11);
         assert_eq!(stores.count(1).expect("count register"), 22);
-        assert_eq!(control.advance_telemetry().attempts, 2);
+        // Both rootless count assignments settle in the delivering admission;
+        // only the terminal `\end` is a typed attempt.
+        assert_eq!(control.advance_telemetry().attempts, 1);
         assert_eq!(control.advance_telemetry().commits, 2);
     });
 }

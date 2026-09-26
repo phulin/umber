@@ -1397,6 +1397,24 @@ impl<G> ColdOperation<G> {
             Self::Continue | Self::Relax | Self::ParagraphStart | Self::Character { .. }
         )
     }
+
+    /// Whether this is a rootless §1211 scalar assignment whose complete
+    /// arm, including §1269's `afterassignment` replay, can be applied and
+    /// settled in the delivering command context. None of these reads host
+    /// facts or retains a token list; glue registers stay out because their
+    /// e-TeX pointer-identity bookkeeping belongs to the typed episode.
+    pub(in crate::main_control) fn is_admitted_scalar_assignment(&self) -> bool {
+        matches!(
+            self,
+            Self::Count { .. }
+                | Self::Dimen { .. }
+                | Self::IntParam { .. }
+                | Self::DimenParam { .. }
+                | Self::GlueParam { .. }
+                | Self::CodeTable { .. }
+                | Self::Arithmetic { .. }
+        )
+    }
 }
 
 /// A cold operation after its complete attempt-root set has crossed the one

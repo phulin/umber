@@ -6776,6 +6776,9 @@ impl<G> MainControl<G> {
         let observing = self.operation_observations.is_some();
         let mut assignment_receipts = observing.then(Vec::new);
         let fires_afterassignment = operation.fires_afterassignment();
+        let group_transition = operation.is_group_transition();
+        let effect_count = context.effect_record_count();
+        let artifact_count = context.artifact_commit_count();
         let invalid_catcode = matches!(
             operation,
             hot_apply::HotOperation::CatCode { value, .. } if !(0..=15).contains(value)
@@ -6783,9 +6786,11 @@ impl<G> MainControl<G> {
         // TeX82 §1211's measured definition, let, and catcode arms reach
         // §1269's `done` label without an intervening host transition. Retain
         // the episode's authoritative borrow through semantic apply, evidence
-        // publication, and `afterassignment` backup. Group transitions can
-        // open page-output work, so they deliberately leave the callback at
-        // the existing host boundary and use the generic tail below.
+        // publication, and `afterassignment` backup. Simple and semi-simple
+        // group transitions (§§1063-1065) likewise only move save-stack
+        // levels and replay `\aftergroup` tokens; one that publishes a host
+        // effect or artifact (for example a cross-file group warning written
+        // as an effect) leaves the callback and uses the generic tail below.
         let mut result = hot_apply::apply(
             operation,
             context,
@@ -6827,7 +6832,13 @@ impl<G> MainControl<G> {
         // Invalid catcodes emit a diagnostic host effect before substituting
         // zero. Their mutation still uses the hot committer, but effect
         // observation and afterassignment must settle after this admission.
-        if result.is_err() || !fires_afterassignment || invalid_catcode {
+        let settles_group_transition = group_transition
+            && context.effect_record_count() == effect_count
+            && context.artifact_commit_count() == artifact_count;
+        if result.is_err()
+            || !(fires_afterassignment || settles_group_transition)
+            || invalid_catcode
+        {
             return HotApplyAdmission {
                 result,
                 main_loop_active: None,
@@ -6861,21 +6872,23 @@ impl<G> MainControl<G> {
         );
         // §1269 publishes the completed assignment mutation before
         // §325 observes the replay-level push of the saved token.
-        let mut host_facts = ExecutorHostFacts {
-            modes: &self.modes,
-            pdf_ignore_depth: self.pdf_ignore_depth,
-            telemetry: &mut self.episode_telemetry,
-        };
-        if let Err(error) = schedule_afterassignment(
-            &mut self.command,
-            self.fuel.fuel_mut(),
-            &mut self.capabilities,
-            &mut host_facts,
-            &mut self.operation_observations,
-            diagnostic_effects,
-            context,
-        ) {
-            result = Err(error);
+        if fires_afterassignment {
+            let mut host_facts = ExecutorHostFacts {
+                modes: &self.modes,
+                pdf_ignore_depth: self.pdf_ignore_depth,
+                telemetry: &mut self.episode_telemetry,
+            };
+            if let Err(error) = schedule_afterassignment(
+                &mut self.command,
+                self.fuel.fuel_mut(),
+                &mut self.capabilities,
+                &mut host_facts,
+                &mut self.operation_observations,
+                diagnostic_effects,
+                context,
+            ) {
+                result = Err(error);
+            }
         }
         HotApplyAdmission {
             result,
@@ -6897,7 +6910,13 @@ impl<G> MainControl<G> {
         diagnostic_effects: &mut DiagnosticEffects,
         operation: &mut PreparedColdCommand<G>,
     ) -> HotApplyAdmission {
-        debug_assert!(operation.executes_directly());
+        let scalar_assignment = operation.is_admitted_scalar_assignment();
+        debug_assert!(
+            operation.executes_directly()
+                || (scalar_assignment && self.operation_observations.is_none())
+        );
+        let effect_count = context.effect_record_count();
+        let artifact_count = context.artifact_commit_count();
         let parking = self.suspend_main_control_parking(operation);
         let mut command = CommandMachine {
             state: &mut self.command,
@@ -6945,11 +6964,37 @@ impl<G> MainControl<G> {
             command.state.profile(),
         );
         let main_loop_active = parking.post_apply(self.modes.current_mode(), context);
+        // A scalar assignment that published no host effect settles here like
+        // the hot assignment arms: §1269 replays `afterassignment` before the
+        // next command is delivered through this same context.
+        let mut result = result;
+        let settled_in_admission = scalar_assignment
+            && result.is_ok()
+            && context.effect_record_count() == effect_count
+            && context.artifact_commit_count() == artifact_count;
+        if settled_in_admission {
+            let mut host_facts = ExecutorHostFacts {
+                modes: &self.modes,
+                pdf_ignore_depth: self.pdf_ignore_depth,
+                telemetry: &mut self.episode_telemetry,
+            };
+            if let Err(error) = schedule_afterassignment(
+                &mut self.command,
+                self.fuel.fuel_mut(),
+                &mut self.capabilities,
+                &mut host_facts,
+                &mut self.operation_observations,
+                diagnostic_effects,
+                context,
+            ) {
+                result = Err(error);
+            }
+        }
         HotApplyAdmission {
             result,
             main_loop_active,
-            settled_in_admission: false,
-            fires_afterassignment: false,
+            settled_in_admission,
+            fires_afterassignment: scalar_assignment,
             pending_page_output: PendingPageOutputFacts::capture(context),
             assignment_receipts: None,
         }

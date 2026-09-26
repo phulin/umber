@@ -349,6 +349,9 @@ impl<G> MainControl<G> {
                         }
                     }
                 }
+                // Unobserved scalar assignments settle in this admission;
+                // observed ones need the typed episode's mutation receipts.
+                let observing = self.operation_observations.is_some();
                 {
                     let mut host_facts = ExecutorHostFacts {
                         modes: &self.modes,
@@ -508,7 +511,10 @@ impl<G> MainControl<G> {
                                 Ok(ScannedOperation::Cold) => {
                                     frame.retain_source_role();
                                     frame.clear_preflight();
-                                    if frame.unavailable(cold).executes_directly() {
+                                    let operation = frame.unavailable(cold);
+                                    if operation.executes_directly()
+                                        || (!observing && operation.is_admitted_scalar_assignment())
+                                    {
                                         direct_cold_operation = true;
                                     } else {
                                         host_preparation

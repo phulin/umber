@@ -52,6 +52,10 @@ impl<G> HotOperation<G> {
         }
     }
 
+    pub(super) const fn is_group_transition(&self) -> bool {
+        matches!(self, Self::EnterGroup(_) | Self::LeaveGroup { .. })
+    }
+
     pub(super) const fn fires_afterassignment(&self) -> bool {
         matches!(
             self,
