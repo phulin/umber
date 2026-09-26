@@ -821,7 +821,7 @@ impl ModeListMutation<'_> {
             .scratch
             .as_deref_mut()
             .expect("pending horizontal runs require the mode scratch owner");
-        let (shaping, tfm_work) = (&mut scratch.shaping, &mut scratch.tfm_work);
+        let (shaping, tfm_work) = scratch.shaping_and_tfm_work();
         stores.open_page_active_list(&mut list.active);
         let result = produce(stores, source, shaping, tfm_work, &mut list.active);
         match result {
@@ -1511,11 +1511,16 @@ pub struct PendingHChar {
 /// its cleared source vector can return here for the next run. The TFM cursor
 /// is cleared after each run. Final page nodes never pass through this scratch
 /// owner.
+///
+/// Every operation commit clears the scratch, but most operations never lend
+/// out the shaping or ligature buffers. `work_lent` records a loan so the
+/// commit only pays for clearing buffers that may hold residue.
 #[derive(Default)]
 pub(crate) struct HorizontalModeScratch {
     pending_source: Vec<PendingHChar>,
     shaping: crate::box_runtime::hmode::OpenTypeShapingScratch,
     tfm_work: crate::box_runtime::hmode::LigatureWorkList,
+    work_lent: bool,
 }
 
 impl HorizontalModeScratch {
@@ -1535,8 +1540,20 @@ impl HorizontalModeScratch {
 
     fn clear(&mut self) {
         self.pending_source.clear();
-        self.shaping.clear();
-        self.tfm_work.clear();
+        if std::mem::take(&mut self.work_lent) {
+            self.shaping.clear();
+            self.tfm_work.clear();
+        }
+    }
+
+    fn shaping_and_tfm_work(
+        &mut self,
+    ) -> (
+        &mut crate::box_runtime::hmode::OpenTypeShapingScratch,
+        &mut crate::box_runtime::hmode::LigatureWorkList,
+    ) {
+        self.work_lent = true;
+        (&mut self.shaping, &mut self.tfm_work)
     }
 
     pub(crate) fn reshape_open_type_runs_list<G>(
@@ -1544,10 +1561,12 @@ impl HorizontalModeScratch {
         stores: &mut CommandContext<'_, G>,
         source: tex_state::page_node_arena::PageListId,
     ) -> tex_state::page_node_arena::PageListId {
+        self.work_lent = true;
         crate::box_runtime::hmode::reshape_open_type_runs_list(stores, source, &mut self.shaping)
     }
 
     pub(crate) fn tfm_work_mut(&mut self) -> &mut crate::box_runtime::hmode::LigatureWorkList {
+        self.work_lent = true;
         &mut self.tfm_work
     }
 }
