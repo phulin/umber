@@ -19,7 +19,10 @@ use crate::node_sequence::SemanticSequenceIdentity;
 
 mod batch_transfer;
 mod checkpoint_lifecycle;
+mod sparse_chunks;
 mod whole_region_transfer;
+
+use sparse_chunks::SparseChunks;
 
 #[cfg(test)]
 #[path = "fork_arena/tests.rs"]
@@ -2382,7 +2385,7 @@ const _: () = assert!(core::mem::size_of::<ArenaListId<PageMaterialLane>>() <= 3
 
 #[derive(Clone, Default)]
 struct ChunkSet {
-    payload: Vec<LogicalChunkId>,
+    payload: SparseChunks,
 }
 
 enum ForkOwnership {
@@ -2492,7 +2495,7 @@ pub(crate) struct DetachedBatch<Lane> {
     arena: u32,
     serial: u64,
     payload_start: u32,
-    payload: Vec<LogicalChunkId>,
+    payload: SparseChunks,
     lists: Vec<ArenaListId<Lane>>,
     rebrand_values: u64,
 }
@@ -2950,13 +2953,14 @@ impl<T, Lane> ForkArena<T, Lane> {
             unreachable!()
         };
         let payload_start = mark.payload_start as usize;
-        for key in &chunks.payload[payload_start..] {
-            if *key == VACANT_LOGICAL_CHUNK {
-                continue;
-            }
+        for (_, key) in chunks
+            .payload
+            .iter_live_with_positions()
+            .filter(|(position, _)| *position >= payload_start)
+        {
             let meta = pool
                 .payload
-                .validate_lineage(*key, self.owner, self.lineage)?;
+                .validate_lineage(key, self.owner, self.lineage)?;
             if meta.lineages.iter().filter(|entry| entry.id != 0).count() != 1 {
                 return Err(ForkArenaError::TooManyLineages);
             }
@@ -2982,13 +2986,12 @@ impl<T, Lane> ForkArena<T, Lane> {
             unreachable!()
         };
         let shared = ChunkSet {
-            payload: chunks.payload[mark.payload_start as usize..].to_vec(),
+            payload: chunks
+                .payload
+                .slice_clone(mark.payload_start as usize, chunks.payload.len()),
         };
         let lineage = NEXT_ARENA_LINEAGE.fetch_add(1, Ordering::Relaxed);
-        for (position, key) in shared.payload.iter().copied().enumerate() {
-            if key == VACANT_LOGICAL_CHUNK {
-                continue;
-            }
+        for (position, key) in shared.payload.iter_live_with_positions() {
             pool.payload
                 .share_with_lineage(key, self.owner, self.lineage, lineage, position)
                 .expect("shared payload lineage was completely preflighted");
@@ -3050,16 +3053,24 @@ impl<T, Lane> ForkArena<T, Lane> {
 
     #[cfg(feature = "profiling")]
     pub(crate) fn profiling_current_physical_tokens(&self, pool: &ChunkPool<T>) -> Vec<u64> {
-        let sets = match &self.ownership {
-            ForkOwnership::Accepted(accepted) => [&accepted.payload[..], &[][..]],
+        let mut tokens = Vec::new();
+        let mut visit = |set: &ChunkSet| {
+            tokens.extend(
+                set.payload
+                    .iter_live_with_positions()
+                    .filter_map(|(_, key)| pool.payload.profiling_physical_token(key)),
+            );
+        };
+        match &self.ownership {
+            ForkOwnership::Accepted(accepted) => visit(accepted),
             ForkOwnership::Forked {
                 prefix, current, ..
-            } => [&prefix.payload[..], &current.payload[..]],
-        };
-        sets.into_iter()
-            .flatten()
-            .filter_map(|key| pool.payload.profiling_physical_token(*key))
-            .collect()
+            } => {
+                visit(prefix);
+                visit(current);
+            }
+        }
+        tokens
     }
 
     #[cfg(feature = "profiling")]
@@ -3074,9 +3085,9 @@ impl<T, Lane> ForkArena<T, Lane> {
         };
         prefix
             .payload
-            .iter()
-            .chain(&detached_prior.payload)
-            .filter_map(|key| pool.payload.profiling_physical_token(*key))
+            .iter_live_with_positions()
+            .chain(detached_prior.payload.iter_live_with_positions())
+            .filter_map(|(_, key)| pool.payload.profiling_physical_token(key))
             .collect()
     }
 

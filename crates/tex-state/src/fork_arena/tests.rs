@@ -2515,6 +2515,46 @@ fn repeated_tail_loans_validate_in_linear_total_work() {
 }
 
 #[test]
+fn settled_trailing_transfers_compress_owner_metadata_without_reusing_marks() {
+    const TRANSFERS: usize = 1_024;
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(4);
+    let mut page = ForkArena::<u32, ActiveLane>::new();
+    let outer_mark = page.operation_mark(&pool);
+    let mut midpoint = None;
+    for position in 0..TRANSFERS {
+        if position == TRANSFERS / 2 {
+            midpoint = Some(page.operation_mark(&pool));
+        }
+        list(&mut page, &mut pool, [position as u32]);
+        page.seal_boundary(&mut pool).expect("box boundary");
+        let mut durable = page.empty_lane::<PageLane>();
+        let _settled = page
+            .transfer_interior_interval(&mut pool, &mut durable, position, position + 1)
+            .expect("unique box chunk moves");
+        durable
+            .retire_region(&mut pool)
+            .expect("settled box retires");
+        page.can_seal_boundary(&pool)
+            .expect("page vacancy remains valid");
+    }
+    let super::ForkOwnership::Accepted(chunks) = &page.ownership else {
+        unreachable!("test owner remains accepted");
+    };
+    assert_eq!(chunks.payload.len(), TRANSFERS);
+    assert_eq!(chunks.payload.live_len(), 0);
+    assert_eq!(chunks.payload.gap_count(), 1);
+    assert_eq!(outer_mark.payload_chunks, 0);
+    page.restore_operation(&mut pool, midpoint.expect("midpoint mark"))
+        .expect("vacant logical suffix restores without resurrecting settled owners");
+    assert_eq!(page.live_payload_chunks(), TRANSFERS / 2);
+    let appended = list(&mut page, &mut pool, [9_999]);
+    assert_eq!(
+        page.resolved_position(&pool, appended.tail.raw),
+        Some(TRANSFERS / 2)
+    );
+}
+
+#[test]
 fn logical_positions_are_pool_stable_and_foreign_spaces_fail_closed() {
     let mut pool = ChunkPool::<u32>::with_chunk_bytes(16);
     let mut arena = ForkArena::<u32, ActiveLane>::new();

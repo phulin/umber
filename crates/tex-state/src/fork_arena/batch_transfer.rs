@@ -270,10 +270,8 @@ impl<T, Lane> ForkArena<T, Lane> {
         let payload = self
             .detach_suffix(batch.payload_start as usize)
             .expect("self-contained payload suffix was preflighted");
-        for key in &payload {
-            if *key != VACANT_LOGICAL_CHUNK {
-                self.unindex_chunk(pool, *key);
-            }
+        for (_, key) in payload.iter_live_with_positions() {
+            self.unindex_chunk(pool, key);
         }
         Ok(DetachedBatch {
             arena: batch.arena,
@@ -296,14 +294,12 @@ impl<T, Lane> ForkArena<T, Lane> {
         if let Err(error) = self.can_reattach_batch(pool, &batch) {
             return Err(DetachedBatchTransferError { error, batch });
         }
-        for (offset, key) in batch.payload.iter().copied().enumerate() {
-            if key != VACANT_LOGICAL_CHUNK {
-                self.index_chunk(pool, key, batch.payload_start as usize + offset);
-            }
+        for (offset, key) in batch.payload.iter_live_with_positions() {
+            self.index_chunk(pool, key, batch.payload_start as usize + offset);
         }
         {
             let current = self.current_chunks_mut();
-            current.payload.extend(batch.payload);
+            current.payload.append(batch.payload);
         }
         self.invalidate_live_tail_hint();
         self.pending_batch = None;
@@ -329,10 +325,8 @@ impl<T, Lane> ForkArena<T, Lane> {
             {
                 return Err(ForkArenaError::InvalidRegion);
             }
-            for key in &batch.payload {
-                if *key != VACANT_LOGICAL_CHUNK {
-                    pool.payload.used(*key, self.owner)?;
-                }
+            for (_, key) in batch.payload.iter_live_with_positions() {
+                pool.payload.used(key, self.owner)?;
             }
             Ok(())
         })
@@ -356,18 +350,16 @@ impl<T, Lane> ForkArena<T, Lane> {
         destination
             .seal_boundary(pool)
             .expect("detached destination boundary was preflighted");
-        for key in &batch.payload {
-            if *key != VACANT_LOGICAL_CHUNK {
-                pool.payload
-                    .transfer(
-                        *key,
-                        self.owner,
-                        self.lineage,
-                        destination.owner,
-                        destination.lineage,
-                    )
-                    .expect("detached payload transfer was preflighted");
-            }
+        for (_, key) in batch.payload.iter_live_with_positions() {
+            pool.payload
+                .transfer(
+                    key,
+                    self.owner,
+                    self.lineage,
+                    destination.owner,
+                    destination.lineage,
+                )
+                .expect("detached payload transfer was preflighted");
         }
         let promoted_lists = batch
             .lists
@@ -376,15 +368,13 @@ impl<T, Lane> ForkArena<T, Lane> {
             .map(|list| rebrand_list(list, destination.owner))
             .collect::<Vec<_>>();
         let payload_start = destination.live_payload_len();
-        for (offset, key) in batch.payload.iter().copied().enumerate() {
-            if key != VACANT_LOGICAL_CHUNK {
-                destination.index_chunk(pool, key, payload_start + offset);
-            }
+        for (offset, key) in batch.payload.iter_live_with_positions() {
+            destination.index_chunk(pool, key, payload_start + offset);
         }
         let promoted = batch.payload.len();
         {
             let current = destination.current_chunks_mut();
-            current.payload.extend(batch.payload);
+            current.payload.append(batch.payload);
         }
         destination.invalidate_live_tail_hint();
         self.counters.chunks_promoted = self
@@ -429,8 +419,8 @@ impl<T, Lane> ForkArena<T, Lane> {
                 return Err(ForkArenaError::ActiveBatch);
             }
             destination.can_seal_boundary(pool)?;
-            for key in &batch.payload {
-                if *key != VACANT_LOGICAL_CHUNK && !pool.payload.is_sealed(*key, self.owner)? {
+            for (_, key) in batch.payload.iter_live_with_positions() {
+                if !pool.payload.is_sealed(key, self.owner)? {
                     return Err(ForkArenaError::UnsealedBoundary);
                 }
             }
@@ -470,34 +460,28 @@ impl<T, Lane> ForkArena<T, Lane> {
         let payload = self
             .detach_suffix(batch.payload_start as usize)
             .expect("batch payload detachment was preflighted");
-        for key in &payload {
-            if *key != VACANT_LOGICAL_CHUNK {
-                self.unindex_chunk(pool, *key);
-            }
+        for (_, key) in payload.iter_live_with_positions() {
+            self.unindex_chunk(pool, key);
         }
-        for key in &payload {
-            if *key != VACANT_LOGICAL_CHUNK {
-                pool.payload
-                    .transfer(
-                        *key,
-                        self.owner,
-                        self.lineage,
-                        destination.owner,
-                        destination.lineage,
-                    )
-                    .expect("batch payload ownership was preflighted");
-            }
+        for (_, key) in payload.iter_live_with_positions() {
+            pool.payload
+                .transfer(
+                    key,
+                    self.owner,
+                    self.lineage,
+                    destination.owner,
+                    destination.lineage,
+                )
+                .expect("batch payload ownership was preflighted");
         }
         let promoted = payload.len();
         let payload_start = destination.live_payload_len();
-        for (offset, key) in payload.iter().copied().enumerate() {
-            if key != VACANT_LOGICAL_CHUNK {
-                destination.index_chunk(pool, key, payload_start + offset);
-            }
+        for (offset, key) in payload.iter_live_with_positions() {
+            destination.index_chunk(pool, key, payload_start + offset);
         }
         {
             let current = destination.current_chunks_mut();
-            current.payload.extend(payload);
+            current.payload.append(payload);
         }
         destination.invalidate_live_tail_hint();
         self.counters.chunks_promoted = self

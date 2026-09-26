@@ -102,8 +102,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         let ForkOwnership::Accepted(source) = &mut self.ownership else {
             unreachable!("interior source was preflighted as accepted");
         };
-        let moved = source.payload[start - base..end - base].to_vec();
-        source.payload[start - base..end - base].fill(VACANT_LOGICAL_CHUNK);
+        let moved = source.payload.take_live_range(start - base, end - base);
         if prior_tail.is_some_and(|position| (start..end).contains(&position)) {
             let previous = (base..start).rev().find(|position| {
                 #[cfg(test)]
@@ -165,16 +164,14 @@ impl<T, Lane> ForkArena<T, Lane> {
             }
         }
         let extra = destination.detach_suffix(end)?;
-        for key in extra {
-            if key != VACANT_LOGICAL_CHUNK {
-                destination.unindex_chunk(pool, key);
-                pool.payload
-                    .release_lineage(key, destination.owner, destination.lineage)?;
-            }
+        for (_, key) in extra.iter_live_with_positions() {
+            destination.unindex_chunk(pool, key);
+            pool.payload
+                .release_lineage(key, destination.owner, destination.lineage)?;
         }
         let selected = destination.detach_suffix(start)?;
         let base = self.base_payload_chunks as usize;
-        for (offset, key) in selected.into_iter().enumerate() {
+        for (offset, key) in selected.iter_live_with_positions() {
             destination.unindex_chunk(pool, key);
             pool.payload.transfer(
                 key,
@@ -184,11 +181,13 @@ impl<T, Lane> ForkArena<T, Lane> {
                 self.lineage,
             )?;
             self.index_chunk(pool, key, start + offset);
-            let ForkOwnership::Accepted(source) = &mut self.ownership else {
-                unreachable!("interior source was preflighted as accepted");
-            };
-            source.payload[start + offset - base] = key;
         }
+        let ForkOwnership::Accepted(source) = &mut self.ownership else {
+            unreachable!("interior source was preflighted as accepted");
+        };
+        source
+            .payload
+            .restore_range(start - base, selected.into_live_keys());
         if start < end {
             self.set_live_tail_hint(Some(
                 self.live_tail_position()
@@ -331,32 +330,26 @@ impl<T, Lane> ForkArena<T, Lane> {
         let payload = self
             .detach_suffix(self.base_payload_chunks as usize)
             .expect("whole-region source suffix was preflighted");
-        for key in &payload {
-            if *key != VACANT_LOGICAL_CHUNK {
-                self.unindex_chunk(pool, *key);
-            }
+        for (_, key) in payload.iter_live_with_positions() {
+            self.unindex_chunk(pool, key);
         }
-        for key in &payload {
-            if *key != VACANT_LOGICAL_CHUNK {
-                pool.payload
-                    .transfer(
-                        *key,
-                        self.owner,
-                        self.lineage,
-                        destination.owner,
-                        destination.lineage,
-                    )
-                    .expect("whole-region payload ownership was preflighted");
-            }
+        for (_, key) in payload.iter_live_with_positions() {
+            pool.payload
+                .transfer(
+                    key,
+                    self.owner,
+                    self.lineage,
+                    destination.owner,
+                    destination.lineage,
+                )
+                .expect("whole-region payload ownership was preflighted");
         }
         let promoted = payload.len();
         let payload_start = destination.live_payload_len();
-        for (offset, key) in payload.iter().copied().enumerate() {
-            if key != VACANT_LOGICAL_CHUNK {
-                destination.index_chunk(pool, key, payload_start + offset);
-            }
+        for (offset, key) in payload.iter_live_with_positions() {
+            destination.index_chunk(pool, key, payload_start + offset);
         }
-        destination.current_chunks_mut().payload.extend(payload);
+        destination.current_chunks_mut().payload.append(payload);
         destination.invalidate_live_tail_hint();
         self.counters.chunks_promoted = self
             .counters
@@ -384,10 +377,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             .collect())
     }
 
-    pub(super) fn detach_suffix(
-        &mut self,
-        start: usize,
-    ) -> Result<Vec<LogicalChunkId>, ForkArenaError> {
+    pub(super) fn detach_suffix(&mut self, start: usize) -> Result<SparseChunks, ForkArenaError> {
         let base = self.base_payload_chunks as usize;
         let prefix_len = match &self.ownership {
             ForkOwnership::Accepted(_) => base,

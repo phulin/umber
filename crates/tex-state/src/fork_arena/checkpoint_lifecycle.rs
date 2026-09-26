@@ -52,7 +52,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             unreachable!()
         };
         let owner = self.owner;
-        for key in accepted.payload.drain(..payload_count) {
+        for key in accepted.payload.drain_prefix(payload_count) {
             if key == VACANT_LOGICAL_CHUNK {
                 continue;
             }
@@ -262,12 +262,16 @@ impl<T, Lane> ForkArena<T, Lane> {
             return Err(ForkArenaError::InvalidCheckpoint);
         }
         let count = (mark.payload_chunks - prefix_payload) as usize;
-        for key in detached_prior.payload.iter().take(count) {
-            let used = pool.payload.used(*key, self.owner)?;
+        for (_, key) in detached_prior
+            .payload
+            .iter_live_with_positions()
+            .take_while(|(position, _)| *position < count)
+        {
+            let used = pool.payload.used(key, self.owner)?;
             for offset in 0..used {
                 visit(
                     pool.payload
-                        .get(*key, self.owner, offset)
+                        .get(key, self.owner, offset)
                         .ok_or(ForkArenaError::InvalidChunk)?,
                 );
             }
@@ -487,12 +491,10 @@ impl<T, Lane> ForkArena<T, Lane> {
             .accepted_chunks_reattached
             .saturating_add(detached_prior.payload.len() as u64);
         let payload_start = self.base_payload_chunks as usize + prefix.payload.len();
-        for (offset, key) in detached_prior.payload.iter().copied().enumerate() {
-            if key != VACANT_LOGICAL_CHUNK {
-                self.index_chunk(pool, key, payload_start + offset);
-            }
+        for (offset, key) in detached_prior.payload.iter_live_with_positions() {
+            self.index_chunk(pool, key, payload_start + offset);
         }
-        prefix.payload.extend(detached_prior.payload);
+        prefix.payload.append(detached_prior.payload);
         self.ownership = ForkOwnership::Accepted(prefix);
         self.invalidate_live_tail_hint();
         Ok(())
@@ -605,10 +607,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         set: ChunkSet,
     ) -> Result<usize, ForkArenaError> {
         let count = set.payload.len();
-        for key in set.payload {
-            if key == VACANT_LOGICAL_CHUNK {
-                continue;
-            }
+        for key in set.payload.into_live_keys() {
             self.unindex_chunk(pool, key);
             pool.payload
                 .release_lineage(key, self.owner, self.lineage)?;

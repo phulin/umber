@@ -175,7 +175,17 @@ follows the build mark. The selected node and annex ranges move together under
 one receipt, and all predecessor and child coordinates must still resolve
 through the destination's sole owner after the source releases them.
 
-The arena now records vacant logical slots when an older interval moves out.
+The arena records vacant logical slots when an older interval moves out. Its
+authoritative owner envelope stores live chunk keys densely and compresses
+vacancies as ordered, nonoverlapping logical ranges. A gap contributes to the
+logical length but owns no key, so existing operation marks, construction
+marks, child coordinates, and move receipts keep their exact numbers. Direct
+lookup is one vector access while the envelope is dense; a sparse owner uses
+its ordered gap index to map a logical position to the live-key vector.
+Appending after a vacant tail creates a new live run, and consuming that run
+merges it back into the gap. Envelope memory is proportional to live chunks
+and the number of disjoint vacancies, not the number of past transfers.
+
 An exclusive box-construction mark rotates both typed tails; the wrapper's
 original annex payload stores the resulting interval coordinates. That stamp
 is non-owning until the mode-list owner consumes that precise wrapper. The

@@ -174,6 +174,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/fork_arena/checkpoint_lifecycle.rs`: Sealed checkpoint marks, exact
   candidate settlement, accepted-prefix release, and borrowed suffix visits
   on the existing arena lane.
+- `src/fork_arena/sparse_chunks.rs`: Compact authoritative owner envelopes
+  with stable logical positions and merged vacancy ranges after interior
+  transfers; dense owners retain direct vector indexing.
 - `src/fork_arena/batch_transfer.rs`: Exclusive batch closure, detachment,
   reattachment, adoption, and promotion of the existing arena lane.
 - `src/fork_arena/whole_region_transfer.rs`: Whole-region closure proofs,
