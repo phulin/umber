@@ -23,6 +23,15 @@ claim. A direct source run can have a cut at each boundary; multiple runs may
 create more than two cuts in one box. Projection cost is bounded by selected
 cut records, while complete interior chunks retain their physical payload.
 
+Before extending the transfer to child-bearing outputs, the profiling build
+attributes each remaining built-root structural copy to ordinary setbox,
+lastbox fallback, or PDF form publication. It records copied node volume and
+classifies the wrapper's immediate child list by leader, nested box, disc,
+migrating material, math, other annex-bearing material, or inline leaves.
+This census is enabled only by the profiling-stats CLI flag; normal builds
+compile no shape traversal or counters. The classes identify where to add
+producer-owned receipts, but do not themselves grant transfer authority.
+
 Paragraph completion and alignment setting construct boxes from earlier page
 lists. Their wrapper is new, but its child list can contain coordinates from
 the consumed paragraph or unset row. A construction mark opened immediately

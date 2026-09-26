@@ -3,7 +3,11 @@
 //! Normal builds do not compile this module. These counters never participate
 //! in engine state, snapshots, rollback, formats, or semantic identity.
 
+mod box_fallback;
 mod hot_core;
+
+pub use box_fallback::{BoxFallbackCensus, box_fallback_census, enable_box_fallback_census};
+pub(crate) use box_fallback::{BoxFallbackShape, box_fallback_census_enabled, record_box_fallback};
 
 pub use crate::meaning::{DirectCommandDeliveryCounters, direct_command_delivery_counters};
 pub use hot_core::{

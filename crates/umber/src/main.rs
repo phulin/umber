@@ -139,6 +139,7 @@ struct HotCoreProfilingReport {
     hot_core_before: tex_state::measurement::HotCoreCensus,
     retained_generations_before: tex_state::measurement::RetainedGenerationCensus,
     node_graph_before: tex_state::measurement::NodeGraphCensus,
+    box_fallback_before: tex_state::measurement::BoxFallbackCensus,
 }
 
 #[cfg(feature = "profiling")]
@@ -146,12 +147,14 @@ impl HotCoreProfilingReport {
     fn new(enabled: bool) -> Self {
         if enabled {
             tex_state::measurement::enable_node_pool_owner_census();
+            tex_state::measurement::enable_box_fallback_census();
         }
         Self {
             enabled,
             hot_core_before: tex_state::measurement::hot_core_census(),
             retained_generations_before: tex_state::measurement::retained_generation_census(),
             node_graph_before: tex_state::measurement::node_graph_census(),
+            box_fallback_before: tex_state::measurement::box_fallback_census(),
         }
     }
 }
@@ -165,6 +168,38 @@ impl Drop for HotCoreProfilingReport {
         let hot_core =
             tex_state::measurement::hot_core_census().saturating_sub(self.hot_core_before);
         eprintln!("HOT_CORE_CENSUS {}", hot_core_census_json(&hot_core));
+        let fallback =
+            tex_state::measurement::box_fallback_census().saturating_sub(self.box_fallback_before);
+        use std::fmt::Write as _;
+        let mut fallback_json = String::from("{\"rows\":[");
+        let mut first_row = true;
+        for (origin_index, origin) in tex_state::measurement::BoxFallbackCensus::ORIGIN_NAMES
+            .into_iter()
+            .enumerate()
+        {
+            for (shape_index, shape) in tex_state::measurement::BoxFallbackCensus::SHAPE_NAMES
+                .into_iter()
+                .enumerate()
+            {
+                let index = origin_index
+                    * tex_state::measurement::BoxFallbackCensus::SHAPE_NAMES.len()
+                    + shape_index;
+                if fallback.events[index] != 0 {
+                    if !first_row {
+                        fallback_json.push(',');
+                    }
+                    first_row = false;
+                    write!(
+                        fallback_json,
+                        "{{\"origin\":\"{origin}\",\"shape\":\"{shape}\",\"events\":{},\"copied_nodes\":{}}}",
+                        fallback.events[index], fallback.copied_nodes[index],
+                    )
+                    .expect("writing to a String cannot fail");
+                }
+            }
+        }
+        fallback_json.push_str("]}");
+        eprintln!("BOX_FALLBACK_CENSUS {fallback_json}");
         let generations = tex_state::measurement::retained_generation_census()
             .saturating_sub(self.retained_generations_before);
         eprintln!(

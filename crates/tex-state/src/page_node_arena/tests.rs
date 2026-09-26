@@ -66,6 +66,27 @@ fn boxed(children: PageListId) -> PageMaterialNode {
     }))
 }
 
+#[cfg(feature = "profiling")]
+#[test]
+fn fallback_profile_separates_inline_and_nested_direct_children() {
+    use crate::measurement::BoxFallbackShape;
+
+    page_arena!(arena, pool, state, 65_536);
+    let inline = arena.publish_owned(penalties(&[1])).expect("inline body");
+    let inline_box = arena.publish_owned([boxed(inline)]).expect("inline box");
+    assert_eq!(
+        arena.profile_built_fallback_shape(inline_box),
+        BoxFallbackShape::Inline
+    );
+
+    let nested = arena.publish_owned([boxed(inline)]).expect("nested body");
+    let outer = arena.publish_owned([boxed(nested)]).expect("outer box");
+    assert_eq!(
+        arena.profile_built_fallback_shape(outer),
+        BoxFallbackShape::NestedBox
+    );
+}
+
 #[test]
 fn generated_mode_source_requires_a_fresh_owned_segment() {
     page_arena!(arena, pool, state, 65_536);
@@ -2017,6 +2038,7 @@ fn built_durable_copy_preserves_page_root_created_in_construction_suffix() {
                 PageListId::empty(),
                 retained,
             ],
+            super::BuiltBoxOrigin::Other,
         )
         .expect("retained-root fallback");
 

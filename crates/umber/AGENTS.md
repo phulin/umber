@@ -75,7 +75,7 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `src/virtual_compile/resolvers/jpeg/tests.rs`: natural-size, density-unit, endianness, marker precedence, and truncated-header regressions.
 - `src/virtual_compile/synchronous.rs`: private candidate-local VFS admission of native command-site file answers, including aggregate byte and typed response validation before World visibility.
 - `src/virtual_compile/tests.rs`: native retry, path, precedence, limits, format, effect-isolation, font batching, and DVI coverage.
-- `src/main.rs`: `umber` binary entry point, CLI argument parsing, canonical `CommandState` source-tokenization for `lex-dump`, `expand-dump`/`run` dispatch, token formatting, profiling-only TeX82 memory-projection and machine-readable hot-core census publication (including failed bounded runs), accepted PDF font-closure receipt publication, and real-run file resolvers.
+- `src/main.rs`: `umber` binary entry point, CLI argument parsing, canonical `CommandState` source-tokenization for `lex-dump`, `expand-dump`/`run` dispatch, token formatting, profiling-only TeX82 memory-projection and machine-readable hot-core and built-box fallback census publication (including failed bounded runs), accepted PDF font-closure receipt publication, and real-run file resolvers.
 - `src/cli_resource.rs`: retained native project/cache/distribution resolution,
   the source/digest/offline-bounded authenticated root plus touched packed-shard
   byte owners, cancellation-aware resource retries, incremental source

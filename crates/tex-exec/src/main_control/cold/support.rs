@@ -841,7 +841,11 @@ pub(in crate::main_control) fn commit_set_box_target<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     command: &mut CommandMachine<'_, '_, G>,
 ) {
-    let PendingSetBox { target, region } = pending;
+    let PendingSetBox {
+        target,
+        region,
+        origin,
+    } = pending;
     let traced_box = boxed;
     let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects).box_register(
         target.index,
@@ -850,7 +854,13 @@ pub(in crate::main_control) fn commit_set_box_target<G>(
         |stores| {
             let (global, boxed) = (target.global, boxed);
             stores
-                .assign_built_page_box(target.index, boxed, region, assignment_scope(global))
+                .assign_built_page_box(
+                    target.index,
+                    boxed,
+                    region,
+                    assignment_scope(global),
+                    origin,
+                )
                 .expect("box assignment transfers its admitted construction")
         },
     );
@@ -865,7 +875,7 @@ pub(in crate::main_control) fn commit_interleaved_set_box_target<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     command: &mut CommandMachine<'_, '_, G>,
 ) {
-    let PendingSetBox { target, region } = pending;
+    let PendingSetBox { target, region, .. } = pending;
     let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects).box_register(
         target.index,
         Some(&root),

@@ -499,6 +499,7 @@ struct SetBoxTarget {
 struct PendingSetBox {
     target: SetBoxTarget,
     region: tex_state::node_region::PageClosureBuildMark,
+    origin: tex_state::page_node_arena::BuiltBoxOrigin,
 }
 
 #[derive(Debug)]

@@ -314,6 +314,7 @@ impl<'a, G> CommandContext<'a, G> {
                 build,
                 box_list,
                 self.page.payload_root_lists(),
+                crate::page_node_arena::BuiltBoxOrigin::PdfForm,
             )
             .map_err(|_| crate::PdfObjectCapacityError)?;
         let attr = attr.map(|tokens| self.pdf_token_parameter(tokens));

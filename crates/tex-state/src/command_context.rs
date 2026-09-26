@@ -1683,6 +1683,7 @@ impl<'a, G> CommandContext<'a, G> {
         value: Option<PageListId>,
         build: crate::node_region::PageClosureBuildMark,
         scope: AssignmentScope,
+        origin: crate::page_node_arena::BuiltBoxOrigin,
     ) -> Result<(), crate::NodePromotionError> {
         // TeX82 §977 plus e-TeX change [44.977] lets `\vsplit` update the
         // split-discard root while constructing the box returned to `\setbox`.
@@ -1694,6 +1695,7 @@ impl<'a, G> CommandContext<'a, G> {
                         build,
                         root,
                         self.page.payload_root_lists(),
+                        origin,
                     )
                     .map_err(crate::NodePromotionError::Nodes)?,
             ),

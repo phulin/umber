@@ -274,9 +274,10 @@ All production mutation of live TeX state should pass through `Universe` or simi
   macro definition keys and the canonical dense-row writer which decodes one
   borrowed row directly into its caller's final command fields.
 - `src/meaning/tests.rs`: Static codec, primitive, and typed macro-meaning tests.
-- `src/measurement.rs` and `src/measurement/hot_core.rs`: Profiling-feature-only
+- `src/measurement.rs`, `src/measurement/hot_core.rs`, and
+  `src/measurement/box_fallback.rs`: Profiling-feature-only
   allocation attribution, structural dispatch census, coarse retained
-  generation lifetime counters, and separate node/annex live-versus-vacant
+  generation lifetime counters, built-box structural-copy attribution, and separate node/annex live-versus-vacant
   NodePool backing evidence. Ordinary builds compile neither the module nor
   any associated fields, branches, or atomics.
 - `src/memory_accounting.rs`: Generation-local constant-time TeX main-memory
@@ -343,6 +344,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/page_node_arena/consumed_source.rs`: Move-only semantic page-source
   partition and reversible consumed-window head detachment for generated
   paragraph and alignment box ownership.
+- `src/page_node_arena/fallback_profile.rs`: Profiling-only classification of
+  built-box immediate children after a construction-mark transfer rejects;
+  this observation never grants move authority.
 - `src/page.rs`: Exclusive move-only `PageRegion` ownership over page payload,
   the four checked `PageListSpan` PageBuilder roots, scalar state, reversible
   same-region journal, and private owner-relative checkpoint rows; active

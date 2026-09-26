@@ -921,6 +921,15 @@ pub(crate) struct DurableTransferLoan {
 type BuiltClosureMoveResult =
     Result<(PageListId, u64), (ForkArenaError, Option<ClosureBuildMark<PageRole>>)>;
 
+/// Construction path for profiling a box whose child predates its build mark.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BuiltBoxOrigin {
+    SetBox,
+    LastBox,
+    PdfForm,
+    Other,
+}
+
 /// Demand-free observations of explicit durable lifetime transitions.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct DurableTransitionCounters {
@@ -1351,6 +1360,15 @@ impl<'a> PageMaterialArena<'a> {
         mark: ClosureBuildMark<PageRole>,
         root: PageListId,
     ) -> Result<DurableNodeClosure, ForkArenaError> {
+        self.finish_built_page_root_to_durable_from(mark, root, BuiltBoxOrigin::Other)
+    }
+
+    fn finish_built_page_root_to_durable_from(
+        &mut self,
+        mark: ClosureBuildMark<PageRole>,
+        root: PageListId,
+        _origin: BuiltBoxOrigin,
+    ) -> Result<DurableNodeClosure, ForkArenaError> {
         let source_root = self.region.root(self.pool, root)?;
         let receipt = self.region.consumed_closure_roots_receipt(&mark)?;
         let sealed = match self
@@ -1364,6 +1382,9 @@ impl<'a> PageMaterialArena<'a> {
                     self.region.cancel_closure_build(self.pool, mark)?;
                     return Err(error);
                 }
+                #[cfg(feature = "profiling")]
+                let shape = crate::measurement::box_fallback_census_enabled()
+                    .then(|| self.profile_built_fallback_shape(root));
                 let mut durable = self.pool.start_region::<DurableRole>()?;
                 let before = durable.counters().source_nodes_copied;
                 let copied = match structural_copy_fallback(
@@ -1406,6 +1427,10 @@ impl<'a> PageMaterialArena<'a> {
                     .durable_transitions
                     .node_closure_scan_nodes
                     .saturating_add(copied_nodes);
+                #[cfg(feature = "profiling")]
+                if let Some(shape) = shape {
+                    crate::measurement::record_box_fallback(_origin, shape, copied_nodes);
+                }
                 return Ok(owner);
             }
         };
@@ -1800,12 +1825,13 @@ impl<'a> PageMaterialArena<'a> {
         mark: ClosureBuildMark<PageRole>,
         root: PageListId,
         retained_roots: [PageListId; N],
+        origin: BuiltBoxOrigin,
     ) -> Result<DurableNodeClosure, ForkArenaError> {
         if !self
             .region
             .build_suffix_contains_any_root(self.pool, &mark, retained_roots)?
         {
-            return self.finish_built_page_root_to_durable(mark, root);
+            return self.finish_built_page_root_to_durable_from(mark, root, origin);
         }
 
         let source_root = self.region.root(self.pool, root)?;
@@ -3243,3 +3269,5 @@ impl<'a> PageMaterialView<'a> {
 mod tests;
 
 mod consumed_box_projection;
+#[cfg(feature = "profiling")]
+mod fallback_profile;

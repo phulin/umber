@@ -57,6 +57,7 @@ fn profiling_stats_flag_reports_feature_only_census() {
         "EXPANSION_STATS ",
         "EXPANSION_TIMERS_NS ",
         "HOT_CORE_CENSUS ",
+        "BOX_FALLBACK_CENSUS ",
         "RETAINED_GENERATION_CENSUS ",
         "SAVE_JOURNAL_CENSUS ",
     ] {
@@ -66,6 +67,14 @@ fn profiling_stats_flag_reports_feature_only_census() {
         stderr.contains("\"expansion_opcodes\":{\"macro\":1"),
         "the profiling census must observe the fixture's macro expansion: {stderr}"
     );
+    let fallback: serde_json::Value = serde_json::from_str(
+        stderr
+            .lines()
+            .find_map(|line| line.strip_prefix("BOX_FALLBACK_CENSUS "))
+            .expect("built-box fallback census line"),
+    )
+    .expect("valid built-box fallback JSON");
+    assert!(fallback["rows"].is_array());
 
     let census: serde_json::Value = serde_json::from_str(
         stderr

@@ -2474,6 +2474,7 @@ pub(in crate::main_control) fn apply<G>(
                         PendingSetBox {
                             target: *target,
                             region: stores.begin_page_node_region(),
+                            origin: tex_state::page_node_arena::BuiltBoxOrigin::LastBox,
                         },
                         root,
                         metadata.clone(),
@@ -2487,6 +2488,7 @@ pub(in crate::main_control) fn apply<G>(
                 boxes.pending_setbox = Some(PendingSetBox {
                     target: *target,
                     region: stores.begin_page_node_region(),
+                    origin: tex_state::page_node_arena::BuiltBoxOrigin::LastBox,
                 });
                 let context = boxes.take_box_context(false);
                 box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
@@ -2496,6 +2498,7 @@ pub(in crate::main_control) fn apply<G>(
             boxes.pending_setbox = Some(PendingSetBox {
                 target: *target,
                 region: stores.begin_page_node_region(),
+                origin: tex_state::page_node_arena::BuiltBoxOrigin::SetBox,
             });
             match path {
                 ScannedSetBoxPath::Forbidden { error_context } => {
