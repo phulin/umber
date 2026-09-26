@@ -12,7 +12,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use crate::fork_arena::{
     AdmittedListChunkCursor, BatchMark, CheckpointMark, ChunkPool, DetachedBatch, ForkArena,
     ForkArenaCounters, ForkArenaError, NodePoolStorageClass, PageMaterialLane, RegionValue,
-    SealedBoundary, SequenceSummaryWork,
+    SealedBoundary, SequenceSummaryWork, TransferredInterval,
 };
 
 #[cfg(feature = "profiling")]
@@ -50,6 +50,15 @@ struct NodeEnvelopeBatch {
     annex: DetachedBatch<NodeAnnexLane>,
 }
 
+/// Operation-local authority to return an older, exclusively removed box
+/// interval to its page owner if the enclosing command rejects.
+pub(crate) struct PageInteriorTransferLoan {
+    source: NodeRegionId,
+    destination: NodeRegionId,
+    nodes: TransferredInterval<PageMaterialLane>,
+    annex: TransferredInterval<NodeAnnexLane>,
+}
+
 static NEXT_NODE_POOL_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Node ownership used by page construction and retained page history.
@@ -64,6 +73,29 @@ pub struct NodeRegionId {
     pool: u64,
     slot: u32,
     generation: u32,
+}
+
+impl NodeRegionId {
+    pub(crate) const fn words(self) -> [u32; 4] {
+        [
+            self.pool as u32,
+            (self.pool >> 32) as u32,
+            self.slot,
+            self.generation,
+        ]
+    }
+
+    pub(crate) const fn from_words(words: [u32; 4]) -> Option<Self> {
+        let pool = words[0] as u64 | ((words[1] as u64) << 32);
+        if pool == 0 || words[3] == 0 {
+            return None;
+        }
+        Some(Self {
+            pool,
+            slot: words[2],
+            generation: words[3],
+        })
+    }
 }
 
 impl core::fmt::Debug for NodeRegionId {
@@ -973,6 +1005,108 @@ impl<Role> core::fmt::Debug for ClosureBuildMark<Role> {
 /// Page-owned closure boundary used by execution-facing construction APIs.
 pub type PageClosureBuildMark = ClosureBuildMark<PageRole>;
 
+/// Non-owning coordinates of one boxed construction. They become a transfer
+/// authority only when the semantic list owner consumes that exact box root.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PageBoxSegment {
+    region: NodeRegionId,
+    node_start: u32,
+    node_end: u32,
+    annex_start: u32,
+    annex_end: u32,
+}
+
+impl PageBoxSegment {
+    pub(crate) fn from_boundaries(
+        start: ClosureBuildMark<PageRole>,
+        end: ClosureBuildMark<PageRole>,
+    ) -> Result<Self, ForkArenaError> {
+        if start.region != end.region
+            || start.batch.payload_start() > end.batch.payload_start()
+            || start.annex_batch.payload_start() > end.annex_batch.payload_start()
+        {
+            return Err(ForkArenaError::InvalidRegion);
+        }
+        Ok(Self {
+            region: start.region,
+            node_start: start.batch.payload_start() as u32,
+            node_end: end.batch.payload_start() as u32,
+            annex_start: start.annex_batch.payload_start() as u32,
+            annex_end: end.annex_batch.payload_start() as u32,
+        })
+    }
+
+    pub(crate) fn from_live_end(
+        start: &ClosureBuildMark<PageRole>,
+        node_end: usize,
+        annex_end: usize,
+    ) -> Result<Self, ForkArenaError> {
+        let node_start = start.batch.payload_start();
+        let annex_start = start.annex_batch.payload_start();
+        let node_end = u32::try_from(node_end).map_err(|_| ForkArenaError::CapacityOverflow)?;
+        let annex_end = u32::try_from(annex_end).map_err(|_| ForkArenaError::CapacityOverflow)?;
+        if node_start >= node_end as usize || annex_start >= annex_end as usize {
+            return Err(ForkArenaError::InvalidRegion);
+        }
+        Ok(Self {
+            region: start.region,
+            node_start: node_start as u32,
+            node_end,
+            annex_start: annex_start as u32,
+            annex_end,
+        })
+    }
+
+    pub(crate) const fn words(self) -> [u32; 8] {
+        let region = self.region.words();
+        [
+            region[0],
+            region[1],
+            region[2],
+            region[3],
+            self.node_start,
+            self.node_end,
+            self.annex_start,
+            self.annex_end,
+        ]
+    }
+
+    pub(crate) const fn from_words(words: [u32; 8]) -> Option<Self> {
+        let Some(region) = NodeRegionId::from_words([words[0], words[1], words[2], words[3]])
+        else {
+            return None;
+        };
+        if words[4] >= words[5] || words[6] >= words[7] {
+            return None;
+        }
+        Some(Self {
+            region,
+            node_start: words[4],
+            node_end: words[5],
+            annex_start: words[6],
+            annex_end: words[7],
+        })
+    }
+
+    pub(crate) const fn node_range(self) -> std::ops::Range<usize> {
+        self.node_start as usize..self.node_end as usize
+    }
+
+    pub(crate) const fn annex_range(self) -> std::ops::Range<usize> {
+        self.annex_start as usize..self.annex_end as usize
+    }
+
+    pub(crate) const fn region(self) -> NodeRegionId {
+        self.region
+    }
+}
+
+impl<Role> ClosureBuildMark<Role> {
+    pub(crate) const fn region_id(&self) -> NodeRegionId {
+        self.region
+    }
+}
+
 /// Consumed proof that no owner-local root outside the closure names its
 /// suffix. It is intentionally neither clonable nor constructible from raw
 /// coordinates.
@@ -1122,6 +1256,10 @@ impl<Role> OwnedNodeClosure<Role> {
         self.region
     }
 
+    pub(crate) fn region_mut(&mut self) -> &mut NodeRegion<Role> {
+        &mut self.region
+    }
+
     pub(crate) const fn root(&self) -> RegionRoot<Role> {
         self.root
     }
@@ -1244,6 +1382,118 @@ pub(crate) fn transfer_sealed_closure_into<Source, Destination>(
     })
 }
 
+/// Moves a completed, exclusively consumed box interval that precedes the
+/// current construction mark. Both typed lanes retain their source-relative
+/// logical positions; the returned loan restores them before operation roots.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn transfer_page_interior_closure(
+    pool: &mut NodePool,
+    source: &mut NodeRegion<PageRole>,
+    root: RegionRoot<PageRole>,
+    node_range: std::ops::Range<usize>,
+    annex_range: std::ops::Range<usize>,
+    destination: &mut NodeRegion<DurableRole>,
+) -> Result<(RegionRoot<DurableRole>, PageInteriorTransferLoan), ForkArenaError> {
+    preflight_page_interior_closure(
+        pool,
+        source,
+        root,
+        node_range.clone(),
+        annex_range.clone(),
+        destination,
+    )?;
+    let nodes = source.pub_arena.transfer_interior_interval(
+        &mut pool.chunks,
+        &mut destination.pub_arena,
+        node_range.start,
+        node_range.end,
+    )?;
+    let annex = source.annex_arena.transfer_interior_interval(
+        &mut pool.annex_chunks,
+        &mut destination.annex_arena,
+        annex_range.start,
+        annex_range.end,
+    )?;
+    pool.closure_transitions.envelope_moves =
+        pool.closure_transitions.envelope_moves.saturating_add(1);
+    Ok((
+        RegionRoot {
+            region: destination.id,
+            list: root.list,
+            _role: PhantomData,
+        },
+        PageInteriorTransferLoan {
+            source: source.id,
+            destination: destination.id,
+            nodes,
+            annex,
+        },
+    ))
+}
+
+pub(crate) fn preflight_page_interior_closure(
+    pool: &NodePool,
+    source: &NodeRegion<PageRole>,
+    root: RegionRoot<PageRole>,
+    node_range: std::ops::Range<usize>,
+    annex_range: std::ops::Range<usize>,
+    destination: &NodeRegion<DurableRole>,
+) -> Result<(), ForkArenaError> {
+    pool.validate_region(source)?;
+    pool.validate_region(destination)?;
+    if root.region != source.id {
+        return Err(ForkArenaError::InvalidRegion);
+    }
+    source.pub_arena.preflight_interval_root(
+        &pool.chunks,
+        root.list.coordinate(),
+        node_range.start,
+        node_range.end,
+    )?;
+    source.pub_arena.preflight_interior_interval(
+        &pool.chunks,
+        &destination.pub_arena,
+        node_range.start,
+        node_range.end,
+    )?;
+    source.annex_arena.preflight_interior_interval(
+        &pool.annex_chunks,
+        &destination.annex_arena,
+        annex_range.start,
+        annex_range.end,
+    )?;
+    source.pub_arena.preflight_paired_interval_floor(
+        &pool.chunks,
+        node_range.start,
+        node_range.end,
+        annex_range.start,
+    )?;
+    Ok(())
+}
+
+pub(crate) fn rollback_page_interior_closure(
+    pool: &mut NodePool,
+    source: &mut NodeRegion<PageRole>,
+    destination: &mut NodeRegion<DurableRole>,
+    loan: PageInteriorTransferLoan,
+) -> Result<(), ForkArenaError> {
+    pool.validate_region(source)?;
+    pool.validate_region(destination)?;
+    if loan.source != source.id || loan.destination != destination.id {
+        return Err(ForkArenaError::InvalidRegion);
+    }
+    source.pub_arena.rollback_interior_interval(
+        &mut pool.chunks,
+        &mut destination.pub_arena,
+        loan.nodes,
+    )?;
+    source.annex_arena.rollback_interior_interval(
+        &mut pool.annex_chunks,
+        &mut destination.annex_arena,
+        loan.annex,
+    )
+}
+
 /// Moves a whole self-contained closure envelope and rebrands every nested
 /// child coordinate without moving any node address.
 pub(crate) fn transfer_closure_into<Source, Destination>(
@@ -1251,6 +1501,8 @@ pub(crate) fn transfer_closure_into<Source, Destination>(
     closure: &mut OwnedNodeClosure<Source>,
     destination: &mut NodeRegion<Destination>,
 ) -> Result<RegionRoot<Destination>, ForkArenaError> {
+    let source_node_base = closure.region.pub_arena.payload_base_position();
+    let source_annex_base = closure.region.annex_arena.payload_base_position();
     let preflight = pool
         .validate_region(&closure.region)
         .and_then(|()| pool.validate_region(destination))
@@ -1267,7 +1519,29 @@ pub(crate) fn transfer_closure_into<Source, Destination>(
                 &pool.annex_chunks,
                 &destination.annex_arena,
                 None,
-            )
+            )?;
+            closure.region.pub_arena.preflight_paired_dependency_floor(
+                &pool.chunks,
+                &[closure.root.list.coordinate()],
+                source_node_base,
+                source_annex_base,
+            )?;
+            let nodes = closure.region.pub_arena.payload_position_end() - source_node_base;
+            let annex = closure.region.annex_arena.payload_position_end() - source_annex_base;
+            if destination
+                .pub_arena
+                .payload_position_end()
+                .checked_add(nodes)
+                .is_none_or(|end| end > u32::MAX as usize)
+                || destination
+                    .annex_arena
+                    .payload_position_end()
+                    .checked_add(annex)
+                    .is_none_or(|end| end > u32::MAX as usize)
+            {
+                return Err(ForkArenaError::CapacityOverflow);
+            }
+            Ok(())
         });
     preflight?;
 
@@ -1300,10 +1574,22 @@ pub(crate) fn transfer_closure_into<Source, Destination>(
     debug_assert!(annex_promoted.is_none());
     destination
         .pub_arena
+        .rebase_dependency_suffix(&mut pool.chunks, destination_node_start, source_node_base)
+        .expect("whole-region node dependency floors were preflighted");
+    destination
+        .annex_arena
+        .rebase_dependency_suffix(
+            &mut pool.annex_chunks,
+            destination_annex_start,
+            source_annex_base,
+        )
+        .expect("whole-region annex dependency floors were preflighted");
+    destination
+        .pub_arena
         .rebase_paired_dependency_suffix(
             &mut pool.chunks,
             destination_node_start,
-            0,
+            source_annex_base,
             destination_annex_start,
         )
         .expect("paired whole-region transfer preserves relative annex floors");

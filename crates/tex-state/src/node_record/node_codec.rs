@@ -116,7 +116,8 @@ impl NodeRecord<PageMaterialLane> {
                 visit(child(&payload, 21)?);
             }
             NodeKind::HList | NodeKind::VList => {
-                let payload = annex.resolve_fixed_array::<BoxPayload, 28>(key_from_record(self))?;
+                let payload = annex
+                    .resolve_fixed_array::<BoxPayload, BOX_PAYLOAD_WORDS>(key_from_record(self))?;
                 visit(child(&payload, 7)?);
                 visit(child(&payload, 17)?);
             }
@@ -248,10 +249,11 @@ impl NodeRecord<PageMaterialLane> {
                 ))
             }
             NodeKind::HList | NodeKind::VList => {
-                let mut payload =
-                    annex.resolve_fixed_array::<BoxPayload, 28>(key_from_record(self))?;
+                let mut payload = annex
+                    .resolve_fixed_array::<BoxPayload, BOX_PAYLOAD_WORDS>(key_from_record(self))?;
                 rewrite_child(&mut payload, 7, &mut map_child)?;
                 rewrite_child(&mut payload, 17, &mut map_child)?;
+                payload[28..].fill(0);
                 let key = annex.append_fixed::<BoxPayload>(&payload);
                 Some((
                     Self::with_key(kind, subtype, flags, key),
@@ -436,10 +438,44 @@ impl NodeRecord<PageMaterialLane> {
             && self.subtype() == 0
             && self.flags() == 0)
             .then(|| {
-                annex.inspect_fixed(key_from_record::<BoxPayload>(self), 28, |payload| {
-                    payload.get(1).copied().map(decode_scaled)
-                })
+                annex.inspect_fixed(
+                    key_from_record::<BoxPayload>(self),
+                    BOX_PAYLOAD_WORDS,
+                    |payload| payload.get(1).copied().map(decode_scaled),
+                )
             })?
+    }
+
+    /// The original box wrapper's construction range, if it was stamped by
+    /// its semantic list owner before the wrapper was sealed. A structural
+    /// re-encode clears this hint, so it cannot duplicate move authority.
+    pub(crate) fn box_segment(
+        self,
+        annex: NodeAnnexView<'_>,
+    ) -> Option<crate::node_region::PageBoxSegment> {
+        if !matches!(self.kind()?, NodeKind::HList | NodeKind::VList)
+            || self.subtype() != 0
+            || self.flags() != 0
+        {
+            return None;
+        }
+        let payload =
+            annex.resolve_fixed_array::<BoxPayload, BOX_PAYLOAD_WORDS>(key_from_record(self))?;
+        crate::node_region::PageBoxSegment::from_words(payload[28..].try_into().ok()?)
+    }
+
+    pub(crate) fn stamp_box_segment(
+        self,
+        annex: &mut NodeAnnexWriter<'_>,
+        segment: crate::node_region::PageBoxSegment,
+    ) -> Option<()> {
+        if !matches!(self.kind()?, NodeKind::HList | NodeKind::VList)
+            || self.subtype() != 0
+            || self.flags() != 0
+        {
+            return None;
+        }
+        annex.stamp_box_segment(key_from_record(self), segment)
     }
 
     pub(crate) fn unset_width(self, annex: NodeAnnexView<'_>) -> Option<Scaled> {
@@ -858,7 +894,7 @@ impl NodeRecord<PageMaterialLane> {
             ),
             Node::HList(value) | Node::VList(value) => {
                 let vertical = matches!(node, Node::VList(_));
-                let key = annex.append_fixed::<BoxPayload>(&encode_box_payload(value));
+                let key = annex.append_fixed::<BoxPayload>(&encode_standalone_box_payload(value));
                 Self::with_key(
                     if vertical {
                         NodeKind::VList
@@ -1231,7 +1267,8 @@ impl NodeRecord<PageMaterialLane> {
                 })
             }
             NodeKind::HList | NodeKind::VList if subtype == 0 && flags == 0 => {
-                let payload = annex.resolve_fixed_array::<BoxPayload, 28>(key_from_record(self))?;
+                let payload = annex
+                    .resolve_fixed_array::<BoxPayload, BOX_PAYLOAD_WORDS>(key_from_record(self))?;
                 let boxed = decode_box_payload(&payload)?;
                 Some(if kind == NodeKind::HList {
                     Node::HList(boxed)

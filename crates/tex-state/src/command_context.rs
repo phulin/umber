@@ -1718,6 +1718,39 @@ impl<'a, G> CommandContext<'a, G> {
             .map_err(|_| crate::NodePromotionError::Values(crate::PromotionError::AllocationFailed))
     }
 
+    /// Assigns a box whose original wrapper was consumed from an older
+    /// isolated page interval. The operation journal owns the reverse loan
+    /// until the command commits.
+    pub fn assign_interleaved_page_box(
+        &mut self,
+        index: u16,
+        root: crate::page_node_arena::PageListId,
+        segment: crate::node_region::PageBoxSegment,
+        build: crate::node_region::PageClosureBuildMark,
+        scope: AssignmentScope,
+    ) -> Result<(), crate::NodePromotionError> {
+        self.page_nodes
+            .cancel_closure_build(build)
+            .map_err(crate::NodePromotionError::Nodes)?;
+        let (durable, loan) = self
+            .page_nodes
+            .finish_interleaved_page_box(root, segment)
+            .map_err(crate::NodePromotionError::Nodes)?;
+        let current_level = self.admitted.state_ref().current_level();
+        let group_save_position = self.admitted.state_ref().save_stack_order_position();
+        self.durable_boxes
+            .assign_with_page_loan(
+                &mut self.page_nodes,
+                index,
+                durable,
+                loan,
+                scope,
+                current_level,
+                group_save_position,
+            )
+            .map_err(|_| crate::NodePromotionError::Values(crate::PromotionError::AllocationFailed))
+    }
+
     pub fn assign_page_box_global(
         &mut self,
         index: u16,

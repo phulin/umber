@@ -303,6 +303,18 @@ impl ModeList {
         self.take_span().list()
     }
 
+    pub(crate) fn last_node_root<G>(
+        &self,
+        stores: &mut CommandContext<'_, G>,
+    ) -> Option<PageListId> {
+        let index = self.nodes.len().checked_sub(1)?;
+        Some(
+            stores
+                .slice_page_node_span(self.nodes, index..index + 1)
+                .list(),
+        )
+    }
+
     fn take_span(&mut self) -> PageListSpan {
         std::mem::take(&mut self.nodes)
     }
@@ -571,6 +583,13 @@ impl ModeList {
         let start = *range.start();
         let end = range.end().saturating_add(1);
         let removed = stores.slice_page_node_span(self.nodes, start..end);
+        if end == self.nodes.len() {
+            // A removed suffix leaves its predecessor's published records
+            // untouched. In particular, an older box keeps the segment
+            // stamped on its original wrapper for a later \lastbox.
+            self.nodes = stores.slice_page_node_span(self.nodes, 0..start);
+            return removed.list();
+        }
         stores.open_page_active_list(&mut self.active);
         stores.append_page_active_span_range(&mut self.active, self.nodes, 0..start);
         stores.append_page_active_span_range(&mut self.active, self.nodes, end..self.nodes.len());

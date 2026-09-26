@@ -1055,6 +1055,7 @@ fn etex_showgroups_detaches_nested_save_and_mode_diagnostics() {
         boxes.active_boxes.push(ActiveReplayBox {
             target: None,
             shipout_region: None,
+            box_segment_start: None,
             kind: ReplayBoxKind::HBox,
             group_kind: GroupKind::AdjustedHBox,
             packing: PackSpec::Exactly(Scaled::from_raw(20 * 65_536)),

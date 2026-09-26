@@ -3,6 +3,186 @@
 use super::*;
 
 impl<T, Lane> ForkArena<T, Lane> {
+    pub(crate) fn preflight_interval_root(
+        &self,
+        pool: &ChunkPool<T>,
+        root: ArenaListId<Lane>,
+        start: usize,
+        end: usize,
+    ) -> Result<(), ForkArenaError> {
+        self.validate_list_in_suffix(pool, root, start)?;
+        if root.is_empty() {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        let tail = self
+            .resolved_position(pool, root.tail.raw)
+            .ok_or(ForkArenaError::InvalidRange)?;
+        (tail < end)
+            .then_some(())
+            .ok_or(ForkArenaError::InvalidRegion)
+    }
+
+    pub(crate) fn preflight_paired_interval_floor(
+        &self,
+        pool: &ChunkPool<T>,
+        start: usize,
+        end: usize,
+        paired_start: usize,
+    ) -> Result<(), ForkArenaError> {
+        for position in start..end {
+            let key = self
+                .live_key_at(position)
+                .ok_or(ForkArenaError::InvalidRegion)?;
+            let meta = pool
+                .payload
+                .validate_lineage(key, self.owner, self.lineage)?;
+            if meta.paired_dependency_floor < paired_start {
+                return Err(ForkArenaError::InvalidRegion);
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn preflight_interior_interval<Destination>(
+        &self,
+        pool: &ChunkPool<T>,
+        destination: &ForkArena<T, Destination>,
+        start: usize,
+        end: usize,
+    ) -> Result<(), ForkArenaError> {
+        self.can_seal_boundary(pool)?;
+        destination.can_seal_boundary(pool)?;
+        if self.owner == destination.owner
+            || self.pending_batch.is_some()
+            || !matches!(self.ownership, ForkOwnership::Accepted(_))
+            || !matches!(destination.ownership, ForkOwnership::Accepted(_))
+            || destination.live_payload_len() != 0
+            || start < self.base_payload_chunks as usize
+            || start >= end
+            || end > self.live_payload_len()
+        {
+            return Err(ForkArenaError::InvalidRegion);
+        }
+        let (start, end) = (u32::try_from(start), u32::try_from(end));
+        let (Ok(start), Ok(end)) = (start, end) else {
+            return Err(ForkArenaError::CapacityOverflow);
+        };
+        for position in start as usize..end as usize {
+            let key = self
+                .live_key_at(position)
+                .ok_or(ForkArenaError::InvalidRegion)?;
+            let meta = pool
+                .payload
+                .validate_lineage(key, self.owner, self.lineage)?;
+            if !meta.sealed
+                || !meta.dependency_metadata_complete
+                || meta.dependency_floor < start as usize
+                || meta.lineages.iter().filter(|entry| entry.id != 0).count() != 1
+            {
+                return Err(ForkArenaError::InvalidRegion);
+            }
+        }
+        Ok(())
+    }
+
+    /// Transfers whole interior logical chunks into an empty independent
+    /// owner. Their original positions remain stable in both the source's
+    /// vacant slots and the destination, so no resident value is rewritten.
+    pub(crate) fn transfer_interior_interval<Destination>(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        destination: &mut ForkArena<T, Destination>,
+        start: usize,
+        end: usize,
+    ) -> Result<TransferredInterval<Lane>, ForkArenaError> {
+        self.preflight_interior_interval(pool, destination, start, end)?;
+        destination.bind_pool(pool)?;
+        let base = self.base_payload_chunks as usize;
+        let ForkOwnership::Accepted(source) = &mut self.ownership else {
+            unreachable!("interior source was preflighted as accepted");
+        };
+        let moved = source.payload[start - base..end - base].to_vec();
+        source.payload[start - base..end - base].fill(VACANT_LOGICAL_CHUNK);
+        destination.base_payload_chunks = start as u32;
+        for (offset, key) in moved.iter().copied().enumerate() {
+            self.unindex_chunk(pool, key);
+            pool.payload
+                .transfer(
+                    key,
+                    self.owner,
+                    self.lineage,
+                    destination.owner,
+                    destination.lineage,
+                )
+                .expect("interior chunk transfer was preflighted");
+            destination.index_chunk(pool, key, start + offset);
+        }
+        destination.current_chunks_mut().payload.extend(moved);
+        Ok(TransferredInterval {
+            source: self.owner,
+            destination: destination.owner,
+            start: start as u32,
+            end: end as u32,
+            _lane: PhantomData,
+        })
+    }
+
+    /// Reverses one interior transfer before the source operation restores
+    /// its earlier roots. Any destination suffix created around the selected
+    /// interval is discarded first.
+    pub(crate) fn rollback_interior_interval<Source>(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        destination: &mut ForkArena<T, Source>,
+        loan: TransferredInterval<Lane>,
+    ) -> Result<(), ForkArenaError> {
+        self.can_seal_boundary(pool)?;
+        destination.can_seal_boundary(pool)?;
+        let (start, end) = (loan.start as usize, loan.end as usize);
+        if self.owner != loan.source
+            || destination.owner != loan.destination
+            || !matches!(self.ownership, ForkOwnership::Accepted(_))
+            || !matches!(destination.ownership, ForkOwnership::Accepted(_))
+            || destination.base_payload_chunks != loan.start
+            || destination.live_payload_len() < end
+            || end > self.live_payload_len()
+        {
+            return Err(ForkArenaError::InvalidRegion);
+        }
+        for position in start..end {
+            if self.live_key_at(position).is_some() || destination.live_key_at(position).is_none() {
+                return Err(ForkArenaError::InvalidRegion);
+            }
+        }
+        let extra = destination.detach_suffix(end)?;
+        for key in extra {
+            if key != VACANT_LOGICAL_CHUNK {
+                destination.unindex_chunk(pool, key);
+                pool.payload
+                    .release_lineage(key, destination.owner, destination.lineage)?;
+            }
+        }
+        let selected = destination.detach_suffix(start)?;
+        let base = self.base_payload_chunks as usize;
+        for (offset, key) in selected.into_iter().enumerate() {
+            destination.unindex_chunk(pool, key);
+            pool.payload.transfer(
+                key,
+                destination.owner,
+                destination.lineage,
+                self.owner,
+                self.lineage,
+            )?;
+            self.index_chunk(pool, key, start + offset);
+            let ForkOwnership::Accepted(source) = &mut self.ownership else {
+                unreachable!("interior source was preflighted as accepted");
+            };
+            source.payload[start + offset - base] = key;
+        }
+        destination.base_payload_chunks = 0;
+        Ok(())
+    }
+
     pub(crate) fn preflight_whole_region_transfer<Destination>(
         &self,
         pool: &ChunkPool<T>,
@@ -41,14 +221,15 @@ impl<T, Lane> ForkArena<T, Lane> {
         if let Some(root) = root {
             self.validate_list_in_suffix(pool, root, 0)?;
         }
-        for position in 0..self.live_payload_len() {
-            let key = self
-                .live_key_at(position)
-                .ok_or(ForkArenaError::InvalidRegion)?;
-            if !pool
+        for position in self.base_payload_chunks as usize..self.live_payload_len() {
+            let Some(key) = self.live_key_at(position) else {
+                continue;
+            };
+            let meta = pool
                 .payload
-                .validate_lineage(key, self.owner, self.lineage)?
-                .dependency_metadata_complete
+                .validate_lineage(key, self.owner, self.lineage)?;
+            if !meta.dependency_metadata_complete
+                || meta.dependency_floor < self.base_payload_chunks as usize
             {
                 return Err(ForkArenaError::InvalidRegion);
             }
@@ -131,26 +312,32 @@ impl<T, Lane> ForkArena<T, Lane> {
             .seal_boundary(pool)
             .expect("whole-region destination boundary was preflighted");
         let payload = self
-            .detach_suffix(0)
+            .detach_suffix(self.base_payload_chunks as usize)
             .expect("whole-region source suffix was preflighted");
         for key in &payload {
-            self.unindex_chunk(pool, *key);
+            if *key != VACANT_LOGICAL_CHUNK {
+                self.unindex_chunk(pool, *key);
+            }
         }
         for key in &payload {
-            pool.payload
-                .transfer(
-                    *key,
-                    self.owner,
-                    self.lineage,
-                    destination.owner,
-                    destination.lineage,
-                )
-                .expect("whole-region payload ownership was preflighted");
+            if *key != VACANT_LOGICAL_CHUNK {
+                pool.payload
+                    .transfer(
+                        *key,
+                        self.owner,
+                        self.lineage,
+                        destination.owner,
+                        destination.lineage,
+                    )
+                    .expect("whole-region payload ownership was preflighted");
+            }
         }
         let promoted = payload.len();
         let payload_start = destination.live_payload_len();
         for (offset, key) in payload.iter().copied().enumerate() {
-            destination.index_chunk(pool, key, payload_start + offset);
+            if key != VACANT_LOGICAL_CHUNK {
+                destination.index_chunk(pool, key, payload_start + offset);
+            }
         }
         destination.current_chunks_mut().payload.extend(payload);
         self.counters.chunks_promoted = self
@@ -174,9 +361,9 @@ impl<T, Lane> ForkArena<T, Lane> {
         if start > end || end != live_len {
             return Err(ForkArenaError::InvalidRegion);
         }
-        (start..end)
-            .map(|index| self.live_key_at(index).ok_or(ForkArenaError::InvalidRegion))
-            .collect()
+        Ok((start..end)
+            .filter_map(|index| self.live_key_at(index))
+            .collect())
     }
 
     pub(super) fn detach_suffix(

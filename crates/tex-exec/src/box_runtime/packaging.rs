@@ -3,6 +3,7 @@
 use tex_state::CommandContext;
 use tex_state::diagnostic::DiagnosticEffects;
 use tex_state::node::Node;
+use tex_state::node_region::PageBoxSegment;
 use tex_state::page_node_arena::PageListId;
 use tex_typeset::{PackDiagnostic, PackSpec};
 
@@ -18,6 +19,22 @@ pub(crate) fn take_last_box<G, F>(
     fuel: &mut tex_command::CommandFuel,
     error_context: F,
 ) -> Result<Option<Node>, ExecError>
+where
+    F: FnOnce(&CommandContext<'_, G>) -> Result<String, ExecError>,
+{
+    take_last_box_with_segment(nest, stores, diagnostic_effects, fuel, error_context)
+        .map(|removed| removed.map(|(node, _, _)| node))
+}
+
+/// Returns an exclusively removed tail's original root and construction
+/// segment when the mode-list owner can prove that both describe this box.
+pub(crate) fn take_last_box_with_segment<G, F>(
+    nest: &mut ModeNest,
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
+    fuel: &mut tex_command::CommandFuel,
+    error_context: F,
+) -> Result<Option<(Node, Option<PageListId>, Option<PageBoxSegment>)>, ExecError>
 where
     F: FnOnce(&CommandContext<'_, G>) -> Result<String, ExecError>,
 {
@@ -65,7 +82,7 @@ where
             let removed = stores.remove_page_contribution_range(tail.removal_range());
             let result = reset_removed_box_shift(stores.page_carrier_node(&removed));
             stores.discard_page_node(removed);
-            Ok(result)
+            Ok(result.map(|node| (node, None, None)))
         }
         Mode::InternalVertical | Mode::Horizontal | Mode::RestrictedHorizontal => {
             let current_list = nest.current_list();
@@ -85,13 +102,21 @@ where
             let removed = nest
                 .current_list_mutation()
                 .remove_node_range(stores, range);
+            let segment = stores.page_box_segment(removed);
             let node = stores
                 .page_node_list(removed)
                 .expect("removed last-box range belongs to the live page arena")
                 .nodes()
                 .first()
                 .expect("effective-tail removal contains its box node");
-            Ok(reset_removed_box_shift(node))
+            let zero_shift = match node.to_owned() {
+                Node::HList(box_node) | Node::VList(box_node) => {
+                    box_node.shift == tex_state::scaled::Scaled::from_raw(0)
+                }
+                _ => false,
+            };
+            Ok(reset_removed_box_shift(node)
+                .map(|node| (node, Some(removed), segment.filter(|_| zero_shift))))
         }
     }
 }

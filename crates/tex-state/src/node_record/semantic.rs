@@ -113,7 +113,7 @@ impl Hash for SemanticRecord<'_> {
             }
             NodeKind::HList | NodeKind::VList => {
                 let payload = annex
-                    .resolve_fixed_array::<BoxPayload, 28>(key_from_record(record))
+                    .resolve_fixed_array::<BoxPayload, BOX_PAYLOAD_WORDS>(key_from_record(record))
                     .expect("published box payload");
                 let boxed = decode_box_payload(&payload).expect("published box");
                 if kind == NodeKind::HList {

@@ -2445,6 +2445,39 @@ fn sealed_batch_promotes_whole_chunks_between_typed_lanes() {
 }
 
 #[test]
+fn interior_interval_transfers_and_rolls_back_without_moving_neighbor_chunks() {
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(4);
+    let mut page = ForkArena::<u32, ActiveLane>::new();
+    let mut durable = page.empty_lane::<PageLane>();
+    let before = list(&mut page, &mut pool, [11]);
+    page.seal_boundary(&mut pool).expect("before boundary");
+    let selected = list(&mut page, &mut pool, [22]);
+    page.seal_boundary(&mut pool).expect("selected boundary");
+    let after = list(&mut page, &mut pool, [33]);
+    page.seal_boundary(&mut pool).expect("after boundary");
+
+    let loan = page
+        .transfer_interior_interval(&mut pool, &mut durable, 1, 2)
+        .expect("selected interior chunk transfers");
+    let durable_selected = super::rebrand_list(selected, durable.owner);
+    assert_eq!(page.list(&pool, before).expect("before").get(0), Some(&11));
+    assert_eq!(page.list(&pool, after).expect("after").get(0), Some(&33));
+    assert!(page.list(&pool, selected).is_err());
+    assert_eq!(
+        durable.list(&pool, durable_selected).expect("moved").get(0),
+        Some(&22)
+    );
+
+    page.rollback_interior_interval(&mut pool, &mut durable, loan)
+        .expect("exact interval rollback");
+    assert_eq!(
+        page.list(&pool, selected).expect("restored").get(0),
+        Some(&22)
+    );
+    assert!(durable.list(&pool, durable_selected).is_err());
+}
+
+#[test]
 fn logical_positions_are_pool_stable_and_foreign_spaces_fail_closed() {
     let mut pool = ChunkPool::<u32>::with_chunk_bytes(16);
     let mut arena = ForkArena::<u32, ActiveLane>::new();

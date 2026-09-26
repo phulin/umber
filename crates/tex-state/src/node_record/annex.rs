@@ -108,6 +108,9 @@ pub struct NodeAnnexView<'a> {
 pub(super) enum LigaturePayload {}
 pub(super) enum LigatureSource {}
 pub(super) enum BoxPayload {}
+/// The first 28 words are TeX box data. The final eight words carry an
+/// optional, non-owning construction interval for the original wrapper.
+pub(super) const BOX_PAYLOAD_WORDS: usize = 36;
 pub(super) enum LeaderBoxPayload {}
 pub(super) enum UnsetPayload {}
 pub(super) enum DiscPayload {}
@@ -146,7 +149,7 @@ pub(super) fn set_fixed_box_word(
     // Validate the complete typed fixed record before taking a mutable
     // single-word view. The sealed list coordinate and child fields stay put.
     NodeAnnexView::new(pool, arena)
-        .fixed_words(key, 28)
+        .fixed_words(key, BOX_PAYLOAD_WORDS)
         .ok_or(ForkArenaError::InvalidRange)?;
     let list = key
         .list(pool.logical_space(), pool.chunk_capacity())
@@ -203,10 +206,23 @@ pub(super) fn encode_box_payload(value: BoxNode<PageListId>) -> Vec<u32> {
     words
 }
 
+pub(super) fn encode_standalone_box_payload(value: BoxNode<PageListId>) -> Vec<u32> {
+    let mut words = encode_box_payload(value);
+    words.resize(BOX_PAYLOAD_WORDS, 0);
+    words
+}
+
 pub(super) fn decode_box_payload(words: &[u32]) -> Option<BoxNode<PageListId>> {
-    if words.len() != 28 {
+    if words.len() != 28 && words.len() != BOX_PAYLOAD_WORDS {
         return None;
     }
+    if words.len() == BOX_PAYLOAD_WORDS
+        && words[28..].iter().any(|word| *word != 0)
+        && crate::node_region::PageBoxSegment::from_words(words[28..].try_into().ok()?).is_none()
+    {
+        return None;
+    }
+    let words = &words[..28];
     let mut cursor = 0;
     let scalar: [u32; 7] = take_words(words, &mut cursor)?;
     if scalar[5] == 0 || scalar[6] & 0xfe00_00f8 != 0 {
@@ -415,6 +431,17 @@ impl<'a> NodeAnnexWriter<'a> {
             .expect("new fixed annex record belongs to its paired region");
         self.dependency_floor = self.dependency_floor.min(position);
         AnnexKey::from_list(list, publication_serial)
+    }
+
+    pub(super) fn stamp_box_segment(
+        &mut self,
+        key: AnnexKey<BoxPayload>,
+        segment: crate::node_region::PageBoxSegment,
+    ) -> Option<()> {
+        let list = key.list(self.pool.logical_space(), self.pool.chunk_capacity())?;
+        self.arena
+            .stamp_unsealed_zero_range(self.pool, list, 29, segment.words())
+            .ok()
     }
 
     pub(crate) fn append_span<Kind>(&mut self, body: &[u32]) -> AnnexKey<Kind> {

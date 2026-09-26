@@ -17,7 +17,8 @@ use crate::node_record::{NodeAnnexView, NodeAnnexWriter, NodeRecord};
 use crate::node_region::{
     ClosureBuildMark, DurableRole, NodeCheckpointMark, NodePool, NodeRegion, NodeSealedBoundary,
     OwnedNodeClosure, PageRole, StructuralCopyReason, copy_closure_into, copy_region_root_into,
-    structural_copy_fallback, transfer_closure_into, transfer_sealed_closure_into,
+    preflight_page_interior_closure, rollback_page_interior_closure, structural_copy_fallback,
+    transfer_closure_into, transfer_page_interior_closure, transfer_sealed_closure_into,
 };
 use crate::node_sequence::SemanticSequenceIdentity;
 
@@ -88,6 +89,11 @@ impl<'a> PageMaterialNodeRef<'a> {
     #[must_use]
     pub fn box_width(self) -> Option<crate::scaled::Scaled> {
         self.record.box_width(self.annex)
+    }
+
+    #[must_use]
+    pub fn box_segment(self) -> Option<crate::node_region::PageBoxSegment> {
+        self.record.box_segment(self.annex)
     }
 
     #[must_use]
@@ -1134,6 +1140,87 @@ impl<'a> PageMaterialArena<'a> {
             })
     }
 
+    /// Moves an exclusively consumed anonymous box from an older page
+    /// construction interval. Its loan is retained by the operation journal
+    /// until the assignment commits or is rolled back.
+    pub(crate) fn finish_interleaved_page_box(
+        &mut self,
+        root: PageListId,
+        segment: crate::node_region::PageBoxSegment,
+    ) -> Result<
+        (
+            DurableNodeClosure,
+            crate::node_region::PageInteriorTransferLoan,
+        ),
+        ForkArenaError,
+    > {
+        if segment.region() != self.region.id() {
+            return Err(ForkArenaError::InvalidRegion);
+        }
+        let source_root = self.region.root(self.pool, root)?;
+        let mut durable = self.pool.start_region::<DurableRole>()?;
+        let (durable_root, loan) = match transfer_page_interior_closure(
+            self.pool,
+            self.region,
+            source_root,
+            segment.node_range(),
+            segment.annex_range(),
+            &mut durable,
+        ) {
+            Ok(result) => result,
+            Err(error) => {
+                assert!(self.pool.retire_region(durable).is_ok());
+                return Err(error);
+            }
+        };
+        let owner = durable
+            .into_closure(self.pool, durable_root)
+            .unwrap_or_else(|(error, _)| panic!("preflighted durable root: {error:?}"));
+        Ok((owner, loan))
+    }
+
+    /// Determines whether this consumed box's exact sealed interval can be
+    /// detached. This check runs before assignment tracing, which may itself
+    /// publish page material for the old value.
+    pub(crate) fn can_finish_interleaved_page_box(
+        &mut self,
+        root: PageListId,
+        segment: crate::node_region::PageBoxSegment,
+    ) -> bool {
+        if segment.region() != self.region.id() {
+            return false;
+        }
+        let Ok(source_root) = self.region.root(self.pool, root) else {
+            return false;
+        };
+        let Ok(destination) = self.pool.start_region::<DurableRole>() else {
+            return false;
+        };
+        let result = preflight_page_interior_closure(
+            self.pool,
+            self.region,
+            source_root,
+            segment.node_range(),
+            segment.annex_range(),
+            &destination,
+        );
+        assert!(self.pool.retire_region(destination).is_ok());
+        result.is_ok()
+    }
+
+    pub(crate) fn rollback_interleaved_page_box(
+        &mut self,
+        owner: &mut Option<DurableNodeClosure>,
+        loan: crate::node_region::PageInteriorTransferLoan,
+    ) -> Result<(), ForkArenaError> {
+        let region = owner
+            .as_mut()
+            .ok_or(ForkArenaError::InvalidRegion)?
+            .region_mut();
+        rollback_page_interior_closure(self.pool, self.region, region, loan)?;
+        self.retire_durable_in_place(owner)
+    }
+
     /// Publishes a built closure without detaching a construction-suffix root
     /// still owned by the page builder.
     pub(crate) fn finish_built_page_root_to_durable_preserving_roots<const N: usize>(
@@ -2173,6 +2260,80 @@ impl<'a> PageMaterialArena<'a> {
 
     pub fn begin_closure_build(&mut self) -> Result<ClosureBuildMark<PageRole>, ForkArenaError> {
         self.region.begin_closure_build(self.pool)
+    }
+
+    pub fn close_box_segment(
+        &mut self,
+        start: ClosureBuildMark<PageRole>,
+    ) -> Result<crate::node_region::PageBoxSegment, ForkArenaError> {
+        if start.region_id() != self.region.id() {
+            return Err(ForkArenaError::InvalidRegion);
+        }
+        let end = self.region.begin_closure_build(self.pool)?;
+        crate::node_region::PageBoxSegment::from_boundaries(start, end)
+    }
+
+    pub fn box_segment_at_current_end(
+        &self,
+        start: &ClosureBuildMark<PageRole>,
+    ) -> Result<crate::node_region::PageBoxSegment, ForkArenaError> {
+        if start.region_id() != self.region.id() {
+            return Err(ForkArenaError::InvalidRegion);
+        }
+        crate::node_region::PageBoxSegment::from_live_end(
+            start,
+            self.region.pub_arena.payload_position_end(),
+            self.region.annex_arena.payload_position_end(),
+        )
+    }
+
+    /// Seals the body before the one-record wrapper is published. This
+    /// guarantees the stamp's fixed payload remains in that wrapper's own
+    /// annex chunk, with an end coordinate known before final sealing.
+    pub fn rotate_box_wrapper_tail(&mut self) -> Result<(), ForkArenaError> {
+        self.region.seal_checkpoint_boundary(self.pool).map(|_| ())
+    }
+
+    pub fn stamp_box_segment(
+        &mut self,
+        start: &ClosureBuildMark<PageRole>,
+        root: PageListId,
+    ) -> Result<crate::node_region::PageBoxSegment, ForkArenaError> {
+        let segment = self.box_segment_at_current_end(start)?;
+        let record = *self
+            .region
+            .pub_arena
+            .validated_list(&self.pool.chunks, root.coordinate())?
+            .first()
+            .ok_or(ForkArenaError::InvalidRange)?;
+        if root.len() != 1 {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        {
+            let mut annex =
+                NodeAnnexWriter::new(&mut self.pool.annex_chunks, &mut self.region.annex_arena);
+            record
+                .stamp_box_segment(&mut annex, segment)
+                .ok_or(ForkArenaError::InvalidRange)?;
+        }
+        debug_assert_eq!(
+            self.region.annex_arena.payload_position_end(),
+            segment.annex_range().end,
+            "box stamp must fit its isolated wrapper chunk"
+        );
+        Ok(segment)
+    }
+
+    pub fn box_segment(&self, root: PageListId) -> Option<crate::node_region::PageBoxSegment> {
+        if root.len() != 1 {
+            return None;
+        }
+        self.region
+            .pub_arena
+            .validated_list(&self.pool.chunks, root.coordinate())
+            .ok()?
+            .first()?
+            .box_segment(self.annex_view())
     }
 
     pub fn cancel_closure_build(

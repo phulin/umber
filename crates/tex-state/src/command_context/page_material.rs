@@ -302,6 +302,52 @@ impl<'a, G> CommandContext<'a, G> {
             .expect("page closure-build boundary is available")
     }
 
+    /// Closes an anonymous box's paired construction ranges after its wrapper
+    /// has been linked into the owning mode or page list.
+    pub fn close_page_box_segment(
+        &mut self,
+        start: crate::node_region::PageClosureBuildMark,
+    ) -> crate::node_region::PageBoxSegment {
+        self.page_nodes
+            .close_box_segment(start)
+            .expect("completed box remains in its construction region")
+    }
+
+    pub fn rotate_page_box_wrapper_tail(&mut self) {
+        self.page_nodes
+            .rotate_box_wrapper_tail()
+            .expect("box wrapper starts in its own paired chunks");
+    }
+
+    pub fn stamp_page_box_segment(
+        &mut self,
+        start: &crate::node_region::PageClosureBuildMark,
+        root: crate::page_node_arena::PageListId,
+    ) -> crate::node_region::PageBoxSegment {
+        self.page_nodes
+            .stamp_box_segment(start, root)
+            .expect("new box wrapper admits its original construction segment")
+    }
+
+    #[must_use]
+    pub fn page_box_segment(
+        &self,
+        root: crate::page_node_arena::PageListId,
+    ) -> Option<crate::node_region::PageBoxSegment> {
+        self.page_nodes.box_segment(root)
+    }
+
+    /// Checks the move-only boundary supplied by a consumed anonymous box.
+    /// Invalid or shared intervals continue through the structural copy path.
+    pub fn can_transfer_interleaved_page_box(
+        &mut self,
+        root: crate::page_node_arena::PageListId,
+        segment: crate::node_region::PageBoxSegment,
+    ) -> bool {
+        self.page_nodes
+            .can_finish_interleaved_page_box(root, segment)
+    }
+
     /// Releases a complete structural suffix after its survivor has been
     /// promoted or detached.
     pub fn release_page_node_region(

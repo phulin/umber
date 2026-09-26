@@ -2457,13 +2457,29 @@ pub(in crate::main_control) fn apply<G>(
             if let ScannedSetBoxPath::Payload(ScannedBoxShiftPayload::LastBox { error_context }) =
                 path
             {
-                let node = crate::box_runtime::take_last_box(
+                let removed = crate::box_runtime::take_last_box_with_segment(
                     modes,
                     stores,
                     command.diagnostic_effects,
                     command.fuel,
                     |_| Ok(std::mem::take(error_context)),
                 )?;
+                if let Some((_, Some(root), Some(segment))) = &removed
+                    && stores.can_transfer_interleaved_page_box(*root, *segment)
+                {
+                    commit_interleaved_set_box_target(
+                        PendingSetBox {
+                            target: *target,
+                            region: stores.begin_page_node_region(),
+                        },
+                        *root,
+                        *segment,
+                        stores,
+                        command,
+                    );
+                    return Ok(ReplayStep::Continue);
+                }
+                let node = removed.map(|(node, _, _)| node);
                 boxes.pending_setbox = Some(PendingSetBox {
                     target: *target,
                     region: stores.begin_page_node_region(),
@@ -2564,10 +2580,38 @@ pub(in crate::main_control) fn apply<G>(
             copy,
             ships_out,
         } => {
+            let isolated_append = !*ships_out
+                && boxes.pending_setbox.is_none()
+                && matches!(
+                    modes.current_mode(),
+                    Mode::Horizontal | Mode::RestrictedHorizontal
+                )
+                && stores.box_register(*index).is_some();
+            if isolated_append {
+                crate::box_runtime::flush_pending_hchars_with_fuel(
+                    modes,
+                    stores,
+                    command.diagnostic_effects,
+                    command.fuel,
+                )?;
+            }
+            let start = isolated_append.then(|| stores.begin_page_node_region());
             let id = read_box_register(*index, *copy, stores, command);
             let node = crate::box_runtime::first_box_node(stores, id);
             let context = boxes.take_box_context(*ships_out);
+            if start.is_some() {
+                stores.rotate_page_box_wrapper_tail();
+            }
             box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
+            if let Some(start) = start {
+                let root = modes
+                    .current_list()
+                    .last_node_root(stores)
+                    .expect("nonvoid box register appended its wrapper");
+                let stamped = stores.stamp_page_box_segment(&start, root);
+                let sealed = stores.close_page_box_segment(start);
+                assert_eq!(stamped, sealed, "register box wrapper has exact segment");
+            }
             Ok(ReplayStep::Continue)
         }
         ColdOperation::Unbox {
@@ -2762,6 +2806,7 @@ pub(in crate::main_control) fn apply<G>(
             boxes.active_boxes.push(ActiveReplayBox {
                 target: None,
                 shipout_region: None,
+                box_segment_start: None,
                 kind: ReplayBoxKind::Insert(class, construction.pre),
                 group_kind: GroupKind::Insert,
                 packing: PackSpec::Natural,
@@ -2909,6 +2954,7 @@ pub(in crate::main_control) fn apply<G>(
             boxes.active_boxes.push(ActiveReplayBox {
                 target: None,
                 shipout_region: None,
+                box_segment_start: None,
                 kind,
                 group_kind: kind.group_kind(),
                 packing,
@@ -3462,6 +3508,13 @@ pub(in crate::main_control) fn apply<G>(
                 if let Some(shift) = shift {
                     crate::box_runtime::apply_box_shift_delta(&mut node, shift.delta)?;
                 }
+                if boxes
+                    .active_boxes
+                    .last()
+                    .is_some_and(|box_state| box_state.box_segment_start.is_some())
+                {
+                    stores.rotate_page_box_wrapper_tail();
+                }
                 crate::box_runtime::append_box_node_to_current_list(
                     modes,
                     stores,
@@ -3475,10 +3528,19 @@ pub(in crate::main_control) fn apply<G>(
                     command.diagnostic_effects,
                     command.state.state(),
                 )?;
-                boxes
+                let box_state = boxes
                     .active_boxes
                     .pop()
                     .expect("successful box append retains its active owner");
+                if let Some(start) = box_state.box_segment_start {
+                    let root = modes
+                        .current_list()
+                        .last_node_root(stores)
+                        .expect("constructed box remains the current list tail");
+                    let stamped = stores.stamp_page_box_segment(&start, root);
+                    let sealed = stores.close_page_box_segment(start);
+                    assert_eq!(stamped, sealed, "wrapper stamp matches sealed bounds");
+                }
             }
             Ok(ReplayStep::Continue)
         }

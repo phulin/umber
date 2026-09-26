@@ -505,6 +505,7 @@ struct PendingSetBox {
 struct ActiveReplayBox {
     target: Option<PendingSetBox>,
     shipout_region: Option<tex_state::node_region::PageClosureBuildMark>,
+    box_segment_start: Option<tex_state::node_region::PageClosureBuildMark>,
     kind: ReplayBoxKind,
     group_kind: GroupKind,
     packing: PackSpec,

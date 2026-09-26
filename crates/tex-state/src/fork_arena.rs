@@ -56,6 +56,13 @@ struct LogicalChunkId {
     incarnation: u32,
 }
 
+// A vacant owner-relative position left by a non-suffix closure transfer.
+// It is never installed in the pool's logical table or exposed as a list key.
+const VACANT_LOGICAL_CHUNK: LogicalChunkId = LogicalChunkId {
+    ordinal: u32::MAX,
+    incarnation: 0,
+};
+
 impl LogicalChunkId {
     fn block(self, space: u32) -> Result<DenseLogicalBlockId, ForkArenaError> {
         DenseLogicalBlockId::from_parts(space, self.ordinal, self.incarnation)
@@ -2713,6 +2720,16 @@ struct PendingBatch {
     payload_end: u32,
 }
 
+/// Move-only authority to restore one exact interior interval after an
+/// operation-local closure transfer.
+pub(crate) struct TransferredInterval<Lane> {
+    source: u32,
+    destination: u32,
+    start: u32,
+    end: u32,
+    _lane: PhantomData<fn(Lane) -> Lane>,
+}
+
 impl<T, Lane> Default for ForkArena<T, Lane> {
     fn default() -> Self {
         Self::new()
@@ -2827,10 +2844,14 @@ impl<T, Lane> ForkArena<T, Lane> {
         if end == self.base_payload_chunks as usize {
             return Ok(());
         }
-        let position = end - 1;
-        let key = self
-            .live_key_at(position)
-            .ok_or(ForkArenaError::InvalidChunk)?;
+        // An interior transfer may leave the last owner-relative position
+        // vacant. Ordinary dense owners take the first iteration directly.
+        let Some((position, key)) = (self.base_payload_chunks as usize..end)
+            .rev()
+            .find_map(|position| self.live_key_at(position).map(|key| (position, key)))
+        else {
+            return Ok(());
+        };
         let actual = pool.payload.arena_position(key, self.owner, self.lineage);
         (actual == Some(position))
             .then_some(())
@@ -2882,6 +2903,9 @@ impl<T, Lane> ForkArena<T, Lane> {
         };
         let payload_start = mark.payload_start as usize;
         for key in &chunks.payload[payload_start..] {
+            if *key == VACANT_LOGICAL_CHUNK {
+                continue;
+            }
             let meta = pool
                 .payload
                 .validate_lineage(*key, self.owner, self.lineage)?;
@@ -2914,6 +2938,9 @@ impl<T, Lane> ForkArena<T, Lane> {
         };
         let lineage = NEXT_ARENA_LINEAGE.fetch_add(1, Ordering::Relaxed);
         for (position, key) in shared.payload.iter().copied().enumerate() {
+            if key == VACANT_LOGICAL_CHUNK {
+                continue;
+            }
             pool.payload
                 .share_with_lineage(key, self.owner, self.lineage, lineage, position)
                 .expect("shared payload lineage was completely preflighted");
@@ -3010,9 +3037,9 @@ impl<T, Lane> ForkArena<T, Lane> {
         destination_paired_start: usize,
     ) -> Result<(), ForkArenaError> {
         for position in payload_start..self.live_payload_len() {
-            let key = self
-                .live_key_at(position)
-                .ok_or(ForkArenaError::InvalidChunk)?;
+            let Some(key) = self.live_key_at(position) else {
+                continue;
+            };
             let meta =
                 pool.payload
                     .validate_exclusive_lineage_mut(key, self.owner, self.lineage)?;
@@ -3024,6 +3051,33 @@ impl<T, Lane> ForkArena<T, Lane> {
                 .checked_sub(source_paired_start)
                 .ok_or(ForkArenaError::InvalidRegion)?;
             meta.paired_dependency_floor = destination_paired_start
+                .checked_add(relative)
+                .ok_or(ForkArenaError::CapacityOverflow)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn rebase_dependency_suffix(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        payload_start: usize,
+        source_start: usize,
+    ) -> Result<(), ForkArenaError> {
+        for position in payload_start..self.live_payload_len() {
+            let Some(key) = self.live_key_at(position) else {
+                continue;
+            };
+            let meta =
+                pool.payload
+                    .validate_exclusive_lineage_mut(key, self.owner, self.lineage)?;
+            if meta.dependency_floor == usize::MAX {
+                continue;
+            }
+            let relative = meta
+                .dependency_floor
+                .checked_sub(source_start)
+                .ok_or(ForkArenaError::InvalidRegion)?;
+            meta.dependency_floor = payload_start
                 .checked_add(relative)
                 .ok_or(ForkArenaError::CapacityOverflow)?;
         }
@@ -3051,6 +3105,16 @@ impl<T, Lane> ForkArena<T, Lane> {
             }
     }
 
+    /// Exclusive logical end, including the current unsealed tail chunk.
+    /// Sealing that tail changes its state but not this coordinate.
+    pub(crate) fn payload_position_end(&self) -> usize {
+        self.live_payload_len()
+    }
+
+    pub(crate) fn payload_base_position(&self) -> usize {
+        self.base_payload_chunks as usize
+    }
+
     fn current_chunks_mut(&mut self) -> &mut ChunkSet {
         match &mut self.ownership {
             ForkOwnership::Accepted(chunks) => chunks,
@@ -3061,7 +3125,7 @@ impl<T, Lane> ForkArena<T, Lane> {
     fn live_key_at(&self, index: usize) -> Option<LogicalChunkId> {
         let base = self.base_payload_chunks as usize;
         let index = index.checked_sub(base)?;
-        match &self.ownership {
+        let key = match &self.ownership {
             ForkOwnership::Accepted(chunks) => chunks.payload.get(index).copied(),
             ForkOwnership::Forked {
                 prefix, current, ..
@@ -3074,7 +3138,8 @@ impl<T, Lane> ForkArena<T, Lane> {
                     current.payload.get(index).copied()
                 }
             }
-        }
+        };
+        key.filter(|key| *key != VACANT_LOGICAL_CHUNK)
     }
 
     fn index_chunk(&self, pool: &mut ChunkPool<T>, key: LogicalChunkId, position: usize) {
@@ -3583,10 +3648,12 @@ impl<T, Lane> ForkArena<T, Lane> {
                     .pop()
                     .ok_or(ForkArenaError::InvalidOperationMark)?
             };
-            self.unindex_chunk(pool, key);
-            pool.payload
-                .release_lineage(key, self.owner, self.lineage)?;
-            self.counters.candidate_chunks_truncated += 1;
+            if key != VACANT_LOGICAL_CHUNK {
+                self.unindex_chunk(pool, key);
+                pool.payload
+                    .release_lineage(key, self.owner, self.lineage)?;
+                self.counters.candidate_chunks_truncated += 1;
+            }
         }
         if chunks != base {
             let key = self
@@ -3952,9 +4019,9 @@ impl<T, Lane> ForkArena<T, Lane> {
         // later rebasing step visits that entire envelope, so preflight must
         // prove the paired floor for every block it will rebase.
         for position in payload_start..self.live_payload_len() {
-            let key = self
-                .live_key_at(position)
-                .ok_or(ForkArenaError::InvalidChunk)?;
+            let Some(key) = self.live_key_at(position) else {
+                continue;
+            };
             let floor = pool
                 .payload
                 .validate_lineage(key, self.owner, self.lineage)?
@@ -5336,6 +5403,52 @@ impl<T, Lane> ForkArena<T, Lane> {
             .get_mut(list.head.raw, self.owner, self.lineage, list.head.offset)
             .ok_or(ForkArenaError::InvalidRange)?;
         Ok(mutate(value))
+    }
+
+    /// Replaces a fixed, zero-initialized suffix inside one exclusive
+    /// unsealed logical chunk. Construction metadata is stamped before the
+    /// chunk becomes immutable; no second annex record is allocated.
+    pub(crate) fn stamp_unsealed_zero_range<const N: usize>(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        list: ArenaListId<Lane>,
+        start: usize,
+        words: [T; N],
+    ) -> Result<(), ForkArenaError>
+    where
+        T: Copy + Default + Eq,
+    {
+        self.validate_list(pool, list)?;
+        if self.active_builder
+            || list.head.raw != list.tail.raw
+            || start.checked_add(N).is_none_or(|end| end > list.len())
+        {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        let key = list.head.raw;
+        let meta = pool
+            .payload
+            .validate_lineage(key, self.owner, self.lineage)?;
+        if meta.sealed || meta.lineages.iter().filter(|entry| entry.id != 0).count() != 1 {
+            return Err(ForkArenaError::InvalidRegion);
+        }
+        let offset = list.head.offset as usize + start;
+        for index in 0..N {
+            let current = pool
+                .payload
+                .get(key, self.owner, (offset + index) as u32)
+                .ok_or(ForkArenaError::InvalidRange)?;
+            if *current != T::default() {
+                return Err(ForkArenaError::InvalidRange);
+            }
+        }
+        for (index, word) in words.into_iter().enumerate() {
+            *pool
+                .payload
+                .get_mut(key, self.owner, self.lineage, (offset + index) as u32)
+                .expect("preflighted exclusive fixed range") = word;
+        }
+        Ok(())
     }
 
     fn validate_list(

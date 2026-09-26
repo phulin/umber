@@ -52,6 +52,51 @@ fn boxed(children: PageListId) -> PageMaterialNode {
 }
 
 #[test]
+fn stamped_box_interval_moves_and_rollback_restores_original_nodes() {
+    page_arena!(arena, pool, state, 65_536);
+    let neighbor = arena
+        .publish_owned(penalties(&[7]))
+        .expect("prior neighbor");
+    let start = arena.begin_closure_build().expect("box start");
+    let child = arena.publish_owned(penalties(&[3, 4])).expect("box child");
+    arena.rotate_box_wrapper_tail().expect("wrapper boundary");
+    let root = arena.publish_owned([boxed(child)]).expect("box wrapper");
+    let annex_words_before = arena
+        .region
+        .annex_arena
+        .live_payload_values(&arena.pool.annex_chunks);
+    let stamped = arena
+        .stamp_box_segment(&start, root)
+        .expect("stamp original wrapper");
+    assert_eq!(
+        arena
+            .region
+            .annex_arena
+            .live_payload_values(&arena.pool.annex_chunks),
+        annex_words_before,
+        "stamping fills the original annex payload without allocating a second one"
+    );
+    let sealed = arena.close_box_segment(start).expect("box end");
+    assert_eq!(stamped, sealed);
+    assert_eq!(arena.box_segment(root), Some(stamped));
+    assert!(arena.can_finish_interleaved_page_box(root, stamped));
+
+    let (owner, loan) = arena
+        .finish_interleaved_page_box(root, stamped)
+        .expect("exclusive interval moves");
+    assert!(!arena.contains(root));
+    assert!(arena.contains(neighbor));
+    let mut owner = Some(owner);
+    arena
+        .rollback_interleaved_page_box(&mut owner, loan)
+        .expect("operation rollback returns original chunks");
+    assert!(owner.is_none());
+    assert!(arena.contains(root));
+    assert!(arena.contains(child));
+    assert!(arena.contains(neighbor));
+}
+
+#[test]
 fn contains_checks_records_without_materializing_an_ordinary_list() {
     const ALLOCATION_OWNER: usize = 15;
     page_arena!(arena, pool, state, 32);

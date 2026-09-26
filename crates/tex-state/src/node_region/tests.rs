@@ -933,6 +933,67 @@ fn prefix_child_rejects_without_mutation_and_fallback_is_counted() {
 }
 
 #[test]
+fn consumed_interleaved_box_interval_moves_and_restores_both_lanes() {
+    let mut pool = NodePool::with_chunk_bytes(64);
+    let mut page = pool.start_region::<PageRole>().expect("page");
+    let before = page
+        .publish_owned(&mut pool, [Node::Penalty(61)])
+        .expect("page prefix");
+    let start = page.begin_closure_build(&mut pool).expect("box start");
+    let child = page
+        .publish_owned(&mut pool, [Node::Penalty(62)])
+        .expect("box child");
+    let selected = page
+        .publish_owned(&mut pool, [boxed(child.list)])
+        .expect("box wrapper");
+    let end = page.begin_closure_build(&mut pool).expect("box end");
+    let after = page
+        .publish_owned(&mut pool, [Node::Penalty(63)])
+        .expect("page source rewrite");
+    let child_address = page
+        .list(&pool, child)
+        .expect("child before move")
+        .testing_node_address(0);
+    let mut durable = pool.start_region::<DurableRole>().expect("durable");
+
+    let (moved, loan) = transfer_page_interior_closure(
+        &mut pool,
+        &mut page,
+        selected,
+        start.batch.payload_start()..end.batch.payload_start(),
+        start.annex_batch.payload_start()..end.annex_batch.payload_start(),
+        &mut durable,
+    )
+    .expect("consumed box moves");
+    assert!(page.list(&pool, before).is_ok());
+    assert!(page.list(&pool, after).is_ok());
+    assert!(page.list(&pool, child).is_err());
+    assert_eq!(
+        durable.list(&pool, moved).expect("durable wrapper").len(),
+        1
+    );
+    let moved_child = durable.root(&pool, child.list).expect("moved child");
+    assert_eq!(
+        durable
+            .list(&pool, moved_child)
+            .expect("durable child")
+            .testing_node_address(0),
+        child_address
+    );
+
+    rollback_page_interior_closure(&mut pool, &mut page, &mut durable, loan)
+        .expect("operation loan rollback");
+    assert_eq!(
+        page.list(&pool, child)
+            .expect("restored child")
+            .testing_node_address(0),
+        child_address
+    );
+    assert!(page.list(&pool, selected).is_ok());
+    assert!(page.list(&pool, after).is_ok());
+}
+
+#[test]
 fn foreign_root_receipt_rejects_without_detaching_suffix() {
     let mut pool = NodePool::with_chunk_bytes(64);
     let mut source = pool.start_region::<PageRole>().expect("source");

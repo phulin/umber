@@ -582,6 +582,23 @@ pub(in crate::main_control) fn begin_replay_box<G>(
     command: &mut CommandMachine<'_, '_, G>,
 ) -> Result<(), ExecError> {
     let kind = ReplayBoxKind::from_scanned(construction.kind);
+    let isolated_box = target.is_none()
+        && shipout_region.is_none()
+        && matches!(
+            modes.current_mode(),
+            Mode::Horizontal | Mode::RestrictedHorizontal
+        );
+    if isolated_box {
+        // A pending parent character run belongs before this box. Materialize
+        // it before opening the box's independent allocation interval.
+        crate::box_runtime::flush_pending_hchars_with_fuel(
+            modes,
+            stores,
+            command.diagnostic_effects,
+            command.fuel,
+        )?;
+    }
+    let box_segment_start = isolated_box.then(|| stores.begin_page_node_region());
     let packing = match construction.packing {
         ScannedPackingSpec::Natural => PackSpec::Natural,
         ScannedPackingSpec::Exactly(size) => PackSpec::Exactly(size),
@@ -622,6 +639,7 @@ pub(in crate::main_control) fn begin_replay_box<G>(
     boxes.active_boxes.push(ActiveReplayBox {
         target,
         shipout_region,
+        box_segment_start,
         kind,
         group_kind,
         packing,
@@ -759,6 +777,7 @@ pub(in crate::main_control) fn apply_box_shift<G>(
             boxes.active_boxes.push(ActiveReplayBox {
                 target: None,
                 shipout_region: None,
+                box_segment_start: None,
                 kind,
                 group_kind,
                 packing,
@@ -906,6 +925,33 @@ pub(in crate::main_control) fn commit_set_box_target<G>(
             stores
                 .assign_built_page_box(target.index, boxed, region, assignment_scope(global))
                 .expect("box assignment transfers its admitted construction")
+        },
+    );
+    command.retain_assignment_receipt(receipt);
+}
+
+pub(in crate::main_control) fn commit_interleaved_set_box_target<G>(
+    pending: PendingSetBox,
+    root: tex_state::page_node_arena::PageListId,
+    segment: tex_state::node_region::PageBoxSegment,
+    stores: &mut tex_state::CommandContext<'_, G>,
+    command: &mut CommandMachine<'_, '_, G>,
+) {
+    let PendingSetBox { target, region } = pending;
+    let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects).box_register(
+        target.index,
+        Some(&root),
+        target.global,
+        |stores| {
+            stores
+                .assign_interleaved_page_box(
+                    target.index,
+                    root,
+                    segment,
+                    region,
+                    assignment_scope(target.global),
+                )
+                .expect("preflighted interleaved box transfers into its durable owner")
         },
     );
     command.retain_assignment_receipt(receipt);

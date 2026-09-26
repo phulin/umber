@@ -41,6 +41,46 @@ fn repeated_setbox_regions_preserve_durable_aliases_and_publish_pages() {
         ));
     });
 }
+
+#[test]
+fn lastbox_transfers_prior_constructed_child_without_copying_its_closure() {
+    // TeX82 §§1074 and 1077 remove the last box from the current list before
+    // assigning it. Its child storage was built before the setbox mark.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\setbox0=\hbox{\kern2pt\hbox{\kern1pt}\global\setbox1=\lastbox}\shipout\box0\shipout\box1\end",
+        );
+        run_to_end(&mut control, stores);
+
+        assert_eq!(stores.world().committed_artifacts().len(), 2);
+        assert_eq!(
+            stores.page_region_counters().page_to_durable_nodes_copied,
+            0,
+            "taking a unique prior box transfers its child closure"
+        );
+    });
+}
+
+#[test]
+fn durable_box_appended_then_taken_by_lastbox_gets_fresh_transfer_interval() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\setbox0=\hbox{\kern1pt}\hbox{\box0\global\setbox1=\lastbox}\shipout\box1\end",
+        );
+        run_to_end(&mut control, stores);
+
+        assert_eq!(stores.world().committed_artifacts().len(), 2);
+        assert_eq!(
+            stores.page_region_counters().page_to_durable_nodes_copied,
+            0
+        );
+    });
+}
+
 #[test]
 fn tracked_advance_records_command_and_execution_reads_after_commit() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {

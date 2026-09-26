@@ -233,8 +233,7 @@ pub(crate) struct DurableBoxPrefixReleaseReceipt {
 pub(crate) struct DurableBoxOperation {
     depth: usize,
     position: usize,
-    loan_position: usize,
-    dimension_position: usize,
+    action_position: usize,
     scalar_position: usize,
     group_position: usize,
     /// Existing saves survive operation rollback; only the newly created
@@ -245,6 +244,18 @@ pub(crate) struct DurableBoxOperation {
 struct DurableBoxTransferLoan {
     mutation_position: usize,
     loan: crate::page_node_arena::DurableTransferLoan,
+}
+
+struct PageBoxTransferLoan {
+    owner: DurableOwnerId,
+    loan: crate::node_region::PageInteriorTransferLoan,
+}
+
+enum DurableOperationAction {
+    Binding(usize),
+    DurableToPage(DurableBoxTransferLoan),
+    PageToDurable(PageBoxTransferLoan),
+    Dimension(DurableDimensionMutation),
 }
 
 #[derive(Clone, Copy)]
@@ -490,8 +501,7 @@ pub(crate) struct DurableBoxState {
     next_group_id: u64,
     semantic_identity: Option<crate::state_hash::SemanticMapIdentity>,
     operation_entries: Vec<DurableMutation>,
-    transfer_loans: Vec<DurableBoxTransferLoan>,
-    dimension_mutations: Vec<DurableDimensionMutation>,
+    operation_actions: Vec<DurableOperationAction>,
     operation_depth: usize,
 }
 
@@ -650,8 +660,7 @@ impl DurableBoxState {
             next_group_id: 0,
             semantic_identity: None,
             operation_entries: Vec::new(),
-            transfer_loans: Vec::new(),
-            dimension_mutations: Vec::new(),
+            operation_actions: Vec::new(),
             operation_depth: 0,
         }
     }
@@ -665,8 +674,7 @@ impl DurableBoxState {
             && self.retained_groups.is_empty()
             && !self.operation_is_active()
             && self.operation_entries.is_empty()
-            && self.transfer_loans.is_empty()
-            && self.dimension_mutations.is_empty()
+            && self.operation_actions.is_empty()
     }
 
     fn cell(&self, index: u16) -> Option<&DurableBoxCell> {
@@ -1125,12 +1133,15 @@ impl DurableBoxState {
                 });
         }
         if operation_needed {
+            let position = self.operation_entries.len();
             self.operation_entries.push(DurableMutation {
                 index,
                 alternate: owner.take().expect("operation owner"),
                 alternate_level: before.1,
                 group_save_position: 0,
             });
+            self.operation_actions
+                .push(DurableOperationAction::Binding(position));
         }
         Ok(())
     }
@@ -1167,6 +1178,46 @@ impl DurableBoxState {
             && before_level != current_level)
             .then_some(current_level);
         self.install_mutation(arena, index, value, level, saved_at, group_save_position)
+    }
+
+    pub(crate) fn assign_with_page_loan(
+        &mut self,
+        arena: &mut PageMaterialArena,
+        index: u16,
+        value: DurableNodeClosure,
+        loan: crate::node_region::PageInteriorTransferLoan,
+        scope: super::AssignmentScope,
+        current_level: u32,
+        group_save_position: u32,
+    ) -> Result<(), BankError> {
+        let owner = self.owners.insert(value);
+        // The interval moved before the binding changed. Record that order so
+        // rollback can reverse a later dimension edit, the binding swap, and
+        // finally the page loan without leaving a live cell on an empty slot.
+        if self.operation_is_active() {
+            self.operation_actions
+                .push(DurableOperationAction::PageToDurable(PageBoxTransferLoan {
+                    owner,
+                    loan,
+                }));
+        }
+        let before_level = self.cell(index).map_or(LEVEL_ONE, |cell| cell.level);
+        let level = match scope {
+            super::AssignmentScope::Global => LEVEL_ONE,
+            super::AssignmentScope::Local => current_level,
+        };
+        let saved_at = (scope == super::AssignmentScope::Local
+            && current_level != LEVEL_ONE
+            && before_level != current_level)
+            .then_some(current_level);
+        self.install_mutation(
+            arena,
+            index,
+            Some(owner),
+            level,
+            saved_at,
+            group_save_position,
+        )
     }
 
     pub(crate) fn replace(
@@ -1232,7 +1283,8 @@ impl DurableBoxState {
                     .insert((index, dimension), self.checkpoint_epoch);
             }
             if self.operation_is_active() {
-                self.dimension_mutations.push(mutation);
+                self.operation_actions
+                    .push(DurableOperationAction::Dimension(mutation));
             }
         }
         Ok(true)
@@ -1326,10 +1378,15 @@ impl DurableBoxState {
                     alternate_level: level,
                     group_save_position: 0,
                 });
-                self.transfer_loans.push(DurableBoxTransferLoan {
-                    mutation_position,
-                    loan,
-                });
+                self.operation_actions
+                    .push(DurableOperationAction::Binding(mutation_position));
+                self.operation_actions
+                    .push(DurableOperationAction::DurableToPage(
+                        DurableBoxTransferLoan {
+                            mutation_position,
+                            loan,
+                        },
+                    ));
                 return Ok(Some(root));
             }
             let moved = arena.move_durable_to_page_in_place(self.owners.owner_slot_mut(owner));
@@ -1550,8 +1607,7 @@ impl DurableBoxState {
         let operation = DurableBoxOperation {
             depth: self.operation_depth,
             position: self.operation_entries.len(),
-            loan_position: self.transfer_loans.len(),
-            dimension_position: self.dimension_mutations.len(),
+            action_position: self.operation_actions.len(),
             scalar_position: self.scalar_entries.len(),
             group_position: self.groups.len(),
             group_entry_position: self.groups.last().map_or(0, |group| group.entries.len()),
@@ -1572,9 +1628,15 @@ impl DurableBoxState {
         assert_eq!(self.operation_depth, operation.depth);
         self.operation_depth -= 1;
         if !self.operation_is_active() {
-            self.dimension_mutations.clear();
-            for loan in self.transfer_loans.drain(..) {
-                arena.commit_durable_transfer_loan(loan.loan);
+            for action in self.operation_actions.drain(..) {
+                match action {
+                    DurableOperationAction::DurableToPage(loan) => {
+                        arena.commit_durable_transfer_loan(loan.loan);
+                    }
+                    DurableOperationAction::Binding(_)
+                    | DurableOperationAction::PageToDurable(_)
+                    | DurableOperationAction::Dimension(_) => {}
+                }
             }
             for mutation in self.operation_entries.drain(..) {
                 Self::retire_value(&mut self.owners, arena, mutation.alternate);
@@ -1588,33 +1650,53 @@ impl DurableBoxState {
         operation: DurableBoxOperation,
     ) {
         assert_eq!(self.operation_depth, operation.depth);
-        let loans = self.transfer_loans.split_off(operation.loan_position);
-        for loan in loans.into_iter().rev() {
-            let owner = arena
-                .rollback_durable_transfer_loan(loan.loan)
-                .expect("rollbackable durable transfer returns its exact owner");
-            let mutation = self
-                .operation_entries
-                .get_mut(loan.mutation_position)
-                .expect("durable transfer loan names its operation mutation");
-            let owner_slot = mutation
-                .alternate
-                .expect("durable transfer mutation retains its owner slot");
-            self.owners.restore(owner_slot, owner);
-        }
-        while self.dimension_mutations.len() > operation.dimension_position {
-            let mutation = self
-                .dimension_mutations
-                .pop()
-                .expect("dimension suffix exists");
-            self.apply_dimension_inverse(arena, mutation);
+        let actions = self.operation_actions.split_off(operation.action_position);
+        for action in actions.into_iter().rev() {
+            match action {
+                DurableOperationAction::Binding(position) => {
+                    let mut mutation = std::mem::replace(
+                        self.operation_entries
+                            .get_mut(position)
+                            .expect("operation binding event names its inverse"),
+                        DurableMutation {
+                            index: 0,
+                            alternate: None,
+                            alternate_level: LEVEL_ONE,
+                            group_save_position: 0,
+                        },
+                    );
+                    self.swap_mutation(&mut mutation);
+                    self.operation_entries[position] = mutation;
+                }
+                DurableOperationAction::DurableToPage(loan) => {
+                    let owner = arena
+                        .rollback_durable_transfer_loan(loan.loan)
+                        .expect("rollbackable durable transfer returns its exact owner");
+                    let mutation = self
+                        .operation_entries
+                        .get_mut(loan.mutation_position)
+                        .expect("durable transfer loan names its operation mutation");
+                    let owner_slot = mutation
+                        .alternate
+                        .expect("durable transfer mutation retains its owner slot");
+                    self.owners.restore(owner_slot, owner);
+                }
+                DurableOperationAction::PageToDurable(loan) => {
+                    arena
+                        .rollback_interleaved_page_box(
+                            self.owners.owner_slot_mut(loan.owner),
+                            loan.loan,
+                        )
+                        .expect("page interval loan restores its original chunks");
+                }
+                DurableOperationAction::Dimension(mutation) => {
+                    self.apply_dimension_inverse(arena, mutation);
+                }
+            }
         }
         self.scalar_entries.truncate(operation.scalar_position);
         self.scalar_stamps.clear();
-        let mut suffix = self.operation_entries.split_off(operation.position);
-        for mutation in suffix.iter_mut().rev() {
-            self.swap_mutation(mutation);
-        }
+        let suffix = self.operation_entries.split_off(operation.position);
         for mutation in suffix {
             Self::retire_value(&mut self.owners, arena, mutation.alternate);
         }
