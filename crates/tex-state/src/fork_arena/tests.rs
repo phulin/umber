@@ -2555,6 +2555,59 @@ fn settled_trailing_transfers_compress_owner_metadata_without_reusing_marks() {
 }
 
 #[test]
+fn cancelling_sealed_build_discards_suffix_after_nested_prefix_move() {
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(4);
+    let mut page = ForkArena::<u32, ActiveLane>::new();
+    let old = list(&mut page, &mut pool, [10]);
+    let build = page.begin_batch(&mut pool).expect("sealed build boundary");
+    let rollback = page.operation_mark(&pool);
+    let _outer_suffix = list(&mut page, &mut pool, [20]);
+    page.seal_boundary(&mut pool)
+        .expect("nested transfer boundary");
+    let mut durable = page.empty_lane::<PageLane>();
+    let _loan = page
+        .transfer_interior_interval(&mut pool, &mut durable, 0, 1)
+        .expect("nested consumed prefix moves");
+    page.discard_sealed_batch_suffix(&mut pool, build, rollback)
+        .expect("only outer construction suffix is discarded");
+    assert_eq!(page.live_payload_chunks(), 1);
+    assert_eq!(page.live_key_at(0), None);
+    assert_eq!(
+        durable
+            .list(&pool, super::rebrand_list(old, durable.owner))
+            .expect("moved old root")
+            .get(0),
+        Some(&10)
+    );
+}
+
+#[test]
+fn unique_successor_adoption_keeps_sparse_suffix_positions() {
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(4);
+    let mut page = ForkArena::<u32, ActiveLane>::new();
+    let _predecessor = list(&mut page, &mut pool, [1]);
+    let successor_mark = page.begin_batch(&mut pool).expect("successor boundary");
+    let consumed = list(&mut page, &mut pool, [2]);
+    let retained = list(&mut page, &mut pool, [3]);
+    page.seal_boundary(&mut pool).expect("handoff boundary");
+    let mut durable = page.empty_lane::<PageLane>();
+    page.transfer_interior_interval(&mut pool, &mut durable, 1, 2)
+        .expect("successor child moves independently");
+    page.adopt_unique_successor_suffix(&mut pool, successor_mark, &[retained])
+        .expect("successor with a vacant slot adopts");
+    assert_eq!(page.live_payload_chunks(), 2);
+    assert_eq!(page.live_key_at(0), None);
+    assert_eq!(page.resolved_position(&pool, retained.tail.raw), Some(1));
+    assert_eq!(
+        durable
+            .list(&pool, super::rebrand_list(consumed, durable.owner))
+            .expect("independently moved child")
+            .get(0),
+        Some(&2)
+    );
+}
+
+#[test]
 fn logical_positions_are_pool_stable_and_foreign_spaces_fail_closed() {
     let mut pool = ChunkPool::<u32>::with_chunk_bytes(16);
     let mut arena = ForkArena::<u32, ActiveLane>::new();

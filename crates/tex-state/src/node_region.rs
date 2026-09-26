@@ -749,10 +749,23 @@ impl<Role> NodeRegion<Role> {
         if mark.region != self.id {
             return Err(ForkArenaError::InvalidRegion);
         }
+        self.pub_arena.can_discard_sealed_batch_suffix(
+            &pool.chunks,
+            &mark.batch,
+            &mark.rollback,
+        )?;
+        self.annex_arena.can_discard_sealed_batch_suffix(
+            &pool.annex_chunks,
+            &mark.annex_batch,
+            &mark.annex_rollback,
+        )?;
         self.pub_arena
-            .restore_operation(&mut pool.chunks, mark.rollback)?;
-        self.annex_arena
-            .restore_operation(&mut pool.annex_chunks, mark.annex_rollback)
+            .discard_sealed_batch_suffix(&mut pool.chunks, mark.batch, mark.rollback)?;
+        self.annex_arena.discard_sealed_batch_suffix(
+            &mut pool.annex_chunks,
+            mark.annex_batch,
+            mark.annex_rollback,
+        )
     }
 
     pub(crate) fn build_suffix_contains_any_root<const N: usize>(

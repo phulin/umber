@@ -2553,6 +2553,7 @@ impl<Lane> LeafRegionValue<Lane> for u32 where u32: RegionValue<Lane> {}
 pub struct BatchMark<Lane> {
     arena: u32,
     payload_start: u32,
+    prior_tail: Option<LogicalChunkId>,
     _lane: PhantomData<fn(Lane) -> Lane>,
 }
 

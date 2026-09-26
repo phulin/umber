@@ -14,8 +14,74 @@ impl<T, Lane> ForkArena<T, Lane> {
         Ok(BatchMark {
             arena: self.owner,
             payload_start: boundary.payload_chunks,
+            prior_tail: boundary.payload_tail,
             _lane: PhantomData,
         })
+    }
+
+    /// A construction batch starts after sealing the preceding tail. Its
+    /// cancellation discards only later slots: a nested successful move may
+    /// have consumed that immutable predecessor while the build was open.
+    pub(crate) fn can_discard_sealed_batch_suffix(
+        &self,
+        pool: &ChunkPool<T>,
+        batch: &BatchMark<Lane>,
+        rollback: &OperationMark<Lane>,
+    ) -> Result<(), ForkArenaError> {
+        self.validate_pool(pool)?;
+        let boundary = batch.payload_start as usize;
+        let current_start = match &self.ownership {
+            ForkOwnership::Accepted(_) => self.base_payload_chunks as usize,
+            ForkOwnership::Forked { prefix, .. } => {
+                self.base_payload_chunks as usize + prefix.payload.len()
+            }
+        };
+        if self.active_builder
+            || self.pending_batch.is_some()
+            || batch.arena != self.owner
+            || rollback.arena != self.owner
+            || rollback.payload_chunks != batch.payload_start
+            || (batch.prior_tail.is_some() && !rollback.payload_tail_sealed)
+            || boundary < current_start
+            || boundary > self.live_payload_len()
+        {
+            return Err(ForkArenaError::InvalidOperationMark);
+        }
+        if boundary != self.base_payload_chunks as usize
+            && let Some(key) = self.live_key_at(boundary - 1)
+        {
+            if Some(key) != batch.prior_tail {
+                return Err(ForkArenaError::InvalidOperationMark);
+            }
+            let meta = pool
+                .payload
+                .validate_lineage(key, self.owner, self.lineage)?;
+            if meta.used != rollback.payload_tail_used
+                || meta.sealed != rollback.payload_tail_sealed
+                || meta.sequence_summary != rollback.payload_tail_summary
+            {
+                return Err(ForkArenaError::InvalidOperationMark);
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn discard_sealed_batch_suffix(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        batch: BatchMark<Lane>,
+        rollback: OperationMark<Lane>,
+    ) -> Result<(), ForkArenaError> {
+        self.can_discard_sealed_batch_suffix(pool, &batch, &rollback)?;
+        self.bind_pool(pool)?;
+        let discarded = self.detach_suffix(batch.payload_start as usize)?;
+        for key in discarded.into_live_keys() {
+            self.unindex_chunk(pool, key);
+            pool.payload
+                .release_lineage(key, self.owner, self.lineage)?;
+            self.counters.candidate_chunks_truncated += 1;
+        }
+        Ok(())
     }
 
     pub(crate) fn is_forked(&self) -> bool {
@@ -223,7 +289,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         };
         let released = self.release_set(pool, accepted)?;
         self.base_payload_chunks = 0;
-        for (position, key) in successor.payload.iter().copied().enumerate() {
+        for (position, key) in successor.payload.iter_live_with_positions() {
             self.index_chunk(pool, key, position);
         }
         self.counters.obsolete_chunks_pruned = self
