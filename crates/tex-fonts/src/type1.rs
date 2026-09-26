@@ -1,7 +1,7 @@
 //! Detached Type-1 PFB decoding for PDF embedding.
 
 use md5::Digest as _;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use umber_hash::{AHash64, HashDomain};
 
 mod transform;
@@ -24,6 +24,13 @@ pub struct PdfType1Program {
     length1: u32,
     length2: u32,
     length3: u32,
+    builtin_encoding: Box<[EncodingEntry; 256]>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct EncodingEntry {
+    start: u32,
+    len: u32,
 }
 
 impl PdfType1Program {
@@ -69,12 +76,14 @@ impl PdfType1Program {
         let identity = PdfType1ProgramIdentity(
             AHash64::for_bytes(HashDomain::Type1Program, &decoded).to_le_bytes(),
         );
+        let builtin_encoding = parse_builtin_encoding(&decoded[..lengths[0] as usize]);
         Ok(Self {
             identity,
             bytes: decoded,
             length1: lengths[0],
             length2: lengths[1],
             length3: lengths[2],
+            builtin_encoding,
         })
     }
 
@@ -114,6 +123,7 @@ impl PdfType1Program {
         bytes.extend_from_slice(&encrypted);
         let length1 = u32::try_from(clear.len()).map_err(|_| PdfType1SubsetError::Overflow)?;
         let length2 = u32::try_from(encrypted.len()).map_err(|_| PdfType1SubsetError::Overflow)?;
+        let builtin_encoding = parse_builtin_encoding(&bytes[..length1 as usize]);
         Ok(Self {
             identity: PdfType1ProgramIdentity(
                 AHash64::for_bytes(HashDomain::Type1Program, &bytes).to_le_bytes(),
@@ -122,32 +132,16 @@ impl PdfType1Program {
             length1,
             length2,
             length3: 0,
+            builtin_encoding,
         })
     }
 
     /// Resolves a code through a cleartext built-in Type-1 encoding array.
     #[must_use]
-    pub fn builtin_glyph_name(&self, code: u8) -> Option<Vec<u8>> {
-        let cleartext = self.bytes.get(..self.length1 as usize)?;
-        let mut tokens = PostScriptTokens::new(cleartext);
-        while let Some(token) = tokens.next() {
-            if token != PostScriptToken::Word(b"dup") {
-                continue;
-            }
-            let Some(PostScriptToken::Word(encoded_code)) = tokens.next() else {
-                continue;
-            };
-            let Some(PostScriptToken::LiteralName(glyph_name)) = tokens.next() else {
-                continue;
-            };
-            let Some(PostScriptToken::Word(b"put")) = tokens.next() else {
-                continue;
-            };
-            if encoded_code == code.to_string().as_bytes() && !glyph_name.is_empty() {
-                return Some(glyph_name.to_vec());
-            }
-        }
-        None
+    pub fn builtin_glyph_name(&self, code: u8) -> Option<&[u8]> {
+        let entry = self.builtin_encoding[usize::from(code)];
+        (entry.len != 0)
+            .then(|| &self.bytes[entry.start as usize..(entry.start + entry.len) as usize])
     }
 
     #[must_use]
@@ -246,6 +240,47 @@ impl PdfType1Program {
         let cleartext = self.bytes.get(..self.length1 as usize)?;
         value_after_marker(cleartext, marker)
     }
+}
+
+fn parse_builtin_encoding(cleartext: &[u8]) -> Box<[EncodingEntry; 256]> {
+    let mut entries = [EncodingEntry::default(); 256];
+    let mut tokens = PostScriptTokens::new(cleartext);
+    while let Some(token) = tokens.next() {
+        if token != PostScriptToken::Word(b"dup") {
+            continue;
+        }
+        let Some(PostScriptToken::Word(encoded_code)) = tokens.next() else {
+            continue;
+        };
+        let Some(PostScriptToken::LiteralName(glyph_name)) = tokens.next() else {
+            continue;
+        };
+        let name_end = tokens.cursor;
+        let Some(PostScriptToken::Word(b"put")) = tokens.next() else {
+            continue;
+        };
+        let Some(code) = canonical_encoding_code(encoded_code) else {
+            continue;
+        };
+        let entry = &mut entries[usize::from(code)];
+        if entry.len == 0 && !glyph_name.is_empty() {
+            entry.start = (name_end - glyph_name.len()) as u32;
+            entry.len = glyph_name.len() as u32;
+        }
+    }
+    Box::new(entries)
+}
+
+fn canonical_encoding_code(bytes: &[u8]) -> Option<u8> {
+    if bytes.is_empty() || (bytes.len() > 1 && bytes[0] == b'0') {
+        return None;
+    }
+    bytes.iter().try_fold(0u8, |number, byte| {
+        byte.is_ascii_digit()
+            .then_some(())
+            .and_then(|()| number.checked_mul(10))
+            .and_then(|number| number.checked_add(byte - b'0'))
+    })
 }
 
 fn value_after_marker<'a>(bytes: &'a [u8], marker: &[u8]) -> Option<&'a [u8]> {
@@ -441,13 +476,15 @@ fn subset_ascii_part(
         subset.extend_from_slice(b"/Encoding StandardEncoding def\n");
     } else {
         subset.extend_from_slice(b"/Encoding 256 array\n0 1 255 {1 index exch /.notdef put} for\n");
+        let mut first_code_by_name = BTreeMap::new();
+        for code in 0u8..=u8::MAX {
+            if let Some(name) = program.builtin_glyph_name(code) {
+                first_code_by_name.entry(name).or_insert(code);
+            }
+        }
         let mut encoded = 0usize;
         for glyph_name in glyph_names {
-            let Some(code) = (0u8..=u8::MAX).find(|code| {
-                program
-                    .builtin_glyph_name(*code)
-                    .is_some_and(|name| name == *glyph_name)
-            }) else {
+            let Some(&code) = first_code_by_name.get(glyph_name.as_slice()) else {
                 continue;
             };
             subset.extend_from_slice(b"dup ");
@@ -1494,6 +1531,8 @@ mod tests {
         let header = b"%!PS\n/Encoding 256 array\n\
             dup 10/uni03A9 put\n\
             dup 1/acute put\n\
+            dup 1/second-acute put\n\
+            dup 01/noncanonical put\n\
             dup % encoding comments may separate tokens\n\
               15/d15 put\n\
             dup 0/minus put\n";
@@ -1503,23 +1542,12 @@ mod tests {
         pfb.extend_from_slice(&[0x80, 2, 1, 0, 0, 0, 0, 0x80, 3]);
         let program = PdfType1Program::from_pfb(&pfb).expect("valid synthetic PFB");
 
-        assert_eq!(
-            program.builtin_glyph_name(10).as_deref(),
-            Some(b"uni03A9".as_slice())
-        );
-        assert_eq!(
-            program.builtin_glyph_name(1).as_deref(),
-            Some(b"acute".as_slice())
-        );
-        assert_eq!(
-            program.builtin_glyph_name(15).as_deref(),
-            Some(b"d15".as_slice())
-        );
-        assert_eq!(
-            program.builtin_glyph_name(0).as_deref(),
-            Some(b"minus".as_slice())
-        );
+        assert_eq!(program.builtin_glyph_name(10), Some(b"uni03A9".as_slice()));
+        assert_eq!(program.builtin_glyph_name(1), Some(b"acute".as_slice()));
+        assert_eq!(program.builtin_glyph_name(15), Some(b"d15".as_slice()));
+        assert_eq!(program.builtin_glyph_name(0), Some(b"minus".as_slice()));
         assert_eq!(program.builtin_glyph_name(2), None);
+        assert_eq!(program.builtin_glyph_name(1), Some(b"acute".as_slice()));
     }
 
     #[test]

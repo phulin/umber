@@ -105,6 +105,7 @@ impl PdfType1Program {
         }
         let mut rewritten = replace_font_name(&rewritten, font_name)?;
         let length1 = u32::try_from(rewritten.len()).map_err(|_| PdfType1SubsetError::Overflow)?;
+        let builtin_encoding = parse_builtin_encoding(&rewritten);
         rewritten.extend_from_slice(&self.bytes[clear_end..]);
         Ok(Self {
             identity: PdfType1ProgramIdentity(
@@ -114,6 +115,7 @@ impl PdfType1Program {
             length2: self.length2,
             length3: self.length3,
             bytes: rewritten,
+            builtin_encoding,
         })
     }
 }

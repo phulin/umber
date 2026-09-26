@@ -4,10 +4,12 @@ mod action;
 mod annotation;
 pub(crate) mod completion;
 mod destination;
+mod destination_index;
 mod document;
 mod object;
 mod outline;
 mod thread;
+mod version_index;
 
 pub use action::{
     PdfActionDestination, PdfActionIdentifier, PdfActionRecord, PdfActionSpec, PdfActionTarget,
@@ -26,6 +28,7 @@ pub use completion::{
     PdfCompletionError,
 };
 pub use destination::{PdfDestinationDefinition, PdfDestinationIdentity, PdfDestinationRecord};
+use destination_index::DestinationIndex;
 use document::PdfDocumentFragments;
 pub use document::{PdfDocumentFragmentKind, PdfDocumentObjectIds};
 use object::PdfRawObjects;
@@ -34,6 +37,7 @@ pub use object::{
 };
 pub use outline::PdfOutlineRecord;
 pub use thread::{PdfThreadBeadRecord, PdfThreadRecord};
+use version_index::{PdfVersionIndex, PdfVersionRoot};
 
 /// Handle-free unresolved PDF navigation selected before terminal rendering.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1616,92 +1620,6 @@ fn hash_optional_u32(hasher: &mut StateHasher, value: Option<u32>) {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-struct PdfVersionRoot(Option<u32>);
-
-#[derive(Clone, Copy, Debug, Default)]
-struct PdfVersionIndexNode {
-    children: [Option<u32>; 2],
-    value: Option<u32>,
-}
-
-#[derive(Debug, Default)]
-struct PdfVersionIndex {
-    accepted: Vec<PdfVersionIndexNode>,
-    candidate: Vec<PdfVersionIndexNode>,
-}
-
-impl PdfVersionIndex {
-    #[cfg(all(feature = "profiling", feature = "testing"))]
-    const PROBES: u32 = u64::BITS;
-
-    fn node(&self, index: u32) -> PdfVersionIndexNode {
-        let index = index as usize;
-        if index < self.accepted.len() {
-            self.accepted[index]
-        } else {
-            self.candidate[index - self.accepted.len()]
-        }
-    }
-
-    fn get(&self, root: PdfVersionRoot, key: u64) -> Option<u32> {
-        let mut node = root.0?;
-        for shift in (0..u64::BITS).rev() {
-            node = self.node(node).children[((key >> shift) & 1) as usize]?;
-        }
-        self.node(node).value
-    }
-
-    fn insert(
-        &mut self,
-        root: PdfVersionRoot,
-        key: u64,
-        value: u32,
-        candidate: bool,
-    ) -> PdfVersionRoot {
-        let mut path = [None; u64::BITS as usize + 1];
-        path[0] = root.0;
-        for (depth, shift) in (0..u64::BITS).rev().enumerate() {
-            path[depth + 1] = path[depth]
-                .and_then(|node| self.node(node).children[((key >> shift) & 1) as usize]);
-        }
-
-        let mut leaf = path[u64::BITS as usize]
-            .map_or_else(PdfVersionIndexNode::default, |node| self.node(node));
-        leaf.value = Some(value);
-        let mut child = self.push(leaf, candidate);
-        for depth in (0..u64::BITS as usize).rev() {
-            let shift = u64::BITS as usize - depth - 1;
-            let branch = ((key >> shift) & 1) as usize;
-            let mut parent =
-                path[depth].map_or_else(PdfVersionIndexNode::default, |node| self.node(node));
-            parent.children[branch] = Some(child);
-            child = self.push(parent, candidate);
-        }
-        PdfVersionRoot(Some(child))
-    }
-
-    fn push(&mut self, node: PdfVersionIndexNode, candidate: bool) -> u32 {
-        let absolute = self.accepted.len() + self.candidate.len();
-        let absolute = u32::try_from(absolute).expect("PDF version-index capacity");
-        if candidate {
-            self.candidate.push(node);
-        } else {
-            debug_assert!(self.candidate.is_empty());
-            self.accepted.push(node);
-        }
-        absolute
-    }
-
-    fn reject_candidate(&mut self) {
-        self.candidate.clear();
-    }
-
-    fn accept_candidate(&mut self) {
-        self.accepted.append(&mut self.candidate);
-    }
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PdfGeneralVersionKey {
     Match,
@@ -1908,8 +1826,10 @@ pub(crate) struct PdfState<G> {
     form_artifact_fingerprint: StateHashFragment,
     return_value: i32,
     destinations: PdfRows<PdfDestinationRecord>,
+    destination_index: DestinationIndex,
     destination_fingerprint: StateHashFragment,
     structure_destinations: PdfRows<PdfDestinationRecord>,
+    structure_destination_index: DestinationIndex,
     structure_destination_fingerprint: StateHashFragment,
     outlines: PdfRows<PdfOutlineRecord<G>>,
     outline_fingerprint: StateHashFragment,
@@ -2050,6 +1970,8 @@ impl<G> PdfState<G> {
                     .len()
                     .saturating_mul(std::mem::size_of::<PdfDestinationRecord>()),
             )
+            .saturating_add(self.destination_index.estimated_allocated_bytes())
+            .saturating_add(self.structure_destination_index.estimated_allocated_bytes())
             .saturating_add(
                 self.outlines
                     .len()
@@ -2060,14 +1982,8 @@ impl<G> PdfState<G> {
                     .len()
                     .saturating_mul(std::mem::size_of::<PdfThreadRecord>()),
             )
-            .saturating_add(
-                (self.general_index.accepted.len() + self.general_index.candidate.len())
-                    .saturating_mul(std::mem::size_of::<PdfVersionIndexNode>()),
-            )
-            .saturating_add(
-                (self.color_index.accepted.len() + self.color_index.candidate.len())
-                    .saturating_mul(std::mem::size_of::<PdfVersionIndexNode>()),
-            )
+            .saturating_add(self.general_index.allocated_bytes())
+            .saturating_add(self.color_index.allocated_bytes())
             .saturating_add(
                 (self.general_versions.accepted.len() + self.general_versions.candidate.len())
                     .saturating_mul(std::mem::size_of::<PdfVersionValue<G>>()),
@@ -2217,6 +2133,8 @@ impl<G> PdfState<G> {
         self.forms.reject_transaction();
         self.destinations.reject_transaction();
         self.structure_destinations.reject_transaction();
+        self.destination_index.reject_candidate();
+        self.structure_destination_index.reject_candidate();
         self.outlines.reject_transaction();
         self.threads.reject_transaction();
         self.payloads.reject_transaction();
@@ -2245,8 +2163,19 @@ impl<G> PdfState<G> {
         self.links.accept_transaction();
         self.color_stacks.accept_transaction();
         self.forms.accept_transaction();
+        let destination_base = self
+            .destinations
+            .base_len
+            .expect("PDF transaction is active");
+        let structure_base = self
+            .structure_destinations
+            .base_len
+            .expect("PDF transaction is active");
         self.destinations.accept_transaction();
         self.structure_destinations.accept_transaction();
+        self.destination_index.accept_candidate(destination_base);
+        self.structure_destination_index
+            .accept_candidate(structure_base);
         self.outlines.accept_transaction();
         self.threads.accept_transaction();
         self.payloads.accept_transaction();
@@ -2514,8 +2443,10 @@ impl<G> Default for PdfState<G> {
                 .finish_fragment(),
             return_value: 0,
             destinations: PdfRows::default(),
+            destination_index: DestinationIndex::default(),
             destination_fingerprint: destination_fingerprint(&PdfRows::default(), false),
             structure_destinations: PdfRows::default(),
+            structure_destination_index: DestinationIndex::default(),
             structure_destination_fingerprint: destination_fingerprint(&PdfRows::default(), true),
             outlines: PdfRows::default(),
             outline_fingerprint: outline_fingerprint::<G>(&[]),
@@ -3159,11 +3090,8 @@ impl<G> PdfState<G> {
         } else {
             &self.destinations
         };
-        let (row, record) = records
-            .iter()
-            .enumerate()
-            .find(|(_, record)| record.identity() == identity)?;
-        let mut record = record.clone();
+        let row = self.destination_row(identity, structure)?;
+        let mut record = records[row].clone();
         if let Some(PdfVersionValue::Destination { structure, defined }) =
             self.general_version(PdfGeneralVersionKey::Destination {
                 structure,
@@ -3173,6 +3101,18 @@ impl<G> PdfState<G> {
             record.restore_definition(*structure, *defined);
         }
         Some(record)
+    }
+
+    fn destination_row(&self, identity: &PdfDestinationIdentity, structure: bool) -> Option<usize> {
+        let (records, index) = if structure {
+            (
+                &self.structure_destinations,
+                &self.structure_destination_index,
+            )
+        } else {
+            (&self.destinations, &self.destination_index)
+        };
+        index.get(identity, records.base_len)
     }
 
     pub(crate) fn reserve_destination(
@@ -3190,7 +3130,16 @@ impl<G> PdfState<G> {
         } else {
             &mut self.destinations
         };
+        let row = records.len();
+        let candidate = records.base_len.is_some();
         records.push(record.clone());
+        if structure {
+            self.structure_destination_index
+                .insert(record.identity().clone(), row, candidate);
+        } else {
+            self.destination_index
+                .insert(record.identity().clone(), row, candidate);
+        }
         if structure {
             self.structure_destination_fingerprint = append_destination_fingerprint(
                 self.structure_destination_fingerprint,
@@ -3211,15 +3160,10 @@ impl<G> PdfState<G> {
         structure_target: Option<u32>,
     ) -> Result<PdfDestinationDefinition, PdfObjectCapacityError> {
         let structure = structure_target.is_some();
-        let reserved = self.reserve_destination(identity, structure)?;
-        let row = if structure {
-            &self.structure_destinations
-        } else {
-            &self.destinations
-        }
-        .iter()
-        .position(|record| record.object() == reserved.object())
-        .expect("reserved destination exists");
+        self.reserve_destination(identity.clone(), structure)?;
+        let row = self
+            .destination_row(&identity, structure)
+            .expect("reserved destination exists");
         let key = PdfGeneralVersionKey::Destination {
             structure,
             row: row as u32,
@@ -4081,9 +4025,17 @@ impl<G> PdfState<G> {
         self.form_artifact_fingerprint = cursor.form_artifact_fingerprint;
         self.return_value = cursor.return_value;
         self.destinations.truncate(cursor.destination_count);
+        self.destination_index.truncate(
+            cursor.destination_count,
+            self.destinations.base_len.is_some(),
+        );
         self.destination_fingerprint = cursor.destination_fingerprint;
         self.structure_destinations
             .truncate(cursor.structure_destination_count);
+        self.structure_destination_index.truncate(
+            cursor.structure_destination_count,
+            self.structure_destinations.base_len.is_some(),
+        );
         self.structure_destination_fingerprint = cursor.structure_destination_fingerprint;
         self.outlines.truncate(cursor.outline_count);
         self.outline_fingerprint = cursor.outline_fingerprint;
@@ -4825,7 +4777,7 @@ fn measure_pdf_lifecycle_phase(
 
 /// Profiles lifecycle work at a retained checkpoint followed by `distance`
 /// accepted general and color versions. Historical key resolution remains a
-/// fixed 64-probe trie walk and is intentionally excluded from lifecycle work.
+/// a compressed trie walk and is intentionally excluded from lifecycle work.
 #[cfg(all(feature = "profiling", feature = "testing"))]
 pub fn profile_pdf_undo_distance(distance: usize) -> PdfUndoDistanceMeasurement {
     let mut state = PdfState::<()>::default();
@@ -4883,7 +4835,17 @@ pub fn profile_pdf_undo_distance(distance: usize) -> PdfUndoDistanceMeasurement 
         first_mutation,
         reject,
         accept,
-        historical_lookup_probes: PdfVersionIndex::PROBES * 2,
+        historical_lookup_probes: state
+            .general_index
+            .lookup_probes(state.general_root, PdfGeneralVersionKey::Match.packed())
+            + state.color_index.lookup_probes(
+                state.color_root,
+                PdfGeneralVersionKey::Color {
+                    row: 0,
+                    target: PdfColorStackTarget::Page,
+                }
+                .packed(),
+            ),
     }
 }
 
@@ -4962,12 +4924,14 @@ pub fn profile_pdf_fork_family(
                 .extend((0..rows).map(|row| PdfAnnotationRecord::reserved(row as u32 + 1)));
         }
         PdfForkProfileFamily::Destinations => {
-            state.destinations.extend((0..rows).map(|row| {
-                PdfDestinationRecord::reserved(
-                    PdfDestinationIdentity::Number(row as u32),
+            for row in 0..rows {
+                let identity = PdfDestinationIdentity::Number(row as u32);
+                state.destinations.push(PdfDestinationRecord::reserved(
+                    identity.clone(),
                     row as u32 + 1,
-                )
-            }));
+                ));
+                state.destination_index.insert(identity, row, false);
+            }
         }
         PdfForkProfileFamily::Threads => {
             state.threads.extend((0..rows).map(|row| {

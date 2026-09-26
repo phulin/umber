@@ -369,3 +369,5 @@ execution model, phased integration, and exit criteria.
 
 - `runtime_storage_audit.md`: Production allocation owners, intentional shared
   payloads, and profile-led integration gaps found in the arXiv book audit.
+- `pdf_version_index.md`: Persistent compressed PDF version-key index,
+  checkpoint roots, and candidate transaction storage contract.

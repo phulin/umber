@@ -67,15 +67,13 @@ pub(in crate::pdf::finalize) fn to_unicode_mappings(
 ) -> Vec<ToUnicodeMapping> {
     let mut mappings = Vec::new();
     for code in 0..=u8::MAX {
-        let owned_glyph;
         let glyph = if let Some(encoding) = encoding {
             encoding.glyph_names()[usize::from(code)].as_slice()
         } else if let Some(type1) = type1 {
             let Some(name) = type1.builtin_glyph_name(code) else {
                 continue;
             };
-            owned_glyph = name;
-            owned_glyph.as_slice()
+            name
         } else {
             continue;
         };

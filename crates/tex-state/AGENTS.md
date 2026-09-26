@@ -332,6 +332,10 @@ All production mutation of live TeX state should pass through `Universe` or simi
   exact inverse journals, one coarse image/form payload prefix plus private
   delta, committed-page ledger, and handle-free PDF format wire
   capture/materialization hooks accepting only the current PDF state version.
+- `src/pdf/version_index.rs` and `src/pdf/version_index/tests.rs`: Immutable
+  compressed version-key index, candidate append vectors, and old-root tests.
+- `src/pdf/destination_index.rs`: Derived regular and structure destination
+  identity lookups synchronized with row truncation and candidate settlement.
 - `src/pdf/completion.rs`: handle-free terminal projection of the checkpointed
   PDF ledger, including artifacts, resources, raw objects, actions, and final
   document state.

@@ -200,7 +200,9 @@ pub fn pdf_finalization_input_with_raw_object_files(
             })
             .unwrap_or_default();
         if let PdfFontProgramInput::Type1(type1) = &program {
-            glyph_names.extend((0..=255).filter_map(|code| type1.builtin_glyph_name(code)));
+            glyph_names.extend(
+                (0..=255).filter_map(|code| type1.builtin_glyph_name(code).map(<[u8]>::to_vec)),
+            );
         }
         let glyph_to_unicode = glyph_to_unicode_mappings(
             &glyph_mappings,

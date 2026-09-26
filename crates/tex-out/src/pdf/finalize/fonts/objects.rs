@@ -95,12 +95,13 @@ pub(in crate::pdf::finalize) fn pdf_font_objects(
                 if let Some(encoding) = encoding {
                     Ok(encoding.glyph_names()[usize::from(*code)].clone())
                 } else if let Some(program) = type1 {
-                    program.builtin_glyph_name(*code).ok_or_else(|| {
-                        PdfBuildError::MissingBuiltinGlyphName {
+                    program
+                        .builtin_glyph_name(*code)
+                        .map(<[u8]>::to_vec)
+                        .ok_or_else(|| PdfBuildError::MissingBuiltinGlyphName {
                             font: font.name.clone(),
                             code: *code,
-                        }
-                    })
+                        })
                 } else {
                     Err(PdfBuildError::TrueTypeSubsetRequiresEncoding(
                         font.name.clone(),

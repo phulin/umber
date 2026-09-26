@@ -245,6 +245,74 @@ fn checkpoint_identity_root_uses_maintained_pdf_semantics_not_version_coordinate
 }
 
 #[test]
+fn destination_lookup_tracks_candidate_visibility_and_rollback() {
+    let mut state = PdfState::<()>::default();
+    let first = PdfDestinationIdentity::Name(b"first".to_vec());
+    let hidden = PdfDestinationIdentity::Name(b"hidden".to_vec());
+    let replacement = PdfDestinationIdentity::Name(b"replacement".to_vec());
+    let first_object = state
+        .reserve_destination(first.clone(), false)
+        .expect("first reservation")
+        .object();
+    let base = state.snapshot();
+    state
+        .reserve_destination(hidden.clone(), false)
+        .expect("accepted suffix reservation");
+
+    state.open_candidate_lineage(&base);
+    assert!(state.destination(&hidden, false).is_none());
+    state
+        .reserve_destination(replacement.clone(), false)
+        .expect("candidate reservation");
+    assert!(state.destination(&replacement, false).is_some());
+    state.reject_candidate_transaction();
+    assert!(state.destination(&replacement, false).is_none());
+    assert!(state.destination(&hidden, false).is_some());
+
+    state.open_candidate_lineage(&base);
+    state
+        .reserve_destination(replacement.clone(), false)
+        .expect("replacement reservation");
+    let definition = state
+        .define_destination(replacement.clone(), None)
+        .expect("replacement definition");
+    assert!(!definition.duplicate);
+    assert!(
+        state
+            .define_destination(replacement.clone(), None)
+            .expect("duplicate definition")
+            .duplicate
+    );
+    state.accept_candidate_transaction();
+    assert!(state.destination(&hidden, false).is_none());
+    assert!(
+        state
+            .destination(&replacement, false)
+            .expect("accepted")
+            .defined()
+    );
+    assert_eq!(
+        state.destination(&first, false).expect("prefix").object(),
+        first_object
+    );
+
+    state
+        .reserve_destination(first.clone(), true)
+        .expect("structure domain is separate");
+    assert_ne!(
+        state.destination(&first, true).expect("structure").object(),
+        first_object
+    );
+    state.rollback(base);
+    assert!(state.destination(&replacement, false).is_none());
+    assert!(state.destination(&first, true).is_none());
+    assert_eq!(
+        state.destination(&first, false).expect("prefix").object(),
+        first_object
+    );
+}
+
+#[test]
 fn action_annotation_outline_and_raw_object_copy_without_brand_traits() {
     with_universe(budget(), |universe| {
         let id = universe
