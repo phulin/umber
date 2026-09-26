@@ -194,10 +194,10 @@ fn ordered_graphics_content_uses_typed_state_and_preserves_literal_bytes() {
 }
 
 #[test]
-fn graphics_save_restore_retains_the_pdftex_origin_raster() {
-    // pdftex.web §690 (`pdf_set_origin`) retains `scaled_out`, rather than
-    // the requested TeX coordinate. The graphics stack must preserve that
-    // exact raster because a later text object starts from the restored CTM.
+fn graphics_restore_keeps_the_pdftex_origin_residue() {
+    // pdftex.web `pdf_out_restore` calls `pdf_set_origin` at the restore
+    // position before Q. Q restores the PDF graphics state, but the exact
+    // logical origin remains at the new `scaled_out` coordinate.
     let retained = super::paint::retained_origin_after_save_restore(
         PdfContentTextPosition {
             h: 3_220_936,
@@ -210,14 +210,14 @@ fn graphics_save_restore_retains_the_pdftex_origin_raster() {
             decimal_digits: 3,
         },
     );
-    assert_eq!(retained, (3_220_938, 0));
+    assert_eq!(retained, (3_220_937, 0));
 }
 
 #[test]
-fn exact_origin_translations_print_scaled_deltas_and_restore_the_raster() {
+fn exact_origin_translations_print_scaled_deltas_through_nested_restores() {
     // pdftex.web §690: the second `cm` uses the first `scaled_out`, not the
-    // subtraction of two separately rounded binary floats. Restoring q/Q
-    // also restores the retained origin used by the following translation.
+    // subtraction of two separately rounded binary floats. Nested restores
+    // retain each logical origin update while Q restores the graphics CTM.
     let at = |h, x| PdfContentOperation::Save {
         x,
         y: 0.0,

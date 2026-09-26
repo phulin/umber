@@ -41,19 +41,12 @@ struct PdfPainter {
     origin: (f32, f32),
     exact_origin: Option<PdfExactTextPosition>,
     fixed_origin: Option<(PdfNumber, PdfNumber)>,
-    saved_origins: Vec<PdfSavedOrigin>,
     in_text: bool,
     current_font: Option<PdfTextFont>,
     text_matrix: Option<PdfTextMatrix>,
     text_cursor: Option<PdfTextCursor>,
     pending_text: Vec<PdfTextItem>,
 }
-
-type PdfSavedOrigin = (
-    (f32, f32),
-    Option<PdfExactTextPosition>,
-    Option<(PdfNumber, PdfNumber)>,
-);
 
 struct PdfTextFont {
     name: Vec<u8>,
@@ -103,7 +96,6 @@ impl PdfPainter {
                 PdfNumber::new(0, 0).expect("zero has valid PDF precision"),
                 PdfNumber::new(0, 0).expect("zero has valid PDF precision"),
             )),
-            saved_origins: Vec::new(),
             in_text: false,
             current_font: None,
             text_matrix: None,
@@ -657,18 +649,14 @@ impl PdfPainter {
     }
 
     fn save(&mut self) {
-        self.saved_origins
-            .push((self.origin, self.exact_origin, self.fixed_origin));
         self.content.save_state();
     }
 
     fn restore(&mut self) {
+        // pdftex.web `pdf_out_restore` first calls `pdf_set_origin`, then
+        // prints Q. The PDF graphics state is restored, but pdfTeX keeps
+        // the rounded logical origin left by that final translation.
         self.content.restore_state();
-        if let Some((origin, exact_origin, fixed_origin)) = self.saved_origins.pop() {
-            self.origin = origin;
-            self.exact_origin = exact_origin;
-            self.fixed_origin = fixed_origin;
-        }
     }
 
     fn end_text(&mut self) {
@@ -841,6 +829,7 @@ pub(super) fn retained_origin_after_save_restore(
     painter.set_origin(48.964, 0.0, Some(saved));
     painter.save();
     painter.set_origin(58.927, 0.0, Some(nested));
+    painter.set_origin(48.964, 0.0, Some(saved));
     painter.restore();
     let exact = painter
         .exact_origin
