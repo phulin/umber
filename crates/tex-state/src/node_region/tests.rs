@@ -1165,6 +1165,63 @@ fn copied_parent_chunks_keep_order_and_independent_children_after_source_retirem
 }
 
 #[test]
+fn copied_wide_parent_chunk_keeps_fixed_bodies_across_mixed_children() {
+    let mut pool = NodePool::with_chunk_bytes(1024);
+    let mut source = pool.start_region::<DurableRole>().expect("source");
+    let leaf = source
+        .publish_owned(&mut pool, [Node::Penalty(73)])
+        .expect("shared child");
+    let root = source
+        .publish_owned(
+            &mut pool,
+            (0..28).map(|index| {
+                if index % 7 == 0 {
+                    Node::Penalty(index)
+                } else {
+                    let Node::HList(mut node) = boxed(leaf.list) else {
+                        unreachable!("boxed helper creates an hlist");
+                    };
+                    node.width = Scaled::from_raw(index);
+                    Node::HList(node)
+                }
+            }),
+        )
+        .expect("wide parent chunk");
+    let mut destination = pool.start_region::<PageRole>().expect("destination");
+    let copied = copy_region_root_into(&mut pool, &source, root, &mut destination, false)
+        .expect("copy wide mixed chunk");
+    let mut children = Vec::new();
+    for (index, node) in destination
+        .list(&pool, copied)
+        .expect("copied parent")
+        .iter()
+        .enumerate()
+    {
+        if index % 7 == 0 {
+            assert_eq!(node, crate::NodeView::Penalty(index as i32));
+        } else {
+            let crate::NodeView::HList(box_node) = node else {
+                panic!("copied box");
+            };
+            assert_eq!(box_node.width, Scaled::from_raw(index as i32));
+            assert_ne!(box_node.children, leaf.list);
+            assert!(!children.contains(&box_node.children));
+            children.push(box_node.children);
+        }
+    }
+    assert_eq!(children.len(), 24);
+    pool.retire_region(source)
+        .map_err(|(error, _)| error)
+        .expect("retire source");
+    for child in children {
+        assert_eq!(
+            resident_nodes(&destination, &pool, child),
+            [Node::Penalty(73)]
+        );
+    }
+}
+
+#[test]
 fn copied_sibling_boxes_stamp_before_multiple_annex_blocks_seal() {
     let mut pool = NodePool::with_chunk_bytes(512);
     let mut source = pool.start_region::<DurableRole>().expect("source");

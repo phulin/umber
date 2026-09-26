@@ -221,6 +221,49 @@ retained relocation cache is created. Failure restores the paired destination
 operation marks. Semantic identities are preserved from the source when
 available and otherwise accumulated from the relocated records.
 
+### Complete-envelope bulk-copy proof
+
+A move-only `OwnedNodeClosure` proves ownership of a region and admission of
+its selected root. It does not by itself prove that every initialized record
+in the region belongs to that root or that the child graph is a tree. Whole-region
+transfer validates same-owner child coordinates and dependency floors, but
+may move resident records outside the selected root. For example, a parent can
+contain two boxes that both name one child list. An explicit copy must create
+two independently owned child lists; cloning the region's chunks unchanged
+would preserve the shared coordinate inside the new region. Neither root
+admission nor a sealed construction suffix licenses that shortcut.
+
+A direct chunk-copy route therefore needs a separate immutable certificate
+that proves the selected root covers every initialized node and annex range
+exactly once, each nonempty child occurrence has a distinct source range, and
+all direct annex keys and publication serials were authenticated. The
+certificate must bind the accepted node and annex owners, lineages, logical
+chunk incarnations, root, and storage generation; any in-place reencoding or
+root change must invalidate or reconstruct it. It may be minted while the
+existing recursive copier builds a fresh destination: that pass already
+visits every selected occurrence and gives repeated source children separate
+destination storage. A fresh durable region produced by
+`copy_page_root_to_durable` or `copy_durable_owner` is a potential issuer.
+`finish_built_page_root_to_durable` cannot issue it from its consumed-roots
+receipt alone, since the receipt does not count incoming child edges or prove
+that every allocated record is reachable. Retained page regions and arbitrary
+owner-relative roots continue through the recursive copier.
+
+Even with such a certificate, a copy must allocate independent destination
+chunks, map each source logical chunk and used offset to its actual destination
+chunk, renew every annex publication serial, rewrite every embedded annex and
+child-list key, clear or rebuild box construction metadata, and establish the
+ordinary node and paired-annex dependency floors. Logical chunk IDs can be
+recycled and are not an arithmetic base offset. A failure must restore both
+destination operation marks before exposing a root. The current copier already
+block-copies staged node records and destination fixed annex groups; the
+remaining per-record authentication and relocation work is real. The larger
+certificate and chunk-map path is justified only if an owner-transition census
+shows that eligible, repeatedly copied complete closures dominate copied
+nodes and a matched benchmark beats the existing path across inline, fixed,
+nested, and variable-span shapes. Until then, no unchecked whole-region clone
+or retained alias is an explicit-copy implementation.
+
 ## Production cutover
 
 As of 2026-08-28, ordinary execution uses these owners rather than retaining
