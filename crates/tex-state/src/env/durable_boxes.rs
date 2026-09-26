@@ -231,6 +231,7 @@ pub(crate) struct DurableBoxPrefixReleaseReceipt {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct DurableBoxOperation {
+    depth: usize,
     position: usize,
     loan_position: usize,
     dimension_position: usize,
@@ -491,7 +492,7 @@ pub(crate) struct DurableBoxState {
     operation_entries: Vec<DurableMutation>,
     transfer_loans: Vec<DurableBoxTransferLoan>,
     dimension_mutations: Vec<DurableDimensionMutation>,
-    active_operations: Vec<usize>,
+    operation_depth: usize,
 }
 
 struct DurableFormEntry {
@@ -651,7 +652,7 @@ impl DurableBoxState {
             operation_entries: Vec::new(),
             transfer_loans: Vec::new(),
             dimension_mutations: Vec::new(),
-            active_operations: Vec::new(),
+            operation_depth: 0,
         }
     }
 
@@ -662,7 +663,7 @@ impl DurableBoxState {
     pub(crate) fn checkpoint_eligible(&self) -> bool {
         self.groups.is_empty()
             && self.retained_groups.is_empty()
-            && self.active_operations.is_empty()
+            && !self.operation_is_active()
             && self.operation_entries.is_empty()
             && self.transfer_loans.is_empty()
             && self.dimension_mutations.is_empty()
@@ -1074,7 +1075,7 @@ impl DurableBoxState {
         let checkpoint_needed = self.checkpoint_anchored
             && self.checkpoint_stamps.get(&index).copied() != Some(self.checkpoint_epoch);
         let group_needed = saved_at.is_some();
-        let operation_needed = !self.active_operations.is_empty();
+        let operation_needed = self.operation_is_active();
         let destinations = usize::from(checkpoint_needed)
             + usize::from(group_needed)
             + usize::from(operation_needed);
@@ -1230,7 +1231,7 @@ impl DurableBoxState {
                 self.scalar_stamps
                     .insert((index, dimension), self.checkpoint_epoch);
             }
-            if !self.active_operations.is_empty() {
+            if self.operation_is_active() {
                 self.dimension_mutations.push(mutation);
             }
         }
@@ -1309,7 +1310,7 @@ impl DurableBoxState {
         };
         if self.can_take_unique(index) {
             self.record_unique_take(index, owner);
-            if !self.active_operations.is_empty() {
+            if self.operation_is_active() {
                 let level = self.cell(index).map_or(LEVEL_ONE, |cell| cell.level);
                 let transfer =
                     arena.loan_durable_to_page_in_place(self.owners.owner_slot_mut(owner));
@@ -1542,7 +1543,12 @@ impl DurableBoxState {
     }
 
     pub(crate) fn begin_operation(&mut self) -> DurableBoxOperation {
+        self.operation_depth = self
+            .operation_depth
+            .checked_add(1)
+            .expect("durable box operation depth exhausted");
         let operation = DurableBoxOperation {
+            depth: self.operation_depth,
             position: self.operation_entries.len(),
             loan_position: self.transfer_loans.len(),
             dimension_position: self.dimension_mutations.len(),
@@ -1550,8 +1556,12 @@ impl DurableBoxState {
             group_position: self.groups.len(),
             group_entry_position: self.groups.last().map_or(0, |group| group.entries.len()),
         };
-        self.active_operations.push(operation.position);
         operation
+    }
+
+    #[inline(always)]
+    fn operation_is_active(&self) -> bool {
+        self.operation_depth != 0
     }
 
     pub(crate) fn commit_operation(
@@ -1559,8 +1569,9 @@ impl DurableBoxState {
         arena: &mut PageMaterialArena,
         operation: DurableBoxOperation,
     ) {
-        assert_eq!(self.active_operations.pop(), Some(operation.position));
-        if self.active_operations.is_empty() {
+        assert_eq!(self.operation_depth, operation.depth);
+        self.operation_depth -= 1;
+        if !self.operation_is_active() {
             self.dimension_mutations.clear();
             for loan in self.transfer_loans.drain(..) {
                 arena.commit_durable_transfer_loan(loan.loan);
@@ -1576,7 +1587,7 @@ impl DurableBoxState {
         arena: &mut PageMaterialArena,
         operation: DurableBoxOperation,
     ) {
-        assert_eq!(self.active_operations.last(), Some(&operation.position));
+        assert_eq!(self.operation_depth, operation.depth);
         let loans = self.transfer_loans.split_off(operation.loan_position);
         for loan in loans.into_iter().rev() {
             let owner = arena
@@ -1631,7 +1642,7 @@ impl DurableBoxState {
                 Self::retire_value(&mut self.owners, arena, mutation.alternate);
             }
         }
-        self.active_operations.pop();
+        self.operation_depth -= 1;
     }
 
     fn swap_checkpoint_suffix(&mut self, start: usize) {
@@ -1676,7 +1687,7 @@ impl DurableBoxState {
         arena: &mut PageMaterialArena,
         cursor: DurableBoxCursor,
     ) -> Result<AcceptedDurableBoxTail, BankError> {
-        assert!(self.active_operations.is_empty());
+        assert!(!self.operation_is_active());
         let rebased = self
             .rebase_cursor(cursor)
             .expect("validated durable candidate cursor rebases");

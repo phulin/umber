@@ -71,6 +71,37 @@ fn assign_box(state: &mut DurableBoxState, arena: &mut PageMaterialArena, index:
 }
 
 #[test]
+fn empty_operations_leave_box_journals_unallocated() {
+    page_arena!(arena, pool, region, 64);
+    let mut state = DurableBoxState::new();
+    for _ in 0..1_000 {
+        let outer = state.begin_operation();
+        let inner = state.begin_operation();
+        state.commit_operation(&mut arena, inner);
+        state.commit_operation(&mut arena, outer);
+    }
+    assert_eq!(state.operation_depth, 0);
+    assert!(state.operation_entries.is_empty());
+    assert!(state.transfer_loans.is_empty());
+    assert!(state.dimension_mutations.is_empty());
+    assert_eq!(state.operation_entries.capacity(), 0);
+}
+
+#[test]
+fn nested_operation_depth_keeps_outer_box_inverse() {
+    page_arena!(arena, pool, region, 64);
+    let mut state = DurableBoxState::new();
+    let outer = state.begin_operation();
+    let inner = state.begin_operation();
+    assign_box(&mut state, &mut arena, 15);
+    state.commit_operation(&mut arena, inner);
+    assert!(state.value(15).is_some());
+    state.rollback_operation(&mut arena, outer);
+    assert!(state.value(15).is_none());
+    assert_eq!(state.operation_depth, 0);
+}
+
+#[test]
 fn scalar_box_root_mutation_preserves_closure_and_rolls_back() {
     page_arena!(arena, pool, region, 64);
     arena.enable_semantic_identity();

@@ -58,3 +58,10 @@ has meanwhile been consumed or replaced. A PageBuilder transaction may
 restore the root first, so the inverse updates the live root identity only
 when its coordinate still matches. A shared wrapper annex rejects mutation
 rather than acquiring implicit copy-on-write ownership.
+
+An operation mark records durable-box suffix lengths and scalar nesting
+depth without pushing an empty journal frame. Only a mutation appends undo
+work; nested marks still settle in last-in-first-out order. Transfer loans,
+scalar edits, and binding changes must replay in reverse event order so a
+page-to-durable transfer followed by a dimension edit restores the scalar
+before returning the box to its page owner.
