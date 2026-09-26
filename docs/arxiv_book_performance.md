@@ -7,14 +7,26 @@ comparison of `99f75a4d9` and `7b9f40dbd` reduced median peak RSS by about
 comparison below explains the storage reduction and the growth it does not
 attribute. These measurements do not establish full-book completion.
 
-The book still does not complete within the original guards. The latest
-unchanged-guard run, `bf4a6a7ba`, reached the 500-million-action fuel limit after
+The book still does not complete within the original guards. The
+unchanged-guard run at `bf4a6a7ba` reached the 500-million-action fuel limit after
 118.12 seconds, before the wall timeout. Its receipt is
 `target/perf-tex-copy-plan/ownership-annex-original-book/summary.json`.
-This is a failed acceptance run, not a completion or a matched speedup claim.
+The subsequent `41b8271d7` run timed out while parallel validation builds were
+active; its receipt is
+`target/perf-tex-copy-plan/direct-register-handoff-original-book/summary.json`.
+Neither run establishes completion or a matched speed comparison.
 Keep the 120-second, 1,536 MiB, 500,000,000 expansion-fuel, and 10,000,000
 execution-step acceptance guards. The reduced split controls below explain an
 earlier scaling defect; their speedups are not whole-book speedups.
+
+A separate `41b8271d7` diagnostic increased the time and fuel limits to
+600 seconds and two billion actions while retaining the 1,536 MiB RSS limit.
+It hit that memory limit after 292.41 seconds, with a measured maximum RSS of
+1,654,316 KiB, and produced no PDF. Its complete command and guard diagnostic
+are under
+`target/perf-tex-copy-plan/direct-register-handoff-extended-diagnostic/`.
+This later growth is outside the earlier 100–200 million-action heap captures;
+those captures cannot establish full-book peak memory or reclamation.
 
 ## Current CPU attribution and copy scope
 
@@ -51,16 +63,54 @@ samples and source/binary identities are in
 `.worktrees/slot-3/target/perf-tex-copy-plan/annex-token-candidate/quiet-comparison.json`.
 The 50 ns/node fixed-body target remains unmet.
 
-The combined ownership and writer checkpoint `bf4a6a7ba` passed all seven
+The direct durable-register handoff checkpoint `41b8271d7` passed all seven
 native/quality stages, all 93 previously passing arXiv PDF comparisons, and
 the eight LaTeX/pdfLaTeX cases across TeX Live 2023–2026. Its frozen shipping
-binary and receipts are under `target/perf-tex-copy-plan/ownership-annex-*`.
-On the preceding ownership checkpoint `ce1f13bb8`, e-TRIP and Gentle passed;
+binary and receipts are under `target/perf-tex-copy-plan/direct-register-handoff-*`.
+On that same checkpoint, e-TRIP and Gentle passed;
 TRIP retained its known paragraph-tracing mismatch at log byte 166256, while
 normalized DVI, all 432 geometry events, and all 22 command events matched.
-These results cover the inline generated-line transfer, not the unfinished
-nested-child and alignment ownership extensions described in
+These results cover the inline generated-line and durable-register transfers;
+the page-owned output carrier, nested-child and alignment ownership extensions
+remain incomplete, as described in
 [Generated box ownership](generated_box_ownership.md).
+
+## Remaining copy origins
+
+At the authenticated 200-million-action endpoint, the profiling build at
+`7ef1d1e6f` counted 5,647,640 recursively copied nodes in 13,165 top-level
+copies. Each recursive descendant is charged once in this denominator.
+
+| Source class                        | Copied nodes |
+| ----------------------------------- | -----------: |
+| Explicit durable-to-page entrypoint |    4,755,326 |
+| Built-box structural fallback       |      791,159 |
+| Durable-to-durable history          |       16,082 |
+| Other region-copy entrypoints       |       85,073 |
+
+The explicit entrypoint includes both required TeX copies and callers such as
+`\vsplit` that currently materialize a copy before destructive work; its name
+does not prove that every caller must copy. Of the structural fallback nodes,
+698,707 came from 108 register-take events, 92,386 from 49 constructions, and
+66 from two last-box events. A subsequent gate-reason census proved that all
+108 register-take events consume the live page-owned box 255 carrier. None
+was a checkpoint-retained durable source. Thus the validated direct
+durable-register handoff leaves this book's dominant fallback unchanged.
+The next ownership change must address the actual page-builder carrier.
+
+The conservative fresh-recursive-source marker covered only 24,188 nodes,
+or 0.428% of all copied nodes. This is measured constructor provenance, not
+an exact-tree certificate or a ceiling on all possible bulk-copy work: directly
+sealed owners are deliberately unmarked. Building a fast copier only for
+that marked class would cover little of this prefix.
+
+The combined census, frozen binary identity, archive and format hashes, and
+raw diagnostics are in
+`.worktrees/slot-3/target/perf-tex-copy-plan/combined-provenance/fuel-200000000/`.
+The reason census is in
+`.worktrees/slot-2/target/perf-generated-box-ownership/gate-reason-census/fuel-200000000/`;
+it records its pre-commit source-diff hash as well as the binary hash. These
+instrumented runs establish copy volume and origin, not runtime improvement.
 
 ## Book identity and workload
 
