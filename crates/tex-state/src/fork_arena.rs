@@ -294,6 +294,18 @@ impl<T> DenseBlock<T> {
     }
 }
 
+fn initialize_packed_chunk<T: Default>(
+    block: &mut Superblock<T>,
+    count: usize,
+) -> Result<(), ForkArenaError> {
+    block
+        .extend_with(count, T::default)
+        .map(|_| ())
+        .map_err(|_| ForkArenaError::CapacityOverflow)
+}
+
+type PackedChunkInitializer<T> = fn(&mut Superblock<T>, usize) -> Result<(), ForkArenaError>;
+
 /// Exact-superblock storage shared by typed semantic lanes.
 ///
 /// Logical list chunks are cursor ranges packed into the initialized prefix
@@ -307,7 +319,7 @@ struct ChunkStorage<T> {
     logical_free: Vec<u32>,
     chunk_bytes: usize,
     slots_per_chunk: usize,
-    packed_vacant: Option<fn() -> T>,
+    packed_initializer: Option<PackedChunkInitializer<T>>,
     blocks: Vec<DenseBlock<T>>,
     free_blocks: Vec<u32>,
     free_ranges: Vec<(DenseBlockKey, u32)>,
@@ -619,7 +631,7 @@ impl<T> ChunkStorage<T> {
         T: Copy + Default,
     {
         let mut storage = Self::with_layout(chunk_bytes, ChunkStorageLayout::PackedCopy);
-        storage.packed_vacant = Some(T::default);
+        storage.packed_initializer = Some(initialize_packed_chunk::<T>);
         storage
     }
 
@@ -639,7 +651,7 @@ impl<T> ChunkStorage<T> {
             logical_free: Vec::new(),
             chunk_bytes,
             slots_per_chunk,
-            packed_vacant: None,
+            packed_initializer: None,
             blocks: Vec::new(),
             free_blocks: Vec::new(),
             free_ranges: Vec::new(),
@@ -1084,7 +1096,7 @@ impl<T> ChunkStorage<T> {
         let base = u32::try_from(self.dense_block(key)?.payload().len())
             .map_err(|_| ForkArenaError::CapacityOverflow)?;
         let slots_per_chunk = self.slots_per_chunk;
-        let packed_vacant = self.packed_vacant;
+        let packed_initializer = self.packed_initializer;
         let block = self.dense_block_mut(key)?;
         match block.payload_mut() {
             DenseBlockPayload::Optional(payload) => {
@@ -1093,10 +1105,7 @@ impl<T> ChunkStorage<T> {
                     .map_err(|_| ForkArenaError::CapacityOverflow)?
             }
             DenseBlockPayload::Packed(payload) => {
-                let vacant = packed_vacant.ok_or(ForkArenaError::InvalidChunk)?;
-                payload
-                    .extend_with(slots_per_chunk, vacant)
-                    .map_err(|_| ForkArenaError::CapacityOverflow)?;
+                packed_initializer.ok_or(ForkArenaError::InvalidChunk)?(payload, slots_per_chunk)?;
             }
         }
         block.live_chunks += 1;
@@ -2034,7 +2043,7 @@ impl<T> ChunkPool<T> {
             ),
             next_publication_serial: 1,
         };
-        pool.payload.packed_vacant = Some(T::default);
+        pool.payload.packed_initializer = Some(initialize_packed_chunk::<T>);
         pool
     }
 
