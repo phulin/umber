@@ -1,4 +1,5 @@
-use super::annex::{BoxConstructionDescriptor, decode_box_construction_descriptor};
+use super::annex::{BoxMigrationSegments, BoxPositiveRanges};
+use super::box_descriptor::{BoxConstructionDescriptor, decode_box_construction_descriptor};
 use super::*;
 
 /// Offsets of independently owned child-list coordinates in one fixed body.
@@ -232,16 +233,19 @@ impl NodeRecord<PageMaterialLane> {
             if matches!(self.kind(), Some(NodeKind::HList | NodeKind::VList)) {
                 let payload = annex
                     .resolve_fixed_array::<BoxPayload, BOX_PAYLOAD_WORDS>(key_from_record(self))?;
-                if let BoxConstructionDescriptor::Original {
-                    migrations: Some(key),
-                    ..
-                } = decode_box_construction_descriptor(&payload)?
-                {
-                    visit(
-                        annex.key_block_range(AnnexKey::<BoxMigrationSegments>::from_words(
+                match decode_box_construction_descriptor(&payload)? {
+                    BoxConstructionDescriptor::Original {
+                        migrations: Some(key),
+                        ..
+                    } => visit(annex.key_block_range(
+                        AnnexKey::<BoxMigrationSegments>::from_words(key.words()),
+                    )?),
+                    BoxConstructionDescriptor::Positive { key, .. } => visit(
+                        annex.key_block_range(AnnexKey::<BoxPositiveRanges>::from_words(
                             key.words(),
                         ))?,
-                    );
+                    ),
+                    _ => {}
                 }
             }
             return Some(());
@@ -486,6 +490,7 @@ impl NodeRecord<PageMaterialLane> {
         Some(crate::page_node_arena::PageBoxMigrationMetadata {
             segment,
             exclusions,
+            positive: None,
             sidecar_annex_range,
             wrapper_rebuild: false,
         })
@@ -531,6 +536,7 @@ impl NodeRecord<PageMaterialLane> {
         Some(crate::page_node_arena::PageBoxMigrationMetadata {
             segment,
             exclusions,
+            positive: None,
             sidecar_annex_range,
             wrapper_rebuild: false,
         })
@@ -552,6 +558,84 @@ impl NodeRecord<PageMaterialLane> {
             BoxConstructionDescriptor::Copied(stamp) => Some(stamp),
             _ => None,
         }
+    }
+
+    pub(crate) fn positive_box_metadata_at_wrapper(
+        self,
+        annex: NodeAnnexView<'_>,
+        region: crate::node_region::NodeRegionId,
+        wrapper_node: usize,
+        wrapper_annex: usize,
+    ) -> Option<crate::page_node_arena::PageBoxMigrationMetadata> {
+        if !matches!(self.kind()?, NodeKind::HList | NodeKind::VList)
+            || self.subtype() != 0
+            || self.flags() != 0
+        {
+            return None;
+        }
+        let payload =
+            annex.resolve_fixed_array::<BoxPayload, BOX_PAYLOAD_WORDS>(key_from_record(self))?;
+        let BoxConstructionDescriptor::Positive {
+            region: original_region,
+            key,
+            wrapper_node: original_node,
+            wrapper_annex: original_annex,
+        } = decode_box_construction_descriptor(&payload)?
+        else {
+            return None;
+        };
+        if original_region.words()[..2] != region.words()[..2] {
+            return None;
+        }
+        let node_shift = i64::try_from(wrapper_node).ok()? - i64::try_from(original_node).ok()?;
+        let annex_shift =
+            i64::try_from(wrapper_annex).ok()? - i64::try_from(original_annex).ok()?;
+        let ranges =
+            annex.box_positive_ranges(key, wrapper_annex, node_shift, annex_shift, wrapper_node)?;
+        let segment = crate::node_region::PageBoxSegment::from_exclusion_bounds(
+            region,
+            [
+                u32::try_from(wrapper_node).ok()?,
+                u32::try_from(wrapper_node.checked_add(1)?).ok()?,
+                u32::try_from(ranges.sidecar.start).ok()?,
+                u32::try_from(wrapper_annex.checked_add(1)?).ok()?,
+            ],
+        )?;
+        Some(crate::page_node_arena::PageBoxMigrationMetadata {
+            segment,
+            exclusions: Vec::new(),
+            positive: Some(crate::page_node_arena::PageBoxPositiveSelection {
+                nodes: ranges.nodes,
+                annex: ranges.annex,
+                node_cuts: ranges.node_cuts,
+                annex_cuts: ranges.annex_cuts,
+            }),
+            sidecar_annex_range: Some(ranges.sidecar),
+            wrapper_rebuild: true,
+        })
+    }
+
+    pub(crate) fn stamp_box_positive(
+        self,
+        annex: &mut NodeAnnexWriter<'_>,
+        region: crate::node_region::NodeRegionId,
+        key: crate::page_node_arena::PageBoxPositiveKey,
+        wrapper_node: usize,
+        wrapper_annex: usize,
+    ) -> Option<()> {
+        if !matches!(self.kind()?, NodeKind::HList | NodeKind::VList)
+            || self.subtype() != 0
+            || self.flags() != 0
+        {
+            return None;
+        }
+        annex.stamp_box_positive(
+            key_from_record(self),
+            region,
+            key,
+            wrapper_node,
+            wrapper_annex,
+        )
     }
 
     pub(crate) fn stamp_box_segment(

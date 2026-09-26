@@ -246,17 +246,28 @@ fn box_migration_sidecar_decodes_multiple_exclusions_and_copies_clear_key() {
 }
 
 #[test]
+fn original_box_serial_equal_to_positive_tag_keeps_original_descriptor() {
+    let segment = crate::node_region::PageBoxSegment::from_words([1, 0, 0, 1, 1, 3, 0, 3])
+        .expect("valid original segment");
+    let mut body = [0; annex::BOX_PAYLOAD_WORDS];
+    body[28..36].copy_from_slice(&segment.words());
+    body[41] = 1; // Original AnnexKey list length, always nonzero.
+    body[42] = 0x5042_4f58; // Same bits as the positive descriptor tag.
+    assert!(matches!(
+        box_descriptor::decode_box_construction_descriptor(&body),
+        Some(box_descriptor::BoxConstructionDescriptor::Original { .. })
+    ));
+}
+
+#[test]
 fn box_migration_sidecar_rejects_bad_serial_shape_region_and_bounds() {
     let mut source = AnnexHarness::new();
     let exclusion = crate::node_region::PageBoxSegment::from_words([1, 0, 0, 1, 1, 2, 0, 1])
         .expect("excluded interval");
     let foreign = crate::node_region::PageBoxSegment::from_words([2, 0, 0, 1, 1, 2, 0, 1])
         .expect("foreign interval");
-    assert!(!annex::valid_box_exclusions([1, 0, 0, 1], &[foreign]));
-    assert!(!annex::valid_box_exclusions(
-        [1, 0, 0, 1],
-        &[exclusion, exclusion]
-    ));
+    assert!(!valid_box_exclusions([1, 0, 0, 1], &[foreign]));
+    assert!(!valid_box_exclusions([1, 0, 0, 1], &[exclusion, exclusion]));
     source.writer().append_fixed::<Fixed>(&[11, 12]);
     source
         .arena

@@ -1,7 +1,7 @@
 //! Shallow record projection after one semantic unbox consumption.
 
 use super::*;
-use crate::node_record::write_original_box_body;
+use crate::node_record::{write_original_box_body, write_positive_box_body};
 use crate::node_region::{NodeAnnexLane, NodeRegionId, PageBoxSegment};
 
 #[derive(Clone, Copy)]
@@ -227,7 +227,7 @@ impl<'a> PageMaterialArena<'a> {
 /// closure. Its old wrapper and sidecars remain page-owned exclusions.
 pub(super) fn reencode_consumed_box_record(
     record: PageMaterialNode,
-    metadata: PageBoxMigrationMetadata,
+    mut metadata: PageBoxMigrationMetadata,
     destination_node_position: usize,
     annex_pool: &mut crate::fork_arena::ChunkPool<u32>,
     annex_arena: &mut crate::fork_arena::ForkArena<u32, NodeAnnexLane>,
@@ -264,30 +264,58 @@ pub(super) fn reencode_consumed_box_record(
     if sidecar_start < old_annex_wrapper {
         return Err(ForkArenaError::InvalidRange);
     }
-    let mut exclusions = metadata.exclusions;
-    let mut gap_node_start = old_node_wrapper;
-    let mut gap_annex_start = old_annex_wrapper;
-    while exclusions.last().is_some_and(|last| {
-        last.node_range().end == gap_node_start && last.annex_range().end == gap_annex_start
-    }) {
-        let last = exclusions.pop().expect("checked final exclusion");
-        gap_node_start = last.node_range().start;
-        gap_annex_start = last.annex_range().start;
+    enum PublishedDescriptor {
+        Original(PageBoxMigrationKey),
+        Positive(PageBoxPositiveKey),
     }
-    if gap_node_start != destination_node_position || gap_annex_start != sidecar_start {
-        exclusions.push(segment_from_bounds(
-            region,
-            gap_node_start,
-            destination_node_position,
-            gap_annex_start,
-            sidecar_start,
-        )?);
-    }
-    if !crate::node_record::valid_box_exclusions(region.words(), &exclusions) {
-        return Err(ForkArenaError::InvalidRange);
-    }
-    let sidecar =
-        NodeAnnexWriter::new(annex_pool, annex_arena).publish_box_migration_segments(&exclusions);
+    let descriptor = if let Some(positive) = metadata.positive.take() {
+        if !valid_positive_ranges(&positive.nodes, destination_node_position)
+            || !valid_positive_ranges(&positive.annex, sidecar_start)
+            || !valid_positive_cuts(
+                &positive.node_cuts,
+                &positive.nodes,
+                destination_node_position,
+            )
+            || !valid_positive_cuts(&positive.annex_cuts, &positive.annex, sidecar_start)
+        {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        PublishedDescriptor::Positive(
+            NodeAnnexWriter::new(annex_pool, annex_arena).publish_box_positive_ranges(
+                &positive.nodes,
+                &positive.annex,
+                &positive.node_cuts,
+                &positive.annex_cuts,
+            ),
+        )
+    } else {
+        let mut exclusions = metadata.exclusions;
+        let mut gap_node_start = old_node_wrapper;
+        let mut gap_annex_start = old_annex_wrapper;
+        while exclusions.last().is_some_and(|last| {
+            last.node_range().end == gap_node_start && last.annex_range().end == gap_annex_start
+        }) {
+            let last = exclusions.pop().expect("checked final exclusion");
+            gap_node_start = last.node_range().start;
+            gap_annex_start = last.annex_range().start;
+        }
+        if gap_node_start != destination_node_position || gap_annex_start != sidecar_start {
+            exclusions.push(segment_from_bounds(
+                region,
+                gap_node_start,
+                destination_node_position,
+                gap_annex_start,
+                sidecar_start,
+            )?);
+        }
+        if !crate::node_record::valid_box_exclusions(region.words(), &exclusions) {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        PublishedDescriptor::Original(
+            NodeAnnexWriter::new(annex_pool, annex_arena)
+                .publish_box_migration_segments(&exclusions),
+        )
+    };
     annex_arena.seal_boundary(annex_pool)?;
 
     let mut flat = vec![0_u32; body.len() + 1];
@@ -297,20 +325,30 @@ pub(super) fn reencode_consumed_box_record(
     let mut keys = writer.append_fixed_flat(
         &mut flat,
         &[u16::try_from(body.len() + 1).map_err(|_| ForkArenaError::CapacityOverflow)?],
-        |_, wrapper_annex_position, body| {
-            let segment = segment_from_bounds(
+        |_, wrapper_annex_position, body| match descriptor {
+            PublishedDescriptor::Positive(sidecar) => write_positive_box_body(
+                body,
                 region,
-                metadata.segment.node_range().start,
-                destination_node_position
-                    .checked_add(1)
-                    .ok_or(ForkArenaError::CapacityOverflow)?,
-                metadata.segment.annex_range().start,
-                wrapper_annex_position
-                    .checked_add(1)
-                    .ok_or(ForkArenaError::CapacityOverflow)?,
-            )?;
-            write_original_box_body(body, segment, Some(sidecar))
-                .ok_or(ForkArenaError::InvalidRange)
+                sidecar,
+                destination_node_position,
+                wrapper_annex_position,
+            )
+            .ok_or(ForkArenaError::InvalidRange),
+            PublishedDescriptor::Original(sidecar) => {
+                let segment = segment_from_bounds(
+                    region,
+                    metadata.segment.node_range().start,
+                    destination_node_position
+                        .checked_add(1)
+                        .ok_or(ForkArenaError::CapacityOverflow)?,
+                    metadata.segment.annex_range().start,
+                    wrapper_annex_position
+                        .checked_add(1)
+                        .ok_or(ForkArenaError::CapacityOverflow)?,
+                )?;
+                write_original_box_body(body, segment, Some(sidecar))
+                    .ok_or(ForkArenaError::InvalidRange)
+            }
         },
     )?;
     let key = keys.pop().ok_or(ForkArenaError::InvalidRange)?;

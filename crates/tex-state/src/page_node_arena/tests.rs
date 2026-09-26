@@ -1,5 +1,6 @@
 use super::{
-    PageListId, PageListSpan, PageMaterialActiveListBuilder, PageMaterialArena, PageMaterialRegion,
+    PageBoxCutRange, PageBoxPositiveKey, PageListId, PageListSpan, PageMaterialActiveListBuilder,
+    PageMaterialArena, PageMaterialRegion,
 };
 use crate::fork_arena::ForkArenaError;
 use crate::glue::Order;
@@ -97,6 +98,160 @@ fn stamped_box_interval_moves_and_rollback_restores_original_nodes() {
     assert!(arena.contains(root));
     assert!(arena.contains(child));
     assert!(arena.contains(neighbor));
+}
+
+#[test]
+fn generated_box_positive_ranges_bind_to_wrapper_and_reject_invalid_geometry() {
+    page_arena!(arena, pool, state, 65_536);
+    let child = arena
+        .publish_owned(penalties(&[3, 4]))
+        .expect("generated body");
+    let child_range = arena
+        .region
+        .pub_arena
+        .owner_relative_list_block_range(&arena.pool.chunks, child.coordinate())
+        .expect("source child range");
+    let key = arena
+        .publish_generated_box_body_ranges(std::slice::from_ref(&child_range), &[], &[], &[])
+        .expect("independent positive sidecar");
+    arena.rotate_box_wrapper_tail().expect("wrapper boundary");
+    let root = arena
+        .publish_owned([boxed(child)])
+        .expect("generated wrapper");
+    let mut forged_words = key.words();
+    forged_words[6] ^= 1;
+    assert!(matches!(
+        arena.stamp_generated_box_body(root, PageBoxPositiveKey::from_words(forged_words)),
+        Err(ForkArenaError::InvalidRange)
+    ));
+    let metadata = arena
+        .stamp_generated_box_body(root, key)
+        .expect("authenticated stamp");
+    assert_eq!(
+        metadata.positive,
+        Some(super::PageBoxPositiveSelection {
+            nodes: vec![child_range],
+            annex: vec![],
+            node_cuts: vec![],
+            annex_cuts: vec![],
+        })
+    );
+    assert!(metadata.wrapper_rebuild);
+    assert_eq!(arena.box_migration_metadata(root), Some(metadata.clone()));
+    assert!(!arena.can_finish_interleaved_page_box(root, &metadata, false));
+
+    let empty = 2..2;
+    let invalid =
+        arena.publish_generated_box_body_ranges(std::slice::from_ref(&empty), &[], &[], &[]);
+    assert!(matches!(invalid, Err(ForkArenaError::InvalidRange)));
+    let invalid = arena.publish_generated_box_body_ranges(&[2..3, 1..2], &[], &[], &[]);
+    assert!(matches!(invalid, Err(ForkArenaError::InvalidRange)));
+    let overflow = usize::MAX - 1..usize::MAX;
+    let invalid =
+        arena.publish_generated_box_body_ranges(std::slice::from_ref(&overflow), &[], &[], &[]);
+    assert!(matches!(invalid, Err(ForkArenaError::InvalidRange)));
+}
+
+#[test]
+fn positive_box_cuts_survive_repeated_filtered_unbox_with_sibling() {
+    page_arena!(arena, pool, state, 65_536);
+    let child = arena
+        .publish_owned(penalties(&[47, 53]))
+        .expect("cut source");
+    let source = arena
+        .region
+        .pub_arena
+        .owner_relative_list_block_range(&arena.pool.chunks, child.coordinate())
+        .expect("source chunk");
+    let cut = PageBoxCutRange {
+        chunk_position: source.start,
+        local: 0..2,
+    };
+    let key = arena
+        .publish_generated_box_body_ranges(&[], &[], std::slice::from_ref(&cut), &[])
+        .expect("cut-only descriptor");
+    arena.rotate_box_wrapper_tail().expect("wrapper boundary");
+    let positive = arena
+        .publish_owned([boxed(child)])
+        .expect("positive wrapper");
+    arena
+        .stamp_generated_box_body(positive, key)
+        .expect("positive stamp");
+
+    let start = arena.begin_closure_build().expect("sibling start");
+    let sibling_child = arena.publish_owned(penalties(&[31])).expect("sibling body");
+    arena.rotate_box_wrapper_tail().expect("sibling boundary");
+    let sibling = arena
+        .publish_owned([boxed(sibling_child)])
+        .expect("sibling wrapper");
+    arena
+        .stamp_box_segment(&start, sibling, None)
+        .expect("sibling stamp");
+    arena.close_box_segment(start).expect("sibling end");
+
+    let margin = Node::MarginKern {
+        amount: Scaled::from_raw(-100),
+        side: crate::node::MarginKernSide::Left,
+        font: crate::font::NULL_FONT,
+        ch: b'A',
+    };
+    let mut children = PageMaterialActiveListBuilder::vacant();
+    arena.open_active_list(&mut children).expect("outer list");
+    arena
+        .push_active_list(&mut children, margin.clone())
+        .expect("leading margin");
+    for root in [positive, sibling] {
+        let span = arena.admit_span(root).expect("nested span");
+        let unique = arena.reclaim_unique_span(span).expect("nested owner");
+        arena
+            .append_unique_active_list(&mut children, unique)
+            .expect("nested append");
+    }
+    arena
+        .push_active_list(&mut children, margin)
+        .expect("trailing margin");
+    let outer_children = arena
+        .finalize_active_list(&mut children)
+        .expect("outer children");
+    let mut outer = arena
+        .publish_owned([boxed(outer_children)])
+        .expect("outer wrapper");
+    let copied_before = arena.counters().source_nodes_copied;
+    for pass in 0..3 {
+        let token = arena
+            .consumed_box_children(outer)
+            .expect("consumed wrapper");
+        let projected = arena
+            .project_consumed_box_children(token, pass == 0)
+            .expect("shallow projection");
+        let list = arena.publish_unique_list(projected);
+        assert_eq!(list.len(), 2);
+        let selected = arena
+            .slice_sequence(list, 0..1, &mut Vec::new())
+            .expect("cut box");
+        let selection = arena
+            .box_migration_metadata(selected)
+            .expect("rebound descriptor")
+            .positive
+            .expect("positive selection");
+        assert_eq!(selection.node_cuts.as_slice(), std::slice::from_ref(&cut));
+        assert!(selection.nodes.is_empty() && selection.annex.is_empty());
+        let neighbor = arena
+            .slice_sequence(list, 1..2, &mut Vec::new())
+            .expect("sibling");
+        let neighbor_nodes = resolved(&arena, neighbor);
+        let [Node::HList(sibling_box)] = neighbor_nodes.as_slice() else {
+            panic!("sibling remains a box");
+        };
+        assert_eq!(resolved(&arena, sibling_box.children), penalties(&[31]));
+        if pass != 2 {
+            outer = arena
+                .publish_owned([boxed(list)])
+                .expect("next outer wrapper");
+        }
+    }
+    assert_eq!(arena.counters().source_nodes_copied - copied_before, 6);
+    assert_eq!(resolved(&arena, child), penalties(&[47, 53]));
 }
 
 #[test]

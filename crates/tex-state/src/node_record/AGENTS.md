@@ -5,8 +5,9 @@ this directory.
 
 This directory is the private, storage-independent 32-byte node-record and
 typed word-annex codec boundary. Keep the resident record layout, header and
-scalar helpers in `layout.rs`; annex keys, markers, fixed payload codecs, and
-the standalone annex proof arena in `annex.rs`; outer node codecs in
+scalar helpers in `layout.rs`; annex keys, fixed payload storage, and the
+standalone annex proof arena in `annex.rs`; authenticated box construction
+descriptors in `box_descriptor.rs`; outer node codecs in
 `node_codec.rs`; whatsit, PDF, byte, and UTF-8 codecs in
 `whatsit_codec.rs`; semantic hashing directly over borrowed compact records in
 `semantic.rs`; and private round-trip/layout tests in `tests.rs`.

@@ -363,6 +363,42 @@ restores both typed arena suffixes before the consumed source is discarded;
 transfer rollback later restores exactly the selected child slots, leaving
 obsolete wrappers and sidecars page-owned.
 
+### Generated box body ranges
+
+Paragraph lines and alignment rows may wrap child material allocated before
+the wrapper's construction mark. A line can select several disjoint source
+runs, while generated right skip, discretionary material, and diagnostics may
+occupy later chunks. One suffix interval plus exclusions would span sibling
+material and cannot authorize its move. The producer instead records positive
+selected node and annex chunk ranges independently. Cut chunks are recorded
+as an owner-relative chunk position and an exact local record or word range;
+each lane's full and cut arrays are sorted, disjoint, and bounded by the
+wrapper publication position. All full ranges may be empty when a line uses
+only part of one source chunk. A typed variable-length annex sidecar stores
+all four arrays before the final wrapper tail rotates. The wrapper's fixed
+descriptor binds the sidecar to the actual node and annex wrapper positions
+and the current region.
+
+The descriptor is non-owning. Whole-region moves preserve the relative
+spacing of its full ranges, cut-chunk positions, and sidecar, so decoding
+rebases both lanes from the authenticated current wrapper positions. Local
+cut offsets remain unchanged. Decoding checks the sidecar key and serial,
+tag, exact length, normalized arrays, region lineage, wrapper anchor, and
+sidecar placement. A consumed wrapper-only rewrite republishes the same
+selected ranges and cuts with new wrapper anchors; ordinary copy/composition
+clears the descriptor.
+
+Taking a generated wrapper needs a prepared transfer, not a mutation inside
+the read-only transfer eligibility check. The preparation proves each selected
+interior chunk and each direct outgoing edge, authenticates each cut against
+the final wrapper child chain, projects at most the cut chunks at the window
+boundaries, and reserves any destination holes before ownership
+changes. The same paired compound interval loan then moves the selected node
+and annex chunks and rebuilds one wrapper. Its receipt restores the exact
+source predecessor and dependency floor as well as both lane positions on
+rollback. A shared or historically retained chunk still requires the explicit
+history-preservation copy.
+
 ## TeX82 ownership baseline
 
 TeX82 implements its own fixed-address heap inside the global `mem` array.

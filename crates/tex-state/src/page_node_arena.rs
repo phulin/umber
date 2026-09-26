@@ -43,18 +43,67 @@ impl PageBoxMigrationKey {
     }
 }
 
+/// Opaque typed-annex coordinate for independently selected generated-body ranges.
+#[derive(Clone, Copy, Debug)]
+pub struct PageBoxPositiveKey([u32; 7]);
+
+impl PageBoxPositiveKey {
+    pub(crate) const fn from_words(words: [u32; 7]) -> Self {
+        Self(words)
+    }
+
+    pub(crate) const fn words(self) -> [u32; 7] {
+        self.0
+    }
+}
+
+/// A selected fragment inside one direct node or annex chunk. Only the
+/// consumed generated wrapper may authorize its boundary projection.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PageBoxCutRange {
+    pub chunk_position: usize,
+    pub local: Range<usize>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PageBoxPositiveSelection {
+    pub nodes: Vec<Range<usize>>,
+    pub annex: Vec<Range<usize>>,
+    pub node_cuts: Vec<PageBoxCutRange>,
+    pub annex_cuts: Vec<PageBoxCutRange>,
+}
+
 /// Non-owning description of an original box wrapper's construction ranges.
 /// Consuming the unique semantic root is still required to authorize transfer.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PageBoxMigrationMetadata {
     pub segment: crate::node_region::PageBoxSegment,
     pub exclusions: Vec<crate::node_region::PageBoxSegment>,
+    /// Explicit selections have independent node and annex geometry.
+    pub positive: Option<PageBoxPositiveSelection>,
     pub sidecar_annex_range: Option<Range<usize>>,
     pub wrapper_rebuild: bool,
 }
 
 impl PageBoxMigrationMetadata {
-    fn selected_body_ranges(&self) -> Option<SelectedBoxBodyRanges> {
+    pub(crate) fn selected_body_ranges(&self) -> Option<SelectedBoxBodyRanges> {
+        if let Some(positive) = &self.positive {
+            let PageBoxPositiveSelection {
+                nodes,
+                annex,
+                node_cuts,
+                annex_cuts,
+            } = positive;
+            if !self.exclusions.is_empty()
+                || !valid_positive_ranges(nodes, self.segment.body_node_range().end)
+                || !valid_positive_ranges(annex, self.segment.body_annex_range().end)
+                || !valid_positive_cuts(node_cuts, nodes, self.segment.body_node_range().end)
+                || !valid_positive_cuts(annex_cuts, annex, self.segment.body_annex_range().end)
+            {
+                return None;
+            }
+            return Some((nodes.clone(), annex.clone()));
+        }
         fn subtract(
             body: Range<usize>,
             exclusions: impl IntoIterator<Item = Range<usize>>,
@@ -97,6 +146,41 @@ impl PageBoxMigrationMetadata {
             )?,
         ))
     }
+}
+
+pub(crate) fn valid_positive_cuts(
+    cuts: &[PageBoxCutRange],
+    full: &[Range<usize>],
+    limit: usize,
+) -> bool {
+    let mut previous: Option<&PageBoxCutRange> = None;
+    cuts.iter().all(|cut| {
+        let intersects_full = full.iter().any(|range| range.contains(&cut.chunk_position));
+        let valid = cut.chunk_position < limit
+            && cut.local.start < cut.local.end
+            && u32::try_from(cut.chunk_position).is_ok()
+            && u32::try_from(cut.local.end).is_ok()
+            && !intersects_full
+            && previous.is_none_or(|prior| {
+                prior.chunk_position < cut.chunk_position
+                    || (prior.chunk_position == cut.chunk_position
+                        && prior.local.end <= cut.local.start)
+            });
+        previous = Some(cut);
+        valid
+    })
+}
+
+pub(crate) fn valid_positive_ranges(ranges: &[Range<usize>], limit: usize) -> bool {
+    let mut previous_end = 0;
+    ranges.iter().all(|range| {
+        let valid = range.start < range.end
+            && range.start >= previous_end
+            && range.end <= limit
+            && u32::try_from(range.end).is_ok();
+        previous_end = range.end;
+        valid
+    })
 }
 
 /// Short-lived projection of one admitted compact page-material record.
@@ -1253,6 +1337,9 @@ impl<'a> PageMaterialArena<'a> {
         ),
         ForkArenaError,
     > {
+        if metadata.positive.is_some() {
+            return Err(ForkArenaError::InvalidRegion);
+        }
         if self.box_migration_metadata(root).as_ref() != Some(&metadata) {
             return Err(ForkArenaError::InvalidRegion);
         }
@@ -1384,6 +1471,10 @@ impl<'a> PageMaterialArena<'a> {
         metadata: &PageBoxMigrationMetadata,
         reset_shift: bool,
     ) -> bool {
+        if metadata.positive.is_some() {
+            // Cut boundary chunks require the generated-box prepared transfer.
+            return false;
+        }
         if self.box_migration_metadata(root).as_ref() != Some(metadata) {
             return false;
         }
@@ -2595,6 +2686,91 @@ impl<'a> PageMaterialArena<'a> {
         Ok(Some(annex.publish_box_migration_segments(&merged)))
     }
 
+    /// Publishes non-owning selected ranges for a generated box. The source
+    /// may share cut boundary chunks; ownership is proved only when the
+    /// consumed wrapper enters prepared transfer.
+    pub fn publish_generated_box_body_ranges(
+        &mut self,
+        nodes: &[Range<usize>],
+        annex: &[Range<usize>],
+        node_cuts: &[PageBoxCutRange],
+        annex_cuts: &[PageBoxCutRange],
+    ) -> Result<PageBoxPositiveKey, ForkArenaError> {
+        if !valid_positive_ranges(nodes, self.region.pub_arena.payload_position_end())
+            || !valid_positive_ranges(annex, self.region.annex_arena.payload_position_end())
+            || !valid_positive_cuts(
+                node_cuts,
+                nodes,
+                self.region.pub_arena.payload_position_end(),
+            )
+            || !valid_positive_cuts(
+                annex_cuts,
+                annex,
+                self.region.annex_arena.payload_position_end(),
+            )
+            || u32::try_from(nodes.len()).is_err()
+            || u32::try_from(annex.len()).is_err()
+            || u32::try_from(node_cuts.len()).is_err()
+            || u32::try_from(annex_cuts.len()).is_err()
+        {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        self.region.seal_checkpoint_boundary(self.pool)?;
+        Ok(
+            NodeAnnexWriter::new(&mut self.pool.annex_chunks, &mut self.region.annex_arena)
+                .publish_box_positive_ranges(nodes, annex, node_cuts, annex_cuts),
+        )
+    }
+
+    /// Binds a published positive sidecar to the actual isolated wrapper.
+    /// A stamp is provenance only: consuming the wrapper and preparing the
+    /// cut-boundary transfer are separate ownership requirements.
+    pub fn stamp_generated_box_body(
+        &mut self,
+        root: PageListId,
+        key: PageBoxPositiveKey,
+    ) -> Result<PageBoxMigrationMetadata, ForkArenaError> {
+        if root.len() != 1 {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        let record = *self
+            .region
+            .pub_arena
+            .validated_list(&self.pool.chunks, root.coordinate())?
+            .first()
+            .ok_or(ForkArenaError::InvalidRange)?;
+        let node_wrapper = self
+            .region
+            .pub_arena
+            .owner_relative_list_block_range(&self.pool.chunks, root.coordinate())?;
+        let annex_view = self.annex_view();
+        let annex_wrapper = record
+            .box_payload_block_range(annex_view)
+            .ok_or(ForkArenaError::InvalidRange)?;
+        if node_wrapper.end != node_wrapper.start + 1
+            || annex_wrapper.end != annex_wrapper.start + 1
+            || annex_view
+                .box_positive_ranges(key, annex_wrapper.start, 0, 0, node_wrapper.start)
+                .is_none()
+        {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        let region = self.region.id();
+        let mut writer =
+            NodeAnnexWriter::new(&mut self.pool.annex_chunks, &mut self.region.annex_arena);
+        record
+            .stamp_box_positive(
+                &mut writer,
+                region,
+                key,
+                node_wrapper.start,
+                annex_wrapper.start,
+            )
+            .ok_or(ForkArenaError::InvalidRange)?;
+        self.box_migration_metadata(root)
+            .ok_or(ForkArenaError::InvalidRange)
+    }
+
     pub fn stamp_box_segment(
         &mut self,
         start: &ClosureBuildMark<PageRole>,
@@ -2768,6 +2944,11 @@ fn box_migration_metadata_at_record(
     }
     if let Some(stamp) = record.copied_box_body_stamp(annex) {
         return stamp.metadata_at_wrapper(region, node_wrapper, annex_wrapper.start);
+    }
+    if let Some(metadata) =
+        record.positive_box_metadata_at_wrapper(annex, region, node_wrapper, annex_wrapper.start)
+    {
+        return Some(metadata);
     }
     let original = record.box_segment(annex)?;
     let segment = original.rebased_to_wrapper(region, node_wrapper, annex_wrapper.start)?;

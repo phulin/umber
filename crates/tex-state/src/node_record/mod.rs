@@ -22,13 +22,16 @@ use crate::token::OriginId;
 use crate::world::{PrintSink, StreamSlot};
 
 mod annex;
+mod box_descriptor;
 mod layout;
 mod node_codec;
 mod semantic;
 mod whatsit_codec;
 
-pub(crate) use annex::{AnnexKey, CopiedBoxBodyStamp, NodeAnnexView, NodeAnnexWriter};
-pub(crate) use annex::{valid_box_exclusions, write_original_box_body};
+pub(crate) use annex::{AnnexKey, NodeAnnexView, NodeAnnexWriter};
+pub(crate) use box_descriptor::{
+    CopiedBoxBodyStamp, valid_box_exclusions, write_original_box_body, write_positive_box_body,
+};
 pub(crate) use layout::NodeRecord;
 
 /// Rewrites only a durable root box's scalar annex word. The caller owns the
