@@ -4,7 +4,7 @@ use super::*;
 /// an explicit copy. The body stays on the stack while child closures are built.
 pub(crate) struct PreparedFixedCopy {
     record: NodeRecord<PageMaterialLane>,
-    body: [u32; 40],
+    body: [u32; MAX_FIXED_COPY_BODY_WORDS],
     len: usize,
     child_offsets: [u8; 4],
     child_count: usize,
@@ -12,7 +12,7 @@ pub(crate) struct PreparedFixedCopy {
 
 pub(crate) struct RelocatedFixedCopy {
     record: NodeRecord<PageMaterialLane>,
-    body: [u32; 40],
+    body: [u32; MAX_FIXED_COPY_BODY_WORDS],
     len: usize,
 }
 
@@ -35,7 +35,7 @@ impl PreparedFixedCopy {
     fn new<const N: usize>(record: NodeRecord<PageMaterialLane>, body: [u32; N]) -> Self {
         let mut prepared = Self {
             record,
-            body: [0; 40],
+            body: [0; MAX_FIXED_COPY_BODY_WORDS],
             len: N,
             child_offsets: [0; 4],
             child_count: 0,

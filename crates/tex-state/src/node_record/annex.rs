@@ -112,6 +112,14 @@ pub(super) enum BoxPayload {}
 /// The first 28 words are TeX box data. The final eight words carry an
 /// optional, non-owning construction interval for the original wrapper.
 pub(super) const BOX_PAYLOAD_WORDS: usize = 36;
+/// The largest fixed body accepted by both the typed writer and prepared copy.
+/// Math choices use 40 words; a larger box construction sidecar raises this
+/// bound without changing the relocation storage in a separate place.
+pub(super) const MAX_FIXED_COPY_BODY_WORDS: usize = if BOX_PAYLOAD_WORDS > 40 {
+    BOX_PAYLOAD_WORDS
+} else {
+    40
+};
 pub(super) enum LeaderBoxPayload {}
 pub(super) enum UnsetPayload {}
 pub(super) enum DiscPayload {}
@@ -418,7 +426,7 @@ impl<'a> NodeAnnexWriter<'a> {
 
     pub(crate) fn append_fixed<Kind>(&mut self, body: &[u32]) -> AnnexKey<Kind> {
         assert!(
-            body.len() <= 40,
+            body.len() <= MAX_FIXED_COPY_BODY_WORDS,
             "fixed node annex record exceeds design maximum"
         );
         let publication_serial = self.pool.next_publication_serial();
@@ -455,7 +463,7 @@ impl<'a> NodeAnnexWriter<'a> {
         let mut lengths = SmallVec::<[u16; 16]>::new();
         let mut serials = SmallVec::<[u32; 16]>::new();
         for body in bodies {
-            if body.len() > 40 {
+            if body.len() > MAX_FIXED_COPY_BODY_WORDS {
                 return Err(ForkArenaError::InvalidRange);
             }
             let serial = self.pool.next_publication_serial();

@@ -105,6 +105,50 @@ fn fixed_batch_keeps_independent_keys_across_chunk_rotation_and_rollback() {
 }
 
 #[test]
+fn box_reencoding_clears_construction_stamp_in_both_copy_paths() {
+    let mut source = AnnexHarness::new();
+    let stamp = crate::node_region::PageBoxSegment::from_words([1, 0, 0, 1, 1, 2, 1, 2])
+        .expect("valid construction coordinates");
+    for kind in [NodeKind::HList, NodeKind::VList] {
+        let mut body = [0; annex::BOX_PAYLOAD_WORDS];
+        body[0] = 42;
+        body[28..36].copy_from_slice(&stamp.words());
+        let key = source.writer().append_fixed::<annex::BoxPayload>(&body);
+        let record = NodeRecord::<PageMaterialLane>::with_key(kind, 0, 0, key);
+        assert_eq!(record.box_segment(source.view()), Some(stamp));
+
+        let (same, _) = record
+            .reencode_same_region(&mut source.pool, &mut source.arena, Some)
+            .expect("same-region box re-encode");
+        let same_body = source
+            .view()
+            .resolve_fixed_array::<_, { annex::BOX_PAYLOAD_WORDS }>(annex::key_from_record::<
+                annex::BoxPayload,
+            >(same))
+            .expect("copied box payload");
+        assert_eq!(&same_body[..28], &body[..28]);
+        assert_eq!(&same_body[28..], &[0; annex::BOX_PAYLOAD_WORDS - 28]);
+        assert_eq!(same.box_segment(source.view()), None);
+        assert_eq!(record.box_segment(source.view()), Some(stamp));
+
+        let mut destination = crate::fork_arena::ForkArena::new();
+        let (between, _) = record
+            .reencode_between_regions(&mut source.pool, &source.arena, &mut destination, Some)
+            .expect("cross-region box re-encode");
+        let destination_view = NodeAnnexView::new(&source.pool, &destination);
+        let between_body = destination_view
+            .resolve_fixed_array::<_, { annex::BOX_PAYLOAD_WORDS }>(annex::key_from_record::<
+                annex::BoxPayload,
+            >(between))
+            .expect("cross-region copied box payload");
+        assert_eq!(&between_body[..28], &body[..28]);
+        assert_eq!(&between_body[28..], &[0; annex::BOX_PAYLOAD_WORDS - 28]);
+        assert_eq!(between.box_segment(destination_view), None);
+        assert_eq!(record.box_segment(source.view()), Some(stamp));
+    }
+}
+
+#[test]
 fn fixed_reads_validate_size_publication_and_contiguous_bounds() {
     let mut annex = AnnexHarness::new();
     let mark = annex.arena.operation_mark(&annex.pool);
