@@ -264,6 +264,16 @@ nodes and a matched benchmark beats the existing path across inline, fixed,
 nested, and variable-span shapes. Until then, no unchecked whole-region clone
 or retained alias is an explicit-copy implementation.
 
+The profiling-only provenance census may mark an owner born in an empty
+region from a successful recursive copy. Topology-capable mutation or transfer
+clears that mark. At each durable source-copy entrypoint it records all
+successful copied calls and node volume, then the subset whose source still
+carries the mark. It also counts successful top-level recursive region copies
+once as a denominator; failed calls after rollback are excluded. This is an
+opportunity measure, not an admission token: it does not certify current
+serials, annex coverage, or destination relocation, and production copying
+never branches on it.
+
 ## Production cutover
 
 As of 2026-08-28, ordinary execution uses these owners rather than retaining

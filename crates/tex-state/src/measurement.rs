@@ -5,6 +5,14 @@
 
 mod box_fallback;
 mod hot_core;
+mod node_copy_eligibility;
+
+pub(crate) use node_copy_eligibility::{
+    DurableSourceCopyKind, record_durable_source_copy, record_region_copy,
+};
+pub use node_copy_eligibility::{
+    NodeCopyEligibilityCensus, NodeCopyEligibilityLane, node_copy_eligibility_census,
+};
 
 pub use box_fallback::{BoxFallbackCensus, box_fallback_census, enable_box_fallback_census};
 pub(crate) use box_fallback::{BoxFallbackShape, box_fallback_census_enabled, record_box_fallback};

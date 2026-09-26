@@ -1331,7 +1331,7 @@ impl<'a> PageMaterialArena<'a> {
             }
         };
         let copied_nodes = durable.counters().source_nodes_copied;
-        let closure = durable
+        let mut closure = durable
             .into_closure(self.pool, copied)
             .map_err(|(error, region)| {
                 assert!(
@@ -1340,6 +1340,7 @@ impl<'a> PageMaterialArena<'a> {
                 );
                 error
             })?;
+        closure.profiling_mark_fresh_recursive_copy();
         self.durable_transitions.page_to_durable_nodes_copied = self
             .durable_transitions
             .page_to_durable_nodes_copied
@@ -1412,7 +1413,7 @@ impl<'a> PageMaterialArena<'a> {
                     .counters()
                     .source_nodes_copied
                     .saturating_sub(before);
-                let owner =
+                let mut owner =
                     durable
                         .into_closure(self.pool, copied)
                         .map_err(|(error, region)| {
@@ -1422,6 +1423,7 @@ impl<'a> PageMaterialArena<'a> {
                             );
                             error
                         })?;
+                owner.profiling_mark_fresh_recursive_copy();
                 self.durable_transitions.page_to_durable_nodes_copied = self
                     .durable_transitions
                     .page_to_durable_nodes_copied
@@ -1860,7 +1862,7 @@ impl<'a> PageMaterialArena<'a> {
             .counters()
             .source_nodes_copied
             .saturating_sub(before);
-        let owner = durable
+        let mut owner = durable
             .into_closure(self.pool, copied)
             .map_err(|(error, region)| {
                 assert!(
@@ -1869,6 +1871,7 @@ impl<'a> PageMaterialArena<'a> {
                 );
                 error
             })?;
+        owner.profiling_mark_fresh_recursive_copy();
         self.durable_transitions.page_to_durable_nodes_copied = self
             .durable_transitions
             .page_to_durable_nodes_copied
@@ -1940,6 +1943,8 @@ impl<'a> PageMaterialArena<'a> {
         &mut self,
         closure: &DurableNodeClosure,
     ) -> Result<PageListId, ForkArenaError> {
+        #[cfg(feature = "profiling")]
+        let marked = closure.profiling_is_fresh_recursive_copy();
         let before = self.region.counters().source_nodes_copied;
         let root = copy_closure_into(
             self.pool,
@@ -1952,6 +1957,12 @@ impl<'a> PageMaterialArena<'a> {
             .counters()
             .source_nodes_copied
             .saturating_sub(before);
+        #[cfg(feature = "profiling")]
+        crate::measurement::record_durable_source_copy(
+            crate::measurement::DurableSourceCopyKind::ExplicitToPage,
+            marked,
+            copied,
+        );
         self.durable_transitions.tex_copy_nodes_copied = self
             .durable_transitions
             .tex_copy_nodes_copied
@@ -1967,6 +1978,8 @@ impl<'a> PageMaterialArena<'a> {
         &mut self,
         closure: &DurableNodeClosure,
     ) -> Result<PageListId, ForkArenaError> {
+        #[cfg(feature = "profiling")]
+        let marked = closure.profiling_is_fresh_recursive_copy();
         let before = self.region.counters().source_nodes_copied;
         let root = copy_closure_into(
             self.pool,
@@ -1979,6 +1992,12 @@ impl<'a> PageMaterialArena<'a> {
             .counters()
             .source_nodes_copied
             .saturating_sub(before);
+        #[cfg(feature = "profiling")]
+        crate::measurement::record_durable_source_copy(
+            crate::measurement::DurableSourceCopyKind::HistoryToPage,
+            marked,
+            copied,
+        );
         self.durable_transitions.history_preservation_nodes_copied = self
             .durable_transitions
             .history_preservation_nodes_copied
@@ -1996,6 +2015,8 @@ impl<'a> PageMaterialArena<'a> {
         &mut self,
         closure: &DurableNodeClosure,
     ) -> Result<DurableNodeClosure, ForkArenaError> {
+        #[cfg(feature = "profiling")]
+        let marked = closure.profiling_is_fresh_recursive_copy();
         let mut destination = self.pool.start_region::<DurableRole>()?;
         let copied = match copy_closure_into(
             self.pool,
@@ -2013,15 +2034,23 @@ impl<'a> PageMaterialArena<'a> {
             }
         };
         let copied_nodes = destination.counters().source_nodes_copied;
-        let closure = destination
-            .into_closure(self.pool, copied)
-            .map_err(|(error, region)| {
-                assert!(
-                    self.pool.retire_region(region).is_ok(),
-                    "validated durable copy destination retires"
-                );
-                error
-            })?;
+        let mut closure =
+            destination
+                .into_closure(self.pool, copied)
+                .map_err(|(error, region)| {
+                    assert!(
+                        self.pool.retire_region(region).is_ok(),
+                        "validated durable copy destination retires"
+                    );
+                    error
+                })?;
+        #[cfg(feature = "profiling")]
+        crate::measurement::record_durable_source_copy(
+            crate::measurement::DurableSourceCopyKind::DurableOwner,
+            marked,
+            copied_nodes,
+        );
+        closure.profiling_mark_fresh_recursive_copy();
         self.durable_transitions.history_preservation_nodes_copied = self
             .durable_transitions
             .history_preservation_nodes_copied

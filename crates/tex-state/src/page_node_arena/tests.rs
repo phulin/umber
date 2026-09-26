@@ -2114,6 +2114,47 @@ fn durable_copy_is_recursive_and_counts_only_the_selected_closure() {
     arena.retire_durable(durable).expect("retire source owner");
 }
 
+#[cfg(feature = "profiling")]
+#[test]
+fn recursive_durable_source_census_revokes_on_mutable_region_access() {
+    page_arena!(arena, pool, region, 64);
+    let child = arena.publish_owned([Node::Penalty(43)]).expect("child");
+    let root = arena.publish_owned([boxed(child)]).expect("box");
+    let mut source = arena
+        .copy_page_root_to_durable(root)
+        .expect("fresh recursive owner");
+    assert!(source.profiling_is_fresh_recursive_copy());
+
+    let before = crate::measurement::node_copy_eligibility_census();
+    arena.copy_durable_to_page(&source).expect("eligible copy");
+    let first = crate::measurement::node_copy_eligibility_census().saturating_sub(before);
+    assert_eq!(first.explicit_to_page.calls, 1);
+    assert_eq!(first.explicit_to_page.nodes, 2);
+    assert_eq!(first.explicit_to_page.marked_calls, 1);
+    assert_eq!(first.explicit_to_page.marked_nodes, 2);
+
+    let _ = source.region_mut();
+    assert!(!source.profiling_is_fresh_recursive_copy());
+    arena.copy_durable_to_page(&source).expect("ordinary copy");
+    let replacement = arena.copy_durable_owner(&source).expect("fresh owner copy");
+    assert!(replacement.profiling_is_fresh_recursive_copy());
+    let second = crate::measurement::node_copy_eligibility_census().saturating_sub(before);
+    assert_eq!(second.explicit_to_page.calls, 2);
+    assert_eq!(second.explicit_to_page.nodes, 4);
+    assert_eq!(second.explicit_to_page.marked_calls, 1);
+    assert_eq!(second.explicit_to_page.marked_nodes, 2);
+    assert_eq!(second.durable_owner.calls, 1);
+    assert_eq!(second.durable_owner.nodes, 2);
+    assert_eq!(second.durable_owner.marked_calls, 0);
+    assert_eq!(second.all_region_calls, 3);
+    assert_eq!(second.all_region_nodes, 6);
+
+    arena.retire_durable(source).expect("retire original");
+    arena
+        .retire_durable(replacement)
+        .expect("retire replacement");
+}
+
 #[test]
 fn copied_box_wrapper_selects_only_its_stamped_child_blocks() {
     page_arena!(arena, pool, region, 64);

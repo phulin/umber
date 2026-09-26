@@ -280,6 +280,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   generation lifetime counters, built-box structural-copy attribution, and separate node/annex live-versus-vacant
   NodePool backing evidence. Ordinary builds compile neither the module nor
   any associated fields, branches, or atomics.
+- `src/measurement/node_copy_eligibility.rs`: Profiling-only observational
+  counts of durable source copies born from fresh recursive construction;
+  these counters never authorize a copy route or retain node roots.
 - `src/memory_accounting.rs`: Generation-local constant-time TeX main-memory
   totals updated by immutable payload publication/final release and node-arena
   publication/release; it contains no root registry or liveness index.

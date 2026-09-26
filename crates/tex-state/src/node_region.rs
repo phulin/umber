@@ -433,7 +433,12 @@ impl NodePool {
         &mut self,
         closure: &mut OwnedNodeClosure<Role>,
     ) -> Result<(), ForkArenaError> {
-        self.retire_region_in_place(&mut closure.region)
+        self.retire_region_in_place(&mut closure.region)?;
+        #[cfg(feature = "profiling")]
+        {
+            closure.profiled_fresh_recursive_copy = false;
+        }
+        Ok(())
     }
 }
 
@@ -1045,7 +1050,12 @@ impl<Role> NodeRegion<Role> {
         {
             return Err((ForkArenaError::InvalidRegion, self));
         }
-        Ok(OwnedNodeClosure { region: self, root })
+        Ok(OwnedNodeClosure {
+            region: self,
+            root,
+            #[cfg(feature = "profiling")]
+            profiled_fresh_recursive_copy: false,
+        })
     }
 
     #[must_use]
@@ -1378,6 +1388,9 @@ impl<Role> RegionRoot<Role> {
 pub struct OwnedNodeClosure<Role> {
     region: NodeRegion<Role>,
     root: RegionRoot<Role>,
+    /// Observational source class only; this never grants copy authority.
+    #[cfg(feature = "profiling")]
+    profiled_fresh_recursive_copy: bool,
 }
 
 impl<Role> OwnedNodeClosure<Role> {
@@ -1407,7 +1420,23 @@ impl<Role> OwnedNodeClosure<Role> {
     }
 
     pub(crate) fn region_mut(&mut self) -> &mut NodeRegion<Role> {
+        #[cfg(feature = "profiling")]
+        {
+            self.profiled_fresh_recursive_copy = false;
+        }
         &mut self.region
+    }
+
+    pub(crate) fn profiling_mark_fresh_recursive_copy(&mut self) {
+        #[cfg(feature = "profiling")]
+        {
+            self.profiled_fresh_recursive_copy = true;
+        }
+    }
+
+    #[cfg(feature = "profiling")]
+    pub(crate) const fn profiling_is_fresh_recursive_copy(&self) -> bool {
+        self.profiled_fresh_recursive_copy
     }
 
     pub(crate) const fn root(&self) -> RegionRoot<Role> {
@@ -1828,6 +1857,11 @@ pub(crate) fn transfer_closure_into<Source, Destination>(
         });
     preflight?;
 
+    #[cfg(feature = "profiling")]
+    {
+        closure.profiled_fresh_recursive_copy = false;
+    }
+
     let batch = closure
         .region
         .pub_arena
@@ -1940,6 +1974,8 @@ pub(crate) fn copy_region_root_into<Source, Destination>(
         }
     };
     destination.pub_arena.record_source_nodes_copied(count);
+    #[cfg(feature = "profiling")]
+    crate::measurement::record_region_copy(count);
     if semantic_identity_enabled {
         destination
             .pub_arena

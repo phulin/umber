@@ -140,6 +140,7 @@ struct HotCoreProfilingReport {
     retained_generations_before: tex_state::measurement::RetainedGenerationCensus,
     node_graph_before: tex_state::measurement::NodeGraphCensus,
     box_fallback_before: tex_state::measurement::BoxFallbackCensus,
+    node_copy_eligibility_before: tex_state::measurement::NodeCopyEligibilityCensus,
 }
 
 #[cfg(feature = "profiling")]
@@ -155,6 +156,7 @@ impl HotCoreProfilingReport {
             retained_generations_before: tex_state::measurement::retained_generation_census(),
             node_graph_before: tex_state::measurement::node_graph_census(),
             box_fallback_before: tex_state::measurement::box_fallback_census(),
+            node_copy_eligibility_before: tex_state::measurement::node_copy_eligibility_census(),
         }
     }
 }
@@ -286,6 +288,25 @@ impl Drop for HotCoreProfilingReport {
             nodes.checkpoint_sidecar_rows,
             nodes.checkpoint_sidecar_nodes,
             nodes.checkpoint_shared_rows,
+        );
+        let copy = tex_state::measurement::node_copy_eligibility_census()
+            .saturating_sub(self.node_copy_eligibility_before);
+        eprintln!(
+            "NODE_COPY_PROVENANCE_CENSUS all_region_calls={} all_region_nodes={} explicit_calls={} explicit_nodes={} explicit_marked_calls={} explicit_marked_nodes={} history_calls={} history_nodes={} history_marked_calls={} history_marked_nodes={} durable_owner_calls={} durable_owner_nodes={} durable_owner_marked_calls={} durable_owner_marked_nodes={}",
+            copy.all_region_calls,
+            copy.all_region_nodes,
+            copy.explicit_to_page.calls,
+            copy.explicit_to_page.nodes,
+            copy.explicit_to_page.marked_calls,
+            copy.explicit_to_page.marked_nodes,
+            copy.history_to_page.calls,
+            copy.history_to_page.nodes,
+            copy.history_to_page.marked_calls,
+            copy.history_to_page.marked_nodes,
+            copy.durable_owner.calls,
+            copy.durable_owner.nodes,
+            copy.durable_owner.marked_calls,
+            copy.durable_owner.marked_nodes,
         );
         let storage = tex_state::measurement::node_pool_storage_census();
         eprintln!(
