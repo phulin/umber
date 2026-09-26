@@ -2735,16 +2735,6 @@ struct PendingBatch {
     payload_end: u32,
 }
 
-/// Move-only authority to restore one exact interior interval after an
-/// operation-local closure transfer.
-pub(crate) struct TransferredInterval<Lane> {
-    source: u32,
-    destination: u32,
-    start: u32,
-    end: u32,
-    _lane: PhantomData<fn(Lane) -> Lane>,
-}
-
 /// One operation-local loan of several disjoint chunk intervals. Vacancies
 /// between the selected intervals retain their original logical positions.
 pub(crate) struct TransferredIntervals<Lane> {

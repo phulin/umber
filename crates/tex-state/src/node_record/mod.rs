@@ -28,7 +28,7 @@ mod semantic;
 mod whatsit_codec;
 
 pub(crate) use annex::valid_box_exclusions;
-pub(crate) use annex::{AnnexKey, NodeAnnexView, NodeAnnexWriter};
+pub(crate) use annex::{AnnexKey, CopiedBoxBodyStamp, NodeAnnexView, NodeAnnexWriter};
 pub(crate) use layout::NodeRecord;
 
 /// Rewrites only a durable root box's scalar annex word. The caller owns the

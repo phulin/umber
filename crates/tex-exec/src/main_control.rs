@@ -506,6 +506,12 @@ struct ActiveReplayBox {
     target: Option<PendingSetBox>,
     shipout_region: Option<tex_state::node_region::PageClosureBuildMark>,
     box_segment_start: Option<tex_state::node_region::PageClosureBuildMark>,
+    /// An insertion or adjustment opened inside an isolated hbox; its
+    /// completed interval belongs to the enclosing page list after hpack.
+    migration_segment_start: Option<tex_state::node_region::PageClosureBuildMark>,
+    /// Construction coordinates of migrating material in this hbox. They
+    /// remain non-owning until the original wrapper is consumed.
+    migration_segments: Vec<tex_state::node_region::PageBoxSegment>,
     kind: ReplayBoxKind,
     group_kind: GroupKind,
     packing: PackSpec,

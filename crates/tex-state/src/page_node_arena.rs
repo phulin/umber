@@ -18,13 +18,16 @@ use crate::node_region::{
     ClosureBuildMark, DurableRole, NodeCheckpointMark, NodePool, NodeRegion, NodeSealedBoundary,
     OwnedNodeClosure, PageRole, StructuralCopyReason, copy_closure_into, copy_region_root_into,
     loan_empty_page_box_body, preflight_empty_page_box_body, preflight_page_interior_closure,
-    rollback_page_interior_closure, structural_copy_fallback, transfer_closure_into,
-    transfer_page_interior_closure, transfer_sealed_closure_into,
+    preflight_page_interior_intervals, rollback_page_interior_closure, structural_copy_fallback,
+    transfer_closure_into, transfer_page_interior_closure, transfer_page_interior_intervals,
+    transfer_sealed_closure_into,
 };
 use crate::node_sequence::SemanticSequenceIdentity;
 
 type PageMaterialNode = NodeRecord<PageMaterialLane>;
 type OwnedPageMaterialNode = Node<PageListId>;
+type SelectedBoxBodyRanges = (Vec<Range<usize>>, Vec<Range<usize>>);
+type PreflightedBoxBody = (Node<PageListId>, Vec<Range<usize>>, Vec<Range<usize>>);
 
 /// Opaque typed-annex coordinate for page-owned intervals excluded from a box.
 #[derive(Clone, Copy, Debug)]
@@ -42,11 +45,58 @@ impl PageBoxMigrationKey {
 
 /// Non-owning description of an original box wrapper's construction ranges.
 /// Consuming the unique semantic root is still required to authorize transfer.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PageBoxMigrationMetadata {
     pub segment: crate::node_region::PageBoxSegment,
     pub exclusions: Vec<crate::node_region::PageBoxSegment>,
     pub sidecar_annex_range: Option<Range<usize>>,
+    pub wrapper_rebuild: bool,
+}
+
+impl PageBoxMigrationMetadata {
+    fn selected_body_ranges(&self) -> Option<SelectedBoxBodyRanges> {
+        fn subtract(
+            body: Range<usize>,
+            exclusions: impl IntoIterator<Item = Range<usize>>,
+        ) -> Option<Vec<Range<usize>>> {
+            let mut ranges = Vec::new();
+            let mut cursor = body.start;
+            for excluded in exclusions {
+                if excluded.start < cursor
+                    || excluded.end > body.end
+                    || excluded.start > excluded.end
+                {
+                    return None;
+                }
+                if cursor < excluded.start {
+                    ranges.push(cursor..excluded.start);
+                }
+                cursor = excluded.end;
+            }
+            if cursor < body.end {
+                ranges.push(cursor..body.end);
+            }
+            Some(ranges)
+        }
+
+        if self
+            .exclusions
+            .iter()
+            .any(|excluded| excluded.region() != self.segment.region())
+        {
+            return None;
+        }
+        Some((
+            subtract(
+                self.segment.body_node_range(),
+                self.exclusions.iter().map(|x| x.node_range()),
+            )?,
+            subtract(
+                self.segment.body_annex_range(),
+                self.exclusions.iter().map(|x| x.annex_range()),
+            )?,
+        ))
+    }
 }
 
 /// Short-lived projection of one admitted compact page-material record.
@@ -545,6 +595,11 @@ impl PageListChunkCursor {
     #[must_use]
     pub const fn logical_start(&self) -> usize {
         self.inner.logical_start()
+    }
+
+    #[must_use]
+    pub const fn owner_position(&self) -> usize {
+        self.inner.owner_position()
     }
 }
 
@@ -1176,7 +1231,7 @@ impl<'a> PageMaterialArena<'a> {
     pub(crate) fn finish_interleaved_page_box(
         &mut self,
         root: PageListId,
-        segment: crate::node_region::PageBoxSegment,
+        metadata: PageBoxMigrationMetadata,
     ) -> Result<
         (
             DurableNodeClosure,
@@ -1184,20 +1239,52 @@ impl<'a> PageMaterialArena<'a> {
         ),
         ForkArenaError,
     > {
-        if segment.region() != self.region.id() {
+        if self.box_migration_metadata(root).as_ref() != Some(&metadata) {
             return Err(ForkArenaError::InvalidRegion);
         }
+        let segment = metadata.segment;
         let source_root = self.region.root(self.pool, root)?;
         let mut durable = self.pool.start_region::<DurableRole>()?;
-        let whole = preflight_page_interior_closure(
-            self.pool,
-            self.region,
-            source_root,
-            segment.node_range(),
-            segment.annex_range(),
-            &durable,
-        );
-        let result = if whole.is_ok() {
+        let partitioned = metadata.wrapper_rebuild || !metadata.exclusions.is_empty();
+        let whole = if partitioned {
+            Err(ForkArenaError::InvalidRegion)
+        } else {
+            preflight_page_interior_closure(
+                self.pool,
+                self.region,
+                source_root,
+                segment.node_range(),
+                segment.annex_range(),
+                &durable,
+            )
+        };
+        let result = if partitioned {
+            let (wrapper, nodes, annex) =
+                match self.preflight_partitioned_box_body(root, &metadata, &durable) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        assert!(self.pool.retire_region(durable).is_ok());
+                        return Err(error);
+                    }
+                };
+            transfer_page_interior_intervals(self.pool, self.region, &nodes, &annex, &mut durable)
+                .and_then(|loan| {
+                    match durable.publish_box_wrapper(self.pool, wrapper, root.sequence_identity())
+                    {
+                        Ok(root) => Ok((root, loan)),
+                        Err(error) => {
+                            rollback_page_interior_closure(
+                                self.pool,
+                                self.region,
+                                &mut durable,
+                                loan,
+                            )
+                            .expect("failed wrapper construction returns its partitioned loan");
+                            Err(error)
+                        }
+                    }
+                })
+        } else if whole.is_ok() {
             transfer_page_interior_closure(
                 self.pool,
                 self.region,
@@ -1271,29 +1358,40 @@ impl<'a> PageMaterialArena<'a> {
     pub(crate) fn can_finish_interleaved_page_box(
         &mut self,
         root: PageListId,
-        segment: crate::node_region::PageBoxSegment,
+        metadata: &PageBoxMigrationMetadata,
     ) -> bool {
-        if segment.region() != self.region.id() {
+        if self.box_migration_metadata(root).as_ref() != Some(metadata) {
             return false;
         }
+        let segment = metadata.segment;
         let Ok(source_root) = self.region.root(self.pool, root) else {
             return false;
         };
         let Ok(destination) = self.pool.start_region::<DurableRole>() else {
             return false;
         };
-        let result = preflight_page_interior_closure(
-            self.pool,
-            self.region,
-            source_root,
-            segment.node_range(),
-            segment.annex_range(),
-            &destination,
-        );
-        let eligible = result.is_ok()
+        let result = if !metadata.wrapper_rebuild && metadata.exclusions.is_empty() {
+            preflight_page_interior_closure(
+                self.pool,
+                self.region,
+                source_root,
+                segment.node_range(),
+                segment.annex_range(),
+                &destination,
+            )
+        } else {
+            Err(ForkArenaError::InvalidRegion)
+        };
+        let eligible = ((metadata.wrapper_rebuild || !metadata.exclusions.is_empty())
+            && self
+                .preflight_partitioned_box_body(root, metadata, &destination)
+                .is_ok())
+            || result.is_ok()
             || self
                 .preflight_interleaved_box_body(root, segment, &destination)
-                .is_ok();
+                .is_ok()
+                && metadata.exclusions.is_empty()
+                && !metadata.wrapper_rebuild;
         assert!(self.pool.retire_region(destination).is_ok());
         eligible
     }
@@ -1359,6 +1457,67 @@ impl<'a> PageMaterialArena<'a> {
             )?;
         }
         Ok((wrapper, Some(child)))
+    }
+
+    fn preflight_partitioned_box_body(
+        &self,
+        root: PageListId,
+        metadata: &PageBoxMigrationMetadata,
+        destination: &NodeRegion<DurableRole>,
+    ) -> Result<PreflightedBoxBody, ForkArenaError> {
+        let segment = metadata.segment;
+        if root.len() != 1 || segment.region() != self.region.id() {
+            return Err(ForkArenaError::InvalidRegion);
+        }
+        let wrapper_range = segment.node_range().end - 1..segment.node_range().end;
+        self.region.pub_arena.preflight_interval_root(
+            &self.pool.chunks,
+            root.coordinate(),
+            wrapper_range.start,
+            wrapper_range.end,
+        )?;
+        let wrapper = self
+            .node_cursor(root)?
+            .first()
+            .ok_or(ForkArenaError::InvalidRange)?
+            .to_owned();
+        let boxed = match &wrapper {
+            Node::HList(boxed) | Node::VList(boxed) => boxed,
+            _ => return Err(ForkArenaError::InvalidRange),
+        };
+        let (mut nodes, mut annex) = metadata
+            .selected_body_ranges()
+            .ok_or(ForkArenaError::InvalidRange)?;
+        let child = (!boxed.children.is_empty())
+            .then_some(boxed.children)
+            .or(boxed.diagnostic_children.filter(|root| !root.is_empty()));
+        if child.is_none() {
+            nodes.clear();
+            annex.clear();
+        }
+        for child in [Some(boxed.children), boxed.diagnostic_children]
+            .into_iter()
+            .flatten()
+        {
+            if child.is_empty() {
+                continue;
+            }
+            let range = self
+                .region
+                .pub_arena
+                .owner_relative_list_block_range(&self.pool.chunks, child.coordinate())?;
+            let selected = |position| {
+                let index = nodes.partition_point(|candidate| candidate.end <= position);
+                nodes.get(index).is_some_and(|candidate| {
+                    candidate.start <= position && position < candidate.end
+                })
+            };
+            if !selected(range.start) || !selected(range.end - 1) {
+                return Err(ForkArenaError::InvalidRegion);
+            }
+        }
+        preflight_page_interior_intervals(self.pool, self.region, &nodes, &annex, destination)?;
+        Ok((wrapper, nodes, annex))
     }
 
     pub(crate) fn rollback_interleaved_page_box(
@@ -2315,6 +2474,22 @@ impl<'a> PageMaterialArena<'a> {
             .map(|cursor| cursor.map(|inner| PageListChunkCursor { span, inner }))
     }
 
+    /// Walks only the top-level records of one authenticated list. Hpack
+    /// consumes this input list before publishing its retained projection;
+    /// its former chunks can then remain page-owned across a box-body loan.
+    pub fn list_chunk_positions(&self, list: PageListId) -> Result<Vec<usize>, ForkArenaError> {
+        let span = self.admit_span(list)?;
+        let mut positions = Vec::new();
+        let mut cursor = self.span_tail_chunk(span)?;
+        while let Some(chunk) = cursor {
+            positions.push(chunk.owner_position());
+            cursor = self.span_previous_chunk(&chunk)?;
+        }
+        positions.reverse();
+        positions.dedup();
+        Ok(positions)
+    }
+
     pub fn admitted_tail_chunk(
         &self,
         list: AdmittedPageList,
@@ -2450,11 +2625,56 @@ impl<'a> PageMaterialArena<'a> {
     pub fn publish_box_migration_segments(
         &mut self,
         exclusions: &[crate::node_region::PageBoxSegment],
+        obsolete_input_positions: &[usize],
     ) -> Result<Option<PageBoxMigrationKey>, ForkArenaError> {
-        if exclusions.is_empty() {
+        if exclusions.is_empty() && obsolete_input_positions.is_empty() {
             return Ok(None);
         }
-        if !crate::node_record::valid_box_exclusions(self.region.id().words(), exclusions) {
+        if !crate::node_record::valid_box_exclusions(self.region.id().words(), exclusions)
+            || obsolete_input_positions
+                .windows(2)
+                .any(|pair| pair[0] >= pair[1])
+        {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        // The consumed hpack source list's top-level chunks are obsolete
+        // after its retained projection is published. Leave exactly those
+        // chunks on the page, without excluding their nested child closures.
+        let mut merged = Vec::with_capacity(exclusions.len() + obsolete_input_positions.len());
+        let mut excluded = exclusions.iter().copied().peekable();
+        let mut annex_anchor = exclusions
+            .first()
+            .map_or(self.region.annex_arena.payload_position_end(), |first| {
+                first.annex_range().start
+            });
+        for &position in obsolete_input_positions {
+            while excluded
+                .peek()
+                .is_some_and(|segment| segment.node_range().end <= position)
+            {
+                let segment = excluded.next().expect("peeked segment exists");
+                annex_anchor = segment.annex_range().end;
+                merged.push(segment);
+            }
+            if excluded.peek().is_some_and(|segment| {
+                let range = segment.node_range();
+                range.start <= position && position < range.end
+            }) {
+                continue;
+            }
+            let bounds = [
+                u32::try_from(position).map_err(|_| ForkArenaError::CapacityOverflow)?,
+                u32::try_from(position + 1).map_err(|_| ForkArenaError::CapacityOverflow)?,
+                u32::try_from(annex_anchor).map_err(|_| ForkArenaError::CapacityOverflow)?,
+                u32::try_from(annex_anchor).map_err(|_| ForkArenaError::CapacityOverflow)?,
+            ];
+            merged.push(
+                crate::node_region::PageBoxSegment::from_exclusion_bounds(self.region.id(), bounds)
+                    .ok_or(ForkArenaError::InvalidRange)?,
+            );
+        }
+        merged.extend(excluded);
+        if !crate::node_record::valid_box_exclusions(self.region.id().words(), &merged) {
             return Err(ForkArenaError::InvalidRange);
         }
         // The sidecar remains page-owned when the box body moves. Isolate its
@@ -2462,7 +2682,7 @@ impl<'a> PageMaterialArena<'a> {
         self.region.seal_checkpoint_boundary(self.pool)?;
         let mut annex =
             NodeAnnexWriter::new(&mut self.pool.annex_chunks, &mut self.region.annex_arena);
-        Ok(Some(annex.publish_box_migration_segments(exclusions)))
+        Ok(Some(annex.publish_box_migration_segments(&merged)))
     }
 
     pub fn stamp_box_segment(
@@ -2512,12 +2732,37 @@ impl<'a> PageMaterialArena<'a> {
         if root.len() != 1 {
             return None;
         }
-        self.region
+        let record = self
+            .region
             .pub_arena
             .validated_list(&self.pool.chunks, root.coordinate())
             .ok()?
-            .first()?
-            .box_migration_metadata(self.annex_view())
+            .first()?;
+        let node_wrapper = self
+            .region
+            .pub_arena
+            .owner_relative_list_block_range(&self.pool.chunks, root.coordinate())
+            .ok()?;
+        let annex_wrapper = record.box_payload_block_range(self.annex_view())?;
+        if node_wrapper.end != node_wrapper.start + 1
+            || annex_wrapper.end != annex_wrapper.start + 1
+        {
+            return None;
+        }
+        if let Some(stamp) = record.copied_box_body_stamp(self.annex_view()) {
+            return stamp.metadata_at_wrapper(
+                self.region.id(),
+                node_wrapper.start,
+                annex_wrapper.start,
+            );
+        }
+        let original = record.box_segment(self.annex_view())?;
+        let segment = original.rebased_to_wrapper(
+            self.region.id(),
+            node_wrapper.start,
+            annex_wrapper.start,
+        )?;
+        record.box_migration_metadata_rebased(self.annex_view(), segment)
     }
 
     pub fn cancel_closure_build(

@@ -1,3 +1,4 @@
+use super::annex::{BoxConstructionDescriptor, decode_box_construction_descriptor};
 use super::*;
 
 /// Offsets of independently owned child-list coordinates in one fixed body.
@@ -214,6 +215,47 @@ impl NodeRecord<PageMaterialLane> {
         }
     }
 
+    /// Visits the direct typed-annex blocks held by this record. A partition
+    /// preflight calls this once per selected record; it does not follow TeX
+    /// child lists or scan unrelated page roots.
+    pub(crate) fn visit_annex_block_ranges(
+        self,
+        annex: NodeAnnexView<'_>,
+        mut visit: impl FnMut(std::ops::Range<usize>),
+    ) -> Option<()> {
+        if self.is_inline_leaf() {
+            return Some(());
+        }
+        if self.has_fixed_copy_payload() {
+            self.with_fixed_copy_body(annex, |_, _| ())?;
+            visit(annex.key_block_range(key_from_record::<()>(self))?);
+            if matches!(self.kind(), Some(NodeKind::HList | NodeKind::VList)) {
+                let payload = annex
+                    .resolve_fixed_array::<BoxPayload, BOX_PAYLOAD_WORDS>(key_from_record(self))?;
+                let key: [u32; 7] = payload[36..].try_into().ok()?;
+                if key.iter().any(|word| *word != 0) {
+                    visit(
+                        annex.key_block_range(AnnexKey::<BoxMigrationSegments>::from_words(key))?,
+                    );
+                }
+            }
+            return Some(());
+        }
+        match self.kind()? {
+            NodeKind::Lig => {
+                let payload =
+                    annex.resolve_fixed_array::<LigaturePayload, 12>(key_from_record(self))?;
+                let source =
+                    AnnexKey::<LigatureSource>::from_words(payload[5..12].try_into().ok()?);
+                visit(annex.key_block_range(source)?);
+                visit(annex.key_block_range(key_from_record::<LigaturePayload>(self))?);
+                Some(())
+            }
+            NodeKind::Whatsit => self.visit_whatsit_annex_block_ranges(annex, visit),
+            _ => None,
+        }
+    }
+
     pub(crate) fn reencode_same_region(
         self,
         pool: &mut crate::fork_arena::ChunkPool<u32>,
@@ -405,7 +447,10 @@ impl NodeRecord<PageMaterialLane> {
         }
         let payload =
             annex.resolve_fixed_array::<BoxPayload, BOX_PAYLOAD_WORDS>(key_from_record(self))?;
-        crate::node_region::PageBoxSegment::from_words(payload[28..36].try_into().ok()?)
+        match decode_box_construction_descriptor(&payload)? {
+            BoxConstructionDescriptor::Original { segment, .. } => Some(segment),
+            _ => None,
+        }
     }
 
     pub(crate) fn box_migration_metadata(
@@ -420,21 +465,88 @@ impl NodeRecord<PageMaterialLane> {
         }
         let payload =
             annex.resolve_fixed_array::<BoxPayload, BOX_PAYLOAD_WORDS>(key_from_record(self))?;
-        let segment =
-            crate::node_region::PageBoxSegment::from_words(payload[28..36].try_into().ok()?)?;
-        let key: [u32; 7] = payload[36..].try_into().ok()?;
-        let (exclusions, sidecar_annex_range) = if key.iter().all(|word| *word == 0) {
-            (Vec::new(), None)
-        } else {
-            let key = crate::page_node_arena::PageBoxMigrationKey::from_words(key);
+        let (segment, migrations) = match decode_box_construction_descriptor(&payload)? {
+            BoxConstructionDescriptor::Original {
+                segment,
+                migrations,
+            } => (segment, migrations),
+            _ => return None,
+        };
+        let (exclusions, sidecar_annex_range) = if let Some(key) = migrations {
             let (exclusions, range) = annex.box_migration_segments(key, segment)?;
             (exclusions, Some(range))
+        } else {
+            (Vec::new(), None)
         };
         Some(crate::page_node_arena::PageBoxMigrationMetadata {
             segment,
             exclusions,
             sidecar_annex_range,
+            wrapper_rebuild: false,
         })
+    }
+
+    pub(crate) fn box_payload_block_range(
+        self,
+        annex: NodeAnnexView<'_>,
+    ) -> Option<std::ops::Range<usize>> {
+        if !matches!(self.kind()?, NodeKind::HList | NodeKind::VList) {
+            return None;
+        }
+        annex.fixed_block_range(key_from_record::<BoxPayload>(self), BOX_PAYLOAD_WORDS)
+    }
+
+    pub(crate) fn box_migration_metadata_rebased(
+        self,
+        annex: NodeAnnexView<'_>,
+        segment: crate::node_region::PageBoxSegment,
+    ) -> Option<crate::page_node_arena::PageBoxMigrationMetadata> {
+        if !matches!(self.kind()?, NodeKind::HList | NodeKind::VList)
+            || self.subtype() != 0
+            || self.flags() != 0
+        {
+            return None;
+        }
+        let payload =
+            annex.resolve_fixed_array::<BoxPayload, BOX_PAYLOAD_WORDS>(key_from_record(self))?;
+        let (original, migrations) = match decode_box_construction_descriptor(&payload)? {
+            BoxConstructionDescriptor::Original {
+                segment,
+                migrations,
+            } => (segment, migrations),
+            _ => return None,
+        };
+        let (exclusions, sidecar_annex_range) = if let Some(key) = migrations {
+            let (exclusions, range) =
+                annex.box_migration_segments_rebased(key, original, segment)?;
+            (exclusions, Some(range))
+        } else {
+            (Vec::new(), None)
+        };
+        Some(crate::page_node_arena::PageBoxMigrationMetadata {
+            segment,
+            exclusions,
+            sidecar_annex_range,
+            wrapper_rebuild: false,
+        })
+    }
+
+    pub(crate) fn copied_box_body_stamp(
+        self,
+        annex: NodeAnnexView<'_>,
+    ) -> Option<crate::node_record::CopiedBoxBodyStamp> {
+        if !matches!(self.kind()?, NodeKind::HList | NodeKind::VList)
+            || self.subtype() != 0
+            || self.flags() != 0
+        {
+            return None;
+        }
+        let payload =
+            annex.resolve_fixed_array::<BoxPayload, BOX_PAYLOAD_WORDS>(key_from_record(self))?;
+        match decode_box_construction_descriptor(&payload)? {
+            BoxConstructionDescriptor::Copied(stamp) => Some(stamp),
+            _ => None,
+        }
     }
 
     pub(crate) fn stamp_box_segment(

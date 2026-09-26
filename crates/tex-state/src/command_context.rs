@@ -1725,7 +1725,7 @@ impl<'a, G> CommandContext<'a, G> {
         &mut self,
         index: u16,
         root: crate::page_node_arena::PageListId,
-        segment: crate::node_region::PageBoxSegment,
+        metadata: crate::page_node_arena::PageBoxMigrationMetadata,
         build: crate::node_region::PageClosureBuildMark,
         scope: AssignmentScope,
     ) -> Result<(), crate::NodePromotionError> {
@@ -1734,7 +1734,7 @@ impl<'a, G> CommandContext<'a, G> {
             .map_err(crate::NodePromotionError::Nodes)?;
         let (durable, loan) = self
             .page_nodes
-            .finish_interleaved_page_box(root, segment)
+            .finish_interleaved_page_box(root, metadata)
             .map_err(crate::NodePromotionError::Nodes)?;
         let current_level = self.admitted.state_ref().current_level();
         let group_save_position = self.admitted.state_ref().save_stack_order_position();

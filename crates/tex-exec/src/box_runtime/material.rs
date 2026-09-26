@@ -3,6 +3,7 @@ use tex_state::diagnostic::DiagnosticEffects;
 use tex_state::math::{MathField, MathNoad, NoadClass, NoadKind};
 use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::node::{KernKind, Node};
+use tex_state::node_region::{PageBoxSegment, PageClosureBuildMark};
 use tex_state::scaled::Scaled;
 
 use crate::vertical::is_outer_vertical;
@@ -274,23 +275,34 @@ fn report_cannot_delete_from_page<G>(
 /// delimiter target from exactly those `max_h`/`max_d`, so an unwrapped box
 /// silently shrank the target and §706's `var_delimiter` returned the
 /// smallest variant instead of the size the box calls for.
-pub(crate) fn append_box_node_to_current_list<G>(
-    nest: &mut ModeNest,
+pub(crate) struct PreparedBoxAppend {
+    node: Option<Node>,
+    pre_migrated: tex_state::page_node_arena::PageListId,
+    migrated: tex_state::page_node_arena::PageListId,
+    obsolete_input_positions: Vec<usize>,
+    migrated_projection_segment: Option<PageBoxSegment>,
+}
+
+/// Materializes hpack's three list projections before a caller seals the
+/// final wrapper chunk. A split can copy partial boundary records; those
+/// copies must remain in the body interval, not in the wrapper's chunk.
+pub(crate) fn prepare_box_append<G>(
+    mode: Mode,
     stores: &mut CommandContext<'_, G>,
-    diagnostic_effects: &mut DiagnosticEffects,
     mut node: Node,
-    fuel: &mut tex_command::CommandFuel,
-) -> Result<(), ExecError> {
-    let (pre_migrated, migrated) =
-        if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
+) -> PreparedBoxAppend {
+    let (pre_migrated, migrated, obsolete_input_positions, migrated_projection_segment) =
+        if matches!(mode, Mode::Vertical | Mode::InternalVertical) {
             extract_box_migrations(stores, &mut node)
         } else {
             (
                 tex_state::page_node_arena::PageListId::empty(),
                 tex_state::page_node_arena::PageListId::empty(),
+                Vec::new(),
+                None,
             )
         };
-    let node = if matches!(nest.current_mode(), Mode::Math | Mode::DisplayMath) {
+    let node = if matches!(mode, Mode::Math | Mode::DisplayMath) {
         let nucleus = stores.publish_page_nodes(vec![node]);
         Node::MathNoad(MathNoad::new(
             NoadKind::Normal(NoadClass::Ord),
@@ -299,15 +311,139 @@ pub(crate) fn append_box_node_to_current_list<G>(
     } else {
         node
     };
-    append_migration_list(nest, stores, pre_migrated);
-    append_node_to_current_list(nest, stores, diagnostic_effects, node, fuel)?;
-    append_migration_list(nest, stores, migrated);
+    PreparedBoxAppend {
+        node: Some(node),
+        pre_migrated,
+        migrated,
+        obsolete_input_positions,
+        migrated_projection_segment,
+    }
+}
+
+pub(crate) fn append_prepared_box_pre_migrations<G>(
+    nest: &mut ModeNest,
+    stores: &mut CommandContext<'_, G>,
+    prepared: &mut PreparedBoxAppend,
+) {
+    append_migration_list(nest, stores, std::mem::take(&mut prepared.pre_migrated));
+}
+
+pub(crate) fn append_prepared_box_baseline_glue<G>(
+    nest: &mut ModeNest,
+    stores: &mut CommandContext<'_, G>,
+    prepared: &PreparedBoxAppend,
+) -> Result<(), ExecError> {
+    crate::vertical::append_vertical_baseline_glue(
+        nest,
+        stores,
+        prepared
+            .node
+            .as_ref()
+            .expect("prepared wrapper remains live"),
+    )
+}
+
+pub(crate) fn append_prepared_box_wrapper<G>(
+    nest: &mut ModeNest,
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
+    prepared: &mut PreparedBoxAppend,
+    baseline_prepared: bool,
+    fuel: &mut tex_command::CommandFuel,
+) -> Result<Option<tex_state::page_node_arena::PageListId>, ExecError> {
+    let node = prepared
+        .node
+        .take()
+        .expect("prepared box wrapper is appended once");
+    if baseline_prepared {
+        crate::vertical::append_vertical_node_after_baseline(nest, stores, node);
+    } else {
+        append_node_to_current_list(nest, stores, diagnostic_effects, node, fuel)?;
+    }
+    // Pre-adjustments precede this wrapper, whereas insertions and ordinary
+    // adjustments follow it. Capture the wrapper before appending that
+    // trailing material: the list tail afterward need not be the box.
+    let wrapper = (!is_outer_vertical(nest))
+        .then(|| nest.current_list().last_node_root(stores))
+        .flatten();
+    Ok(wrapper)
+}
+
+pub(crate) fn append_prepared_box_post_migrations<G>(
+    nest: &mut ModeNest,
+    stores: &mut CommandContext<'_, G>,
+    prepared: PreparedBoxAppend,
+) {
+    append_migration_list(nest, stores, prepared.migrated);
     if matches!(
         nest.current_mode(),
         Mode::Horizontal | Mode::RestrictedHorizontal
     ) {
         nest.current_list_mutation().set_space_factor(1000);
     }
+}
+
+pub(crate) fn append_box_node_to_current_list<G>(
+    nest: &mut ModeNest,
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
+    node: Node,
+    fuel: &mut tex_command::CommandFuel,
+) -> Result<Option<tex_state::page_node_arena::PageListId>, ExecError> {
+    let mut prepared = prepare_box_append(nest.current_mode(), stores, node);
+    append_prepared_box_pre_migrations(nest, stores, &mut prepared);
+    let wrapper =
+        append_prepared_box_wrapper(nest, stores, diagnostic_effects, &mut prepared, false, fuel)?;
+    append_prepared_box_post_migrations(nest, stores, prepared);
+    Ok(wrapper)
+}
+
+/// Publishes a uniquely constructed box and its page-owned splices as
+/// separate sealed intervals. The wrapper is last in the stamped envelope;
+/// earlier baseline glue and pre-adjustments stay with the parent list.
+pub(crate) fn append_box_node_with_segment<G>(
+    nest: &mut ModeNest,
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
+    fuel: &mut tex_command::CommandFuel,
+    node: Node,
+    start: PageClosureBuildMark,
+    mut exclusions: Vec<PageBoxSegment>,
+) -> Result<(), ExecError> {
+    let mut prepared = prepare_box_append(nest.current_mode(), stores, node);
+    let vertical = matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical);
+    if let Some(segment) = prepared.migrated_projection_segment
+        && !segment.is_empty()
+    {
+        exclusions.push(segment);
+    }
+    let pre_append_start = vertical.then(|| stores.begin_page_node_region());
+    append_prepared_box_pre_migrations(nest, stores, &mut prepared);
+    if vertical {
+        append_prepared_box_baseline_glue(nest, stores, &prepared)?;
+    }
+    if let Some(mark) = pre_append_start {
+        let segment = stores.close_page_box_segment(mark);
+        if !segment.is_empty() {
+            exclusions.push(segment);
+        }
+    }
+    let migration_key =
+        stores.publish_page_box_migration_segments(&exclusions, &prepared.obsolete_input_positions);
+    stores.rotate_page_box_wrapper_tail();
+    let root = append_prepared_box_wrapper(
+        nest,
+        stores,
+        diagnostic_effects,
+        &mut prepared,
+        vertical,
+        fuel,
+    )?
+    .expect("constructed box appended one original wrapper");
+    let stamped = stores.stamp_page_box_segment(&start, root, migration_key);
+    let sealed = stores.close_page_box_segment(start);
+    assert_eq!(stamped, sealed, "wrapper stamp matches sealed bounds");
+    append_prepared_box_post_migrations(nest, stores, prepared);
     Ok(())
 }
 
@@ -317,19 +453,50 @@ fn extract_box_migrations<G>(
 ) -> (
     tex_state::page_node_arena::PageListId,
     tex_state::page_node_arena::PageListId,
+    Vec<usize>,
+    Option<PageBoxSegment>,
 ) {
     let Node::HList(boxed) = node else {
         return (
             tex_state::page_node_arena::PageListId::empty(),
             tex_state::page_node_arena::PageListId::empty(),
+            Vec::new(),
+            None,
         );
     };
     let children = boxed.children;
-    let (retained, pre_migrated, migrated) = split_hpack_migrations(stores, children);
+    let migrates = stores
+        .page_node_list(children)
+        .expect("hpack source belongs to the live page arena")
+        .nodes()
+        .iter()
+        .any(|node| {
+            matches!(
+                node,
+                tex_state::node_view::NodeView::Mark { .. }
+                    | tex_state::node_view::NodeView::Ins { .. }
+                    | tex_state::node_view::NodeView::Adjust(_)
+            )
+        });
+    let obsolete_input_positions = if migrates {
+        let positions = stores
+            .page_list_chunk_positions(children)
+            .expect("consumed hpack input list has exact chunk positions");
+        stores.rotate_page_box_wrapper_tail();
+        positions
+    } else {
+        Vec::new()
+    };
+    let (retained, pre_migrated, migrated, projection) = split_hpack_migrations(stores, children);
     if !pre_migrated.is_empty() || !migrated.is_empty() {
         boxed.children = retained;
     }
-    (pre_migrated, migrated)
+    (
+        pre_migrated,
+        migrated,
+        obsolete_input_positions,
+        Some(projection),
+    )
 }
 
 fn append_migration_list<G>(
@@ -365,6 +532,7 @@ pub(crate) fn split_hpack_migrations<G>(
     tex_state::page_node_arena::PageListId,
     tex_state::page_node_arena::PageListId,
     tex_state::page_node_arena::PageListId,
+    PageBoxSegment,
 ) {
     fn select<G>(
         stores: &mut CommandContext<'_, G>,
@@ -404,9 +572,11 @@ pub(crate) fn split_hpack_migrations<G>(
     // disjoint zero-copy projections sequentially so no partial operation
     // coordinates overlap.
     let retained = select(stores, nodes, 0);
+    let migration_projection_start = stores.begin_page_node_region();
     let pre_migrated = select(stores, nodes, 1);
     let migrated = select(stores, nodes, 2);
-    (retained, pre_migrated, migrated)
+    let projection = stores.close_page_box_segment(migration_projection_start);
+    (retained, pre_migrated, migrated, projection)
 }
 
 fn append_unboxed<G>(
@@ -424,6 +594,31 @@ fn append_unboxed<G>(
     // containing packed line. Copying the box preserves them, but either
     // unboxing primitive removes them while splicing the remaining children;
     // the frozen source list itself must remain immutable for `\unhcopy`.
+    let has_margin_kern = stores
+        .page_node_list(children)
+        .expect("unboxed children belong to the live page arena")
+        .nodes()
+        .iter()
+        .any(|node| {
+            matches!(
+                node,
+                tex_state::node_view::NodeView::MarginKern { .. }
+                    | tex_state::node_view::NodeView::Kern {
+                        kind: KernKind::LeftMargin | KernKind::RightMargin,
+                        ..
+                    }
+            )
+        });
+    if !has_margin_kern {
+        let retained = stores.reclaim_unique_page_list(children);
+        if is_outer_vertical(nest) {
+            stores.append_unique_page_contributions(retained);
+        } else {
+            nest.current_list_mutation()
+                .append_unique_list(stores, retained);
+        }
+        return Ok(());
+    }
     let mut retained = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
     stores.open_page_active_list(&mut retained);
     for index in 0..children.len() {

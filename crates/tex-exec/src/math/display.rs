@@ -114,7 +114,7 @@ pub(crate) fn finish_display_math<G>(
     // adjustments before §663's `short_display` examines an overfull
     // formula. Keep the migrated material beside the display instead of
     // leaving zero-dimensional wrappers inside its packed hlist.
-    let (display_list, pre_migrated, migrated) = split_hpack_migrations(stores, display_nodes);
+    let (display_list, pre_migrated, migrated, _) = split_hpack_migrations(stores, display_nodes);
     let display_view = stores
         .page_node_list(display_list)
         .expect("display list belongs to the live page arena")

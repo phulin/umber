@@ -25,9 +25,9 @@ pub(crate) use leaders::{
     append_leader_contribution, leader_glue_kind, payload_from_node, take_register_payload,
 };
 pub(crate) use material::{
-    append_box_node_to_current_list, apply_box_shift_delta, execute_delete_last,
-    execute_scanned_saved_vertical_discards, execute_scanned_unbox_with_error_context,
-    split_hpack_migrations,
+    append_box_node_to_current_list, append_box_node_with_segment, apply_box_shift_delta,
+    execute_delete_last, execute_scanned_saved_vertical_discards,
+    execute_scanned_unbox_with_error_context, split_hpack_migrations,
 };
 
 pub(crate) use hmode::{indent_in_hmode, norm_min};

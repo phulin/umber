@@ -322,9 +322,10 @@ impl<'a, G> CommandContext<'a, G> {
     pub fn publish_page_box_migration_segments(
         &mut self,
         exclusions: &[crate::node_region::PageBoxSegment],
+        obsolete_input_positions: &[usize],
     ) -> Option<crate::page_node_arena::PageBoxMigrationKey> {
         self.page_nodes
-            .publish_box_migration_segments(exclusions)
+            .publish_box_migration_segments(exclusions, obsolete_input_positions)
             .expect("box migration exclusions belong to this page region")
     }
 
@@ -360,10 +361,10 @@ impl<'a, G> CommandContext<'a, G> {
     pub fn can_transfer_interleaved_page_box(
         &mut self,
         root: crate::page_node_arena::PageListId,
-        segment: crate::node_region::PageBoxSegment,
+        metadata: &crate::page_node_arena::PageBoxMigrationMetadata,
     ) -> bool {
         self.page_nodes
-            .can_finish_interleaved_page_box(root, segment)
+            .can_finish_interleaved_page_box(root, metadata)
     }
 
     /// Releases a complete structural suffix after its survivor has been
@@ -381,6 +382,15 @@ impl<'a, G> CommandContext<'a, G> {
         list: PageListId,
     ) -> Result<crate::node_view::NodeCursor<'_>, ForkArenaError> {
         self.page_nodes.node_cursor(list)
+    }
+
+    /// Exact top-level chunk coordinates of one admitted page list. This is
+    /// used at hpack's consumed-input boundary, not as a live-root registry.
+    pub fn page_list_chunk_positions(
+        &self,
+        list: PageListId,
+    ) -> Result<Vec<usize>, ForkArenaError> {
+        self.page_nodes.list_chunk_positions(list)
     }
 
     /// Validates one transport coordinate at a semantic ownership boundary.

@@ -79,10 +79,13 @@ fn stamped_box_interval_moves_and_rollback_restores_original_nodes() {
     let sealed = arena.close_box_segment(start).expect("box end");
     assert_eq!(stamped, sealed);
     assert_eq!(arena.box_segment(root), Some(stamped));
-    assert!(arena.can_finish_interleaved_page_box(root, stamped));
+    let metadata = arena
+        .box_migration_metadata(root)
+        .expect("original metadata");
+    assert!(arena.can_finish_interleaved_page_box(root, &metadata));
 
     let (owner, loan) = arena
-        .finish_interleaved_page_box(root, stamped)
+        .finish_interleaved_page_box(root, metadata)
         .expect("exclusive interval moves");
     assert!(!arena.contains(root));
     assert!(arena.contains(neighbor));
@@ -94,6 +97,52 @@ fn stamped_box_interval_moves_and_rollback_restores_original_nodes() {
     assert!(arena.contains(root));
     assert!(arena.contains(child));
     assert!(arena.contains(neighbor));
+}
+
+#[test]
+fn nested_original_box_stamp_rebases_after_whole_region_moves() {
+    page_arena!(arena, pool, state, 65_536);
+    arena
+        .publish_owned(penalties(&[9]))
+        .expect("older neighbor");
+    let outer_start = arena.begin_closure_build().expect("outer construction");
+    let inner_start = arena.begin_closure_build().expect("inner construction");
+    let child = arena.publish_owned(penalties(&[3])).expect("inner child");
+    arena
+        .rotate_box_wrapper_tail()
+        .expect("inner wrapper boundary");
+    let inner = arena.publish_owned([boxed(child)]).expect("inner wrapper");
+    arena
+        .stamp_box_segment(&inner_start, inner, None)
+        .expect("original inner stamp");
+    arena.close_box_segment(inner_start).expect("inner end");
+    let original = arena
+        .box_migration_metadata(inner)
+        .expect("inner construction provenance");
+
+    let outer = arena.publish_owned([boxed(inner)]).expect("outer wrapper");
+    let durable = arena
+        .finish_built_page_root_to_durable(outer_start, outer)
+        .expect("outer construction moves into durable owner");
+    arena
+        .publish_owned(penalties(&[11]))
+        .expect("intervening page material shifts the destination envelope");
+    let mut durable = Some(durable);
+    let moved_outer = arena
+        .move_durable_to_page_in_place(&mut durable)
+        .expect("outer closure moves back to page");
+    let Node::HList(boxed) = resolved(&arena, moved_outer).remove(0) else {
+        panic!("moved outer remains a box");
+    };
+    let metadata = arena
+        .box_migration_metadata(boxed.children)
+        .expect("nested original provenance follows whole-region move");
+    assert_eq!(metadata.segment.region(), arena.region.id());
+    assert_eq!(
+        metadata.segment.node_range().end - metadata.segment.node_range().start,
+        original.segment.node_range().end - original.segment.node_range().start
+    );
+    assert_ne!(metadata.segment.node_range(), original.segment.node_range());
 }
 
 #[test]

@@ -2548,3 +2548,156 @@ fn empty_interleaved_box_rebuilds_only_its_wrapper() {
         );
     });
 }
+
+#[test]
+fn internal_vertical_lastbox_with_pre_adjustment_transfers_unique_body() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = super::pdftex_initex(stores);
+        register_source(
+            &mut control,
+            br"\setbox0=\vbox{\hbox{\kern1pt\vadjust pre{\kern2pt}\kern3pt}\global\setbox1=\lastbox}\end",
+        );
+        run_to_end(&mut control, stores);
+
+        assert!(
+            admitted!(stores, |context| context.box_register(1)).is_some(),
+            "{}",
+            terminal_text(stores)
+        );
+        assert_eq!(
+            stores.page_region_counters().page_to_durable_nodes_copied,
+            0,
+            "a unique box body with page-owned pre-adjustment transfers"
+        );
+        let outer = box_child_nodes(stores, 0);
+        assert!(
+            matches!(outer.as_slice(), [Node::Kern { amount, .. }] if amount.raw() == 2 * 65_536),
+            "pre-adjustment remains in the enclosing vertical box: {outer:?}"
+        );
+        let inner = box_child_nodes(stores, 1);
+        assert!(
+            matches!(inner.as_slice(), [Node::Kern { amount: first, .. }, Node::Kern { amount: last, .. }]
+                if first.raw() == 65_536 && last.raw() == 3 * 65_536),
+            "the taken hbox retains its two child kerns: {inner:?}"
+        );
+    });
+}
+
+#[test]
+fn internal_vertical_lastbox_without_migration_transfers_unique_body() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\setbox0=\vbox{\hbox{\kern1pt}\global\setbox1=\lastbox}\end",
+        );
+        run_to_end(&mut control, stores);
+
+        assert!(admitted!(stores, |context| context.box_register(1)).is_some());
+        assert_eq!(
+            stores.page_region_counters().page_to_durable_nodes_copied,
+            0
+        );
+        assert!(box_child_nodes(stores, 0).is_empty());
+    });
+}
+
+#[test]
+fn internal_vertical_lastbox_preserves_earlier_baseline_glue() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\setbox0=\vbox{\hbox{\kern1pt}\hbox{\kern2pt}\global\setbox1=\lastbox}\end",
+        );
+        run_to_end(&mut control, stores);
+
+        assert!(admitted!(stores, |context| context.box_register(1)).is_some());
+        assert_eq!(
+            stores.page_region_counters().page_to_durable_nodes_copied,
+            0
+        );
+        let outer = box_child_nodes(stores, 0);
+        assert!(
+            matches!(outer.as_slice(), [Node::HList(_), Node::Glue { .. }]),
+            "baseline glue remains with its preceding box: {outer:?}"
+        );
+    });
+}
+
+#[test]
+fn unique_lastbox_from_box_register_copy_vsplit_and_unbox_avoids_second_copy() {
+    let cases: [(&str, &[u8]); 5] = [
+        (
+            "box register move",
+            br"\setbox1=\hbox{\kern1pt}\setbox0=\vbox{\box1\global\setbox2=\lastbox}\end",
+        ),
+        (
+            "box register copy",
+            br"\setbox1=\hbox{\kern1pt}\setbox0=\vbox{\copy1\global\setbox2=\lastbox}\end",
+        ),
+        (
+            "vsplit result",
+            br"\setbox1=\vbox{\kern1pt\penalty-10000\kern2pt}\setbox0=\vbox{\vsplit1 to 0pt\global\setbox2=\lastbox}\end",
+        ),
+        (
+            "unbox move",
+            br"\setbox1=\hbox{\hbox{\kern1pt}}\setbox0=\hbox{\unhbox1\global\setbox2=\lastbox}\end",
+        ),
+        (
+            "unbox copy",
+            br"\setbox1=\hbox{\hbox{\kern1pt}}\setbox0=\hbox{\unhcopy1\global\setbox2=\lastbox}\end",
+        ),
+    ];
+    let mut copied = Vec::new();
+    for (name, source) in cases {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = MainControl::tex82_initex(stores);
+            register_source(&mut control, source);
+            run_to_end(&mut control, stores);
+            assert!(
+                admitted!(stores, |context| context.box_register(2)).is_some(),
+                "{name}: {}",
+                terminal_text(stores)
+            );
+            copied.push((
+                name,
+                stores.page_region_counters().page_to_durable_nodes_copied,
+            ));
+        });
+    }
+    assert!(copied.iter().all(|(_, count)| *count == 0), "{copied:?}");
+}
+
+#[test]
+fn lastbox_after_unboxing_keeps_sibling_children_in_their_respective_boxes() {
+    for (name, primitive) in [("move", "unhbox"), ("copy", "unhcopy")] {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let source = format!(
+                "\\setbox1=\\hbox{{\\hbox{{\\kern1pt}}\\hbox{{\\kern2pt}}}}\\setbox0=\\hbox{{\\{primitive}1\\global\\setbox2=\\lastbox}}\\end"
+            );
+            let mut control = MainControl::tex82_initex(stores);
+            register_source(&mut control, source.as_bytes());
+            run_to_end(&mut control, stores);
+
+            let copied = stores.page_region_counters().page_to_durable_nodes_copied;
+            let first = box_child_nodes(stores, 0);
+            let second = box_child_nodes(stores, 2);
+            let [Node::HList(first)] = first.as_slice() else {
+                panic!("{name}: first sibling stays in box 0: {first:?}");
+            };
+            assert!(matches!(
+                page_vec(stores, first.children).as_slice(),
+                [Node::Kern { amount, .. }] if amount.raw() == 65_536
+            ));
+            assert!(matches!(
+                second.as_slice(),
+                [Node::Kern { amount, .. }] if amount.raw() == 131_072
+            ));
+            assert_eq!(
+                copied, 0,
+                "{name}: unique second box transfers without taking its sibling"
+            );
+        });
+    }
+}

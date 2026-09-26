@@ -374,7 +374,7 @@ pub(in crate::main_control) fn capture_replay_alignment_cell<G>(
             cell.list_mutation().take_nodes(),
             false,
         );
-        let (retained, pre_migrated, migrated) =
+        let (retained, pre_migrated, migrated, _) =
             crate::box_runtime::split_hpack_migrations(stores, material);
         let mut migration_builder =
             tex_state::page_node_arena::PageMaterialActiveListBuilder::vacant();

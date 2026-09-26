@@ -113,6 +113,180 @@ pub(super) enum BoxMigrationSegments {}
 const BOX_MIGRATION_TAG: u32 = 0x424d_5347;
 /// TeX fields, the original construction interval, and a typed sidecar key.
 pub(super) const BOX_PAYLOAD_WORDS: usize = 43;
+const COPIED_BOX_BODY_TAG: u32 = 0x4342_4f58;
+
+/// Non-owning provenance captured during the required recursive copy of a
+/// box's children. The actual consumed wrapper remains the move authority.
+#[derive(Clone, Debug)]
+pub(crate) struct CopiedBoxBodyStamp {
+    region: crate::node_region::NodeRegionId,
+    node_body: std::ops::Range<usize>,
+    annex_body: std::ops::Range<usize>,
+    wrapper_node_position: usize,
+    wrapper_annex_position: usize,
+}
+
+impl CopiedBoxBodyStamp {
+    pub(crate) fn new(
+        region: crate::node_region::NodeRegionId,
+        node_body: std::ops::Range<usize>,
+        annex_body: std::ops::Range<usize>,
+        wrapper_node_position: usize,
+        wrapper_annex_position: usize,
+    ) -> Option<Self> {
+        if node_body.start > node_body.end
+            || annex_body.start > annex_body.end
+            || (node_body.is_empty() && annex_body.is_empty())
+            || node_body.end > wrapper_node_position
+            || annex_body.end > wrapper_annex_position
+            || [
+                node_body.start,
+                node_body.end,
+                annex_body.start,
+                annex_body.end,
+                wrapper_node_position,
+                wrapper_annex_position,
+            ]
+            .into_iter()
+            .any(|position| u32::try_from(position).is_err())
+        {
+            return None;
+        }
+        Some(Self {
+            region,
+            node_body,
+            annex_body,
+            wrapper_node_position,
+            wrapper_annex_position,
+        })
+    }
+
+    fn words(&self) -> [u32; 15] {
+        let region = self.region.words();
+        [
+            0,
+            0,
+            0,
+            0,
+            self.node_body.start as u32,
+            self.node_body.end as u32,
+            self.annex_body.start as u32,
+            self.annex_body.end as u32,
+            region[0],
+            region[1],
+            region[2],
+            region[3],
+            self.wrapper_node_position as u32,
+            self.wrapper_annex_position as u32,
+            COPIED_BOX_BODY_TAG,
+        ]
+    }
+
+    /// Writes the descriptor while the required explicit-copy body is still
+    /// private scratch. Publication may seal an annex group immediately.
+    pub(crate) fn write_flat_body(&self, body: &mut [u32]) -> Option<()> {
+        if body.len() != BOX_PAYLOAD_WORDS || body[28..].iter().any(|word| *word != 0) {
+            return None;
+        }
+        body[28..].copy_from_slice(&self.words());
+        Some(())
+    }
+
+    fn from_words(words: [u32; 15]) -> Option<Self> {
+        if words[..4] != [0; 4] || words[14] != COPIED_BOX_BODY_TAG {
+            return None;
+        }
+        Self::new(
+            crate::node_region::NodeRegionId::from_words(words[8..12].try_into().ok()?)?,
+            words[4] as usize..words[5] as usize,
+            words[6] as usize..words[7] as usize,
+            words[12] as usize,
+            words[13] as usize,
+        )
+    }
+
+    pub(crate) fn metadata_at_wrapper(
+        &self,
+        region: crate::node_region::NodeRegionId,
+        wrapper_node: usize,
+        wrapper_annex: usize,
+    ) -> Option<crate::page_node_arena::PageBoxMigrationMetadata> {
+        // A whole-region move may change both owner-relative offsets, but
+        // keeps the spacing between this wrapper and its copied child block.
+        if self.region.words()[..2] != region.words()[..2] {
+            return None;
+        }
+        let node_shift =
+            i64::try_from(wrapper_node).ok()? - i64::try_from(self.wrapper_node_position).ok()?;
+        let annex_shift =
+            i64::try_from(wrapper_annex).ok()? - i64::try_from(self.wrapper_annex_position).ok()?;
+        let rebase = |position: usize, shift: i64| -> Option<u32> {
+            u32::try_from(i64::try_from(position).ok()?.checked_add(shift)?).ok()
+        };
+        let node_start = rebase(self.node_body.start, node_shift)?;
+        let node_end = rebase(self.node_body.end, node_shift)?;
+        let annex_start = rebase(self.annex_body.start, annex_shift)?;
+        let annex_end = rebase(self.annex_body.end, annex_shift)?;
+        let wrapper_node = u32::try_from(wrapper_node).ok()?;
+        let wrapper_annex = u32::try_from(wrapper_annex).ok()?;
+        let segment = crate::node_region::PageBoxSegment::from_exclusion_bounds(
+            region,
+            [
+                node_start,
+                wrapper_node.checked_add(1)?,
+                annex_start,
+                wrapper_annex.checked_add(1)?,
+            ],
+        )?;
+        let exclusion = crate::node_region::PageBoxSegment::from_exclusion_bounds(
+            region,
+            [node_end, wrapper_node, annex_end, wrapper_annex],
+        );
+        if node_end > wrapper_node || annex_end > wrapper_annex {
+            return None;
+        }
+        Some(crate::page_node_arena::PageBoxMigrationMetadata {
+            segment,
+            exclusions: exclusion.into_iter().collect(),
+            sidecar_annex_range: None,
+            wrapper_rebuild: true,
+        })
+    }
+}
+
+pub(super) enum BoxConstructionDescriptor {
+    None,
+    Original {
+        segment: crate::node_region::PageBoxSegment,
+        migrations: Option<crate::page_node_arena::PageBoxMigrationKey>,
+    },
+    Copied(CopiedBoxBodyStamp),
+}
+
+pub(super) fn decode_box_construction_descriptor(
+    words: &[u32],
+) -> Option<BoxConstructionDescriptor> {
+    if words.len() == 28 {
+        return Some(BoxConstructionDescriptor::None);
+    }
+    let words: [u32; 15] = words.get(28..43)?.try_into().ok()?;
+    if words.iter().all(|word| *word == 0) {
+        return Some(BoxConstructionDescriptor::None);
+    }
+    if words[..4] == [0; 4] {
+        return Some(BoxConstructionDescriptor::Copied(
+            CopiedBoxBodyStamp::from_words(words)?,
+        ));
+    }
+    let segment = crate::node_region::PageBoxSegment::from_words(words[..8].try_into().ok()?)?;
+    let key: [u32; 7] = words[8..].try_into().ok()?;
+    let migrations = (!key.iter().all(|word| *word == 0))
+        .then(|| crate::page_node_arena::PageBoxMigrationKey::from_words(key));
+    Some(BoxConstructionDescriptor::Original {
+        segment,
+        migrations,
+    })
+}
 /// The largest fixed body accepted by both the typed writer and prepared copy.
 /// Math choices use 40 words; a larger box construction sidecar raises this
 /// bound without changing the relocation storage in a separate place.
@@ -246,15 +420,7 @@ pub(super) fn decode_box_payload(words: &[u32]) -> Option<BoxNode<PageListId>> {
     if words.len() != 28 && words.len() != BOX_PAYLOAD_WORDS {
         return None;
     }
-    if words.len() == BOX_PAYLOAD_WORDS {
-        if words[28..36].iter().all(|word| *word == 0) {
-            if words[36..].iter().any(|word| *word != 0) {
-                return None;
-            }
-        } else {
-            crate::node_region::PageBoxSegment::from_words(words[28..36].try_into().ok()?)?;
-        }
-    }
+    decode_box_construction_descriptor(words)?;
     let words = &words[..28];
     let mut cursor = 0;
     let scalar: [u32; 7] = take_words(words, &mut cursor)?;
@@ -621,6 +787,29 @@ impl<'a> NodeAnnexView<'a> {
         self.fixed_words(key, N)?.get(1..)?.try_into().ok()
     }
 
+    pub(super) fn fixed_block_range<Kind>(
+        self,
+        key: AnnexKey<Kind>,
+        body_words: usize,
+    ) -> Option<std::ops::Range<usize>> {
+        self.fixed_words(key, body_words)?;
+        let list = key.list(self.pool.logical_space(), self.pool.chunk_capacity())?;
+        self.arena
+            .owner_relative_list_block_range(self.pool, list)
+            .ok()
+    }
+
+    pub(super) fn key_block_range<Kind>(
+        self,
+        key: AnnexKey<Kind>,
+    ) -> Option<std::ops::Range<usize>> {
+        self.list(key)?;
+        let list = key.list(self.pool.logical_space(), self.pool.chunk_capacity())?;
+        self.arena
+            .owner_relative_list_block_range(self.pool, list)
+            .ok()
+    }
+
     pub(super) fn visit_span<Kind>(
         self,
         key: AnnexKey<Kind>,
@@ -641,6 +830,18 @@ impl<'a> NodeAnnexView<'a> {
     pub(super) fn box_migration_segments(
         self,
         key: crate::page_node_arena::PageBoxMigrationKey,
+        segment: crate::node_region::PageBoxSegment,
+    ) -> Option<(
+        Vec<crate::node_region::PageBoxSegment>,
+        std::ops::Range<usize>,
+    )> {
+        self.box_migration_segments_rebased(key, segment, segment)
+    }
+
+    pub(super) fn box_migration_segments_rebased(
+        self,
+        key: crate::page_node_arena::PageBoxMigrationKey,
+        original: crate::node_region::PageBoxSegment,
         segment: crate::node_region::PageBoxSegment,
     ) -> Option<(
         Vec<crate::node_region::PageBoxSegment>,
@@ -668,7 +869,9 @@ impl<'a> NodeAnnexView<'a> {
         let mut exclusions = Vec::with_capacity((words.len() - 1) / 4 + 1);
         let body_node_end = segment.node_range().end.checked_sub(1)?;
         for &bounds in words[1..].as_chunks::<4>().0 {
-            let exclusion = segment.exclusion_from_bounds(bounds)?;
+            let exclusion = original
+                .exclusion_from_bounds(bounds)?
+                .shifted_like(original, segment)?;
             if exclusion.node_range().start < segment.node_range().start
                 || exclusion.node_range().end > body_node_end
                 || exclusion.annex_range().start < box_annex.start

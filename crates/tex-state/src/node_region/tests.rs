@@ -1033,6 +1033,44 @@ fn consumed_interleaved_box_interval_moves_and_restores_both_lanes() {
 }
 
 #[test]
+fn paired_box_rollback_checks_annex_before_returning_node_chunks() {
+    let mut pool = NodePool::with_chunk_bytes(64);
+    let mut page = pool.start_region::<PageRole>().expect("page");
+    let start = page.begin_closure_build(&mut pool).expect("box start");
+    let child = page
+        .publish_owned(&mut pool, [Node::Penalty(73)])
+        .expect("child");
+    let selected = page
+        .publish_owned(&mut pool, [boxed(child.list)])
+        .expect("wrapper");
+    let end = page.begin_closure_build(&mut pool).expect("box end");
+    let mut durable = pool.start_region::<DurableRole>().expect("durable");
+    let empty_annex = durable.annex_arena.operation_mark(&pool.annex_chunks);
+    let (moved, loan) = transfer_page_interior_closure(
+        &mut pool,
+        &mut page,
+        selected,
+        start.batch.payload_start()..end.batch.payload_start(),
+        start.annex_batch.payload_start()..end.annex_batch.payload_start(),
+        &mut durable,
+    )
+    .expect("paired box transfer");
+
+    durable
+        .annex_arena
+        .restore_operation(&mut pool.annex_chunks, empty_annex)
+        .expect("invalidate only annex destination");
+    assert!(rollback_page_interior_closure(&mut pool, &mut page, &mut durable, loan).is_err());
+    assert!(page.list(&pool, selected).is_err());
+    assert!(
+        durable
+            .pub_arena
+            .list(&pool.chunks, moved.list.coordinate())
+            .is_ok()
+    );
+}
+
+#[test]
 fn foreign_root_receipt_rejects_without_detaching_suffix() {
     let mut pool = NodePool::with_chunk_bytes(64);
     let mut source = pool.start_region::<PageRole>().expect("source");

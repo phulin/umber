@@ -134,8 +134,11 @@ fn page_loan_then_dimension_edit_replays_scalar_before_returning_interval() {
         .expect("immutable interval stamp");
     assert_eq!(arena.close_box_segment(start).expect("box end"), segment);
     let operation = state.begin_operation();
+    let metadata = arena
+        .box_migration_metadata(root)
+        .expect("original metadata");
     let (owner, loan) = arena
-        .finish_interleaved_page_box(root, segment)
+        .finish_interleaved_page_box(root, metadata)
         .expect("move page interval");
     state
         .assign_with_page_loan(

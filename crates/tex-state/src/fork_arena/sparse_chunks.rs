@@ -177,23 +177,6 @@ impl SparseChunks {
         self.rebuild_gap_prefixes_from(first);
     }
 
-    /// Removes an entirely live logical interval and returns its keys in
-    /// unchanged coordinate order. The interval becomes one merged gap.
-    pub(super) fn take_live_range(&mut self, start: usize, end: usize) -> Vec<LogicalChunkId> {
-        assert!(start <= end && end <= self.logical_len);
-        if start == end {
-            return Vec::new();
-        }
-        assert_eq!(self.vacant_before(end) - self.vacant_before(start), 0);
-        let physical_start = start - self.vacant_before(start);
-        let keys = self
-            .live
-            .drain(physical_start..physical_start + (end - start))
-            .collect();
-        self.insert_gap(start, end);
-        keys
-    }
-
     /// Partitions every selected interval in one ordered pass. The returned
     /// envelope retains the coordinates between intervals as vacancies, and
     /// existing vacancies stay vacant in both owners.
@@ -301,56 +284,12 @@ impl SparseChunks {
         );
     }
 
-    /// Fills the exact vacant interval named by a reverse ownership loan.
-    pub(super) fn restore_range(&mut self, start: usize, keys: Vec<LogicalChunkId>) {
-        let end = start + keys.len();
-        if start == end {
-            return;
-        }
-        let gap_index = self.gap_after_or_at(start);
-        let gap = *self
-            .gaps
-            .get(gap_index)
-            .expect("reverse loan names an existing vacant range");
-        assert!(gap.start <= start && end <= gap.end);
-        let physical_start = start - self.vacant_before(start);
-        self.live.splice(physical_start..physical_start, keys);
-        self.gaps.remove(gap_index);
-        if gap.start < start {
-            self.gaps.insert(
-                gap_index,
-                Gap {
-                    start: gap.start,
-                    end: start,
-                    vacant_through: 0,
-                },
-            );
-        }
-        if end < gap.end {
-            self.gaps.insert(
-                self.gap_after_or_at(end),
-                Gap {
-                    start: end,
-                    end: gap.end,
-                    vacant_through: 0,
-                },
-            );
-        }
-        self.rebuild_gap_prefixes();
-    }
-
     pub(super) fn push(&mut self, key: LogicalChunkId) {
         self.logical_len += 1;
         if key == VACANT_LOGICAL_CHUNK {
             self.insert_gap(self.logical_len - 1, self.logical_len);
         } else {
             self.live.push(key);
-        }
-    }
-
-    pub(super) fn extend(&mut self, keys: impl IntoIterator<Item = LogicalChunkId>) {
-        for key in keys {
-            self.push(key);
         }
     }
 
@@ -523,15 +462,19 @@ mod tests {
     #[test]
     fn append_and_split_preserve_multiple_compact_gaps() {
         let mut prefix = SparseChunks::default();
-        prefix.extend([key(0), VACANT_LOGICAL_CHUNK, key(2)]);
+        for key in [key(0), VACANT_LOGICAL_CHUNK, key(2)] {
+            prefix.push(key);
+        }
         let mut suffix = SparseChunks::default();
-        suffix.extend([
+        for key in [
             key(3),
             VACANT_LOGICAL_CHUNK,
             key(5),
             VACANT_LOGICAL_CHUNK,
             key(7),
-        ]);
+        ] {
+            suffix.push(key);
+        }
         prefix.append(suffix);
         assert_eq!(prefix.len(), 8);
         assert_eq!(prefix.gap_count(), 3);
@@ -558,16 +501,8 @@ mod tests {
             vec![key(5), VACANT_LOGICAL_CHUNK, key(7),]
         );
         prefix.append(right);
-        prefix.restore_range(1, vec![key(1)]);
-        prefix.restore_range(4, vec![key(4)]);
-        prefix.restore_range(6, vec![key(6)]);
-        assert_eq!(prefix.gap_count(), 0);
-        assert_eq!(
-            prefix.iter().copied().collect::<Vec<_>>(),
-            (0..8).map(key).collect::<Vec<_>>()
-        );
-        prefix.take_live_range(6, 8);
-        assert_eq!(prefix.last_live_position(), Some(5));
+        assert_eq!(prefix.gap_count(), 3);
+        assert_eq!(prefix.last_live_position(), Some(7));
     }
 
     #[test]
@@ -586,7 +521,9 @@ mod tests {
             VACANT_LOGICAL_CHUNK,
             key(10),
         ];
-        page.extend(original);
+        for key in original {
+            page.push(key);
+        }
         let ranges = [1..4, 6..8];
         let (selected, counts) = page.take_selected_ranges(&ranges);
         assert_eq!(counts, vec![2, 2]);

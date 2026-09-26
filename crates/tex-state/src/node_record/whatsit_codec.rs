@@ -366,6 +366,71 @@ fn decode_literal_mode(value: u32) -> Option<PdfLiteralMode> {
 }
 
 impl NodeRecord<PageMaterialLane> {
+    pub(super) fn visit_whatsit_annex_block_ranges(
+        self,
+        annex: NodeAnnexView<'_>,
+        mut visit: impl FnMut(std::ops::Range<usize>),
+    ) -> Option<()> {
+        let fixed = match self.subtype() {
+            0 => {
+                let payload =
+                    annex.resolve_fixed_array::<OpenOutPayload, 8>(key_from_record(self))?;
+                visit(annex.key_block_range(AnnexKey::<Utf8Span>::from_words(
+                    payload[..7].try_into().ok()?,
+                ))?);
+                true
+            }
+            3 => {
+                let payload =
+                    annex.resolve_fixed_array::<SpecialPayload, 14>(key_from_record(self))?;
+                visit(annex.key_block_range(AnnexKey::<Utf8Span>::from_words(
+                    payload[..7].try_into().ok()?,
+                ))?);
+                visit(annex.key_block_range(AnnexKey::<ByteSpan>::from_words(
+                    payload[7..].try_into().ok()?,
+                ))?);
+                true
+            }
+            4 => {
+                let payload = annex
+                    .resolve_fixed_array::<DeferredSpecialPayload, 13>(key_from_record(self))?;
+                visit(annex.key_block_range(AnnexKey::<Utf8Span>::from_words(
+                    payload[..7].try_into().ok()?,
+                ))?);
+                true
+            }
+            11 | 13 => {
+                visit(annex.key_block_range(key_from_record::<ByteSpan>(self))?);
+                false
+            }
+            16 => {
+                let payload =
+                    annex.resolve_fixed_array::<PdfColorStackPayload, 10>(key_from_record(self))?;
+                if payload[2] == 1 {
+                    visit(annex.key_block_range(AnnexKey::<ByteSpan>::from_words(
+                        payload[3..].try_into().ok()?,
+                    ))?);
+                } else if payload[2] != 0 {
+                    return None;
+                }
+                true
+            }
+            23 => {
+                annex.resolve_fixed_array::<PdfDestinationPayload, 12>(key_from_record(self))?;
+                true
+            }
+            24 => {
+                annex.resolve_fixed_array::<PdfThreadPayload, 16>(key_from_record(self))?;
+                true
+            }
+            _ => false,
+        };
+        if fixed {
+            visit(annex.key_block_range(key_from_record::<()>(self))?);
+        }
+        Some(())
+    }
+
     pub(super) fn reencode_whatsit(
         self,
         annex: &mut NodeAnnexCopier<'_>,

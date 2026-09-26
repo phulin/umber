@@ -3,8 +3,7 @@
 use tex_state::CommandContext;
 use tex_state::diagnostic::DiagnosticEffects;
 use tex_state::node::Node;
-use tex_state::node_region::PageBoxSegment;
-use tex_state::page_node_arena::PageListId;
+use tex_state::page_node_arena::{PageBoxMigrationMetadata, PageListId};
 use tex_typeset::{PackDiagnostic, PackSpec};
 
 use crate::packing_params::hpack_params;
@@ -17,7 +16,7 @@ use super::hmode::flush_pending_hchars;
 pub(crate) struct RemovedLastBox {
     pub(crate) node: Node,
     pub(crate) root: Option<PageListId>,
-    pub(crate) segment: Option<PageBoxSegment>,
+    pub(crate) migration_metadata: Option<PageBoxMigrationMetadata>,
 }
 
 pub(crate) fn take_last_box<G, F>(
@@ -93,7 +92,7 @@ where
             Ok(result.map(|node| RemovedLastBox {
                 node,
                 root: None,
-                segment: None,
+                migration_metadata: None,
             }))
         }
         Mode::InternalVertical | Mode::Horizontal | Mode::RestrictedHorizontal => {
@@ -114,7 +113,7 @@ where
             let removed = nest
                 .current_list_mutation()
                 .remove_node_range(stores, range);
-            let segment = stores.page_box_segment(removed);
+            let migration_metadata = stores.page_box_migration_metadata(removed);
             let node = stores
                 .page_node_list(removed)
                 .expect("removed last-box range belongs to the live page arena")
@@ -130,7 +129,7 @@ where
             Ok(reset_removed_box_shift(node).map(|node| RemovedLastBox {
                 node,
                 root: Some(removed),
-                segment: segment.filter(|_| zero_shift),
+                migration_metadata: migration_metadata.filter(|_| zero_shift),
             }))
         }
     }

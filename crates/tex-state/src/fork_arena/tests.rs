@@ -2457,7 +2457,7 @@ fn interior_interval_transfers_and_rolls_back_without_moving_neighbor_chunks() {
     page.seal_boundary(&mut pool).expect("after boundary");
 
     let loan = page
-        .transfer_interior_interval(&mut pool, &mut durable, 1, 2)
+        .transfer_interior_intervals(&mut pool, &mut durable, std::slice::from_ref(&(1..2)))
         .expect("selected interior chunk transfers");
     let durable_selected = super::rebrand_list(selected, durable.owner);
     assert_eq!(page.list(&pool, before).expect("before").get(0), Some(&11));
@@ -2468,7 +2468,7 @@ fn interior_interval_transfers_and_rolls_back_without_moving_neighbor_chunks() {
         Some(&22)
     );
 
-    page.rollback_interior_interval(&mut pool, &mut durable, loan)
+    page.rollback_interior_intervals(&mut pool, &mut durable, loan)
         .expect("exact interval rollback");
     assert_eq!(
         page.list(&pool, selected).expect("restored").get(0),
@@ -2491,7 +2491,11 @@ fn repeated_tail_loans_derive_frontier_from_gap_metadata() {
     for position in (1..CHUNKS).rev() {
         let mut durable = page.empty_lane::<PageLane>();
         let loan = page
-            .transfer_interior_interval(&mut pool, &mut durable, position, position + 1)
+            .transfer_interior_intervals(
+                &mut pool,
+                &mut durable,
+                std::slice::from_ref(&(position..position + 1)),
+            )
             .expect("unique trailing chunk moves");
         page.can_seal_boundary(&pool)
             .expect("vacant trailing slots admit in bounded work");
@@ -2502,7 +2506,7 @@ fn repeated_tail_loans_derive_frontier_from_gap_metadata() {
         loans.push((durable, loan));
     }
     for (mut durable, loan) in loans.into_iter().rev() {
-        page.rollback_interior_interval(&mut pool, &mut durable, loan)
+        page.rollback_interior_intervals(&mut pool, &mut durable, loan)
             .expect("exact trailing loan restores");
     }
     page.can_seal_boundary(&pool).expect("dense owner restored");
@@ -2523,7 +2527,11 @@ fn settled_trailing_transfers_compress_owner_metadata_without_reusing_marks() {
         page.seal_boundary(&mut pool).expect("box boundary");
         let mut durable = page.empty_lane::<PageLane>();
         let _settled = page
-            .transfer_interior_interval(&mut pool, &mut durable, position, position + 1)
+            .transfer_interior_intervals(
+                &mut pool,
+                &mut durable,
+                std::slice::from_ref(&(position..position + 1)),
+            )
             .expect("unique box chunk moves");
         durable
             .retire_region(&mut pool)
@@ -2560,7 +2568,7 @@ fn cancelling_sealed_build_discards_suffix_after_nested_prefix_move() {
         .expect("nested transfer boundary");
     let mut durable = page.empty_lane::<PageLane>();
     let _loan = page
-        .transfer_interior_interval(&mut pool, &mut durable, 0, 1)
+        .transfer_interior_intervals(&mut pool, &mut durable, std::slice::from_ref(&(0..1)))
         .expect("nested consumed prefix moves");
     page.discard_sealed_batch_suffix(&mut pool, build, rollback)
         .expect("only outer construction suffix is discarded");
@@ -2585,7 +2593,7 @@ fn unique_successor_adoption_keeps_sparse_suffix_positions() {
     let retained = list(&mut page, &mut pool, [3]);
     page.seal_boundary(&mut pool).expect("handoff boundary");
     let mut durable = page.empty_lane::<PageLane>();
-    page.transfer_interior_interval(&mut pool, &mut durable, 1, 2)
+    page.transfer_interior_intervals(&mut pool, &mut durable, std::slice::from_ref(&(1..2)))
         .expect("successor child moves independently");
     page.adopt_unique_successor_suffix(&mut pool, successor_mark, &[retained])
         .expect("successor with a vacant slot adopts");
@@ -2612,7 +2620,7 @@ fn sparse_checkpoint_candidate_reattaches_only_live_prior_slots() {
     let prior = list(&mut page, &mut pool, [3]);
     page.seal_boundary(&mut pool).expect("transfer boundary");
     let mut durable = page.empty_lane::<PageLane>();
-    page.transfer_interior_interval(&mut pool, &mut durable, 1, 2)
+    page.transfer_interior_intervals(&mut pool, &mut durable, std::slice::from_ref(&(1..2)))
         .expect("middle box moves before candidate fork");
     page.begin_checkpoint_candidate(&mut pool, selected)
         .expect("sparse accepted suffix detaches");
@@ -2733,8 +2741,12 @@ fn compound_interval_preserves_nested_consumed_box_hole() {
     page.seal_boundary(&mut pool)
         .expect("isolated boxes sealed");
     let mut nested_durable = page.empty_lane::<PageLane>();
-    page.transfer_interior_interval(&mut pool, &mut nested_durable, 2, 3)
-        .expect("nested box consumes its own chunk");
+    page.transfer_interior_intervals(
+        &mut pool,
+        &mut nested_durable,
+        std::slice::from_ref(&(2..3)),
+    )
+    .expect("nested box consumes its own chunk");
     let mut outer_durable = page.empty_lane::<PageLane>();
     let outer_body = 1..4;
     let loan = page

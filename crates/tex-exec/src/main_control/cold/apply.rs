@@ -2466,8 +2466,9 @@ pub(in crate::main_control) fn apply<G>(
                         |_| Ok(std::mem::take(error_context)),
                     )?;
                 if let Some(removed) = &removed
-                    && let (Some(root), Some(segment)) = (removed.root, removed.segment)
-                    && stores.can_transfer_interleaved_page_box(root, segment)
+                    && let (Some(root), Some(metadata)) =
+                        (removed.root, removed.migration_metadata.as_ref())
+                    && stores.can_transfer_interleaved_page_box(root, metadata)
                 {
                     commit_interleaved_set_box_target(
                         PendingSetBox {
@@ -2475,7 +2476,7 @@ pub(in crate::main_control) fn apply<G>(
                             region: stores.begin_page_node_region(),
                         },
                         root,
-                        segment,
+                        metadata.clone(),
                         stores,
                         command,
                     );
@@ -2562,6 +2563,21 @@ pub(in crate::main_control) fn apply<G>(
             if let Some(context) = &split.missing_to_context {
                 report_missing_vsplit_to(context, command.diagnostic_effects, stores)?;
             }
+            let isolated_append = boxes.pending_setbox.is_none()
+                && matches!(
+                    modes.current_mode(),
+                    Mode::Horizontal | Mode::RestrictedHorizontal | Mode::InternalVertical
+                )
+                && stores.box_register(split.index).is_some();
+            if isolated_append {
+                crate::box_runtime::flush_pending_hchars_with_fuel(
+                    modes,
+                    stores,
+                    command.diagnostic_effects,
+                    command.fuel,
+                )?;
+            }
+            let start = isolated_append.then(|| stores.begin_page_node_region());
             let diagnostic_context = command_diagnostic_context(command, stores);
             let mut geometry = pack_geometry_sink(command.state, command.observations);
             let node = crate::box_runtime::split_vbox_register(
@@ -2574,7 +2590,29 @@ pub(in crate::main_control) fn apply<G>(
                 &split.split_context,
             )?;
             let context = boxes.take_box_context(false);
-            box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
+            match (start, node) {
+                (Some(start), Some(node)) => {
+                    debug_assert!(matches!(context, BoxContext::Append(_)));
+                    crate::box_runtime::append_box_node_with_segment(
+                        modes,
+                        stores,
+                        command.diagnostic_effects,
+                        command.fuel,
+                        node,
+                        start,
+                        Vec::new(),
+                    )?;
+                }
+                (Some(start), None) => {
+                    stores
+                        .release_page_node_region(start)
+                        .expect("void split releases its construction boundary");
+                    box_end(context, None, modes, stores, prepared_dvi_pages, command)?;
+                }
+                (None, node) => {
+                    box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
+                }
+            }
             Ok(ReplayStep::Continue)
         }
         ColdOperation::BoxRegister {
@@ -2586,7 +2624,7 @@ pub(in crate::main_control) fn apply<G>(
                 && boxes.pending_setbox.is_none()
                 && matches!(
                     modes.current_mode(),
-                    Mode::Horizontal | Mode::RestrictedHorizontal
+                    Mode::Horizontal | Mode::RestrictedHorizontal | Mode::InternalVertical
                 )
                 && stores.box_register(*index).is_some();
             if isolated_append {
@@ -2601,18 +2639,25 @@ pub(in crate::main_control) fn apply<G>(
             let id = read_box_register(*index, *copy, stores, command);
             let node = crate::box_runtime::first_box_node(stores, id);
             let context = boxes.take_box_context(*ships_out);
-            if start.is_some() {
-                stores.rotate_page_box_wrapper_tail();
-            }
-            box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
             if let Some(start) = start {
-                let root = modes
-                    .current_list()
-                    .last_node_root(stores)
-                    .expect("nonvoid box register appended its wrapper");
-                let stamped = stores.stamp_page_box_segment(&start, root, None);
-                let sealed = stores.close_page_box_segment(start);
-                assert_eq!(stamped, sealed, "register box wrapper has exact segment");
+                debug_assert!(matches!(context, BoxContext::Append(_)));
+                crate::box_runtime::append_box_node_with_segment(
+                    modes,
+                    stores,
+                    command.diagnostic_effects,
+                    command.fuel,
+                    node.expect("nonvoid box register retains its wrapper"),
+                    start,
+                    Vec::new(),
+                )?;
+                crate::vertical::build_page_if_outer_vertical(
+                    modes,
+                    stores,
+                    command.diagnostic_effects,
+                    command.state.state(),
+                )?;
+            } else {
+                box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
             }
             Ok(ReplayStep::Continue)
         }
@@ -2791,6 +2836,24 @@ pub(in crate::main_control) fn apply<G>(
                 class = 0;
             }
             let class = class as u16;
+            let migration_segment_start = if boxes.active_boxes.last().is_some_and(|box_state| {
+                box_state.kind == ReplayBoxKind::HBox && box_state.box_segment_start.is_some()
+            }) && modes.current_mode()
+                == Mode::RestrictedHorizontal
+            {
+                // Material before the insertion remains in the box body.
+                // Finish its pending character run before opening the page
+                // interval that hpack will migrate out of this box.
+                crate::box_runtime::flush_pending_hchars_with_fuel(
+                    modes,
+                    stores,
+                    command.diagnostic_effects,
+                    command.fuel,
+                )?;
+                Some(stores.begin_page_node_region())
+            } else {
+                None
+            };
             enter_group(
                 stores,
                 command.state,
@@ -2809,6 +2872,8 @@ pub(in crate::main_control) fn apply<G>(
                 target: None,
                 shipout_region: None,
                 box_segment_start: None,
+                migration_segment_start,
+                migration_segments: Vec::new(),
                 kind: ReplayBoxKind::Insert(class, construction.pre),
                 group_kind: GroupKind::Insert,
                 packing: PackSpec::Natural,
@@ -2915,6 +2980,11 @@ pub(in crate::main_control) fn apply<G>(
                 command.diagnostic_effects,
                 command.fuel,
             )?;
+            let migration_segment_start = (modes.current_mode() == Mode::RestrictedHorizontal
+                && boxes.active_boxes.last().is_some_and(|box_state| {
+                    box_state.kind == ReplayBoxKind::HBox && box_state.box_segment_start.is_some()
+                }))
+            .then(|| stores.begin_page_node_region());
             let tokens = stores.node_token_list(tokens.prepared());
             crate::vertical::append_vertical_contribution(
                 modes,
@@ -2924,6 +2994,17 @@ pub(in crate::main_control) fn apply<G>(
                     tokens,
                 },
             );
+            if let Some(start) = migration_segment_start {
+                let segment = stores.close_page_box_segment(start);
+                if !segment.is_empty() {
+                    boxes
+                        .active_boxes
+                        .last_mut()
+                        .expect("mark remains inside its enclosing hbox")
+                        .migration_segments
+                        .push(segment);
+                }
+            }
             Ok(ReplayStep::Continue)
         }
         ColdOperation::BeginLeaderBox {
@@ -2957,6 +3038,8 @@ pub(in crate::main_control) fn apply<G>(
                 target: None,
                 shipout_region: None,
                 box_segment_start: None,
+                migration_segment_start: None,
+                migration_segments: Vec::new(),
                 kind,
                 group_kind: kind.group_kind(),
                 packing,
@@ -3291,10 +3374,21 @@ pub(in crate::main_control) fn apply<G>(
                 })?;
             if let ReplayBoxKind::Insert(class, pre) = box_kind {
                 let step = finish_insert_or_adjust_group(class, pre, modes, stores, command)?;
-                boxes
+                let inserted = boxes
                     .active_boxes
                     .pop()
                     .expect("successful insert completion retains its active owner");
+                if let Some(start) = inserted.migration_segment_start {
+                    let segment = stores.close_page_box_segment(start);
+                    if !segment.is_empty() {
+                        boxes
+                            .active_boxes
+                            .last_mut()
+                            .expect("isolated insertion has an enclosing hbox")
+                            .migration_segments
+                            .push(segment);
+                    }
+                }
                 return Ok(step);
             }
             // TeX82 §1085's `handle_right_brace` runs `end_graf` (§1096) for
@@ -3510,39 +3604,35 @@ pub(in crate::main_control) fn apply<G>(
                 if let Some(shift) = shift {
                     crate::box_runtime::apply_box_shift_delta(&mut node, shift.delta)?;
                 }
-                if boxes
+                let box_state = boxes
                     .active_boxes
-                    .last()
-                    .is_some_and(|box_state| box_state.box_segment_start.is_some())
-                {
-                    stores.rotate_page_box_wrapper_tail();
+                    .pop()
+                    .expect("successful box append retains its active owner");
+                if let Some(start) = box_state.box_segment_start {
+                    crate::box_runtime::append_box_node_with_segment(
+                        modes,
+                        stores,
+                        command.diagnostic_effects,
+                        command.fuel,
+                        node,
+                        start,
+                        box_state.migration_segments,
+                    )?;
+                } else {
+                    crate::box_runtime::append_box_node_to_current_list(
+                        modes,
+                        stores,
+                        command.diagnostic_effects,
+                        node,
+                        command.fuel,
+                    )?;
                 }
-                crate::box_runtime::append_box_node_to_current_list(
-                    modes,
-                    stores,
-                    command.diagnostic_effects,
-                    node,
-                    command.fuel,
-                )?;
                 crate::vertical::build_page_if_outer_vertical(
                     modes,
                     stores,
                     command.diagnostic_effects,
                     command.state.state(),
                 )?;
-                let box_state = boxes
-                    .active_boxes
-                    .pop()
-                    .expect("successful box append retains its active owner");
-                if let Some(start) = box_state.box_segment_start {
-                    let root = modes
-                        .current_list()
-                        .last_node_root(stores)
-                        .expect("constructed box remains the current list tail");
-                    let stamped = stores.stamp_page_box_segment(&start, root, None);
-                    let sealed = stores.close_page_box_segment(start);
-                    assert_eq!(stamped, sealed, "wrapper stamp matches sealed bounds");
-                }
             }
             Ok(ReplayStep::Continue)
         }

@@ -222,8 +222,11 @@ and the seven-word key to that span. Each span entry carries four bounds; the
 wrapper's region supplies the shared region identity. Decode validates the
 annex key and serial, span shape, interval containment, and ordering before
 offering the metadata to transfer preflight. Only consuming the unique wrapper
-root supplies move authority. Re-encoding a box clears the entire construction
-metadata tail, including the span key, so a copy cannot duplicate that hint.
+root supplies move authority. Re-encoding clears the original construction
+stamp and span key, so a copy cannot duplicate that hint. An explicit copy
+may publish a new body descriptor from the paired child intervals it must
+construct. The descriptor binds those intervals to the copied wrapper's node
+and annex positions; it never transfers authority from the source wrapper.
 
 Appending a unique wrapper to a mode list writes a backward predecessor edge
 to the preceding box. This can make the wrapper's logical chunk depend on a
@@ -248,6 +251,58 @@ An empty closure build, such as a void `\setbox` operand, rolls back without
 changing a retained shared tail when its length, seal state, and sequence
 summary still match the build mark. A changed tail continues to require an
 exclusive lineage.
+
+### Migrating material in a consumed box
+
+An hbox appended to an internal vertical list may move insertion and mark
+nodes, and the contents of adjustments, to that vertical list. A pdfTeX
+`\vadjust pre` moves its contents before the hbox, so a later `\lastbox` can
+consume the hbox while the adjustment remains page-owned. The hbox's build
+interval can therefore contain two owners even when its retained children are
+otherwise exclusive. Moving that entire interval would invalidate the live
+adjustment; recursively copying the hbox loses the constant-time unique move.
+
+Construction isolates each migration at its opening and closing boundaries in
+both typed lanes. Vertical baseline glue and any material allocated while
+pre-adjustments join the enclosing list are isolated as page-owned ranges too.
+The consumed hpack input list's obsolete top-level chunks are excluded after
+the retained projection is sealed; only that projection and its nested child
+bodies can move. The pre-adjustment's rebuilt page-owned projection is also
+excluded using paired marks around publication.
+The original box wrapper records its construction interval
+and a typed, variable-length annex span of excluded migration intervals.
+These coordinates are non-owning. A structural box copy clears both original hints.
+Only the semantic list owner's removal of that exact wrapper grants transfer
+authority. The hpack split uses the same migration classification as TeX82
+§§647 and 655, and the wrapper's coordinates retain construction order even
+if pre-adjustment material is prepended or later material follows it.
+
+Transfer preflights every selected node and annex interval, each paired
+dependency edge, the exclusion boundaries, and the destination before either
+lane changes owner. The cold preflight visits each selected chunk once and
+inspects direct record references where aggregate floors cross an exclusion;
+it does not recursively traverse child closures. Its cost is proportional to
+selected chunks plus the records inspected in those chunks. The page keeps
+every excluded interval at its original
+coordinate; the durable owner receives the disjoint selected intervals with
+vacant logical gaps, so child and annex coordinates do not change. A backward
+wrapper edge to the page list keeps the original wrapper page-owned and causes
+one new durable wrapper around the moved retained children. The compound
+operation receipt returns selected intervals to their exact page slots after
+discarding that new wrapper, before mode and page roots roll back. Retained
+history can still require a copy, but ordinary unique migration cannot select
+the whole-closure structural fallback.
+
+A whole-region move can place an originally stamped nested box at a different
+logical offset. Its original wrapper remains the only source of its non-owning
+stamp. When that wrapper is later consumed, its authenticated current node and
+annex chunk positions determine independent offsets from the stamped final
+chunk positions. Applying those offsets to all stamped and excluded intervals
+preserves their spacing, including vacant gaps, without scanning the child
+graph or keeping a root registry. The translated ranges are accepted only
+after ownership and direct-edge preflight in the current page region. An
+explicit TeX copy clears the old stamp and may mint fresh construction
+provenance during its already-required recursive copy.
 
 ## TeX82 ownership baseline
 

@@ -554,7 +554,7 @@ pub(in crate::main_control) fn begin_replay_box<G>(
         && shipout_region.is_none()
         && matches!(
             modes.current_mode(),
-            Mode::Horizontal | Mode::RestrictedHorizontal
+            Mode::Horizontal | Mode::RestrictedHorizontal | Mode::InternalVertical
         );
     if isolated_box {
         // A pending parent character run belongs before this box. Materialize
@@ -608,6 +608,8 @@ pub(in crate::main_control) fn begin_replay_box<G>(
         target,
         shipout_region,
         box_segment_start,
+        migration_segment_start: None,
+        migration_segments: Vec::new(),
         kind,
         group_kind,
         packing,
@@ -746,6 +748,8 @@ pub(in crate::main_control) fn apply_box_shift<G>(
                 target: None,
                 shipout_region: None,
                 box_segment_start: None,
+                migration_segment_start: None,
+                migration_segments: Vec::new(),
                 kind,
                 group_kind,
                 packing,
@@ -901,7 +905,7 @@ pub(in crate::main_control) fn commit_set_box_target<G>(
 pub(in crate::main_control) fn commit_interleaved_set_box_target<G>(
     pending: PendingSetBox,
     root: tex_state::page_node_arena::PageListId,
-    segment: tex_state::node_region::PageBoxSegment,
+    metadata: tex_state::page_node_arena::PageBoxMigrationMetadata,
     stores: &mut tex_state::CommandContext<'_, G>,
     command: &mut CommandMachine<'_, '_, G>,
 ) {
@@ -915,7 +919,7 @@ pub(in crate::main_control) fn commit_interleaved_set_box_target<G>(
                 .assign_interleaved_page_box(
                     target.index,
                     root,
-                    segment,
+                    metadata,
                     region,
                     assignment_scope(target.global),
                 )
@@ -940,7 +944,7 @@ pub(in crate::main_control) fn append_shifted_box<G>(
         return Ok(());
     };
     crate::box_runtime::apply_box_shift_delta(&mut node, delta)?;
-    crate::box_runtime::append_box_node_to_current_list(
+    let _ = crate::box_runtime::append_box_node_to_current_list(
         modes,
         stores,
         command.diagnostic_effects,

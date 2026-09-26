@@ -26,8 +26,19 @@ pub(crate) fn append_node_to_vertical_list<G>(
     stores: &mut CommandContext<'_, G>,
     node: Node,
 ) -> Result<(), ExecError> {
-    let Some((height, depth)) = vertical_baseline_dimensions(&node) else {
-        append_vertical_contribution(nest, stores, node);
+    append_vertical_baseline_glue(nest, stores, &node)?;
+    append_vertical_node_after_baseline(nest, stores, node);
+    Ok(())
+}
+
+/// TeX82 §679's glue between consecutive boxes. A newly constructed box
+/// publishes this page-owned node before sealing its transferable wrapper.
+pub(crate) fn append_vertical_baseline_glue<G>(
+    nest: &mut ModeNest,
+    stores: &mut CommandContext<'_, G>,
+    node: &Node,
+) -> Result<(), ExecError> {
+    let Some((height, _)) = vertical_baseline_dimensions(node) else {
         return Ok(());
     };
     let ignored_depth = if stores.primitive_resolved("pdfignoreddimen").is_some() {
@@ -82,9 +93,19 @@ pub(crate) fn append_node_to_vertical_list<G>(
             },
         );
     }
-    append_vertical_contribution(nest, stores, node);
-    nest.current_list_mutation().set_prev_depth(depth);
     Ok(())
+}
+
+pub(crate) fn append_vertical_node_after_baseline<G>(
+    nest: &mut ModeNest,
+    stores: &mut CommandContext<'_, G>,
+    node: Node,
+) {
+    let depth = vertical_baseline_dimensions(&node).map(|(_, depth)| depth);
+    append_vertical_contribution(nest, stores, node);
+    if let Some(depth) = depth {
+        nest.current_list_mutation().set_prev_depth(depth);
+    }
 }
 
 pub(crate) fn append_vertical_contribution<G>(

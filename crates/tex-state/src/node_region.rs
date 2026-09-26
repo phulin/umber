@@ -12,7 +12,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use crate::fork_arena::{
     AdmittedListChunkCursor, BatchMark, CheckpointMark, ChunkPool, DetachedBatch, ForkArena,
     ForkArenaCounters, ForkArenaError, NodePoolStorageClass, PageMaterialLane, RegionValue,
-    SealedBoundary, SequenceSummaryWork, TransferredInterval,
+    SealedBoundary, SequenceSummaryWork, TransferredIntervals,
 };
 
 #[cfg(feature = "profiling")]
@@ -56,8 +56,14 @@ struct NodeEnvelopeBatch {
 pub(crate) struct PageInteriorTransferLoan {
     source: NodeRegionId,
     destination: NodeRegionId,
-    nodes: TransferredInterval<PageMaterialLane>,
-    annex: TransferredInterval<NodeAnnexLane>,
+    chunks: PageInteriorTransferredChunks,
+}
+
+enum PageInteriorTransferredChunks {
+    Partitioned {
+        nodes: TransferredIntervals<PageMaterialLane>,
+        annex: TransferredIntervals<NodeAnnexLane>,
+    },
 }
 
 static NEXT_NODE_POOL_ID: AtomicU64 = AtomicU64::new(1);
@@ -1168,6 +1174,44 @@ impl PageBoxSegment {
         Self::from_exclusion_bounds(self.region, bounds)
     }
 
+    /// Rebind construction coordinates to the admitted position of their
+    /// original wrapper. Whole-region moves preserve each lane's relative
+    /// logical spacing, including vacant positions left by earlier loans.
+    pub(crate) fn rebased_to_wrapper(
+        self,
+        region: NodeRegionId,
+        node_wrapper: usize,
+        annex_wrapper: usize,
+    ) -> Option<Self> {
+        let node_shift =
+            i64::try_from(node_wrapper).ok()? - i64::from(self.node_end.checked_sub(1)?);
+        let annex_shift =
+            i64::try_from(annex_wrapper).ok()? - i64::from(self.annex_end.checked_sub(1)?);
+        self.shifted(region, node_shift, annex_shift)
+    }
+
+    pub(crate) fn shifted_like(self, original: Self, rebased: Self) -> Option<Self> {
+        if self.region != original.region {
+            return None;
+        }
+        let node_shift = i64::from(rebased.node_end) - i64::from(original.node_end);
+        let annex_shift = i64::from(rebased.annex_end) - i64::from(original.annex_end);
+        self.shifted(rebased.region, node_shift, annex_shift)
+    }
+
+    fn shifted(self, region: NodeRegionId, node_shift: i64, annex_shift: i64) -> Option<Self> {
+        fn offset(position: u32, shift: i64) -> Option<u32> {
+            u32::try_from(i64::from(position).checked_add(shift)?).ok()
+        }
+        Some(Self {
+            region,
+            node_start: offset(self.node_start, node_shift)?,
+            node_end: offset(self.node_end, node_shift)?,
+            annex_start: offset(self.annex_start, annex_shift)?,
+            annex_end: offset(self.annex_end, annex_shift)?,
+        })
+    }
+
     pub const fn is_empty(self) -> bool {
         self.node_start == self.node_end && self.annex_start == self.annex_end
     }
@@ -1496,32 +1540,23 @@ pub(crate) fn transfer_page_interior_closure(
         annex_range.clone(),
         destination,
     )?;
-    let nodes = source.pub_arena.transfer_interior_interval(
-        &mut pool.chunks,
-        &mut destination.pub_arena,
-        node_range.start,
-        node_range.end,
-    )?;
-    let annex = source.annex_arena.transfer_interior_interval(
-        &mut pool.annex_chunks,
-        &mut destination.annex_arena,
-        annex_range.start,
-        annex_range.end,
-    )?;
-    pool.closure_transitions.envelope_moves =
-        pool.closure_transitions.envelope_moves.saturating_add(1);
+    let node_ranges = (!node_range.is_empty())
+        .then_some(node_range)
+        .into_iter()
+        .collect::<Vec<_>>();
+    let annex_ranges = (!annex_range.is_empty())
+        .then_some(annex_range)
+        .into_iter()
+        .collect::<Vec<_>>();
+    let loan =
+        transfer_page_interior_intervals(pool, source, &node_ranges, &annex_ranges, destination)?;
     Ok((
         RegionRoot {
             region: destination.id,
             list: root.list,
             _role: PhantomData,
         },
-        PageInteriorTransferLoan {
-            source: source.id,
-            destination: destination.id,
-            nodes,
-            annex,
-        },
+        loan,
     ))
 }
 
@@ -1536,24 +1571,7 @@ pub(crate) fn loan_empty_page_box_body(
     destination: &mut NodeRegion<DurableRole>,
 ) -> Result<PageInteriorTransferLoan, ForkArenaError> {
     preflight_empty_page_box_body(pool, source, node_position, annex_position, destination)?;
-    let nodes = source.pub_arena.transfer_interior_interval(
-        &mut pool.chunks,
-        &mut destination.pub_arena,
-        node_position,
-        node_position,
-    )?;
-    let annex = source.annex_arena.transfer_interior_interval(
-        &mut pool.annex_chunks,
-        &mut destination.annex_arena,
-        annex_position,
-        annex_position,
-    )?;
-    Ok(PageInteriorTransferLoan {
-        source: source.id,
-        destination: destination.id,
-        nodes,
-        annex,
-    })
+    transfer_page_interior_intervals(pool, source, &[], &[], destination)
 }
 
 pub(crate) fn preflight_empty_page_box_body(
@@ -1565,18 +1583,8 @@ pub(crate) fn preflight_empty_page_box_body(
 ) -> Result<(), ForkArenaError> {
     pool.validate_region(source)?;
     pool.validate_region(destination)?;
-    source.pub_arena.preflight_interior_interval(
-        &pool.chunks,
-        &destination.pub_arena,
-        node_position,
-        node_position,
-    )?;
-    source.annex_arena.preflight_interior_interval(
-        &pool.annex_chunks,
-        &destination.annex_arena,
-        annex_position,
-        annex_position,
-    )
+    let _ = (node_position, annex_position);
+    preflight_page_interior_intervals(pool, source, &[], &[], destination)
 }
 
 pub(crate) fn preflight_page_interior_closure(
@@ -1598,25 +1606,110 @@ pub(crate) fn preflight_page_interior_closure(
         node_range.start,
         node_range.end,
     )?;
-    source.pub_arena.preflight_interior_interval(
+    let node_ranges = (!node_range.is_empty())
+        .then_some(node_range)
+        .into_iter()
+        .collect::<Vec<_>>();
+    let annex_ranges = (!annex_range.is_empty())
+        .then_some(annex_range)
+        .into_iter()
+        .collect::<Vec<_>>();
+    preflight_page_interior_intervals(pool, source, &node_ranges, &annex_ranges, destination)
+}
+
+fn interval_contains(ranges: &[std::ops::Range<usize>], position: usize) -> bool {
+    let index = ranges.partition_point(|range| range.end <= position);
+    ranges
+        .get(index)
+        .is_some_and(|range| range.start <= position && position < range.end)
+}
+
+fn interval_contains_range(
+    ranges: &[std::ops::Range<usize>],
+    dependency: std::ops::Range<usize>,
+) -> bool {
+    let index = ranges.partition_point(|range| range.end <= dependency.start);
+    ranges
+        .get(index)
+        .is_some_and(|range| range.start <= dependency.start && dependency.end <= range.end)
+}
+
+/// Proves exact direct closure over both selected lanes before a disjoint box
+/// body move. The generic arena checks selected chunk ownership/predecessors;
+/// this typed pass checks each resident record's direct child and annex keys.
+pub(crate) fn preflight_page_interior_intervals(
+    pool: &NodePool,
+    source: &NodeRegion<PageRole>,
+    node_ranges: &[std::ops::Range<usize>],
+    annex_ranges: &[std::ops::Range<usize>],
+    destination: &NodeRegion<DurableRole>,
+) -> Result<(), ForkArenaError> {
+    pool.validate_region(source)?;
+    pool.validate_region(destination)?;
+    source.pub_arena.preflight_interior_intervals(
         &pool.chunks,
         &destination.pub_arena,
-        node_range.start,
-        node_range.end,
+        node_ranges,
     )?;
-    source.annex_arena.preflight_interior_interval(
+    source.annex_arena.preflight_interior_intervals(
         &pool.annex_chunks,
         &destination.annex_arena,
-        annex_range.start,
-        annex_range.end,
+        annex_ranges,
     )?;
-    source.pub_arena.preflight_paired_interval_floor(
-        &pool.chunks,
-        node_range.start,
-        node_range.end,
-        annex_range.start,
+    let annex = NodeAnnexView::new(&pool.annex_chunks, &source.annex_arena);
+    source
+        .pub_arena
+        .visit_interval_values(&pool.chunks, node_ranges, |record| {
+            let mut closed = true;
+            record
+                .visit_node_lists(annex, |child| {
+                    if child.is_empty() {
+                        return;
+                    }
+                    let admitted = source
+                        .pub_arena
+                        .owner_relative_list_block_range(&pool.chunks, child.coordinate())
+                        .ok();
+                    closed &= admitted.is_some_and(|range| {
+                        interval_contains(node_ranges, range.start)
+                            && interval_contains(node_ranges, range.end - 1)
+                    });
+                })
+                .ok_or(ForkArenaError::InvalidRange)?;
+            record
+                .visit_annex_block_ranges(annex, |range| {
+                    closed &= interval_contains_range(annex_ranges, range);
+                })
+                .ok_or(ForkArenaError::InvalidRange)?;
+            closed.then_some(()).ok_or(ForkArenaError::InvalidRegion)
+        })
+}
+
+pub(crate) fn transfer_page_interior_intervals(
+    pool: &mut NodePool,
+    source: &mut NodeRegion<PageRole>,
+    node_ranges: &[std::ops::Range<usize>],
+    annex_ranges: &[std::ops::Range<usize>],
+    destination: &mut NodeRegion<DurableRole>,
+) -> Result<PageInteriorTransferLoan, ForkArenaError> {
+    preflight_page_interior_intervals(pool, source, node_ranges, annex_ranges, destination)?;
+    let nodes = source.pub_arena.transfer_interior_intervals(
+        &mut pool.chunks,
+        &mut destination.pub_arena,
+        node_ranges,
     )?;
-    Ok(())
+    let annex = source.annex_arena.transfer_interior_intervals(
+        &mut pool.annex_chunks,
+        &mut destination.annex_arena,
+        annex_ranges,
+    )?;
+    pool.closure_transitions.envelope_moves =
+        pool.closure_transitions.envelope_moves.saturating_add(1);
+    Ok(PageInteriorTransferLoan {
+        source: source.id,
+        destination: destination.id,
+        chunks: PageInteriorTransferredChunks::Partitioned { nodes, annex },
+    })
 }
 
 pub(crate) fn rollback_page_interior_closure(
@@ -1630,16 +1723,30 @@ pub(crate) fn rollback_page_interior_closure(
     if loan.source != source.id || loan.destination != destination.id {
         return Err(ForkArenaError::InvalidRegion);
     }
-    source.pub_arena.rollback_interior_interval(
-        &mut pool.chunks,
-        &mut destination.pub_arena,
-        loan.nodes,
-    )?;
-    source.annex_arena.rollback_interior_interval(
-        &mut pool.annex_chunks,
-        &mut destination.annex_arena,
-        loan.annex,
-    )
+    match loan.chunks {
+        PageInteriorTransferredChunks::Partitioned { nodes, annex } => {
+            source.pub_arena.preflight_rollback_interior_intervals(
+                &pool.chunks,
+                &destination.pub_arena,
+                &nodes,
+            )?;
+            source.annex_arena.preflight_rollback_interior_intervals(
+                &pool.annex_chunks,
+                &destination.annex_arena,
+                &annex,
+            )?;
+            source.pub_arena.rollback_interior_intervals(
+                &mut pool.chunks,
+                &mut destination.pub_arena,
+                nodes,
+            )?;
+            source.annex_arena.rollback_interior_intervals(
+                &mut pool.annex_chunks,
+                &mut destination.annex_arena,
+                annex,
+            )
+        }
+    }
 }
 
 /// Moves a whole self-contained closure envelope and rebrands every nested
@@ -1860,6 +1967,8 @@ pub(crate) fn structural_copy_fallback<Source, Destination>(
 }
 
 impl RegionValue<PageMaterialLane> for RegionNode {
+    const HAS_INLINE_REGION_LISTS: bool = false;
+
     fn visit_region_lists(
         &self,
         visit: &mut dyn FnMut(crate::fork_arena::ArenaListId<PageMaterialLane>),
@@ -1886,6 +1995,8 @@ impl RegionValue<PageMaterialLane> for Node<PageListId> {
 }
 
 impl RegionValue<NodeAnnexLane> for u32 {
+    const HAS_INLINE_REGION_LISTS: bool = false;
+
     fn visit_region_lists(
         &self,
         _visit: &mut dyn FnMut(crate::fork_arena::ArenaListId<NodeAnnexLane>),
