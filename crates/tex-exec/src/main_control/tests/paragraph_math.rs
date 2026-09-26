@@ -333,6 +333,38 @@ fn paragraph_entry_snapshots_language_before_first_character() {
         assert_eq!(languages, [vec![(0, 2, 3)], vec![]]);
     });
 }
+
+#[test]
+fn display_resume_snapshots_hyphenation_context_for_following_paragraph() {
+    // TeX82 §1200 pushes a fresh horizontal paragraph after the display;
+    // §1091's language and minima must seed its §919 second pass as well.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        for (parameter, value) in [
+            (IntParam::LANGUAGE, 7),
+            (IntParam::LEFT_HYPHEN_MIN, 2),
+            (IntParam::RIGHT_HYPHEN_MIN, 3),
+        ] {
+            crate::test_harness::assign_int_param(
+                stores,
+                parameter,
+                value,
+                tex_state::AssignmentScope::Global,
+            )
+            .expect("hyphenation parameter assignment");
+        }
+        let mut effects = DiagnosticEffects::new();
+        control
+            .resume_display_inner(stores, &mut effects, Vec::new(), false, &mut None)
+            .expect("display resume");
+        assert_eq!(control.modes.current_mode(), Mode::Horizontal);
+        assert_eq!(
+            control.modes.current_list().initial_hyphen_context(),
+            (7, 2, 3)
+        );
+        assert_eq!(control.modes.current_list().hyphen_language(), 7);
+    });
+}
 #[test]
 fn opentype_only_math_family_rejection_precedes_state_mutation() {
     let key = tex_fonts::FontRequestKey::new(

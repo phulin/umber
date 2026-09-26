@@ -5571,7 +5571,7 @@ impl<G> MainControl<G> {
         };
         self.modes
             .current_list_mutation()
-            .set_hyphen_context(language, left, right);
+            .begin_paragraph_hyphen_context(language, left, right);
         self.modes.current_list_mutation().set_space_factor(1000);
         self.modes.current_list_mutation().append(
             &mut stores

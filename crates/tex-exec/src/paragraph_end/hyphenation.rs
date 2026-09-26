@@ -132,6 +132,13 @@ impl HyphenationWalk<'_, '_> {
                         start,
                         (self.language, self.left, self.right),
                     ) {
+                        // TeX82 §1073/pdfTeX §1610 may read a language node
+                        // between the glue and the first letter. The outer
+                        // §1043 scan must retain that context when this walk
+                        // skips the looked-ahead nodes.
+                        self.language = candidate.language;
+                        self.left = candidate.left;
+                        self.right = candidate.right;
                         let next = hyphenate_candidate_after_glue(
                             stores,
                             diagnostic_effects,
@@ -2984,6 +2991,80 @@ mod tests {
                     _ => {}
                 });
             assert_eq!(discs_by_language, [7]);
+        });
+    }
+
+    #[test]
+    fn language_node_in_glue_lookahead_governs_this_word_and_the_next() {
+        // TeX82 §§1043, 1073/pdfTeX §1610: the hyphenation lookahead may
+        // consume a language node after glue. Its language and minima remain
+        // current when the outer scan resumes after the looked-ahead word.
+        crate::test_harness::with_nonstop_plain_universe(|universe| {
+            let mut stores = universe.command_context().expect("test state is admitted");
+            let font = hyphenation_font(&mut stores);
+            stores.set_font_hyphen_char(font, i32::from(b'-'));
+            stores.add_hyphenation_exception_for_language(
+                0,
+                ExceptionSpec {
+                    word: "abcd".into(),
+                    positions: vec![2],
+                },
+            );
+            for (restored_minima, expected_discs) in
+                [(None, 0), (Some((3, 2)), 0), (Some((2, 2)), 2)]
+            {
+                let mut nodes = vec![
+                    Node::Whatsit(tex_state::node::Whatsit::Language {
+                        language: 2,
+                        left_hyphen_min: 3,
+                        right_hyphen_min: 2,
+                    }),
+                    Node::Glue {
+                        origin: tex_state::node::GlueSpecOrigin::Owned,
+                        spec: tex_state::glue::GlueSpec::ZERO,
+                        kind: tex_state::node::GlueKind::Normal,
+                        leader: None,
+                    },
+                ];
+                if let Some((left_hyphen_min, right_hyphen_min)) = restored_minima {
+                    nodes.push(Node::Whatsit(tex_state::node::Whatsit::Language {
+                        language: 0,
+                        left_hyphen_min,
+                        right_hyphen_min,
+                    }));
+                }
+                nodes.extend("abcd".chars().map(|ch| character(font, ch)));
+                nodes.push(Node::Glue {
+                    origin: tex_state::node::GlueSpecOrigin::Owned,
+                    spec: tex_state::glue::GlueSpec::ZERO,
+                    kind: tex_state::node::GlueKind::Normal,
+                    leader: None,
+                });
+                nodes.extend("abcd".chars().map(|ch| character(font, ch)));
+                let source = stores.publish_page_nodes(nodes);
+                let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+                let mut scratch = crate::mode::HorizontalModeScratch::default();
+                let mut fuel = tex_command::CommandFuelLedger::new(10_000).expect("bounded fuel");
+                let output = hyphenated_hlist_with_initial_context(
+                    &mut stores,
+                    &mut effects,
+                    source,
+                    (0, 2, 2),
+                    &mut scratch,
+                    fuel.fuel_mut(),
+                )
+                .expect("lookahead traversal succeeds");
+                let discs = stores
+                    .page_nodes(output.semantic)
+                    .expect("semantic list")
+                    .iter()
+                    .filter(|node| matches!(node, tex_state::NodeView::Disc { .. }))
+                    .count();
+                assert_eq!(
+                    discs, expected_discs,
+                    "restored minima: {restored_minima:?}"
+                );
+            }
         });
     }
 
