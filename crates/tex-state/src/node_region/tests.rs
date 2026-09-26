@@ -1211,6 +1211,66 @@ fn copied_sibling_boxes_stamp_before_multiple_annex_blocks_seal() {
 }
 
 #[test]
+fn copied_boxes_with_inline_children_keep_annex_chunks_packed() {
+    let mut pool = NodePool::new();
+    let mut source = pool.start_region::<DurableRole>().expect("source");
+    let child = source
+        .publish_owned(&mut pool, [Node::Penalty(11)])
+        .expect("inline source child");
+    let roots = (0..400)
+        .map(|_| {
+            source
+                .publish_owned(&mut pool, [boxed(child.list)])
+                .expect("source box")
+        })
+        .collect::<Vec<_>>();
+    let mut destination = pool.start_region::<PageRole>().expect("destination");
+    for root in roots {
+        copy_region_root_into(&mut pool, &source, root, &mut destination, false)
+            .expect("independent box copy");
+    }
+    assert!(
+        destination.annex_arena.payload_position_end() < 32,
+        "inline children do not strand one 1,024-word annex chunk per box"
+    );
+}
+
+#[test]
+fn copied_box_with_empty_annex_body_survives_source_retirement_and_whole_move() {
+    let mut pool = NodePool::new();
+    let mut source = pool.start_region::<DurableRole>().expect("source");
+    let child = source
+        .publish_owned(&mut pool, [Node::Penalty(19)])
+        .expect("inline child");
+    let root = source
+        .publish_owned(&mut pool, [boxed(child.list)])
+        .expect("source box");
+    let mut page = pool.start_region::<PageRole>().expect("copied page");
+    let copied = copy_region_root_into(&mut pool, &source, root, &mut page, false)
+        .expect("explicit copied box");
+    pool.retire_region(source)
+        .map_err(|(error, _)| error)
+        .expect("retire source");
+    let mut closure = page
+        .into_closure(&pool, copied)
+        .map_err(|(error, _)| error)
+        .expect("copied closure");
+    let mut durable = pool
+        .start_region::<DurableRole>()
+        .expect("moved destination");
+    let moved =
+        transfer_closure_into(&mut pool, &mut closure, &mut durable).expect("whole-region move");
+    let wrapper = resident_nodes(&durable, &pool, moved.list);
+    let [Node::HList(boxed)] = wrapper.as_slice() else {
+        panic!("moved copied wrapper");
+    };
+    assert_eq!(
+        resident_nodes(&durable, &pool, boxed.children),
+        [Node::Penalty(19)]
+    );
+}
+
+#[test]
 fn long_flat_copy_uses_bounded_rust_stack() {
     std::thread::Builder::new()
         .stack_size(128 * 1024)

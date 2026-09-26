@@ -104,8 +104,16 @@ closure, remaining fixed bodies in that source node chunk wait until all child
 copies finish. This lets the caller stamp that box with its exact child
 envelope and final wrapper position before a later child can seal its annex.
 Boxes with empty children require no transferred body or stamp.
-The copy walk seals paired logical boundaries around a nonempty box's child
-copies. After every child in a source node chunk is complete, the node arena
+The copy walk seals a node boundary before a nonempty box's child copies.
+Each completed child list seals its own node tail, so the box records the node
+end without a second boundary walk. Annex isolation is lazy: a stack of open
+box envelopes records no annex start until the first actual annex publication
+inside them. That publication seals the preceding tail and records the start
+for each pending envelope. Finishing a box seals its annex tail only if its
+children published annex words; otherwise both annex bounds equal the current
+end. This preserves an exact transferable interval for nested children while
+avoiding a mostly empty 1,024-word annex chunk for each box whose children
+need no annex storage. After every child in a source node chunk is complete, the node arena
 reserves the exact parent append runs and lends their owner-relative positions
 while the parent root remains private. The reservation retains exclusive
 mutable borrows of the node arena, node pool, and private root until it is
@@ -117,6 +125,9 @@ seals the parent tail. This order never mutates a sealed annex block, including
 when hundreds of copied boxes cross annex chunk boundaries. The caller's
 paired operation marks cancel node reservations, annex words, and stamps
 together on any failure before the completed root becomes observable.
+An empty annex interval is anchored at its actual wrapper block when the stamp
+is written; the current annex end can be one past a still-open tail that the
+wrapper reuses.
 The stamp binds the actual wrapper positions to the exact child interval, so
 sibling wrappers may share the parent chunk. Unique consumption moves only
 that child interval and reconstructs one wrapper.

@@ -3,7 +3,7 @@ use super::{
 };
 use crate::fork_arena::ForkArenaError;
 use crate::glue::Order;
-use crate::node::{BoxLr, BoxNode, BoxNodeFields, Node, NodeKind, Sign};
+use crate::node::{BoxLr, BoxNode, BoxNodeFields, Node, NodeKind, Sign, Whatsit};
 use crate::node_record::NodeRecord;
 use crate::node_region::NodePool;
 use crate::node_sequence::SemanticSequenceIdentity;
@@ -1433,6 +1433,64 @@ fn copied_box_wrapper_selects_only_its_stamped_child_blocks() {
     arena
         .rollback_interleaved_page_box(&mut moved, loan)
         .expect("rollback restores copied body");
+    assert!(moved.is_none());
+    assert!(arena.contains(copied));
+    arena.retire_durable(durable_source).expect("retire source");
+}
+
+#[test]
+fn nested_copied_boxes_isolate_actual_annex_writes_and_rollback() {
+    page_arena!(arena, pool, region, 512);
+    let special = |byte| {
+        Node::Whatsit(Whatsit::Special {
+            class: "nested-copy".into(),
+            payload: vec![byte; 80],
+        })
+    };
+    let inner_child = arena
+        .publish_owned([special(1)])
+        .expect("inner annex child");
+    let inner = arena
+        .publish_owned([boxed(inner_child)])
+        .expect("inner box");
+    let outer_children = arena
+        .publish_owned([special(2), boxed(inner), special(3)])
+        .expect("outer mixed children");
+    let original = arena
+        .publish_owned([boxed(outer_children)])
+        .expect("outer box");
+    let durable_source = arena
+        .copy_page_root_to_durable(original)
+        .expect("durable source");
+    let copied = arena
+        .copy_durable_to_page(&durable_source)
+        .expect("copied nested box");
+    let Node::HList(outer) = resolved(&arena, copied).remove(0) else {
+        panic!("copied outer box");
+    };
+    let inner_record = *arena
+        .region
+        .pub_arena
+        .list(&arena.pool.chunks, outer.children.coordinate())
+        .expect("copied outer children")
+        .get(1)
+        .expect("copied inner wrapper");
+    assert!(
+        inner_record
+            .copied_box_body_stamp(arena.annex_view())
+            .is_some()
+    );
+    let metadata = arena
+        .box_migration_metadata(copied)
+        .expect("outer copied body envelope");
+    assert!(arena.can_finish_interleaved_page_box(copied, &metadata, false));
+    let (moved, loan) = arena
+        .finish_interleaved_page_box(copied, metadata, false)
+        .expect("move exact nested body");
+    let mut moved = Some(moved);
+    arena
+        .rollback_interleaved_page_box(&mut moved, loan)
+        .expect("rollback nested body");
     assert!(moved.is_none());
     assert!(arena.contains(copied));
     arena.retire_durable(durable_source).expect("retire source");

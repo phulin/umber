@@ -31,6 +31,7 @@ pub(super) struct CopyContext<'a> {
     destination_annex: &'a mut ForkArena<u32, NodeAnnexLane>,
     destination_region: NodeRegionId,
     stack: Vec<PageListId>,
+    annex_envelopes: Vec<Option<u32>>,
     fixed_words: Vec<u32>,
     semantic_identity_enabled: bool,
 }
@@ -72,10 +73,15 @@ impl FixedBatchPublisher<'_> {
                     let node_position = reservation
                         .and_then(|reservation| reservation.position_of(index))
                         .ok_or(ForkArenaError::InvalidRange)?;
+                    let annex_body = if envelope.child_annex_start == envelope.child_annex_end {
+                        annex_position..annex_position
+                    } else {
+                        envelope.child_annex_start as usize..envelope.child_annex_end as usize
+                    };
                     let stamp = CopiedBoxBodyStamp::new(
                         self.region,
                         envelope.child_node_start as usize..envelope.child_node_end as usize,
-                        envelope.child_annex_start as usize..envelope.child_annex_end as usize,
+                        annex_body,
                         node_position,
                         annex_position,
                     )
@@ -103,16 +109,44 @@ impl FixedBatchPublisher<'_> {
 }
 
 impl<'a> CopyContext<'a> {
-    fn paired_boundary(&mut self) -> Result<(u32, u32), ForkArenaError> {
+    fn begin_box_body(&mut self) -> Result<u32, ForkArenaError> {
         let node = self.destination.begin_batch(self.pool)?.payload_start();
-        let annex = self
-            .destination_annex
-            .begin_batch(self.annex_pool)?
-            .payload_start();
-        Ok((
-            u32::try_from(node).map_err(|_| ForkArenaError::CapacityOverflow)?,
-            u32::try_from(annex).map_err(|_| ForkArenaError::CapacityOverflow)?,
-        ))
+        self.annex_envelopes.push(None);
+        u32::try_from(node).map_err(|_| ForkArenaError::CapacityOverflow)
+    }
+
+    fn prepare_annex_publication(&mut self) -> Result<(), ForkArenaError> {
+        if self.annex_envelopes.last().is_some_and(Option::is_none) {
+            let start = self
+                .destination_annex
+                .begin_batch(self.annex_pool)?
+                .payload_start();
+            let start = u32::try_from(start).map_err(|_| ForkArenaError::CapacityOverflow)?;
+            for envelope in &mut self.annex_envelopes {
+                if envelope.is_none() {
+                    *envelope = Some(start);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn end_box_body(&mut self) -> Result<(u32, u32, u32), ForkArenaError> {
+        let node_end = u32::try_from(self.destination.payload_position_end())
+            .map_err(|_| ForkArenaError::CapacityOverflow)?;
+        let annex_start = self
+            .annex_envelopes
+            .pop()
+            .ok_or(ForkArenaError::InvalidRange)?;
+        let annex_end = if annex_start.is_some() {
+            self.destination_annex
+                .begin_batch(self.annex_pool)?
+                .payload_start()
+        } else {
+            self.destination_annex.payload_position_end()
+        };
+        let annex_end = u32::try_from(annex_end).map_err(|_| ForkArenaError::CapacityOverflow)?;
+        Ok((node_end, annex_start.unwrap_or(annex_end), annex_end))
     }
 
     pub(super) fn new<Source, Destination>(
@@ -130,6 +164,7 @@ impl<'a> CopyContext<'a> {
             destination: &mut destination.pub_arena,
             destination_annex: &mut destination.annex_arena,
             stack: Vec::new(),
+            annex_envelopes: Vec::new(),
             fixed_words: Vec::new(),
             semantic_identity_enabled,
         }
@@ -231,7 +266,7 @@ impl<'a> CopyContext<'a> {
                     }
                     let child_start = if is_box && has_nonempty_child {
                         defer_fixed_publication = true;
-                        Some(self.paired_boundary()?)
+                        Some(self.begin_box_body()?)
                     } else {
                         None
                     };
@@ -249,8 +284,9 @@ impl<'a> CopyContext<'a> {
                         copied_children[child_index] = copied;
                         count = count.saturating_add(child_count);
                     }
-                    if let Some((child_node_start, child_annex_start)) = child_start {
-                        let (child_node_end, child_annex_end) = self.paired_boundary()?;
+                    if let Some(child_node_start) = child_start {
+                        let (child_node_end, child_annex_start, child_annex_end) =
+                            self.end_box_body()?;
                         box_envelopes.push(CopiedBoxEnvelope {
                             index,
                             child_node_start,
@@ -277,6 +313,7 @@ impl<'a> CopyContext<'a> {
                     }
                     pending.push((index, (body_len + 1) as u16));
                     if !defer_fixed_publication && pending.len() == 16 {
+                        self.prepare_annex_publication()?;
                         FixedBatchPublisher {
                             pool: self.annex_pool,
                             arena: self.destination_annex,
@@ -309,6 +346,7 @@ impl<'a> CopyContext<'a> {
                 let copied_children = children;
                 let mut children = copied_children.iter().copied();
                 let mut reencoded = None;
+                self.prepare_annex_publication()?;
                 let (child_floor, child_annex_floor) = self
                     .destination
                     .dependency_floors_for_region_lists(self.pool, |visit| {
@@ -332,6 +370,9 @@ impl<'a> CopyContext<'a> {
                 paired_floor = paired_floor.min(annex_floor.unwrap_or(usize::MAX));
                 dependency_floor = dependency_floor.min(child_floor.unwrap_or(usize::MAX));
                 paired_floor = paired_floor.min(child_annex_floor.unwrap_or(usize::MAX));
+            }
+            if !pending.is_empty() {
+                self.prepare_annex_publication()?;
             }
             let reservation = self.destination.reserve_constructed_list_run(
                 self.pool,
