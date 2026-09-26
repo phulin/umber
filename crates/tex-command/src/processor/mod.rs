@@ -247,10 +247,11 @@ pub struct CommandProcessor<'episode, 'admission, G> {
     /// starts unavailable; ordinary resident delivery enters `Resident` once
     /// and leaves it there across sequential cursor advances.
     delivery_authority: DeliveryAuthority,
-    /// The non-numeric command that completed the most recent integer scan.
-    /// It remains backed up in input; dimension scanning uses the semantic
-    /// fact to decide whether that replay is a decimal point or a unit.
-    pub(crate) last_integer_terminator: Option<crate::CurrentCommand<G>>,
+    /// The static meaning of the non-numeric command that completed the most
+    /// recent integer scan. The command itself remains backed up in input;
+    /// dimension scanning uses this semantic fact to decide whether that
+    /// replay is a decimal point or a unit.
+    pub(crate) last_integer_terminator: Option<tex_state::meaning::Meaning>,
     next_delivery_sequence: u64,
     /// Set only by canonical outer-validity recovery while a scalar macro
     /// matcher owns `ScannerStatus::Matching`.
