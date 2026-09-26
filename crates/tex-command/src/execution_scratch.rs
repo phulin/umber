@@ -464,10 +464,9 @@ impl MacroWordLane {
         source: MacroArgumentRange<G>,
         position: u32,
         origin_run: &mut u32,
-        destination: &mut MacroAppendPosition,
+        writer: &mut MacroArgumentWriter<G>,
         limit: usize,
         admission: &mut ArgumentRunAdmission<'_, '_, G>,
-        cursor: &mut crate::scanner_kernel::ScannerCursor,
     ) -> Result<u32, ScratchError> {
         let mut consumed = 0_u32;
         let start = source
@@ -487,8 +486,11 @@ impl MacroWordLane {
             if !admission.admits(word) {
                 break;
             }
-            self.append_at(destination, TracedTokenWord::from_parts(word, origin))?;
-            cursor.settle_argument_word(word, false);
+            self.append_at(
+                &mut writer.append,
+                TracedTokenWord::from_parts(word, origin),
+            )?;
+            writer.cursor.settle_argument_word(word, false);
             consumed += 1;
         }
         Ok(consumed)
@@ -929,15 +931,9 @@ impl<G> ExecutionScratch<G> {
         if writer.holdback_len != 0 {
             return Err(ScratchError::InvalidCoordinate);
         }
-        let count = self.macro_words.append_plain_range_at(
-            source,
-            position,
-            origin_run,
-            &mut writer.append,
-            limit,
-            admission,
-            &mut writer.cursor,
-        )?;
+        let count = self
+            .macro_words
+            .append_plain_range_at(source, position, origin_run, writer, limit, admission)?;
         writer.visible_end = writer.append.absolute;
         Ok(count)
     }
