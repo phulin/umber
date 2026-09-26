@@ -4167,7 +4167,6 @@ impl<T, Lane> ForkArena<T, Lane> {
             .ok_or(ForkArenaError::InvalidRange)
     }
 
-    #[allow(dead_code)] // Paired migration codec uses this after branch integration.
     pub(crate) fn owner_relative_list_block_range(
         &self,
         pool: &ChunkPool<T>,

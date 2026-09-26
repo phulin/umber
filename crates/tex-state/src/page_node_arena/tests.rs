@@ -66,7 +66,7 @@ fn stamped_box_interval_moves_and_rollback_restores_original_nodes() {
         .annex_arena
         .live_payload_values(&arena.pool.annex_chunks);
     let stamped = arena
-        .stamp_box_segment(&start, root)
+        .stamp_box_segment(&start, root, None)
         .expect("stamp original wrapper");
     assert_eq!(
         arena

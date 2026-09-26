@@ -2610,7 +2610,7 @@ pub(in crate::main_control) fn apply<G>(
                     .current_list()
                     .last_node_root(stores)
                     .expect("nonvoid box register appended its wrapper");
-                let stamped = stores.stamp_page_box_segment(&start, root);
+                let stamped = stores.stamp_page_box_segment(&start, root, None);
                 let sealed = stores.close_page_box_segment(start);
                 assert_eq!(stamped, sealed, "register box wrapper has exact segment");
             }
@@ -3539,7 +3539,7 @@ pub(in crate::main_control) fn apply<G>(
                         .current_list()
                         .last_node_root(stores)
                         .expect("constructed box remains the current list tail");
-                    let stamped = stores.stamp_page_box_segment(&start, root);
+                    let stamped = stores.stamp_page_box_segment(&start, root, None);
                     let sealed = stores.close_page_box_segment(start);
                     assert_eq!(stamped, sealed, "wrapper stamp matches sealed bounds");
                 }

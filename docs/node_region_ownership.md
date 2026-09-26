@@ -194,6 +194,18 @@ pool-stable coordinates; an operation loan restores those exact slots before
 the mode list rolls back. Several such logical slots may occupy different
 ranges of one physical superblock without sharing semantic ownership.
 
+Box construction can interleave page-owned insertions and adjustments with
+material destined for the box. The original wrapper records these excluded
+paired intervals in a typed variable annex span, published before the wrapper
+tail rotates. A paired boundary isolates that span so it remains page-owned
+when box material moves. Its fixed box payload stores the original construction interval
+and the seven-word key to that span. Each span entry carries four bounds; the
+wrapper's region supplies the shared region identity. Decode validates the
+annex key and serial, span shape, interval containment, and ordering before
+offering the metadata to transfer preflight. Only consuming the unique wrapper
+root supplies move authority. Re-encoding a box clears the entire construction
+metadata tail, including the span key, so a copy cannot duplicate that hint.
+
 Appending a unique wrapper to a mode list writes a backward predecessor edge
 to the preceding box. This can make the wrapper's logical chunk depend on a
 live page prefix even when all its child material is exclusive. In that case,

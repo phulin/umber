@@ -130,7 +130,7 @@ fn page_loan_then_dimension_edit_replays_scalar_before_returning_interval() {
         }))])
         .expect("box wrapper");
     let segment = arena
-        .stamp_box_segment(&start, root)
+        .stamp_box_segment(&start, root, None)
         .expect("immutable interval stamp");
     assert_eq!(arena.close_box_segment(start).expect("box end"), segment);
     let operation = state.begin_operation();

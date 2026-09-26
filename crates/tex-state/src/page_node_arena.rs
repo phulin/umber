@@ -26,6 +26,29 @@ use crate::node_sequence::SemanticSequenceIdentity;
 type PageMaterialNode = NodeRecord<PageMaterialLane>;
 type OwnedPageMaterialNode = Node<PageListId>;
 
+/// Opaque typed-annex coordinate for page-owned intervals excluded from a box.
+#[derive(Clone, Copy, Debug)]
+pub struct PageBoxMigrationKey([u32; 7]);
+
+impl PageBoxMigrationKey {
+    pub(crate) const fn from_words(words: [u32; 7]) -> Self {
+        Self(words)
+    }
+
+    pub(crate) const fn words(self) -> [u32; 7] {
+        self.0
+    }
+}
+
+/// Non-owning description of an original box wrapper's construction ranges.
+/// Consuming the unique semantic root is still required to authorize transfer.
+#[derive(Clone, Debug)]
+pub struct PageBoxMigrationMetadata {
+    pub segment: crate::node_region::PageBoxSegment,
+    pub exclusions: Vec<crate::node_region::PageBoxSegment>,
+    pub sidecar_annex_range: Option<Range<usize>>,
+}
+
 /// Short-lived projection of one admitted compact page-material record.
 ///
 /// The projection retains the record and annex borrows instead of expanding
@@ -95,6 +118,11 @@ impl<'a> PageMaterialNodeRef<'a> {
     #[must_use]
     pub fn box_segment(self) -> Option<crate::node_region::PageBoxSegment> {
         self.record.box_segment(self.annex)
+    }
+
+    #[must_use]
+    pub fn box_migration_metadata(self) -> Option<PageBoxMigrationMetadata> {
+        self.record.box_migration_metadata(self.annex)
     }
 
     #[must_use]
@@ -2419,10 +2447,29 @@ impl<'a> PageMaterialArena<'a> {
         self.region.seal_checkpoint_boundary(self.pool).map(|_| ())
     }
 
+    pub fn publish_box_migration_segments(
+        &mut self,
+        exclusions: &[crate::node_region::PageBoxSegment],
+    ) -> Result<Option<PageBoxMigrationKey>, ForkArenaError> {
+        if exclusions.is_empty() {
+            return Ok(None);
+        }
+        if !crate::node_record::valid_box_exclusions(self.region.id().words(), exclusions) {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        // The sidecar remains page-owned when the box body moves. Isolate its
+        // paired chunk before publication; wrapper rotation seals it again.
+        self.region.seal_checkpoint_boundary(self.pool)?;
+        let mut annex =
+            NodeAnnexWriter::new(&mut self.pool.annex_chunks, &mut self.region.annex_arena);
+        Ok(Some(annex.publish_box_migration_segments(exclusions)))
+    }
+
     pub fn stamp_box_segment(
         &mut self,
         start: &ClosureBuildMark<PageRole>,
         root: PageListId,
+        migrations: Option<PageBoxMigrationKey>,
     ) -> Result<crate::node_region::PageBoxSegment, ForkArenaError> {
         let segment = self.box_segment_at_current_end(start)?;
         let record = *self
@@ -2438,7 +2485,7 @@ impl<'a> PageMaterialArena<'a> {
             let mut annex =
                 NodeAnnexWriter::new(&mut self.pool.annex_chunks, &mut self.region.annex_arena);
             record
-                .stamp_box_segment(&mut annex, segment)
+                .stamp_box_segment(&mut annex, segment, migrations)
                 .ok_or(ForkArenaError::InvalidRange)?;
         }
         debug_assert_eq!(
@@ -2459,6 +2506,18 @@ impl<'a> PageMaterialArena<'a> {
             .ok()?
             .first()?
             .box_segment(self.annex_view())
+    }
+
+    pub fn box_migration_metadata(&self, root: PageListId) -> Option<PageBoxMigrationMetadata> {
+        if root.len() != 1 {
+            return None;
+        }
+        self.region
+            .pub_arena
+            .validated_list(&self.pool.chunks, root.coordinate())
+            .ok()?
+            .first()?
+            .box_migration_metadata(self.annex_view())
     }
 
     pub fn cancel_closure_build(

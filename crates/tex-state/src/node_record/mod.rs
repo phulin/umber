@@ -27,6 +27,7 @@ mod node_codec;
 mod semantic;
 mod whatsit_codec;
 
+pub(crate) use annex::valid_box_exclusions;
 pub(crate) use annex::{AnnexKey, NodeAnnexView, NodeAnnexWriter};
 pub(crate) use layout::NodeRecord;
 pub(crate) use node_codec::RelocatedFixedCopy;

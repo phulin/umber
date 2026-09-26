@@ -464,13 +464,43 @@ impl NodeRecord<PageMaterialLane> {
         }
         let payload =
             annex.resolve_fixed_array::<BoxPayload, BOX_PAYLOAD_WORDS>(key_from_record(self))?;
-        crate::node_region::PageBoxSegment::from_words(payload[28..].try_into().ok()?)
+        crate::node_region::PageBoxSegment::from_words(payload[28..36].try_into().ok()?)
+    }
+
+    pub(crate) fn box_migration_metadata(
+        self,
+        annex: NodeAnnexView<'_>,
+    ) -> Option<crate::page_node_arena::PageBoxMigrationMetadata> {
+        if !matches!(self.kind()?, NodeKind::HList | NodeKind::VList)
+            || self.subtype() != 0
+            || self.flags() != 0
+        {
+            return None;
+        }
+        let payload =
+            annex.resolve_fixed_array::<BoxPayload, BOX_PAYLOAD_WORDS>(key_from_record(self))?;
+        let segment =
+            crate::node_region::PageBoxSegment::from_words(payload[28..36].try_into().ok()?)?;
+        let key: [u32; 7] = payload[36..].try_into().ok()?;
+        let (exclusions, sidecar_annex_range) = if key.iter().all(|word| *word == 0) {
+            (Vec::new(), None)
+        } else {
+            let key = crate::page_node_arena::PageBoxMigrationKey::from_words(key);
+            let (exclusions, range) = annex.box_migration_segments(key, segment)?;
+            (exclusions, Some(range))
+        };
+        Some(crate::page_node_arena::PageBoxMigrationMetadata {
+            segment,
+            exclusions,
+            sidecar_annex_range,
+        })
     }
 
     pub(crate) fn stamp_box_segment(
         self,
         annex: &mut NodeAnnexWriter<'_>,
         segment: crate::node_region::PageBoxSegment,
+        migrations: Option<crate::page_node_arena::PageBoxMigrationKey>,
     ) -> Option<()> {
         if !matches!(self.kind()?, NodeKind::HList | NodeKind::VList)
             || self.subtype() != 0
@@ -478,7 +508,10 @@ impl NodeRecord<PageMaterialLane> {
         {
             return None;
         }
-        annex.stamp_box_segment(key_from_record(self), segment)
+        if let Some(key) = migrations {
+            annex.view().box_migration_segments(key, segment)?;
+        }
+        annex.stamp_box_segment(key_from_record(self), segment, migrations)
     }
 
     pub(crate) fn unset_width(self, annex: NodeAnnexView<'_>) -> Option<Scaled> {

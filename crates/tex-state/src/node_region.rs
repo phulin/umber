@@ -1132,6 +1132,33 @@ impl PageBoxSegment {
         })
     }
 
+    pub(crate) const fn from_exclusion_bounds(
+        region: NodeRegionId,
+        bounds: [u32; 4],
+    ) -> Option<Self> {
+        if bounds[0] > bounds[1]
+            || bounds[2] > bounds[3]
+            || (bounds[0] == bounds[1] && bounds[2] == bounds[3])
+        {
+            return None;
+        }
+        Some(Self {
+            region,
+            node_start: bounds[0],
+            node_end: bounds[1],
+            annex_start: bounds[2],
+            annex_end: bounds[3],
+        })
+    }
+
+    pub(crate) const fn exclusion_from_bounds(self, bounds: [u32; 4]) -> Option<Self> {
+        Self::from_exclusion_bounds(self.region, bounds)
+    }
+
+    pub const fn is_empty(self) -> bool {
+        self.node_start == self.node_end && self.annex_start == self.annex_end
+    }
+
     pub(crate) const fn node_range(self) -> std::ops::Range<usize> {
         self.node_start as usize..self.node_end as usize
     }

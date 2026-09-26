@@ -109,9 +109,10 @@ pub struct NodeAnnexView<'a> {
 pub(super) enum LigaturePayload {}
 pub(super) enum LigatureSource {}
 pub(super) enum BoxPayload {}
-/// The first 28 words are TeX box data. The final eight words carry an
-/// optional, non-owning construction interval for the original wrapper.
-pub(super) const BOX_PAYLOAD_WORDS: usize = 36;
+pub(super) enum BoxMigrationSegments {}
+const BOX_MIGRATION_TAG: u32 = 0x424d_5347;
+/// TeX fields, the original construction interval, and a typed sidecar key.
+pub(super) const BOX_PAYLOAD_WORDS: usize = 43;
 /// The largest fixed body accepted by both the typed writer and prepared copy.
 /// Math choices use 40 words; a larger box construction sidecar raises this
 /// bound without changing the relocation storage in a separate place.
@@ -136,6 +137,26 @@ pub(super) enum DeferredSpecialPayload {}
 pub(super) enum PdfDestinationPayload {}
 pub(super) enum PdfThreadPayload {}
 pub(super) enum PdfColorStackPayload {}
+
+pub(crate) fn valid_box_exclusions(
+    region: [u32; 4],
+    segments: &[crate::node_region::PageBoxSegment],
+) -> bool {
+    let mut previous = None;
+    for &segment in segments {
+        let words = segment.words();
+        if words[..4] != region
+            || words[4] > words[5]
+            || words[6] > words[7]
+            || (words[4] == words[5] && words[6] == words[7])
+            || previous.is_some_and(|end: [u32; 2]| end[0] > words[4] || end[1] > words[6])
+        {
+            return false;
+        }
+        previous = Some([words[5], words[7]]);
+    }
+    true
+}
 
 pub(super) fn key_words<Kind>(key: AnnexKey<Kind>) -> [u32; 7] {
     key.words()
@@ -225,11 +246,14 @@ pub(super) fn decode_box_payload(words: &[u32]) -> Option<BoxNode<PageListId>> {
     if words.len() != 28 && words.len() != BOX_PAYLOAD_WORDS {
         return None;
     }
-    if words.len() == BOX_PAYLOAD_WORDS
-        && words[28..].iter().any(|word| *word != 0)
-        && crate::node_region::PageBoxSegment::from_words(words[28..].try_into().ok()?).is_none()
-    {
-        return None;
+    if words.len() == BOX_PAYLOAD_WORDS {
+        if words[28..36].iter().all(|word| *word == 0) {
+            if words[36..].iter().any(|word| *word != 0) {
+                return None;
+            }
+        } else {
+            crate::node_region::PageBoxSegment::from_words(words[28..36].try_into().ok()?)?;
+        }
     }
     let words = &words[..28];
     let mut cursor = 0;
@@ -446,11 +470,29 @@ impl<'a> NodeAnnexWriter<'a> {
         &mut self,
         key: AnnexKey<BoxPayload>,
         segment: crate::node_region::PageBoxSegment,
+        migrations: Option<crate::page_node_arena::PageBoxMigrationKey>,
     ) -> Option<()> {
         let list = key.list(self.pool.logical_space(), self.pool.chunk_capacity())?;
+        let mut metadata = [0; 15];
+        metadata[..8].copy_from_slice(&segment.words());
+        if let Some(migrations) = migrations {
+            metadata[8..].copy_from_slice(&migrations.words());
+        }
         self.arena
-            .stamp_unsealed_zero_range(self.pool, list, 29, segment.words())
+            .stamp_unsealed_zero_range(self.pool, list, 29, metadata)
             .ok()
+    }
+
+    pub(crate) fn publish_box_migration_segments(
+        &mut self,
+        segments: &[crate::node_region::PageBoxSegment],
+    ) -> crate::page_node_arena::PageBoxMigrationKey {
+        let words = std::iter::once(BOX_MIGRATION_TAG).chain(segments.iter().flat_map(|segment| {
+            let words = segment.words();
+            [words[4], words[5], words[6], words[7]]
+        }));
+        let key = self.append_span_iter::<BoxMigrationSegments>(words);
+        crate::page_node_arena::PageBoxMigrationKey::from_words(key.words())
     }
 
     /// Publishes independent typed fixed records through one or more admitted
@@ -588,6 +630,60 @@ impl<'a> NodeAnnexView<'a> {
         let mut words = Vec::with_capacity(view.len().saturating_sub(1));
         view.for_each_range(1..view.len(), |_, word| words.push(*word));
         Some(words)
+    }
+
+    pub(super) fn box_migration_segments(
+        self,
+        key: crate::page_node_arena::PageBoxMigrationKey,
+        segment: crate::node_region::PageBoxSegment,
+    ) -> Option<(
+        Vec<crate::node_region::PageBoxSegment>,
+        std::ops::Range<usize>,
+    )> {
+        let key = AnnexKey::<BoxMigrationSegments>::from_words(key.words());
+        let list = key.list(self.pool.logical_space(), self.pool.chunk_capacity())?;
+        let view = self.list(key)?;
+        let sidecar_range = self
+            .arena
+            .owner_relative_list_block_range(self.pool, list)
+            .ok()?;
+        let box_annex = segment.annex_range();
+        if sidecar_range.start < box_annex.start
+            || sidecar_range.end != box_annex.end.checked_sub(1)?
+            || view.len() < 6
+            || (view.len() - 2) % 4 != 0
+        {
+            return None;
+        }
+        let words = self.detach_span(key)?;
+        if words.first().copied()? != BOX_MIGRATION_TAG {
+            return None;
+        }
+        let mut exclusions = Vec::with_capacity((words.len() - 1) / 4 + 1);
+        let body_node_end = segment.node_range().end.checked_sub(1)?;
+        for &bounds in words[1..].as_chunks::<4>().0 {
+            let exclusion = segment.exclusion_from_bounds(bounds)?;
+            if exclusion.node_range().start < segment.node_range().start
+                || exclusion.node_range().end > body_node_end
+                || exclusion.annex_range().start < box_annex.start
+                || exclusion.annex_range().end > sidecar_range.start
+            {
+                return None;
+            }
+            exclusions.push(exclusion);
+        }
+        if !valid_box_exclusions(segment.words()[..4].try_into().ok()?, &exclusions) {
+            return None;
+        }
+        let sidecar_node = u32::try_from(body_node_end).ok()?;
+        let sidecar = segment.exclusion_from_bounds([
+            sidecar_node,
+            sidecar_node,
+            u32::try_from(sidecar_range.start).ok()?,
+            u32::try_from(sidecar_range.end).ok()?,
+        ])?;
+        exclusions.push(sidecar);
+        Some((exclusions, sidecar_range))
     }
 }
 

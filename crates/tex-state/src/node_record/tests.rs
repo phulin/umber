@@ -149,6 +149,143 @@ fn box_reencoding_clears_construction_stamp_in_both_copy_paths() {
 }
 
 #[test]
+fn box_migration_sidecar_decodes_multiple_exclusions_and_copies_clear_key() {
+    let mut source = AnnexHarness::new();
+    source.writer().append_fixed::<Fixed>(&[11, 12]);
+    source
+        .arena
+        .seal_boundary(&mut source.pool)
+        .expect("seal first excluded annex chunk");
+    source.writer().append_fixed::<Fixed>(&[13, 14]);
+    source
+        .arena
+        .seal_boundary(&mut source.pool)
+        .expect("seal second excluded annex chunk");
+    let first = crate::node_region::PageBoxSegment::from_words([1, 0, 0, 1, 1, 2, 0, 1])
+        .expect("first excluded interval");
+    let second = crate::node_region::PageBoxSegment::from_words([1, 0, 0, 1, 2, 3, 1, 2])
+        .expect("second excluded interval");
+    let migrations = source
+        .writer()
+        .publish_box_migration_segments(&[first, second]);
+    let sidecar_end = source.arena.payload_position_end();
+    source
+        .arena
+        .seal_boundary(&mut source.pool)
+        .expect("isolate box wrapper annex chunk");
+    let segment = crate::node_region::PageBoxSegment::from_words([
+        1,
+        0,
+        0,
+        1,
+        1,
+        5,
+        0,
+        (sidecar_end + 1) as u32,
+    ])
+    .expect("original box construction");
+    let mut body = [0; annex::BOX_PAYLOAD_WORDS];
+    body[28..36].copy_from_slice(&segment.words());
+    body[36..].copy_from_slice(&migrations.words());
+    let key = source.writer().append_fixed::<annex::BoxPayload>(&body);
+    let record = NodeRecord::<PageMaterialLane>::with_key(NodeKind::HList, 0, 0, key);
+    let metadata = record
+        .box_migration_metadata(source.view())
+        .expect("validated original metadata");
+    assert_eq!(metadata.segment, segment);
+    assert_eq!(&metadata.exclusions[..2], &[first, second]);
+    assert_eq!(metadata.sidecar_annex_range, Some(2..sidecar_end));
+    assert_eq!(metadata.exclusions[2].node_range(), 4..4);
+    assert_eq!(metadata.exclusions[2].annex_range(), 2..sidecar_end);
+
+    let (copy, _) = record
+        .reencode_same_region(&mut source.pool, &mut source.arena, Some)
+        .expect("structural copy");
+    assert!(copy.box_migration_metadata(source.view()).is_none());
+    let mut destination = crate::fork_arena::ForkArena::new();
+    let (cross_region, _) = record
+        .reencode_between_regions(&mut source.pool, &source.arena, &mut destination, Some)
+        .expect("cross-region structural copy");
+    let destination_view = NodeAnnexView::new(&source.pool, &destination);
+    assert!(
+        cross_region
+            .box_migration_metadata(destination_view)
+            .is_none()
+    );
+    assert_eq!(
+        record
+            .box_migration_metadata(source.view())
+            .expect("original sidecar remains valid")
+            .exclusions
+            .len(),
+        3
+    );
+}
+
+#[test]
+fn box_migration_sidecar_rejects_bad_serial_shape_region_and_bounds() {
+    let mut source = AnnexHarness::new();
+    let exclusion = crate::node_region::PageBoxSegment::from_words([1, 0, 0, 1, 1, 2, 0, 1])
+        .expect("excluded interval");
+    let foreign = crate::node_region::PageBoxSegment::from_words([2, 0, 0, 1, 1, 2, 0, 1])
+        .expect("foreign interval");
+    assert!(!annex::valid_box_exclusions([1, 0, 0, 1], &[foreign]));
+    assert!(!annex::valid_box_exclusions(
+        [1, 0, 0, 1],
+        &[exclusion, exclusion]
+    ));
+    source.writer().append_fixed::<Fixed>(&[11, 12]);
+    source
+        .arena
+        .seal_boundary(&mut source.pool)
+        .expect("seal excluded annex chunk");
+    let valid = source.writer().publish_box_migration_segments(&[exclusion]);
+    let end = source.arena.payload_position_end();
+    source
+        .arena
+        .seal_boundary(&mut source.pool)
+        .expect("isolate wrapper annex chunk");
+    let segment =
+        crate::node_region::PageBoxSegment::from_words([1, 0, 0, 1, 1, 3, 0, (end + 1) as u32])
+            .expect("original box construction");
+    let view = source.view();
+    assert!(view.box_migration_segments(valid, segment).is_some());
+
+    let mut serial = valid.words();
+    serial[6] ^= 1;
+    assert!(
+        view.box_migration_segments(
+            crate::page_node_arena::PageBoxMigrationKey::from_words(serial),
+            segment
+        )
+        .is_none()
+    );
+    let bad_shape = source
+        .writer()
+        .append_span::<annex::BoxMigrationSegments>(&[0x424d_5347, 1]);
+    let extended = crate::node_region::PageBoxSegment::from_words([
+        1,
+        0,
+        0,
+        1,
+        1,
+        3,
+        0,
+        (source.arena.payload_position_end() + 1) as u32,
+    ])
+    .expect("construction through malformed sidecar");
+    assert!(
+        source
+            .view()
+            .box_migration_segments(
+                crate::page_node_arena::PageBoxMigrationKey::from_words(bad_shape.words()),
+                extended
+            )
+            .is_none()
+    );
+}
+
+#[test]
 fn fixed_reads_validate_size_publication_and_contiguous_bounds() {
     let mut annex = AnnexHarness::new();
     let mark = annex.arena.operation_mark(&annex.pool);

@@ -319,14 +319,32 @@ impl<'a, G> CommandContext<'a, G> {
             .expect("box wrapper starts in its own paired chunks");
     }
 
+    pub fn publish_page_box_migration_segments(
+        &mut self,
+        exclusions: &[crate::node_region::PageBoxSegment],
+    ) -> Option<crate::page_node_arena::PageBoxMigrationKey> {
+        self.page_nodes
+            .publish_box_migration_segments(exclusions)
+            .expect("box migration exclusions belong to this page region")
+    }
+
     pub fn stamp_page_box_segment(
         &mut self,
         start: &crate::node_region::PageClosureBuildMark,
         root: crate::page_node_arena::PageListId,
+        migrations: Option<crate::page_node_arena::PageBoxMigrationKey>,
     ) -> crate::node_region::PageBoxSegment {
         self.page_nodes
-            .stamp_box_segment(start, root)
+            .stamp_box_segment(start, root, migrations)
             .expect("new box wrapper admits its original construction segment")
+    }
+
+    #[must_use]
+    pub fn page_box_migration_metadata(
+        &self,
+        root: crate::page_node_arena::PageListId,
+    ) -> Option<crate::page_node_arena::PageBoxMigrationMetadata> {
+        self.page_nodes.box_migration_metadata(root)
     }
 
     #[must_use]
