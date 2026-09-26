@@ -82,8 +82,7 @@ fn empty_operations_leave_box_journals_unallocated() {
     }
     assert_eq!(state.operation_depth, 0);
     assert!(state.operation_entries.is_empty());
-    assert!(state.transfer_loans.is_empty());
-    assert!(state.dimension_mutations.is_empty());
+    assert!(state.operation_actions.is_empty());
     assert_eq!(state.operation_entries.capacity(), 0);
 }
 

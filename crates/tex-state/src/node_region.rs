@@ -18,9 +18,7 @@ use crate::fork_arena::{
 #[cfg(feature = "profiling")]
 use crate::fork_arena::ChunkStorageLayoutCensus;
 use crate::node::Node;
-#[cfg(test)]
-use crate::node_record::NodeAnnexWriter;
-use crate::node_record::{NodeAnnexView, NodeRecord};
+use crate::node_record::{NodeAnnexView, NodeAnnexWriter, NodeRecord};
 use crate::node_sequence::SemanticSequenceIdentity;
 use crate::page_node_arena::PageListId;
 
@@ -629,6 +627,49 @@ impl<Role> NodeRegion<Role> {
         })
     }
 
+    /// Publishes one newly constructed durable wrapper around child storage
+    /// already admitted by this region. The source wrapper can have a live
+    /// predecessor outside the moved body; no part of it is copied here.
+    pub(crate) fn publish_box_wrapper(
+        &mut self,
+        pool: &mut NodePool,
+        node: Node<PageListId>,
+        identity: Option<SemanticSequenceIdentity>,
+    ) -> Result<RegionRoot<Role>, ForkArenaError> {
+        if !matches!(node, Node::HList(_) | Node::VList(_)) {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        pool.validate_region(self)?;
+        let annex_operation = self.annex_arena.operation_mark(&pool.annex_chunks);
+        let coordinate = (|| {
+            let mut builder = self.pub_arena.begin_builder(&mut pool.chunks)?;
+            let child_annex_floor = builder.paired_dependency_floor_for(&node)?;
+            let (record, annex_floor) = {
+                let mut annex = NodeAnnexWriter::new(&mut pool.annex_chunks, &mut self.annex_arena);
+                let record = NodeRecord::encode_owned(node.clone(), &mut annex);
+                (record, annex.dependency_floor())
+            };
+            builder.push_with_dependencies(record, &node)?;
+            builder.record_paired_dependency(
+                [annex_floor, child_annex_floor].into_iter().flatten().min(),
+            )?;
+            Ok::<_, ForkArenaError>(builder.finish())
+        })();
+        let coordinate = match coordinate {
+            Ok(coordinate) => coordinate,
+            Err(error) => {
+                self.annex_arena
+                    .restore_operation(&mut pool.annex_chunks, annex_operation)?;
+                return Err(error);
+            }
+        };
+        Ok(RegionRoot {
+            region: self.id,
+            list: PageListId::from_parts(coordinate, identity),
+            _role: PhantomData,
+        })
+    }
+
     /// Seals the current payload tail and opens one fresh
     /// whole-envelope construction suffix. Unlike an operation mark, this
     /// capability can only be consumed by closure sealing.
@@ -1096,6 +1137,16 @@ impl PageBoxSegment {
         self.annex_start as usize..self.annex_end as usize
     }
 
+    /// Construction rotates both tails before publishing the sole wrapper,
+    /// so the final logical chunk of each lane belongs to that wrapper.
+    pub(crate) const fn body_node_range(self) -> std::ops::Range<usize> {
+        self.node_start as usize..(self.node_end - 1) as usize
+    }
+
+    pub(crate) const fn body_annex_range(self) -> std::ops::Range<usize> {
+        self.annex_start as usize..(self.annex_end - 1) as usize
+    }
+
     pub(crate) const fn region(self) -> NodeRegionId {
         self.region
     }
@@ -1429,6 +1480,60 @@ pub(crate) fn transfer_page_interior_closure(
             annex,
         },
     ))
+}
+
+/// Creates an exact reversible paired loan for a box with no resident body.
+/// The vacant destination coordinates position its newly built wrapper after
+/// the source wrapper's construction boundary without moving source data.
+pub(crate) fn loan_empty_page_box_body(
+    pool: &mut NodePool,
+    source: &mut NodeRegion<PageRole>,
+    node_position: usize,
+    annex_position: usize,
+    destination: &mut NodeRegion<DurableRole>,
+) -> Result<PageInteriorTransferLoan, ForkArenaError> {
+    preflight_empty_page_box_body(pool, source, node_position, annex_position, destination)?;
+    let nodes = source.pub_arena.transfer_interior_interval(
+        &mut pool.chunks,
+        &mut destination.pub_arena,
+        node_position,
+        node_position,
+    )?;
+    let annex = source.annex_arena.transfer_interior_interval(
+        &mut pool.annex_chunks,
+        &mut destination.annex_arena,
+        annex_position,
+        annex_position,
+    )?;
+    Ok(PageInteriorTransferLoan {
+        source: source.id,
+        destination: destination.id,
+        nodes,
+        annex,
+    })
+}
+
+pub(crate) fn preflight_empty_page_box_body(
+    pool: &NodePool,
+    source: &NodeRegion<PageRole>,
+    node_position: usize,
+    annex_position: usize,
+    destination: &NodeRegion<DurableRole>,
+) -> Result<(), ForkArenaError> {
+    pool.validate_region(source)?;
+    pool.validate_region(destination)?;
+    source.pub_arena.preflight_interior_interval(
+        &pool.chunks,
+        &destination.pub_arena,
+        node_position,
+        node_position,
+    )?;
+    source.annex_arena.preflight_interior_interval(
+        &pool.annex_chunks,
+        &destination.annex_arena,
+        annex_position,
+        annex_position,
+    )
 }
 
 pub(crate) fn preflight_page_interior_closure(

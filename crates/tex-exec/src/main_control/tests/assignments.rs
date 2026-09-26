@@ -2504,3 +2504,47 @@ fn interactionmode_reads_and_assigns_globally() {
     );
     });
 }
+
+#[test]
+fn repeated_lastbox_removals_keep_older_wrapper_intervals_transferable() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\hbox{\hbox{\kern1pt}\hbox{\kern2pt}\global\setbox1=\lastbox\global\setbox2=\lastbox}\shipout\box1\shipout\box2\end",
+        );
+        run_to_end(&mut control, stores);
+
+        assert_eq!(stores.world().committed_artifacts().len(), 3);
+        assert_eq!(
+            stores.page_region_counters().page_to_durable_nodes_copied,
+            0
+        );
+        assert_eq!(
+            stores.page_region_counters().interleaved_box_wrappers_built,
+            1
+        );
+    });
+}
+
+#[test]
+fn empty_interleaved_box_rebuilds_only_its_wrapper() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\hbox{\hbox{}\hbox{}\global\setbox1=\lastbox\global\setbox2=\lastbox}\shipout\box1\shipout\box2\end",
+        );
+        run_to_end(&mut control, stores);
+
+        assert_eq!(stores.world().committed_artifacts().len(), 3);
+        assert_eq!(
+            stores.page_region_counters().page_to_durable_nodes_copied,
+            0
+        );
+        assert_eq!(
+            stores.page_region_counters().interleaved_box_wrappers_built,
+            1
+        );
+    });
+}

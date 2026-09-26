@@ -58,7 +58,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             || !matches!(destination.ownership, ForkOwnership::Accepted(_))
             || destination.live_payload_len() != 0
             || start < self.base_payload_chunks as usize
-            || start >= end
+            || start > end
             || end > self.live_payload_len()
         {
             return Err(ForkArenaError::InvalidRegion);

@@ -943,6 +943,8 @@ pub struct PageRegionCounters {
     pub held_over_envelopes_moved: u64,
     /// Page-to-durable nodes copied only by a structural fallback.
     pub page_to_durable_nodes_copied: u64,
+    /// One-node wrappers newly built around an exclusively moved box body.
+    pub interleaved_box_wrappers_built: u64,
     /// Nodes copied by TeX's explicit `\copy`/`\unhcopy` operations.
     pub tex_copy_nodes_copied: u64,
     /// Nodes copied because retained checkpoint/group history owns the source.
@@ -1817,6 +1819,7 @@ impl PageRegion {
         let durable = self.nodes.durable_transition_counters();
         PageRegionCounters {
             page_to_durable_nodes_copied: durable.page_to_durable_nodes_copied,
+            interleaved_box_wrappers_built: durable.interleaved_box_wrappers_built,
             tex_copy_nodes_copied: durable.tex_copy_nodes_copied,
             history_preservation_nodes_copied: durable.history_preservation_nodes_copied,
             nested_closure_nodes_copied: durable.nested_closure_nodes_copied,

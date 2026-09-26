@@ -151,20 +151,26 @@ follows the build mark. The selected node and annex ranges move together under
 one receipt, and all predecessor and child coordinates must still resolve
 through the destination's sole owner after the source releases them.
 
-The present `ForkArena` batch is a contiguous suffix of a region-local vector
-of logical blocks. Its detach and rollback receipts, dependency floors,
-checkpoint cursors, and chunk-position indexing all assume that vector has no
-holes. Selecting older child blocks while retaining later page blocks thus
-requires a segmented ownership envelope. Each segment must carry its original
-pool-stable coordinates, exact initialized ranges, and paired node/annex
-ownership. Preflight must validate the supplied unique closure authority,
-account for nodes from both owners inside one physical block, reserve
-destination metadata, and validate every rollback and checkpoint boundary
-before any mutation. Commit
-then changes only segment ownership and the region index; rollback restores
-the same segments to their original positions. Neither path may relocate a
-node, copy an annex word, retain a foreign coordinate, or introduce a
-per-node reference count.
+The arena now records vacant logical slots when an older interval moves out.
+An exclusive box-construction mark rotates both typed tails; the wrapper's
+original annex payload stores the resulting interval coordinates. That stamp
+is non-owning until the mode-list owner consumes that precise wrapper. The
+move then transfers the paired node and annex slots without changing their
+pool-stable coordinates; an operation loan restores those exact slots before
+the mode list rolls back. Several such logical slots may occupy different
+ranges of one physical superblock without sharing semantic ownership.
+
+Appending a unique wrapper to a mode list writes a backward predecessor edge
+to the preceding box. This can make the wrapper's logical chunk depend on a
+live page prefix even when all its child material is exclusive. In that case,
+the wrapper must remain page-owned: move the independently sealed body
+interval and construct exactly one new durable wrapper around the moved child
+root. A body with no nodes requires only that new wrapper. The new wrapper is
+construction, not a recursive closure copy, and the source wrapper's stale
+link never crosses owners. Rollback first discards the new durable wrapper,
+then returns the body slots to their original page coordinates. Preflight
+must check the construction boundary and every child and paired-annex floor
+before either typed lane changes owner.
 
 Opening construction in an isolated region is another valid route for newly
 built boxes, provided ordinary page effects still publish to the page region

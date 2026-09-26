@@ -5602,7 +5602,6 @@ impl<T, Lane> ForkArenaBuilder<'_, T, Lane> {
         Ok(())
     }
 
-    #[cfg(test)]
     pub(crate) fn push_with_dependencies(
         &mut self,
         value: T,
@@ -5622,7 +5621,6 @@ impl<T, Lane> ForkArenaBuilder<'_, T, Lane> {
         )
     }
 
-    #[cfg(test)]
     pub(crate) fn paired_dependency_floor_for(
         &self,
         source: &impl RegionValue<Lane>,
@@ -5630,7 +5628,6 @@ impl<T, Lane> ForkArenaBuilder<'_, T, Lane> {
         self.arena.paired_dependency_floor_for(self.pool, source)
     }
 
-    #[cfg(test)]
     pub(crate) fn record_paired_dependency(
         &mut self,
         paired_dependency_floor: Option<usize>,

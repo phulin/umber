@@ -17,8 +17,9 @@ use crate::node_record::{NodeAnnexView, NodeAnnexWriter, NodeRecord};
 use crate::node_region::{
     ClosureBuildMark, DurableRole, NodeCheckpointMark, NodePool, NodeRegion, NodeSealedBoundary,
     OwnedNodeClosure, PageRole, StructuralCopyReason, copy_closure_into, copy_region_root_into,
-    preflight_page_interior_closure, rollback_page_interior_closure, structural_copy_fallback,
-    transfer_closure_into, transfer_page_interior_closure, transfer_sealed_closure_into,
+    loan_empty_page_box_body, preflight_empty_page_box_body, preflight_page_interior_closure,
+    rollback_page_interior_closure, structural_copy_fallback, transfer_closure_into,
+    transfer_page_interior_closure, transfer_sealed_closure_into,
 };
 use crate::node_sequence::SemanticSequenceIdentity;
 
@@ -631,6 +632,7 @@ type BuiltClosureMoveResult =
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct DurableTransitionCounters {
     pub(crate) page_to_durable_nodes_copied: u64,
+    pub(crate) interleaved_box_wrappers_built: u64,
     pub(crate) tex_copy_nodes_copied: u64,
     pub(crate) history_preservation_nodes_copied: u64,
     pub(crate) nested_closure_nodes_copied: u64,
@@ -1159,20 +1161,76 @@ impl<'a> PageMaterialArena<'a> {
         }
         let source_root = self.region.root(self.pool, root)?;
         let mut durable = self.pool.start_region::<DurableRole>()?;
-        let (durable_root, loan) = match transfer_page_interior_closure(
+        let whole = preflight_page_interior_closure(
             self.pool,
             self.region,
             source_root,
             segment.node_range(),
             segment.annex_range(),
-            &mut durable,
-        ) {
+            &durable,
+        );
+        let result = if whole.is_ok() {
+            transfer_page_interior_closure(
+                self.pool,
+                self.region,
+                source_root,
+                segment.node_range(),
+                segment.annex_range(),
+                &mut durable,
+            )
+        } else {
+            let (wrapper, child) =
+                match self.preflight_interleaved_box_body(root, segment, &durable) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        assert!(self.pool.retire_region(durable).is_ok());
+                        return Err(error);
+                    }
+                };
+            let loaned = if let Some(child) = child {
+                let source_child = self.region.root(self.pool, child)?;
+                transfer_page_interior_closure(
+                    self.pool,
+                    self.region,
+                    source_child,
+                    segment.body_node_range(),
+                    segment.body_annex_range(),
+                    &mut durable,
+                )
+                .map(|(_, loan)| loan)
+            } else {
+                loan_empty_page_box_body(
+                    self.pool,
+                    self.region,
+                    segment.body_node_range().start,
+                    segment.body_annex_range().start,
+                    &mut durable,
+                )
+            };
+            loaned.and_then(|loan| {
+                match durable.publish_box_wrapper(self.pool, wrapper, root.sequence_identity()) {
+                    Ok(root) => Ok((root, loan)),
+                    Err(error) => {
+                        rollback_page_interior_closure(self.pool, self.region, &mut durable, loan)
+                            .expect("failed wrapper construction returns its exact body loan");
+                        Err(error)
+                    }
+                }
+            })
+        };
+        let (durable_root, loan) = match result {
             Ok(result) => result,
             Err(error) => {
                 assert!(self.pool.retire_region(durable).is_ok());
                 return Err(error);
             }
         };
+        if whole.is_err() {
+            self.durable_transitions.interleaved_box_wrappers_built = self
+                .durable_transitions
+                .interleaved_box_wrappers_built
+                .saturating_add(1);
+        }
         let owner = durable
             .into_closure(self.pool, durable_root)
             .unwrap_or_else(|(error, _)| panic!("preflighted durable root: {error:?}"));
@@ -1204,8 +1262,75 @@ impl<'a> PageMaterialArena<'a> {
             segment.annex_range(),
             &destination,
         );
+        let eligible = result.is_ok()
+            || self
+                .preflight_interleaved_box_body(root, segment, &destination)
+                .is_ok();
         assert!(self.pool.retire_region(destination).is_ok());
-        result.is_ok()
+        eligible
+    }
+
+    fn preflight_interleaved_box_body(
+        &self,
+        root: PageListId,
+        segment: crate::node_region::PageBoxSegment,
+        destination: &NodeRegion<DurableRole>,
+    ) -> Result<(Node<PageListId>, Option<PageListId>), ForkArenaError> {
+        if root.len() != 1 || segment.region() != self.region.id() {
+            return Err(ForkArenaError::InvalidRegion);
+        }
+        let wrapper_range = segment.node_range().end - 1..segment.node_range().end;
+        self.region.pub_arena.preflight_interval_root(
+            &self.pool.chunks,
+            root.coordinate(),
+            wrapper_range.start,
+            wrapper_range.end,
+        )?;
+        let wrapper = self
+            .node_cursor(root)?
+            .first()
+            .ok_or(ForkArenaError::InvalidRange)?
+            .to_owned();
+        let boxed = match &wrapper {
+            Node::HList(boxed) | Node::VList(boxed) => boxed,
+            _ => return Err(ForkArenaError::InvalidRange),
+        };
+        let body_nodes = segment.body_node_range();
+        let body_annex = segment.body_annex_range();
+        let diagnostic = boxed.diagnostic_children.filter(|root| !root.is_empty());
+        let child = (!boxed.children.is_empty())
+            .then_some(boxed.children)
+            .or(diagnostic);
+        let Some(child) = child else {
+            if !body_nodes.is_empty() || !body_annex.is_empty() {
+                return Err(ForkArenaError::InvalidRegion);
+            }
+            preflight_empty_page_box_body(
+                self.pool,
+                self.region,
+                body_nodes.start,
+                body_annex.start,
+                destination,
+            )?;
+            return Ok((wrapper, None));
+        };
+        preflight_page_interior_closure(
+            self.pool,
+            self.region,
+            self.region.root(self.pool, child)?,
+            body_nodes.clone(),
+            body_annex,
+            destination,
+        )?;
+        if let Some(diagnostic) = diagnostic {
+            self.region.pub_arena.preflight_interval_root(
+                &self.pool.chunks,
+                diagnostic.coordinate(),
+                body_nodes.start,
+                body_nodes.end,
+            )?;
+        }
+        Ok((wrapper, Some(child)))
     }
 
     pub(crate) fn rollback_interleaved_page_box(
