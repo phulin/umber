@@ -64,6 +64,62 @@ fn lastbox_transfers_prior_constructed_child_without_copying_its_closure() {
 }
 
 #[test]
+fn lastbox_from_completed_paragraph_preserves_earlier_vertical_material() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_cmr10_as(&mut control, stores, "cmr10.tfm");
+        register_source(
+            &mut control,
+            br"\font\f=cmr10 \f\setbox0=\vbox{\hbox{\kern2pt}\noindent A\par\global\setbox1=\lastbox\kern3pt}\end",
+        );
+        run_to_end(&mut control, stores);
+
+        let remaining = box_child_nodes(stores, 0);
+        assert!(
+            remaining.iter().any(|node| matches!(node, Node::HList(boxed) if boxed.width.raw() == 2 * Scaled::UNITY)),
+            "the preceding box survives the paragraph line's removal: {remaining:?}"
+        );
+        assert!(
+            matches!(remaining.last(), Some(Node::Kern { amount, .. }) if amount.raw() == 3 * Scaled::UNITY),
+            "material following lastbox remains in the vertical list: {remaining:?}"
+        );
+        let moved = box_child_nodes(stores, 1);
+        assert!(
+            moved.iter().any(|node| matches!(node, Node::Char { ch: 'A', .. })),
+            "the consumed paragraph line retains its text: {moved:?}"
+        );
+    });
+}
+
+#[test]
+fn lastbox_from_set_alignment_preserves_earlier_row() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_cmr10_as(&mut control, stores, "cmr10.tfm");
+        register_source(
+            &mut control,
+            br"\font\f=cmr10 \f\setbox0=\vbox{\halign{#\cr A\cr B\cr}\global\setbox1=\lastbox\kern3pt}\end",
+        );
+        run_to_end(&mut control, stores);
+
+        let remaining = box_child_nodes(stores, 0);
+        assert!(
+            remaining.iter().any(|node| matches!(node, Node::HList(_))),
+            "the first set row survives the last row's removal: {remaining:?}"
+        );
+        assert!(
+            matches!(remaining.last(), Some(Node::Kern { amount, .. }) if amount.raw() == 3 * Scaled::UNITY),
+            "material after the alignment row survives: {remaining:?}"
+        );
+        let moved = box_child_nodes(stores, 1);
+        assert!(
+            moved.iter().any(|node| matches!(node, Node::HList(_))),
+            "the consumed set row retains its cell: {moved:?}"
+        );
+    });
+}
+
+#[test]
 fn durable_box_appended_then_taken_by_lastbox_gets_fresh_transfer_interval() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);
