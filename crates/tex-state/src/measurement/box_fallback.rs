@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crate::page_node_arena::BuiltBoxOrigin;
 
-const ORIGINS: usize = 10;
+const ORIGINS: usize = 17;
 const SHAPES: usize = 8;
 const CELLS: usize = ORIGINS * SHAPES;
 
@@ -55,6 +55,13 @@ impl BoxFallbackCensus {
         "pdf_form",
         "other",
         "setbox_register_take_output_carrier",
+        "setbox_register_take_output_retained_page",
+        "setbox_register_take_output_pending_successor",
+        "setbox_register_take_output_mode_roots",
+        "setbox_register_take_output_active_box",
+        "setbox_register_take_output_pending_loan",
+        "setbox_register_take_output_ready_armed",
+        "setbox_register_take_output_ready_unarmed",
         "setbox_register_take_retained_durable",
         "setbox_register_take_missing_source",
     ];

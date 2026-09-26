@@ -59,6 +59,7 @@ fallback requires a consumed `PageBuilderState` output-carrier receipt that
 selects the packaged page prefix without taking held-over page material or
 checkpoint history. The page builder owns the source; a bare `PageListId`
 cannot mint that authority.
+
 The setbox scanner completes operand expansion and classifies the register
 take before opening the page construction mark. The direct-take branch only
 reads the durable source and removes the pending target before it cancels
@@ -77,6 +78,94 @@ If either copy fails, the staged copy retires, the pending action disappears,
 and the source binding returns unchanged. Once the destination is installed,
 the ordinary binding inverse and the source-take inverse undo it in reverse
 order, without duplicating the exclusive owner.
+
+### Page-owned output carrier
+
+The common book case is the output routine assigning `\box255` to another
+register. `prepare_box255` consumes a prefix of the current page, may move
+insertion records into class boxes or hold them over, packs the selected page
+as a VList, and installs that wrapper in `PageBuilderState.output_box`. The
+wrapper is in the page region, but its paragraph-line children and annex
+payloads may occupy older page chunks shared at logical chunk boundaries
+with held-over material. No construction suffix beginning at the wrapper can
+claim them. `take_output_box` does remove the actual semantic owner and
+records the page inverse; a copied root coordinate does neither.
+
+For an uncheckpointed page region, the first output-carrier path should move
+the _whole old region envelope_ into a durable box owner. This avoids a late
+recursive census of paragraph lines, glue annexes, nested boxes, and
+unreachable historical records. Before moving it, the existing page-region
+successor builder prepares a fresh region containing independent copies of
+every live _survivor_ root: contribution, current page/held-over insertions,
+page discards, and split discards. It excludes the consumed output box. A
+complete old region can then move even if the selected box and survivor
+records share physical logical chunks. Survivor copy volume is measured
+separately from moved output-box volume; if survivors are large, a later
+selected-range/cut transfer can improve that case without changing authority.
+The old region may contain unreachable records, which are retained with the
+box until that owner retires; none becomes a second semantic alias.
+The whole-envelope transfer still performs the existing mandatory paired
+node/annex admission and validates every direct child dependency. Avoiding
+new graph discovery does not weaken that check. The builder's insertion
+slots are scalar class/status records; page marks refer to generation-owned
+token keys, not node-region chunks. Its five payload roots enumerate the
+page-owned node survivors. A page region with an incomplete external-root
+inventory cannot take this route.
+
+Admission uses the actual page-builder output-box slot and the existing
+successor's complete root inventory. It rejects a retained page-region
+checkpoint, a prepared successor/candidate, an unfinished durable-to-page
+loan, and any live or rollback-restorable mode, alignment, scanner, or
+detached page-node root outside the builder inventory. The mode-list
+succession preflight already checks mode levels and their journal; other
+external owners need equivalent checked receipts or must make this fast path
+decline. The admission and successor-copy preflight finish before clearing
+the output slot, detaching a chunk, or publishing a durable register binding.
+The ordinary output routine has already armed `output_successor_build` for
+the next-page suffix. That construction mark is expected and stays distinct
+from `PageRegionHistory.pending_successor`, which holds a prepared owner
+transition. The former cannot by itself veto the common output-carrier take.
+No caller may request the move by supplying a `PageListId` alone.
+`PageRegionHistory` mints this admission from its actual checkpoint and
+pending-successor state when lending its current arena and builder to the
+command. The command cannot create a retained page checkpoint while that
+borrow is live. The current arena can then replace its resident node region
+with the prepared successor while keeping the command's borrow valid; the
+returned move-only loan holds the old region. The builder's copied survivor
+roots are rebased in place without resetting its active operation journal.
+
+The page operation owns an inverse for the output slot; the durable operation
+owns the register binding and the whole-region transfer loan. Forward order
+is: prepare successor and paired node/annex transfer; consume output slot;
+install successor; loan old region envelopes to the durable owner; install
+destination binding. Rollback reverses the binding first, returns the exact
+paired chunks to the old page region, restores the old current-region slot,
+retires the unexposed successor, then applies the page output-slot inverse.
+This ordering leaves no page journal pointing at a region whose chunks are
+durable-owned. Commit retires the old empty page-region shell and consumes
+the loan. A failure after successor preparation but before publication drops
+only the prepared successor; a failure after detachment uses the same exact
+inverse before any page root becomes visible again. The transfer cannot move
+an accepted checkpoint's chunks because their page roots remain meaningful
+after the operation commits.
+The old region's unreachable node and annex words must be counted against
+the selected box's reachable nodes, and survivor-copy words counted
+separately. The route is worthwhile only if it replaces a larger recursive
+box copy without causing excessive retained backing.
+
+TeX's same-register case still clears the page carrier before destination
+assignment and tracing. For `\setbox255=\box255`, the old destination is
+void at that assignment point; a local group save restores void, while a
+global assignment retains the moved owner. When the destination is another
+register, an overwritten owner keeps its usual group/checkpoint history;
+dimension edits to the moved wrapper remain exclusive and reversible. An
+explicit `\copy255` continues to allocate an independent copy.
+Tracing must format the new box directly from the live page carrier before
+consumption. Calling `copy_box_to_page(255)` would promote that carrier into
+durable storage and destroy the admission proof. After source clear, tracing
+reads the old destination and reports the preformatted new value; any
+diagnostic projection is explicitly independent and paid only when tracing
+is enabled.
 
 Paragraph completion and alignment setting construct boxes from earlier page
 lists. Their wrapper is new, but its child list can contain coordinates from

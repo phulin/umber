@@ -1889,10 +1889,35 @@ impl<'a, G> CommandContext<'a, G> {
     pub fn profile_box_register_take_decline(
         &self,
         source: u16,
+        mode_roots_clear: bool,
+        replay_boxes_clear: bool,
     ) -> crate::page_node_arena::BuiltBoxOrigin {
         use crate::page_node_arena::BuiltBoxOrigin;
         if source == u16::from(u8::MAX) && !self.page.output_box().is_empty() {
-            BuiltBoxOrigin::SetBoxRegisterTakeOutputCarrier
+            match self.page_nodes.output_history_probe() {
+                crate::page_node_arena::PageOutputHistoryProbe::RetainedPage => {
+                    BuiltBoxOrigin::SetBoxRegisterTakeOutputRetainedPage
+                }
+                crate::page_node_arena::PageOutputHistoryProbe::PendingSuccessor => {
+                    BuiltBoxOrigin::SetBoxRegisterTakeOutputPendingSuccessor
+                }
+                crate::page_node_arena::PageOutputHistoryProbe::Unavailable => {
+                    BuiltBoxOrigin::SetBoxRegisterTakeOutputCarrier
+                }
+                crate::page_node_arena::PageOutputHistoryProbe::Ready => {
+                    if !mode_roots_clear {
+                        BuiltBoxOrigin::SetBoxRegisterTakeOutputModeRoots
+                    } else if !replay_boxes_clear {
+                        BuiltBoxOrigin::SetBoxRegisterTakeOutputActiveBox
+                    } else if self.durable_boxes.has_pending_durable_to_page_loan() {
+                        BuiltBoxOrigin::SetBoxRegisterTakeOutputPendingLoan
+                    } else if self.page.has_output_successor_build() {
+                        BuiltBoxOrigin::SetBoxRegisterTakeOutputReadyArmed
+                    } else {
+                        BuiltBoxOrigin::SetBoxRegisterTakeOutputReadyUnarmed
+                    }
+                }
+            }
         } else if self.durable_boxes.value(source).is_some() {
             BuiltBoxOrigin::SetBoxRegisterTakeRetainedDurable
         } else {

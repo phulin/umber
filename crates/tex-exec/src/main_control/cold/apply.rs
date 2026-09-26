@@ -2541,7 +2541,13 @@ pub(in crate::main_control) fn apply<G>(
                         } else {
                             #[cfg(feature = "profiling")]
                             {
-                                stores.profile_box_register_take_decline(*index)
+                                let mode_roots_clear =
+                                    modes.preflight_page_region_succession(stores).is_some();
+                                stores.profile_box_register_take_decline(
+                                    *index,
+                                    mode_roots_clear,
+                                    boxes.active_boxes.is_empty(),
+                                )
                             }
                             #[cfg(not(feature = "profiling"))]
                             {

@@ -934,6 +934,20 @@ pub enum BuiltBoxOrigin {
     #[cfg(feature = "profiling")]
     SetBoxRegisterTakeOutputCarrier,
     #[cfg(feature = "profiling")]
+    SetBoxRegisterTakeOutputRetainedPage,
+    #[cfg(feature = "profiling")]
+    SetBoxRegisterTakeOutputPendingSuccessor,
+    #[cfg(feature = "profiling")]
+    SetBoxRegisterTakeOutputModeRoots,
+    #[cfg(feature = "profiling")]
+    SetBoxRegisterTakeOutputActiveBox,
+    #[cfg(feature = "profiling")]
+    SetBoxRegisterTakeOutputPendingLoan,
+    #[cfg(feature = "profiling")]
+    SetBoxRegisterTakeOutputReadyArmed,
+    #[cfg(feature = "profiling")]
+    SetBoxRegisterTakeOutputReadyUnarmed,
+    #[cfg(feature = "profiling")]
     SetBoxRegisterTakeRetainedDurable,
     #[cfg(feature = "profiling")]
     SetBoxRegisterTakeMissingSource,
@@ -956,6 +970,19 @@ pub struct PageMaterialArena<'a> {
     region: &'a mut NodeRegion<PageRole>,
     semantic_identity_enabled: &'a mut bool,
     durable_transitions: &'a mut DurableTransitionCounters,
+    #[cfg(feature = "profiling")]
+    output_history_probe: PageOutputHistoryProbe,
+}
+
+/// Read-only state of the actual page-history owner at its command lend.
+/// This is diagnostic data, never transfer authority.
+#[cfg(feature = "profiling")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PageOutputHistoryProbe {
+    Unavailable,
+    RetainedPage,
+    PendingSuccessor,
+    Ready,
 }
 
 impl PageMaterialRegion {
@@ -1158,7 +1185,20 @@ impl<'a> PageMaterialArena<'a> {
             region: &mut state.region,
             semantic_identity_enabled: &mut state.semantic_identity_enabled,
             durable_transitions: &mut state.durable_transitions,
+            #[cfg(feature = "profiling")]
+            output_history_probe: PageOutputHistoryProbe::Unavailable,
         }
+    }
+
+    #[cfg(feature = "profiling")]
+    pub(crate) fn with_output_history_probe(mut self, probe: PageOutputHistoryProbe) -> Self {
+        self.output_history_probe = probe;
+        self
+    }
+
+    #[cfg(feature = "profiling")]
+    pub(crate) const fn output_history_probe(&self) -> PageOutputHistoryProbe {
+        self.output_history_probe
     }
 
     fn annex_view(&self) -> NodeAnnexView<'_> {

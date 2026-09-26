@@ -1132,14 +1132,22 @@ impl PageRegionHistory {
     }
 
     pub(crate) fn parts_mut(&mut self) -> (PageMaterialArena<'_>, &mut PageBuilderState) {
+        #[cfg(feature = "profiling")]
+        let output_probe = if self.pending_successor.is_some() {
+            crate::page_node_arena::PageOutputHistoryProbe::PendingSuccessor
+        } else if !self.current().checkpoints.is_empty() {
+            crate::page_node_arena::PageOutputHistoryProbe::RetainedPage
+        } else {
+            crate::page_node_arena::PageOutputHistoryProbe::Ready
+        };
         let current = self
             .regions
             .last_mut()
             .expect("page history always has a current region");
-        (
-            PageMaterialArena::new(&mut self.pool, &mut current.nodes),
-            &mut current.builder,
-        )
+        let arena = PageMaterialArena::new(&mut self.pool, &mut current.nodes);
+        #[cfg(feature = "profiling")]
+        let arena = arena.with_output_history_probe(output_probe);
+        (arena, &mut current.builder)
     }
 
     pub(crate) fn seal_checkpoint(&mut self) -> Result<PageRegionCheckpointKey, ForkArenaError> {
@@ -2567,6 +2575,11 @@ impl PageBuilderState {
 
     fn take_output_successor_build(&mut self) -> Option<PageClosureBuildMark> {
         self.output_successor_build.take()
+    }
+
+    #[cfg(feature = "profiling")]
+    pub(crate) const fn has_output_successor_build(&self) -> bool {
+        self.output_successor_build.is_some()
     }
 
     fn payload_roots(&self) -> PagePayloadRoots {

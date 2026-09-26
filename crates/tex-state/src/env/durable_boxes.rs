@@ -287,6 +287,17 @@ enum DurableOperationAction {
     PageScalar(crate::page::PageOutputBoxDimensionInverse),
 }
 
+impl DurableBoxState {
+    /// A live durable-to-page loan may still name the current page region.
+    /// The output-carrier probe only reads this operation journal.
+    #[cfg(feature = "profiling")]
+    pub(crate) fn has_pending_durable_to_page_loan(&self) -> bool {
+        self.operation_actions
+            .iter()
+            .any(|action| matches!(action, DurableOperationAction::DurableToPage(_)))
+    }
+}
+
 #[derive(Clone, Copy)]
 struct DurableDimensionMutation {
     index: u16,
