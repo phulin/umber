@@ -1051,3 +1051,53 @@ fn long_flat_copy_uses_bounded_rust_stack() {
         .join()
         .expect("bounded-stack copy");
 }
+
+#[test]
+fn copied_partial_parent_chunk_is_sealed_before_child_construction_continues() {
+    let mut pool = NodePool::with_chunk_bytes(64);
+    let mut source = pool.start_region::<PageRole>().expect("source");
+    let leaf = source
+        .publish_owned(&mut pool, [Node::Penalty(17)])
+        .expect("leaf");
+    let parent = source
+        .publish_owned(
+            &mut pool,
+            [Node::Penalty(0), boxed(leaf.list), boxed(leaf.list)],
+        )
+        .expect("parent");
+    let selected = source
+        .pub_arena
+        .slice_list(
+            &mut pool.chunks,
+            parent.list.coordinate(),
+            1..3,
+            &mut Vec::new(),
+        )
+        .expect("partial first chunk");
+    let selected = RegionRoot {
+        region: source.id,
+        list: PageListId::from_parts(selected, None),
+        _role: PhantomData,
+    };
+    let mut durable = pool.start_region::<DurableRole>().expect("durable");
+    let copied =
+        copy_region_root_into(&mut pool, &source, selected, &mut durable, false).expect("copy");
+    let mut closure = durable
+        .into_closure(&pool, copied)
+        .map_err(|(error, _)| error)
+        .expect("closure");
+    let mut page = pool.start_region::<PageRole>().expect("page");
+    let moved = transfer_closure_into(&mut pool, &mut closure, &mut page)
+        .expect("all copied chunks sealed for transfer");
+    let nodes = page.list(&pool, moved).expect("moved root");
+    assert_eq!(nodes.len(), 2);
+    for node in nodes.iter() {
+        let crate::NodeView::HList(node) = node else {
+            panic!("box");
+        };
+        assert_eq!(
+            resident_nodes(&page, &pool, node.children),
+            [Node::Penalty(17)]
+        );
+    }
+}

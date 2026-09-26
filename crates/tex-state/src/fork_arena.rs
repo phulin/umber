@@ -4452,7 +4452,10 @@ impl<T, Lane> ForkArena<T, Lane> {
             );
             remaining = &remaining[count..];
         }
-        Ok(())
+        // A recursive child may allocate before the next parent run. Leaving
+        // this non-current tail unsealed would escape seal_boundary, which
+        // seals only the current arena tail before a whole-region transfer.
+        self.seal_direct_tail(pool, *root)
     }
 
     pub(crate) fn finish_constructed_list(
