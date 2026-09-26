@@ -21,6 +21,21 @@ pub(super) struct TokenMeaning<G> {
     pub(super) control_sequence: Option<Symbol>,
 }
 
+/// How TeX82 §494's `pass_text` treats one word of skipped text.
+#[derive(Clone, Copy)]
+enum SkippedWord {
+    /// Discarded with no effect beyond its fuel charge.
+    Discarded,
+    /// A literal brace, which still moves §347's `align_state`.
+    Brace(i32),
+    /// An `if_test` command, which nests the skip.
+    NestedConditional,
+    /// `\fi` closing a nested conditional.
+    NestedFi,
+    /// A word that needs ordinary delivery settlement.
+    Boundary,
+}
+
 /// One read from the shared raw input kernel, interpreted for expansion.
 /// Preflight and the ordinary expansion loop share this exact admission so
 /// neither has to construct a command for an ordinary unobserved macro.
@@ -119,6 +134,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub(crate) fn get_next_skipping_into(
         &mut self,
         destination: &mut Option<HotCommand<G>>,
+        nested_conditions: &mut u32,
     ) -> Result<DeliveryStatus, CommandError> {
         if self.is_observed()
             || self.command.delivery_mode.tracing()
@@ -147,28 +163,37 @@ impl<G> CommandProcessor<'_, '_, G> {
 
         self.pending_diagnostic_location = None;
         let mut consumed = 0_u32;
+        // TeX82 §347 counts every skipped brace in `align_state`. No
+        // alignment is active on this path, so the run's net brace change is
+        // settled once after it ends.
+        let mut brace_delta = 0_i32;
         let fuel = &mut *self.fuel;
         let state = &*self.state;
         let selected = Self::read_resident_run(self.command, |word, _| {
-            let transparent = match word.literal_catcode() {
-                Some(
-                    tex_state::token::Catcode::BeginGroup | tex_state::token::Catcode::EndGroup,
-                ) => false,
-                Some(tex_state::token::Catcode::Active) => {
-                    classify_meanings && Self::skipped_meaning_is_transparent(state, word)
+            let effect = match word.literal_catcode() {
+                Some(tex_state::token::Catcode::BeginGroup) => SkippedWord::Brace(1),
+                Some(tex_state::token::Catcode::EndGroup) => SkippedWord::Brace(-1),
+                Some(tex_state::token::Catcode::Active) if classify_meanings => {
+                    Self::skipped_command(state, word, *nested_conditions)
                 }
-                Some(_) => true,
+                Some(tex_state::token::Catcode::Active) => SkippedWord::Boundary,
+                Some(_) => SkippedWord::Discarded,
                 // Parameters and frozen tokens keep their input transitions.
-                None => {
-                    word.is_control_sequence()
-                        && classify_meanings
-                        && Self::skipped_meaning_is_transparent(state, word)
+                None if classify_meanings && word.is_control_sequence() => {
+                    Self::skipped_command(state, word, *nested_conditions)
                 }
+                None => SkippedWord::Boundary,
             };
-            if !transparent {
+            if matches!(effect, SkippedWord::Boundary) {
                 return Ok(ResidentAdmission::Boundary);
             }
             fuel.charge()?;
+            match effect {
+                SkippedWord::Brace(delta) => brace_delta += delta,
+                SkippedWord::NestedConditional => *nested_conditions += 1,
+                SkippedWord::NestedFi => *nested_conditions -= 1,
+                SkippedWord::Discarded | SkippedWord::Boundary => {}
+            }
             consumed += 1;
             if fuel.remaining() == 0 || consumed == u32::MAX {
                 Ok(ResidentAdmission::Stop)
@@ -176,6 +201,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                 Ok(ResidentAdmission::Continue)
             }
         })?;
+        if brace_delta != 0 {
+            let alignment = &mut self.command.roots.alignment;
+            self.command
+                .timeline
+                .record_delivery_align_state(alignment.align_state);
+            alignment.align_state += brace_delta;
+        }
         if consumed != 0 {
             self.enter_resident_delivery();
             #[cfg(test)]
@@ -234,41 +266,53 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     /// TeX82 §494 `pass_text` inspects only `cur_cmd`: a conditional
-    /// (`if_test`) or delimiter (`fi_or_else`) ends or nests the skip, and
-    /// §336's `check_outer_validity` owns an outer macro or `\endtemplate`.
-    /// Every other skipped command is discarded without settlement, so its
-    /// word needs one dense meaning lookup and no delivery record.
+    /// (`if_test`) nests the skip, a delimiter (`fi_or_else`) ends it or
+    /// closes a nested conditional, and §336's `check_outer_validity` owns
+    /// an outer macro or `\endtemplate`. Every other skipped command is
+    /// discarded without settlement, so its word needs one dense meaning
+    /// lookup and no delivery record.
     #[inline(always)]
-    fn skipped_meaning_is_transparent(
+    fn skipped_command(
         state: &tex_state::CommandContext<'_, G>,
         word: tex_state::token::TokenWord,
-    ) -> bool {
+        nested_conditions: u32,
+    ) -> SkippedWord {
         let mut meaning = TokenMeaning::empty();
         state.write_packed_token_command_into(word, &mut meaning);
         if meaning.is_outer() {
-            return false;
+            return SkippedWord::Boundary;
         }
-        match meaning.word {
-            MeaningWord::Static(word) => {
-                !matches!(
-                    Meaning::runtime_word_class(word),
-                    tex_state::meaning::StaticCommandClass::Expandable
-                ) || !matches!(
-                    tex_state::meaning::ExpandablePrimitive::from_operand(
-                        Meaning::runtime_word_operand(word)
-                    ),
-                    Some(primitive)
-                        if crate::conditionals::ConditionalKind::from_primitive(primitive)
-                            .is_some()
-                            || matches!(
-                                primitive,
-                                tex_state::meaning::ExpandablePrimitive::Fi
-                                    | tex_state::meaning::ExpandablePrimitive::Else
-                                    | tex_state::meaning::ExpandablePrimitive::Or
-                            )
-                )
+        let MeaningWord::Static(word) = meaning.word else {
+            return SkippedWord::Discarded;
+        };
+        if !matches!(
+            Meaning::runtime_word_class(word),
+            tex_state::meaning::StaticCommandClass::Expandable
+        ) {
+            return SkippedWord::Discarded;
+        }
+        let Some(primitive) = tex_state::meaning::ExpandablePrimitive::from_operand(
+            Meaning::runtime_word_operand(word),
+        ) else {
+            return SkippedWord::Discarded;
+        };
+        match primitive {
+            _ if crate::conditionals::ConditionalKind::from_primitive(primitive).is_some() => {
+                SkippedWord::NestedConditional
             }
-            MeaningWord::Macro { .. } | MeaningWord::Font(_) => true,
+            tex_state::meaning::ExpandablePrimitive::Fi if nested_conditions != 0 => {
+                SkippedWord::NestedFi
+            }
+            tex_state::meaning::ExpandablePrimitive::Else
+            | tex_state::meaning::ExpandablePrimitive::Or
+                if nested_conditions != 0 =>
+            {
+                SkippedWord::Discarded
+            }
+            tex_state::meaning::ExpandablePrimitive::Fi
+            | tex_state::meaning::ExpandablePrimitive::Else
+            | tex_state::meaning::ExpandablePrimitive::Or => SkippedWord::Boundary,
+            _ => SkippedWord::Discarded,
         }
     }
 

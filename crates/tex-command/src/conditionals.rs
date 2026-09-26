@@ -1681,7 +1681,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         let mut nested_conditions = 0_u32;
         let mut destination = None;
         loop {
-            if self.get_next_skipping_into(&mut destination)? != crate::DeliveryStatus::Command {
+            if self.get_next_skipping_into(&mut destination, &mut nested_conditions)?
+                != crate::DeliveryStatus::Command
+            {
                 return Err(CommandError::input_invariant());
             }
             let command = destination

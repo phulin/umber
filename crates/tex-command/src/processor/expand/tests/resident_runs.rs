@@ -41,7 +41,7 @@ fn skipped_resident_run_settles_its_first_conditional_delimiter_once() {
         let mut destination = None;
         assert_eq!(
             processor
-                .get_next_skipping_into(&mut destination)
+                .get_next_skipping_into(&mut destination, &mut 0)
                 .expect("skip delivery"),
             crate::DeliveryStatus::Command
         );
@@ -63,6 +63,79 @@ fn skipped_resident_run_settles_its_first_conditional_delimiter_once() {
             1
         );
         assert_eq!(command.stored_token_advance_counters.packed_loads, 4_097);
+        assert_eq!(command.stored_token_advance_counters.command_writes, 1);
+    });
+}
+
+#[test]
+fn skipped_resident_run_counts_nested_conditionals_and_braces_in_place() {
+    crate::test_harness::with_universe(|universe| {
+        use tex_state::meaning::ExpandablePrimitive;
+        let if_true = install_static(
+            universe,
+            "iftrueish",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::IfTrue),
+        );
+        let else_ = install_static(
+            universe,
+            "elseish",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Else),
+        );
+        let fi = install_static(
+            universe,
+            "fiish",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Fi),
+        );
+        let letter = Token::Char {
+            ch: 'x',
+            cat: Catcode::Letter,
+        };
+        let open = Token::Char {
+            ch: '{',
+            cat: Catcode::BeginGroup,
+        };
+        let close = Token::Char {
+            ch: '}',
+            cat: Catcode::EndGroup,
+        };
+        let mut command = CommandState::default();
+        // TeX82 §494: the nested `\iftrue...\else...\fi` and the balanced
+        // braces are skipped; only the outer `\fi` is delivered. §347 still
+        // counts the skipped braces, which leaves `align_state` net +1 here.
+        crate::test_harness::push(
+            &mut command,
+            [
+                letter, open, if_true, letter, else_, letter, fi, close, open, fi,
+            ],
+        );
+        let align_state = command.roots.alignment.align_state;
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::new(64).expect("skip fuel");
+        let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut effects,
+        );
+        let mut destination = None;
+        let mut nested = 0;
+        assert_eq!(
+            processor
+                .get_next_skipping_into(&mut destination, &mut nested)
+                .expect("skip delivery"),
+            crate::DeliveryStatus::Command
+        );
+        assert_eq!(
+            destination.expect("boundary command").static_meaning(),
+            Some(Meaning::ExpandablePrimitive(ExpandablePrimitive::Fi))
+        );
+        assert_eq!(nested, 0);
+        drop(processor);
+        assert_eq!(fuel.burned(), 10);
+        assert_eq!(command.roots.alignment.align_state, align_state + 1);
         assert_eq!(command.stored_token_advance_counters.command_writes, 1);
     });
 }
@@ -92,7 +165,7 @@ fn skipped_resident_run_stops_before_the_over_budget_word() {
             );
             let mut destination = None;
             assert!(matches!(
-                processor.get_next_skipping_into(&mut destination),
+                processor.get_next_skipping_into(&mut destination, &mut 0),
                 Err(crate::CommandError::FuelExhausted { .. })
             ));
             assert!(destination.is_none());
