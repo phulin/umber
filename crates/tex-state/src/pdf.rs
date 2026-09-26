@@ -1678,7 +1678,6 @@ enum PdfVersionValue<G> {
         bead_head: Option<u32>,
         len: u32,
     },
-    Color(PdfColorRuntimeRoot),
 }
 
 #[derive(Debug)]
@@ -1840,6 +1839,7 @@ pub(crate) struct PdfState<G> {
     color_root: PdfVersionRoot,
     color_index: PdfVersionIndex,
     general_versions: PdfBranchArena<PdfVersionValue<G>>,
+    color_versions: PdfBranchArena<PdfColorRuntimeRoot>,
     open_link_nodes: PdfBranchArena<PdfOpenLinkNode<G>>,
     thread_bead_nodes: PdfBranchArena<PdfThreadBeadNode>,
     color_values: PdfBranchArena<Box<[u8]>>,
@@ -1989,6 +1989,10 @@ impl<G> PdfState<G> {
                     .saturating_mul(std::mem::size_of::<PdfVersionValue<G>>()),
             )
             .saturating_add(
+                (self.color_versions.accepted.len() + self.color_versions.candidate.len())
+                    .saturating_mul(std::mem::size_of::<PdfColorRuntimeRoot>()),
+            )
+            .saturating_add(
                 (self.open_link_nodes.accepted.len() + self.open_link_nodes.candidate.len())
                     .saturating_mul(std::mem::size_of::<PdfOpenLinkNode<G>>()),
             )
@@ -2086,6 +2090,7 @@ impl<G> PdfState<G> {
         self.general_index.reject_candidate();
         self.color_index.reject_candidate();
         self.general_versions.reject_candidate();
+        self.color_versions.reject_candidate();
         self.open_link_nodes.reject_candidate();
         self.thread_bead_nodes.reject_candidate();
         self.color_values.reject_candidate();
@@ -2101,6 +2106,7 @@ impl<G> PdfState<G> {
         self.general_index.accept_candidate();
         self.color_index.accept_candidate();
         self.general_versions.accept_candidate();
+        self.color_versions.accept_candidate();
         self.open_link_nodes.accept_candidate();
         self.thread_bead_nodes.accept_candidate();
         self.color_values.accept_candidate();
@@ -2309,11 +2315,12 @@ impl<G> PdfState<G> {
             target,
         };
         let event = self.color_index.get(self.color_root, key.packed())?;
-        match self.general_versions.get(event) {
-            Some(PdfVersionValue::Color(root)) => Some(*root),
-            Some(_) => unreachable!("PDF color version key has one value family"),
-            None => unreachable!("PDF color version root is live"),
-        }
+        Some(
+            *self
+                .color_versions
+                .get(event)
+                .expect("PDF color version root is live"),
+        )
     }
 
     fn push_color_version(
@@ -2323,9 +2330,7 @@ impl<G> PdfState<G> {
         root: PdfColorRuntimeRoot,
     ) {
         let candidate = self.transaction.is_some();
-        let event = self
-            .general_versions
-            .push(PdfVersionValue::Color(root), candidate);
+        let event = self.color_versions.push(root, candidate);
         let key = PdfGeneralVersionKey::Color {
             row: row as u32,
             target,
@@ -2457,6 +2462,7 @@ impl<G> Default for PdfState<G> {
             color_root: PdfVersionRoot::default(),
             color_index: PdfVersionIndex::default(),
             general_versions: PdfBranchArena::default(),
+            color_versions: PdfBranchArena::default(),
             open_link_nodes: PdfBranchArena::default(),
             thread_bead_nodes: PdfBranchArena::default(),
             color_values: PdfBranchArena::default(),

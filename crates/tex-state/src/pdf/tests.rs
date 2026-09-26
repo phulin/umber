@@ -11,6 +11,148 @@ fn semantic_id(tag: u64) -> StateHashFragment {
     StateHasher::new(tag).finish_fragment()
 }
 
+#[test]
+fn color_history_settles_independently_of_interleaved_general_versions() {
+    fn apply(
+        state: &mut PdfState<()>,
+        target: PdfColorStackTarget,
+        action: PdfColorStackAction,
+    ) -> Vec<u8> {
+        state
+            .apply_color_stack(0, target, &action)
+            .expect("valid color operation")
+            .payload
+    }
+    for accept in [false, true] {
+        let mut state = PdfState::<()>::default();
+        let initial = apply(
+            &mut state,
+            PdfColorStackTarget::Form,
+            PdfColorStackAction::Current,
+        );
+        state.set_match(vec![0], vec![Some((0, 1))], 1, true);
+        apply(
+            &mut state,
+            PdfColorStackTarget::Page,
+            PdfColorStackAction::Push(b"base page".to_vec()),
+        );
+        apply(
+            &mut state,
+            PdfColorStackTarget::Form,
+            PdfColorStackAction::Push(b"base form".to_vec()),
+        );
+        let base = state.snapshot();
+        state.set_match(vec![1], vec![Some((0, 1))], 1, true);
+        apply(
+            &mut state,
+            PdfColorStackTarget::Page,
+            PdfColorStackAction::Set(b"accepted page".to_vec()),
+        );
+        apply(
+            &mut state,
+            PdfColorStackTarget::Form,
+            PdfColorStackAction::Set(b"accepted form".to_vec()),
+        );
+
+        state.open_candidate_lineage(&base);
+        assert_eq!(state.match_capture(0), Some((0, &[0][..])));
+        assert_eq!(
+            apply(
+                &mut state,
+                PdfColorStackTarget::Page,
+                PdfColorStackAction::Current
+            ),
+            b"base page"
+        );
+        state.set_match(vec![2], vec![Some((0, 1))], 1, true);
+        let general_rows =
+            state.general_versions.accepted.len() + state.general_versions.candidate.len();
+        apply(
+            &mut state,
+            PdfColorStackTarget::Page,
+            PdfColorStackAction::Set(b"candidate page".to_vec()),
+        );
+        assert_eq!(
+            apply(
+                &mut state,
+                PdfColorStackTarget::Form,
+                PdfColorStackAction::Pop
+            ),
+            initial
+        );
+        assert_eq!(
+            state.general_versions.accepted.len() + state.general_versions.candidate.len(),
+            general_rows,
+            "color history must not allocate general PDF value rows"
+        );
+
+        if accept {
+            state.accept_candidate_transaction();
+        } else {
+            state.reject_candidate_transaction();
+        }
+        let expected_page = if accept {
+            &b"candidate page"[..]
+        } else {
+            &b"accepted page"[..]
+        };
+        let expected_form = if accept {
+            &initial[..]
+        } else {
+            &b"accepted form"[..]
+        };
+        let expected_match = if accept { 2 } else { 1 };
+        assert_eq!(state.match_capture(0), Some((0, &[expected_match][..])));
+        assert_eq!(
+            apply(
+                &mut state,
+                PdfColorStackTarget::Page,
+                PdfColorStackAction::Current
+            ),
+            expected_page
+        );
+        assert_eq!(
+            apply(
+                &mut state,
+                PdfColorStackTarget::Form,
+                PdfColorStackAction::Current
+            ),
+            expected_form
+        );
+
+        let settled = state.snapshot();
+        apply(
+            &mut state,
+            PdfColorStackTarget::Page,
+            PdfColorStackAction::Pop,
+        );
+        apply(
+            &mut state,
+            PdfColorStackTarget::Form,
+            PdfColorStackAction::Push(b"later".to_vec()),
+        );
+        state.set_match(vec![3], vec![Some((0, 1))], 1, true);
+        state.rollback(settled);
+        assert_eq!(state.match_capture(0), Some((0, &[expected_match][..])));
+        assert_eq!(
+            apply(
+                &mut state,
+                PdfColorStackTarget::Page,
+                PdfColorStackAction::Current
+            ),
+            expected_page
+        );
+        assert_eq!(
+            apply(
+                &mut state,
+                PdfColorStackTarget::Form,
+                PdfColorStackAction::Current
+            ),
+            expected_form
+        );
+    }
+}
+
 fn output() -> PdfOutputParameters {
     PdfOutputParameters {
         output: 1,

@@ -418,6 +418,50 @@ Receipts are under `target/perf-tex-copy-plan/optional-compact-retention/` and
 SHA-256 is
 `4486846d5c5dedbfc9072f611a7c79bcea73b645144b6dbcfb3fe3907ed62669`.
 
+## Heap attribution beyond superblock backing
+
+Heaptrack 1.5.0 ran the same compacted profiling binary at 100 and 200 million
+fuel actions. Both runs reached the exact fuel boundary under the original
+120-second and 1,536 MiB guards. Instrumentation and concurrent builds make
+these diagnostic runs unsuitable for latency comparisons. Heaptrack reports
+390,278,632 and 467,340,396 bytes allocated at the respective global heap peaks.
+These are requested live heap bytes, distinct from resident pages and from
+memory sampled at the exact fuel boundary.
+
+The peak flamegraph attributes the following disjoint allocation paths. A
+stack enters the first matching category in the order shown; remaining stacks
+are grouped as other. Values use decimal MB.
+
+| Allocation path                      | 100-million run peak | 200-million run peak |
+| ------------------------------------ | -------------------- | -------------------- |
+| PDF color-stack history and payloads | 14.20                | 28.57                |
+| Render provenance                    | 10.12                | 21.70                |
+| Verified artifacts                   | 6.89                 | 14.63                |
+| Other retained shipout output        | 13.86                | 28.40                |
+| Durable token lists                  | 16.56                | 24.90                |
+| Definition storage                   | 38.00                | 45.63                |
+| Node-pool chunk metadata             | 44.05                | 44.05                |
+| Source provenance                    | 12.58                | 12.58                |
+| Other                                | 234.02               | 246.87               |
+
+The pool's metadata allocation is separate from its 21.3 MiB of superblock
+backing, and also stays flat across these two runs. Output, provenance,
+tokens, and PDF history explain much of the growing allocated heap. These
+attributions do not prove that the retained data is unnecessary.
+
+One concrete representation cost is avoidable: color history stores a small
+pair of runtime coordinates in the general PDF version enum, paying for its
+largest variant on every update. The separate color index already distinguishes
+that value family. [PDF version storage](pdf_version_index.md) describes moving
+these values into a dedicated compact arena while retaining every historical
+root and the existing candidate settlement rules.
+
+Raw heaptrack traces, demangled peak reports, peak flamegraphs, exact commands,
+and input/binary receipts live in
+`target/perf-tex-copy-plan/remaining-memory-heaptrack/`. The four allocations
+left after complete teardown total 632 bytes; that end-of-process result does
+not explain which histories must remain live during execution.
+
 ## Shipping comparison at the same book prefix
 
 A separate quiet A/B/B/A run compared the earlier `99f75a4d9` shipping binary
@@ -452,3 +496,8 @@ Commands, source and binary hashes, exact diagnostics, and timing receipts are
 in `target/perf-tex-copy-plan/optional-compact-abba-200m/`. The shipping candidate
 SHA-256 is
 `365e89f2ed9e62450f756db010b96da39d51db014c41e0a6ceef39b6dae45067`.
+
+The same shipping binary still reaches the original full-book timeout: exit
+124 after 120.17 seconds, with the original 500-million-fuel and 1,536 MiB
+limits. The receipt is
+`target/perf-tex-copy-plan/optional-compact-original-book/summary.json`.

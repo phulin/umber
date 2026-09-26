@@ -27,3 +27,22 @@ cover sparse high-bit keys, updates and old roots, candidate accept/reject,
 and initialized-node and reserved-vector growth against distinct-key count.
 The checkpoint memory estimate uses vector capacity for this index, since
 unused reserved slots still occupy heap allocation.
+
+Color versions use their own typed value arena. The color index already has
+an independent root and never resolves general PDF values, so storing its
+small current-value and push-stack coordinates in the general value enum
+wastes the space required by the largest unrelated variant on every color
+change. The book heap profile at 100 and 200 million fuel actions attributes
+14.2 and 28.6 MB respectively to color-stack allocation paths, including the
+index and payloads. These are allocations live at each run's global heap peak,
+not a measurement of retained memory at the exact fuel boundary.
+
+The dedicated arena preserves append-only stable coordinates and uses the
+same accepted/candidate settlement as the general arena. Both arenas settle
+with their corresponding indices before any restored lookup is exposed.
+Snapshots still retain separate general and color roots; no historical value
+is overwritten, coalesced, or discarded by this representation change.
+Color values no longer inhabit the general enum, and memory accounting
+includes the dedicated arena. Tests interleave general writes with page and
+form color changes, reject and accept candidates from an older checkpoint,
+and restore the resulting snapshots.

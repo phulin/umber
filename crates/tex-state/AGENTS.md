@@ -346,7 +346,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/pdf.rs`: Checkpointed pdfTeX document mode with generation-typed token
   coordinates in catalog/page collections, deterministic object allocation,
   durable form-list coordinates, allocation-free scalar checkpoint marks,
-  exact inverse journals, one coarse image/form payload prefix plus private
+  exact inverse journals, separate compact color-version and general-version
+  arenas, one coarse image/form payload prefix plus private
   delta, committed-page ledger, and handle-free PDF format wire
   capture/materialization hooks accepting only the current PDF state version.
 - `src/pdf/version_index.rs` and `src/pdf/version_index/tests.rs`: Immutable
@@ -357,7 +358,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
   PDF ledger, including artifacts, resources, raw objects, actions, and final
   document state.
 - `src/pdf/tests.rs`: Generation-typed page/action/object coordinates, owned
-  image payloads, atomic PDF checkpoint rollback, and handle-free format-ledger
+  image payloads, atomic PDF checkpoint rollback, interleaved general/color
+  candidate settlement, and handle-free format-ledger
   round-trip/rejection tests.
 - `src/provenance_resolver.rs`: Explicit cold-demand admission from
   generation-typed provenance coordinates to owned handle-free diagnostic and
