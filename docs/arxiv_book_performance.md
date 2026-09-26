@@ -1,89 +1,133 @@
-# Long-book PDF performance diagnosis
+# Long-book PDF performance audit
 
-The recent-arXiv PDF row `2606.24937` remains a performance diagnosis in
-progress. Its complete, unmodified `book.tex` compiles with the pinned pdfTeX
-oracle, while the frozen Umber test-profile binary reaches the ordinary
-120-second wall guard. The archived failure alone does not identify a semantic
-loop, a scaling owner, or the behavior of a release build. Keep the
-120-second, 1,536 MiB, 500,000,000 expansion-fuel, and 10,000,000
-execution-step guards when testing this row.
+A repeated page-list range traversal made large `\vsplit` inputs scale badly.
+Commit `530552805` batches unchanged ranges and avoids rebuilding an unchanged
+list. On an authenticated 800-split control, the shipping-resolution release
+binary improved from 10.043 to 1.900 seconds of user CPU. The complete arXiv
+book `2606.24937` still reaches its 120-second wall guard with the candidate
+binary. Its release profile instead samples sustained token delivery and
+growing region-node copying; the split control does not establish either as
+the dominant remaining owner. The split correction is validated, but the
+book timeout remains open.
+Keep the 120-second, 1,536 MiB, 500,000,000 expansion-fuel, and 10,000,000
+execution-step acceptance guards.
 
-## Reproduction identity and workload
+## Book identity and workload
 
-The primary receipt is
-`target/arxiv-pdf-wave3-final/rows/2606.24937/result.json`, with the exact
-commands, source archive identity, selected 2025 distribution and formats,
-working directories, and output hashes. The source archive SHA-256 is
+The original row receipt is
+`target/arxiv-pdf-wave3-final/rows/2606.24937/result.json`. It records the
+command, source archive, selected 2025 distribution and formats, working
+directories, and output hashes. The source archive SHA-256 is
 `3a052603f4914ef4226b2ad7401ae56c7e64919a53c5a422061329c555f2ebbe`;
 the materialized `book.tex` SHA-256 is
 `4e120d67196807d37974163f1bc8c5526f2b2df55a6c5ad0812378d3dfc9d9b2`.
-The frozen Umber binary is `target/parity-wave3/umber-final-8dd33323c`
-(SHA-256 `fb3d9e353b42e526c78c272da0bbed3642c597be3fe7581ab72c6e5ab7233cb5`).
 The Umber format SHA-256 is
 `57f9889486c66afd49e3776877dd0b53766d6d9bb79091053db58feb108d632e`;
 the distribution manifest SHA-256 is
 `b5358fc48c9de49b44b39ab4ae255d7ba9ea3c22575b79a68ff852673b52c9b1`.
+The original frozen Umber test-profile binary is
+`target/parity-wave3/umber-final-8dd33323c` (SHA-256
+`fb3d9e353b42e526c78c272da0bbed3642c597be3fe7581ab72c6e5ab7233cb5`).
 
-The book is 1,607,085 source bytes and 29,487 lines. It has 35 chapter
-commands, 309 sections, 705 subsections, 3,415 list items, 187 listings with
-240,161 bytes of listing body text, 647 instances of its five breakable
+The materialized source contains 74 files. `book.tex` has 1,607,085 bytes,
+29,487 lines, 35 chapter commands, 309 sections, 705 subsections, 3,415 list
+items, 187 listings with 240,161 body bytes, 647 instances of five breakable
 `tcolorbox` environments, 72 image inclusions, 753 `\cite` commands, and
-1,456 labels. The breakable boxes occur throughout the four line quartiles
-(218, 176, 103, 150); the listings likewise occur throughout (38, 50, 57,
-42). This is a large mixed LaTeX workload, not evidence of a runaway loop.
+1,456 labels. Breakable boxes occur across all four source-line quartiles
+(218, 176, 103, 150). The pinned pdfTeX oracle completed 588 pages in
+30.30 seconds elapsed and 30.09 seconds user CPU with 73,788 KiB maximum RSS.
+Its log has 10,424 PDF destinations and 14,969 PDF objects. This is a large,
+mixed LaTeX workload; the source counts alone do not identify a loop or
+scaling owner.
 
-The oracle's `reference.time` records 30.30 seconds elapsed, 30.09 seconds
-user CPU, and 73,788 KiB maximum RSS. Its `reference/book.log` records 588
-pages, 10,424 named PDF destinations, and 14,969 PDF objects. The reference
-PDF SHA-256 is
-`76d0a209515de0b3f9e6dc690ff31eb0109708d25c253a6e4a18c9c60b141ad6`.
-The frozen Umber command exits 124 at the 120-second guard; `umber.log`
-contains only the guard settings and timeout notice. There is no completed
-Umber PDF or input-record artifact in that row. Earlier corpus receipts also
-record exit 124, but do not provide a measured growth curve.
+## Measured split owner and correction
 
-## Destination scaling control
+The book's selected `tcbbreakable.code.tex` calls `\vsplit` while assembling
+breakable boxes. Before the correction, `normalize_split_infinite_shrink`
+appended every unchanged source node as a separate one-element page-list
+range, even if there was no offending glue. After the first box or rule,
+`prune_page_top_list_with_discards` likewise appended every remaining node
+individually to the retained list; it also appended each discarded prefix
+node individually to a separate list. Each same-page append could enter
+`PageMaterialArena::append_reencoded_chunk_range`, which walks predecessor
+chunks from tail to head before checking whether the selected range overlaps
+the chunk. `ForkArena::admitted_previous_chunk` checks a fixed two-entry
+lineage array; its cost came from repeated calls, not a growing lineage
+search. With L retained nodes and a proportional number of chunks, L
+one-node appends can traverse O(L²) chunks per prune. Repeatedly splitting
+progressively smaller remainders can therefore yield O(N³) traversal. These
+are source-derived bounds, not measured iteration counts.
 
-Source inspection found two linear scans in `PdfState::define_destination`:
-`reserve_destination` searches existing destination identities, then
-definition finds the reserved object row. With 10,424 oracle destinations,
-this is a plausible quadratic component, but source inspection cannot assign
-its runtime share. A bounded control challenged that hypothesis before any
-engine change.
+The current-base N=800 release profile collected 2,039 cycles samples with
+none lost. `append_reencoded_chunk_range` held 78.47% inclusive and 49.81%
+self; `admitted_previous_chunk` held 21.98% inclusive and 21.88% self.
+Durable-to-Page recursive copying held only 1.78% inclusive on this reduced
+input. The profile is
+`.worktrees/slot-2/target/book-timeout-profile/reduced/split-800.perf`, with
+its symbolized `split-800-report.txt`. The full-book baseline release profile
+separately showed growing recursive node-copy shares: Durable-to-Page
+`copy_list_recursive` rose from 7.23% to 13.19% inclusive between its first
+and last quarters, and Page-to-Durable rose from 3.26% to 6.94% inclusive.
+Those overlapping full-book shares do not make register-copy elimination the
+split-control fix; their book-level cost still needs attribution. The report
+is `.worktrees/slot-2/target/book-timeout-profile/release-children-report.txt`.
 
-The frozen Umber binary compiled generated LaTeX inputs with 100 explicit
-zero-width boxes per shipped page. One family placed a distinct named
-`\pdfdest` in each box; the matched family placed `\pdfsavepos`. Each run used
-the receipt's pinned format and distribution, offline mode, and the ordinary
-guards. Runs were pinned to CPU 10. The controls completed without TeX errors.
+The correction in `530552805` returns the original page-list identity when
+there is no infinite-shrink glue. Otherwise it appends each maximal unchanged
+range once and replaces only offending glue. Remainder pruning now collects
+contiguous retained and discarded ranges separately, appends each range once,
+and preserves the inserted split-top glue and source order. This follows the
+TeX82 split rule: section 976 normalizes infinite shrink, and section 977
+extracts the prefix and replaces the source with its pruned remainder. The
+change leaves box-register consumption, page ownership, and the lower-level
+range traversal contract as separate concerns.
 
-| Commands | Named destinations: user CPU | Saved positions: user CPU | Difference |
-| -------: | ---------------------------: | ------------------------: | ---------: |
-|    1,000 |                       1.10 s |                    1.04 s |     0.06 s |
-|    5,000 |                       1.81 s |                    1.29 s |     0.52 s |
-|   10,000 |                       3.37 s |                    1.66 s |     1.71 s |
+## Matched reduced-workload result
 
-The 10,000-command runs each shipped 100 pages. Generated sources, logs,
-`/usr/bin/time -v` output, and PDFs are under
-`.worktrees/slot-3/target/book-timeout-audit/dest-control/` as
-`dest-N.{tex,log,time,pdf}` and `savepos-N.{tex,log,time,pdf}`. The measured
-difference includes all destination processing and PDF output differences;
-it is not a measurement of the two scans alone. It is too small to explain
-the book's 120-second failure by itself. Do not promote a destination-index
-change as this row's fix without a representative profile assigning it a
-meaningful share.
+Both Umber binaries used the same generated `split-N.tex` inputs, optimized
+release configuration, and CPU 10. Each generated input puts N zero-width
+1 pt-high rule boxes in register zero, separated by zero-point vertical
+skips, then performs N repetitions of `\setbox1=\vsplit0 to 1pt`, counting
+whether the source box is nonvoid before each split. This synthetic workload
+is separate from the original book. Every run exited zero and reported exactly
+N nonvoid source-box observations. The baseline release binary SHA-256 is
+`45f6736b4dd09893c5ace1e62c16e581dae827e207194e2c9e24b4da46c37323`;
+the candidate SHA-256 is
+`74834fe6eedb39305ec888ca256866f7a768092297e582ddff8eeb20cfdd74c0`.
+The N=800 input SHA-256 is
+`07456e9d133a7511924fbaa7c67d4403bf3d79fd6e0a66e660c48925c9357970`.
 
-## Original-source work endpoints
+| Splits | Baseline user CPU | Candidate user CPU | Speedup |
+| -----: | ----------------: | -----------------: | ------: |
+|    100 |           0.098 s |            0.071 s |   1.38× |
+|    200 |           0.329 s |            0.161 s |   2.04× |
+|    400 |           1.596 s |            0.486 s |   3.28× |
+|    800 |          10.043 s |            1.900 s |   5.29× |
 
-A separate shipping-resolution release binary in
-`.worktrees/slot-2/target/release/umber` (SHA-256
-`45f6736b4dd09893c5ace1e62c16e581dae827e207194e2c9e24b4da46c37323`)
-ran fresh copies of all 74 materialized source members, with the same pinned
-format, distribution, offline mode, PDF output request, and 120-second,
-1,536 MiB, and 10,000,000-step guards. Only expansion fuel changed to make
-exact engine-work endpoints. Each run was pinned to CPU 10, exited 1, and
-reported exhaustion at precisely its requested fuel count. These diagnostic
-endpoints are not corpus acceptance runs.
+Sources and controls are under
+`.worktrees/slot-1/target/book-vsplit-scaling/`; matched timing and DVI
+artifacts are there and under `.worktrees/slot-2/target/book-timeout-profile/reduced/`.
+The candidate N=800 capture has 387 cycles samples with none lost. The old
+`append_reencoded_chunk_range` hotspot is absent from its flat top. The
+candidate capture is `candidate-split-800.perf` beside its symbolized report
+in the latter directory. The reduced speedup establishes that the targeted
+path improved; it does not measure its share of the complete book.
+
+## Original-book and regression boundaries
+
+Both the frozen original test-profile binary and the baseline release binary
+exited 124 at the 120-second wall guard on the full book. The candidate
+release binary also exited 124 after 120.29 seconds elapsed, 114.53 seconds
+user CPU, and 1,059,984 KiB maximum RSS. None produced a completed book PDF
+or input-record artifact. Its exact command and guard output are in
+`.worktrees/slot-2/target/book-timeout-profile/candidate-book.{time,stderr}`.
+Do not infer a whole-book speedup from the reduced control.
+
+For an exact internal-work boundary, a fresh copy of the original 74 source
+files ran on CPU 10 with the same pinned format, distribution, offline mode,
+PDF output request, 120-second wall and 1,536 MiB RSS guards, and 10,000,000
+execution-step cap. Only expansion fuel changed. The baseline release run
+exited at each requested fuel cap:
 
 | Fuel actions | User CPU | Elapsed | Maximum RSS |
 | -----------: | -------: | ------: | ----------: |
@@ -94,116 +138,67 @@ endpoints are not corpus acceptance runs.
 |  100,000,000 |  24.50 s | 25.98 s | 461,392 KiB |
 |  200,000,000 |  51.91 s | 54.54 s | 636,368 KiB |
 
-The corresponding `run.log`, `run.time`, and source copy are under
-`.worktrees/slot-3/target/book-timeout-audit/fuel-endpoints/fuel-N/` in the
-primary checkout. The marginal user CPU per million fuel actions is about
-0.30 seconds over 50–100 million actions and 0.27 seconds over 100–200
-million. These endpoints do not show continuing acceleration over the later
-span. They also do not identify the operation mix, page progress, or an owner
-of retained memory. Fuel exhaustion produces no completed PDF or input-record
-artifact.
+Artifacts are under
+`.worktrees/slot-3/target/book-timeout-audit/fuel-endpoints/fuel-N/`.
+A balanced serial A/B–B/A comparison then ran four fresh, verified
+source copies on CPU 10 to exactly 200 million expansion-fuel actions.
+Every run exited 1 at that cap without acquiring additional resources:
 
-## Release profile boundary
+| Order | Binary | User CPU | Elapsed | Maximum RSS |
+| ----: | :----- | -------: | ------: | ----------: |
+|     1 | Base   |  51.86 s | 54.47 s | 636,060 KiB |
+|     2 | Fix    |  51.86 s | 54.42 s | 636,188 KiB |
+|     3 | Fix    |  51.68 s | 54.36 s | 636,316 KiB |
+|     4 | Base   |  52.05 s | 54.84 s | 636,700 KiB |
 
-The release capture's first-to-last-quarter inclusive shares rise from 7.52%
-to 14.67% in `copy_record_chunk_prefix`, from 7.23% to 13.19% in the
-Durable-to-Page `copy_list_recursive` specialization, and from 3.26% to
-6.94% in the Page-to-Durable specialization. These call trees overlap and
-must not be summed. Expanded token delivery stays in a narrower 19.51% to
-17.08% band. The symbolized report is
-`.worktrees/slot-2/target/book-timeout-profile/release-children-report.txt`.
-This identifies recursive node copying as growing work within the captured
-release run. Inclusive shares overlap; they do not establish that copying is
-the dominant cause of the timeout.
+Baseline median user CPU was 51.955 seconds and candidate median was 51.77
+seconds, a 0.36% difference within run variation. The split fix did not
+measurably improve the book's first 200 million fuel actions. Commands,
+source receipts, and time records are under
+`.worktrees/slot-2/target/book-timeout-profile/ab_ba_200m/`. An earlier
+candidate-only 200-million run overlapped the eight-row cohort and is not
+used for this comparison. Fuel exhaustion is a diagnostic boundary, not an
+acceptance run. The baseline's marginal CPU per million actions was about
+0.30 seconds over 50–100 million and 0.27 seconds over 100–200 million;
+those endpoints did not show continuing acceleration in the later span or
+identify a retained-memory owner.
 
-The selected `tcolorbox` package's `tcbbreakable.code.tex` uses `\vsplit`
-and `\unvbox` while assembling breakable boxes. Umber's
-`split_vbox_register` copies a durable box into page storage, and
-`replace_split_source` copies the remainder back to durable storage. TeX's
-explicit `\copy` and retained rollback history can require structural
-copies. The reduced profile below assigns its principal cost to same-page
-range re-encoding, so a copy-frame sample alone does not justify changing
-`\vsplit` register ownership.
+Eight other original `tcolorbox` rows compiled with the candidate
+under their unchanged guards. All eight exited zero and their rendered pages
+and extracted text compared `equal` against the saved independent references.
+The IDs and per-row evidence are in
+`.worktrees/slot-2/target/book-timeout-tcolorbox-candidate/summary.json`.
+The implementation's `scripts/check-and-test.sh` verdict was `PASS`: seven
+stages passed with zero failures, blocks, or coverage reductions; its log is
+`.worktrees/slot-1/target/book-vsplit-scaling/check-and-test.log`.
 
-## Reduced vertical-split owner
+## Excluded candidates and build interpretation
 
-A repeated-`\vsplit` control with 100, 200, 400, and 800 repetitions on
-the current release binary took Umber 0.13, 0.32, 1.59, and 10.05 seconds
-elapsed (0.09, 0.29, 1.56, and 10.01 seconds user CPU). The pinned pdfTeX
-control took 0.06, 0.10, 0.15, and 0.30 seconds. A matched consuming-box
-control took Umber 0.04, 0.04, 0.05, and 0.07 seconds. This establishes
-disproportionate growth in Umber's split path on the reduced input; it does not quantify how much of the
-full book it explains. The N=800 release run returned zero and reached
-39,040 KiB maximum RSS. Its same-input, same-binary profile collected 2,039
-cycles samples with none lost. It assigns 78.47% inclusive and 49.81% self to `PageMaterialArena::append_reencoded_chunk_range`,
-21.98% inclusive and 21.88% self to `ForkArena::admitted_previous_chunk`,
-and only 1.78% inclusive to the Durable-to-Page `copy_list_recursive`
-specialization. The control sources and runner are under
-`.worktrees/slot-1/target/book-vsplit-scaling/`; the N=800 source SHA-256
-begins `07456e9d`. Its matched release capture and report are under
-`.worktrees/slot-2/target/book-timeout-profile/reduced/` as
-`split-800.{perf,tex}` and `split-800-report.txt`.
-
-In `normalize_split_infinite_shrink`, Umber appends every unchanged source
-node as a separate one-element range, even when `vert_break` reports no
-infinite-shrink glue. Each append can enter `append_reencoded_chunk_range`.
-That function starts at the source tail and recursively follows predecessor
-chunks to the head before testing whether the selected range overlaps a
-chunk. Predecessor resolution checks a fixed two-entry lineage array, so the
-lookup itself has bounded cost. The high predecessor sample share reflects
-its repeated calls. Repeating a full-chain traversal for each one-node range
-accounts for the measured scaling shape; the profile establishes the hot
-functions, while source inspection establishes their traversal order.
-
-`prune_page_top_list_with_discards` has the same repeated-range pattern.
-After the first box or rule, it appends each remaining node as a one-element
-range to the retained projection; before the first box, it appends
-discardable nodes one by one to the discard projection. For a retained
-remainder of length L spread across a number of chunks proportional to L,
-its L full-chain range traversals cost O(L²). Repeating that operation while
-progressively splitting a box can yield O(N³) total traversal in the reduced
-control. The neighboring `prune_page_top_list` already collects retained
-runs before slicing, providing a source-level control for the batched
-approach. These are source-derived bounds, not direct measurements of
-individual loop iteration counts.
-
-The first correction boundary is the semantic identity case: when the
-infinite-shrink index set is empty, return the original page-list identity.
-When replacements exist, preserve order by appending each maximal unchanged
-range once and inserting a replacement only for the offending glue node.
-TeX82's `vsplit` (section 977, `tex.web` part [44]) changes shrink order only
-for infinite-shrink glue that triggers the split diagnostic. This design
-keeps marks, break index, remainder, and register ownership in their existing
-owners. In `prune_page_top_list_with_discards`, preserve the two separate
-retained and discarded projections but append contiguous source runs once
-per run; a single surviving tail is one range. Recheck the matched control
-and full book after implementation. A lower-level range traversal fix
-requires its own dependency and rollback audit, since admitted predecessors
-can carry retained history.
-The annex fixed-array range walker, by contrast, begins at the fixed record
-tail; fixed records are kept inside one logical chunk. Its sampled work is
-per-node bounded traversal, not a scan from the global arena origin.
-
-## Build and profile interpretation
+`PdfState::define_destination` includes two linear searches over destination
+records. A generated control compared 1,000, 5,000, and 10,000 named
+`\pdfdest` commands with the same numbers of `\pdfsavepos` commands, shipping
+100 commands per page. On the original frozen binary, the respective user-CPU
+pairs were 1.10/1.04, 1.81/1.29, and 3.37/1.66 seconds. The 10,000-command
+difference was 1.71 seconds, including all destination processing and PDF
+output differences, too small by itself to explain this book's timeout.
+Sources, logs, `/usr/bin/time -v` records, and PDFs are in
+`.worktrees/slot-3/target/book-timeout-audit/dest-control/`. No destination
+index was changed for this row. The annex fixed-array range walker also
+starts at a fixed record tail kept within one logical chunk; its sampled
+work is per-node bounded traversal, not a scan from the global arena origin.
 
 `[profile.test]` uses optimization level 1. Test builds unify the
-`tex-state/testing` feature through dev-dependencies. The frozen binary
-contains the `RESIDENT_MACRO_BODY_READ_COUNTERS` thread-local symbol, as
-verified with `nm -C`. The counter is gated by
-`#[cfg(any(test, feature = "testing"))]` in `definition_arena.rs` and updates
-on resident macro-body reads. The shipping feature resolution excludes
-`testing`; the release performance comparison must use a separately built
-shipping binary rather than treating the frozen test-profile timing as a
-release timing. This also narrows the counter's relevance to the captured
-test-profile build.
+`tex-state/testing` feature through dev-dependencies. The frozen original
+binary contains the `RESIDENT_MACRO_BODY_READ_COUNTERS` thread-local symbol,
+verified with `nm -C`; it is gated by
+`#[cfg(any(test, feature = "testing"))]` in `definition_arena.rs`. Shipping
+feature resolution excludes `testing`, so the release binaries above are the
+appropriate production-resolution timing comparison. The counter's captured
+1.38% self-time share is specific to the frozen test-profile build and cannot
+explain the shipping release timeout.
 
-For the complete book, profile with the authenticated input and guards, record
-the binary hash and feature resolution, and use matched engine-work endpoints
-when comparing internal scaling. A wall timeout is a failure observation,
-not a work boundary. Record page or source progress and RSS at bounded
-endpoints before deciding whether elapsed time is steady per page or grows
-with retained state. Compare production and profiling-feature builds
-separately, as specified in [Profiling Umber](profiling.md#long-loaded-format-latex-prefixes).
-The reduced control identifies a same-page range-reencoding owner. Its
-contribution to the complete book and the outcome of the guarded row after a
-principled correction remain to be measured.
+The unresolved boundary is the full book's dominant cost after the split
+correction. Keep comparing authenticated original-source runs at equal work
+and recording progress, memory, and symbolized owners before selecting another
+fix or changing any guard. See [Profiling Umber](profiling.md#long-loaded-format-latex-prefixes)
+for the release-resolution capture procedure.
