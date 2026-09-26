@@ -97,6 +97,7 @@ impl SparseChunks {
         Some(trailing_gap.map_or(self.logical_len - 1, |gap| gap.start - 1))
     }
 
+    #[cfg(test)]
     pub(super) fn iter(&self) -> SparseChunksIter<'_> {
         SparseChunksIter {
             chunks: self,
@@ -458,15 +459,6 @@ impl SparseChunks {
     }
 }
 
-impl<'a> IntoIterator for &'a SparseChunks {
-    type Item = &'a LogicalChunkId;
-    type IntoIter = SparseChunksIter<'a>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.iter()
-    }
-}
-
 pub(super) struct SparseChunksLiveIter<'a> {
     chunks: &'a SparseChunks,
     live_index: usize,
@@ -492,11 +484,13 @@ impl Iterator for SparseChunksLiveIter<'_> {
     }
 }
 
+#[cfg(test)]
 pub(super) struct SparseChunksIter<'a> {
     chunks: &'a SparseChunks,
     position: usize,
 }
 
+#[cfg(test)]
 impl<'a> Iterator for SparseChunksIter<'a> {
     type Item = &'a LogicalChunkId;
 
@@ -512,64 +506,8 @@ impl<'a> Iterator for SparseChunksIter<'a> {
     }
 }
 
+#[cfg(test)]
 impl ExactSizeIterator for SparseChunksIter<'_> {}
-
-pub(super) struct SparseChunksIntoIter {
-    live: std::vec::IntoIter<LogicalChunkId>,
-    gaps: Vec<Gap>,
-    gap_index: usize,
-    position: usize,
-    logical_len: usize,
-}
-
-impl Iterator for SparseChunksIntoIter {
-    type Item = LogicalChunkId;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.position >= self.logical_len {
-            return None;
-        }
-        while self
-            .gaps
-            .get(self.gap_index)
-            .is_some_and(|gap| gap.end <= self.position)
-        {
-            self.gap_index += 1;
-        }
-        let vacant = self
-            .gaps
-            .get(self.gap_index)
-            .is_some_and(|gap| gap.start <= self.position);
-        self.position += 1;
-        Some(if vacant {
-            VACANT_LOGICAL_CHUNK
-        } else {
-            self.live.next().expect("live position owns one key")
-        })
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let left = self.logical_len - self.position;
-        (left, Some(left))
-    }
-}
-
-impl ExactSizeIterator for SparseChunksIntoIter {}
-
-impl IntoIterator for SparseChunks {
-    type Item = LogicalChunkId;
-    type IntoIter = SparseChunksIntoIter;
-
-    fn into_iter(self) -> Self::IntoIter {
-        SparseChunksIntoIter {
-            live: self.live.into_iter(),
-            gaps: self.gaps,
-            gap_index: 0,
-            position: 0,
-            logical_len: self.logical_len,
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {

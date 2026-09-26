@@ -351,8 +351,9 @@ impl<T, Lane> ForkArena<T, Lane> {
         if start > end || end != live_len {
             return Err(ForkArenaError::InvalidRegion);
         }
-        Ok((start..end)
-            .filter_map(|index| self.live_key_at(index))
+        Ok(self
+            .live_positions_from(start)
+            .map(|(_, key)| key)
             .collect())
     }
 
