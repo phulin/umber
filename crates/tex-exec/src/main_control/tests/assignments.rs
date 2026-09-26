@@ -76,7 +76,9 @@ fn lastbox_from_completed_paragraph_preserves_earlier_vertical_material() {
 
         let remaining = box_child_nodes(stores, 0);
         assert!(
-            remaining.iter().any(|node| matches!(node, Node::HList(boxed) if boxed.width.raw() == 2 * Scaled::UNITY)),
+            remaining.iter().any(
+                |node| matches!(node, Node::HList(boxed) if boxed.width.raw() == 2 * Scaled::UNITY)
+            ),
             "the preceding box survives the paragraph line's removal: {remaining:?}"
         );
         assert!(
@@ -85,8 +87,50 @@ fn lastbox_from_completed_paragraph_preserves_earlier_vertical_material() {
         );
         let moved = box_child_nodes(stores, 1);
         assert!(
-            moved.iter().any(|node| matches!(node, Node::Char { ch: 'A', .. })),
+            moved
+                .iter()
+                .any(|node| matches!(node, Node::Char { ch: 'A', .. })),
             "the consumed paragraph line retains its text: {moved:?}"
+        );
+    });
+}
+
+#[test]
+fn lastbox_from_paragraph_keeps_leader_children_and_sibling() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_cmr10_as(&mut control, stores, "cmr10.tfm");
+        register_source(
+            &mut control,
+            br"\font\f=cmr10 \f\setbox0=\vbox{\hsize=200pt\hbox{\kern2pt}\noindent A\leaders\hbox{L}\hskip10pt B\par\global\setbox1=\lastbox\kern3pt}\end",
+        );
+        run_to_end(&mut control, stores);
+
+        let remaining = box_child_nodes(stores, 0);
+        assert!(
+            remaining.iter().any(
+                |node| matches!(node, Node::HList(boxed) if boxed.width.raw() == 2 * Scaled::UNITY)
+            ),
+            "preceding sibling remains live: {remaining:?}"
+        );
+        let moved = box_child_nodes(stores, 1);
+        let leader = moved.iter().find_map(|node| match node {
+            Node::Glue {
+                leader: Some(tex_state::node::LeaderPayload::HList(boxed)),
+                ..
+            } => Some(boxed.children),
+            _ => None,
+        });
+        let leader = leader.unwrap_or_else(|| panic!("line retains leader glue: {moved:?}"));
+        let leader_nodes = stores
+            .page_node_list(leader)
+            .expect("leader child belongs to the moved line");
+        assert!(
+            leader_nodes
+                .nodes()
+                .iter()
+                .any(|node| matches!(node, tex_state::NodeView::Char { ch: 'L', .. })),
+            "leader child survives the box transfer"
         );
     });
 }

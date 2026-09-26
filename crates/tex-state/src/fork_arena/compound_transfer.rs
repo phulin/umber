@@ -55,12 +55,31 @@ impl<T, Lane> ForkArena<T, Lane> {
     where
         T: RegionValue<Lane>,
     {
+        self.preflight_interior_intervals_inner(pool, destination, ranges, false)
+    }
+
+    fn preflight_interior_intervals_inner<Destination>(
+        &self,
+        pool: &ChunkPool<T>,
+        destination: &ForkArena<T, Destination>,
+        ranges: &[Range<usize>],
+        destination_has_prefix: bool,
+    ) -> Result<(), ForkArenaError>
+    where
+        T: RegionValue<Lane>,
+    {
         self.can_seal_boundary(pool)?;
         destination.can_seal_boundary(pool)?;
+        let selected_start = ranges.first().map_or(0, |range| range.start);
         if self.owner == destination.owner
             || self.pending_batch.is_some()
             || !matches!(destination.ownership, ForkOwnership::Accepted(_))
-            || destination.live_payload_len() != 0
+            || if destination_has_prefix {
+                destination.base_payload_chunks != 0
+                    || destination.live_payload_len() != selected_start
+            } else {
+                destination.live_payload_len() != 0
+            }
         {
             return Err(ForkArenaError::InvalidRegion);
         }
@@ -161,12 +180,43 @@ impl<T, Lane> ForkArena<T, Lane> {
     where
         T: RegionValue<Lane>,
     {
-        self.preflight_interior_intervals(pool, destination, ranges)?;
+        self.transfer_interior_intervals_inner(pool, destination, ranges, false)
+    }
+
+    /// Appends exact source intervals after a private destination boundary
+    /// projection. The destination has already reserved vacant positions up
+    /// to the first source interval, so moved chunks keep their original
+    /// logical positions and their direct dependency floors remain valid.
+    pub(crate) fn transfer_interior_intervals_after_prefix<Destination>(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        destination: &mut ForkArena<T, Destination>,
+        ranges: &[Range<usize>],
+    ) -> Result<TransferredIntervals<Lane>, ForkArenaError>
+    where
+        T: RegionValue<Lane>,
+    {
+        self.transfer_interior_intervals_inner(pool, destination, ranges, true)
+    }
+
+    fn transfer_interior_intervals_inner<Destination>(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        destination: &mut ForkArena<T, Destination>,
+        ranges: &[Range<usize>],
+        destination_has_prefix: bool,
+    ) -> Result<TransferredIntervals<Lane>, ForkArenaError>
+    where
+        T: RegionValue<Lane>,
+    {
+        self.preflight_interior_intervals_inner(pool, destination, ranges, destination_has_prefix)?;
         self.bind_pool(pool)?;
         destination.bind_pool(pool)?;
         let base = ranges.first().map_or(0, |range| range.start);
         let end = ranges.last().map_or(0, |range| range.end);
-        destination.base_payload_chunks = base as u32;
+        if !destination_has_prefix {
+            destination.base_payload_chunks = base as u32;
+        }
         let source_base = self.current_payload_start();
         let relative_ranges = ranges
             .iter()
@@ -201,8 +251,27 @@ impl<T, Lane> ForkArena<T, Lane> {
             source_current_start: source_base as u32,
             base: base as u32,
             end: end as u32,
+            destination_has_prefix,
             _lane: PhantomData,
         })
+    }
+
+    /// Adds a single compressed vacant interval after copied cut chunks.
+    pub(crate) fn reserve_vacant_prefix_until(
+        &mut self,
+        pool: &ChunkPool<T>,
+        position: usize,
+    ) -> Result<(), ForkArenaError> {
+        self.can_seal_boundary(pool)?;
+        if self.base_payload_chunks != 0
+            || !matches!(self.ownership, ForkOwnership::Accepted(_))
+            || position < self.live_payload_len()
+        {
+            return Err(ForkArenaError::InvalidRegion);
+        }
+        u32::try_from(position).map_err(|_| ForkArenaError::CapacityOverflow)?;
+        self.current_chunks_mut().payload.extend_vacant_to(position);
+        Ok(())
     }
 
     /// A paired-region owner checks both lanes with this read-only proof
@@ -222,7 +291,12 @@ impl<T, Lane> ForkArena<T, Lane> {
             || destination.owner != loan.destination
             || !matches!(destination.ownership, ForkOwnership::Accepted(_))
             || self.current_payload_start() != loan.source_current_start as usize
-            || destination.base_payload_chunks != loan.base
+            || destination.base_payload_chunks
+                != if loan.destination_has_prefix {
+                    0
+                } else {
+                    loan.base
+                }
             || destination.live_payload_len() < end
             || end > self.live_payload_len()
         {
@@ -324,7 +398,9 @@ impl<T, Lane> ForkArena<T, Lane> {
                 .payload
                 .restore_sparse_overlay(base - source_base, selected);
         }
-        destination.base_payload_chunks = 0;
+        if !loan.destination_has_prefix {
+            destination.base_payload_chunks = 0;
+        }
         Ok(())
     }
 }

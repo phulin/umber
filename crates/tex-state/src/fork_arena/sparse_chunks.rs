@@ -311,6 +311,17 @@ impl SparseChunks {
         self.rebuild_gap_prefixes();
     }
 
+    /// Reserves logical coordinates for a later exact interval loan without
+    /// allocating physical chunks or inserting one gap row per coordinate.
+    pub(super) fn extend_vacant_to(&mut self, end: usize) {
+        if end <= self.logical_len {
+            return;
+        }
+        Self::push_gap(&mut self.gaps, self.logical_len, end);
+        self.logical_len = end;
+        self.rebuild_gap_prefixes();
+    }
+
     pub(super) fn pop(&mut self) -> Option<LogicalChunkId> {
         let position = self.logical_len.checked_sub(1)?;
         self.logical_len -= 1;

@@ -29,6 +29,9 @@ type OwnedPageMaterialNode = Node<PageListId>;
 type SelectedBoxBodyRanges = (Vec<Range<usize>>, Vec<Range<usize>>);
 type PreflightedBoxBody = (Node<PageListId>, Vec<Range<usize>>, Vec<Range<usize>>);
 
+mod consumed_source;
+pub use consumed_source::{ConsumedPageSource, ConsumedPageWindow};
+
 /// Opaque typed-annex coordinate for page-owned intervals excluded from a box.
 #[derive(Clone, Copy, Debug)]
 pub struct PageBoxMigrationKey([u32; 7]);

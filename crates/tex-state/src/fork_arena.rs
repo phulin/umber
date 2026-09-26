@@ -20,6 +20,8 @@ use crate::node_sequence::SemanticSequenceIdentity;
 mod batch_transfer;
 mod checkpoint_lifecycle;
 mod compound_transfer;
+mod consumed_window;
+pub(crate) use consumed_window::ConsumedHeadEdgeLoan;
 mod packed_source;
 mod physical_extents;
 pub(crate) use packed_source::PackedSourceChunkReader;
@@ -2838,6 +2840,7 @@ pub(crate) struct TransferredIntervals<Lane> {
     source_current_start: u32,
     base: u32,
     end: u32,
+    destination_has_prefix: bool,
     _lane: PhantomData<fn(Lane) -> Lane>,
 }
 

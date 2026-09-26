@@ -2918,6 +2918,134 @@ fn interior_interval_transfers_and_rolls_back_without_moving_neighbor_chunks() {
 }
 
 #[test]
+fn consumed_window_head_edge_restores_after_rejected_and_reversed_transfer() {
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(4);
+    let mut page = ForkArena::<u32, ActiveLane>::new();
+    let source = list(&mut page, &mut pool, [11, 22, 33]);
+    page.seal_boundary(&mut pool).expect("sealed source");
+    let selected = page
+        .slice_list(&mut pool, source, 1..2, &mut Vec::new())
+        .expect("middle source window");
+    let mut occupied = page.empty_lane::<PageLane>();
+    let mut occupied_builder = occupied.begin_builder(&mut pool).expect("occupied builder");
+    occupied_builder.push(99).expect("occupied value");
+    let _ = occupied_builder.finish();
+    occupied
+        .seal_boundary(&mut pool)
+        .expect("occupied destination");
+
+    let edge = page
+        .detach_consumed_head_edge(&mut pool, selected, usize::MAX)
+        .expect("exclusive consumed head");
+    assert_eq!(
+        page.preflight_interior_intervals(&pool, &occupied, &[1..2]),
+        Err(ForkArenaError::InvalidRegion),
+        "a rejected destination cannot consume the detached source"
+    );
+    page.restore_consumed_head_edge(&mut pool, edge)
+        .expect("rejected transfer restores predecessor and floor");
+    assert_eq!(page.list(&pool, source).expect("source restored").len(), 3);
+
+    let mut durable = page.empty_lane::<PageLane>();
+    let edge = page
+        .detach_consumed_head_edge(&mut pool, selected, usize::MAX)
+        .expect("retry detaches same head");
+    let loan = page
+        .transfer_interior_intervals(&mut pool, &mut durable, &[1..2])
+        .expect("selected middle chunk moves");
+    assert!(
+        page.audit_owned_list(&pool, source).is_err(),
+        "source chain cannot resolve through the moved window"
+    );
+    page.rollback_interior_intervals(&mut pool, &mut durable, loan)
+        .expect("window returns to source owner");
+    page.restore_consumed_head_edge(&mut pool, edge)
+        .expect("inverse restores source chain");
+    let restored = page.list(&pool, source).expect("source after rollback");
+    assert_eq!(restored.iter().copied().collect::<Vec<_>>(), [11, 22, 33]);
+}
+
+#[test]
+fn consumed_window_moves_after_private_boundary_prefix_and_restores_both() {
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(4);
+    let mut page = ForkArena::<u32, ActiveLane>::new();
+    let source = list(&mut page, &mut pool, [11, 22, 33, 44, 55]);
+    page.seal_boundary(&mut pool).expect("source sealed");
+    let middle = page
+        .slice_list(&mut pool, source, 3..4, &mut Vec::new())
+        .expect("middle window");
+    let mut durable = page.empty_lane::<PageLane>();
+    let mut prefix = durable.begin_builder(&mut pool).expect("private boundary");
+    prefix.push(77).expect("projected cut record");
+    let prefix_root = prefix.finish();
+    durable.seal_boundary(&mut pool).expect("prefix sealed");
+    durable
+        .reserve_vacant_prefix_until(&pool, 3)
+        .expect("exact destination offset");
+
+    let edge = page
+        .detach_consumed_head_edge(&mut pool, middle, usize::MAX)
+        .expect("middle edge detached");
+    let loan = page
+        .transfer_interior_intervals_after_prefix(&mut pool, &mut durable, &[3..4])
+        .expect("middle chunk joins private prefix owner");
+    durable
+        .bind_consumed_head_to_prefix(&mut pool, &edge, prefix_root)
+        .expect("moved head links to projected boundary");
+    let combined = super::ArenaListId::from_root(
+        prefix_root.space,
+        prefix_root.head,
+        super::rebrand_list(middle, durable.owner).tail,
+        2,
+    );
+    assert_eq!(
+        durable
+            .list(&pool, combined)
+            .expect("projected boundary precedes moved interior")
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        [77, 44]
+    );
+    assert_eq!(
+        durable
+            .list(&pool, prefix_root)
+            .expect("prefix stays live")
+            .get(0),
+        Some(&77)
+    );
+    assert_eq!(
+        durable
+            .list(&pool, super::rebrand_list(middle, durable.owner))
+            .expect("moved middle")
+            .get(0),
+        Some(&44)
+    );
+    durable
+        .unbind_consumed_head_from_prefix(&mut pool, &edge, prefix_root)
+        .expect("private link reverses before loan returns");
+    page.rollback_interior_intervals(&mut pool, &mut durable, loan)
+        .expect("middle returns to source");
+    page.restore_consumed_head_edge(&mut pool, edge)
+        .expect("middle predecessor restored");
+    assert_eq!(
+        durable
+            .list(&pool, prefix_root)
+            .expect("private prefix retained")
+            .get(0),
+        Some(&77)
+    );
+    assert_eq!(
+        page.list(&pool, source)
+            .expect("original source restored")
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        [11, 22, 33, 44, 55]
+    );
+}
+
+#[test]
 fn repeated_tail_loans_derive_frontier_from_gap_metadata() {
     const CHUNKS: usize = 128;
     let mut pool = ChunkPool::<u32>::with_chunk_bytes(4);

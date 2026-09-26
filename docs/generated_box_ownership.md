@@ -38,7 +38,9 @@ chunks or uniquely consumed. Projecting direct records never transfers their
 nested children by itself. A nested box contributes its own authenticated
 body receipt, which is consumed once when the parent takes it. An explicit
 TeX copy creates independent children and a fresh receipt; it cannot reuse the
-source's move authority.
+source's move authority. The existing source chain remains readable during
+line and row construction. Only removal of the last wrapper may detach its
+source window, after all outputs from that source have been built.
 
 Immediately before wrapper publication, the builder closes the selected
 node-and-annex body intervals, excludes obsolete source projections and page
@@ -65,15 +67,26 @@ interval without also spanning all intervening line or row constructions.
 `preflight_page_interior_intervals` and `transfer_page_interior_intervals`
 already accept disjoint positive ranges, but the wrapper codec cannot publish
 those ranges as authenticated provenance. A producer API must therefore
-accept a move-only consumed source list and a selected direct-record window,
-then return a private projection root and its positive paired chunk ranges.
-It must split at most the two boundary chunks of that window; fully selected
-interior chunks transfer without rewriting their payload. The returned
+accept a move-only consumed source list and selected direct-record runs,
+then return a private projection root and their positive paired chunk ranges.
+It must split at most two boundary chunks per contiguous selected run;
+fully selected interior chunks transfer without rewriting their payload.
+Discretionary and left/right skip materialization can create several runs in
+one box. The returned
 receipt must specify nested child receipts separately and invalidate its
 source window, so two wrappers cannot claim one chunk. The wrapper publisher
 combines that receipt with ranges built during materialization and writes a
 positive-range descriptor. Preflight verifies direct node and annex edges and
 the wrapper's binding to those ranges before granting the loan.
+
+The physical predecessor link of the first moved interior chunk can still
+point to a preceding source chunk. Detaching it is reversible: the loan stores
+the original predecessor and paired dependency floor, recalculates the moved
+head's intrinsic annex floor from its direct records, and restores both only
+after rollback has returned the chunk to its original owner. The rest of the
+source remains untouched. Failed destination preflight restores the original
+edge before the operation exposes a new root. A historical checkpoint can
+still require a preservation copy; its roots are not consumed by this loan.
 
 The current `append_validated_active_list_range` calls `copy_shared_then_splice`
 after `slice_direct_root`; it explicitly copies a shared source root because
@@ -99,6 +112,15 @@ alignment templates create new cell lists on each row; they do not grant
 reuse of a row's old child receipt. A retained tabskip or rule is a direct
 record and can share a boundary chunk with another row, so it too needs the
 bounded boundary projection.
+
+The direct-record receipt must include all retained child-bearing node kinds:
+H/V and unset boxes, box leaders inside glue, discretionary pre/post/replace,
+insertions, adjustments, and math node child lists. The ordinary paragraph
+materializer migrates insertions and adjustments out of the line; their
+page-owned projections are excluded. A retained leader remains in the line,
+so its child closure belongs to the selected box even though the direct node
+is glue. A direct dependency check at transfer remains a validation gate; it
+cannot discover missing provenance by recursively copying the graph.
 
 ## Validation
 
