@@ -44,6 +44,7 @@ CASES = {
     "expandafter": r"\expandafter\relax\mzero",
     "ifx": r"\ifx\x\relax\fi",
     "ifnum_false": r"\ifnum1>2 \fi",
+    "skip": r"\iffalse\relax\mzero\def\x{ab}\let\y\z\else\fi",
     "csname": r"\csname relax\endcsname",
     "string": r"\edef\x{\string\relax}",
     "the": r"\edef\x{\the\count255}",

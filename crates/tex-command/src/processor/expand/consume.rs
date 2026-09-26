@@ -24,9 +24,13 @@ pub(super) struct TokenMeaning<G> {
 /// One read from the shared raw input kernel, interpreted for expansion.
 /// Preflight and the ordinary expansion loop share this exact admission so
 /// neither has to construct a command for an ordinary unobserved macro.
-pub(super) enum ExpansionCandidate<G> {
+///
+/// A settled command is written straight into the caller's slot; returning it
+/// by value through this status would copy the whole compact command at
+/// every nested result boundary of the per-token loop.
+pub(super) enum ExpansionCandidate {
     ExpandedMacro,
-    Command(HotCommand<G>),
+    Command,
     Finished(DeliveryStatus),
 }
 
@@ -34,7 +38,7 @@ impl<G> TokenMeaning<G> {
     #[inline(always)]
     pub(super) fn empty() -> Self {
         Self {
-            word: MeaningWord::Static(Meaning::Undefined.encode()),
+            word: MeaningWord::Static(Meaning::UNDEFINED_WORD),
             control_sequence: None,
         }
     }
@@ -43,13 +47,7 @@ impl<G> TokenMeaning<G> {
     pub(super) fn is_outer(&self) -> bool {
         match &self.word {
             MeaningWord::Macro { flags, .. } => flags.contains(MeaningFlags::OUTER),
-            MeaningWord::Static(word) => {
-                *word
-                    == Meaning::ExpandablePrimitive(
-                        tex_state::meaning::ExpandablePrimitive::EndTemplate,
-                    )
-                    .encode()
-            }
+            MeaningWord::Static(word) => *word == Meaning::END_TEMPLATE_WORD,
             MeaningWord::Font(_) => false,
         }
     }
@@ -281,7 +279,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         const PREFLIGHT_FIRST: bool,
     >(
         &mut self,
-    ) -> Result<ExpansionCandidate<G>, CommandError> {
+        destination: &mut Option<HotCommand<G>>,
+    ) -> Result<ExpansionCandidate, CommandError> {
         let word = match self.read_raw_word(self.create_source_control_sequences)? {
             ResidentColdOutcome::Word(word) => word,
             ResidentColdOutcome::Finished(status) => {
@@ -319,10 +318,10 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
             return Ok(ExpansionCandidate::ExpandedMacro);
         }
-        let mut command = word.materialize(&meaning);
-        self.admit_materialized_read(&word, &command);
-        self.settle_hot_delivery_in::<OBSERVED>(&mut command, resolution.literal_catcode())?;
-        Ok(ExpansionCandidate::Command(command))
+        let command = destination.insert(word.materialize(&meaning));
+        self.admit_materialized_read(&word, command);
+        self.settle_hot_delivery_in::<OBSERVED>(command, resolution.literal_catcode())?;
+        Ok(ExpansionCandidate::Command)
     }
 
     #[inline(always)]
@@ -414,21 +413,22 @@ impl<G> CommandProcessor<'_, '_, G> {
             expanded = true;
         }
         loop {
-            let mut command =
-                match self.read_expansion_candidate::<OBSERVED, STOP_PROTECTED, false>()? {
-                    ExpansionCandidate::ExpandedMacro => {
-                        expanded = true;
-                        continue;
-                    }
-                    ExpansionCandidate::Finished(status) => {
-                        destination.take();
-                        return Ok(status);
-                    }
-                    ExpansionCandidate::Command(command) => command,
-                };
-            let action = classify_hot_command(&command);
-            if STOP_PROTECTED && Self::protected_terminal(&command, action) {
-                *destination = Some(command);
+            match self.read_expansion_candidate::<OBSERVED, STOP_PROTECTED, false>(destination)? {
+                ExpansionCandidate::ExpandedMacro => {
+                    expanded = true;
+                    continue;
+                }
+                ExpansionCandidate::Finished(status) => {
+                    destination.take();
+                    return Ok(status);
+                }
+                ExpansionCandidate::Command => {}
+            }
+            let command = destination
+                .as_mut()
+                .expect("command candidate initializes destination");
+            let action = classify_hot_command(command);
+            if STOP_PROTECTED && Self::protected_terminal(command, action) {
                 return Ok(DeliveryStatus::Command);
             }
             if PRESERVE_UNDEFINED
@@ -437,19 +437,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                     ExpandedCommandAction::Expand(ExpansionDispatch::Undefined)
                 )
             {
-                let status =
-                    self.finish_terminal_expansion::<OBSERVED>(&mut command, action, expanded);
-                *destination = Some(command);
-                return Ok(status);
+                return Ok(self.finish_terminal_expansion::<OBSERVED>(command, action, expanded));
             }
             if let ExpandedCommandAction::Expand(dispatch) = action {
-                self.execute_expansion_action(&mut command, dispatch)?;
+                self.execute_expansion_action(command, dispatch)?;
                 expanded = true;
                 continue;
             }
-            let status = self.finish_terminal_expansion::<OBSERVED>(&mut command, action, expanded);
-            *destination = Some(command);
-            return Ok(status);
+            return Ok(self.finish_terminal_expansion::<OBSERVED>(command, action, expanded));
         }
     }
 

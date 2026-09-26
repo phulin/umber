@@ -1072,18 +1072,16 @@ impl<G> CommandProcessor<'_, '_, G> {
         if hot_destination.is_none() {
             if preflight {
                 let candidate = if self.is_observed() {
-                    self.read_expansion_candidate::<true, false, true>()
+                    self.read_expansion_candidate::<true, false, true>(&mut hot_destination)
                 } else {
-                    self.read_expansion_candidate::<false, false, true>()
+                    self.read_expansion_candidate::<false, false, true>(&mut hot_destination)
                 };
                 match candidate {
                     Ok(ExpansionCandidate::ExpandedMacro) => {
                         let result = self.expanded_next_hot(&mut hot_destination, None);
                         return self.finish_hot_delivery(destination, &mut hot_destination, result);
                     }
-                    Ok(ExpansionCandidate::Command(command)) => {
-                        hot_destination = Some(command);
-                    }
+                    Ok(ExpansionCandidate::Command) => {}
                     Ok(ExpansionCandidate::Finished(status)) => return Ok(status),
                     Err(failure) => {
                         destination.take();
