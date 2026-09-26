@@ -1,16 +1,18 @@
 # Long-book PDF performance audit
 
-A repeated page-list range traversal made large `\vsplit` inputs scale badly.
-Commit `530552805` batches unchanged ranges and avoids rebuilding an unchanged
-list. On an authenticated 800-split control, the shipping-resolution release
-binary improved from 10.043 to 1.900 seconds of user CPU. The complete arXiv
-book `2606.24937` still reaches its 120-second wall guard with the candidate
-binary. Its release profile instead samples sustained token delivery and
-growing region-node copying; the split control does not establish either as
-the dominant remaining owner. The split correction is validated, but the
-book timeout remains open.
+Physical compaction of node and annex storage substantially reduces the book's
+memory footprint. At the same 200-million-action endpoint, a quiet shipping
+comparison of `99f75a4d9` and `7b9f40dbd` reduced median peak RSS by about
+225 MiB, while median user CPU improved by only 2.0%. The fixed-fuel profiling
+comparison below explains the storage reduction and the growth it does not
+attribute. These measurements do not establish full-book completion.
+
+The original timeout remains unresolved. The latest unchanged-guard book run
+recorded here, `293dbfe0e`, exited 124 at 120 seconds; its receipt is
+`target/perf-tex-copy-plan/consumed-unbox-original-book/summary.json`.
 Keep the 120-second, 1,536 MiB, 500,000,000 expansion-fuel, and 10,000,000
-execution-step acceptance guards.
+execution-step acceptance guards. The reduced split controls below explain an
+earlier scaling defect; their speedups are not whole-book speedups.
 
 ## Book identity and workload
 
@@ -366,38 +368,87 @@ Shipout normalization also clones the detached open context only for an
 `OpenOut` whatsit, instead of cloning it before inspecting every whatsit.
 These changes have not yet been assigned a measured runtime saving.
 
-## Node-pool retention at fixed fuel
+## Node-pool retention and physical compaction
 
-A profiling-feature build of `c8c6a2397` ran the original book source and
-authenticated 2025 distribution/format on CPU 10. Both diagnostic runs kept
-the 120-second, 1,536 MiB, 10,000,000-step, and two-second termination guards;
-only expansion fuel changed. Each ended with the exact fuel-exhaustion
-diagnostic. These figures describe this profiling build, not shipping latency.
+Sealing a short logical chunk now returns its unused physical tail to the
+64 KiB superblock. This applies to both packed annex words and optional node
+slots. Logical keys remain stable. If rollback must reopen a tail after later
+allocations, packed words relocate within the same owner; optional values move
+with `Option::take`, preserving exactly-once destruction. Cached admitted
+physical positions refresh after relocation, release, transfer, or truncation.
+The [node ownership contract](node_region_ownership.md) defines these rules;
+this is exclusive storage compaction, not sharing or copy-on-write.
 
-| Fuel actions | Peak RSS KiB | Fresh node/annex blocks | Reused node/annex blocks | Peak sampled live node/annex blocks |
-| ------------ | ------------ | ----------------------- | ------------------------ | ----------------------------------- |
-| 100 million  | 464,684      | 1,599 / 577             | 12,554 / 2,929           | 454 / 430                           |
-| 200 million  | 534,184      | 1,599 / 577             | 29,467 / 6,997           | 454 / 430                           |
+Profiling-feature builds ran the authenticated original book and 2025
+format/distribution at fixed fuel endpoints. Both runs kept the 120-second,
+1,536 MiB, 10,000,000-step, and two-second termination guards. Only expansion
+fuel changed, and every run ended with the exact requested fuel-exhaustion
+diagnostic. The comparison isolates physical compaction from the preceding
+lazy annex-boundary implementation; it does not measure shipping latency.
 
-The pool's 2,176 fresh exact 64 KiB allocations represent 136 MiB of backing.
-That allocation high-water stays flat as fuel doubles, while block reuse grows.
-The peak owner census, sampled at checkpoint and page-output boundaries, also
-stays flat. At its peak sample, only 11 node and two annex blocks are classified
-as durable or other, and one block in each lane belongs to checkpoint history.
-These are peak observations, not a snapshot at the instant of fuel exhaustion.
-The final zero-live-block gauge is printed after the engine drops and cannot
-establish its live ownership at the fuel boundary.
+| Build                                      | Fuel actions | Peak RSS KiB | Fresh node blocks | Fresh annex blocks |
+| ------------------------------------------ | ------------ | ------------ | ----------------- | ------------------ |
+| Before physical compaction (`f031f9662`)   | 100 million  | 628,904      | 1,593             | 3,051              |
+| Before physical compaction (`f031f9662`)   | 200 million  | 698,024      | 1,593             | 3,051              |
+| Both storage lanes compacted (`7b9f40dbd`) | 100 million  | 336,416      | 112               | 229                |
+| Both storage lanes compacted (`7b9f40dbd`) | 200 million  | 405,028      | 112               | 229                |
 
-Peak RSS rises by 69,500 KiB across the two runs. Since fresh node-pool backing
-and its sampled live high-water do not grow, this increment is not caused by
-new node-pool superblocks. The source of the remaining growth is unassigned by
-these counters. An empty superblock keeps its 64 KiB allocation in the pool's
-vacant list for direct reuse until the pool drops; retirement removes its
-semantic owner but does not return the backing to the allocator immediately.
-The bounded pool high-water does not support changing that reuse policy for
-this workload. No 4.7 GiB full-book memory result was reproduced in this audit.
+Peak RSS falls by about 286 MiB at either endpoint. The compacted pool's 341
+fresh 64 KiB blocks total 21.3125 MiB of backing, and that high-water remains
+flat as fuel doubles. Owner censuses sampled at checkpoint and output
+boundaries report peaks of 37/73 live node/annex blocks at 100 million fuel
+and 45/78 at 200 million. These samples are not snapshots taken at the instant
+of fuel exhaustion. The final zero-live-block gauge is printed after the
+engine drops and cannot establish its live ownership at that boundary.
 
-Commands, binary and source hashes, exact diagnostics, and census reports are
-under `.worktrees/slot-3/target/perf-retention-evidence/fuel-100000000/` and
-`fuel-200000000/`. The profiling binary SHA-256 is
-`0238a2bdb41d4a049bdb8fdd38be092ced82144d07216553c4e443bcf3ed8212`.
+An empty superblock keeps its allocation in the pool's vacant list for reuse
+until the pool drops. Retirement removes the semantic owner; it does not
+immediately return backing to the system allocator. Fixed-live-set churn tests
+verify bounded reuse, while rollback tests cover same-block and cross-block
+relocation, stale cursors, and non-Copy values. These measurements support
+reusing retired blocks rather than adding an eager-release policy.
+
+RSS still rises by 68,612 KiB between the compacted runs without new node-pool
+superblocks. These counters do not attribute that remaining growth. No
+4.7 GiB full-book memory result was reproduced, so this audit does not claim
+to have explained that figure.
+
+Receipts are under `target/perf-tex-copy-plan/optional-compact-retention/` and
+`optional-compact-retention-comparison.json`. The compacted profiling binary
+SHA-256 is
+`4486846d5c5dedbfc9072f611a7c79bcea73b645144b6dbcfb3fe3907ed62669`.
+
+## Shipping comparison at the same book prefix
+
+A separate quiet A/B/B/A run compared the earlier `99f75a4d9` shipping binary
+with integrated `7b9f40dbd`. It used CPU 11, the same authenticated source,
+format, distribution, and 200-million-action endpoint. Builds, corpus runs,
+and other performance jobs were paused. Every trial reached the exact fuel
+limit; an exit code alone was not accepted as evidence.
+
+| Run          | User CPU seconds | Elapsed seconds | Peak RSS KiB |
+| ------------ | ---------------- | --------------- | ------------ |
+| Baseline A1  | 46.13            | 48.68           | 635,424      |
+| Candidate B1 | 44.86            | 47.21           | 405,148      |
+| Candidate B2 | 43.51            | 45.68           | 405,148      |
+| Baseline A2  | 44.05            | 46.43           | 634,784      |
+
+Median user CPU falls from 45.09 to 44.185 seconds (2.0%); median elapsed time
+falls from 47.555 to 46.445 seconds (2.3%). Median RSS falls by about 225 MiB.
+The runtime difference is small compared with the memory reduction, and the
+trials show variation. This prefix result does not demonstrate a 20–25%
+whole-book speedup or completed book output. It includes the integrated box,
+copy, and allocator changes preceding source-admission caching; it cannot
+assign the runtime difference to one change.
+
+The candidate passed the full native/quality gate (seven stages, no failures,
+blocked stages, or coverage reductions), all 93 previously passing arXiv PDF
+comparisons, and eight LaTeX/pdfLaTeX cases across TeX Live 2023–2026. PDF
+comparison means equal rendered pixels and extracted text. These results do
+not cover unfinished generated-box transfer work or establish an exact TRIP
+log pass; the known paragraph-scoring log mismatch remains separate.
+
+Commands, source and binary hashes, exact diagnostics, and timing receipts are
+in `target/perf-tex-copy-plan/optional-compact-abba-200m/`. The shipping candidate
+SHA-256 is
+`365e89f2ed9e62450f756db010b96da39d51db014c41e0a6ceef39b6dae45067`.
