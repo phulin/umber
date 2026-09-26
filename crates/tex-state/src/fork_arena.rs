@@ -1081,19 +1081,17 @@ impl<T> ChunkStorage<T> {
         let slots_per_chunk = self.slots_per_chunk;
         let packed_vacant = self.packed_vacant;
         let block = self.dense_block_mut(key)?;
-        for _ in 0..slots_per_chunk {
-            match block.payload_mut() {
-                DenseBlockPayload::Optional(payload) => {
-                    payload
-                        .push_with(|slot| slot.insert(None))
-                        .map_err(|_| ForkArenaError::CapacityOverflow)?;
-                }
-                DenseBlockPayload::Packed(payload) => {
-                    let vacant = packed_vacant.ok_or(ForkArenaError::InvalidChunk)?;
-                    payload
-                        .push_with(|slot| slot.insert(vacant()))
-                        .map_err(|_| ForkArenaError::CapacityOverflow)?;
-                }
+        match block.payload_mut() {
+            DenseBlockPayload::Optional(payload) => {
+                payload
+                    .extend_with(slots_per_chunk, || None)
+                    .map_err(|_| ForkArenaError::CapacityOverflow)?
+            }
+            DenseBlockPayload::Packed(payload) => {
+                let vacant = packed_vacant.ok_or(ForkArenaError::InvalidChunk)?;
+                payload
+                    .extend_with(slots_per_chunk, vacant)
+                    .map_err(|_| ForkArenaError::CapacityOverflow)?;
             }
         }
         block.live_chunks += 1;
