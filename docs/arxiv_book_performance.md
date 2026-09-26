@@ -7,12 +7,60 @@ comparison of `99f75a4d9` and `7b9f40dbd` reduced median peak RSS by about
 comparison below explains the storage reduction and the growth it does not
 attribute. These measurements do not establish full-book completion.
 
-The original timeout remains unresolved. The latest unchanged-guard book run
-recorded here, `7b9f40dbd`, exited 124 at 120.17 seconds; its receipt is
-`target/perf-tex-copy-plan/optional-compact-original-book/summary.json`.
+The book still does not complete within the original guards. The latest
+unchanged-guard run, `bf4a6a7ba`, reached the 500-million-action fuel limit after
+118.12 seconds, before the wall timeout. Its receipt is
+`target/perf-tex-copy-plan/ownership-annex-original-book/summary.json`.
+This is a failed acceptance run, not a completion or a matched speedup claim.
 Keep the 120-second, 1,536 MiB, 500,000,000 expansion-fuel, and 10,000,000
 execution-step acceptance guards. The reduced split controls below explain an
 earlier scaling defect; their speedups are not whole-book speedups.
+
+## Current CPU attribution and copy scope
+
+A shipping CPU profile at `84367177d` reached the authenticated
+200-million-action endpoint with the original wall, memory, and execution-step
+guards. The 99 Hz user-cycle capture lost no samples. List copying accounted
+for 5.67% inclusive CPU and 1.01% self CPU. Expanded token delivery accounted
+for 35.45% inclusive CPU; these nested percentages must not be added. This
+prefix suggests a smaller remaining copying opportunity than the older
+full-book profile, but it does not establish the cost of later chapters.
+The raw capture and symbolized reports are in
+`target/perf-tex-copy-plan/color-storage-cpu-200m/1-B/`. Concurrent builds make
+this attribution evidence, not a matched runtime comparison.
+
+A longer capture of `bf4a6a7ba` under the original guards confirms that copying
+gets more expensive later: its inclusive share was 5.73%, 6.28%, 9.52%, and
+8.00% in successive elapsed-time quarters, or 7.39% overall. Closure sealing
+rose from 1.85% in the first quarter to 4.08% in the last. This instrumented run
+timed out after 120.25 seconds and peaked at 576,428 KiB RSS; it did not reach
+the same endpoint as the unprofiled fuel-limited run. Its 11K cycle samples
+lost none. Raw reports and quarter boundaries are in
+`target/perf-tex-copy-plan/ownership-annex-cpu-original-guards/1-B/`.
+
+The integrated copy writer now opens one lazy rollback scope for a complete
+record, including its variable annex spans and final body. Failure or unwinding
+restores unpublished storage; successful publication commits the scope. A
+matched CPU-10 microbenchmark measured variable-payload copying at median
+552.095 ns/node before this change and 510.055 ns/node after it. The candidate
+was faster in all four paired legs. Our agents paused other heavy work, but
+unrelated machine activity was not audited, so the roughly 7.6% estimate is
+not a machine-wide quiet measurement. The shorter all-shape run was noisy and
+does not establish an improvement for fixed bodies or nested lists. Raw
+samples and source/binary identities are in
+`.worktrees/slot-3/target/perf-tex-copy-plan/annex-token-candidate/quiet-comparison.json`.
+The 50 ns/node fixed-body target remains unmet.
+
+The combined ownership and writer checkpoint `bf4a6a7ba` passed all seven
+native/quality stages, all 93 previously passing arXiv PDF comparisons, and
+the eight LaTeX/pdfLaTeX cases across TeX Live 2023–2026. Its frozen shipping
+binary and receipts are under `target/perf-tex-copy-plan/ownership-annex-*`.
+On the preceding ownership checkpoint `ce1f13bb8`, e-TRIP and Gentle passed;
+TRIP retained its known paragraph-tracing mismatch at log byte 166256, while
+normalized DVI, all 432 geometry events, and all 22 command events matched.
+These results cover the inline generated-line transfer, not the unfinished
+nested-child and alignment ownership extensions described in
+[Generated box ownership](generated_box_ownership.md).
 
 ## Book identity and workload
 
