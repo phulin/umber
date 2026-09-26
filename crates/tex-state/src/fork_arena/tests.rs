@@ -278,6 +278,142 @@ fn packed_subranges_keep_other_regions_live_and_reuse_vacant_ranges() {
 }
 
 #[test]
+fn sealed_short_packed_chunks_share_one_physical_superblock() {
+    let mut pool = ChunkPool::<u32>::with_node_pool_packed_chunk_bytes(
+        4_096,
+        super::NodePoolStorageClass::Annex,
+    );
+    let mut arena = ForkArena::<u32, ActiveLane>::new();
+    let mut roots = Vec::new();
+    for value in 1..=1_000_u32 {
+        let root = list(&mut arena, &mut pool, [value]);
+        arena.seal_boundary(&mut pool).expect("seal short body");
+        roots.push(root);
+    }
+    assert_eq!(pool.page_count(), 1, "short bodies pack by physical use");
+    assert_eq!(arena.live_payload_chunks(), roots.len());
+    for (index, root) in roots.into_iter().enumerate() {
+        assert_eq!(
+            arena.list(&pool, root).expect("stable packed root").get(0),
+            Some(&(index as u32 + 1))
+        );
+    }
+}
+
+#[test]
+fn rollback_regrows_sealed_packed_tail_without_changing_logical_key() {
+    let mut pool = ChunkPool::<u32>::with_node_pool_packed_chunk_bytes(
+        4_096,
+        super::NodePoolStorageClass::Annex,
+    );
+    let mut first_owner = ForkArena::<u32, ActiveLane>::new();
+    let first = first_owner
+        .append_unsealed_list(&mut pool, [11])
+        .expect("open first tail");
+    let mark = first_owner.operation_mark(&pool);
+    let original_physical = pool
+        .payload
+        .mapping(first.head.raw)
+        .expect("original mapping");
+    first_owner
+        .seal_boundary(&mut pool)
+        .expect("temporarily seal marked tail");
+    assert_eq!(
+        pool.payload.logical_rows[first.head.raw.ordinal as usize].physical_capacity,
+        1
+    );
+
+    let mut other_owner = ForkArena::<u32, ActiveLane>::new();
+    let other = list(&mut other_owner, &mut pool, [22]);
+    other_owner
+        .seal_boundary(&mut pool)
+        .expect("later owner keeps intervening extent live");
+    first_owner
+        .restore_operation(&mut pool, mark)
+        .expect("rollback regrows marked tail");
+    let restored = first_owner.operation_mark(&pool);
+    assert_eq!(restored.payload_chunks, mark.payload_chunks);
+    assert_eq!(restored.payload_tail_used, mark.payload_tail_used);
+    assert_eq!(restored.payload_tail_sealed, mark.payload_tail_sealed);
+    assert_eq!(restored.payload_tail_summary, mark.payload_tail_summary);
+    assert_ne!(
+        pool.payload
+            .mapping(first.head.raw)
+            .expect("remapped physical extent"),
+        original_physical
+    );
+    assert_eq!(
+        first_owner
+            .list(&pool, first)
+            .expect("original key remains valid")
+            .get(0),
+        Some(&11)
+    );
+    assert_eq!(
+        other_owner
+            .list(&pool, other)
+            .expect("other owner unaffected")
+            .get(0),
+        Some(&22)
+    );
+    first_owner
+        .append_unsealed_list(&mut pool, [33])
+        .expect("reopened tail accepts an append");
+    first_owner
+        .retire_region(&mut pool)
+        .expect("retire first owner");
+    assert!(
+        pool.payload
+            .get(first.head.raw, first_owner.owner, 0)
+            .is_none()
+    );
+    assert_eq!(
+        other_owner
+            .list(&pool, other)
+            .expect("other root survives retirement")
+            .get(0),
+        Some(&22)
+    );
+}
+
+#[test]
+fn short_packed_extent_churn_reuses_blocks_with_a_fixed_live_set() {
+    let mut pool = ChunkPool::<u32>::with_node_pool_packed_chunk_bytes(
+        4_096,
+        super::NodePoolStorageClass::Annex,
+    );
+    let mut survivor = ForkArena::<u32, ActiveLane>::new();
+    let sentinel = list(&mut survivor, &mut pool, [7; 512]);
+    survivor.seal_boundary(&mut pool).expect("seal sentinel");
+    for round in 0..8 {
+        let mut transient = Vec::new();
+        for value in 0..31_u32 {
+            let mut owner = ForkArena::<u32, ActiveLane>::new();
+            list(&mut owner, &mut pool, [round * 31 + value + 100; 512]);
+            owner.seal_boundary(&mut pool).expect("seal transient");
+            transient.push(owner);
+        }
+        for mut owner in transient {
+            owner.retire_region(&mut pool).expect("retire transient");
+        }
+        assert_eq!(
+            survivor
+                .list(&pool, sentinel)
+                .expect("retained root")
+                .get(0),
+            Some(&7)
+        );
+        assert!(
+            pool.page_count() <= 2,
+            "round {round}: allocated {}, live {}, free {}; a fixed survivor plus transient bodies need a bounded block count",
+            pool.page_count(),
+            pool.payload.live_page_count(),
+            pool.payload.free_blocks.len()
+        );
+    }
+}
+
+#[test]
 fn chunk_release_drops_payload_in_place_once_in_order_and_remains_retryable() {
     let drops = Rc::new(RefCell::new(Vec::new()));
     let did_panic = Rc::new(Cell::new(false));

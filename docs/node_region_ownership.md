@@ -131,6 +131,32 @@ wrapper reuses.
 The stamp binds the actual wrapper positions to the exact child interval, so
 sibling wrappers may share the parent chunk. Unique consumption moves only
 that child interval and reconstructs one wrapper.
+
+Annex envelope boundaries remain logical chunk boundaries, even when a child's
+actual annex body contains only a few words. Packed physical storage may return
+the unused suffix of a sealed logical chunk when that reservation is the last
+range in its physical superblock. Later logical chunks append at the shortened
+physical end; their keys, publication serials, and logical capacity do not
+change. Each logical row records its physical extent. Only an intact full-width
+retired extent may enter the full-width free-range list. A short retired extent
+can shorten its physical superblock when it is the tail; otherwise that space
+waits for the whole superblock to retire. No lookup or scan of other logical
+chunks occurs on a seal or release.
+
+An operation rollback may reopen a tail that was sealed and shortened after its
+mark. Before changing that tail to unsealed, the pool must recover a full-width
+physical extent. It grows the same physical tail in place when possible;
+otherwise it allocates a new full extent, copies the used packed values, and
+updates only the stable logical row. The old short extent is retired without
+entering the full-width free-range list. The allocation and copy finish before
+the logical mapping changes, so a failed regrowth leaves the sealed source
+unchanged. This is exclusive same-owner physical relocation during explicit
+rollback, not retained-owner first-write copying or a second logical owner.
+Admitted physical cursors cannot survive mutation or rollback of their own
+logical chunk; copy traversal retains cursors only for its immutable source,
+while destination construction holds an exclusive mutable pool borrow.
+The physical-packing policy does not compact logical positions, forward keys,
+or change the paired ownership receipts.
 A record remains inside one logical block; a segment rotates before the next
 record when space is insufficient.
 Each resulting key names only that record's exact word range, and its serial
