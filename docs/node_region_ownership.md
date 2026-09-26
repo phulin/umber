@@ -98,14 +98,17 @@ relocation without retaining source coordinates or introducing a destination
 lookup table. Publication serials and paired dependency floors are still
 established by the ordinary annex writer.
 
-Fixed bodies whose child closures have finished are staged in groups of at
-most 16. The paired annex writer copies the flat words through one admitted
-physical run per available block segment. A record remains inside one logical
-block; a segment rotates before the next record when space is insufficient.
+Fixed bodies are staged for one source node chunk while all its child closures
+are copied. The paired annex writer then publishes groups of at most 16 through
+one admitted physical run per available block segment. Publishing after all
+child copies lets the caller stamp each copied box with its exact child
+envelope and final wrapper position before a later child can seal its annex.
+A record remains inside one logical block; a segment rotates before the next
+record when space is insufficient.
 Each resulting key names only that record's exact word range, and its serial
 authenticates it independently. The caller's paired operation marks cover the
-whole batch if a later child or parent publication fails. Group scratch is
-bounded even when a source list spans many node chunks. Recursive copies share
+whole batch if a later child or parent publication fails. Flat scratch is
+bounded by one source node chunk even when a list spans many chunks. Recursive copies share
 one growable scratch buffer in the copy context. Each child records its entry
 offset and truncates to that offset on return, preserving its parent's pending
 run without placing the flat buffer on every Rust call frame.

@@ -28,20 +28,26 @@ impl<'a> CopyContext<'a> {
             return Ok(());
         }
         let mut writer = NodeAnnexWriter::new(self.annex_pool, self.destination_annex);
-        let lengths = pending
-            .iter()
-            .map(|(_, len)| *len)
-            .collect::<SmallVec<[u16; 16]>>();
-        let keys = writer.append_fixed_flat(&mut self.fixed_words[batch_start..], &lengths)?;
-        if keys.len() != pending.len() {
-            return Err(ForkArenaError::InvalidRange);
+        let mut offset = batch_start;
+        for group in pending.chunks(16) {
+            let lengths = group
+                .iter()
+                .map(|(_, len)| *len)
+                .collect::<SmallVec<[u16; 16]>>();
+            let end = offset + lengths.iter().map(|&len| usize::from(len)).sum::<usize>();
+            let keys = writer.append_fixed_flat(&mut self.fixed_words[offset..end], &lengths)?;
+            if keys.len() != group.len() {
+                return Err(ForkArenaError::InvalidRange);
+            }
+            for ((index, _), key) in group.iter().zip(keys) {
+                records[*index] = records[*index]
+                    .with_relocated_fixed_key(key)
+                    .ok_or(ForkArenaError::InvalidRange)?;
+            }
+            offset = end;
         }
         *paired_floor = (*paired_floor).min(writer.dependency_floor().unwrap_or(usize::MAX));
-        for ((index, _), key) in pending.drain(..).zip(keys) {
-            records[index] = records[index]
-                .with_relocated_fixed_key(key)
-                .ok_or(ForkArenaError::InvalidRange)?;
-        }
+        pending.clear();
         self.fixed_words.truncate(batch_start);
         Ok(())
     }
@@ -175,14 +181,6 @@ impl<'a> CopyContext<'a> {
                         paired_floor = paired_floor.min(child_annex_floor.unwrap_or(usize::MAX));
                     }
                     pending.push((index, (body_len + 1) as u16));
-                    if pending.len() == 16 {
-                        self.publish_fixed_batch(
-                            &mut records,
-                            &mut pending,
-                            batch_start,
-                            &mut paired_floor,
-                        )?;
-                    }
                     continue;
                 }
                 let mut children = SmallVec::<[PageListId; 4]>::new();
