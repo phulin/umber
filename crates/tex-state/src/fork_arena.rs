@@ -506,7 +506,7 @@ pub(crate) struct ConstructedRunReservation<'a, T, Lane> {
 }
 
 struct ConstructedRunPlan {
-    runs: Vec<ConstructedRunSegment>,
+    runs: smallvec::SmallVec<[ConstructedRunSegment; 2]>,
     len: usize,
 }
 
@@ -4692,7 +4692,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         if len > (u32::MAX - root.len) as usize {
             return Err(ForkArenaError::CapacityOverflow);
         }
-        let mut runs: Vec<ConstructedRunSegment> = Vec::new();
+        let mut runs = smallvec::SmallVec::<[ConstructedRunSegment; 2]>::new();
         let mut remaining = len;
         while remaining != 0 {
             let key = if let Some(previous) = runs.last() {

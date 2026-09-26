@@ -179,12 +179,16 @@ impl<'a> CopyContext<'a> {
             debug_assert!(pending.is_empty());
             if let Some((_, source)) = self.source.admitted_remaining_chunk(self.pool, &mut cursor)
             {
-                source.for_each(|record| records.push(*record));
+                if let Some(packed) = source.packed_slice() {
+                    records.extend_from_slice(packed);
+                } else {
+                    source.for_each(|record| records.push(*record));
+                }
             }
             let mut dependency_floor = usize::MAX;
             let mut paired_floor = usize::MAX;
             let mut defer_fixed_publication = false;
-            let mut box_envelopes = SmallVec::<[CopiedBoxEnvelope; 4]>::new();
+            let mut box_envelopes = SmallVec::<[CopiedBoxEnvelope; 16]>::new();
             for index in 0..records.len() {
                 let record = &mut records[index];
                 if record.is_inline_leaf() {
