@@ -127,16 +127,15 @@ range re-encoding, so a copy-frame sample alone does not justify changing
 
 ## Reduced vertical-split owner
 
-A repeated-`\vsplit` control with 100, 200, 400, and 800 repetitions
-on the current release binary took Umber 0.13, 0.32, 1.59, and 10.05 seconds
-elapsed (0.09, 0.29, 1.56, and 10.01 seconds user CPU). The pinned pdfTeX control took
-0.06, 0.10, 0.15, and 0.30 seconds. A matched consuming-box control took
-Umber 0.04, 0.04, 0.05, and 0.07 seconds. This establishes disproportionate growth in
-Umber's split path on the reduced input; it does not quantify how much of the
+A repeated-`\vsplit` control with 100, 200, 400, and 800 repetitions on
+the current release binary took Umber 0.13, 0.32, 1.59, and 10.05 seconds
+elapsed (0.09, 0.29, 1.56, and 10.01 seconds user CPU). The pinned pdfTeX
+control took 0.06, 0.10, 0.15, and 0.30 seconds. A matched consuming-box
+control took Umber 0.04, 0.04, 0.05, and 0.07 seconds. This establishes
+disproportionate growth in Umber's split path on the reduced input; it does not quantify how much of the
 full book it explains. The N=800 release run returned zero and reached
 39,040 KiB maximum RSS. Its same-input, same-binary profile collected 2,039
-cycles samples with none lost. It assigns 78.47%
-inclusive and 49.81% self to `PageMaterialArena::append_reencoded_chunk_range`,
+cycles samples with none lost. It assigns 78.47% inclusive and 49.81% self to `PageMaterialArena::append_reencoded_chunk_range`,
 21.98% inclusive and 21.88% self to `ForkArena::admitted_previous_chunk`,
 and only 1.78% inclusive to the Durable-to-Page `copy_list_recursive`
 specialization. The control sources and runner are under
@@ -156,6 +155,18 @@ its repeated calls. Repeating a full-chain traversal for each one-node range
 accounts for the measured scaling shape; the profile establishes the hot
 functions, while source inspection establishes their traversal order.
 
+`prune_page_top_list_with_discards` has the same repeated-range pattern.
+After the first box or rule, it appends each remaining node as a one-element
+range to the retained projection; before the first box, it appends
+discardable nodes one by one to the discard projection. For a retained
+remainder of length L spread across a number of chunks proportional to L,
+its L full-chain range traversals cost O(L²). Repeating that operation while
+progressively splitting a box can yield O(N³) total traversal in the reduced
+control. The neighboring `prune_page_top_list` already collects retained
+runs before slicing, providing a source-level control for the batched
+approach. These are source-derived bounds, not direct measurements of
+individual loop iteration counts.
+
 The first correction boundary is the semantic identity case: when the
 infinite-shrink index set is empty, return the original page-list identity.
 When replacements exist, preserve order by appending each maximal unchanged
@@ -163,10 +174,12 @@ range once and inserting a replacement only for the offending glue node.
 TeX82's `vsplit` (section 977, `tex.web` part [44]) changes shrink order only
 for infinite-shrink glue that triggers the split diagnostic. This design
 keeps marks, break index, remainder, and register ownership in their existing
-owners. Recheck the matched control and full book after implementation;
-`prune_page_top_list_with_discards` has a separate per-node append path that
-may still matter. A range traversal fix requires its own dependency and
-rollback audit, since admitted predecessors can carry retained history.
+owners. In `prune_page_top_list_with_discards`, preserve the two separate
+retained and discarded projections but append contiguous source runs once
+per run; a single surviving tail is one range. Recheck the matched control
+and full book after implementation. A lower-level range traversal fix
+requires its own dependency and rollback audit, since admitted predecessors
+can carry retained history.
 The annex fixed-array range walker, by contrast, begins at the fixed record
 tail; fixed records are kept inside one logical chunk. Its sampled work is
 per-node bounded traversal, not a scan from the global arena origin.
