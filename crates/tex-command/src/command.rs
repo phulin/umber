@@ -696,7 +696,7 @@ impl<G> HotCommand<G> {
                     ),
                 },
             },
-            command: CommandWord::from_static_word(Meaning::Undefined.encode()),
+            command: CommandWord::from_static_word(Meaning::UNDEFINED_WORD),
             font: None,
         }
     }
@@ -719,7 +719,7 @@ impl<G> HotCommand<G> {
                     delivery_flags: CommandDeliveryFlags::default(),
                 },
             },
-            command: CommandWord::from_static_word(Meaning::Undefined.encode()),
+            command: CommandWord::from_static_word(Meaning::UNDEFINED_WORD),
             font: None,
         }
     }
@@ -907,7 +907,7 @@ impl<G> HotCommand<G> {
                 CommandClass::Undefined | CommandClass::Macro | CommandClass::Expandable
             )
         {
-            self.command = CommandWord::from_static_word(Meaning::Relax.encode());
+            self.command = CommandWord::from_static_word(Meaning::RELAX_WORD);
             self.font = None;
             self.token
                 .site
@@ -936,16 +936,14 @@ impl<G> HotCommand<G> {
 
     pub(crate) fn convert_end_template_to_endv(&mut self, frozen_endv: Token) {
         self.token.word = TokenWord::pack(frozen_endv);
-        self.command = CommandWord::from_static_word(Meaning::EndV.encode());
+        self.command = CommandWord::from_static_word(Meaning::END_V_WORD);
         self.font = None;
         self.token.site.control_sequence = None;
         self.token.site.alignment_adjustment = crate::processor::AlignmentDeliveryAdjustment::None;
     }
 
     pub(crate) fn convert_to_end_template(&mut self) {
-        self.command = CommandWord::from_static_word(
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate).encode(),
-        );
+        self.command = CommandWord::from_static_word(Meaning::END_TEMPLATE_WORD);
         self.font = None;
         self.token.site.control_sequence = None;
     }

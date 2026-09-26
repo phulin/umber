@@ -1777,6 +1777,28 @@ impl Meaning {
         Self::decode_stored(word)
     }
 
+    /// Packed word of [`Meaning::Undefined`], for per-token placeholders.
+    pub const UNDEFINED_WORD: u64 = Self::Undefined.encode();
+    /// Packed word of [`Meaning::Relax`].
+    pub const RELAX_WORD: u64 = Self::Relax.encode();
+    /// Packed word of [`Meaning::EndV`].
+    pub const END_V_WORD: u64 = Self::EndV.encode();
+    /// Packed word of the outer `\endtemplate` primitive.
+    pub const END_TEMPLATE_WORD: u64 =
+        Self::ExpandablePrimitive(ExpandablePrimitive::EndTemplate).encode();
+
+    /// Packs a character-token meaning without the general encoder's
+    /// dispatch; every literal character delivery takes this path.
+    #[must_use]
+    #[inline(always)]
+    pub const fn char_token_word(ch: char, cat: Catcode) -> u64 {
+        pack(
+            OP_CHAR_TOKEN,
+            MeaningFlags::EMPTY,
+            ((ch as u64) << 4) | cat as u64,
+        )
+    }
+
     /// Encodes this meaning into `opcode:8 | flags:8 | operand:48`.
     #[must_use]
     #[inline]
@@ -1785,11 +1807,7 @@ impl Meaning {
             Self::Undefined => pack(OP_UNDEFINED, MeaningFlags::EMPTY, 0),
             Self::Relax => pack(OP_RELAX, MeaningFlags::EMPTY, 0),
             Self::CharGiven(ch) => pack(OP_CHAR_GIVEN, MeaningFlags::EMPTY, ch as u64),
-            Self::CharToken { ch, cat } => pack(
-                OP_CHAR_TOKEN,
-                MeaningFlags::EMPTY,
-                ((ch as u64) << 4) | cat as u64,
-            ),
+            Self::CharToken { ch, cat } => Self::char_token_word(ch, cat),
             Self::MathCharGiven(value) => {
                 pack(OP_MATH_CHAR_GIVEN, MeaningFlags::EMPTY, value as u64)
             }
