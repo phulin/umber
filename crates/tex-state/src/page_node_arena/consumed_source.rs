@@ -149,7 +149,7 @@ impl PageMaterialArena<'_> {
         window: ConsumedPageWindow,
         suffix: super::FreshGeneratedSegment,
     ) -> Result<(PageListId, GeneratedLineBody), ForkArenaError> {
-        let retained = self.slice_sequence(window.source(), window.selected(), &mut Vec::new())?;
+        let retained = self.slice_sequence(window.source(), window.selected())?;
         let retained_span = self.admit_span(retained)?;
         let assembled = self
             .append_unique_to_span(retained_span, suffix.unique)?
@@ -172,11 +172,7 @@ impl PageMaterialArena<'_> {
         if body.assembled != final_child {
             return Err(ForkArenaError::InvalidRegion);
         }
-        let expected = self.slice_sequence(
-            body.window.source(),
-            body.window.selected(),
-            &mut Vec::new(),
-        )?;
+        let expected = self.slice_sequence(body.window.source(), body.window.selected())?;
         if expected != body.retained {
             return Err(ForkArenaError::InvalidRegion);
         }
@@ -313,11 +309,9 @@ impl PageMaterialArena<'_> {
                     end = indexed[index].records.end;
                     index += 1;
                 }
-                pieces.push(GeneratedInlinePiece::Full(self.slice_sequence(
-                    child,
-                    start..end,
-                    &mut Vec::new(),
-                )?));
+                pieces.push(GeneratedInlinePiece::Full(
+                    self.slice_sequence(child, start..end)?,
+                ));
             } else {
                 pieces.push(GeneratedInlinePiece::Cut(PageBoxCutRange {
                     chunk_position: indexed[index].position,
