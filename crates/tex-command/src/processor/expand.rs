@@ -5,6 +5,8 @@ mod consume;
 mod input;
 mod resident;
 
+use consume::ExpansionCandidate;
+
 use tex_state::meaning::{ExpandablePrimitive, Meaning, ResolvedMeaning};
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
@@ -1041,9 +1043,35 @@ impl<G> CommandProcessor<'_, '_, G> {
             None
         };
         if hot_destination.is_none() {
-            match self.raw_next_hot(&mut hot_destination)? {
-                DeliveryStatus::Command => {}
-                status => return Ok(status),
+            if preflight {
+                let candidate = if self.is_observed() {
+                    self.read_expansion_candidate::<true, false, true>()
+                } else {
+                    self.read_expansion_candidate::<false, false, true>()
+                };
+                match candidate {
+                    Ok(ExpansionCandidate::ExpandedMacro) => {
+                        let result = self.expanded_next_hot(&mut hot_destination, None);
+                        return self.finish_hot_delivery(destination, &mut hot_destination, result);
+                    }
+                    Ok(ExpansionCandidate::Command(command)) => {
+                        hot_destination = Some(command);
+                    }
+                    Ok(ExpansionCandidate::Finished(status)) => return Ok(status),
+                    Err(failure) => {
+                        destination.take();
+                        return self.fail_hot_expanded_delivery(
+                            &mut hot_destination,
+                            self.command.transient.active_expansion_depth,
+                            failure,
+                        );
+                    }
+                }
+            } else {
+                match self.raw_next_hot(&mut hot_destination)? {
+                    DeliveryStatus::Command => {}
+                    status => return Ok(status),
+                }
             }
         }
         let hot = hot_destination

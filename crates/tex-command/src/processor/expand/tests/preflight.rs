@@ -11,10 +11,10 @@ fn one_and_4096_preflight_expansions_reuse_one_slot_with_exact_linear_work() {
     for (expansions, evidence) in [(1, one), (4_096, many)] {
         assert_eq!(evidence.slot_initializations, 0);
         assert_eq!(evidence.rich_materializations, 1);
-        // Preflight materializes its initial command; subsequent ordinary
-        // macro activations consume only their meaning and invocation facts.
-        assert_eq!(evidence.resolved_writes, 2);
-        assert_eq!(evidence.expanded_classifications, 2);
+        // The first macro and every later activation consume only resolved
+        // invocation facts; only the terminal character becomes a command.
+        assert_eq!(evidence.resolved_writes, 1);
+        assert_eq!(evidence.expanded_classifications, 1);
         assert_eq!(evidence.command_clones, 0);
         assert_eq!(evidence.token_frame_steps, expansions + 1);
         assert_eq!(evidence.meaning_lookups, expansions);
@@ -80,6 +80,175 @@ fn expandable_preflight_delivery_uses_one_caller_owned_command_slot() {
         assert_eq!(processor.fuel.burned(), 2);
         let ownership_after = crate::command::command_ownership_counters();
         assert_eq!(ownership_after.clones - ownership_before.clones, 0);
+        assert_eq!(
+            ownership_after.resolved_writes - ownership_before.resolved_writes,
+            1
+        );
+    });
+}
+
+#[test]
+fn source_macro_preflight_materializes_only_when_observed() {
+    crate::test_harness::with_universe(|universe| {
+        let replacement = Token::Char {
+            ch: 'A',
+            cat: Catcode::Letter,
+        };
+        let definition = universe
+            .allocate_definition(&[], &[TokenWord::pack(replacement)])
+            .expect("definition");
+        let symbol = universe.intern("m").expect("macro name");
+        universe
+            .assign_meaning(
+                symbol,
+                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                AssignmentScope::Global,
+            )
+            .expect("macro meaning");
+
+        for observed in [false, true] {
+            let mut command = CommandState::default();
+            let source = command
+                .register_source(crate::SourceRegistration::new(
+                    crate::RegisteredSourceKind::Generated,
+                    &b"\\m"[..],
+                ))
+                .expect("source registration");
+            command
+                .open_registered_source(source)
+                .expect("source opening");
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut fuel = crate::CommandFuelLedger::new(2).expect("preflight fuel");
+            let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut observer = RecordingObserver::default();
+            let mut context = universe.command_context().expect("command context");
+            let processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut effects,
+            );
+            let mut processor = if observed {
+                processor.with_observer(&mut observer)
+            } else {
+                processor
+            };
+            let before = crate::command::command_ownership_counters();
+            let mut destination = None;
+            assert_eq!(
+                processor
+                    .preflight_command_into(&mut destination)
+                    .expect("source macro preflight"),
+                crate::DeliveryStatus::Command
+            );
+            assert_eq!(
+                destination
+                    .expect("expanded terminal")
+                    .spelling()
+                    .semantic_token(),
+                replacement
+            );
+            assert_eq!(processor.fuel.burned(), 2);
+            let after = crate::command::command_ownership_counters();
+            assert_eq!(
+                after.resolved_writes - before.resolved_writes,
+                if observed { 2 } else { 1 }
+            );
+            drop(processor);
+            let boundaries = observer
+                .0
+                .iter()
+                .filter_map(|observation| match observation {
+                    CommandObservation::Command(record) => Some(record.boundary),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            if observed {
+                assert_eq!(
+                    boundaries,
+                    [
+                        CommandDeliveryBoundary::Raw,
+                        CommandDeliveryBoundary::Raw,
+                        CommandDeliveryBoundary::Expanded,
+                    ]
+                );
+            } else {
+                assert!(boundaries.is_empty());
+            }
+        }
+    });
+}
+
+#[test]
+fn preflight_end_template_inserts_and_reads_frozen_endv() {
+    crate::test_harness::with_universe(|universe| {
+        let template = install_static(
+            universe,
+            "template",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate),
+        );
+        let mut command = CommandState::default();
+        crate::test_harness::push(&mut command, [template]);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::new(2).expect("template fuel");
+        let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut effects,
+        );
+        let mut destination = None;
+        assert_eq!(
+            processor
+                .preflight_command_into(&mut destination)
+                .expect("template preflight"),
+            crate::DeliveryStatus::Command
+        );
+        let delivered = destination.expect("frozen endv delivery");
+        assert!(delivered.spelling().semantic_token().is_frozen_endv());
+        assert_eq!(delivered.meaning(), Meaning::EndV);
+        assert_eq!(processor.fuel.burned(), 2);
+    });
+}
+
+#[test]
+fn empty_macro_preflight_reaches_end_without_an_expanded_command() {
+    crate::test_harness::with_universe(|universe| {
+        let definition = universe.allocate_definition(&[], &[]).expect("definition");
+        let symbol = universe.intern("empty").expect("macro name");
+        universe
+            .assign_meaning(
+                symbol,
+                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                AssignmentScope::Global,
+            )
+            .expect("macro meaning");
+        let mut command = CommandState::default();
+        crate::test_harness::push(&mut command, [Token::Cs(symbol.symbol())]);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::new(2).expect("preflight fuel");
+        let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut effects,
+        );
+        let mut destination = None;
+        assert_eq!(
+            processor
+                .preflight_command_into(&mut destination)
+                .expect("empty macro preflight"),
+            crate::DeliveryStatus::End
+        );
+        assert!(destination.is_none());
+        assert_eq!(processor.fuel.burned(), 2);
     });
 }
 

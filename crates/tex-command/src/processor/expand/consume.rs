@@ -17,6 +17,15 @@ pub(super) struct TokenMeaning<G> {
     pub(super) control_sequence: Option<Symbol>,
 }
 
+/// One read from the shared raw input kernel, interpreted for expansion.
+/// Preflight and the ordinary expansion loop share this exact admission so
+/// neither has to construct a command for an ordinary unobserved macro.
+pub(super) enum ExpansionCandidate<G> {
+    ExpandedMacro,
+    Command(HotCommand<G>),
+    Finished(DeliveryStatus),
+}
+
 impl<G> TokenMeaning<G> {
     #[inline(always)]
     pub(super) fn empty() -> Self {
@@ -102,6 +111,57 @@ impl ResidentWord {
 }
 
 impl<G> CommandProcessor<'_, '_, G> {
+    #[inline(always)]
+    pub(super) fn read_expansion_candidate<
+        const OBSERVED: bool,
+        const STOP_PROTECTED: bool,
+        const PREFLIGHT_FIRST: bool,
+    >(
+        &mut self,
+    ) -> Result<ExpansionCandidate<G>, CommandError> {
+        let word = match self.read_raw_word(self.create_source_control_sequences)? {
+            ResidentColdOutcome::Word(word) => word,
+            ResidentColdOutcome::Finished(status) => {
+                return Ok(ExpansionCandidate::Finished(status));
+            }
+            ResidentColdOutcome::Retry => unreachable!("reader settles transitions"),
+        };
+        let (meaning, resolution) = self.resolve_read(&word);
+        self.record_consumed_read(&word, resolution.meaning_lookup());
+        if !OBSERVED
+            && !self
+                .command
+                .delivery_mode
+                .requires_semantic_settlement(word.suppress_expandable, meaning.is_outer())
+            && let MeaningWord::Macro { flags, definition } = &meaning.word
+            && !(STOP_PROTECTED && flags.contains(MeaningFlags::PROTECTED))
+        {
+            let name = meaning
+                .control_sequence
+                .ok_or_else(CommandError::input_invariant)?;
+            let spelling = tex_state::token::TracedTokenWord::from_parts(word.word, word.origin);
+            if PREFLIGHT_FIRST {
+                // The supplied-command path activated this first macro
+                // inside expanded_next_hot's transient quiescence guard.
+                let depth = self.command.transient.active_expansion_depth;
+                let active_depth = depth
+                    .checked_add(1)
+                    .ok_or_else(CommandError::input_invariant)?;
+                self.command.transient.active_expansion_depth = active_depth;
+                let result = self.activate_read_macro(spelling, *flags, *definition, name);
+                self.command.transient.active_expansion_depth = depth;
+                result?;
+            } else {
+                self.activate_read_macro(spelling, *flags, *definition, name)?;
+            }
+            return Ok(ExpansionCandidate::ExpandedMacro);
+        }
+        let mut command = word.materialize(&meaning);
+        self.admit_materialized_read(&word, &command);
+        self.settle_hot_delivery_in::<OBSERVED>(&mut command, resolution.literal_catcode())?;
+        Ok(ExpansionCandidate::Command(command))
+    }
+
     #[inline(always)]
     pub(super) fn resolve_read(
         &self,
@@ -191,45 +251,18 @@ impl<G> CommandProcessor<'_, '_, G> {
             expanded = true;
         }
         loop {
-            let mut command = {
-                let word = match self.read_raw_word(self.create_source_control_sequences)? {
-                    ResidentColdOutcome::Word(word) => word,
-                    ResidentColdOutcome::Finished(status) => {
+            let mut command =
+                match self.read_expansion_candidate::<OBSERVED, STOP_PROTECTED, false>()? {
+                    ExpansionCandidate::ExpandedMacro => {
+                        expanded = true;
+                        continue;
+                    }
+                    ExpansionCandidate::Finished(status) => {
                         destination.take();
                         return Ok(status);
                     }
-                    ResidentColdOutcome::Retry => unreachable!("reader settles transitions"),
+                    ExpansionCandidate::Command(command) => command,
                 };
-                let (meaning, resolution) = self.resolve_read(&word);
-                self.record_consumed_read(&word, resolution.meaning_lookup());
-                if !OBSERVED
-                    && !self
-                        .command
-                        .delivery_mode
-                        .requires_semantic_settlement(word.suppress_expandable, meaning.is_outer())
-                    && let MeaningWord::Macro { flags, definition } = &meaning.word
-                    && !(STOP_PROTECTED && flags.contains(MeaningFlags::PROTECTED))
-                {
-                    let name = meaning
-                        .control_sequence
-                        .ok_or_else(CommandError::input_invariant)?;
-                    self.activate_read_macro(
-                        tex_state::token::TracedTokenWord::from_parts(word.word, word.origin),
-                        *flags,
-                        *definition,
-                        name,
-                    )?;
-                    expanded = true;
-                    continue;
-                }
-                let mut command = word.materialize(&meaning);
-                self.admit_materialized_read(&word, &command);
-                self.settle_hot_delivery_in::<OBSERVED>(
-                    &mut command,
-                    resolution.literal_catcode(),
-                )?;
-                command
-            };
             let action = classify_hot_command(&command);
             if STOP_PROTECTED && Self::protected_terminal(&command, action) {
                 *destination = Some(command);

@@ -57,6 +57,13 @@ sequences still resolve live meanings for outer validity; literal characters
 need no meaning lookup. Expanded delivery resolves each interpreted meaning
 once. A macro supplies only its name, origin, flags, and definition to activation
 and argument scanning; successful ordinary activation constructs no command.
+Main-control preflight uses this same resolved-read candidate for its first
+token. An ordinary unobserved macro can activate directly there and continue
+through the existing expansion loop; source, recovery, observation, and other
+commands still pass through ordinary raw settlement. Preflight retains the
+canonical `end_template` insertion and its fuel charge. Direct first-macro
+activation retains the expanded episode's transient quiescence guard while
+matching arguments; the continuation enters the ordinary guarded expansion loop.
 
 A full hot command is materialized when a caller actually needs command delivery,
 or when observation, suppression, alignment, or outer recovery requires the
