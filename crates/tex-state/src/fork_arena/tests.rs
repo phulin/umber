@@ -1610,6 +1610,36 @@ fn sealed_prefix_has_two_bounded_lineages_with_isolated_tails() {
 }
 
 #[test]
+fn shared_tail_noop_rollback_keeps_exclusive_mutation_rejected() {
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(8);
+    let mut prior = ForkArena::<u32, ActiveLane>::new();
+    let build = prior.begin_batch(&mut pool).expect("successor boundary");
+    let retained = region_list(&mut prior, &mut pool, [41]);
+    let mut current = prior
+        .share_sealed_prefix(&mut pool, build, &[retained])
+        .expect("shared successor");
+
+    let empty_operation = current.operation_mark(&pool);
+    current
+        .restore_operation(&mut pool, empty_operation)
+        .expect("unchanged shared tail needs no mutation");
+    assert_eq!(
+        current.list(&pool, retained).expect("current root").get(0),
+        Some(&41)
+    );
+    assert_eq!(
+        prior.list(&pool, retained).expect("prior root").get(0),
+        Some(&41)
+    );
+    assert_eq!(
+        pool.payload
+            .truncate(retained.tail.raw, current.owner, current.lineage, 0, None),
+        Err(ForkArenaError::ChunkShared),
+        "a real change still requires exclusive ownership"
+    );
+}
+
+#[test]
 fn shared_chunk_destructors_run_only_after_the_last_lineage_drops() {
     let drops = Rc::new(RefCell::new(Vec::new()));
     let did_panic = Rc::new(Cell::new(false));

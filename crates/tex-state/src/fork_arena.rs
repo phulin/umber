@@ -3607,10 +3607,24 @@ impl<T, Lane> ForkArena<T, Lane> {
             let key = self
                 .live_key_at(chunks - 1)
                 .ok_or(ForkArenaError::InvalidOperationMark)?;
-            pool.payload
-                .truncate(key, self.owner, self.lineage, tail_used, tail_summary)?;
-            pool.payload
-                .restore_sealed(key, self.owner, self.lineage, tail_sealed)?;
+            let tail_unchanged = {
+                let meta = pool
+                    .payload
+                    .validate_lineage(key, self.owner, self.lineage)?;
+                meta.used == tail_used
+                    && meta.sealed == tail_sealed
+                    && meta.sequence_summary == tail_summary
+            };
+            // A retained checkpoint can share the mark's sealed tail with a
+            // candidate. Rolling back an empty construction leaves that
+            // chunk untouched; exclusive mutation is required only when the
+            // operation actually changed its payload or metadata.
+            if !tail_unchanged {
+                pool.payload
+                    .truncate(key, self.owner, self.lineage, tail_used, tail_summary)?;
+                pool.payload
+                    .restore_sealed(key, self.owner, self.lineage, tail_sealed)?;
+            }
         } else if tail_used != 0 {
             return Err(ForkArenaError::InvalidOperationMark);
         }

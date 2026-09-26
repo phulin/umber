@@ -189,6 +189,36 @@ fn whole_closure_preflight_rejects_foreign_nested_child_atomically() {
 }
 
 #[test]
+fn void_closure_build_preserves_shared_successor_tail() {
+    let mut pool = NodePool::with_chunk_bytes(64);
+    let mut prior = pool.start_region::<PageRole>().expect("prior page region");
+    let build = prior
+        .begin_closure_build(&mut pool)
+        .expect("retained prefix build");
+    let retained = prior
+        .publish_owned(&mut pool, [Node::Penalty(17)])
+        .expect("retained page root");
+    let address = resident_address(&prior, &pool, retained.list);
+    let mut successor = prior
+        .share_sealed_prefix(&mut pool, build, [retained.list])
+        .expect("shared successor");
+
+    let void_build = successor
+        .begin_closure_build(&mut pool)
+        .expect("void box construction");
+    successor
+        .cancel_closure_build(&mut pool, void_build)
+        .expect("void construction leaves shared prefix untouched");
+
+    assert_eq!(resident_address(&prior, &pool, retained.list), address);
+    assert_eq!(resident_address(&successor, &pool, retained.list), address);
+    assert_eq!(
+        resident_nodes(&successor, &pool, retained.list),
+        [Node::Penalty(17)]
+    );
+}
+
+#[test]
 fn suffix_transfer_preflights_and_rebrands_the_whole_nested_closure() {
     let mut chunks = ChunkPool::<Node<PageListId>>::with_chunk_bytes(64);
     let mut source = ForkArena::<Node<PageListId>, PageMaterialLane>::new();
