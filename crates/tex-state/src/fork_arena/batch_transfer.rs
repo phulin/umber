@@ -103,10 +103,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         // Every producer settles direct child floors while publishing its
         // payload. An unfinished reservation is not a transferable batch;
         // sealing must not repair it by scanning already published values.
-        for (_, key) in self
-            .live_positions()
-            .filter(|(position, _)| *position >= mark.payload_start as usize)
-        {
+        for (_, key) in self.live_positions_from(mark.payload_start as usize) {
             if !pool
                 .payload
                 .validate_lineage(key, self.owner, self.lineage)?
@@ -220,10 +217,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         for list in lists {
             self.validate_list_endpoints_in_suffix(pool, *list, mark.payload_start as usize)?;
         }
-        for (_, key) in self
-            .live_positions()
-            .filter(|(position, _)| *position >= mark.payload_start as usize)
-        {
+        for (_, key) in self.live_positions_from(mark.payload_start as usize) {
             let meta = pool
                 .payload
                 .validate_lineage(key, self.owner, self.lineage)?;
@@ -296,7 +290,6 @@ impl<T, Lane> ForkArena<T, Lane> {
             .obsolete_chunks_pruned
             .saturating_add(released as u64);
         self.ownership = ForkOwnership::Accepted(successor);
-        self.invalidate_live_tail_hint();
         Ok(())
     }
 
@@ -366,7 +359,6 @@ impl<T, Lane> ForkArena<T, Lane> {
             let current = self.current_chunks_mut();
             current.payload.append(batch.payload);
         }
-        self.invalidate_live_tail_hint();
         self.pending_batch = None;
         Ok(())
     }
@@ -441,7 +433,6 @@ impl<T, Lane> ForkArena<T, Lane> {
             let current = destination.current_chunks_mut();
             current.payload.append(batch.payload);
         }
-        destination.invalidate_live_tail_hint();
         self.counters.chunks_promoted = self
             .counters
             .chunks_promoted
@@ -548,7 +539,6 @@ impl<T, Lane> ForkArena<T, Lane> {
             let current = destination.current_chunks_mut();
             current.payload.append(payload);
         }
-        destination.invalidate_live_tail_hint();
         self.counters.chunks_promoted = self
             .counters
             .chunks_promoted

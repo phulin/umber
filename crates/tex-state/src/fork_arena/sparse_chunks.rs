@@ -78,6 +78,12 @@ impl SparseChunks {
             .and_then(|position| self.get(position))
     }
 
+    pub(super) fn last_live_position(&self) -> Option<usize> {
+        self.live.last()?;
+        let trailing_gap = self.gaps.last().filter(|gap| gap.end == self.logical_len);
+        Some(trailing_gap.map_or(self.logical_len - 1, |gap| gap.start - 1))
+    }
+
     pub(super) fn iter(&self) -> SparseChunksIter<'_> {
         SparseChunksIter {
             chunks: self,
@@ -85,26 +91,25 @@ impl SparseChunks {
         }
     }
 
-    pub(super) fn iter_live_with_positions(
-        &self,
-    ) -> impl Iterator<Item = (usize, LogicalChunkId)> + '_ {
-        let mut vacant = 0;
-        let mut gap_index = 0;
-        self.live
-            .iter()
-            .copied()
-            .enumerate()
-            .map(move |(index, key)| {
-                while let Some(gap) = self.gaps.get(gap_index) {
-                    let position = index + vacant;
-                    if position < gap.start {
-                        break;
-                    }
-                    vacant += gap.end - gap.start;
-                    gap_index += 1;
-                }
-                (index + vacant, key)
-            })
+    pub(super) fn iter_live_with_positions(&self) -> SparseChunksLiveIter<'_> {
+        self.iter_live_from(0)
+    }
+
+    pub(super) fn iter_live_from(&self, start: usize) -> SparseChunksLiveIter<'_> {
+        let mut position = start.min(self.logical_len);
+        let mut gap_index = self.gap_after_or_at(position);
+        if let Some(gap) = self.gaps.get(gap_index)
+            && gap.start <= position
+        {
+            position = gap.end;
+            gap_index += 1;
+        }
+        SparseChunksLiveIter {
+            chunks: self,
+            live_index: position - self.vacant_before(position),
+            gap_index,
+            position,
+        }
     }
 
     fn rebuild_gap_prefixes_from(&mut self, first: usize) {
@@ -342,6 +347,31 @@ impl<'a> IntoIterator for &'a SparseChunks {
     }
 }
 
+pub(super) struct SparseChunksLiveIter<'a> {
+    chunks: &'a SparseChunks,
+    live_index: usize,
+    gap_index: usize,
+    position: usize,
+}
+
+impl Iterator for SparseChunksLiveIter<'_> {
+    type Item = (usize, LogicalChunkId);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let key = *self.chunks.live.get(self.live_index)?;
+        if let Some(gap) = self.chunks.gaps.get(self.gap_index)
+            && gap.start == self.position
+        {
+            self.position = gap.end;
+            self.gap_index += 1;
+        }
+        let position = self.position;
+        self.position += 1;
+        self.live_index += 1;
+        Some((position, key))
+    }
+}
+
 pub(super) struct SparseChunksIter<'a> {
     chunks: &'a SparseChunks,
     position: usize,
@@ -449,6 +479,11 @@ mod tests {
         assert_eq!(prefix.gap_count(), 3);
         assert_eq!(prefix.live_len(), 5);
         assert_eq!(prefix.get(5), Some(&key(5)));
+        assert_eq!(prefix.last_live_position(), Some(7));
+        assert_eq!(
+            prefix.iter_live_from(4).collect::<Vec<_>>(),
+            vec![(5, key(5)), (7, key(7))]
+        );
         let right = prefix.split_off(5);
         assert_eq!(
             prefix.iter().copied().collect::<Vec<_>>(),
@@ -473,5 +508,7 @@ mod tests {
             prefix.iter().copied().collect::<Vec<_>>(),
             (0..8).map(key).collect::<Vec<_>>()
         );
+        prefix.take_live_range(6, 8);
+        assert_eq!(prefix.last_live_position(), Some(5));
     }
 }

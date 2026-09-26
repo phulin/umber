@@ -660,16 +660,14 @@ preflight exactly like the other page payload roots. Thus page construction
 and output consumption coexist without a second durable closure, while
 speculative failure still restores the exact prior root.
 
-Each arena lane also maintains one constant-size live frontier: its logical
-end position and current tail chunk incarnation. Append, operation rollback,
-candidate settlement, prefix release, lineage sharing, and succession update
-that record at the same structural mutation as the authoritative chunk vector
-and pool lineage index. A checked lifecycle boundary compares the maintained
-record with the vector tail and authenticates that tail's generation, arena,
-lineage, and owner-relative position in the pool. It therefore admits the
-module-private prefix invariant in O(1), without a whole-arena chunk census or
-a second node representation. Cold suffix-closure and dependency audits remain
-explicit where their semantic contract requires visiting the selected suffix.
+Each arena lane derives its live frontier directly from the authoritative
+envelope: the last live key and, if present, the start of its merged trailing
+vacancy range. A checked lifecycle boundary authenticates that key's
+generation, arena, lineage, and owner-relative position in the pool. This
+derivation takes O(1), even after many trailing transfers, and retains no
+second frontier cache or whole-arena chunk census. Cold suffix-closure and
+dependency audits remain explicit where their semantic contract requires
+visiting the selected suffix.
 
 An old page region is retained precisely when at least one retained restart
 row belongs to its contiguous boundary interval. If a page contains no

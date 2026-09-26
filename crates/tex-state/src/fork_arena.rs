@@ -11,7 +11,7 @@
 use core::hash::{Hash, Hasher};
 use core::marker::PhantomData;
 use std::ops::Range;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 use tex_dense_arena::{AcceptedBlockTable, LogicalBlockId as DenseLogicalBlockId, LogicalPosition};
 use tex_dense_prefix::Superblock;
 
@@ -65,8 +65,6 @@ const VACANT_LOGICAL_CHUNK: LogicalChunkId = LogicalChunkId {
     ordinal: u32::MAX,
     incarnation: 0,
 };
-const UNKNOWN_LIVE_TAIL: u64 = u64::MAX;
-const EMPTY_LIVE_TAIL: u64 = u64::MAX - 1;
 
 impl LogicalChunkId {
     fn block(self, space: u32) -> Result<DenseLogicalBlockId, ForkArenaError> {
@@ -2719,11 +2717,6 @@ pub struct ForkArena<T, Lane> {
     pool_owner: Option<u32>,
     ownership: ForkOwnership,
     base_payload_chunks: u32,
-    /// Highest non-vacant owner-relative slot. Only the arena's direct chunk
-    /// vector is authoritative; this hint keeps repeated seal checks O(1).
-    live_tail_hint: AtomicU64,
-    #[cfg(test)]
-    tail_search_slots: AtomicU64,
     active_builder: bool,
     pending_batch: Option<PendingBatch>,
     next_batch_serial: u64,
@@ -2771,9 +2764,6 @@ impl<T, Lane> ForkArena<T, Lane> {
             pool_owner: None,
             ownership: ForkOwnership::Accepted(ChunkSet::default()),
             base_payload_chunks: 0,
-            live_tail_hint: AtomicU64::new(EMPTY_LIVE_TAIL),
-            #[cfg(test)]
-            tail_search_slots: AtomicU64::new(0),
             active_builder: false,
             pending_batch: None,
             next_batch_serial: 1,
@@ -2791,9 +2781,6 @@ impl<T, Lane> ForkArena<T, Lane> {
             pool_owner: None,
             ownership: ForkOwnership::Accepted(ChunkSet::default()),
             base_payload_chunks: 0,
-            live_tail_hint: AtomicU64::new(EMPTY_LIVE_TAIL),
-            #[cfg(test)]
-            tail_search_slots: AtomicU64::new(0),
             active_builder: false,
             pending_batch: None,
             next_batch_serial: 1,
@@ -2856,51 +2843,26 @@ impl<T, Lane> ForkArena<T, Lane> {
         }
     }
 
-    /// Records only a position, never a second owner or copy of a chunk key.
-    fn set_live_tail_hint(&self, position: Option<usize>) {
-        self.live_tail_hint.store(
-            position.map_or(EMPTY_LIVE_TAIL, |position| position as u64),
-            Ordering::Relaxed,
-        );
-    }
-
-    fn invalidate_live_tail_hint(&self) {
-        self.live_tail_hint
-            .store(UNKNOWN_LIVE_TAIL, Ordering::Relaxed);
-    }
-
     fn live_tail_position(&self) -> Option<usize> {
-        let end = self.live_payload_len();
-        if end == self.base_payload_chunks as usize {
-            self.set_live_tail_hint(None);
-            return None;
+        let base = self.base_payload_chunks as usize;
+        match &self.ownership {
+            ForkOwnership::Accepted(chunks) => chunks
+                .payload
+                .last_live_position()
+                .map(|position| base + position),
+            ForkOwnership::Forked {
+                prefix, current, ..
+            } => current
+                .payload
+                .last_live_position()
+                .map(|position| base + prefix.payload.len() + position)
+                .or_else(|| {
+                    prefix
+                        .payload
+                        .last_live_position()
+                        .map(|position| base + position)
+                }),
         }
-        if self.live_key_at(end - 1).is_some() {
-            self.set_live_tail_hint(Some(end - 1));
-            return Some(end - 1);
-        }
-        let hint = self.live_tail_hint.load(Ordering::Relaxed);
-        if hint == EMPTY_LIVE_TAIL {
-            return None;
-        }
-        if hint != UNKNOWN_LIVE_TAIL {
-            let position = hint as usize;
-            if position >= self.base_payload_chunks as usize
-                && position < end
-                && self.live_key_at(position).is_some()
-            {
-                return Some(position);
-            }
-        }
-        let position = (self.base_payload_chunks as usize..end)
-            .rev()
-            .find(|position| {
-                #[cfg(test)]
-                self.tail_search_slots.fetch_add(1, Ordering::Relaxed);
-                self.live_key_at(*position).is_some()
-            });
-        self.set_live_tail_hint(position);
-        position
     }
 
     /// Authenticates the maintained live tail through the authoritative chunk
@@ -3018,9 +2980,6 @@ impl<T, Lane> ForkArena<T, Lane> {
             pool_owner: self.pool_owner,
             ownership: ForkOwnership::Accepted(shared),
             base_payload_chunks: 0,
-            live_tail_hint: AtomicU64::new(UNKNOWN_LIVE_TAIL),
-            #[cfg(test)]
-            tail_search_slots: AtomicU64::new(0),
             active_builder: false,
             pending_batch: None,
             next_batch_serial: 1,
@@ -3108,10 +3067,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         source_paired_start: usize,
         destination_paired_start: usize,
     ) -> Result<(), ForkArenaError> {
-        for (_, key) in self
-            .live_positions()
-            .filter(|(position, _)| *position >= payload_start)
-        {
+        for (_, key) in self.live_positions_from(payload_start) {
             let meta =
                 pool.payload
                     .validate_exclusive_lineage_mut(key, self.owner, self.lineage)?;
@@ -3135,10 +3091,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         payload_start: usize,
         source_start: usize,
     ) -> Result<(), ForkArenaError> {
-        for (_, key) in self
-            .live_positions()
-            .filter(|(position, _)| *position >= payload_start)
-        {
+        for (_, key) in self.live_positions_from(payload_start) {
             let meta =
                 pool.payload
                     .validate_exclusive_lineage_mut(key, self.owner, self.lineage)?;
@@ -3178,6 +3131,13 @@ impl<T, Lane> ForkArena<T, Lane> {
     }
 
     fn live_positions(&self) -> impl Iterator<Item = (usize, LogicalChunkId)> + '_ {
+        self.live_positions_from(self.base_payload_chunks as usize)
+    }
+
+    fn live_positions_from(
+        &self,
+        start: usize,
+    ) -> impl Iterator<Item = (usize, LogicalChunkId)> + '_ {
         let base = self.base_payload_chunks as usize;
         let sets: [Option<(&SparseChunks, usize)>; 2] = match &self.ownership {
             ForkOwnership::Accepted(chunks) => [Some((&chunks.payload, base)), None],
@@ -3188,8 +3148,8 @@ impl<T, Lane> ForkArena<T, Lane> {
                 Some((&current.payload, base + prefix.payload.len())),
             ],
         };
-        sets.into_iter().flatten().flat_map(|(set, offset)| {
-            set.iter_live_with_positions()
+        sets.into_iter().flatten().flat_map(move |(set, offset)| {
+            set.iter_live_from(start.saturating_sub(offset))
                 .map(move |(position, key)| (offset + position, key))
         })
     }
@@ -3775,9 +3735,6 @@ impl<T, Lane> ForkArena<T, Lane> {
         } else if tail_used != 0 {
             return Err(ForkArenaError::InvalidOperationMark);
         }
-        if live_len != chunks {
-            self.invalidate_live_tail_hint();
-        }
         Ok(())
     }
 
@@ -4228,10 +4185,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         // build boundary, even when the selected root does not reach it. The
         // later rebasing step visits that entire envelope, so preflight must
         // prove the paired floor for every block it will rebase.
-        for (_, key) in self
-            .live_positions()
-            .filter(|(position, _)| *position >= payload_start)
-        {
+        for (_, key) in self.live_positions_from(payload_start) {
             let floor = pool
                 .payload
                 .validate_lineage(key, self.owner, self.lineage)?

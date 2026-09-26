@@ -60,7 +60,6 @@ impl<T, Lane> ForkArena<T, Lane> {
             pool.payload.release_lineage(key, owner, self.lineage)?;
         }
         self.base_payload_chunks = mark.payload_chunks;
-        self.invalidate_live_tail_hint();
         Ok(payload_count)
     }
 
@@ -114,10 +113,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         if !self.can_begin_checkpoint_candidate(mark) {
             return Err(ForkArenaError::InvalidCheckpoint);
         }
-        for (_, key) in self
-            .live_positions()
-            .filter(|(position, _)| *position >= mark.payload_chunks as usize)
-        {
+        for (_, key) in self.live_positions_from(mark.payload_chunks as usize) {
             let used = pool.payload.used(key, self.owner)?;
             for offset in 0..used {
                 visit(
@@ -190,10 +186,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         {
             return Err(ForkArenaError::InvalidCheckpoint);
         }
-        for (_, key) in self
-            .live_positions()
-            .filter(|(position, _)| *position >= mark.payload_chunks as usize)
-        {
+        for (_, key) in self.live_positions_from(mark.payload_chunks as usize) {
             let used = pool.payload.used(key, self.owner)?;
             for offset in 0..used {
                 visit(
@@ -388,7 +381,6 @@ impl<T, Lane> ForkArena<T, Lane> {
             detached_prior,
             current: ChunkSet::default(),
         };
-        self.invalidate_live_tail_hint();
         Ok(())
     }
 
@@ -496,7 +488,6 @@ impl<T, Lane> ForkArena<T, Lane> {
         }
         prefix.payload.append(detached_prior.payload);
         self.ownership = ForkOwnership::Accepted(prefix);
-        self.invalidate_live_tail_hint();
         Ok(())
     }
 
@@ -532,7 +523,6 @@ impl<T, Lane> ForkArena<T, Lane> {
             .saturating_add(pruned as u64);
         prefix.payload.append(current.payload);
         self.ownership = ForkOwnership::Accepted(prefix);
-        self.invalidate_live_tail_hint();
         Ok(())
     }
 
@@ -576,7 +566,6 @@ impl<T, Lane> ForkArena<T, Lane> {
         let released = ChunkSet {
             payload: current.payload.split_off(payload_floor),
         };
-        self.invalidate_live_tail_hint();
         let count = self.release_set(pool, released)?;
         self.counters.rootless_suffix_chunks_released = self
             .counters

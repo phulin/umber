@@ -2478,7 +2478,7 @@ fn interior_interval_transfers_and_rolls_back_without_moving_neighbor_chunks() {
 }
 
 #[test]
-fn repeated_tail_loans_validate_in_linear_total_work() {
+fn repeated_tail_loans_derive_frontier_from_gap_metadata() {
     const CHUNKS: usize = 128;
     let mut pool = ChunkPool::<u32>::with_chunk_bytes(4);
     let mut page = ForkArena::<u32, ActiveLane>::new();
@@ -2495,18 +2495,12 @@ fn repeated_tail_loans_validate_in_linear_total_work() {
             .expect("unique trailing chunk moves");
         page.can_seal_boundary(&pool)
             .expect("vacant trailing slots admit in bounded work");
+        assert_eq!(page.live_tail_position(), Some(position - 1));
         let operation = page.operation_mark(&pool);
         page.restore_operation(&mut pool, operation)
             .expect("a vacant operation tail restores without a live tail key");
         loans.push((durable, loan));
     }
-    let searched = page
-        .tail_search_slots
-        .load(std::sync::atomic::Ordering::Relaxed);
-    assert!(
-        searched <= CHUNKS as u64 * 2,
-        "each removed tail crosses at most its preceding chunk: {searched}"
-    );
     for (mut durable, loan) in loans.into_iter().rev() {
         page.rollback_interior_interval(&mut pool, &mut durable, loan)
             .expect("exact trailing loan restores");

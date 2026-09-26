@@ -96,21 +96,12 @@ impl<T, Lane> ForkArena<T, Lane> {
         end: usize,
     ) -> Result<TransferredInterval<Lane>, ForkArenaError> {
         self.preflight_interior_interval(pool, destination, start, end)?;
-        let prior_tail = self.live_tail_position();
         destination.bind_pool(pool)?;
         let base = self.base_payload_chunks as usize;
         let ForkOwnership::Accepted(source) = &mut self.ownership else {
             unreachable!("interior source was preflighted as accepted");
         };
         let moved = source.payload.take_live_range(start - base, end - base);
-        if prior_tail.is_some_and(|position| (start..end).contains(&position)) {
-            let previous = (base..start).rev().find(|position| {
-                #[cfg(test)]
-                self.tail_search_slots.fetch_add(1, Ordering::Relaxed);
-                self.live_key_at(*position).is_some()
-            });
-            self.set_live_tail_hint(previous);
-        }
         destination.base_payload_chunks = start as u32;
         for (offset, key) in moved.iter().copied().enumerate() {
             self.unindex_chunk(pool, key);
@@ -126,7 +117,6 @@ impl<T, Lane> ForkArena<T, Lane> {
             destination.index_chunk(pool, key, start + offset);
         }
         destination.current_chunks_mut().payload.extend(moved);
-        destination.set_live_tail_hint((start < end).then_some(end - 1));
         Ok(TransferredInterval {
             source: self.owner,
             destination: destination.owner,
@@ -188,14 +178,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         source
             .payload
             .restore_range(start - base, selected.into_live_keys());
-        if start < end {
-            self.set_live_tail_hint(Some(
-                self.live_tail_position()
-                    .map_or(end - 1, |tail| tail.max(end - 1)),
-            ));
-        }
         destination.base_payload_chunks = 0;
-        destination.set_live_tail_hint(None);
         Ok(())
     }
 
@@ -347,7 +330,6 @@ impl<T, Lane> ForkArena<T, Lane> {
             destination.index_chunk(pool, key, payload_start + offset);
         }
         destination.current_chunks_mut().payload.append(payload);
-        destination.invalidate_live_tail_hint();
         self.counters.chunks_promoted = self
             .counters
             .chunks_promoted
@@ -389,7 +371,6 @@ impl<T, Lane> ForkArena<T, Lane> {
             return Err(ForkArenaError::InvalidRegion);
         }
         let detached = lane.split_off(local);
-        self.invalidate_live_tail_hint();
         Ok(detached)
     }
 
