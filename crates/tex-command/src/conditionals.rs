@@ -1681,13 +1681,13 @@ impl<G> CommandProcessor<'_, '_, G> {
         let mut nested_conditions = 0_u32;
         let mut destination = None;
         loop {
-            if self.get_next_into(&mut destination)? != crate::DeliveryStatus::Command {
+            if self.get_next_hot_into(&mut destination)? != crate::DeliveryStatus::Command {
                 return Err(CommandError::input_invariant());
             }
             let command = destination
                 .as_ref()
                 .expect("command status initializes destination");
-            let Some(meaning) = static_meaning(command.meaning_ref()) else {
+            let Some(meaning) = command.static_meaning() else {
                 destination = None;
                 continue;
             };

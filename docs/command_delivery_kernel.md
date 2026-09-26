@@ -72,6 +72,8 @@ implementation. Expansion chains stay iterative. EOF, replay completion, and
 errors clear outward destinations; every recursive expansion depth is restored
 on error. No runtime consumer selector, boxed callback, parked continuation,
 parallel reader cache, or alternate recovery engine is introduced.
+Conditional skipped-text delivery uses the compact raw slot and classifies its
+static meaning there; it materializes no rich command for discarded tokens.
 
 ## Observation and settlement
 

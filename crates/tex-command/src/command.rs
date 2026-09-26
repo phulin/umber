@@ -767,6 +767,13 @@ impl<G> HotCommand<G> {
         self.command
     }
 
+    /// Classifies a delivered static command without expanding its rich
+    /// recovery and diagnostic representation.
+    #[inline(always)]
+    pub(crate) fn static_meaning(&self) -> Option<Meaning> {
+        self.command.static_meaning()
+    }
+
     /// The command identity selected by the compact delivery loop.
     pub(crate) fn identity(&self) -> CommandIdentity {
         if self

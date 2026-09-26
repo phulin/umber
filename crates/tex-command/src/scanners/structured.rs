@@ -88,10 +88,9 @@ pub use pdf_values::{
 };
 
 impl<G> CommandProcessor<'_, '_, G> {
-    // Structured scans run as ordinary synchronous Rust calls.  These tiny
-    // adapters are kept only while the legacy per-command phase tables are
-    // being collapsed; they never store or restore anything across a resource
-    // boundary.
+    // Structured scans run synchronously through the sole command processor.
+    // Their typed results cross to the executor only after scanning completes;
+    // no scanner continuation survives a resource boundary.
     /// Expands a frozen whatsit payload at output traversal time.
     ///
     /// The caller decides how the resulting token spellings are rendered;

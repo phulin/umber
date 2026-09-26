@@ -112,6 +112,51 @@ fn ifx_branch<G>(universe: &mut tex_state::Universe<G>, first: Token, second: To
 }
 
 #[test]
+fn skipped_nested_conditional_materializes_only_the_selected_command() {
+    crate::test_harness::with_universe(|universe| {
+        let if_false = install(universe, "iffalse", ExpandablePrimitive::IfFalse);
+        let if_true = install(universe, "iftrue", ExpandablePrimitive::IfTrue);
+        let otherwise = install(universe, "else", ExpandablePrimitive::Else);
+        let fi = install(universe, "fi", ExpandablePrimitive::Fi);
+        let mut command = CommandState::default();
+        crate::test_harness::push(
+            &mut command,
+            [
+                if_false,
+                other('a'),
+                if_true,
+                other('b'),
+                fi,
+                other('c'),
+                otherwise,
+                other('d'),
+                fi,
+            ],
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut diagnostic_effects,
+        );
+
+        let before = crate::command::command_ownership_counters();
+        assert_eq!(next_character(&mut processor), 'd');
+        let after = crate::command::command_ownership_counters();
+        assert_eq!(
+            after.rich_materializations - before.rich_materializations,
+            1
+        );
+        assert_expanded_end(&mut processor);
+    });
+}
+
+#[test]
 fn etex_current_if_values_preserve_kind_inversion_and_branch() {
     let cases = [
         (ConditionalKind::If, 1),
