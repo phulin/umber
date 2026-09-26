@@ -1362,6 +1362,43 @@ impl<'a> PageMaterialArena<'a> {
         closure.set_root_box_dimension(self.pool, dimension, value)
     }
 
+    /// Edits the page-owned output wrapper, leaving its child closure and
+    /// stable coordinate in the page region. A retained fork cannot edit a
+    /// shared annex chunk: the fixed-word mutation checks exclusive lineage.
+    pub(crate) fn set_page_root_box_dimension(
+        &mut self,
+        root: PageListId,
+        dimension: crate::command_context::BoxDimension,
+        value: crate::scaled::Scaled,
+    ) -> Result<(crate::scaled::Scaled, PageListId), ForkArenaError> {
+        if root.len() != 1 {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        let record = *self
+            .region
+            .pub_arena
+            .list(&self.pool.chunks, root.coordinate())?
+            .get(0)
+            .ok_or(ForkArenaError::InvalidRange)?;
+        let previous = crate::node_record::set_root_box_dimension(
+            record,
+            &mut self.pool.annex_chunks,
+            &mut self.region.annex_arena,
+            dimension,
+            value,
+        )?;
+        let identity = root.semantic_identity().map(|_| {
+            let annex = NodeAnnexView::new(&self.pool.annex_chunks, &self.region.annex_arena);
+            let mut identity = SemanticSequenceIdentity::empty();
+            identity.push_back(record.semantic_identity(annex));
+            identity
+        });
+        Ok((
+            previous,
+            PageListId::from_parts(root.coordinate(), identity),
+        ))
+    }
+
     pub(crate) fn durable_child_list<'b>(
         &'b self,
         closure: &'b DurableNodeClosure,

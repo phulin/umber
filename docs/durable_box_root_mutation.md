@@ -43,7 +43,18 @@ therefore persists after that group closes.
 The ownership decision uses the current cell's checkpoint and group save
 state. It does not scan the box closure or count node references. The only
 mutable storage seam is a validated fixed annex word belonging to the live
-durable region. No page-root copy is required for an ordinary durable box
-dimension write, and no node alias, refcount, or copy-on-write owner is
-introduced. The page-owned automatic output box 255 remains on the separate
-page-root promotion path until it becomes a durable register owner.
+owner's region. No page-root copy is required for a box dimension write, and
+no node alias, refcount, or copy-on-write owner is introduced.
+
+The automatic output box 255 is page-owned. Page fire-up constructs its root
+wrapper after the retained checkpoint boundary, and execution enters the
+output group before assigning a dimension to it. Runtime checkpoints require
+level zero, so none can retain that wrapper while it is edited; its children
+may still belong to older page chunks. The page owner edits only the
+exclusive wrapper annex word and refreshes the root's semantic identity. An
+operation-only scalar inverse captures its stable page coordinate. Rollback
+applies that inverse before page suffix truncation, even if the output root
+has meanwhile been consumed or replaced. A PageBuilder transaction may
+restore the root first, so the inverse updates the live root identity only
+when its coordinate still matches. A shared wrapper annex rejects mutation
+rather than acquiring implicit copy-on-write ownership.

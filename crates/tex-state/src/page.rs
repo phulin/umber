@@ -608,6 +608,16 @@ enum PageInverse {
     },
 }
 
+/// Operation-only inverse for a scalar edit to the page-owned output box.
+/// The coordinate survives a temporary take or replacement until the page
+/// operation suffix is truncated.
+#[derive(Clone, Copy)]
+pub(crate) struct PageOutputBoxDimensionInverse {
+    root: PageListId,
+    dimension: crate::command_context::BoxDimension,
+    previous: Scaled,
+}
+
 // Page inverses can hold page-node spans, but no journal-lane child lists.
 impl crate::fork_arena::RegionValue<PageBuilderJournalLane> for PageInverse {
     fn visit_region_lists(
@@ -3160,6 +3170,40 @@ impl PageBuilderState {
 
     pub(crate) fn output_box(&self) -> PageListId {
         self.output_box.list()
+    }
+
+    pub(crate) fn set_output_box_dimension(
+        &mut self,
+        arena: &mut PageMaterialArena,
+        dimension: crate::command_context::BoxDimension,
+        value: Scaled,
+    ) -> Result<Option<PageOutputBoxDimensionInverse>, ForkArenaError> {
+        let root = self.output_box.list();
+        if root.is_empty() {
+            return Ok(None);
+        }
+        let (previous, updated) = arena.set_page_root_box_dimension(root, dimension, value)?;
+        self.output_box = arena.admit_span(updated)?;
+        Ok(
+            (previous != value).then_some(PageOutputBoxDimensionInverse {
+                root,
+                dimension,
+                previous,
+            }),
+        )
+    }
+
+    pub(crate) fn restore_output_box_dimension(
+        &mut self,
+        arena: &mut PageMaterialArena,
+        inverse: PageOutputBoxDimensionInverse,
+    ) -> Result<(), ForkArenaError> {
+        let (_, restored) =
+            arena.set_page_root_box_dimension(inverse.root, inverse.dimension, inverse.previous)?;
+        if self.output_box.list().coordinate() == inverse.root.coordinate() {
+            self.output_box = arena.admit_span(restored)?;
+        }
+        Ok(())
     }
 
     pub(crate) fn install_output_box(

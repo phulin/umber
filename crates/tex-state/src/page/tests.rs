@@ -1,10 +1,12 @@
 use super::state_hash::PageHashCache;
 use super::{PageBuilderState, PageInsertion, PageRegion, PageRegionHistory};
-use crate::node::{KernKind, Node, NodeTokenKey};
+use crate::command_context::BoxDimension;
+use crate::glue::Order;
+use crate::node::{BoxLr, BoxNode, BoxNodeFields, KernKind, Node, NodeTokenKey, Sign};
 use crate::node_region::NodePool;
 use crate::page::{PageInteger, PageMark};
 use crate::page_node_arena::{PageListId, PageMaterialArena, PageMaterialRegion};
-use crate::scaled::Scaled;
+use crate::scaled::{GlueSetRatio, Scaled};
 use crate::state_hash::StateHasher;
 use crate::token::{Token, TokenWord};
 
@@ -22,6 +24,86 @@ fn kern(value: i32) -> Node {
         amount: Scaled::from_raw(value),
         kind: KernKind::Explicit,
     }
+}
+
+fn output_box(children: PageListId, width: i32) -> Node {
+    Node::HList(BoxNode::new(BoxNodeFields {
+        width: Scaled::from_raw(width),
+        height: Scaled::from_raw(20),
+        depth: Scaled::from_raw(3),
+        shift: Scaled::from_raw(0),
+        box_lr: BoxLr::Normal,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children,
+    }))
+}
+
+fn output_width(arena: &PageMaterialArena, root: PageListId) -> Scaled {
+    let list = arena
+        .node_cursor(root)
+        .expect("output wrapper remains page-owned");
+    let Some(crate::NodeView::HList(node)) = list.get(0) else {
+        panic!("output wrapper is an hbox")
+    };
+    node.width
+}
+
+#[test]
+fn output_box_scalar_edit_keeps_page_closure_and_restores_after_root_rewind() {
+    page_arena!(arena, pool, state);
+    arena.enable_semantic_identity();
+    let child = publish_nodes(&mut arena, [kern(47)]);
+    let root = publish_nodes(&mut arena, [output_box(child, 10)]);
+    let mut page = PageBuilderState::default();
+    page.enable_reachable_state_identity();
+    page.install_output_box(&arena, root)
+        .expect("page output root");
+    let old_identity = page.output_box().semantic_identity();
+    let mark = page.checkpoint_mark();
+    let copies = arena.durable_transition_counters();
+
+    let inverse = page
+        .set_output_box_dimension(&mut arena, BoxDimension::Width, Scaled::from_raw(40))
+        .expect("exclusive output wrapper")
+        .expect("changed scalar records an inverse");
+    assert_eq!(page.output_box().coordinate(), root.coordinate());
+    assert_ne!(page.output_box().semantic_identity(), old_identity);
+    assert_eq!(output_width(&arena, root), Scaled::from_raw(40));
+    assert_eq!(list_nodes(&arena, child), [kern(47)]);
+    assert_eq!(arena.durable_transition_counters(), copies);
+
+    let _consumed = page.take_output_box();
+    page.rollback_transaction(mark);
+    page.restore_output_box_dimension(&mut arena, inverse)
+        .expect("operation restores captured wrapper after root rewind");
+    assert_eq!(page.output_box().coordinate(), root.coordinate());
+    assert_eq!(page.output_box().semantic_identity(), old_identity);
+    assert_eq!(output_width(&arena, root), Scaled::from_raw(10));
+}
+
+#[test]
+fn output_box_scalar_inverse_targets_original_wrapper_after_replacement() {
+    page_arena!(arena, pool, state);
+    let child = publish_nodes(&mut arena, [kern(1)]);
+    let original = publish_nodes(&mut arena, [output_box(child, 10)]);
+    let replacement = publish_nodes(&mut arena, [output_box(child, 80)]);
+    let mut page = PageBuilderState::default();
+    page.install_output_box(&arena, original)
+        .expect("original output root");
+    let inverse = page
+        .set_output_box_dimension(&mut arena, BoxDimension::Width, Scaled::from_raw(40))
+        .expect("exclusive output wrapper")
+        .expect("changed scalar records an inverse");
+    page.install_output_box(&arena, replacement)
+        .expect("replacement output root");
+
+    page.restore_output_box_dimension(&mut arena, inverse)
+        .expect("original wrapper is still page-owned");
+    assert_eq!(page.output_box().coordinate(), replacement.coordinate());
+    assert_eq!(output_width(&arena, original), Scaled::from_raw(10));
+    assert_eq!(output_width(&arena, replacement), Scaled::from_raw(80));
 }
 
 fn tokens(tokens: &[Token]) -> NodeTokenKey {
