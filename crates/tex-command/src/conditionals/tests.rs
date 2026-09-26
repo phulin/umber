@@ -157,6 +157,56 @@ fn skipped_nested_conditional_materializes_only_the_selected_command() {
 }
 
 #[test]
+fn skipped_resident_text_batches_frame_admission_with_exact_fuel() {
+    crate::test_harness::with_universe(|universe| {
+        let if_false = install(universe, "iffalse", ExpandablePrimitive::IfFalse);
+        let otherwise = install(universe, "else", ExpandablePrimitive::Else);
+        let fi = install(universe, "fi", ExpandablePrimitive::Fi);
+        let mut input = vec![if_false];
+        input.extend((0..1_024).map(|_| other('x')));
+        input.push(Token::Char {
+            ch: '{',
+            cat: Catcode::BeginGroup,
+        });
+        input.extend((0..128).map(|_| other('y')));
+        input.push(Token::Char {
+            ch: '}',
+            cat: Catcode::EndGroup,
+        });
+        input.extend([otherwise, other('d'), fi]);
+
+        let mut command = CommandState::default();
+        crate::test_harness::push(&mut command, input);
+        let initial_align_state = command.alignment.align_state;
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::new(1_157).expect("exact skip fuel");
+        let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut effects,
+        );
+        assert_eq!(next_character(&mut processor), 'd');
+        assert_eq!(processor.fuel.burned(), 1_157);
+        assert_eq!(processor.command.alignment.align_state, initial_align_state);
+        assert!(
+            processor
+                .command
+                .roots
+                .input
+                .levels
+                .cursor_mutations
+                .typed_top_accesses
+                < 32,
+            "literal skipped text should use a few resident admissions"
+        );
+    });
+}
+
+#[test]
 fn etex_current_if_values_preserve_kind_inversion_and_branch() {
     let cases = [
         (ConditionalKind::If, 1),

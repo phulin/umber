@@ -417,14 +417,28 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         destination: &mut Option<HotCommand<G>>,
     ) -> Result<DeliveryStatus, CommandError> {
-        let literal_catcode = match self.read_raw_word(self.create_source_control_sequences)? {
-            ResidentColdOutcome::Word(word) => self.write_resident_word(word, destination),
+        let selected = match self.read_raw_word(self.create_source_control_sequences)? {
+            ResidentColdOutcome::Word(word) => word,
             ResidentColdOutcome::Finished(status) => {
                 destination.take();
                 return Ok(status);
             }
             ResidentColdOutcome::Retry => unreachable!("raw reading settles input transitions"),
         };
+        self.finish_selected_hot_word::<OBSERVED>(selected, destination)
+    }
+
+    /// Settles a word already advanced by the shared resident reader. The
+    /// skipped-text run returns its first boundary word in exactly this form;
+    /// raw delivery uses the same finish so neither repeats a meaning lookup
+    /// nor backs the boundary word into a second input level.
+    #[inline(always)]
+    fn finish_selected_hot_word<const OBSERVED: bool>(
+        &mut self,
+        selected: ResidentWord,
+        destination: &mut Option<HotCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        let literal_catcode = self.write_resident_word(selected, destination);
         self.settle_hot_delivery_in::<OBSERVED>(
             destination.as_mut().expect("initialized delivery"),
             literal_catcode,

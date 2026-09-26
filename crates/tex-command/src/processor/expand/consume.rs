@@ -2,10 +2,14 @@
 
 use super::{
     ExpandedCommandAction, ExpansionDispatch, ReadSite, ResidentColdOutcome, ResidentWord,
-    classify_hot_command,
+    ResidentWordRead, classify_hot_command, resident::ResidentAdmission,
 };
 use crate::command::HotCommand;
+use crate::input::InputLevel;
+#[cfg(any(test, feature = "profiling"))]
+use crate::input::ResidentTokenStorage;
 use crate::{CommandError, CommandProcessor, DeliveryStatus};
+use std::ops::ControlFlow;
 use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, MeaningFlags, MeaningWord};
 use tex_state::token::{PackedCommandTarget, PackedMeaningResolution};
@@ -111,6 +115,99 @@ impl ResidentWord {
 }
 
 impl<G> CommandProcessor<'_, '_, G> {
+    /// TeX.web §494's raw skip consumer. Literal resident characters that
+    /// cannot affect skipping share one physical-frame admission; the first
+    /// exceptional word is returned by that same reader for normal settlement.
+    pub(crate) fn get_next_skipping_into(
+        &mut self,
+        destination: &mut Option<HotCommand<G>>,
+    ) -> Result<DeliveryStatus, CommandError> {
+        if self.is_observed()
+            || self.command.delivery_mode.tracing()
+            || self.command.delivery_mode.requires_persistent_settlement()
+        {
+            return self.get_next_hot_into(destination);
+        }
+        let Some(index) = self.command.roots.input.levels.top.checked_sub(1) else {
+            return self.get_next_hot_into(destination);
+        };
+        let Some(InputLevel::Resident(row)) = self.command.roots.input.levels.rows.get(index)
+        else {
+            return self.get_next_hot_into(destination);
+        };
+        #[cfg(any(test, feature = "profiling"))]
+        let argument = matches!(row.storage, ResidentTokenStorage::MacroArgument(_));
+        #[cfg(not(any(test, feature = "profiling")))]
+        let _ = row;
+        if self.fuel.remaining() == 0 {
+            return self.get_next_hot_into(destination);
+        }
+
+        self.pending_diagnostic_location = None;
+        let mut consumed = 0_u32;
+        let fuel = &mut *self.fuel;
+        let selected = Self::read_resident_run(self.command, |word, _| {
+            let plain = matches!(
+                word.literal_catcode(),
+                Some(cat)
+                    if !matches!(
+                        cat,
+                        tex_state::token::Catcode::Active
+                            | tex_state::token::Catcode::BeginGroup
+                            | tex_state::token::Catcode::EndGroup
+                    )
+            );
+            if !plain {
+                return Ok(ResidentAdmission::Boundary);
+            }
+            fuel.charge()?;
+            consumed += 1;
+            if fuel.remaining() == 0 || consumed == u32::MAX {
+                Ok(ResidentAdmission::Stop)
+            } else {
+                Ok(ResidentAdmission::Continue)
+            }
+        })?;
+        if consumed != 0 {
+            self.enter_resident_delivery();
+            #[cfg(test)]
+            if argument {
+                self.command
+                    .raw_delivery_path_counters
+                    .macro_argument_direct += u64::from(consumed);
+            } else {
+                self.command.raw_delivery_path_counters.stored_direct += u64::from(consumed);
+            }
+            #[cfg(feature = "profiling")]
+            self.fuel.record_raw_run(
+                self.command.delivery_mode.scanner_active(),
+                if argument {
+                    crate::fuel::RawDeliveryKind::MacroArgument
+                } else {
+                    crate::fuel::RawDeliveryKind::StoredToken
+                },
+                consumed,
+            );
+        }
+        match selected {
+            ControlFlow::Continue(ResidentWordRead::Word(word)) => {
+                self.charge_command_action()?;
+                let result = self.finish_selected_hot_word::<false>(word, destination);
+                match result {
+                    Ok(status) => Ok(status),
+                    Err(failure) => self.fail_hot_expanded_delivery(
+                        destination,
+                        self.command.transient.active_expansion_depth,
+                        failure,
+                    ),
+                }
+            }
+            ControlFlow::Continue(_) | ControlFlow::Break(()) => {
+                self.get_next_hot_into(destination)
+            }
+        }
+    }
+
     #[inline(always)]
     pub(super) fn read_expansion_candidate<
         const OBSERVED: bool,

@@ -1,6 +1,106 @@
 use super::*;
 
 #[test]
+fn skipped_resident_run_settles_its_first_control_sequence_once() {
+    crate::test_harness::with_universe(|universe| {
+        let relax = install_static(universe, "relaxing", Meaning::Relax);
+        let mut command = CommandState::default();
+        crate::test_harness::push(
+            &mut command,
+            (0..4_096)
+                .map(|_| Token::Char {
+                    ch: 'x',
+                    cat: Catcode::Letter,
+                })
+                .chain([relax]),
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::new(4_097).expect("skip fuel");
+        let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut effects,
+        );
+        let mut destination = None;
+        assert_eq!(
+            processor
+                .get_next_skipping_into(&mut destination)
+                .expect("skip delivery"),
+            crate::DeliveryStatus::Command
+        );
+        assert_eq!(
+            destination.expect("boundary command").static_meaning(),
+            Some(Meaning::Relax)
+        );
+        drop(processor);
+        assert_eq!(fuel.burned(), 4_097);
+        assert_eq!(
+            command
+                .roots
+                .input
+                .levels
+                .cursor_mutations
+                .typed_top_accesses,
+            1
+        );
+        assert_eq!(command.stored_token_advance_counters.packed_loads, 4_097);
+        assert_eq!(command.stored_token_advance_counters.command_writes, 1);
+    });
+}
+
+#[test]
+fn skipped_resident_run_stops_before_the_over_budget_word() {
+    for limit in 1..=5 {
+        crate::test_harness::with_universe(|universe| {
+            let mut command = CommandState::default();
+            crate::test_harness::push(
+                &mut command,
+                (0..7).map(|_| Token::Char {
+                    ch: 'x',
+                    cat: Catcode::Letter,
+                }),
+            );
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut fuel = crate::CommandFuelLedger::new(limit).expect("bounded fuel");
+            let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut context = universe.command_context().expect("command context");
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut effects,
+            );
+            let mut destination = None;
+            assert!(matches!(
+                processor.get_next_skipping_into(&mut destination),
+                Err(crate::CommandError::FuelExhausted { .. })
+            ));
+            assert!(destination.is_none());
+            drop(processor);
+            assert_eq!(fuel.burned(), limit);
+            assert_eq!(
+                command.stored_token_advance_counters.packed_loads, limit,
+                "failed delivery must leave the over-budget word unread"
+            );
+            assert_eq!(
+                command
+                    .roots
+                    .input
+                    .levels
+                    .cursor_mutations
+                    .typed_top_accesses,
+                1
+            );
+        });
+    }
+}
+
+#[test]
 fn resident_character_stop_resumes_without_reselecting_each_word() {
     crate::test_harness::with_universe(|universe| {
         let mut command = CommandState::default();

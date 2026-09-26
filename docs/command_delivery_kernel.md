@@ -81,6 +81,15 @@ on error. No runtime consumer selector, boxed callback, parked continuation,
 parallel reader cache, or alternate recovery engine is introduced.
 Conditional skipped-text delivery uses the compact raw slot and classifies its
 static meaning there; it materializes no rich command for discarded tokens.
+When observation, command tracing, and alignment interception are absent,
+`pass_text` can consume a contiguous resident run of literal non-active,
+non-brace characters under one borrow of the existing input reader. Each word
+still advances its frame and charges fuel in order. The first control sequence,
+active character, brace, parameter, or other boundary returns from that same
+reader already advanced and passes through ordinary raw settlement exactly once.
+Source tokenization and exceptional deliveries keep the scalar path. A run
+stops after the last available fuel charge so the next rejected token remains
+unread, as it would under scalar delivery.
 
 ## Observation and settlement
 
