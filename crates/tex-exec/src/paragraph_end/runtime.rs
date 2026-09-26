@@ -666,6 +666,7 @@ pub(crate) fn break_current_paragraph<G>(
         },
     );
     let mut level = commit_current_list(nest, stores, diagnostic_effects, fuel)?;
+    let initial_hyphen_context = level.list().initial_hyphen_context();
     let paragraph_diagnostic_context = diagnostic_context.with_pack_begin_line(level.entry_line());
     let hlist = crate::math::finish_math_lists_owned(
         stores,
@@ -699,6 +700,7 @@ pub(crate) fn break_current_paragraph<G>(
         diagnostic_effects,
         hlist,
         line_params,
+        initial_hyphen_context,
         fuel,
         tracing,
     )?;
@@ -1512,12 +1514,14 @@ fn active_text_directions(nodes: tex_state::node_view::NodeCursor<'_>) -> Vec<Di
     active
 }
 
+#[allow(clippy::too_many_arguments)] // Paragraph entry context must accompany the list through both line-break passes.
 fn break_hlist_with_trace<G>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     hlist: tex_state::page_node_arena::PageListId,
     line_params: LineBreakParams,
+    initial_hyphen_context: (u8, u8, u8),
     fuel: &mut tex_command::CommandFuel,
     tracing: bool,
 ) -> Result<
@@ -1560,10 +1564,11 @@ fn break_hlist_with_trace<G>(
         ))
     } else {
         drop(tape);
-        let hyphenated = super::hyphenation::hyphenated_hlist_with_fuel(
+        let hyphenated = super::hyphenation::hyphenated_hlist_with_initial_context(
             stores,
             diagnostic_effects,
             hlist,
+            initial_hyphen_context,
             nest.horizontal_mode_scratch_mut(),
             fuel,
         )?;
@@ -1981,7 +1986,7 @@ pub(crate) fn start_paragraph<G>(
             nest.push_at_line(crate::Mode::Horizontal, diagnostic_context.current_line)?;
             let (language, left, right) = crate::box_runtime::hmode::current_hyphen_context(stores);
             nest.current_list_mutation()
-                .set_hyphen_context(language, left, right);
+                .begin_paragraph_hyphen_context(language, left, right);
             if indent {
                 let mut fuel = tex_command::CommandFuelLedger::default();
                 crate::box_runtime::indent_in_hmode(

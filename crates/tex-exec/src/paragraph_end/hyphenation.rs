@@ -210,6 +210,7 @@ fn hyphenated_hlist_with_projections<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     source: tex_state::page_node_arena::PageListId,
+    initial_context: HyphenationContext,
     tfm_work: &mut crate::box_runtime::hmode::LigatureWorkList,
     fuel: &mut tex_command::CommandFuel,
     projection: &mut HyphenationProjection<'_>,
@@ -224,8 +225,6 @@ fn hyphenated_hlist_with_projections<G>(
     let mut out = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
     stores.open_page_active_list(&mut out);
     let mut out_segments = Vec::new();
-    let left = stores.int_param(IntParam::LEFT_HYPHEN_MIN).max(1) as usize;
-    let right = stores.int_param(IntParam::RIGHT_HYPHEN_MIN).max(1) as usize;
     let (retained_start, language, left, right) = {
         let mut walk = HyphenationWalk {
             out: &mut out,
@@ -237,9 +236,9 @@ fn hyphenated_hlist_with_projections<G>(
             retained_start: 0,
             skip_until: 0,
             auto_breaking: true,
-            language: 0,
-            left,
-            right,
+            language: initial_context.language,
+            left: initial_context.left,
+            right: initial_context.right,
         };
         if let Some(tail) = stores
             .admitted_page_tail_chunk(source)
@@ -283,10 +282,11 @@ fn hyphenated_hlist_with_projections<G>(
 /// semantic pre-break list used by line breaking, while TeX's linked-list
 /// representation exposes the preceding reconstituted character span in the
 /// discretionary's diagnostic pre-break branch.
-pub(crate) fn hyphenated_hlist_with_fuel<G>(
+pub(crate) fn hyphenated_hlist_with_initial_context<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     source: tex_state::page_node_arena::PageListId,
+    initial_context: (u8, u8, u8),
     scratch: &mut crate::mode::HorizontalModeScratch,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<HyphenatedHlist, ExecError> {
@@ -301,6 +301,11 @@ pub(crate) fn hyphenated_hlist_with_fuel<G>(
         stores,
         diagnostic_effects,
         source,
+        HyphenationContext {
+            language: initial_context.0,
+            left: usize::from(initial_context.1),
+            right: usize::from(initial_context.2),
+        },
         scratch.tfm_work_mut(),
         fuel,
         &mut projection,
@@ -337,6 +342,25 @@ pub(crate) fn hyphenated_hlist_with_fuel<G>(
         physical_boundaries,
         missing_hyphens,
     })
+}
+
+#[cfg(test)]
+fn hyphenated_hlist_with_fuel<G>(
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
+    source: tex_state::page_node_arena::PageListId,
+    scratch: &mut crate::mode::HorizontalModeScratch,
+    fuel: &mut tex_command::CommandFuel,
+) -> Result<HyphenatedHlist, ExecError> {
+    let initial = crate::box_runtime::hmode::current_hyphen_context(stores);
+    hyphenated_hlist_with_initial_context(
+        stores,
+        diagnostic_effects,
+        source,
+        initial,
+        scratch,
+        fuel,
+    )
 }
 
 fn project_physical_hlist<G>(
@@ -2886,6 +2910,84 @@ mod tests {
     }
 
     #[test]
+    fn paragraph_entry_language_and_minima_govern_first_word_until_language_nodes_change_them() {
+        // TeX82 §§1091, 1068: line_break saves the paragraph's packed
+        // language/minima before pop_nest and restores all three at the
+        // hyphenating pass. A language node changes only the following words.
+        crate::test_harness::with_nonstop_plain_universe(|universe| {
+            let mut stores = universe.command_context().expect("test state is admitted");
+            let font = hyphenation_font(&mut stores);
+            stores.set_font_hyphen_char(font, i32::from(b'-'));
+            for language in [0, 7] {
+                stores.add_hyphenation_exception_for_language(
+                    language,
+                    ExceptionSpec {
+                        word: "abcd".into(),
+                        positions: vec![2],
+                    },
+                );
+            }
+            let glue = || Node::Glue {
+                origin: tex_state::node::GlueSpecOrigin::Owned,
+                spec: tex_state::glue::GlueSpec::ZERO,
+                kind: tex_state::node::GlueKind::Normal,
+                leader: None,
+            };
+            let mut nodes = vec![glue()];
+            nodes.extend("abcd".chars().map(|ch| character(font, ch)));
+            nodes.push(Node::Whatsit(tex_state::node::Whatsit::Language {
+                language: 7,
+                left_hyphen_min: 3,
+                right_hyphen_min: 2,
+            }));
+            nodes.push(glue());
+            nodes.extend("abcd".chars().map(|ch| character(font, ch)));
+            nodes.push(Node::Whatsit(tex_state::node::Whatsit::Language {
+                language: 7,
+                left_hyphen_min: 1,
+                right_hyphen_min: 1,
+            }));
+            nodes.push(glue());
+            nodes.extend("abcd".chars().map(|ch| character(font, ch)));
+            nodes.push(Node::Whatsit(tex_state::node::Whatsit::Language {
+                language: 2,
+                left_hyphen_min: 1,
+                right_hyphen_min: 1,
+            }));
+            nodes.push(glue());
+            nodes.extend("abcd".chars().map(|ch| character(font, ch)));
+            let source = stores.publish_page_nodes(nodes);
+            let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut scratch = crate::mode::HorizontalModeScratch::default();
+            let mut fuel = tex_command::CommandFuelLedger::new(10_000).expect("bounded fuel");
+            let result = hyphenated_hlist_with_initial_context(
+                &mut stores,
+                &mut effects,
+                source,
+                (2, 1, 1),
+                &mut scratch,
+                fuel.fuel_mut(),
+            )
+            .expect("hyphenation traversal succeeds");
+            let mut language = 2;
+            let mut discs_by_language = Vec::new();
+            stores
+                .page_nodes(result.semantic)
+                .expect("semantic list")
+                .iter()
+                .for_each(|node| match node {
+                    tex_state::NodeView::Whatsit(tex_state::node::Whatsit::Language {
+                        language: new_language,
+                        ..
+                    }) => language = new_language,
+                    tex_state::NodeView::Disc { .. } => discs_by_language.push(language),
+                    _ => {}
+                });
+            assert_eq!(discs_by_language, [7]);
+        });
+    }
+
+    #[test]
     fn hyphenation_reconstitution_uses_same_font_nonletter_as_right_boundary() {
         // TeX82 §897 saves the first same-font nonletter as `hyf_bchar`;
         // §§903--918 reconstitute the word against it while retaining the
@@ -3046,6 +3148,11 @@ mod tests {
                 &mut stores,
                 &mut diagnostic_effects,
                 source,
+                HyphenationContext {
+                    language: 0,
+                    left: 2,
+                    right: 3,
+                },
                 scratch.tfm_work_mut(),
                 fuel.fuel_mut(),
                 &mut projection,
@@ -3273,6 +3380,11 @@ mod tests {
                     &mut stores,
                     &mut effects,
                     source,
+                    HyphenationContext {
+                        language: 0,
+                        left: 2,
+                        right: 3,
+                    },
                     scratch.tfm_work_mut(),
                     ledger.fuel_mut(),
                     &mut projection,

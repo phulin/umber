@@ -151,6 +151,7 @@ pub struct ModeList {
     hyphen_language: u8,
     left_hyphen_min: u8,
     right_hyphen_min: u8,
+    initial_hyphen_context: (u8, u8, u8),
 }
 
 impl ModeList {
@@ -172,6 +173,7 @@ impl ModeList {
             hyphen_language: self.hyphen_language,
             left_hyphen_min: self.left_hyphen_min,
             right_hyphen_min: self.right_hyphen_min,
+            initial_hyphen_context: self.initial_hyphen_context,
         }
     }
 
@@ -212,6 +214,7 @@ impl PartialEq for ModeList {
             && self.hyphen_language == other.hyphen_language
             && self.left_hyphen_min == other.left_hyphen_min
             && self.right_hyphen_min == other.right_hyphen_min
+            && self.initial_hyphen_context == other.initial_hyphen_context
     }
 }
 
@@ -500,6 +503,11 @@ impl ModeList {
         self.hyphen_language = language;
         self.left_hyphen_min = left;
         self.right_hyphen_min = right;
+    }
+
+    #[must_use]
+    pub(crate) const fn initial_hyphen_context(&self) -> (u8, u8, u8) {
+        self.initial_hyphen_context
     }
 
     #[must_use]
@@ -1048,6 +1056,13 @@ impl ModeListMutation<'_> {
             journal.record_hyphen_context(old);
         }
         self.list.set_hyphen_context(language, left, right);
+    }
+
+    /// Called only for the newly pushed paragraph level. Rollback of that
+    /// level removes this entry value together with the level itself.
+    pub(crate) fn begin_paragraph_hyphen_context(&mut self, language: u8, left: u8, right: u8) {
+        self.set_hyphen_context(language, left, right);
+        self.list.initial_hyphen_context = (language, left, right);
     }
 
     #[cfg(test)]
@@ -1907,6 +1922,9 @@ fn hash_mode_list<G>(
     projection.u8(list.hyphen_language);
     projection.u8(list.left_hyphen_min);
     projection.u8(list.right_hyphen_min);
+    projection.u8(list.initial_hyphen_context.0);
+    projection.u8(list.initial_hyphen_context.1);
+    projection.u8(list.initial_hyphen_context.2);
 }
 
 fn hash_node_tokens<G>(
@@ -1985,6 +2003,7 @@ fn mode_list_semantic_identity(list: &ModeList) -> u64 {
     list.hyphen_language.hash(&mut hasher);
     list.left_hyphen_min.hash(&mut hasher);
     list.right_hyphen_min.hash(&mut hasher);
+    list.initial_hyphen_context.hash(&mut hasher);
     hasher.finish()
 }
 
