@@ -8,8 +8,8 @@ comparison below explains the storage reduction and the growth it does not
 attribute. These measurements do not establish full-book completion.
 
 The original timeout remains unresolved. The latest unchanged-guard book run
-recorded here, `293dbfe0e`, exited 124 at 120 seconds; its receipt is
-`target/perf-tex-copy-plan/consumed-unbox-original-book/summary.json`.
+recorded here, `7b9f40dbd`, exited 124 at 120.17 seconds; its receipt is
+`target/perf-tex-copy-plan/optional-compact-original-book/summary.json`.
 Keep the 120-second, 1,536 MiB, 500,000,000 expansion-fuel, and 10,000,000
 execution-step acceptance guards. The reduced split controls below explain an
 earlier scaling defect; their speedups are not whole-book speedups.
@@ -461,6 +461,25 @@ and input/binary receipts live in
 `target/perf-tex-copy-plan/remaining-memory-heaptrack/`. The four allocations
 left after complete teardown total 632 bytes; that end-of-process result does
 not explain which histories must remain live during execution.
+
+### Compact color-history measurement
+
+A matched 100-million-action heaptrack run compared `f818c6b37` with
+`84367177d`, which adds the dedicated color-value arena. Both reached the
+exact fuel limit with the original timeout and memory guards. Peak requested
+heap fell from 390,278,616 to 379,710,992 bytes, a reduction of 10.1 MiB.
+Allocations attributed to `apply_color_stack` fell from 14,204,890 to
+3,456,986 bytes. The remaining color allocation includes persistent lookup
+history, pushed values, and payload bytes; those ownership rules did not
+change. These figures describe each run's global heap peak and do not establish
+a runtime improvement.
+
+The full native/quality gate passed all seven stages with no failures, blocked
+stages, or coverage reductions. The color tests cover independent page/form
+stacks, interleaved general PDF versions, candidate acceptance and rejection,
+and subsequent checkpoint rollback. Profile receipts, binary hashes, and
+exact commands are in `target/perf-tex-copy-plan/color-storage-heap-comparison.json`,
+with raw traces under `color-baseline-heaptrack/` and `color-candidate-heaptrack/`.
 
 ## Shipping comparison at the same book prefix
 
