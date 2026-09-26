@@ -231,6 +231,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             .obsolete_chunks_pruned
             .saturating_add(released as u64);
         self.ownership = ForkOwnership::Accepted(successor);
+        self.invalidate_live_tail_hint();
         Ok(())
     }
 
@@ -304,6 +305,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             let current = self.current_chunks_mut();
             current.payload.extend(batch.payload);
         }
+        self.invalidate_live_tail_hint();
         self.pending_batch = None;
         Ok(())
     }
@@ -384,6 +386,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             let current = destination.current_chunks_mut();
             current.payload.extend(batch.payload);
         }
+        destination.invalidate_live_tail_hint();
         self.counters.chunks_promoted = self
             .counters
             .chunks_promoted
@@ -496,6 +499,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             let current = destination.current_chunks_mut();
             current.payload.extend(payload);
         }
+        destination.invalidate_live_tail_hint();
         self.counters.chunks_promoted = self
             .counters
             .chunks_promoted

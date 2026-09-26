@@ -2478,6 +2478,43 @@ fn interior_interval_transfers_and_rolls_back_without_moving_neighbor_chunks() {
 }
 
 #[test]
+fn repeated_tail_loans_validate_in_linear_total_work() {
+    const CHUNKS: usize = 128;
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(4);
+    let mut page = ForkArena::<u32, ActiveLane>::new();
+    for value in 0..CHUNKS as u32 {
+        list(&mut page, &mut pool, [value]);
+    }
+    page.seal_boundary(&mut pool).expect("all chunks sealed");
+
+    let mut loans = Vec::new();
+    for position in (1..CHUNKS).rev() {
+        let mut durable = page.empty_lane::<PageLane>();
+        let loan = page
+            .transfer_interior_interval(&mut pool, &mut durable, position, position + 1)
+            .expect("unique trailing chunk moves");
+        page.can_seal_boundary(&pool)
+            .expect("vacant trailing slots admit in bounded work");
+        let operation = page.operation_mark(&pool);
+        page.restore_operation(&mut pool, operation)
+            .expect("a vacant operation tail restores without a live tail key");
+        loans.push((durable, loan));
+    }
+    let searched = page
+        .tail_search_slots
+        .load(std::sync::atomic::Ordering::Relaxed);
+    assert!(
+        searched <= CHUNKS as u64 * 2,
+        "each removed tail crosses at most its preceding chunk: {searched}"
+    );
+    for (mut durable, loan) in loans.into_iter().rev() {
+        page.rollback_interior_interval(&mut pool, &mut durable, loan)
+            .expect("exact trailing loan restores");
+    }
+    page.can_seal_boundary(&pool).expect("dense owner restored");
+}
+
+#[test]
 fn logical_positions_are_pool_stable_and_foreign_spaces_fail_closed() {
     let mut pool = ChunkPool::<u32>::with_chunk_bytes(16);
     let mut arena = ForkArena::<u32, ActiveLane>::new();

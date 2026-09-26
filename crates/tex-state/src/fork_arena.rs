@@ -11,7 +11,7 @@
 use core::hash::{Hash, Hasher};
 use core::marker::PhantomData;
 use std::ops::Range;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use tex_dense_arena::{AcceptedBlockTable, LogicalBlockId as DenseLogicalBlockId, LogicalPosition};
 use tex_dense_prefix::Superblock;
 
@@ -62,6 +62,8 @@ const VACANT_LOGICAL_CHUNK: LogicalChunkId = LogicalChunkId {
     ordinal: u32::MAX,
     incarnation: 0,
 };
+const UNKNOWN_LIVE_TAIL: u64 = u64::MAX;
+const EMPTY_LIVE_TAIL: u64 = u64::MAX - 1;
 
 impl LogicalChunkId {
     fn block(self, space: u32) -> Result<DenseLogicalBlockId, ForkArenaError> {
@@ -2704,6 +2706,11 @@ pub struct ForkArena<T, Lane> {
     pool_owner: Option<u32>,
     ownership: ForkOwnership,
     base_payload_chunks: u32,
+    /// Highest non-vacant owner-relative slot. Only the arena's direct chunk
+    /// vector is authoritative; this hint keeps repeated seal checks O(1).
+    live_tail_hint: AtomicU64,
+    #[cfg(test)]
+    tail_search_slots: AtomicU64,
     active_builder: bool,
     pending_batch: Option<PendingBatch>,
     next_batch_serial: u64,
@@ -2751,6 +2758,9 @@ impl<T, Lane> ForkArena<T, Lane> {
             pool_owner: None,
             ownership: ForkOwnership::Accepted(ChunkSet::default()),
             base_payload_chunks: 0,
+            live_tail_hint: AtomicU64::new(EMPTY_LIVE_TAIL),
+            #[cfg(test)]
+            tail_search_slots: AtomicU64::new(0),
             active_builder: false,
             pending_batch: None,
             next_batch_serial: 1,
@@ -2768,6 +2778,9 @@ impl<T, Lane> ForkArena<T, Lane> {
             pool_owner: None,
             ownership: ForkOwnership::Accepted(ChunkSet::default()),
             base_payload_chunks: 0,
+            live_tail_hint: AtomicU64::new(EMPTY_LIVE_TAIL),
+            #[cfg(test)]
+            tail_search_slots: AtomicU64::new(0),
             active_builder: false,
             pending_batch: None,
             next_batch_serial: 1,
@@ -2830,26 +2843,63 @@ impl<T, Lane> ForkArena<T, Lane> {
         }
     }
 
-    /// Authenticates the live suffix from the authoritative chunk vectors.
-    ///
-    /// The ordered key vectors and pool indexes are mutated only by this
-    /// module. Deriving the constant-time end and validating the tail chunk's
-    /// incarnation, arena, lineage, and owner-relative position therefore
-    /// admits the maintained prefix invariant without replaying every chunk.
-    fn validate_live_chunks(&self, pool: &ChunkPool<T>) -> Result<(), ForkArenaError> {
-        self.validate_pool(pool)?;
+    /// Records only a position, never a second owner or copy of a chunk key.
+    fn set_live_tail_hint(&self, position: Option<usize>) {
+        self.live_tail_hint.store(
+            position.map_or(EMPTY_LIVE_TAIL, |position| position as u64),
+            Ordering::Relaxed,
+        );
+    }
+
+    fn invalidate_live_tail_hint(&self) {
+        self.live_tail_hint
+            .store(UNKNOWN_LIVE_TAIL, Ordering::Relaxed);
+    }
+
+    fn live_tail_position(&self) -> Option<usize> {
         let end = self.live_payload_len();
         if end == self.base_payload_chunks as usize {
-            return Ok(());
+            self.set_live_tail_hint(None);
+            return None;
         }
-        // An interior transfer may leave the last owner-relative position
-        // vacant. Ordinary dense owners take the first iteration directly.
-        let Some((position, key)) = (self.base_payload_chunks as usize..end)
+        if self.live_key_at(end - 1).is_some() {
+            self.set_live_tail_hint(Some(end - 1));
+            return Some(end - 1);
+        }
+        let hint = self.live_tail_hint.load(Ordering::Relaxed);
+        if hint == EMPTY_LIVE_TAIL {
+            return None;
+        }
+        if hint != UNKNOWN_LIVE_TAIL {
+            let position = hint as usize;
+            if position >= self.base_payload_chunks as usize
+                && position < end
+                && self.live_key_at(position).is_some()
+            {
+                return Some(position);
+            }
+        }
+        let position = (self.base_payload_chunks as usize..end)
             .rev()
-            .find_map(|position| self.live_key_at(position).map(|key| (position, key)))
-        else {
+            .find(|position| {
+                #[cfg(test)]
+                self.tail_search_slots.fetch_add(1, Ordering::Relaxed);
+                self.live_key_at(*position).is_some()
+            });
+        self.set_live_tail_hint(position);
+        position
+    }
+
+    /// Authenticates the maintained live tail through the authoritative chunk
+    /// vector and pool index without replaying every transferred vacancy.
+    fn validate_live_chunks(&self, pool: &ChunkPool<T>) -> Result<(), ForkArenaError> {
+        self.validate_pool(pool)?;
+        let Some(position) = self.live_tail_position() else {
             return Ok(());
         };
+        let key = self
+            .live_key_at(position)
+            .ok_or(ForkArenaError::InvalidChunk)?;
         let actual = pool.payload.arena_position(key, self.owner, self.lineage);
         (actual == Some(position))
             .then_some(())
@@ -2955,6 +3005,9 @@ impl<T, Lane> ForkArena<T, Lane> {
             pool_owner: self.pool_owner,
             ownership: ForkOwnership::Accepted(shared),
             base_payload_chunks: 0,
+            live_tail_hint: AtomicU64::new(UNKNOWN_LIVE_TAIL),
+            #[cfg(test)]
+            tail_search_slots: AtomicU64::new(0),
             active_builder: false,
             pending_batch: None,
             next_batch_serial: 1,
@@ -3654,29 +3707,38 @@ impl<T, Lane> ForkArena<T, Lane> {
             }
         }
         if chunks != base {
-            let key = self
-                .live_key_at(chunks - 1)
-                .ok_or(ForkArenaError::InvalidOperationMark)?;
-            let tail_unchanged = {
-                let meta = pool
-                    .payload
-                    .validate_lineage(key, self.owner, self.lineage)?;
-                meta.used == tail_used
-                    && meta.sealed == tail_sealed
-                    && meta.sequence_summary == tail_summary
-            };
-            // A retained checkpoint can share the mark's sealed tail with a
-            // candidate. Rolling back an empty construction leaves that
-            // chunk untouched; exclusive mutation is required only when the
-            // operation actually changed its payload or metadata.
-            if !tail_unchanged {
-                pool.payload
-                    .truncate(key, self.owner, self.lineage, tail_used, tail_summary)?;
-                pool.payload
-                    .restore_sealed(key, self.owner, self.lineage, tail_sealed)?;
+            if let Some(key) = self.live_key_at(chunks - 1) {
+                let tail_unchanged = {
+                    let meta = pool
+                        .payload
+                        .validate_lineage(key, self.owner, self.lineage)?;
+                    meta.used == tail_used
+                        && meta.sealed == tail_sealed
+                        && meta.sequence_summary == tail_summary
+                };
+                // A retained checkpoint can share the mark's sealed tail with a
+                // candidate. Rolling back an empty construction leaves that
+                // chunk untouched; exclusive mutation is required only when the
+                // operation actually changed its payload or metadata.
+                if !tail_unchanged {
+                    pool.payload.truncate(
+                        key,
+                        self.owner,
+                        self.lineage,
+                        tail_used,
+                        tail_summary,
+                    )?;
+                    pool.payload
+                        .restore_sealed(key, self.owner, self.lineage, tail_sealed)?;
+                }
+            } else if tail_used != 0 || tail_sealed || tail_summary.is_some() {
+                return Err(ForkArenaError::InvalidOperationMark);
             }
         } else if tail_used != 0 {
             return Err(ForkArenaError::InvalidOperationMark);
+        }
+        if live_len != chunks {
+            self.invalidate_live_tail_hint();
         }
         Ok(())
     }
