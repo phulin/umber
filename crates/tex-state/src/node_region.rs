@@ -150,7 +150,6 @@ pub struct ClosureTransitionCounters {
     pub transient_rollbacks: u64,
     pub structural_fallbacks: u64,
     pub interleaved_prefix_fallbacks: u64,
-    pub foreign_root_fallbacks: u64,
     pub retained_root_fallbacks: u64,
 }
 
@@ -158,7 +157,6 @@ pub struct ClosureTransitionCounters {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StructuralCopyReason {
     InterleavedPrefixChild,
-    ForeignRoot,
     RetainedRoot,
 }
 
@@ -1951,7 +1949,6 @@ pub(crate) fn structural_copy_fallback<Source, Destination>(
         StructuralCopyReason::InterleavedPrefixChild => {
             &mut pool.closure_transitions.interleaved_prefix_fallbacks
         }
-        StructuralCopyReason::ForeignRoot => &mut pool.closure_transitions.foreign_root_fallbacks,
         StructuralCopyReason::RetainedRoot => &mut pool.closure_transitions.retained_root_fallbacks,
     };
     *reason_counter = reason_counter.saturating_add(1);
