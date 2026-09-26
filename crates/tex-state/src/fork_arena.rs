@@ -5417,32 +5417,6 @@ impl<T, Lane> ForkArena<T, Lane> {
         })
     }
 
-    pub fn compose_lists(
-        &mut self,
-        pool: &mut ChunkPool<T>,
-        lists: &[ArenaListId<Lane>],
-        scratch: &mut Vec<()>,
-    ) -> Result<ArenaListId<Lane>, ForkArenaError>
-    where
-        T: Clone + RegionValue<Lane>,
-    {
-        // This compatibility surface is intentionally implemented in terms of
-        // the explicitly named shared-copy primitive. Production ownership
-        // seams should consume `UniqueArenaList` instead.
-        scratch.clear();
-        let mut root = ArenaListId::empty();
-        for list in lists.iter().copied() {
-            self.validate_list(pool, list)?;
-            root = if root.is_empty() {
-                list
-            } else {
-                self.copy_shared_then_splice(pool, root, list)?
-            };
-        }
-        self.seal_direct_tail(pool, root)?;
-        Ok(root)
-    }
-
     /// Returns the empty canonical list for this arena lane.
     #[must_use]
     pub const fn empty_list(&self) -> ArenaListId<Lane> {

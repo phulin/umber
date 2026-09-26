@@ -479,13 +479,18 @@ fn copying_a_shared_right_root_never_rewrites_an_earlier_composite() {
     let first = list(&mut arena, &mut pool, [1]);
     let shared = list(&mut arena, &mut pool, [2, 3]);
     let other = list(&mut arena, &mut pool, [9]);
-    let mut scratch = Vec::new();
     let earlier = arena
-        .compose_lists(&mut pool, &[first, shared], &mut scratch)
+        .copy_shared_then_splice(&mut pool, first, shared)
         .expect("first composite");
+    arena
+        .seal_direct_tail(&mut pool, earlier)
+        .expect("seal first");
     let later = arena
-        .compose_lists(&mut pool, &[other, shared], &mut scratch)
+        .copy_shared_then_splice(&mut pool, other, shared)
         .expect("second composite");
+    arena
+        .seal_direct_tail(&mut pool, later)
+        .expect("seal second");
 
     assert_eq!(
         arena
@@ -2030,8 +2035,11 @@ fn direct_chunk_sequence_has_indexed_and_sequential_parity() {
     let right = list(&mut arena, &mut pool, [7, 8]);
     let mut scratch = Vec::new();
     let composite = arena
-        .compose_lists(&mut pool, &[left, right], &mut scratch)
+        .copy_shared_then_splice(&mut pool, left, right)
         .expect("range sequence");
+    arena
+        .seal_direct_tail(&mut pool, composite)
+        .expect("seal range sequence");
     assert_ne!(composite.head.raw, composite.tail.raw);
     {
         let view = arena.list(&pool, composite).expect("sequence view");
@@ -2248,10 +2256,12 @@ fn active_shared_subrange_crosses_chunks_with_one_counted_copy() {
     let mut arena = ForkArena::<u32, ActiveLane>::new();
     let left = list(&mut arena, &mut pool, [1, 2]);
     let right = list(&mut arena, &mut pool, [3, 4, 5]);
-    let mut scratch = Vec::new();
     let source = arena
-        .compose_lists(&mut pool, &[left, right], &mut scratch)
+        .copy_shared_then_splice(&mut pool, left, right)
         .expect("composed source");
+    arena
+        .seal_direct_tail(&mut pool, source)
+        .expect("seal composed source");
     let source_address = arena
         .list(&pool, source)
         .expect("source view")
