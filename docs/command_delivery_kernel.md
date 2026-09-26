@@ -149,6 +149,50 @@ batch admission can build on these owners, but is separate from retaining one
 reader selection across scalar callbacks. No consumer borrow survives a stack
 mutation, and no copied cursor needs reconciliation with its owning frame.
 
+## Batched skip and argument runs
+
+Two consumers extend the resident character run to control sequences, because
+their TeX82 loops inspect only a few facts of each token.
+
+- §494's `pass_text` asks whether a skipped command is a conditional, a
+  `fi_or_else` delimiter, or §336's outer class. The skip run resolves each
+  control sequence or active character with one dense meaning lookup, keeps the
+  nesting count of skipped conditionals inside the run, and settles §347's
+  `align_state` for skipped braces once from the run's net change. Only the
+  delimiter that ends the skip at nesting zero, outer commands, parameters,
+  frozen tokens, and words from `\noexpand`-marked frames are delivered.
+- §§392--399's macro argument matcher reads spelling, braces, `\par`, and
+  outer validity. The argument run admits a control sequence or active
+  character after one outer probe, crosses balanced interior groups while
+  tracking depth, and stops at the brace that would close an undelimited
+  argument, at a stray closing brace of a delimited argument, at the paragraph
+  token, or at the delimiter's first token at depth zero. Each word settles
+  through the same scanner-cursor step as a delivered token.
+
+Both runs require that no alignment is active, so no delimiter interception can
+apply to a consumed word, and both fall back to character-only admission in
+observed episodes and after outer recovery. A run consumes words in delivery
+order and charges fuel per word, so a later scalar delivery resumes exactly
+where the run stopped.
+
+## Admitted-run settlement
+
+Main control applies consecutive ordinary commands inside one admitted command
+context. A command settles in place, and the run continues, when it cannot
+contribute page material or publish a host effect: the definition, `\let`,
+and catcode arms; simple and semi-simple group transitions; §1045's `\relax`;
+and rootless scalar assignments (count, dimen, integer, dimension, and glue
+parameters, code tables, and `\advance`, `\multiply`, `\divide`) when the
+operation is unobserved. Any other command, and any settled command that
+published an effect or artifact, returns to the enclosing episode driver.
+
+Between admitted commands the operation mark rolls forward in place. The state
+journal commits and reopens its transaction. The attempt arena keeps its open
+scope when the settled operation left its tables at the opening mark, and the
+mode journal keeps its frame when no inverse was recorded and every level root
+still equals its projection. Otherwise each journal takes its ordinary commit
+and begin.
+
 ## Validation
 
 Command tests cover source and resident delivery, nested macro/argument return,
