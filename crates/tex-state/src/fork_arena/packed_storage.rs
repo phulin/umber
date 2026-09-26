@@ -161,6 +161,7 @@ impl<T> ChunkStorage<T> {
             self.logical_rows[key.ordinal as usize].physical_capacity = self.slots_per_chunk as u32;
             return Ok(());
         }
+        let next_epoch = self.admission_epoch.saturating_add(1);
         let replacement = self.allocate_dense_range()?;
         let used = self.chunks[key.ordinal as usize].used as usize;
         if let Err(error) =
@@ -174,6 +175,7 @@ impl<T> ChunkStorage<T> {
         current.physical_incarnation = replacement.0.incarnation;
         current.physical_base = replacement.1;
         current.physical_capacity = self.slots_per_chunk as u32;
+        self.admission_epoch = next_epoch;
         self.release_dense_extent(old_physical, row.physical_base, row.physical_capacity)?;
         Ok(())
     }

@@ -193,7 +193,7 @@ impl<'a> CopyContext<'a> {
         list: PageListId,
     ) -> Result<(PageListId, usize), ForkArenaError> {
         let admitted = self.source.admit_owned_root(self.pool, list.coordinate())?;
-        let mut cursors = SmallVec::<[AdmittedListChunkCursor<PageMaterialLane>; 8]>::new();
+        let mut cursors = SmallVec::<[AdmittedListChunkCursor<PageMaterialLane>; 2]>::new();
         let mut cursor =
             self.source
                 .admitted_tail_chunk_from_root(self.pool, list.coordinate(), admitted)?;
@@ -223,7 +223,7 @@ impl<'a> CopyContext<'a> {
             let mut dependency_floor = usize::MAX;
             let mut paired_floor = usize::MAX;
             let mut defer_fixed_publication = false;
-            let mut box_envelopes = SmallVec::<[CopiedBoxEnvelope; 16]>::new();
+            let mut box_envelopes = SmallVec::<[CopiedBoxEnvelope; 4]>::new();
             for index in 0..records.len() {
                 let record = &mut records[index];
                 if record.is_inline_leaf() {

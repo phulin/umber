@@ -311,6 +311,13 @@ fn rollback_regrows_sealed_packed_tail_without_changing_logical_key() {
         .append_unsealed_list(&mut pool, [11])
         .expect("open first tail");
     let mark = first_owner.operation_mark(&pool);
+    let admitted = first_owner
+        .admit_owned_root(&pool, first)
+        .expect("admit original root");
+    let mut cached_cursor = first_owner
+        .admitted_tail_chunk_from_root(&pool, first, admitted)
+        .expect("admit original tail")
+        .expect("nonempty tail");
     let original_physical = pool
         .payload
         .mapping(first.head.raw)
@@ -328,6 +335,10 @@ fn rollback_regrows_sealed_packed_tail_without_changing_logical_key() {
     other_owner
         .seal_boundary(&mut pool)
         .expect("later owner keeps intervening extent live");
+    let mut other_cursor = other_owner
+        .admitted_tail_chunk(&pool, other)
+        .expect("admit other owner's root")
+        .expect("nonempty other root");
     first_owner
         .restore_operation(&mut pool, mark)
         .expect("rollback regrows marked tail");
@@ -336,11 +347,35 @@ fn rollback_regrows_sealed_packed_tail_without_changing_logical_key() {
     assert_eq!(restored.payload_tail_used, mark.payload_tail_used);
     assert_eq!(restored.payload_tail_sealed, mark.payload_tail_sealed);
     assert_eq!(restored.payload_tail_summary, mark.payload_tail_summary);
-    assert_ne!(
-        pool.payload
-            .mapping(first.head.raw)
-            .expect("remapped physical extent"),
-        original_physical
+    let remapped_physical = pool
+        .payload
+        .mapping(first.head.raw)
+        .expect("remapped physical extent");
+    assert_eq!(
+        remapped_physical.0, original_physical.0,
+        "the marked tail relocates within the same physical block"
+    );
+    assert_ne!(remapped_physical.1, original_physical.1);
+    assert_eq!(
+        first_owner
+            .admitted_view(&pool, first, admitted)
+            .expect("cached root refreshes after remap")
+            .first(),
+        Some(&11)
+    );
+    assert_eq!(
+        *first_owner
+            .admitted_chunk_value_at(&pool, &cached_cursor, 0)
+            .1,
+        11
+    );
+    assert_eq!(
+        first_owner
+            .admitted_remaining_chunk(&pool, &mut cached_cursor)
+            .expect("cached cursor refreshes after remap")
+            .1
+            .packed_slice(),
+        Some(&[11][..])
     );
     assert_eq!(
         first_owner
@@ -356,12 +391,54 @@ fn rollback_regrows_sealed_packed_tail_without_changing_logical_key() {
             .get(0),
         Some(&22)
     );
+    assert_eq!(
+        *other_owner
+            .admitted_next_chunk_value(&pool, &mut other_cursor)
+            .expect("unaffected owner refreshes after foreign remap")
+            .1,
+        22
+    );
     first_owner
         .append_unsealed_list(&mut pool, [33])
         .expect("reopened tail accepts an append");
+    let mut stale_cursor = first_owner
+        .admitted_tail_chunk(&pool, first)
+        .expect("admit retained root")
+        .expect("nonempty tail");
     first_owner
         .retire_region(&mut pool)
         .expect("retire first owner");
+    let mut recycled_owner = ForkArena::<u32, ActiveLane>::new();
+    let recycled = recycled_owner
+        .append_unsealed_list(&mut pool, std::iter::repeat_n(99, 16_000))
+        .expect("reuse a retired full-width physical range");
+    assert_eq!(
+        recycled_owner
+            .list(&pool, recycled)
+            .expect("recycled root")
+            .last(),
+        Some(&99)
+    );
+    assert!(
+        pool.payload
+            .logical_rows
+            .iter()
+            .enumerate()
+            .any(|(index, row)| {
+                pool.payload.chunks[index].live
+                    && row.physical_slot == remapped_physical.0.slot
+                    && row.physical_incarnation == remapped_physical.0.incarnation
+                    && row.physical_base == remapped_physical.1
+            }),
+        "another logical key occupies the former physical range"
+    );
+    assert!(first_owner.admitted_view(&pool, first, admitted).is_err());
+    assert!(
+        first_owner
+            .admitted_next_chunk_value(&pool, &mut stale_cursor)
+            .is_none(),
+        "a retired key cannot keep reading its recycled physical slot"
+    );
     assert!(
         pool.payload
             .get(first.head.raw, first_owner.owner, 0)

@@ -331,6 +331,9 @@ struct ChunkStorage<T> {
     free_blocks: Vec<u32>,
     free_ranges: Vec<(DenseBlockKey, u32)>,
     tail_block: Option<DenseBlockKey>,
+    // Cached admitted physical positions refresh after remap, release,
+    // transfer, or truncation. Saturation means always revalidate.
+    admission_epoch: u64,
     chunks: Vec<ChunkMeta>,
     #[cfg(feature = "profiling")]
     node_pool_storage_class: Option<NodePoolStorageClass>,
@@ -719,6 +722,7 @@ impl<T> ChunkStorage<T> {
             free_blocks: Vec::new(),
             free_ranges: Vec::new(),
             tail_block: None,
+            admission_epoch: 1,
             chunks: Vec::new(),
             #[cfg(feature = "profiling")]
             node_pool_storage_class: None,
@@ -1735,6 +1739,7 @@ impl<T> ChunkStorage<T> {
         if used == old_used {
             return Ok(());
         }
+        let next_epoch = self.admission_epoch.saturating_add(1);
         if used as usize != self.slots_per_chunk {
             self.restore_full_packed_extent(key)?;
         }
@@ -1755,6 +1760,7 @@ impl<T> ChunkStorage<T> {
         if used as usize != capacity {
             meta.sealed = false;
         }
+        self.admission_epoch = next_epoch;
         Ok(())
     }
 
@@ -1796,6 +1802,7 @@ impl<T> ChunkStorage<T> {
         let (physical, physical_base) = self.mapping(key)?;
         let physical_capacity = self.logical_rows[key.ordinal as usize].physical_capacity;
         let used = self.validate(key, arena)?.used;
+        let next_epoch = self.admission_epoch.saturating_add(1);
         let meta = self.validate_mut(key, arena)?;
         let Some(index) = meta.lineages.iter().position(|entry| entry.id == lineage) else {
             return Err(ForkArenaError::InvalidChunk);
@@ -1807,6 +1814,7 @@ impl<T> ChunkStorage<T> {
             .any(|(other, entry)| other != index && entry.id != 0)
         {
             meta.lineages[index] = VACANT_CHUNK_LINEAGE;
+            self.admission_epoch = next_epoch;
             return Ok(0);
         }
         match self.dense_block_mut(physical)?.payload_mut() {
@@ -1828,6 +1836,7 @@ impl<T> ChunkStorage<T> {
         meta.previous_in_list = None;
         self.release_dense_extent(physical, physical_base, physical_capacity)?;
         self.release_logical(key)?;
+        self.admission_epoch = next_epoch;
         Ok(used as usize)
     }
 
@@ -1987,6 +1996,7 @@ impl<T> ChunkStorage<T> {
         destination: u32,
         destination_lineage: u32,
     ) -> Result<(), ForkArenaError> {
+        let next_epoch = self.admission_epoch.saturating_add(1);
         let meta = self.validate_exclusive_lineage_mut(key, source, source_lineage)?;
         if !meta.sealed {
             return Err(ForkArenaError::UnsealedBoundary);
@@ -1997,6 +2007,7 @@ impl<T> ChunkStorage<T> {
             .find(|entry| entry.id == source_lineage)
             .expect("exclusive lineage validation retained its source")
             .id = destination_lineage;
+        self.admission_epoch = next_epoch;
         Ok(())
     }
 }
@@ -4598,6 +4609,15 @@ impl<T, Lane> ForkArena<T, Lane> {
         if selected.is_empty() {
             return Ok(0);
         }
+        if self.live_key_at(source.position) != Some(source.key)
+            || source.end
+                > pool
+                    .payload
+                    .validate_lineage(source.key, self.owner, self.lineage)?
+                    .used
+        {
+            return Err(ForkArenaError::InvalidRange);
+        }
         let operation = self.operation_mark(pool);
         let previous_root = self.active_list_open_mut(builder)?.root;
         let mut root = previous_root;
@@ -4628,8 +4648,13 @@ impl<T, Lane> ForkArena<T, Lane> {
         let mut run_summary = identity_enabled.then(SemanticSequenceIdentity::empty);
         let mut dependency_floor = usize::MAX;
         let mut paired_dependency_floor = usize::MAX;
+        // Reservation can change the physical backing of this same-owner
+        // source, but cannot retire or transfer it while the arena is borrowed.
+        let source_block = self
+            .refreshed_admitted_chunk_block(pool, source)
+            .expect("exclusive reservation retains its admitted source chunk");
         let transformed = pool.payload.with_optional_source_destination(
-            source.block,
+            source_block,
             source_start..source_end,
             key,
             destination_start..destination_end,
@@ -5626,6 +5651,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         };
         Ok(AdmittedListRoot {
             owner: self.owner,
+            admission_epoch: pool.payload.admission_epoch,
             head: AdmittedChunkCursor::new(
                 u32::try_from(head_position).map_err(|_| ForkArenaError::CapacityOverflow)?,
                 head_block,
@@ -6047,6 +6073,7 @@ impl<Lane> AdmittedChunkCursor<Lane> {
 
 pub(crate) struct AdmittedListRoot<Lane> {
     owner: u32,
+    admission_epoch: u64,
     head: AdmittedChunkCursor<Lane>,
     tail: AdmittedChunkCursor<Lane>,
 }
@@ -6062,6 +6089,7 @@ impl<Lane> Copy for AdmittedListRoot<Lane> {}
 impl<Lane> AdmittedListRoot<Lane> {
     pub(crate) const EMPTY: Self = Self {
         owner: 0,
+        admission_epoch: 0,
         head: AdmittedChunkCursor::EMPTY,
         tail: AdmittedChunkCursor::EMPTY,
     };
@@ -6087,6 +6115,7 @@ pub struct ArenaChunkSlice<'a, T> {
 pub(crate) struct AdmittedListChunkCursor<Lane> {
     key: LogicalChunkId,
     block: AdmittedDenseBlock,
+    admission_epoch: u64,
     position: usize,
     start: u32,
     end: u32,
@@ -6513,7 +6542,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         list: ArenaListId<Lane>,
         root: AdmittedListRoot<Lane>,
     ) -> Result<ArenaListView<'a, T, Lane>, ForkArenaError> {
-        self.validate_admitted_root(pool, list, root)?;
+        let root = self.refresh_admitted_root(pool, list, root)?;
         Ok(ArenaListView {
             arena: self,
             pool,
@@ -6548,6 +6577,50 @@ impl<T, Lane> ForkArena<T, Lane> {
         Ok(())
     }
 
+    /// A short mutable pool borrow may have reopened a compacted operation
+    /// tail, truncated a list, or retired a chunk. Refresh only after such a
+    /// lifecycle change; ordinary admitted reads keep their direct block.
+    fn refresh_admitted_root(
+        &self,
+        pool: &ChunkPool<T>,
+        list: ArenaListId<Lane>,
+        mut root: AdmittedListRoot<Lane>,
+    ) -> Result<AdmittedListRoot<Lane>, ForkArenaError> {
+        self.validate_admitted_root(pool, list, root)?;
+        if !list.is_empty()
+            && (root.admission_epoch != pool.payload.admission_epoch
+                || pool.payload.admission_epoch == u64::MAX)
+        {
+            let head = pool
+                .payload
+                .validate_lineage(list.head.raw, self.owner, self.lineage)
+                .map_err(|_| ForkArenaError::InvalidRange)?;
+            let tail = pool
+                .payload
+                .validate_lineage(list.tail.raw, self.owner, self.lineage)
+                .map_err(|_| ForkArenaError::InvalidRange)?;
+            if root.head.offset >= head.used
+                || root.tail.offset == 0
+                || root.tail.offset > tail.used
+            {
+                return Err(ForkArenaError::InvalidRange);
+            }
+            root.head.block = pool
+                .payload
+                .admit_dense_block(list.head.raw)
+                .ok_or(ForkArenaError::InvalidRange)?;
+            root.tail.block = if list.head.raw == list.tail.raw {
+                root.head.block
+            } else {
+                pool.payload
+                    .admit_dense_block(list.tail.raw)
+                    .ok_or(ForkArenaError::InvalidRange)?
+            };
+            root.admission_epoch = pool.payload.admission_epoch;
+        }
+        Ok(root)
+    }
+
     /// Admits a list once and returns its tail packed-chunk continuation.
     #[allow(dead_code)] // Retained by direct ForkArena controls; page spans carry the proof.
     pub(crate) fn admitted_tail_chunk(
@@ -6567,7 +6640,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         list: ArenaListId<Lane>,
         root: AdmittedListRoot<Lane>,
     ) -> Result<Option<AdmittedListChunkCursor<Lane>>, ForkArenaError> {
-        self.validate_admitted_root(pool, list, root)?;
+        let root = self.refresh_admitted_root(pool, list, root)?;
         if list.is_empty() {
             return Ok(None);
         }
@@ -6580,6 +6653,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         Ok(Some(AdmittedListChunkCursor {
             key: list.tail.raw,
             block: root.tail.block,
+            admission_epoch: root.admission_epoch,
             position: root.tail.position as usize,
             start,
             end: root.tail.offset,
@@ -6627,6 +6701,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         Ok(Some(AdmittedListChunkCursor {
             key,
             block,
+            admission_epoch: pool.payload.admission_epoch,
             position,
             start,
             end,
@@ -6657,7 +6732,10 @@ impl<T, Lane> ForkArena<T, Lane> {
     ) -> (usize, &'a T) {
         debug_assert!(offset < cursor.len());
         let offset = cursor.start + offset as u32;
-        let value = pool.payload.admitted_capability_value(cursor.block, offset);
+        let block = self
+            .refreshed_admitted_chunk_block(pool, cursor)
+            .expect("admitted chunk remains owned while its cursor is used");
+        let value = pool.payload.admitted_capability_value(block, offset);
         (
             cursor.logical_start + (offset - cursor.start) as usize,
             value,
@@ -6676,6 +6754,12 @@ impl<T, Lane> ForkArena<T, Lane> {
         }
         let offset = cursor.next;
         let logical = cursor.logical_start + (offset - cursor.start) as usize;
+        if cursor.admission_epoch != pool.payload.admission_epoch
+            || pool.payload.admission_epoch == u64::MAX
+        {
+            cursor.block = self.refreshed_admitted_chunk_block(pool, cursor)?;
+            cursor.admission_epoch = pool.payload.admission_epoch;
+        }
         let value = pool.payload.admitted_capability_value(cursor.block, offset);
         cursor.next += 1;
         Some((logical, value))
@@ -6709,12 +6793,41 @@ impl<T, Lane> ForkArena<T, Lane> {
         if cursor.next == cursor.end {
             return None;
         }
+        if cursor.admission_epoch != pool.payload.admission_epoch
+            || pool.payload.admission_epoch == u64::MAX
+        {
+            cursor.block = self.refreshed_admitted_chunk_block(pool, cursor)?;
+            cursor.admission_epoch = pool.payload.admission_epoch;
+        }
         let logical = cursor.logical_start + (cursor.next - cursor.start) as usize;
         let cells = pool
             .payload
             .admitted_dense_slice(cursor.block, cursor.next..cursor.end)?;
         cursor.next = cursor.end;
         Some((logical, ArenaChunkSlice { cells }))
+    }
+
+    fn refreshed_admitted_chunk_block(
+        &self,
+        pool: &ChunkPool<T>,
+        cursor: &AdmittedListChunkCursor<Lane>,
+    ) -> Option<AdmittedDenseBlock> {
+        if cursor.admission_epoch == pool.payload.admission_epoch
+            && pool.payload.admission_epoch != u64::MAX
+        {
+            return Some(cursor.block);
+        }
+        if self.live_key_at(cursor.position) != Some(cursor.key)
+            || cursor.end
+                > pool
+                    .payload
+                    .validate_lineage(cursor.key, self.owner, self.lineage)
+                    .ok()?
+                    .used
+        {
+            return None;
+        }
+        pool.payload.admit_dense_block(cursor.key)
     }
 }
 

@@ -152,9 +152,17 @@ entering the full-width free-range list. The allocation and copy finish before
 the logical mapping changes, so a failed regrowth leaves the sealed source
 unchanged. This is exclusive same-owner physical relocation during explicit
 rollback, not retained-owner first-write copying or a second logical owner.
-Admitted physical cursors cannot survive mutation or rollback of their own
-logical chunk; copy traversal retains cursors only for its immutable source,
-while destination construction holds an exclusive mutable pool borrow.
+An admission epoch changes on physical remap, truncation, release, or transfer.
+An admitted root or chunk cursor held across a short mutable borrow checks
+that scalar before using its cached physical position. On a mismatch it
+revalidates its exact owner, lineage, logical key, and initialized bounds,
+then resolves the current physical position. Saturating the epoch makes the
+terminal value an always-revalidate state rather than an overflow failure
+partway through a transfer. The epoch grants no ownership; the ordinary
+admission checks remain authoritative. A borrowed list view already holds an
+immutable pool borrow, so it refreshes once at view construction and traverses
+directly. Copy traversal retains cursors only for its immutable source, while
+destination construction holds an exclusive mutable pool borrow.
 The physical-packing policy does not compact logical positions, forward keys,
 or change the paired ownership receipts.
 A record remains inside one logical block; a segment rotates before the next
