@@ -3,6 +3,7 @@
 use core::ops::Range;
 
 use super::*;
+use crate::node_record::NodeAnnexCopyReader;
 
 /// Copies only the selected direct records from one source logical chunk.
 /// Every child key is mapped to an already destination-owned closure before
@@ -25,6 +26,7 @@ pub(crate) fn copy_consumed_direct_cut_into<Source, Destination>(
             .read_consumed_cut_values(&pool.chunks, source_chunk, local_records)?;
     let node_mark = destination.pub_arena.operation_mark(&pool.chunks);
     let annex_mark = destination.annex_arena.operation_mark(&pool.annex_chunks);
+    let mut annex_reader = NodeAnnexCopyReader::new(&source.annex_arena);
     let copied = (|| {
         let mut rewritten = Vec::with_capacity(records.len());
         let mut dependency_floor = usize::MAX;
@@ -43,7 +45,7 @@ pub(crate) fn copy_consumed_direct_cut_into<Source, Destination>(
                 .dependency_floors_for_region_lists(&pool.chunks, |visit| {
                     relocated = record.reencode_between_regions(
                         &mut pool.annex_chunks,
-                        &source.annex_arena,
+                        &mut annex_reader,
                         &mut destination.annex_arena,
                         |child| {
                             let mapped = map_child(child)?;
