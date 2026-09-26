@@ -1,7 +1,8 @@
 use super::*;
 
-use crate::fork_arena::{ArenaListId, ChunkPool, ForkArena};
+use crate::fork_arena::{ArenaListId, ChunkPool, ForkArena, ForkArenaError};
 use crate::node_region::NodeAnnexLane;
+use smallvec::SmallVec;
 
 #[repr(C)]
 pub(crate) struct AnnexKey<Kind> {
@@ -444,6 +445,41 @@ impl<'a> NodeAnnexWriter<'a> {
             .ok()
     }
 
+    /// Publishes independent typed fixed records through one or more admitted
+    /// physical word runs. Every record keeps its own serial and exact root.
+    pub(crate) fn append_fixed_batch<'b>(
+        &mut self,
+        bodies: impl IntoIterator<Item = &'b [u32]>,
+    ) -> Result<SmallVec<[AnnexKey<()>; 16]>, ForkArenaError> {
+        let mut words = SmallVec::<[u32; 1024]>::new();
+        let mut lengths = SmallVec::<[u16; 16]>::new();
+        let mut serials = SmallVec::<[u32; 16]>::new();
+        for body in bodies {
+            if body.len() > 40 {
+                return Err(ForkArenaError::InvalidRange);
+            }
+            let serial = self.pool.next_publication_serial();
+            serials.push(serial);
+            lengths.push((body.len() + 1) as u16);
+            words.push(serial);
+            words.extend_from_slice(body);
+        }
+        let mut keys = SmallVec::<[AnnexKey<()>; 16]>::new();
+        let mut first_list = None;
+        self.arena
+            .append_unsealed_fixed_batch_copy_parts(self.pool, &words, &lengths, |list| {
+                first_list.get_or_insert(list);
+                keys.push(AnnexKey::from_list(list, serials[keys.len()]));
+            })?;
+        if let Some(first_list) = first_list {
+            let position = self
+                .arena
+                .owner_relative_head_position(self.pool, first_list)?;
+            self.dependency_floor = self.dependency_floor.min(position);
+        }
+        Ok(keys)
+    }
+
     pub(crate) fn append_span<Kind>(&mut self, body: &[u32]) -> AnnexKey<Kind> {
         let publication_serial = self.pool.next_publication_serial();
         let list = self
@@ -573,7 +609,7 @@ impl<'a> NodeAnnexCopier<'a> {
         }
     }
 
-    fn source_view(&self) -> NodeAnnexView<'_> {
+    pub(super) fn source_view(&self) -> NodeAnnexView<'_> {
         let arena = match self.source {
             NodeAnnexCopySource::SameRegion => &*self.destination,
             NodeAnnexCopySource::OtherRegion(arena) => arena,
@@ -588,8 +624,11 @@ impl<'a> NodeAnnexCopier<'a> {
         self.source_view().resolve_fixed_array(key)
     }
 
-    pub(super) fn detach_span<Kind>(&self, key: AnnexKey<Kind>) -> Option<Vec<u32>> {
-        self.source_view().detach_span(key)
+    pub(super) fn detach_span<Kind>(&self, key: AnnexKey<Kind>) -> Option<SmallVec<[u32; 64]>> {
+        let mut words = SmallVec::new();
+        self.source_view()
+            .visit_span(key, |word| words.push(word))?;
+        Some(words)
     }
 
     pub(super) fn append_fixed<Kind>(&mut self, body: &[u32]) -> AnnexKey<Kind> {

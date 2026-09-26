@@ -1,5 +1,102 @@
 use super::*;
 
+/// One authenticated fixed annex body and the child fields that must move with
+/// an explicit copy. The body stays on the stack while child closures are built.
+pub(crate) struct PreparedFixedCopy {
+    record: NodeRecord<PageMaterialLane>,
+    body: [u32; 40],
+    len: usize,
+    child_offsets: [u8; 4],
+    child_count: usize,
+}
+
+pub(crate) struct RelocatedFixedCopy {
+    record: NodeRecord<PageMaterialLane>,
+    body: [u32; 40],
+    len: usize,
+}
+
+impl RelocatedFixedCopy {
+    pub(crate) fn body(&self) -> &[u32] {
+        &self.body[..self.len]
+    }
+
+    pub(crate) fn with_key(self, key: AnnexKey<()>) -> Option<NodeRecord<PageMaterialLane>> {
+        Some(NodeRecord::with_key(
+            self.record.kind()?,
+            self.record.subtype(),
+            self.record.flags(),
+            key,
+        ))
+    }
+}
+
+impl PreparedFixedCopy {
+    fn new<const N: usize>(record: NodeRecord<PageMaterialLane>, body: [u32; N]) -> Self {
+        let mut prepared = Self {
+            record,
+            body: [0; 40],
+            len: N,
+            child_offsets: [0; 4],
+            child_count: 0,
+        };
+        prepared.body[..N].copy_from_slice(&body);
+        prepared
+    }
+
+    fn child_at(&mut self, offset: usize) {
+        self.child_offsets[self.child_count] = offset as u8;
+        self.child_count += 1;
+    }
+
+    fn math_field_at(&mut self, offset: usize) -> Option<()> {
+        match *self.body.get(offset)? {
+            0..=2 => Some(()),
+            3 | 4 => {
+                self.child_at(offset + 1);
+                Some(())
+            }
+            _ => None,
+        }
+    }
+
+    pub(crate) fn visit_children(&self, mut visit: impl FnMut(PageListId)) -> Option<()> {
+        for &offset in &self.child_offsets[..self.child_count] {
+            let offset = usize::from(offset);
+            visit(PageListId::from_words(
+                self.body[offset..offset + 10].try_into().ok()?,
+            )?);
+        }
+        Some(())
+    }
+
+    pub(crate) fn relocate(
+        mut self,
+        mut map_child: impl FnMut(PageListId) -> Option<PageListId>,
+    ) -> Option<RelocatedFixedCopy> {
+        for &offset in &self.child_offsets[..self.child_count] {
+            let offset = usize::from(offset);
+            let source = PageListId::from_words(self.body[offset..offset + 10].try_into().ok()?)?;
+            self.body[offset..offset + 10].copy_from_slice(&map_child(source)?.words());
+        }
+        Some(RelocatedFixedCopy {
+            record: self.record,
+            body: self.body,
+            len: self.len,
+        })
+    }
+
+    pub(crate) fn publish(
+        self,
+        map_child: impl FnMut(PageListId) -> Option<PageListId>,
+        append: impl FnOnce(&[u32]) -> (AnnexKey<()>, Option<usize>),
+    ) -> Option<(NodeRecord<PageMaterialLane>, Option<usize>)> {
+        let relocated = self.relocate(map_child)?;
+        let (key, floor) = append(relocated.body());
+        Some((relocated.with_key(key)?, floor))
+    }
+}
+
 impl NodeRecord<PageMaterialLane> {
     /// Inline leaves contain neither node-region children nor annex coordinates.
     /// Their complete record may cross an explicit copy boundary unchanged.
@@ -21,6 +118,103 @@ impl NodeRecord<PageMaterialLane> {
             Some(NodeKind::Glue) => !matches!(self.flags() & 3, 2 | 3),
             _ => false,
         }
+    }
+
+    pub(crate) fn has_fixed_copy_payload(self) -> bool {
+        matches!(
+            self.kind(),
+            Some(
+                NodeKind::HList
+                    | NodeKind::VList
+                    | NodeKind::Unset
+                    | NodeKind::Disc
+                    | NodeKind::Ins
+                    | NodeKind::MathNoad
+                    | NodeKind::FractionNoad
+                    | NodeKind::MathChoice
+                    | NodeKind::MathList
+                    | NodeKind::Adjust
+            )
+        ) || (self.kind() == Some(NodeKind::Glue) && matches!(self.flags() & 3, 2 | 3))
+    }
+
+    pub(crate) fn prepare_fixed_copy(self, annex: NodeAnnexView<'_>) -> Option<PreparedFixedCopy> {
+        let mut prepared = match self.kind()? {
+            NodeKind::Glue if matches!(self.flags() & 3, 2 | 3) => PreparedFixedCopy::new(
+                self,
+                annex.resolve_fixed_array::<(), 32>(key_from_record(self))?,
+            ),
+            NodeKind::HList | NodeKind::VList => PreparedFixedCopy::new(
+                self,
+                annex.resolve_fixed_array::<(), BOX_PAYLOAD_WORDS>(key_from_record(self))?,
+            ),
+            NodeKind::Unset => PreparedFixedCopy::new(
+                self,
+                annex.resolve_fixed_array::<(), 15>(key_from_record(self))?,
+            ),
+            NodeKind::Disc => PreparedFixedCopy::new(
+                self,
+                annex.resolve_fixed_array::<(), 30>(key_from_record(self))?,
+            ),
+            NodeKind::Ins => PreparedFixedCopy::new(
+                self,
+                annex.resolve_fixed_array::<(), 17>(key_from_record(self))?,
+            ),
+            NodeKind::MathNoad => PreparedFixedCopy::new(
+                self,
+                annex.resolve_fixed_array::<(), 36>(key_from_record(self))?,
+            ),
+            NodeKind::FractionNoad => PreparedFixedCopy::new(
+                self,
+                annex.resolve_fixed_array::<(), 23>(key_from_record(self))?,
+            ),
+            NodeKind::MathChoice => PreparedFixedCopy::new(
+                self,
+                annex.resolve_fixed_array::<(), 40>(key_from_record(self))?,
+            ),
+            NodeKind::MathList | NodeKind::Adjust => PreparedFixedCopy::new(
+                self,
+                annex.resolve_fixed_array::<(), 10>(key_from_record(self))?,
+            ),
+            _ => return None,
+        };
+        if matches!(self.kind(), Some(NodeKind::HList | NodeKind::VList)) {
+            prepared.body[28..BOX_PAYLOAD_WORDS].fill(0);
+        }
+        match self.kind()? {
+            NodeKind::Glue => {
+                prepared.child_at(11);
+                prepared.child_at(21);
+            }
+            NodeKind::HList | NodeKind::VList => {
+                prepared.child_at(7);
+                prepared.child_at(17);
+            }
+            NodeKind::Unset | NodeKind::Ins | NodeKind::MathList | NodeKind::Adjust => {
+                prepared.child_at(0);
+            }
+            NodeKind::Disc => {
+                for offset in [0, 10, 20] {
+                    prepared.child_at(offset);
+                }
+            }
+            NodeKind::MathNoad => {
+                for offset in [3, 14, 25] {
+                    prepared.math_field_at(offset)?;
+                }
+            }
+            NodeKind::FractionNoad => {
+                prepared.child_at(0);
+                prepared.child_at(10);
+            }
+            NodeKind::MathChoice => {
+                for offset in [0, 10, 20, 30] {
+                    prepared.child_at(offset);
+                }
+            }
+            _ => unreachable!("fixed copy kind was selected above"),
+        }
+        Some(prepared)
     }
 
     pub(crate) fn direct_font(self, annex: NodeAnnexView<'_>) -> Option<FontId> {
@@ -83,89 +277,14 @@ impl NodeRecord<PageMaterialLane> {
     pub(crate) fn visit_node_lists(
         self,
         annex: NodeAnnexView<'_>,
-        mut visit: impl FnMut(PageListId),
+        visit: impl FnMut(PageListId),
     ) -> Option<()> {
-        fn child(words: &[u32], offset: usize) -> Option<PageListId> {
-            PageListId::from_words(
-                words
-                    .get(offset..offset.checked_add(10)?)?
-                    .try_into()
-                    .ok()?,
-            )
+        self.kind()?;
+        if self.has_fixed_copy_payload() {
+            self.prepare_fixed_copy(annex)?.visit_children(visit)
+        } else {
+            Some(())
         }
-        fn math_field(
-            words: &[u32],
-            offset: usize,
-            visit: &mut impl FnMut(PageListId),
-        ) -> Option<()> {
-            match *words.get(offset)? {
-                0..=2 => Some(()),
-                3 | 4 => {
-                    visit(child(words, offset + 1)?);
-                    Some(())
-                }
-                _ => None,
-            }
-        }
-
-        match self.kind()? {
-            NodeKind::Glue if matches!(self.flags() & 3, 2 | 3) => {
-                let payload =
-                    annex.resolve_fixed_array::<LeaderBoxPayload, 32>(key_from_record(self))?;
-                visit(child(&payload, 11)?);
-                visit(child(&payload, 21)?);
-            }
-            NodeKind::HList | NodeKind::VList => {
-                let payload = annex
-                    .resolve_fixed_array::<BoxPayload, BOX_PAYLOAD_WORDS>(key_from_record(self))?;
-                visit(child(&payload, 7)?);
-                visit(child(&payload, 17)?);
-            }
-            NodeKind::Unset => {
-                let payload =
-                    annex.resolve_fixed_array::<UnsetPayload, 15>(key_from_record(self))?;
-                visit(child(&payload, 0)?);
-            }
-            NodeKind::Disc => {
-                let payload =
-                    annex.resolve_fixed_array::<DiscPayload, 30>(key_from_record(self))?;
-                for offset in [0, 10, 20] {
-                    visit(child(&payload, offset)?);
-                }
-            }
-            NodeKind::Ins => {
-                let payload =
-                    annex.resolve_fixed_array::<InsertionPayload, 17>(key_from_record(self))?;
-                visit(child(&payload, 0)?);
-            }
-            NodeKind::MathNoad => {
-                let payload =
-                    annex.resolve_fixed_array::<MathNoadPayload, 36>(key_from_record(self))?;
-                for offset in [3, 14, 25] {
-                    math_field(&payload, offset, &mut visit)?;
-                }
-            }
-            NodeKind::FractionNoad => {
-                let payload =
-                    annex.resolve_fixed_array::<FractionPayload, 23>(key_from_record(self))?;
-                visit(child(&payload, 0)?);
-                visit(child(&payload, 10)?);
-            }
-            NodeKind::MathChoice => {
-                let payload =
-                    annex.resolve_fixed_array::<MathChoicePayload, 40>(key_from_record(self))?;
-                for offset in [0, 10, 20, 30] {
-                    visit(child(&payload, offset)?);
-                }
-            }
-            NodeKind::MathList | NodeKind::Adjust => {
-                let payload =
-                    annex.resolve_fixed_array::<ListPayload, 10>(key_from_record(self))?;
-                visit(child(&payload, 0)?);
-            }
-            _ => {}
-        }
-        Some(())
     }
 
     pub(crate) fn reencode_same_region(
@@ -194,29 +313,12 @@ impl NodeRecord<PageMaterialLane> {
         annex: &mut NodeAnnexCopier<'_>,
         mut map_child: impl FnMut(PageListId) -> Option<PageListId>,
     ) -> Option<(Self, Option<usize>)> {
-        fn rewrite_child(
-            words: &mut [u32],
-            offset: usize,
-            map: &mut impl FnMut(PageListId) -> Option<PageListId>,
-        ) -> Option<()> {
-            let end = offset.checked_add(10)?;
-            let child = PageListId::from_words(words.get(offset..end)?.try_into().ok()?)?;
-            words
-                .get_mut(offset..end)?
-                .copy_from_slice(&map(child)?.words());
-            Some(())
-        }
-
-        fn rewrite_math_field(
-            words: &mut [u32],
-            offset: usize,
-            map: &mut impl FnMut(PageListId) -> Option<PageListId>,
-        ) -> Option<()> {
-            match *words.get(offset)? {
-                0..=2 => Some(()),
-                3 | 4 => rewrite_child(words, offset + 1, map),
-                _ => None,
-            }
+        if self.has_fixed_copy_payload() {
+            let prepared = self.prepare_fixed_copy(annex.source_view())?;
+            return prepared.publish(&mut map_child, |body| {
+                let key = annex.append_fixed::<()>(body);
+                (key, annex.dependency_floor())
+            });
         }
 
         let kind = self.kind()?;
@@ -237,106 +339,6 @@ impl NodeRecord<PageMaterialLane> {
                     annex.dependency_floor(),
                 ))
             }
-            NodeKind::Glue if matches!(flags & 3, 2 | 3) => {
-                let mut payload =
-                    annex.resolve_fixed_array::<LeaderBoxPayload, 32>(key_from_record(self))?;
-                rewrite_child(&mut payload, 11, &mut map_child)?;
-                rewrite_child(&mut payload, 21, &mut map_child)?;
-                let key = annex.append_fixed::<LeaderBoxPayload>(&payload);
-                Some((
-                    Self::with_key(kind, subtype, flags, key),
-                    annex.dependency_floor(),
-                ))
-            }
-            NodeKind::HList | NodeKind::VList => {
-                let mut payload = annex
-                    .resolve_fixed_array::<BoxPayload, BOX_PAYLOAD_WORDS>(key_from_record(self))?;
-                rewrite_child(&mut payload, 7, &mut map_child)?;
-                rewrite_child(&mut payload, 17, &mut map_child)?;
-                payload[28..].fill(0);
-                let key = annex.append_fixed::<BoxPayload>(&payload);
-                Some((
-                    Self::with_key(kind, subtype, flags, key),
-                    annex.dependency_floor(),
-                ))
-            }
-            NodeKind::Unset => {
-                let mut payload =
-                    annex.resolve_fixed_array::<UnsetPayload, 15>(key_from_record(self))?;
-                rewrite_child(&mut payload, 0, &mut map_child)?;
-                let key = annex.append_fixed::<UnsetPayload>(&payload);
-                Some((
-                    Self::with_key(kind, subtype, flags, key),
-                    annex.dependency_floor(),
-                ))
-            }
-            NodeKind::Disc => {
-                let mut payload =
-                    annex.resolve_fixed_array::<DiscPayload, 30>(key_from_record(self))?;
-                rewrite_child(&mut payload, 0, &mut map_child)?;
-                rewrite_child(&mut payload, 10, &mut map_child)?;
-                rewrite_child(&mut payload, 20, &mut map_child)?;
-                let key = annex.append_fixed::<DiscPayload>(&payload);
-                Some((
-                    Self::with_key(kind, subtype, flags, key),
-                    annex.dependency_floor(),
-                ))
-            }
-            NodeKind::Ins => {
-                let mut payload =
-                    annex.resolve_fixed_array::<InsertionPayload, 17>(key_from_record(self))?;
-                rewrite_child(&mut payload, 0, &mut map_child)?;
-                let key = annex.append_fixed::<InsertionPayload>(&payload);
-                Some((
-                    Self::with_key(kind, subtype, flags, key),
-                    annex.dependency_floor(),
-                ))
-            }
-            NodeKind::MathNoad => {
-                let mut payload =
-                    annex.resolve_fixed_array::<MathNoadPayload, 36>(key_from_record(self))?;
-                rewrite_math_field(&mut payload, 3, &mut map_child)?;
-                rewrite_math_field(&mut payload, 14, &mut map_child)?;
-                rewrite_math_field(&mut payload, 25, &mut map_child)?;
-                let key = annex.append_fixed::<MathNoadPayload>(&payload);
-                Some((
-                    Self::with_key(kind, subtype, flags, key),
-                    annex.dependency_floor(),
-                ))
-            }
-            NodeKind::FractionNoad => {
-                let mut payload =
-                    annex.resolve_fixed_array::<FractionPayload, 23>(key_from_record(self))?;
-                rewrite_child(&mut payload, 0, &mut map_child)?;
-                rewrite_child(&mut payload, 10, &mut map_child)?;
-                let key = annex.append_fixed::<FractionPayload>(&payload);
-                Some((
-                    Self::with_key(kind, subtype, flags, key),
-                    annex.dependency_floor(),
-                ))
-            }
-            NodeKind::MathChoice => {
-                let mut payload =
-                    annex.resolve_fixed_array::<MathChoicePayload, 40>(key_from_record(self))?;
-                for offset in [0, 10, 20, 30] {
-                    rewrite_child(&mut payload, offset, &mut map_child)?;
-                }
-                let key = annex.append_fixed::<MathChoicePayload>(&payload);
-                Some((
-                    Self::with_key(kind, subtype, flags, key),
-                    annex.dependency_floor(),
-                ))
-            }
-            NodeKind::MathList | NodeKind::Adjust => {
-                let mut payload =
-                    annex.resolve_fixed_array::<ListPayload, 10>(key_from_record(self))?;
-                rewrite_child(&mut payload, 0, &mut map_child)?;
-                let key = annex.append_fixed::<ListPayload>(&payload);
-                Some((
-                    Self::with_key(kind, subtype, flags, key),
-                    annex.dependency_floor(),
-                ))
-            }
             NodeKind::Whatsit => self.reencode_whatsit(annex),
             NodeKind::Char
             | NodeKind::Kern
@@ -350,6 +352,7 @@ impl NodeRecord<PageMaterialLane> {
             | NodeKind::Direction
             | NodeKind::MathStyle
             | NodeKind::Nonscript => Some((self, None)),
+            _ => None,
         }
     }
 

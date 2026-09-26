@@ -17,6 +17,12 @@ Do not add either concern to this codec tree. This codec is the production
 page-material representation; keep decoding and validation rules shared by
 resident traversal and cold materialization.
 
+Fixed-payload explicit copies use bounded prepared word scratch in
+`node_codec.rs`. Its child-field offsets are shared by visitation and both
+reencode directions. `annex.rs` publishes independent typed keys in batches;
+each key retains its own serial and exact word range. Box construction metadata
+is non-owning and must be cleared by every reencode path.
+
 Preserve crate-private codec visibility and explicit integer encoding. Do not
 transmute records, serialize native bytes, add owned payloads to `NodeRecord`,
 or weaken stale annex-coordinate validation. Run the focused `node_record`

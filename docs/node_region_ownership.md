@@ -79,6 +79,30 @@ the destination. Child copies may allocate between consecutive parent runs;
 continuing a parent list must therefore use its own tail key, never another
 list's tail merely because the offsets happen to match.
 
+For a fixed annex payload, preparation authenticates its source key and copies
+at most 40 words into stack scratch once. It records the child-field offsets in
+that payload. Each occurrence of each child is then copied independently;
+the copied coordinates replace those fields in scratch before one typed annex
+publication. The new annex key replaces the source key in the compact record.
+Inline leaves cross unchanged. Variable spans and whatsits retain their typed
+relocation path because their nested span keys require separate publication.
+That path visits each authenticated source span once into inline word scratch
+for the common short case, spilling only when the span exceeds 64 words.
+This bounded preparation shares decoding between child discovery and annex
+relocation without retaining source coordinates or introducing a destination
+lookup table. Publication serials and paired dependency floors are still
+established by the ordinary annex writer.
+
+Fixed bodies whose child closures have finished are staged in groups of at
+most 16. The paired annex writer gives every body a distinct publication
+serial, then copies the flat words through one admitted physical run per
+available block segment. A record remains inside one logical block; a segment
+rotates before the next record when space is insufficient. Each resulting key
+names only that record's exact word range, and its serial authenticates it
+independently. The caller's paired operation marks cover the whole batch if a
+later child or parent publication fails. Group scratch is bounded even when a
+source list spans many node chunks.
+
 The destination root remains private to copy construction until its complete
 child closure has been rewritten and its tail sealed. Each run settles child
 and paired-annex dependency floors once. Only compact chunk scratch and child

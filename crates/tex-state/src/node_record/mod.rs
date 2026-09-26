@@ -29,6 +29,7 @@ mod whatsit_codec;
 
 pub(crate) use annex::{AnnexKey, NodeAnnexView, NodeAnnexWriter};
 pub(crate) use layout::NodeRecord;
+pub(crate) use node_codec::RelocatedFixedCopy;
 
 /// Rewrites only a durable root box's scalar annex word. The caller owns the
 /// exclusive region and journals the returned old value before any rollback.

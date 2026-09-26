@@ -1,6 +1,7 @@
 //! Chunk-batched explicit copies between independently owned node regions.
 
 use super::*;
+use crate::node_record::{NodeAnnexWriter, RelocatedFixedCopy};
 use smallvec::SmallVec;
 
 pub(super) struct CopyContext<'a> {
@@ -15,6 +16,27 @@ pub(super) struct CopyContext<'a> {
 }
 
 impl<'a> CopyContext<'a> {
+    fn publish_fixed_batch(
+        &mut self,
+        records: &mut [RegionNode],
+        pending: &mut SmallVec<[(usize, RelocatedFixedCopy); 4]>,
+        paired_floor: &mut usize,
+    ) -> Result<(), ForkArenaError> {
+        if pending.is_empty() {
+            return Ok(());
+        }
+        let mut writer = NodeAnnexWriter::new(self.annex_pool, self.destination_annex);
+        let keys = writer.append_fixed_batch(pending.iter().map(|(_, payload)| payload.body()))?;
+        if keys.len() != pending.len() {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        *paired_floor = (*paired_floor).min(writer.dependency_floor().unwrap_or(usize::MAX));
+        for ((index, payload), key) in pending.drain(..).zip(keys) {
+            records[index] = payload.with_key(key).ok_or(ForkArenaError::InvalidRange)?;
+        }
+        Ok(())
+    }
+
     pub(super) fn new(
         pool: &'a mut ChunkPool<RegionNode>,
         annex_pool: &'a mut ChunkPool<u32>,
@@ -71,56 +93,92 @@ impl<'a> CopyContext<'a> {
             && list.semantic_identity().is_none())
         .then(SemanticSequenceIdentity::empty);
         let mut records = SmallVec::<[RegionNode; 16]>::new();
+        let mut pending = SmallVec::<[(usize, RelocatedFixedCopy); 4]>::new();
         for mut cursor in cursors.into_iter().rev() {
             records.clear();
+            debug_assert!(pending.is_empty());
             if let Some((_, source)) = self.source.admitted_remaining_chunk(self.pool, &mut cursor)
             {
                 source.for_each(|record| records.push(*record));
             }
             let mut dependency_floor = usize::MAX;
             let mut paired_floor = usize::MAX;
-            for record in records.iter_mut().filter(|record| !record.is_inline_leaf()) {
-                let mut children = SmallVec::<[PageListId; 4]>::new();
-                record
-                    .visit_node_lists(
-                        NodeAnnexView::new(self.annex_pool, self.source_annex),
-                        |child| {
-                            children.push(child);
-                        },
+            for index in 0..records.len() {
+                let record = &mut records[index];
+                if record.is_inline_leaf() {
+                    continue;
+                }
+                let mut prepared = if record.has_fixed_copy_payload() {
+                    Some(
+                        record
+                            .prepare_fixed_copy(NodeAnnexView::new(
+                                self.annex_pool,
+                                self.source_annex,
+                            ))
+                            .ok_or(ForkArenaError::InvalidRange)?,
                     )
-                    .ok_or(ForkArenaError::InvalidRange)?;
+                } else {
+                    None
+                };
+                let mut children = SmallVec::<[PageListId; 4]>::new();
+                if let Some(prepared) = &prepared {
+                    prepared.visit_children(|child| children.push(child))
+                } else {
+                    record.visit_node_lists(
+                        NodeAnnexView::new(self.annex_pool, self.source_annex),
+                        |child| children.push(child),
+                    )
+                }
+                .ok_or(ForkArenaError::InvalidRange)?;
                 for child in &mut children {
                     let (copied, child_count) = self.copy_list(*child)?;
                     *child = copied;
                     count = count.saturating_add(child_count);
                 }
-                let mut children = children.into_iter();
+                let copied_children = children;
+                let mut children = copied_children.iter().copied();
                 let mut reencoded = None;
+                let mut relocated = None;
                 let (child_floor, child_annex_floor) = self
                     .destination
                     .dependency_floors_for_region_lists(self.pool, |visit| {
-                        reencoded = record.reencode_between_regions(
-                            self.annex_pool,
-                            self.source_annex,
-                            self.destination_annex,
-                            |_| {
+                        if let Some(prepared) = prepared.take() {
+                            relocated = prepared.relocate(|_| {
                                 let child = children.next()?;
                                 visit(child.coordinate());
                                 Some(child)
-                            },
-                        );
-                        reencoded.as_ref().map(|_| ())
+                            });
+                        } else {
+                            reencoded = record.reencode_between_regions(
+                                self.annex_pool,
+                                self.source_annex,
+                                self.destination_annex,
+                                |_| {
+                                    let child = children.next()?;
+                                    visit(child.coordinate());
+                                    Some(child)
+                                },
+                            );
+                        }
+                        (relocated.is_some() || reencoded.is_some()).then_some(())
                     })?;
                 if children.next().is_some() {
                     return Err(ForkArenaError::InvalidRegion);
                 }
-                let (relocated, annex_floor) = reencoded.ok_or(ForkArenaError::InvalidRange)?;
-                *record = relocated;
+                if let Some(relocated) = relocated {
+                    pending.push((index, relocated));
+                } else {
+                    let (relocated, annex_floor) = reencoded.ok_or(ForkArenaError::InvalidRange)?;
+                    *record = relocated;
+                    paired_floor = paired_floor.min(annex_floor.unwrap_or(usize::MAX));
+                }
                 dependency_floor = dependency_floor.min(child_floor.unwrap_or(usize::MAX));
-                paired_floor = paired_floor
-                    .min(child_annex_floor.unwrap_or(usize::MAX))
-                    .min(annex_floor.unwrap_or(usize::MAX));
+                paired_floor = paired_floor.min(child_annex_floor.unwrap_or(usize::MAX));
+                if pending.len() == 16 {
+                    self.publish_fixed_batch(&mut records, &mut pending, &mut paired_floor)?;
+                }
             }
+            self.publish_fixed_batch(&mut records, &mut pending, &mut paired_floor)?;
             if let Some(identity) = &mut computed_identity {
                 let annex = NodeAnnexView::new(self.annex_pool, self.destination_annex);
                 for record in &records {
@@ -144,5 +202,127 @@ impl<'a> CopyContext<'a> {
             None
         };
         Ok((PageListId::from_parts(root, identity), count))
+    }
+}
+
+/// Synthetic shapes for the explicit, opt-in node-copy timing tier.
+#[cfg(any(feature = "profiling", feature = "testing"))]
+#[derive(Clone, Copy, Debug)]
+pub enum ExplicitCopyShape {
+    Inline,
+    FixedAnnex,
+    Nested,
+    VariableSpan,
+}
+
+/// Source and destination owners for the opt-in explicit-copy timing tier.
+/// Construction and rollback are separate from the measured copy method.
+#[cfg(any(feature = "profiling", feature = "testing"))]
+pub struct ExplicitCopyHarness {
+    pool: NodePool,
+    source: NodeRegion<PageRole>,
+    root: RegionRoot<PageRole>,
+    destination: NodeRegion<DurableRole>,
+    node_mark: crate::fork_arena::OperationMark<PageMaterialLane>,
+    annex_mark: crate::fork_arena::OperationMark<NodeAnnexLane>,
+    nodes: usize,
+    copied_nodes: usize,
+}
+
+#[cfg(any(feature = "profiling", feature = "testing"))]
+impl ExplicitCopyHarness {
+    pub fn new(shape: ExplicitCopyShape, nodes: usize) -> Self {
+        use crate::glue::Order;
+        use crate::node::{BoxLr, BoxNode, BoxNodeFields, Sign, Whatsit};
+        use crate::scaled::{GlueSetRatio, Scaled};
+
+        assert!(nodes > 0);
+        let mut pool = NodePool::new();
+        let mut source = pool.start_region::<PageRole>().expect("source region");
+        let child = if matches!(shape, ExplicitCopyShape::Nested) {
+            source
+                .publish_owned(&mut pool, [Node::Penalty(7)])
+                .expect("shared source child")
+                .list
+        } else {
+            PageListId::empty()
+        };
+        let make_box = || {
+            Node::HList(BoxNode::new(BoxNodeFields {
+                width: Scaled::from_raw(0),
+                height: Scaled::from_raw(0),
+                depth: Scaled::from_raw(0),
+                shift: Scaled::from_raw(0),
+                box_lr: BoxLr::Normal,
+                glue_set: GlueSetRatio::ZERO,
+                glue_sign: Sign::Normal,
+                glue_order: Order::Normal,
+                children: child,
+            }))
+        };
+        let root = source
+            .publish_owned(
+                &mut pool,
+                (0..nodes).map(|index| match shape {
+                    ExplicitCopyShape::Inline => Node::Penalty(index as i32),
+                    ExplicitCopyShape::FixedAnnex | ExplicitCopyShape::Nested => make_box(),
+                    ExplicitCopyShape::VariableSpan => Node::Whatsit(Whatsit::Special {
+                        class: "copy-profile".into(),
+                        payload: vec![index as u8; 128],
+                    }),
+                }),
+            )
+            .expect("source root");
+        let destination = pool
+            .start_region::<DurableRole>()
+            .expect("destination region");
+        let node_mark = destination.pub_arena.operation_mark(&pool.chunks);
+        let annex_mark = destination.annex_arena.operation_mark(&pool.annex_chunks);
+        let copied_nodes = nodes
+            * if matches!(shape, ExplicitCopyShape::Nested) {
+                2
+            } else {
+                1
+            };
+        Self {
+            pool,
+            source,
+            root,
+            destination,
+            node_mark,
+            annex_mark,
+            nodes,
+            copied_nodes,
+        }
+    }
+
+    /// Runs one exact copy; the caller must subsequently restore this harness.
+    pub fn copy_once(&mut self) -> usize {
+        let before = self.destination.pub_arena.counters().source_nodes_copied;
+        let copied = copy_region_root_into(
+            &mut self.pool,
+            &self.source,
+            self.root,
+            &mut self.destination,
+            false,
+        )
+        .expect("profile copy");
+        assert_eq!(copied.list.len(), self.nodes);
+        assert_eq!(
+            self.destination.pub_arena.counters().source_nodes_copied - before,
+            self.copied_nodes as u64
+        );
+        self.copied_nodes
+    }
+
+    pub fn restore(&mut self) {
+        self.destination
+            .pub_arena
+            .restore_operation(&mut self.pool.chunks, self.node_mark)
+            .expect("restore measured node suffix");
+        self.destination
+            .annex_arena
+            .restore_operation(&mut self.pool.annex_chunks, self.annex_mark)
+            .expect("restore measured annex suffix");
     }
 }

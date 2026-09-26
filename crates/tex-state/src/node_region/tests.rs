@@ -453,6 +453,45 @@ fn mapped_region_node_copy_is_one_resident_clone_at_required_sizes() {
 }
 
 #[test]
+fn fixed_annex_copy_batches_across_blocks_and_remains_transferable() {
+    let mut pool = NodePool::with_chunk_bytes(512);
+    let mut source = pool.start_region::<DurableRole>().expect("source");
+    let root = source
+        .publish_owned(
+            &mut pool,
+            (0..128).map(|width| {
+                let Node::HList(mut node) = boxed(PageListId::empty()) else {
+                    unreachable!("boxed helper creates an hlist");
+                };
+                node.width = Scaled::from_raw(width);
+                Node::HList(node)
+            }),
+        )
+        .expect("source box list");
+    let mut page = pool.start_region::<PageRole>().expect("page destination");
+    let copied = copy_region_root_into(&mut pool, &source, root, &mut page, true)
+        .expect("batch copy across annex blocks");
+    let copied_list = page.list(&pool, copied).expect("copied box list");
+    assert_eq!(copied_list.len(), 128);
+    for (index, node) in copied_list.iter().enumerate() {
+        let crate::NodeView::HList(node) = node else {
+            panic!("copied box shape");
+        };
+        assert_eq!(node.width, Scaled::from_raw(index as i32));
+    }
+    let mut closure = page
+        .into_closure(&pool, copied)
+        .map_err(|(error, _)| error)
+        .expect("copied boxes form a sealed closure");
+    let mut durable = pool
+        .start_region::<DurableRole>()
+        .expect("transfer destination");
+    let moved = transfer_closure_into(&mut pool, &mut closure, &mut durable)
+        .expect("batched annex records satisfy paired transfer floors");
+    assert_eq!(durable.list(&pool, moved).expect("moved boxes").len(), 128);
+}
+
+#[test]
 fn closure_build_transfer_is_zero_copy_and_address_stable() {
     let mut pool = NodePool::with_chunk_bytes(64);
     let mut source = pool.start_region::<PageRole>().expect("source");
@@ -1152,13 +1191,19 @@ fn copied_partial_parent_chunk_is_sealed_before_child_construction_continues() {
         .expect("all copied chunks sealed for transfer");
     let nodes = page.list(&pool, moved).expect("moved root");
     assert_eq!(nodes.len(), 2);
+    let mut children = Vec::new();
     for node in nodes.iter() {
         let crate::NodeView::HList(node) = node else {
             panic!("box");
         };
+        children.push(node.children.coordinate());
         assert_eq!(
             resident_nodes(&page, &pool, node.children),
             [Node::Penalty(17)]
         );
     }
+    assert_ne!(
+        children[0], children[1],
+        "each child occurrence owns its copy"
+    );
 }

@@ -64,6 +64,47 @@ fn rollback_reuse_rejects_old_publication_serial() {
 }
 
 #[test]
+fn fixed_batch_keeps_independent_keys_across_chunk_rotation_and_rollback() {
+    let mut annex = AnnexHarness {
+        pool: crate::fork_arena::ChunkPool::with_packed_chunk_bytes(64),
+        arena: crate::fork_arena::ForkArena::new(),
+    };
+    let mark = annex.arena.operation_mark(&annex.pool);
+    let bodies: [&[u32]; 5] = [
+        &[10, 11, 12],
+        &[20, 21, 22],
+        &[30, 31, 32],
+        &[40, 41, 42],
+        &[50, 51, 52],
+    ];
+    let keys = annex
+        .writer()
+        .append_fixed_batch(bodies)
+        .expect("batch fixed publication");
+    assert_eq!(keys.len(), bodies.len());
+    for (key, body) in keys.iter().zip(bodies) {
+        assert_eq!(
+            annex.view().resolve_fixed_array::<_, 3>(*key),
+            Some(body.try_into().expect("three-word body"))
+        );
+    }
+    assert_ne!(keys[0].words(), keys[1].words());
+    assert_ne!(keys[0].words()[0..2], keys[4].words()[0..2]);
+    annex
+        .arena
+        .restore_operation(&mut annex.pool, mark)
+        .expect("rollback fixed batch");
+    let replacement = annex.writer().append_fixed::<()>(&[99, 98, 97]);
+    assert_eq!(
+        annex.view().resolve_fixed_array::<_, 3>(replacement),
+        Some([99, 98, 97])
+    );
+    for key in keys {
+        assert!(annex.view().resolve_fixed_array::<_, 3>(key).is_none());
+    }
+}
+
+#[test]
 fn fixed_reads_validate_size_publication_and_contiguous_bounds() {
     let mut annex = AnnexHarness::new();
     let mark = annex.arena.operation_mark(&annex.pool);

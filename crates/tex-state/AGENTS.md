@@ -303,7 +303,10 @@ All production mutation of live TeX state should pass through `Universe` or simi
   fallback.
 - `src/node_region/copy.rs`: Explicit recursive closure copies, one source
   chunk admission and one destination run settlement per copied chunk, with
-  temporary compact record scratch and independently relocated children.
+  temporary compact record scratch and independently relocated children. Its
+  testing-axis entry point backs the opt-in `tex-state-copy-timing` binary in
+  `benchmarks/tex-state/timing`; that timing package excludes profiling
+  counters.
 - `src/page_node_arena.rs` and `src/page_node_arena/tests.rs`: Page-semantic
   identity facade, checked destination construction, and focused warmed
   1/4,096-node allocation/copy/chunk-work proof over the live page-material

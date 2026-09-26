@@ -3913,6 +3913,98 @@ impl<T, Lane> ForkArena<T, Lane> {
         self.append_unsealed_copy_parts_from_mark(pool, header, body, operation)
     }
 
+    /// Publishes several independent fixed leaf lists from one flat word run.
+    /// Each length includes its publication header and receives its own root.
+    /// The paired caller owns the operation mark and rolls back both lanes if
+    /// this batch or subsequent node publication fails.
+    pub(crate) fn append_unsealed_fixed_batch_copy_parts(
+        &mut self,
+        pool: &mut ChunkPool<T>,
+        words: &[T],
+        lengths: &[u16],
+        mut published: impl FnMut(ArenaListId<Lane>),
+    ) -> Result<(), ForkArenaError>
+    where
+        T: LeafRegionValue<Lane>,
+    {
+        self.bind_pool(pool)?;
+        if self.active_builder {
+            return Err(ForkArenaError::ActiveBuilder);
+        }
+        if self.pending_batch.is_some() {
+            return Err(ForkArenaError::ActiveBatch);
+        }
+        let capacity = pool.payload.chunk_capacity();
+        let total = lengths
+            .iter()
+            .try_fold(0_usize, |total, &len| total.checked_add(usize::from(len)));
+        if lengths
+            .iter()
+            .any(|&len| len == 0 || usize::from(len) > capacity)
+            || total != Some(words.len())
+        {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        let logical_space = pool.payload.logical_space();
+        let mut item = 0;
+        let mut word = 0;
+        while item < lengths.len() {
+            let key = self.payload_reservation_target(pool, &ArenaListId::empty())?;
+            let used = pool.payload.used(key, self.owner)? as usize;
+            let mut next_item = item;
+            let mut count = 0;
+            while let Some(&len) = lengths.get(next_item) {
+                let len = usize::from(len);
+                if count + len > capacity - used {
+                    break;
+                }
+                count += len;
+                next_item += 1;
+            }
+            if count == 0 {
+                let unused = pool.payload.seal(key, self.owner)?;
+                self.counters.chunks_sealed = self.counters.chunks_sealed.saturating_add(1);
+                self.counters.unused_sealed_bytes = self
+                    .counters
+                    .unused_sealed_bytes
+                    .saturating_add((unused * pool.payload.resident_slot_bytes()) as u64);
+                continue;
+            }
+            let (start, became_full) = {
+                let mut run =
+                    pool.payload
+                        .admit_untracked_append_run(key, self.owner, self.lineage)?;
+                let start = run.offset;
+                let copied = run.extend_copy_parts(None, &words[word..word + count]);
+                debug_assert_eq!(copied, count);
+                (start, run.is_full())
+            };
+            let mut summary = ArenaListId::empty();
+            self.complete_admitted_payload_run(
+                &mut summary,
+                key,
+                start,
+                count as u32,
+                became_full,
+                logical_space,
+            );
+            let mut offset = start;
+            for &len in &lengths[item..next_item] {
+                let len = u32::from(len);
+                published(ArenaListId::from_root(
+                    logical_space,
+                    ChunkCursor::new(key, offset),
+                    ChunkCursor::new(key, offset + len),
+                    len,
+                ));
+                offset += len;
+            }
+            word += count;
+            item = next_item;
+        }
+        Ok(())
+    }
+
     /// Focused performance-gate access to ordinary unsealed packed-list
     /// publication. Production codecs remain the only non-testing caller.
     #[cfg(feature = "testing")]
@@ -4299,43 +4391,6 @@ impl<T, Lane> ForkArena<T, Lane> {
         if selected_len != source_len {
             self.record_partial_edge_nodes_copied(selected_len);
         }
-    }
-
-    #[allow(dead_code)] // Compatibility helper for scalar construction tests.
-    pub(crate) fn append_reencoded_active_list_copy_value(
-        &mut self,
-        pool: &mut ChunkPool<T>,
-        builder: &mut ActiveListBuilder<T, Lane>,
-        value: T,
-        item_identity: Option<u64>,
-        dependency_floor: Option<usize>,
-        paired_dependency_floor: Option<usize>,
-    ) -> Result<(), ForkArenaError> {
-        let mut root = self.active_list_open_mut(builder)?.root;
-        self.append_payload_value_with_dependency(
-            pool,
-            &mut root,
-            value,
-            item_identity,
-            dependency_floor,
-            true,
-        )?;
-        if let Some(paired_dependency_floor) = paired_dependency_floor {
-            let meta = pool.payload.validate_exclusive_lineage_mut(
-                root.tail.raw,
-                self.owner,
-                self.lineage,
-            )?;
-            meta.paired_dependency_floor =
-                meta.paired_dependency_floor.min(paired_dependency_floor);
-        }
-        self.active_list_open_mut(builder)?.root = root;
-        self.counters.whole_payload_copies = self.counters.whole_payload_copies.saturating_add(1);
-        self.counters.resident_payload_clones =
-            self.counters.resident_payload_clones.saturating_add(1);
-        self.counters.new_semantic_nodes = self.counters.new_semantic_nodes.saturating_sub(1);
-        self.record_source_nodes_copied(1);
-        Ok(())
     }
 
     /// Transforms one admitted source subspan into one exact final destination

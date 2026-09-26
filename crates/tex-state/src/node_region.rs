@@ -28,6 +28,9 @@ mod tests;
 
 mod copy;
 
+#[cfg(any(feature = "profiling", feature = "testing"))]
+pub use copy::{ExplicitCopyHarness, ExplicitCopyShape};
+
 pub(crate) type RegionNode = NodeRecord<PageMaterialLane>;
 
 pub(crate) enum NodeAnnexLane {}
@@ -597,7 +600,7 @@ impl<Role> NodeRegion<Role> {
         Ok(())
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "profiling", feature = "testing"))]
     pub(crate) fn publish_owned(
         &mut self,
         pool: &mut NodePool,
