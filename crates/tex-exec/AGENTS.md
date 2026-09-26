@@ -156,7 +156,7 @@ Command operands are scanned by `tex-command` into typed request and result valu
   primitive registration delegated from `tex-command`'s integrated catalogue.
 - `src/assignments/tests.rs`: focused typed-owner controls for token assignment
   pre/post images across global replacement and local undo-backed writes.
-- `src/box_runtime/`: source-free box-register, material, packing, migration, horizontal contribution, shaping, spacing, indentation, whatsit, leader, and list-commit operations.
+- `src/box_runtime/`: source-free box-register, material, packing, migration, horizontal contribution, shaping, spacing, indentation, whatsit, leader, and list-commit operations. `vsplit/tests.rs` covers TeX82 §976 shrink normalization and unchanged-source ownership.
 - `src/paragraph_end.rs` and `src/paragraph_end/`: typed paragraph completion,
   one-time admitted linear borrowed-range post-line inspection,
   append-interleaved hyphenation over the same operation-local compact root

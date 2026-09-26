@@ -120,15 +120,20 @@ fn normalize_split_infinite_shrink<G>(
     diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
     diagnostic_effects: &mut DiagnosticEffects,
 ) -> Result<tex_state::page_node_arena::PageListId, ExecError> {
+    // TeX82 §976 changes only glue whose shrink order is infinite. Most
+    // splits have no such glue, so their source list already is the result.
+    if indices.is_empty() {
+        return Ok(nodes);
+    }
+
     let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
     stores.open_page_active_list(&mut output);
-    let mut next_replacement = 0;
-    for index in 0..nodes.len() {
-        if indices.get(next_replacement).copied() != Some(index) {
-            stores.append_page_active_list_range(&mut output, nodes, index..index + 1);
-            continue;
+    let mut unchanged_from = 0;
+    for &index in indices {
+        debug_assert!(index >= unchanged_from && index < nodes.len());
+        if unchanged_from < index {
+            stores.append_page_active_list_range(&mut output, nodes, unchanged_from..index);
         }
-        next_replacement += 1;
         let replacement = match stores
             .page_node_list(nodes)
             .expect("vsplit source remains live")
@@ -142,9 +147,12 @@ fn normalize_split_infinite_shrink<G>(
         };
         let Some((mut finite, kind, leader)) = replacement else {
             stores.append_page_active_list_range(&mut output, nodes, index..index + 1);
+            unchanged_from = index + 1;
             continue;
         };
         if finite.shrink_order == Order::Normal || finite.shrink.raw() == 0 {
+            stores.append_page_active_list_range(&mut output, nodes, index..index + 1);
+            unchanged_from = index + 1;
             continue;
         }
         diagnostics::report_split_infinite_shrinkage(
@@ -162,6 +170,10 @@ fn normalize_split_infinite_shrink<G>(
                 leader,
             },
         );
+        unchanged_from = index + 1;
+    }
+    if unchanged_from < nodes.len() {
+        stores.append_page_active_list_range(&mut output, nodes, unchanged_from..nodes.len());
     }
     Ok(stores.finalize_page_active_list(&mut output))
 }
@@ -237,3 +249,6 @@ fn vertical_break_error(error: VerticalBreakError) -> ExecError {
         VerticalBreakError::ArithmeticOverflow => ExecError::ArithmeticOverflow,
     }
 }
+
+#[cfg(test)]
+mod tests;

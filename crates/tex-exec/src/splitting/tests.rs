@@ -126,3 +126,97 @@ fn pdftex_prune_page_top_discards_snapy_but_preserves_other_whatsits() {
         );
     });
 }
+
+#[test]
+fn split_prune_keeps_interleaved_marks_and_whatsits_in_order() {
+    crate::test_harness::with_nonstop_universe(|universe| {
+        let mut stores = universe.command_context().expect("test state is admitted");
+        let mark = stores
+            .allocate_node_token_list(&[])
+            .expect("mark payload belongs to this generation");
+        let top = GlueSpec {
+            width: sp(10),
+            ..GlueSpec::ZERO
+        };
+        let box_node = Node::HList(BoxNode::new(BoxNodeFields {
+            width: sp(1),
+            height: sp(4),
+            depth: sp(0),
+            shift: sp(0),
+            box_lr: tex_state::node::BoxLr::Normal,
+            glue_set: GlueSetRatio::ZERO,
+            glue_sign: Sign::Normal,
+            glue_order: Order::Normal,
+            children: PageListId::empty(),
+        }));
+        let discard_glue = Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
+            spec: GlueSpec::ZERO,
+            kind: GlueKind::Normal,
+            leader: None,
+        };
+        let mark_node = Node::Mark {
+            class: 2,
+            tokens: mark,
+        };
+        let special = Node::Whatsit(Whatsit::PdfSnapRefPoint);
+        let source_nodes = vec![
+            Node::Penalty(1),
+            mark_node.clone(),
+            discard_glue.clone(),
+            special.clone(),
+            Node::Kern {
+                amount: sp(2),
+                kind: KernKind::Explicit,
+            },
+            mark_node.clone(),
+            box_node.clone(),
+            Node::Penalty(2),
+            discard_glue.clone(),
+        ];
+        let source = stores.publish_page_nodes(source_nodes);
+        let (retained, discarded) = prune_page_top_list_with_discards(&mut stores, source, top);
+        let top_skip = Node::Glue {
+            origin: tex_state::node::GlueSpecOrigin::Owned,
+            spec: GlueSpec {
+                width: sp(6),
+                ..top
+            },
+            kind: GlueKind::SplitTopSkip,
+            leader: None,
+        };
+        assert_eq!(
+            stores
+                .page_nodes(retained)
+                .expect("retained projection")
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            [
+                mark_node.clone(),
+                special,
+                mark_node,
+                top_skip,
+                box_node,
+                Node::Penalty(2),
+                discard_glue.clone()
+            ]
+        );
+        assert_eq!(
+            stores
+                .page_nodes(discarded)
+                .expect("discarded projection")
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            [
+                Node::Penalty(1),
+                discard_glue,
+                Node::Kern {
+                    amount: sp(2),
+                    kind: KernKind::Explicit
+                }
+            ]
+        );
+    });
+}

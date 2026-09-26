@@ -91,48 +91,82 @@ pub(crate) fn prune_page_top_list_with_discards<G>(
     source: PageListId,
     split_top_skip: GlueSpec,
 ) -> (PageListId, PageListId) {
+    let nodes = stores
+        .page_node_list(source)
+        .expect("page-top source belongs to the live page arena")
+        .nodes();
+    let mut retained_ranges = Vec::<core::ops::Range<usize>>::new();
+    let mut discarded_ranges = Vec::<core::ops::Range<usize>>::new();
+    let mut retained_start = None;
+    let mut discarded_start = None;
+    let mut first_box = None;
+    let mut adjusted_top_skip = None;
+    let stopped = nodes.try_for_each_range(0..nodes.len(), |index, node| {
+        if matches!(
+            node,
+            NodeView::HList(_) | NodeView::VList(_) | NodeView::Rule { .. }
+        ) {
+            if let Some(start) = retained_start.take() {
+                retained_ranges.push(start..index);
+            }
+            if let Some(start) = discarded_start.take() {
+                discarded_ranges.push(start..index);
+            }
+            adjusted_top_skip = Some(GlueSpec {
+                width: split_top_skip
+                    .width
+                    .checked_sub(vertical_height(node))
+                    .filter(|width| width.raw() > 0)
+                    .unwrap_or_else(|| Scaled::from_raw(0)),
+                stretch: split_top_skip.stretch,
+                stretch_order: split_top_skip.stretch_order,
+                shrink: split_top_skip.shrink,
+                shrink_order: split_top_skip.shrink_order,
+            });
+            first_box = Some(index);
+            return core::ops::ControlFlow::Break(());
+        }
+        if is_page_top_discardable(node) {
+            if let Some(start) = retained_start.take() {
+                retained_ranges.push(start..index);
+            }
+            discarded_start.get_or_insert(index);
+        } else {
+            if let Some(start) = discarded_start.take() {
+                discarded_ranges.push(start..index);
+            }
+            retained_start.get_or_insert(index);
+        }
+        core::ops::ControlFlow::Continue(())
+    });
+    debug_assert_eq!(stopped.is_break(), first_box.is_some());
+    if first_box.is_none() {
+        if let Some(start) = retained_start {
+            retained_ranges.push(start..nodes.len());
+        }
+        if let Some(start) = discarded_start {
+            discarded_ranges.push(start..nodes.len());
+        }
+    }
+    let source_len = nodes.len();
+    let _ = nodes;
+
     let mut retained = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
     stores.open_page_active_list(&mut retained);
-    let mut found_box = false;
-    for index in 0..source.len() {
-        if found_box {
-            stores.append_page_active_list_range(&mut retained, source, index..index + 1);
-            continue;
-        }
-        let node = stores
-            .page_node_list(source)
-            .expect("page-top source belongs to the live page arena")
-            .nodes()
-            .get(index)
-            .expect("page-top source index remains in range");
-        match node {
-            NodeView::HList(_) | NodeView::VList(_) | NodeView::Rule { .. } => {
-                let adjusted = GlueSpec {
-                    width: split_top_skip
-                        .width
-                        .checked_sub(vertical_height_ref(&node))
-                        .filter(|width| width.raw() > 0)
-                        .unwrap_or_else(|| Scaled::from_raw(0)),
-                    stretch: split_top_skip.stretch,
-                    stretch_order: split_top_skip.stretch_order,
-                    shrink: split_top_skip.shrink,
-                    shrink_order: split_top_skip.shrink_order,
-                };
-                stores.push_page_active_list(
-                    &mut retained,
-                    Node::Glue {
-                        origin: tex_state::node::GlueSpecOrigin::Owned,
-                        spec: adjusted,
-                        kind: GlueKind::SplitTopSkip,
-                        leader: None,
-                    },
-                );
-                stores.append_page_active_list_range(&mut retained, source, index..index + 1);
-                found_box = true;
-            }
-            _ if is_page_top_discardable_ref(&node) => {}
-            _ => stores.append_page_active_list_range(&mut retained, source, index..index + 1),
-        }
+    for range in retained_ranges {
+        stores.append_page_active_list_range(&mut retained, source, range);
+    }
+    if let (Some(index), Some(spec)) = (first_box, adjusted_top_skip) {
+        stores.push_page_active_list(
+            &mut retained,
+            Node::Glue {
+                origin: tex_state::node::GlueSpecOrigin::Owned,
+                spec,
+                kind: GlueKind::SplitTopSkip,
+                leader: None,
+            },
+        );
+        stores.append_page_active_list_range(&mut retained, source, index..source_len);
     }
     let retained = stores.finalize_page_active_list(&mut retained);
 
@@ -141,22 +175,8 @@ pub(crate) fn prune_page_top_list_with_discards<G>(
     // the retained projection has been sealed.
     let mut discarded = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
     stores.open_page_active_list(&mut discarded);
-    for index in 0..source.len() {
-        let node = stores
-            .page_node_list(source)
-            .expect("page-top source belongs to the live page arena")
-            .nodes()
-            .get(index)
-            .expect("page-top source index remains in range");
-        if matches!(
-            node,
-            NodeView::HList(_) | NodeView::VList(_) | NodeView::Rule { .. }
-        ) {
-            break;
-        }
-        if is_page_top_discardable_ref(&node) {
-            stores.append_page_active_list_range(&mut discarded, source, index..index + 1);
-        }
+    for range in discarded_ranges {
+        stores.append_page_active_list_range(&mut discarded, source, range);
     }
     let discarded = stores.finalize_page_active_list(&mut discarded);
     (retained, discarded)
@@ -219,21 +239,6 @@ pub(crate) fn vpack_natural<G>(
 fn vertical_height(node: NodeView<'_>) -> Scaled {
     node.vertical_dimensions()
         .map_or(Scaled::from_raw(0), |(height, _)| height)
-}
-
-fn vertical_height_ref(node: &NodeView<'_>) -> Scaled {
-    node.vertical_dimensions()
-        .map_or(Scaled::from_raw(0), |(height, _)| height)
-}
-
-fn is_page_top_discardable_ref(node: &NodeView<'_>) -> bool {
-    matches!(
-        node,
-        NodeView::Glue { .. }
-            | NodeView::Kern { .. }
-            | NodeView::Penalty(_)
-            | NodeView::Whatsit(Whatsit::PdfSnapY { .. })
-    )
 }
 
 #[cfg(test)]
