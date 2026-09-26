@@ -751,6 +751,18 @@ impl<'a, G> CommandContext<'a, G> {
             .commit_state_transaction(operation.transaction_position());
     }
 
+    /// Commits an operation opened by [`Self::begin_state_operation`] and
+    /// opens its successor in the same slot.
+    pub fn roll_state_operation(&mut self, operation: &mut crate::StateOperation<G>) {
+        let durable = operation.take_durable_box();
+        self.durable_boxes
+            .commit_operation(&mut self.page_nodes, durable);
+        self.admitted
+            .state()
+            .commit_state_transaction(operation.transaction_position());
+        *operation = self.begin_state_operation();
+    }
+
     /// Restores an operation opened by [`Self::begin_state_operation`].
     pub fn restore_state_operation(
         &mut self,

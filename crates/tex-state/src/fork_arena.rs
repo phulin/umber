@@ -3764,24 +3764,17 @@ impl<T, Lane> ForkArena<T, Lane> {
 
     #[must_use]
     pub fn operation_mark(&self, pool: &ChunkPool<T>) -> OperationMark<Lane> {
-        let payload_tail_used = self
+        // Every operation boundary takes this mark; validate the tail chunk
+        // once and read all three of its facts from that metadata.
+        let tail = self
             .live_key_at(self.live_payload_len().saturating_sub(1))
-            .and_then(|key| pool.payload.used(key, self.owner).ok())
-            .unwrap_or(0);
-        let payload_tail_summary = self
-            .live_key_at(self.live_payload_len().saturating_sub(1))
-            .and_then(|key| pool.payload.sequence_summary(key, self.owner).ok())
-            .flatten();
-        let payload_tail_sealed = self
-            .live_key_at(self.live_payload_len().saturating_sub(1))
-            .and_then(|key| pool.payload.is_sealed(key, self.owner).ok())
-            .unwrap_or(false);
+            .and_then(|key| pool.payload.validate(key, self.owner).ok());
         OperationMark {
             arena: self.owner,
             payload_chunks: self.live_payload_len() as u32,
-            payload_tail_used,
-            payload_tail_sealed,
-            payload_tail_summary,
+            payload_tail_used: tail.map_or(0, |meta| meta.used),
+            payload_tail_sealed: tail.is_some_and(|meta| meta.sealed),
+            payload_tail_summary: tail.and_then(|meta| meta.sequence_summary),
             _lane: PhantomData,
         }
     }

@@ -442,6 +442,30 @@ impl<G> MainControl<G> {
         );
     }
 
+    /// Settles an ordinary admitted operation and opens the next one in
+    /// place. Each journal keeps its current frame when the settled operation
+    /// left nothing to discard, so a run of commands that only read input or
+    /// assign scalars does not re-capture every coordinate per command.
+    pub(super) fn roll_admitted_direct_operation(
+        &mut self,
+        stores: &mut CommandContext<'_, G>,
+        mark: &mut DirectOperationMark<G>,
+    ) {
+        debug_assert!(
+            !self.page_region_succession_pending,
+            "page-region succession ends an admitted command run"
+        );
+        stores.roll_state_operation(&mut mark.state);
+        self.modes
+            .roll_journal(&mut mark.mode)
+            .expect("direct operation owns the top mode journal frame");
+        self.command
+            .roll_attempt_operation(&mark.attempt)
+            .expect("committed operation owns a valid command-attempt scope");
+        mark.page = stores.page_node_cursor();
+        mark.active_box_len = self.boxes.active_boxes.len();
+    }
+
     pub(super) fn commit_direct_operation(
         &mut self,
         stores: &mut Universe<G>,

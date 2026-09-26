@@ -6911,6 +6911,7 @@ impl<G> MainControl<G> {
         operation: &mut PreparedColdCommand<G>,
     ) -> HotApplyAdmission {
         let scalar_assignment = operation.is_admitted_scalar_assignment();
+        let settles = operation.settles_in_admission();
         debug_assert!(
             operation.executes_directly()
                 || (scalar_assignment && self.operation_observations.is_none())
@@ -6964,15 +6965,16 @@ impl<G> MainControl<G> {
             command.state.profile(),
         );
         let main_loop_active = parking.post_apply(self.modes.current_mode(), context);
-        // A scalar assignment that published no host effect settles here like
-        // the hot assignment arms: §1269 replays `afterassignment` before the
-        // next command is delivered through this same context.
+        // An operation that published no host effect settles here like the
+        // hot assignment arms; for an assignment §1269 replays
+        // `afterassignment` before the next command is delivered through
+        // this same context.
         let mut result = result;
-        let settled_in_admission = scalar_assignment
+        let settled_in_admission = settles
             && result.is_ok()
             && context.effect_record_count() == effect_count
             && context.artifact_commit_count() == artifact_count;
-        if settled_in_admission {
+        if settled_in_admission && scalar_assignment {
             let mut host_facts = ExecutorHostFacts {
                 modes: &self.modes,
                 pdf_ignore_depth: self.pdf_ignore_depth,

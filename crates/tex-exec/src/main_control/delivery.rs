@@ -621,6 +621,12 @@ impl<G> MainControl<G> {
                 // delivery.  Any page, diagnostic, observation, resource, or
                 // checkpoint work fails the predicate above and returns to
                 // the enclosing-Universe driver instead.
+                if let Some(main_loop_active) = hot_admission
+                    .as_ref()
+                    .and_then(|(admission, _)| admission.main_loop_active)
+                {
+                    self.main_loop_active = main_loop_active;
+                }
                 let checked = host_preparation
                     .take_checked_save_stack_words()
                     .expect("admitted direct operation captures save-stack usage");
@@ -629,11 +635,12 @@ impl<G> MainControl<G> {
                 frame.clear_operation_origin();
                 frame.assert_empty();
                 *operations += 1;
-                let completed_mark = operation_mark
-                    .take()
-                    .expect("admitted run owns its current operation mark");
-                self.commit_admitted_direct_operation(context, completed_mark);
-                *operation_mark = Some(self.begin_admitted_direct_operation(context));
+                self.roll_admitted_direct_operation(
+                    context,
+                    operation_mark
+                        .as_mut()
+                        .expect("admitted run owns its current operation mark"),
+                );
                 *host_preparation = OperationPreparation::new();
                 continue 'admitted;
             }

@@ -1403,6 +1403,14 @@ impl<G> ColdOperation<G> {
     /// settled in the delivering command context. None of these reads host
     /// facts or retains a token list; glue registers stay out because their
     /// e-TeX pointer-identity bookkeeping belongs to the typed episode.
+    /// Whether a directly executed operation may settle in the delivering
+    /// context and let the admitted run continue: §1045's `\relax` arm and
+    /// the rootless scalar assignments below. Relax only ends a pending
+    /// character run, exactly as the hot assignment arms do.
+    pub(in crate::main_control) fn settles_in_admission(&self) -> bool {
+        matches!(self, Self::Continue | Self::Relax) || self.is_admitted_scalar_assignment()
+    }
+
     pub(in crate::main_control) fn is_admitted_scalar_assignment(&self) -> bool {
         matches!(
             self,

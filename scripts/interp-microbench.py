@@ -35,6 +35,7 @@ DEFAULT_PDFTEX = PRIMARY / "target/pdftex14029-oracle/bin/umber-pdftex14029-orac
 
 CASES = {
     "base": "",
+    "relax": r"\relax",
     "macro0": r"\mzero",
     "macro_delim": r"\mdelim a.b\stop",
     "let": r"\let\x\relax",

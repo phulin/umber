@@ -131,6 +131,21 @@ impl<G> CommandState<G> {
 
     /// Commits the exact direct-operation/scanner scope. Macro frames live in
     /// the disjoint generation-owned scratch lanes until input retirement.
+    /// Commits the active direct operation and opens its successor in one
+    /// step, keeping the scope open when the operation allocated nothing.
+    pub fn roll_attempt_operation(
+        &mut self,
+        _operation: &crate::CommandAttemptOperation,
+    ) -> Result<(), crate::AttemptError> {
+        let mut mark = self
+            .active_attempt_operation
+            .ok_or(crate::AttemptError::InvalidCoordinate)?;
+        self.attempt
+            .roll_operation(&mut mark, self.scratch.frame_len())?;
+        self.active_attempt_operation = Some(mark);
+        Ok(())
+    }
+
     pub fn commit_attempt_operation(
         &mut self,
         _operation: crate::CommandAttemptOperation,

@@ -1765,6 +1765,36 @@ impl<G> CommandAttempt<G> {
         Ok(mark)
     }
 
+    /// Settles the active operation and opens its successor.
+    ///
+    /// An operation whose attempt tables still sit exactly at its opening
+    /// mark, and whose scope was never handed to a child, has nothing to
+    /// truncate: the same owned scope and mark already describe the
+    /// successor's opening. Any other operation takes the ordinary commit
+    /// and begin.
+    pub(crate) fn roll_operation(
+        &mut self,
+        mark: &mut CommandAttemptMark,
+        macro_depth: usize,
+    ) -> Result<(), AttemptError> {
+        let unchanged = self.active_operation.as_ref().is_some_and(|owner| {
+            self.active_operation_origin == Some(mark.operation)
+                && owner.coordinate() == mark.operation
+                && owner.close_through_serial == owner.serial
+                && owner.opening == mark.opening
+                && self.arena.top_scope == owner.serial
+                && self.arena.mark() == mark.opening
+        }) && usize::try_from(mark.macro_depth) == Ok(macro_depth);
+        if unchanged {
+            return Ok(());
+        }
+        self.commit_operation(*mark)?;
+        *mark = self
+            .begin_operation(macro_depth)
+            .expect("command operation scope capacity is bounded");
+        Ok(())
+    }
+
     pub(crate) fn validate_operation(&self, mark: CommandAttemptMark) -> Result<(), AttemptError> {
         self.arena.validate_mark(mark.opening)?;
         if mark.operation.key != self.arena.key.0 {

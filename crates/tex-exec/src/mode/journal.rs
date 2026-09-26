@@ -576,6 +576,35 @@ impl ModeNestStorage {
         Ok(())
     }
 
+    /// Settles the outermost operation frame and opens its successor.
+    ///
+    /// A frame that recorded no inverse and whose live level roots still
+    /// equal its projections is exactly the frame `begin_journal` would
+    /// capture next, so it stays in place; only the operation scratch is
+    /// cleared, as a commit would.
+    pub(crate) fn roll_journal(&mut self, cursor: &mut Cursor) -> Result<(), CursorError> {
+        self.validate_cursor(*cursor)?;
+        let frame = self.journal.frames.last().expect("validated frame exists");
+        let projections = &self.journal.projections[frame.projection_start..];
+        let unchanged = self.journal.frames.len() == 1
+            && self.journal.inverses.len() == frame.cursor
+            && projections.len() == self.levels.len()
+            && projections
+                .iter()
+                .zip(self.levels.iter().zip(&self.journal.level_ids))
+                .all(|(projection, (level, &id))| {
+                    projection.id == id && projection.root == level.list.nodes.span()
+                });
+        if unchanged {
+            debug_assert!(self.journal.inverses.is_empty());
+            self.scratch.clear();
+            return Ok(());
+        }
+        self.commit_journal(*cursor)?;
+        *cursor = self.begin_journal();
+        Ok(())
+    }
+
     pub(crate) fn rollback_journal(&mut self, cursor: Cursor) -> Result<(), CursorError> {
         self.validate_cursor(cursor)?;
         let frame = self.journal.frames.pop().expect("validated frame exists");
@@ -753,6 +782,10 @@ impl ModeNest {
 
     pub(crate) fn commit_journal(&mut self, cursor: Cursor) -> Result<(), CursorError> {
         self.storage.commit_journal(cursor)
+    }
+
+    pub(crate) fn roll_journal(&mut self, cursor: &mut Cursor) -> Result<(), CursorError> {
+        self.storage.roll_journal(cursor)
     }
 
     pub(crate) fn rollback_journal(&mut self, cursor: Cursor) -> Result<(), CursorError> {
