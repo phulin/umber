@@ -756,7 +756,7 @@ impl<'a, G> CommandContext<'a, G> {
     ) -> Result<(), StateError> {
         let durable = operation.take_durable_box();
         self.durable_boxes
-            .rollback_operation(&mut self.page_nodes, durable);
+            .rollback_operation(&mut self.page_nodes, self.page, durable);
         self.admitted.state().rollback_state_transaction(&operation)
     }
 
@@ -1742,8 +1742,10 @@ impl<'a, G> CommandContext<'a, G> {
             .assign_with_page_loan(
                 &mut self.page_nodes,
                 index,
-                durable,
-                loan,
+                crate::env::PageBoxAssignment {
+                    closure: durable,
+                    loan,
+                },
                 scope,
                 current_level,
                 group_save_position,
@@ -2183,14 +2185,21 @@ impl<'a, G> CommandContext<'a, G> {
 
     /// TeX82 §1055 changes the current box node itself, without assigning a
     /// new register binding or recursively copying its child closure.
-    pub fn set_durable_box_dimension(
+    pub fn set_box_dimension(
         &mut self,
         index: u16,
         dimension: BoxDimension,
         value: Scaled,
     ) -> bool {
         if index == u16::from(u8::MAX) && !self.page.output_box().is_empty() {
-            return false;
+            let inverse = self
+                .page
+                .set_output_box_dimension(&mut self.page_nodes, dimension, value)
+                .expect("page-owned output box has an exclusive root wrapper");
+            if let Some(inverse) = inverse {
+                self.durable_boxes.record_page_output_box_dimension(inverse);
+            }
+            return true;
         }
         self.durable_boxes
             .set_box_dimension(&mut self.page_nodes, index, dimension, value)

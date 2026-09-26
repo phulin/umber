@@ -88,39 +88,7 @@ pub(in crate::main_control) fn assign_box_dimension<G>(
     dimension: tex_state::BoxDimension,
     value: Scaled,
 ) {
-    // box255 can be the output routine's page-owned box; keep that page-root
-    // path until it is promoted. Ordinary durable roots edit one scalar word.
-    if stores.set_durable_box_dimension(index, dimension, value) {
-        return;
-    }
-    let Some(root) = stores.copy_box_to_page(index) else {
-        return;
-    };
-    let nodes = stores
-        .page_node_list(root)
-        .expect("copied box belongs to the admitted page arena")
-        .nodes();
-    let Some(source) = nodes.get(0) else {
-        return;
-    };
-    let (mut node, horizontal) = match source {
-        tex_state::node_view::NodeView::HList(node) => (node, true),
-        tex_state::node_view::NodeView::VList(node) => (node, false),
-        _ => return,
-    };
-    match dimension {
-        tex_state::BoxDimension::Width => node.width = value,
-        tex_state::BoxDimension::Height => node.height = value,
-        tex_state::BoxDimension::Depth => node.depth = value,
-    }
-    let replacement = stores.publish_page_nodes(vec![if horizontal {
-        Node::HList(node)
-    } else {
-        Node::VList(node)
-    }]);
-    stores
-        .replace_page_box(index, replacement)
-        .expect("mutated box closure fits durable storage");
+    let _ = stores.set_box_dimension(index, dimension, value);
 }
 
 /// Queues TeX output whose character codes have crossed the immutable

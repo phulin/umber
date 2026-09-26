@@ -70,6 +70,15 @@ fn assign_box(state: &mut DurableBoxState, arena: &mut PageMaterialArena, index:
         .expect("box assignment");
 }
 
+fn rollback_box_operation(
+    state: &mut DurableBoxState,
+    arena: &mut PageMaterialArena,
+    operation: DurableBoxOperation,
+) {
+    let mut page = crate::page::PageBuilderState::default();
+    state.rollback_operation(arena, &mut page, operation);
+}
+
 #[test]
 fn empty_operations_leave_box_journals_unallocated() {
     page_arena!(arena, pool, region, 64);
@@ -95,9 +104,89 @@ fn nested_operation_depth_keeps_outer_box_inverse() {
     assign_box(&mut state, &mut arena, 15);
     state.commit_operation(&mut arena, inner);
     assert!(state.value(15).is_some());
-    state.rollback_operation(&mut arena, outer);
+    rollback_box_operation(&mut state, &mut arena, outer);
     assert!(state.value(15).is_none());
     assert_eq!(state.operation_depth, 0);
+}
+
+#[test]
+fn page_loan_then_dimension_edit_replays_scalar_before_returning_interval() {
+    page_arena!(arena, pool, region, 65_536);
+    let mut state = DurableBoxState::new();
+    let start = arena.begin_closure_build().expect("box interval start");
+    let child = arena.publish_owned([Node::Penalty(47)]).expect("box child");
+    arena.rotate_box_wrapper_tail().expect("wrapper boundary");
+    let root = arena
+        .publish_owned([Node::HList(BoxNode::new(BoxNodeFields {
+            width: Scaled::from_raw(10),
+            height: Scaled::from_raw(20),
+            depth: Scaled::from_raw(3),
+            shift: Scaled::from_raw(0),
+            box_lr: BoxLr::Normal,
+            glue_set: GlueSetRatio::ZERO,
+            glue_sign: Sign::Normal,
+            glue_order: Order::Normal,
+            children: child,
+        }))])
+        .expect("box wrapper");
+    let segment = arena
+        .stamp_box_segment(&start, root)
+        .expect("immutable interval stamp");
+    assert_eq!(arena.close_box_segment(start).expect("box end"), segment);
+    let operation = state.begin_operation();
+    let (owner, loan) = arena
+        .finish_interleaved_page_box(root, segment)
+        .expect("move page interval");
+    state
+        .assign_with_page_loan(
+            &mut arena,
+            22,
+            PageBoxAssignment {
+                closure: owner,
+                loan,
+            },
+            super::super::AssignmentScope::Global,
+            LEVEL_ONE,
+            0,
+        )
+        .expect("durable binding");
+    state
+        .set_box_dimension(&mut arena, 22, BoxDimension::Width, Scaled::from_raw(40))
+        .expect("durable scalar edit");
+    rollback_box_operation(&mut state, &mut arena, operation);
+
+    assert!(state.value(22).is_none());
+    assert!(arena.contains(root));
+    let list = arena.node_cursor(root).expect("returned wrapper");
+    let Some(crate::NodeView::HList(node)) = list.get(0) else {
+        panic!("returned wrapper is an hbox")
+    };
+    assert_eq!(node.width, Scaled::from_raw(10));
+}
+
+#[test]
+fn durable_take_then_replacement_rolls_back_in_event_order() {
+    page_arena!(arena, pool, region, 65_536);
+    let mut state = DurableBoxState::new();
+    assign_box(&mut state, &mut arena, 23);
+    let original_region = current_region(&state, 23);
+    let operation = state.begin_operation();
+    let moved = state
+        .take_to_page(&mut arena, 23)
+        .expect("durable loan")
+        .expect("occupied box");
+    let replacement = boxed_owner(&mut arena);
+    state
+        .replace(&mut arena, 23, Some(replacement))
+        .expect("replacement binding");
+    assert_ne!(current_region(&state, 23), original_region);
+    let copies = arena.durable_transition_counters();
+    rollback_box_operation(&mut state, &mut arena, operation);
+
+    assert!(current_region(&state, 23).is_some());
+    assert_eq!(dimensions(&state, &arena, 23).0, Scaled::from_raw(10));
+    assert!(!arena.contains(moved));
+    assert_eq!(arena.durable_transition_counters(), copies);
 }
 
 #[test]
@@ -145,7 +234,7 @@ fn scalar_box_root_mutation_preserves_closure_and_rolls_back() {
             .history_preservation_nodes_copied,
         before.history_preservation_nodes_copied
     );
-    state.rollback_operation(&mut arena, operation);
+    rollback_box_operation(&mut state, &mut arena, operation);
     assert_eq!(
         dimensions(&state, &arena, 8),
         (
@@ -259,7 +348,7 @@ fn rolled_back_scalar_first_touch_can_be_recorded_again() {
     state
         .set_box_dimension(&mut arena, 10, BoxDimension::Depth, Scaled::from_raw(8))
         .expect("transient edit");
-    state.rollback_operation(&mut arena, operation);
+    rollback_box_operation(&mut state, &mut arena, operation);
     assert!(state.scalar_entries.is_empty());
     state
         .set_box_dimension(&mut arena, 10, BoxDimension::Depth, Scaled::from_raw(9))
@@ -511,7 +600,7 @@ fn operation_rollback_moves_the_original_owner_back_without_copying() {
     state
         .replace(&mut arena, 7, Some(replacement))
         .expect("operation replacement");
-    state.rollback_operation(&mut arena, operation);
+    rollback_box_operation(&mut state, &mut arena, operation);
 
     assert_eq!(current_region(&state, 7), Some(original_id));
     assert!(!arena.durable_region_is_live(replacement_id));
@@ -548,7 +637,7 @@ fn operation_rollback_discards_existing_group_box_save_before_group_close() {
             2,
         )
         .expect("operation-local assignment");
-    state.rollback_operation(&mut arena, operation);
+    rollback_box_operation(&mut state, &mut arena, operation);
 
     assert_eq!(current_region(&state, 7), Some(original_id));
     assert!(!arena.durable_region_is_live(transient_id));
@@ -621,7 +710,7 @@ fn active_operation_take_uses_a_rollbackable_zero_copy_loan() {
         before.history_preservation_nodes_copied
     );
 
-    state.rollback_operation(&mut arena, operation);
+    rollback_box_operation(&mut state, &mut arena, operation);
     let restored = state.value(8).expect("rollback restores durable owner");
     assert_eq!(
         arena
@@ -678,7 +767,7 @@ fn open_groups_without_a_saved_current_owner_keep_destructive_take_unique() {
             .history_preservation_nodes_copied,
         before.history_preservation_nodes_copied
     );
-    state.rollback_operation(&mut arena, operation);
+    rollback_box_operation(&mut state, &mut arena, operation);
     assert_eq!(
         arena
             .durable_list(state.value(8).expect("restored source"))
@@ -715,7 +804,7 @@ fn operation_rollback_restores_the_maintained_semantic_root() {
         .expect("operation replacement");
 
     assert_ne!(state.semantic_identity_root(), original_identity);
-    state.rollback_operation(&mut arena, operation);
+    rollback_box_operation(&mut state, &mut arena, operation);
 
     assert_eq!(state.semantic_identity_root(), original_identity);
     state.retire_all(&mut arena);

@@ -1,4 +1,5 @@
 use super::{UniverseError, with_universe};
+use crate::command_context::BoxDimension;
 use crate::env::AssignmentScope;
 use crate::env::banks::IntParam;
 use crate::fork_arena::ForkArenaError;
@@ -27,6 +28,110 @@ fn test_font(name: &str) -> LoadedFont {
         vec![Scaled::from_raw(0); 7],
         FontMetrics::default(),
     )
+}
+
+fn output_box_node(children: crate::page_node_arena::PageListId, width: i32) -> Node {
+    Node::HList(BoxNode::new(BoxNodeFields {
+        width: Scaled::from_raw(width),
+        height: Scaled::from_raw(20),
+        depth: Scaled::from_raw(3),
+        shift: Scaled::from_raw(0),
+        box_lr: BoxLr::Normal,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: crate::glue::Order::Normal,
+        children,
+    }))
+}
+
+#[test]
+fn command_operation_restores_page_owned_box_dimension_without_promotion() {
+    with_universe(budget(), |universe| {
+        universe.enable_reachable_state_identity();
+        let before = universe.page_region_counters();
+        let mut context = universe.command_context().expect("command context");
+        let child = context.publish_page_nodes(vec![Node::Penalty(47)]);
+        let root = context.publish_page_nodes(vec![output_box_node(child, 10)]);
+        context
+            .install_page_output_box(root)
+            .expect("page-owned output wrapper");
+        let original = context.box_register(255).expect("box 255 metadata");
+        let operation = context.begin_state_operation();
+        assert!(context.set_box_dimension(255, BoxDimension::Width, Scaled::from_raw(40),));
+        assert_eq!(
+            context.box_dimension(255, BoxDimension::Width),
+            Some(Scaled::from_raw(40))
+        );
+        assert_ne!(context.box_register(255), Some(original));
+        context
+            .restore_state_operation(operation)
+            .expect("command state rollback");
+        assert_eq!(context.box_register(255), Some(original));
+        assert_eq!(
+            context.box_dimension(255, BoxDimension::Width),
+            Some(Scaled::from_raw(10))
+        );
+        drop(context);
+        let after = universe.page_region_counters();
+        assert_eq!(
+            after.page_to_durable_nodes_copied,
+            before.page_to_durable_nodes_copied
+        );
+        assert_eq!(
+            after.history_preservation_nodes_copied,
+            before.history_preservation_nodes_copied
+        );
+    })
+    .expect("universe allocation");
+}
+
+#[test]
+fn shipout_rollback_restores_edited_output_box_after_take_or_replacement() {
+    for replace in [false, true] {
+        with_universe(budget(), |universe| {
+            universe.enable_reachable_state_identity();
+            let root = {
+                let mut context = universe.command_context().expect("command context");
+                let child = context.publish_page_nodes(vec![Node::Penalty(47)]);
+                let root = context.publish_page_nodes(vec![output_box_node(child, 10)]);
+                context
+                    .install_page_output_box(root)
+                    .expect("output wrapper");
+                root
+            };
+            let original = universe.page_region.builder().output_box();
+            let before = universe.page_region_counters();
+            {
+                let mut transaction = universe.begin_shipout();
+                let mut context = transaction.command_context().expect("shipout context");
+                assert!(context.set_box_dimension(255, BoxDimension::Width, Scaled::from_raw(40),));
+                let taken = context.take_box_to_page(255).expect("consumed output box");
+                assert_eq!(taken.coordinate(), root.coordinate());
+                if replace {
+                    let replacement = context.publish_page_nodes(vec![output_box_node(root, 80)]);
+                    context
+                        .install_page_output_box(replacement)
+                        .expect("replacement output wrapper");
+                }
+            }
+            let restored = universe.page_region.builder().output_box();
+            assert_eq!(restored.coordinate(), original.coordinate());
+            assert_eq!(restored.semantic_identity(), original.semantic_identity());
+            assert_eq!(
+                universe
+                    .command_context()
+                    .expect("restored context")
+                    .box_dimension(255, BoxDimension::Width),
+                Some(Scaled::from_raw(10))
+            );
+            let after = universe.page_region_counters();
+            assert_eq!(
+                after.page_to_durable_nodes_copied,
+                before.page_to_durable_nodes_copied
+            );
+        })
+        .expect("universe allocation");
+    }
 }
 
 #[test]

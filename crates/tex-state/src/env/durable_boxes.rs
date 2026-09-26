@@ -251,11 +251,19 @@ struct PageBoxTransferLoan {
     loan: crate::node_region::PageInteriorTransferLoan,
 }
 
+/// The move-only closure and its exact page interval reversal travel together
+/// across the assignment boundary.
+pub(crate) struct PageBoxAssignment {
+    pub(crate) closure: DurableNodeClosure,
+    pub(crate) loan: crate::node_region::PageInteriorTransferLoan,
+}
+
 enum DurableOperationAction {
     Binding(usize),
     DurableToPage(DurableBoxTransferLoan),
     PageToDurable(PageBoxTransferLoan),
     Dimension(DurableDimensionMutation),
+    PageScalar(crate::page::PageOutputBoxDimensionInverse),
 }
 
 #[derive(Clone, Copy)]
@@ -1184,13 +1192,13 @@ impl DurableBoxState {
         &mut self,
         arena: &mut PageMaterialArena,
         index: u16,
-        value: DurableNodeClosure,
-        loan: crate::node_region::PageInteriorTransferLoan,
+        assignment: PageBoxAssignment,
         scope: super::AssignmentScope,
         current_level: u32,
         group_save_position: u32,
     ) -> Result<(), BankError> {
-        let owner = self.owners.insert(value);
+        let PageBoxAssignment { closure, loan } = assignment;
+        let owner = self.owners.insert(closure);
         // The interval moved before the binding changed. Record that order so
         // rollback can reverse a later dimension edit, the binding swap, and
         // finally the page loan without leaving a live cell on an empty slot.
@@ -1288,6 +1296,16 @@ impl DurableBoxState {
             }
         }
         Ok(true)
+    }
+
+    pub(crate) fn record_page_output_box_dimension(
+        &mut self,
+        inverse: crate::page::PageOutputBoxDimensionInverse,
+    ) {
+        if self.operation_is_active() {
+            self.operation_actions
+                .push(DurableOperationAction::PageScalar(inverse));
+        }
     }
 
     fn apply_dimension_inverse(
@@ -1604,15 +1622,14 @@ impl DurableBoxState {
             .operation_depth
             .checked_add(1)
             .expect("durable box operation depth exhausted");
-        let operation = DurableBoxOperation {
+        DurableBoxOperation {
             depth: self.operation_depth,
             position: self.operation_entries.len(),
             action_position: self.operation_actions.len(),
             scalar_position: self.scalar_entries.len(),
             group_position: self.groups.len(),
             group_entry_position: self.groups.last().map_or(0, |group| group.entries.len()),
-        };
-        operation
+        }
     }
 
     #[inline(always)]
@@ -1635,7 +1652,8 @@ impl DurableBoxState {
                     }
                     DurableOperationAction::Binding(_)
                     | DurableOperationAction::PageToDurable(_)
-                    | DurableOperationAction::Dimension(_) => {}
+                    | DurableOperationAction::Dimension(_)
+                    | DurableOperationAction::PageScalar(_) => {}
                 }
             }
             for mutation in self.operation_entries.drain(..) {
@@ -1647,6 +1665,7 @@ impl DurableBoxState {
     pub(crate) fn rollback_operation(
         &mut self,
         arena: &mut PageMaterialArena,
+        page: &mut crate::page::PageBuilderState,
         operation: DurableBoxOperation,
     ) {
         assert_eq!(self.operation_depth, operation.depth);
@@ -1691,6 +1710,10 @@ impl DurableBoxState {
                 }
                 DurableOperationAction::Dimension(mutation) => {
                     self.apply_dimension_inverse(arena, mutation);
+                }
+                DurableOperationAction::PageScalar(inverse) => {
+                    page.restore_output_box_dimension(arena, inverse)
+                        .expect("page output scalar inverse retains its wrapper coordinate");
                 }
             }
         }

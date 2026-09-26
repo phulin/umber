@@ -9,7 +9,7 @@ mod restoration;
 pub use durable_boxes::DurableNodeMetadata;
 pub(crate) use durable_boxes::{
     AcceptedDurableBoxTail, DurableBoxCursor, DurableBoxOperation, DurableBoxState,
-    DurableFormState,
+    DurableFormState, PageBoxAssignment,
 };
 mod font_runtime;
 #[path = "env/group.rs"]

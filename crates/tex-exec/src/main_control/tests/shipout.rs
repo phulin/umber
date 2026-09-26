@@ -25,6 +25,24 @@ fn automatic_output_box_remains_page_owned_until_shipout() {
         );
     });
 }
+
+#[test]
+fn output_routine_dimension_edit_keeps_box255_page_owned() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\output={\wd255=20pt\ht255=8pt\shipout\box255}\vsize=5pt\hrule height10pt\penalty-10000\end",
+        );
+
+        run_to_end(&mut control, stores);
+
+        assert_eq!(stores.world().committed_artifacts().len(), 1);
+        let lifecycle = stores.page_region_counters();
+        assert_eq!(lifecycle.page_to_durable_nodes_copied, 0);
+        assert_eq!(lifecycle.history_preservation_nodes_copied, 0);
+    });
+}
 #[test]
 fn finish_job_publishes_each_live_stack_owner() {
     // TeX82 §1334 reports five independently owned maxima. Derive the

@@ -2787,8 +2787,9 @@ impl<G> Universe<G> {
 
     pub fn restore_state(&mut self, mut operation: StateOperation<G>) -> Result<(), UniverseError> {
         let durable = operation.take_durable_box();
+        let (mut page_nodes, page) = self.page_region.parts_mut();
         self.durable_boxes
-            .rollback_operation(&mut self.page_region.nodes_mut(), durable);
+            .rollback_operation(&mut page_nodes, page, durable);
         self.live_state_mut()?
             .rollback_state_transaction(&operation)?;
         Ok(())
