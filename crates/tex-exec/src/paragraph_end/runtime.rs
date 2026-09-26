@@ -35,6 +35,14 @@ struct ArenaPostLineChannel {
     active_directions: Vec<Direction>,
 }
 
+struct PostLineSelection<'a> {
+    decision: tex_typeset::linebreak::BreakDecision,
+    params: &'a PostLineBreakParams,
+    actions: Option<&'a [tex_typeset::linebreak::MaterializationAction]>,
+    par_fill_override: Option<GlueSpec>,
+    source_window: Option<tex_state::page_node_arena::ConsumedPageWindow>,
+}
+
 struct ArenaBrokenLine {
     nodes: tex_state::page_node_arena::PageListId,
     body_receipt: Option<tex_state::page_node_arena::GeneratedLineBody>,
@@ -109,23 +117,27 @@ impl ArenaPostLineMaterializer {
         });
         let (nodes, body_receipt) = self.semantic.materialize(
             stores,
-            decision,
-            &self.params,
-            Some(&self.actions),
-            self.par_fill_override,
+            PostLineSelection {
+                decision,
+                params: &self.params,
+                actions: Some(&self.actions),
+                par_fill_override: self.par_fill_override,
+                source_window,
+            },
             &mut self.semantic_lineage_scratch,
-            source_window,
         );
         let diagnostic = self.diagnostic.as_mut().map(|diagnostic| {
             diagnostic
                 .materialize(
                     stores,
-                    diagnostic_decision,
-                    &self.params,
-                    None,
-                    self.par_fill_override,
+                    PostLineSelection {
+                        decision: diagnostic_decision,
+                        params: &self.params,
+                        actions: None,
+                        par_fill_override: self.par_fill_override,
+                        source_window: None,
+                    },
                     &mut self.diagnostic_lineage_scratch,
-                    None,
                 )
                 .0
         });
@@ -173,16 +185,19 @@ impl ArenaPostLineChannel {
     fn materialize<G>(
         &mut self,
         stores: &mut CommandContext<'_, G>,
-        decision: tex_typeset::linebreak::BreakDecision,
-        params: &PostLineBreakParams,
-        actions: Option<&[tex_typeset::linebreak::MaterializationAction]>,
-        par_fill_override: Option<GlueSpec>,
+        selection: PostLineSelection<'_>,
         output_lineages: &mut Vec<tex_state::node_sequence::DirectHighCellLineage>,
-        source_window: Option<tex_state::page_node_arena::ConsumedPageWindow>,
     ) -> (
         tex_state::page_node_arena::PageListId,
         Option<tex_state::page_node_arena::GeneratedLineBody>,
     ) {
+        let PostLineSelection {
+            decision,
+            params,
+            actions,
+            par_fill_override,
+            source_window,
+        } = selection;
         let source_start = self.position;
         let end = decision.position.min(self.source.len());
         let plain_source_run = params.left_skip == GlueSpec::ZERO
@@ -745,7 +760,12 @@ pub(crate) fn break_current_paragraph<G>(
                 .nodes(),
         )?;
     }
-    let (mut decisions, trace, missing_hyphens, consumed_source) = break_hlist_with_trace(
+    let BrokenParagraphPlan {
+        mut decisions,
+        trace,
+        missing_hyphens,
+        consumed_source,
+    } = break_hlist_with_trace(
         nest,
         stores,
         diagnostic_effects,
@@ -1582,6 +1602,13 @@ fn active_text_directions(nodes: tex_state::node_view::NodeCursor<'_>) -> Vec<Di
     active
 }
 
+struct BrokenParagraphPlan {
+    decisions: LineBreakResult,
+    trace: Vec<LineBreakTrace>,
+    missing_hyphens: Vec<super::hyphenation::MissingHyphenDiagnostic>,
+    consumed_source: Option<tex_state::page_node_arena::ConsumedPageSource>,
+}
+
 #[allow(clippy::too_many_arguments)] // Paragraph entry context must accompany the list through both line-break passes.
 fn break_hlist_with_trace<G>(
     nest: &mut ModeNest,
@@ -1593,15 +1620,7 @@ fn break_hlist_with_trace<G>(
     initial_hyphen_context: (u8, u8, u8),
     fuel: &mut tex_command::CommandFuel,
     tracing: bool,
-) -> Result<
-    (
-        LineBreakResult,
-        Vec<LineBreakTrace>,
-        Vec<super::hyphenation::MissingHyphenDiagnostic>,
-        Option<tex_state::page_node_arena::ConsumedPageSource>,
-    ),
-    ExecError,
-> {
+) -> Result<BrokenParagraphPlan, ExecError> {
     // TeX82 §815 skips the pretolerance pass when `pretolerance<0` and
     // enters the hyphenating second pass directly. §919 initializes the trie
     // at that boundary, even if Umber's pure non-hyphenating planner can
@@ -1627,12 +1646,12 @@ fn break_hlist_with_trace<G>(
         )
     };
     if let Some(first) = first {
-        Ok((
-            tex_typeset::linebreak::plan_with_tape(first, tape),
+        Ok(BrokenParagraphPlan {
+            decisions: tex_typeset::linebreak::plan_with_tape(first, tape),
             trace,
-            Vec::new(),
+            missing_hyphens: Vec::new(),
             consumed_source,
-        ))
+        })
     } else {
         drop(tape);
         let hyphenated = super::hyphenation::hyphenated_hlist_with_initial_context(
@@ -1668,12 +1687,12 @@ fn break_hlist_with_trace<G>(
                 trace,
             )
         };
-        Ok((
-            tex_typeset::linebreak::plan_with_tape(plan, tape),
+        Ok(BrokenParagraphPlan {
+            decisions: tex_typeset::linebreak::plan_with_tape(plan, tape),
             trace,
-            hyphenated.missing_hyphens,
-            hyphenated.consumed_source,
-        ))
+            missing_hyphens: hyphenated.missing_hyphens,
+            consumed_source: hyphenated.consumed_source,
+        })
     }
 }
 

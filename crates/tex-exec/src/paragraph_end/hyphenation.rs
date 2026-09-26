@@ -216,11 +216,15 @@ pub(crate) fn apply_scanned_hyphenation_exceptions<G>(
     }
 }
 
+struct HyphenationSource {
+    root: tex_state::page_node_arena::PageListId,
+    consumed: Option<tex_state::page_node_arena::ConsumedPageSource>,
+}
+
 fn hyphenated_hlist_with_projections<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
-    source: tex_state::page_node_arena::PageListId,
-    consumed_source: Option<tex_state::page_node_arena::ConsumedPageSource>,
+    source: HyphenationSource,
     initial_context: HyphenationContext,
     tfm_work: &mut crate::box_runtime::hmode::LigatureWorkList,
     fuel: &mut tex_command::CommandFuel,
@@ -233,6 +237,10 @@ fn hyphenated_hlist_with_projections<G>(
     ),
     ExecError,
 > {
+    let HyphenationSource {
+        root: source,
+        consumed: consumed_source,
+    } = source;
     // TeX82 §919 initializes the trie on entry to the first hyphenation pass,
     // even when this particular paragraph ultimately supplies no candidate.
     stores.close_hyphenation_patterns();
@@ -317,8 +325,10 @@ pub(crate) fn hyphenated_hlist_with_initial_context<G>(
     let (semantic, consumed_source, _) = match hyphenated_hlist_with_projections(
         stores,
         diagnostic_effects,
-        source,
-        consumed_source,
+        HyphenationSource {
+            root: source,
+            consumed: consumed_source,
+        },
         HyphenationContext {
             language: initial_context.0,
             left: usize::from(initial_context.1),
@@ -3398,8 +3408,10 @@ mod tests {
             let (_, _, final_context) = hyphenated_hlist_with_projections(
                 &mut stores,
                 &mut diagnostic_effects,
-                source,
-                None,
+                HyphenationSource {
+                    root: source,
+                    consumed: None,
+                },
                 HyphenationContext {
                     language: 0,
                     left: 2,
@@ -3631,8 +3643,10 @@ mod tests {
                 let (output, _, context) = hyphenated_hlist_with_projections(
                     &mut stores,
                     &mut effects,
-                    source,
-                    None,
+                    HyphenationSource {
+                        root: source,
+                        consumed: None,
+                    },
                     HyphenationContext {
                         language: 0,
                         left: 2,
