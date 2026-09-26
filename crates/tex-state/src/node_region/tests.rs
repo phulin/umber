@@ -1463,3 +1463,97 @@ fn consumed_cut_copies_only_selected_direct_records_and_rejects_atomically() {
         vec![boxed(child.list)]
     );
 }
+
+#[test]
+fn rejected_mixed_generated_rollback_keeps_both_owners_unchanged() {
+    let mut pool = NodePool::with_chunk_bytes(512);
+    let mut source = pool.start_region::<PageRole>().expect("page source");
+    let source_root = source
+        .publish_owned(&mut pool, (0..40).map(Node::Penalty).collect::<Vec<_>>())
+        .expect("three source chunks");
+    source
+        .seal_checkpoint_boundary(&mut pool)
+        .expect("immutable direct chunks");
+    let left = PageListId::from_parts(
+        source
+            .pub_arena
+            .slice_list(&mut pool.chunks, source_root.list.coordinate(), 0..3)
+            .expect("left sibling"),
+        None,
+    );
+    let middle = PageListId::from_parts(
+        source
+            .pub_arena
+            .slice_list(&mut pool.chunks, source_root.list.coordinate(), 16..32)
+            .expect("whole middle chunk"),
+        None,
+    );
+    let right = PageListId::from_parts(
+        source
+            .pub_arena
+            .slice_list(&mut pool.chunks, source_root.list.coordinate(), 35..40)
+            .expect("right sibling"),
+        None,
+    );
+    let start = source
+        .pub_arena
+        .owner_relative_head_position(&pool.chunks, source_root.list.coordinate())
+        .expect("first source chunk");
+    let pieces = [
+        GeneratedInlinePiece::Cut(crate::page_node_arena::PageBoxCutRange {
+            chunk_position: start,
+            local: 3..16,
+        }),
+        GeneratedInlinePiece::Full(middle),
+        GeneratedInlinePiece::Cut(crate::page_node_arena::PageBoxCutRange {
+            chunk_position: start + 2,
+            local: 0..3,
+        }),
+    ];
+    let mut destination = pool
+        .start_region::<DurableRole>()
+        .expect("durable destination");
+    let (projected, mut loan) = transfer_page_generated_inline_selected(
+        &mut pool,
+        &mut source,
+        &pieces,
+        &[start + 1..start + 2],
+        false,
+        &mut destination,
+    )
+    .expect("mixed cut and complete-chunk projection");
+    let projected = PageListId::from_parts(projected, None);
+    let before = (
+        source.pub_arena.payload_position_end(),
+        destination.pub_arena.payload_position_end(),
+    );
+    let PageInteriorTransferredChunks::GeneratedSelected { heads, .. } = &mut loan.chunks else {
+        panic!("mixed transfer returns a generated receipt")
+    };
+    assert!(heads[0].bound_prefix.is_some());
+    heads[0].bound_prefix = None;
+    assert_eq!(
+        rollback_page_interior_closure(&mut pool, &mut source, &mut destination, loan),
+        Err(ForkArenaError::InvalidRegion),
+        "inverse preflight rejects a stale head binding before either owner mutates"
+    );
+    assert_eq!(
+        (
+            source.pub_arena.payload_position_end(),
+            destination.pub_arena.payload_position_end(),
+        ),
+        before
+    );
+    assert_eq!(
+        resident_nodes(&source, &pool, left),
+        (0..3).map(Node::Penalty).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        resident_nodes(&source, &pool, right),
+        (35..40).map(Node::Penalty).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        resident_nodes(&destination, &pool, projected),
+        (3..35).map(Node::Penalty).collect::<Vec<_>>()
+    );
+}
