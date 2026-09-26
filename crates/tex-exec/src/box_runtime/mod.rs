@@ -10,8 +10,8 @@ mod packaging;
 mod vsplit;
 
 pub(crate) use packaging::{
-    first_box_node, hpack_page_list_with_diagnostics, hpack_with_overfull_rule, take_last_box,
-    take_last_box_with_segment,
+    RemovedLastBox, first_box_node, hpack_page_list_with_diagnostics, hpack_with_overfull_rule,
+    take_last_box, take_last_box_with_segment,
 };
 pub(crate) use vsplit::split_vbox_register;
 

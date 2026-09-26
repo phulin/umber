@@ -12,6 +12,14 @@ use crate::{ExecError, Mode, ModeNest};
 
 use super::hmode::flush_pending_hchars;
 
+/// A box removed by TeX's `\lastbox`, with its original page root only when
+/// the mode-list owner consumed one directly.
+pub(crate) struct RemovedLastBox {
+    pub(crate) node: Node,
+    pub(crate) root: Option<PageListId>,
+    pub(crate) segment: Option<PageBoxSegment>,
+}
+
 pub(crate) fn take_last_box<G, F>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
@@ -23,7 +31,7 @@ where
     F: FnOnce(&CommandContext<'_, G>) -> Result<String, ExecError>,
 {
     take_last_box_with_segment(nest, stores, diagnostic_effects, fuel, error_context)
-        .map(|removed| removed.map(|(node, _, _)| node))
+        .map(|removed| removed.map(|removed| removed.node))
 }
 
 /// Returns an exclusively removed tail's original root and construction
@@ -34,7 +42,7 @@ pub(crate) fn take_last_box_with_segment<G, F>(
     diagnostic_effects: &mut DiagnosticEffects,
     fuel: &mut tex_command::CommandFuel,
     error_context: F,
-) -> Result<Option<(Node, Option<PageListId>, Option<PageBoxSegment>)>, ExecError>
+) -> Result<Option<RemovedLastBox>, ExecError>
 where
     F: FnOnce(&CommandContext<'_, G>) -> Result<String, ExecError>,
 {
@@ -82,7 +90,11 @@ where
             let removed = stores.remove_page_contribution_range(tail.removal_range());
             let result = reset_removed_box_shift(stores.page_carrier_node(&removed));
             stores.discard_page_node(removed);
-            Ok(result.map(|node| (node, None, None)))
+            Ok(result.map(|node| RemovedLastBox {
+                node,
+                root: None,
+                segment: None,
+            }))
         }
         Mode::InternalVertical | Mode::Horizontal | Mode::RestrictedHorizontal => {
             let current_list = nest.current_list();
@@ -115,8 +127,11 @@ where
                 }
                 _ => false,
             };
-            Ok(reset_removed_box_shift(node)
-                .map(|node| (node, Some(removed), segment.filter(|_| zero_shift))))
+            Ok(reset_removed_box_shift(node).map(|node| RemovedLastBox {
+                node,
+                root: Some(removed),
+                segment: segment.filter(|_| zero_shift),
+            }))
         }
     }
 }

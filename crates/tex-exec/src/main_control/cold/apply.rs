@@ -2457,29 +2457,31 @@ pub(in crate::main_control) fn apply<G>(
             if let ScannedSetBoxPath::Payload(ScannedBoxShiftPayload::LastBox { error_context }) =
                 path
             {
-                let removed = crate::box_runtime::take_last_box_with_segment(
-                    modes,
-                    stores,
-                    command.diagnostic_effects,
-                    command.fuel,
-                    |_| Ok(std::mem::take(error_context)),
-                )?;
-                if let Some((_, Some(root), Some(segment))) = &removed
-                    && stores.can_transfer_interleaved_page_box(*root, *segment)
+                let removed: Option<crate::box_runtime::RemovedLastBox> =
+                    crate::box_runtime::take_last_box_with_segment(
+                        modes,
+                        stores,
+                        command.diagnostic_effects,
+                        command.fuel,
+                        |_| Ok(std::mem::take(error_context)),
+                    )?;
+                if let Some(removed) = &removed
+                    && let (Some(root), Some(segment)) = (removed.root, removed.segment)
+                    && stores.can_transfer_interleaved_page_box(root, segment)
                 {
                     commit_interleaved_set_box_target(
                         PendingSetBox {
                             target: *target,
                             region: stores.begin_page_node_region(),
                         },
-                        *root,
-                        *segment,
+                        root,
+                        segment,
                         stores,
                         command,
                     );
                     return Ok(ReplayStep::Continue);
                 }
-                let node = removed.map(|(node, _, _)| node);
+                let node = removed.map(|removed| removed.node);
                 boxes.pending_setbox = Some(PendingSetBox {
                     target: *target,
                     region: stores.begin_page_node_region(),
