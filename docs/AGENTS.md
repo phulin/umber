@@ -32,6 +32,11 @@ Samply wrapper, prerequisites, counters, measurement controls, and capture
 analysis workflow. Historical measurements belong in Git history or Beads,
 not as chronological release receipts in `docs/`.
 
+`arxiv_book_performance.md` records the reproducible long-book PDF timeout,
+the mixed-source workload, negative destination and split controls, the measured same-page range owner,
+and the test-versus-shipping build distinction while the full-book diagnosis
+remains open.
+
 `paired_measurement.md` documents the owner-maintained prebuilt-executable
 paired runner in `scripts/paired-measure.py`, its JSON/JSONL receipt contract,
 inner-metric scope, and release-versus-structural evidence lanes.
