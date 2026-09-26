@@ -314,6 +314,29 @@ impl<'a, G> CommandContext<'a, G> {
             .expect("checked page span belongs to the live page arena")
     }
 
+    /// Removes the sole semantic mode-list root and indexes its direct chunks
+    /// once for monotonic generated-box windows. Callers must pass the actual
+    /// mode-list slot after journaling its prior value, not a copied span.
+    pub fn take_generated_mode_source(
+        &mut self,
+        slot: &mut crate::page_node_arena::PageListSpan,
+    ) -> crate::page_node_arena::ConsumedPageSource {
+        self.page_nodes
+            .take_generated_mode_source(slot)
+            .expect("consumed mode source belongs to the live page arena")
+    }
+
+    /// Indexes the final consumed semantic source only when its tape retains
+    /// the original removed root.
+    pub fn index_consumed_page_source(
+        &mut self,
+        source: &mut crate::page_node_arena::ConsumedPageSource,
+    ) {
+        self.page_nodes
+            .index_consumed_source(source)
+            .expect("consumed source remains in the live page region");
+    }
+
     #[must_use]
     pub fn page_node_semantic_identity_enabled(&self) -> bool {
         self.page_nodes.semantic_identity_enabled()

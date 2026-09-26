@@ -159,6 +159,7 @@ Command operands are scanned by `tex-command` into typed request and result valu
 - `src/box_runtime/`: source-free box-register, material, packing, migration, horizontal contribution, shaping, spacing, indentation, whatsit, leader, and list-commit operations. `vsplit/tests.rs` covers TeX82 §976 shrink normalization and unchanged-source ownership.
 - `src/paragraph_end.rs` and `src/paragraph_end/`: typed paragraph completion,
   one-time admitted linear borrowed-range post-line inspection,
+  consumed semantic-source windows for generated line ownership,
   append-interleaved hyphenation over the same operation-local compact root
   and coordinate-only direct chunk continuations, coalesced unchanged-source
   materialization, packing, migration,
@@ -221,7 +222,8 @@ Command operands are scanned by `tex-command` into typed request and result valu
   capacity remains with the operation owner.
 - `src/mode.rs` and `src/mode/`: mode nest, page-arena list roots with detached
   active builders, checked `PageListSpan` live roots carried only within their
-  admitting `PageRegion`, direct-value paragraph/alignment glue, copy-only
+  admitting `PageRegion`, a journaled move-only removal seam for generated
+  paragraph and alignment source ownership, direct-value paragraph/alignment glue, copy-only
   pending-character provenance, rootless retained summaries, and the
   same-region operation-local rollback journal. Restart
   eligibility proves a sole empty outer vertical level, so a named boundary

@@ -46,7 +46,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/command_context/pdf_commands.rs`: PDF ledger, form, font-resource,
   color-stack, and navigation projections of the same admitted command borrow.
 - `src/command_context/page_material.rs`: Borrowed page-material construction,
-  range, traversal, and shipout-scratch projections of that command borrow.
+  range, traversal, shipout-scratch, and generated mode-source removal
+  projections of that command borrow.
 - `src/command_context/page_builder.rs`: Page-builder dimensions, contributions,
   discard lists, insertions, and marks of that same borrow.
 - `src/dependency.rs`: Region-scoped dependency keys with scope-free `CellId` environment identity, typed recorder lifecycle and first-reason poison barrier, detached observations, changed-at validation, conservative page/PDF family clocks, registered World-backed mutation keys, semantic backdating, and opaque cross-Universe memo validation stamps.
@@ -186,7 +187,11 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/fork_arena/batch_transfer.rs`: Exclusive batch closure, detachment,
   reattachment, adoption, and promotion of the existing arena lane.
 - `src/fork_arena/compound_transfer.rs`: Exact disjoint interval ownership
-  proof, move, and operation rollback with stable sparse logical positions.
+  proof, move, and operation rollback with stable sparse logical positions,
+  including a private-prefix destination for selected consumed windows.
+- `src/fork_arena/consumed_window.rs`: Reversible consumed-window head edge
+  detachment and rebinding that restores both its predecessor and exact paired
+  dependency floor after rejected transfers.
 - `src/fork_arena/whole_region_transfer.rs`: Whole-region closure proofs,
   coordinate validation, and exact suffix detachment for that same lane.
 - `src/format.rs` and `src/format/tests.rs`: Consuming destination-stamped
@@ -318,6 +323,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   testing-axis entry point backs the opt-in `tex-state-copy-timing` binary in
   `benchmarks/tex-state/timing`; that timing package excludes profiling
   counters.
+- `src/node_region/consumed_cut.rs`: Bounded shallow selected-record projection
+  from one consumed logical chunk, with child-coordinate mapping and paired
+  destination-mark rollback on rejection.
 - `src/page_node_arena.rs` and `src/page_node_arena/tests.rs`: Page-semantic
   identity facade, checked destination construction, and focused warmed
   1/4,096-node allocation/copy/chunk-work proof over the live page-material
@@ -325,6 +333,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/page_node_arena/consumed_box_projection.rs`: Consumed unbox child
   projection that rebinds authenticated nested-box provenance while copying
   only surviving direct records and keeping child closures in place.
+- `src/page_node_arena/consumed_source.rs`: Move-only semantic page-source
+  partition and reversible consumed-window head detachment for generated
+  paragraph and alignment box ownership.
 - `src/page.rs`: Exclusive move-only `PageRegion` ownership over page payload,
   the four checked `PageListSpan` PageBuilder roots, scalar state, reversible
   same-region journal, and private owner-relative checkpoint rows; active

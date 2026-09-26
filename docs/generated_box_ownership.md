@@ -42,6 +42,14 @@ source's move authority. The existing source chain remains readable during
 line and row construction. Only removal of the last wrapper may detach its
 source window, after all outputs from that source have been built.
 
+The receipt is minted by swapping the actual mode-list span after its mutation
+journal records the old root. No public constructor from a copyable list key
+grants move authority. A semantic rewrite that replaces the removed root
+invalidates this direct-source receipt until that rewrite supplies its own
+consumption proof. Once the final tape retains the removed root, a transient
+direct-chunk index is built once; monotonically partitioned line windows
+binary-search that index instead of rescanning the paragraph suffix.
+
 Immediately before wrapper publication, the builder closes the selected
 node-and-annex body intervals, excludes obsolete source projections and page
 migrations, and writes one authenticated body descriptor into the wrapper's

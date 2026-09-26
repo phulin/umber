@@ -237,8 +237,9 @@ fn production_post_line_retains_source_addresses_and_counts_no_copies() {
             &line_params,
         );
         let mut materializer = ArenaPostLineMaterializer::new(
-            &stores,
+            &mut stores,
             tape,
+            None,
             vec![tex_typeset::linebreak::BreakDecision {
                 position: source.len(),
                 penalty: -10_000,
@@ -300,8 +301,9 @@ fn production_post_line_discards_an_explicit_kern_chosen_as_a_break() {
             &line_params,
         );
         let mut materializer = ArenaPostLineMaterializer::new(
-            &stores,
+            &mut stores,
             tape,
+            None,
             vec![
                 tex_typeset::linebreak::BreakDecision {
                     position: 2,

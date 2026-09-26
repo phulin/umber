@@ -1197,6 +1197,72 @@ fn generated_line_edges_preserve_the_selected_source_subrange_addresses() {
 }
 
 #[test]
+fn consumed_window_plan_keeps_only_complete_interior_chunks() {
+    page_arena!(arena, pool, state, 512);
+    let source = arena
+        .publish_owned(penalties(&(0..40).collect::<Vec<_>>()))
+        .expect("source spans three logical chunks");
+    let mut source_slot = arena.admit_span(source).expect("semantic source slot");
+    let mut consumed = arena
+        .take_generated_mode_source(&mut source_slot)
+        .expect("index direct chunks once after consuming source");
+    assert!(source_slot.is_empty());
+    arena
+        .index_consumed_source(&mut consumed)
+        .expect("index final semantic source once");
+    let first = consumed.partition_window(3..18).expect("first line window");
+    let second = consumed
+        .partition_window(18..35)
+        .expect("second line window");
+    assert!(consumed.partition_window(17..20).is_none());
+
+    let first_plan = first.plan();
+    assert!(first_plan.full_node_chunks.is_empty());
+    assert_eq!(first_plan.cut_records, [3..16, 16..18]);
+
+    let second_plan = second.plan();
+    assert!(second_plan.full_node_chunks.is_empty());
+    assert_eq!(second_plan.cut_records, [18..32, 32..35]);
+
+    let mut independent_slot = arena.admit_span(source).expect("independent test slot");
+    let mut independent = arena
+        .take_generated_mode_source(&mut independent_slot)
+        .expect("independent test source index");
+    arena
+        .index_consumed_source(&mut independent)
+        .expect("index independent final source");
+    let interior = independent
+        .partition_window(16..32)
+        .expect("complete middle chunk");
+    let interior_plan = interior.plan();
+    assert_eq!(interior_plan.full_node_chunks.len(), 1);
+    assert!(interior_plan.cut_records.is_empty());
+
+    let sliced = arena
+        .slice_sequence(source, 3..35, &mut Vec::new())
+        .expect("head and tail share source chunks");
+    let mut sliced_slot = arena.admit_span(sliced).expect("sliced semantic slot");
+    let mut sliced_owner = arena
+        .take_generated_mode_source(&mut sliced_slot)
+        .expect("index the sliced source");
+    arena
+        .index_consumed_source(&mut sliced_owner)
+        .expect("index sliced final source");
+    let whole_sliced = sliced_owner
+        .partition_window(0..sliced.len())
+        .expect("consume the complete semantic slice");
+    assert_eq!(whole_sliced.plan().cut_records, [0..13, 29..32]);
+    assert_eq!(whole_sliced.plan().full_node_chunks.len(), 1);
+    let direct = arena
+        .direct_root_chunk_selection(sliced)
+        .expect("final direct child geometry");
+    assert_eq!(direct.full_node_chunks.len(), 1);
+    assert_eq!(direct.cut_chunks.len(), 2);
+    assert_eq!(direct.cut_chunks[0].1, 3..16);
+    assert_eq!(direct.cut_chunks[1].1, 0..3);
+}
+
+#[test]
 fn overlapping_checked_span_composition_counts_its_unavoidable_copy() {
     page_arena!(arena, pool, state, 4096);
     let source = arena

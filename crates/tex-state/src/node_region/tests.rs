@@ -1390,3 +1390,76 @@ fn copied_partial_parent_chunk_is_sealed_before_child_construction_continues() {
         "each child occurrence owns its copy"
     );
 }
+
+#[test]
+fn consumed_cut_copies_only_selected_direct_records_and_rejects_atomically() {
+    let mut pool = NodePool::with_chunk_bytes(512);
+    let mut source = pool.start_region::<PageRole>().expect("source");
+    let list = source
+        .publish_owned(&mut pool, (0..12).map(Node::Penalty).collect::<Vec<_>>())
+        .expect("one source chunk");
+    source
+        .seal_checkpoint_boundary(&mut pool)
+        .expect("source chunk is immutable");
+    let position = source
+        .pub_arena
+        .owner_relative_head_position(&pool.chunks, list.list.coordinate())
+        .expect("source chunk position");
+    let mut destination = pool.start_region::<DurableRole>().expect("destination");
+    let copied = copy_consumed_direct_cut_into(
+        &mut pool,
+        &source,
+        position,
+        3..6,
+        &mut destination,
+        false,
+        Some,
+    )
+    .expect("bounded shallow cut copy");
+    assert_eq!(
+        resident_nodes(&destination, &pool, copied),
+        vec![Node::Penalty(3), Node::Penalty(4), Node::Penalty(5)]
+    );
+    assert_eq!(resident_nodes(&source, &pool, list.list).len(), 12);
+
+    let child = source
+        .publish_owned(&mut pool, [Node::Penalty(71)])
+        .expect("source child");
+    let parent = source
+        .publish_owned(&mut pool, [boxed(child.list)])
+        .expect("source parent");
+    source
+        .seal_checkpoint_boundary(&mut pool)
+        .expect("parent chunk immutable");
+    let parent_position = source
+        .pub_arena
+        .owner_relative_head_position(&pool.chunks, parent.list.coordinate())
+        .expect("parent chunk position");
+    let before = (
+        destination.pub_arena.payload_position_end(),
+        destination.annex_arena.payload_position_end(),
+    );
+    assert_eq!(
+        copy_consumed_direct_cut_into(
+            &mut pool,
+            &source,
+            parent_position,
+            0..1,
+            &mut destination,
+            false,
+            |_| None,
+        ),
+        Err(ForkArenaError::InvalidRegion),
+    );
+    assert_eq!(
+        (
+            destination.pub_arena.payload_position_end(),
+            destination.annex_arena.payload_position_end()
+        ),
+        before
+    );
+    assert_eq!(
+        resident_nodes(&source, &pool, parent.list),
+        vec![boxed(child.list)]
+    );
+}

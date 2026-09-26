@@ -821,6 +821,18 @@ impl ModeListMutation<'_> {
         self.list.take_nodes()
     }
 
+    /// Consumes the actual mode-list slot for generated paragraph or
+    /// alignment materialization. The returned source cannot be minted from
+    /// an arbitrary copied page coordinate.
+    pub(crate) fn take_generated_source<G>(
+        &mut self,
+        stores: &mut CommandContext<'_, G>,
+    ) -> tex_state::page_node_arena::ConsumedPageSource {
+        self.record_nodes();
+        let ModeListBorrow::Direct(list) = &mut self.list;
+        stores.take_generated_mode_source(&mut list.nodes)
+    }
+
     pub(crate) fn append_unique_list<G>(
         &mut self,
         stores: &mut CommandContext<'_, G>,

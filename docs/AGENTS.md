@@ -194,6 +194,10 @@ coordinates. It supersedes page-batch dependency/refcount designs.
 mutation and destructive box/unbox transfer through current, group, checkpoint,
 and operation owners.
 
+`generated_box_ownership.md` defines the consumed-source and authenticated
+positive-range ownership contract for generated paragraph and alignment boxes,
+including bounded shared-boundary projection and rollback requirements.
+
 `fork_arena_dense_prefix_emplacement.md` is the approved measured-implementation
 physical-storage design below that ownership contract. It separates semantic
 lifetimes from exactly 64 KiB dense typed superblocks, limits the isolated

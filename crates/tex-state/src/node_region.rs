@@ -26,7 +26,9 @@ use crate::page_node_arena::PageListId;
 #[path = "node_region/tests.rs"]
 mod tests;
 
+mod consumed_cut;
 mod copy;
+pub(crate) use consumed_cut::copy_consumed_direct_cut_into;
 
 #[cfg(any(feature = "profiling", feature = "testing"))]
 pub use copy::{ExplicitCopyHarness, ExplicitCopyShape};

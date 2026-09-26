@@ -14,6 +14,7 @@ impl ParagraphBreakResult {
 
 struct ArenaPostLineMaterializer {
     semantic: ArenaPostLineChannel,
+    consumed_source: Option<tex_state::page_node_arena::ConsumedPageSource>,
     diagnostic: Option<ArenaPostLineChannel>,
     diagnostic_boundaries: Option<Vec<usize>>,
     actions: Vec<tex_typeset::linebreak::MaterializationAction>,
@@ -36,6 +37,7 @@ struct ArenaPostLineChannel {
 
 struct ArenaBrokenLine {
     nodes: tex_state::page_node_arena::PageListId,
+    source_window: Option<tex_state::page_node_arena::ConsumedPageWindow>,
     material_start: usize,
     diagnostic_nodes: Option<tex_state::page_node_arena::PageListId>,
     allocator_high_cell_overlap: u32,
@@ -45,14 +47,20 @@ struct ArenaBrokenLine {
 
 impl ArenaPostLineMaterializer {
     fn new<G>(
-        stores: &CommandContext<'_, G>,
+        stores: &mut CommandContext<'_, G>,
         tape: ParagraphTape<'static>,
+        consumed_source: Option<tex_state::page_node_arena::ConsumedPageSource>,
         breaks: Vec<tex_typeset::linebreak::BreakDecision>,
         params: PostLineBreakParams,
     ) -> Self {
         let arena = tape
             .into_arena_materialization()
             .expect("production paragraph tape remains arena-backed");
+        let mut consumed_source =
+            consumed_source.filter(|source| source.source() == arena.semantic);
+        if let Some(source) = &mut consumed_source {
+            stores.index_consumed_page_source(source);
+        }
         let semantic = stores
             .admit_page_node_list(arena.semantic)
             .expect("semantic paragraph crosses one live page-region boundary");
@@ -63,6 +71,7 @@ impl ArenaPostLineMaterializer {
         });
         Self {
             semantic: ArenaPostLineChannel::new(semantic, arena.semantic_high_cell_lineages),
+            consumed_source,
             diagnostic: diagnostic
                 .zip(arena.diagnostic_high_cell_lineages)
                 .map(|(source, lineages)| ArenaPostLineChannel::new(source, lineages)),
@@ -94,7 +103,8 @@ impl ArenaPostLineMaterializer {
         let dimensions = self.params.shape.dimensions(self.line_no + 1);
         let material_start = usize::from(self.params.left_skip != GlueSpec::ZERO)
             + self.semantic.active_directions.len();
-        let nodes = self.semantic.materialize(
+        let source_start = self.semantic.position;
+        let (nodes, plain_source_run) = self.semantic.materialize(
             stores,
             decision,
             &self.params,
@@ -102,15 +112,21 @@ impl ArenaPostLineMaterializer {
             self.par_fill_override,
             &mut self.semantic_lineage_scratch,
         );
+        let source_window = self.consumed_source.as_mut().and_then(|source| {
+            source.partition_window(source_start..decision.position.min(self.semantic.source.len()))
+        });
+        let source_window = plain_source_run.then_some(source_window).flatten();
         let diagnostic = self.diagnostic.as_mut().map(|diagnostic| {
-            diagnostic.materialize(
-                stores,
-                diagnostic_decision,
-                &self.params,
-                None,
-                self.par_fill_override,
-                &mut self.diagnostic_lineage_scratch,
-            )
+            diagnostic
+                .materialize(
+                    stores,
+                    diagnostic_decision,
+                    &self.params,
+                    None,
+                    self.par_fill_override,
+                    &mut self.diagnostic_lineage_scratch,
+                )
+                .0
         });
         let allocator_high_cell_overlap = diagnostic.map_or(0, |_| {
             tex_state::node_sequence::direct_high_cell_overlap(
@@ -127,6 +143,7 @@ impl ArenaPostLineMaterializer {
         self.line_no += 1;
         Some(ArenaBrokenLine {
             nodes,
+            source_window,
             material_start,
             diagnostic_nodes: diagnostic,
             allocator_high_cell_overlap,
@@ -160,7 +177,7 @@ impl ArenaPostLineChannel {
         actions: Option<&[tex_typeset::linebreak::MaterializationAction]>,
         par_fill_override: Option<GlueSpec>,
         output_lineages: &mut Vec<tex_state::node_sequence::DirectHighCellLineage>,
-    ) -> tex_state::page_node_arena::PageListId {
+    ) -> (tex_state::page_node_arena::PageListId, bool) {
         let end = decision.position.min(self.source.len());
         let plain_source_run = params.left_skip == GlueSpec::ZERO
             && self.active_directions.is_empty()
@@ -210,7 +227,7 @@ impl ArenaPostLineChannel {
                     .expect("paragraph source remains live"),
                 self.position,
             );
-            return output;
+            return (output, true);
         }
         let mut output = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
         stores.open_page_active_list(&mut output);
@@ -400,7 +417,7 @@ impl ArenaPostLineChannel {
                 .expect("paragraph source remains live"),
             self.position,
         );
-        stores.finalize_page_active_list(&mut output)
+        (stores.finalize_page_active_list(&mut output), false)
     }
 }
 
@@ -668,13 +685,16 @@ pub(crate) fn break_current_paragraph<G>(
     let mut level = commit_current_list(nest, stores, diagnostic_effects, fuel)?;
     let initial_hyphen_context = level.list().initial_hyphen_context();
     let paragraph_diagnostic_context = diagnostic_context.with_pack_begin_line(level.entry_line());
+    let consumed_source = level.list_mutation().take_generated_source(stores);
+    let original_source = consumed_source.source();
     let hlist = crate::math::finish_math_lists_owned(
         stores,
         diagnostic_effects,
         geometry,
-        level.list_mutation().take_nodes(),
+        original_source,
         true,
     );
+    let mut consumed_source = (hlist == original_source).then_some(consumed_source);
     let tracing = stores.int_param(IntParam::TRACING_PARAGRAPHS) > 0;
     let hlist = normalize_paragraph_infinite_shrink(
         stores,
@@ -684,6 +704,9 @@ pub(crate) fn break_current_paragraph<G>(
         &diagnostic_context,
         diagnostic_effects,
     )?;
+    if hlist != original_source {
+        consumed_source = None;
+    }
     let mut line_params = line_break_params(stores, &params);
     if line_params.pdf_adjust_spacing > 1 {
         line_params.expansion_steps = tex_typeset::linebreak::validate_paragraph_expansion(
@@ -737,8 +760,13 @@ pub(crate) fn break_current_paragraph<G>(
     // §804 labels every line packed by `post_line_break` with the horizontal
     // mode level's entry line. The value is detached before the packing loop,
     // so reporting never reaches into command or input state.
-    let mut materializer =
-        ArenaPostLineMaterializer::new(stores, decisions.tape, decisions.breaks, post_params);
+    let mut materializer = ArenaPostLineMaterializer::new(
+        stores,
+        decisions.tape,
+        consumed_source,
+        decisions.breaks,
+        post_params,
+    );
     let mut packing_direction_scratch = Vec::new();
     while let Some(mut broken) = materializer.materialize_next(stores) {
         broken.nodes = nest.reshape_open_type_runs_list(stores, broken.nodes);
