@@ -207,6 +207,196 @@ fn skipped_resident_text_batches_frame_admission_with_exact_fuel() {
 }
 
 #[test]
+fn skipped_macro_body_parameter_enters_its_argument() {
+    crate::test_harness::with_universe(|universe| {
+        let if_false = install(universe, "iffalse", ExpandablePrimitive::IfFalse);
+        let otherwise = install(universe, "else", ExpandablePrimitive::Else);
+        let fi = install(universe, "fi", ExpandablePrimitive::Fi);
+        let definition = universe
+            .allocate_definition(
+                &[TokenWord::pack(Token::Param(1))],
+                &[
+                    TokenWord::pack(if_false),
+                    TokenWord::pack(other('x')),
+                    TokenWord::pack(Token::Param(1)),
+                    TokenWord::pack(other('d')),
+                    TokenWord::pack(fi),
+                ],
+            )
+            .expect("macro definition");
+        let macro_name = universe.intern("skipmacro").expect("macro name");
+        universe
+            .assign_meaning(
+                macro_name,
+                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                AssignmentScope::Global,
+            )
+            .expect("macro meaning");
+
+        for source in [false, true] {
+            let mut scalar_fuel = None;
+            for observed in [true, false] {
+                let mut command = CommandState::default();
+                if source {
+                    for (ch, cat) in [('{', Catcode::BeginGroup), ('}', Catcode::EndGroup)] {
+                        universe
+                            .assign_code(
+                                tex_state::env::CodeTableKind::Catcode,
+                                ch,
+                                i64::from(cat as u8),
+                                AssignmentScope::Global,
+                            )
+                            .expect("brace catcode");
+                    }
+                    let source_id = command
+                        .register_source(crate::SourceRegistration::new(
+                            crate::RegisteredSourceKind::Generated,
+                            &b"\\skipmacro{\\else}%"[..],
+                        ))
+                        .expect("source registration");
+                    command.open_registered_source(source_id).expect("source");
+                } else {
+                    crate::test_harness::push(
+                        &mut command,
+                        [
+                            Token::Cs(macro_name.symbol()),
+                            Token::Char {
+                                ch: '{',
+                                cat: Catcode::BeginGroup,
+                            },
+                            otherwise,
+                            Token::Char {
+                                ch: '}',
+                                cat: Catcode::EndGroup,
+                            },
+                        ],
+                    );
+                }
+                let mut capabilities = CommandHostCapabilities::default();
+                let mut fuel = crate::CommandFuelLedger::default();
+                let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+                let mut observer = InsertedRowBalanceObserver::default();
+                let mut context = universe.command_context().expect("command context");
+                let processor = crate::test_harness::processor(
+                    &mut command,
+                    &mut context,
+                    &mut capabilities,
+                    &mut fuel,
+                    &mut effects,
+                );
+                let mut processor = if observed {
+                    processor.with_observer(&mut observer)
+                } else {
+                    processor
+                };
+                assert_eq!(next_character(&mut processor), 'd', "source={source}");
+                assert_expanded_end(&mut processor);
+                let burned = processor.fuel.burned();
+                if let Some(expected) = scalar_fuel {
+                    assert_eq!(burned, expected, "source={source}: batching fuel");
+                } else {
+                    scalar_fuel = Some(burned);
+                }
+            }
+        }
+    });
+}
+
+#[test]
+fn skipped_macro_parameter_preserves_empty_and_forwarded_arguments() {
+    crate::test_harness::with_universe(|universe| {
+        let if_false = install(universe, "iffalse", ExpandablePrimitive::IfFalse);
+        let otherwise = install(universe, "else", ExpandablePrimitive::Else);
+        let fi = install(universe, "fi", ExpandablePrimitive::Fi);
+        let begin = Token::Char {
+            ch: '{',
+            cat: Catcode::BeginGroup,
+        };
+        let end = Token::Char {
+            ch: '}',
+            cat: Catcode::EndGroup,
+        };
+        let install_macro = |universe: &mut tex_state::Universe<_>, name, body: &[Token]| {
+            let replacement = body
+                .iter()
+                .copied()
+                .map(TokenWord::pack)
+                .collect::<Vec<_>>();
+            let definition = universe
+                .allocate_definition(&[TokenWord::pack(Token::Param(1))], &replacement)
+                .expect("macro definition");
+            let symbol = universe.intern(name).expect("macro name");
+            universe
+                .assign_meaning(
+                    symbol,
+                    MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                    AssignmentScope::Global,
+                )
+                .expect("macro meaning");
+            Token::Cs(symbol.symbol())
+        };
+        let empty = install_macro(
+            universe,
+            "empty-skip",
+            &[
+                if_false,
+                other('x'),
+                Token::Param(1),
+                otherwise,
+                other('d'),
+                fi,
+            ],
+        );
+        let inner = install_macro(
+            universe,
+            "inner-skip",
+            &[if_false, other('x'), Token::Param(1), other('d'), fi],
+        );
+        let outer = install_macro(
+            universe,
+            "outer-skip",
+            &[inner, begin, Token::Param(1), end],
+        );
+
+        for (name, input) in [
+            ("empty", vec![empty, begin, end]),
+            ("forwarded", vec![outer, begin, otherwise, end]),
+        ] {
+            let mut scalar_fuel = None;
+            for observed in [true, false] {
+                let mut command = CommandState::default();
+                crate::test_harness::push(&mut command, input.iter().copied());
+                let mut capabilities = CommandHostCapabilities::default();
+                let mut fuel = crate::CommandFuelLedger::default();
+                let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+                let mut observer = InsertedRowBalanceObserver::default();
+                let mut context = universe.command_context().expect("command context");
+                let processor = crate::test_harness::processor(
+                    &mut command,
+                    &mut context,
+                    &mut capabilities,
+                    &mut fuel,
+                    &mut effects,
+                );
+                let mut processor = if observed {
+                    processor.with_observer(&mut observer)
+                } else {
+                    processor
+                };
+                assert_eq!(next_character(&mut processor), 'd', "{name}");
+                assert_expanded_end(&mut processor);
+                let burned = processor.fuel.burned();
+                if let Some(expected) = scalar_fuel {
+                    assert_eq!(burned, expected, "{name}: batching fuel");
+                } else {
+                    scalar_fuel = Some(burned);
+                }
+            }
+        }
+    });
+}
+
+#[test]
 fn etex_current_if_values_preserve_kind_inversion_and_branch() {
     let cases = [
         (ConditionalKind::If, 1),

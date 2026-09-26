@@ -455,13 +455,26 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<ResidentColdOutcome, CommandError> {
         self.pending_diagnostic_location = None;
         self.charge_command_action()?;
+        let selected = self.read_resident_word();
+        self.finish_charged_raw_read(selected, create_control_sequences)
+    }
+
+    /// Continues the one already-charged canonical read from a word or input
+    /// transition selected by the shared resident reader. A batch consumer
+    /// can hand back its advanced boundary without dropping a parameter or
+    /// charging a substituted token twice.
+    #[inline(always)]
+    fn finish_charged_raw_read(
+        &mut self,
+        mut selected: ResidentWordRead<G>,
+        create_control_sequences: bool,
+    ) -> Result<ResidentColdOutcome, CommandError> {
         loop {
-            let selected = self.read_resident_word();
             if let ResidentWordRead::Word(word) = selected {
                 return Ok(ResidentColdOutcome::Word(word));
             }
             match self.transition_resident_word(selected, create_control_sequences)? {
-                ResidentColdOutcome::Retry => {}
+                ResidentColdOutcome::Retry => selected = self.read_resident_word(),
                 outcome => return Ok(outcome),
             }
         }

@@ -87,6 +87,12 @@ non-brace characters under one borrow of the existing input reader. Each word
 still advances its frame and charges fuel in order. The first control sequence,
 active character, brace, parameter, or other boundary returns from that same
 reader already advanced and passes through ordinary raw settlement exactly once.
+An advanced parameter or exhausted frame enters the same charged input
+transition loop as scalar raw delivery. In particular, a parameter in a macro
+body must open its argument even while `pass_text` is skipping a false branch;
+the argument can contain the branch's `\else` or `\fi` delimiter.
+The resulting command also enters the single compact raw continuation for
+replay completion and alignment v-template admission.
 Source tokenization and exceptional deliveries keep the scalar path. A run
 stops after the last available fuel charge so the next rejected token remains
 unread, as it would under scalar delivery.

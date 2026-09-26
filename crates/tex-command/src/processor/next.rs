@@ -61,27 +61,43 @@ impl<G> CommandProcessor<'_, '_, G> {
         destination: &mut Option<HotCommand<G>>,
     ) -> Result<super::DeliveryStatus, CommandError> {
         loop {
-            match self.raw_next_hot(destination)? {
-                super::DeliveryStatus::ReplayCompleted(_) => continue,
-                super::DeliveryStatus::Command => {
-                    let delimiter = destination.as_ref().is_some_and(|command| {
-                        matches!(
-                            command.alignment_adjustment(),
-                            super::AlignmentDeliveryAdjustment::Delimiter(_)
-                        )
-                    });
-                    if delimiter {
-                        let command = destination
-                            .take()
-                            .ok_or_else(CommandError::input_invariant)?;
-                        self.begin_scalar_alignment_v_template_hot(&command)?;
-                        continue;
-                    }
-                    return Ok(super::DeliveryStatus::Command);
-                }
-                super::DeliveryStatus::End => return Ok(super::DeliveryStatus::End),
-                _ => unreachable!("compact raw delivery has no character or expanded event"),
+            let status = self.raw_next_hot(destination)?;
+            if let Some(status) = self.settle_hot_raw_step(status, destination)? {
+                return Ok(status);
             }
+        }
+    }
+
+    /// Shared continuation after one compact raw read, whether the word came
+    /// from scalar delivery or a resident run's already-advanced boundary.
+    /// `None` requests another raw read after replay or alignment admission.
+    #[inline(always)]
+    pub(super) fn settle_hot_raw_step(
+        &mut self,
+        status: super::DeliveryStatus,
+        destination: &mut Option<HotCommand<G>>,
+    ) -> Result<Option<super::DeliveryStatus>, CommandError> {
+        match status {
+            super::DeliveryStatus::ReplayCompleted(_) => Ok(None),
+            super::DeliveryStatus::Command => {
+                let delimiter = destination.as_ref().is_some_and(|command| {
+                    matches!(
+                        command.alignment_adjustment(),
+                        super::AlignmentDeliveryAdjustment::Delimiter(_)
+                    )
+                });
+                if delimiter {
+                    let command = destination
+                        .take()
+                        .ok_or_else(CommandError::input_invariant)?;
+                    self.begin_scalar_alignment_v_template_hot(&command)?;
+                    Ok(None)
+                } else {
+                    Ok(Some(super::DeliveryStatus::Command))
+                }
+            }
+            super::DeliveryStatus::End => Ok(Some(super::DeliveryStatus::End)),
+            _ => unreachable!("compact raw delivery has no character or expanded event"),
         }
     }
     /// Delivers raw replay-aware input into caller-provided command storage.

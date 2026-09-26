@@ -2,7 +2,7 @@
 
 use super::{
     ExpandedCommandAction, ExpansionDispatch, ReadSite, ResidentColdOutcome, ResidentWord,
-    ResidentWordRead, classify_hot_command, resident::ResidentAdmission,
+    classify_hot_command, resident::ResidentAdmission,
 };
 use crate::command::HotCommand;
 use crate::input::InputLevel;
@@ -190,11 +190,30 @@ impl<G> CommandProcessor<'_, '_, G> {
             );
         }
         match selected {
-            ControlFlow::Continue(ResidentWordRead::Word(word)) => {
-                self.charge_command_action()?;
-                let result = self.finish_selected_hot_word::<false>(word, destination);
+            ControlFlow::Continue(selected) => {
+                self.pending_diagnostic_location = None;
+                let result = (|| {
+                    self.charge_command_action()?;
+                    match self
+                        .finish_charged_raw_read(selected, self.create_source_control_sequences)?
+                    {
+                        ResidentColdOutcome::Word(word) => {
+                            self.finish_selected_hot_word::<false>(word, destination)
+                        }
+                        ResidentColdOutcome::Finished(status) => {
+                            destination.take();
+                            Ok(status)
+                        }
+                        ResidentColdOutcome::Retry => {
+                            unreachable!("charged raw reader settles transitions")
+                        }
+                    }
+                })();
                 match result {
-                    Ok(status) => Ok(status),
+                    Ok(status) => match self.settle_hot_raw_step(status, destination)? {
+                        Some(status) => Ok(status),
+                        None => self.get_next_hot_into(destination),
+                    },
                     Err(failure) => self.fail_hot_expanded_delivery(
                         destination,
                         self.command.transient.active_expansion_depth,
@@ -202,9 +221,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     ),
                 }
             }
-            ControlFlow::Continue(_) | ControlFlow::Break(()) => {
-                self.get_next_hot_into(destination)
-            }
+            ControlFlow::Break(()) => self.get_next_hot_into(destination),
         }
     }
 
