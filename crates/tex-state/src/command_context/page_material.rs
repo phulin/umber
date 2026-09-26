@@ -93,6 +93,21 @@ impl<'a, G> CommandContext<'a, G> {
         self.reclaim_unique_page_nodes(span)
     }
 
+    /// Reclaims a consumed list only when its admitted direct head is
+    /// unlinked. A sliced page-successor list remains valid but must be
+    /// projected before splicing; stale or foreign lists remain errors.
+    pub fn reclaim_unlinked_page_list(
+        &self,
+        list: PageListId,
+    ) -> Result<Option<crate::page_node_arena::UniquePageList>, ForkArenaError> {
+        let span = self.page_nodes.admit_span(list)?;
+        match self.page_nodes.reclaim_unique_span(span) {
+            Ok(unique) => Ok(Some(unique)),
+            Err(ForkArenaError::InvalidRange) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
     /// Converts move-only whole-list authority into an immutable embedded
     /// root without copying its nodes.
     pub fn publish_unique_page_list(
