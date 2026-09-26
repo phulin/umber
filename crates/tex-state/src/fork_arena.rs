@@ -4563,6 +4563,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             &Self,
             &T,
             &mut Option<T>,
+            usize,
         ) -> Result<ConstructedRunValue, ForkArenaError>,
     ) -> Result<usize, ForkArenaError> {
         if selected.start > selected.end || selected.end > source.len() {
@@ -4590,6 +4591,9 @@ impl<T, Lane> ForkArena<T, Lane> {
             count,
             identity_enabled,
         )?;
+        let destination_position = self
+            .resolved_position(pool, key)
+            .ok_or(ForkArenaError::InvalidRange)?;
         let source_start = source.start
             + u32::try_from(selected.start).map_err(|_| ForkArenaError::CapacityOverflow)?;
         let source_end =
@@ -4606,7 +4610,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             |source, destination| {
                 for (source, destination) in source.iter().zip(destination) {
                     let source = source.as_ref().expect("admitted source run is initialized");
-                    let metadata = transform(&*self, source, destination)?;
+                    let metadata = transform(&*self, source, destination, destination_position)?;
                     if destination.is_none() {
                         return Err(ForkArenaError::InvalidRange);
                     }

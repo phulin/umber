@@ -316,6 +316,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   identity facade, checked destination construction, and focused warmed
   1/4,096-node allocation/copy/chunk-work proof over the live page-material
   owner. Public page reads return borrowed cursors; cold detachment is explicit.
+- `src/page_node_arena/consumed_box_projection.rs`: Consumed unbox child
+  projection that rebinds authenticated nested-box provenance while copying
+  only surviving direct records and keeping child closures in place.
 - `src/page.rs`: Exclusive move-only `PageRegion` ownership over page payload,
   the four checked `PageListSpan` PageBuilder roots, scalar state, reversible
   same-region journal, and private owner-relative checkpoint rows; active

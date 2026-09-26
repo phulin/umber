@@ -381,6 +381,19 @@ pub struct UniquePageList {
     identity: Option<SemanticSequenceIdentity>,
 }
 
+/// One semantic box consumption grants one shallow projection of its children.
+/// A linked physical head is valid here; it only rules out a direct splice.
+pub struct ConsumedBoxChildren {
+    list: PageListId,
+}
+
+impl ConsumedBoxChildren {
+    #[must_use]
+    pub const fn list(&self) -> PageListId {
+        self.list
+    }
+}
+
 impl UniquePageList {
     pub(crate) fn list(&self) -> PageListId {
         PageListId::from_parts(self.coordinate.coordinate(), self.identity)
@@ -1949,7 +1962,7 @@ impl<'a> PageMaterialArena<'a> {
         builder: &mut PageMaterialActiveListBuilder,
         span: PageListSpan,
     ) -> Result<(), ForkArenaError> {
-        self.append_reencoded_span_range(builder, span, 0..span.len(), true)
+        self.append_reencoded_span_range(builder, span, 0..span.len(), true, false, false)
     }
 
     /// Moves one unpublished whole chain into the builder's private suffix.
@@ -2035,131 +2048,7 @@ impl<'a> PageMaterialArena<'a> {
             }
             return Ok(());
         }
-        self.append_reencoded_span_range(builder, span, selected, false)
-    }
-
-    fn append_reencoded_span_range(
-        &mut self,
-        builder: &mut PageMaterialActiveListBuilder,
-        span: PageListSpan,
-        selected: Range<usize>,
-        whole_source: bool,
-    ) -> Result<(), ForkArenaError> {
-        if selected.start > selected.end || selected.end > span.len() {
-            return Err(ForkArenaError::InvalidRange);
-        }
-        self.region
-            .pub_arena
-            .begin_reencoded_active_list_copy(span.len(), selected.len());
-        let mut selected_identity = builder
-            .identity
-            .as_ref()
-            .map(|_| SemanticSequenceIdentity::empty());
-        let mut copied = 0_usize;
-        if let Some(tail) = self.span_tail_chunk(span)? {
-            self.append_reencoded_chunk_range(
-                builder,
-                tail,
-                &selected,
-                &mut selected_identity,
-                &mut copied,
-            )?;
-        }
-        if copied != selected.len() {
-            return Err(ForkArenaError::InvalidRange);
-        }
-        if selected_identity.is_some() {
-            builder.identity_work.hashed_values = builder
-                .identity_work
-                .hashed_values
-                .saturating_add(copied as u64);
-            builder.identity_work.combined_summaries = builder
-                .identity_work
-                .combined_summaries
-                .saturating_add(u64::from(whole_source));
-        }
-        if let (Some(identity), Some(selected_identity)) =
-            (&mut builder.identity, selected_identity)
-        {
-            *identity = identity.concat(selected_identity);
-        }
-        Ok(())
-    }
-
-    fn append_reencoded_chunk_range(
-        &mut self,
-        builder: &mut PageMaterialActiveListBuilder,
-        cursor: PageListChunkCursor,
-        selected: &Range<usize>,
-        selected_identity: &mut Option<SemanticSequenceIdentity>,
-        copied: &mut usize,
-    ) -> Result<(), ForkArenaError> {
-        if let Some(previous) = self.span_previous_chunk(&cursor)? {
-            self.append_reencoded_chunk_range(
-                builder,
-                previous,
-                selected,
-                selected_identity,
-                copied,
-            )?;
-        }
-        let chunk_start = cursor.inner.logical_start();
-        let chunk_end = chunk_start + cursor.inner.len();
-        let start = selected.start.max(chunk_start);
-        let end = selected.end.min(chunk_end);
-        if start >= end {
-            return Ok(());
-        }
-        let (dependency_floor, source_paired_dependency_floor) = self
-            .region
-            .pub_arena
-            .admitted_chunk_dependency_floors(&self.pool.chunks, &cursor.inner)?;
-        let identity_enabled = selected_identity.is_some();
-        let mut local_start = start - chunk_start;
-        let local_end = end - chunk_start;
-        while local_start < local_end {
-            let written = self.region.pub_arena.transform_admitted_active_list_run(
-                &mut self.pool.chunks,
-                &mut builder.inner,
-                &cursor.inner,
-                local_start..local_end,
-                identity_enabled,
-                |_, record, destination| {
-                    let record = *record;
-                    let annex =
-                        NodeAnnexView::new(&self.pool.annex_chunks, &self.region.annex_arena);
-                    let item_identity =
-                        identity_enabled.then(|| semantic_record_identity(&record, annex));
-                    if let (Some(identity), Some(item_identity)) =
-                        (selected_identity.as_mut(), item_identity)
-                    {
-                        identity.push_back(item_identity);
-                    }
-                    let (record, annex_dependency_floor) = record
-                        .reencode_same_region(
-                            &mut self.pool.annex_chunks,
-                            &mut self.region.annex_arena,
-                            Some,
-                        )
-                        .ok_or(ForkArenaError::InvalidRange)?;
-                    *destination = Some(record);
-                    Ok(crate::fork_arena::ConstructedRunValue {
-                        item_identity,
-                        dependency_floor,
-                        paired_dependency_floor: [
-                            annex_dependency_floor,
-                            source_paired_dependency_floor,
-                        ]
-                        .into_iter()
-                        .flatten()
-                        .min(),
-                    })
-                },
-            )?;
-            local_start += written;
-            *copied += written;
-        }
-        Ok(())
+        self.append_reencoded_span_range(builder, span, selected, false, false, false)
     }
 
     pub fn finalize_active_list(
@@ -2358,7 +2247,14 @@ impl<'a> PageMaterialArena<'a> {
             let mut builder = PageMaterialActiveListBuilder::vacant();
             self.open_active_list(&mut builder)?;
             builder.identity = None;
-            self.append_reencoded_span_range(&mut builder, span, 0..span.len(), false)?;
+            self.append_reencoded_span_range(
+                &mut builder,
+                span,
+                0..span.len(),
+                false,
+                false,
+                false,
+            )?;
             let copied = self.finalize_unique_active_list(&mut builder)?;
             root = self.region.pub_arena.append_unique_to_validated_list(
                 &mut self.pool.chunks,
@@ -2757,26 +2653,39 @@ impl<'a> PageMaterialArena<'a> {
             .pub_arena
             .owner_relative_list_block_range(&self.pool.chunks, root.coordinate())
             .ok()?;
-        let annex_wrapper = record.box_payload_block_range(self.annex_view())?;
-        if node_wrapper.end != node_wrapper.start + 1
-            || annex_wrapper.end != annex_wrapper.start + 1
-        {
+        if node_wrapper.end != node_wrapper.start + 1 {
             return None;
         }
-        if let Some(stamp) = record.copied_box_body_stamp(self.annex_view()) {
-            return stamp.metadata_at_wrapper(
-                self.region.id(),
-                node_wrapper.start,
-                annex_wrapper.start,
-            );
-        }
-        let original = record.box_segment(self.annex_view())?;
-        let segment = original.rebased_to_wrapper(
+        box_migration_metadata_at_record(
+            *record,
+            self.annex_view(),
             self.region.id(),
             node_wrapper.start,
-            annex_wrapper.start,
-        )?;
-        record.box_migration_metadata_rebased(self.annex_view(), segment)
+        )
+    }
+
+    /// Claims the child list of the page wrapper just consumed by `\unhbox`
+    /// or `\unvbox`. The caller must have removed or independently copied that
+    /// semantic wrapper before asking for this one-shot projection authority.
+    pub fn consumed_box_children(
+        &self,
+        wrapper: PageListId,
+    ) -> Result<ConsumedBoxChildren, ForkArenaError> {
+        if wrapper.len() != 1 {
+            return Err(ForkArenaError::InvalidRange);
+        }
+        let child = match self
+            .node_cursor(wrapper)?
+            .get(0)
+            .ok_or(ForkArenaError::InvalidRange)?
+        {
+            crate::node_view::NodeView::HList(node) | crate::node_view::NodeView::VList(node) => {
+                node.children
+            }
+            _ => return Err(ForkArenaError::InvalidRange),
+        };
+        self.admit_span(child)?;
+        Ok(ConsumedBoxChildren { list: child })
     }
 
     pub fn cancel_closure_build(
@@ -2835,6 +2744,34 @@ impl<'a> PageMaterialArena<'a> {
 
 fn semantic_record_identity(record: &PageMaterialNode, annex: NodeAnnexView<'_>) -> u64 {
     record.semantic_identity(annex)
+}
+
+fn is_unbox_margin_kern(record: &PageMaterialNode) -> bool {
+    record.kind() == Some(crate::node::NodeKind::MarginKern)
+        || record.kern().is_some_and(|(_, kind)| {
+            matches!(
+                kind,
+                crate::node::KernKind::LeftMargin | crate::node::KernKind::RightMargin
+            )
+        })
+}
+
+fn box_migration_metadata_at_record(
+    record: PageMaterialNode,
+    annex: NodeAnnexView<'_>,
+    region: crate::node_region::NodeRegionId,
+    node_wrapper: usize,
+) -> Option<PageBoxMigrationMetadata> {
+    let annex_wrapper = record.box_payload_block_range(annex)?;
+    if annex_wrapper.end != annex_wrapper.start + 1 {
+        return None;
+    }
+    if let Some(stamp) = record.copied_box_body_stamp(annex) {
+        return stamp.metadata_at_wrapper(region, node_wrapper, annex_wrapper.start);
+    }
+    let original = record.box_segment(annex)?;
+    let segment = original.rebased_to_wrapper(region, node_wrapper, annex_wrapper.start)?;
+    record.box_migration_metadata_rebased(annex, segment)
 }
 
 /// Checks the admitted root and every compact record without collecting nodes.
@@ -2982,3 +2919,5 @@ impl<'a> PageMaterialView<'a> {
 #[cfg(test)]
 #[path = "page_node_arena/tests.rs"]
 mod tests;
+
+mod consumed_box_projection;

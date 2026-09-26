@@ -21,7 +21,9 @@ Fixed-payload explicit copies use bounded prepared word scratch in
 `node_codec.rs`. Its child-field offsets are shared by visitation and both
 reencode directions. `annex.rs` publishes independent typed keys in batches;
 each key retains its own serial and exact word range. Box construction metadata
-is non-owning and must be cleared by every reencode path.
+is non-owning. Ordinary copy/composition reencoding clears it; the separate
+consumed-box projection may publish a fresh descriptor anchored to the new
+wrapper while retaining authenticated child ranges.
 
 Preserve crate-private codec visibility and explicit integer encoding. Do not
 transmute records, serialize native bytes, add owned payloads to `NodeRecord`,

@@ -108,6 +108,18 @@ impl<'a, G> CommandContext<'a, G> {
         }
     }
 
+    /// Claims one consumed page box's child list for a single shallow unbox
+    /// projection. The source wrapper was taken from a register or freshly
+    /// copied to page material before this call.
+    pub fn consumed_box_children(
+        &self,
+        wrapper: PageListId,
+    ) -> crate::page_node_arena::ConsumedBoxChildren {
+        self.page_nodes
+            .consumed_box_children(wrapper)
+            .expect("consumed unbox wrapper is one admitted page box")
+    }
+
     /// Converts move-only whole-list authority into an immutable embedded
     /// root without copying its nodes.
     pub fn publish_unique_page_list(
@@ -209,6 +221,16 @@ impl<'a, G> CommandContext<'a, G> {
         self.page_nodes
             .append_range_to_active_list(builder, list, selected)
             .expect("page active-list source range belongs to its live owner");
+    }
+
+    pub fn project_consumed_box_children(
+        &mut self,
+        source: crate::page_node_arena::ConsumedBoxChildren,
+        remove_margin_kerns: bool,
+    ) -> crate::page_node_arena::UniquePageList {
+        self.page_nodes
+            .project_consumed_box_children(source, remove_margin_kerns)
+            .expect("consumed box child projection remains in its live page owner")
     }
 
     pub fn append_page_active_span_range(

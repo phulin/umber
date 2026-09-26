@@ -331,6 +331,38 @@ after ownership and direct-edge preflight in the current page region. An
 explicit TeX copy clears the old stamp and may mint fresh construction
 provenance during its already-required recursive copy.
 
+### Consumed unbox projections
+
+Unboxing consumes a page wrapper even when its child list has a linked or
+sliced physical head. A standalone-head check permits a direct splice, but it
+does not define semantic ownership: a linked list may still be the sole live
+box child after its wrapper is consumed. If margin kerns must be removed, or a
+linked head prevents direct splicing, a move-only consumed-child token
+authorizes one shallow projection of the direct records. Ordinary checked
+range composition has no such token and continues to clear box construction
+descriptors, since its source can remain live.
+
+The projection scans direct records to select survivor runs, reencodes each
+survivor once, omits margin kerns, and never recurses into box children.
+Before publishing a surviving wrapper,
+it authenticates that wrapper's existing body ranges against its actual node
+and annex positions. It reserves the destination node run to learn the new
+wrapper position. Its new typed sidecar retains the old exclusions and adds
+the page-owned gap from the old wrapper to the new sidecar. The sidecar is
+sealed before the replacement wrapper, whose fixed payload is stamped before
+annex publication. The sidecar itself is excluded by the decoder. Adjacent
+old sidecar and gap ranges coalesce, so repeated projections keep metadata
+proportional to the original migrations rather than the number of rewrites.
+Node and annex gaps can grow by different amounts; their bounds are validated
+independently in the same paired descriptor.
+
+Only the consumed replacement wrapper can authorize a later body move. A
+retained checkpoint or shared lineage still fails the selected-chunk
+preflight and takes the history-preserving copy path. Local projection failure
+restores both typed arena suffixes before the consumed source is discarded;
+transfer rollback later restores exactly the selected child slots, leaving
+obsolete wrappers and sidecars page-owned.
+
 ## TeX82 ownership baseline
 
 TeX82 implements its own fixed-address heap inside the global `mem` array.

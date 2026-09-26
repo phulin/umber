@@ -2728,3 +2728,89 @@ fn lastbox_after_unboxing_keeps_sibling_children_in_their_respective_boxes() {
         });
     }
 }
+
+#[test]
+fn margin_filtered_unbox_keeps_siblings_and_moves_lastbox_body() {
+    use tex_state::node::{BoxLr, BoxNode, BoxNodeFields, MarginKernSide, Sign};
+    use tex_state::scaled::GlueSetRatio;
+
+    for (name, primitive) in [("move", "unhbox"), ("copy", "unhcopy")] {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            crate::test_harness::with_admitted(stores, |context| {
+                let make_box = |children| {
+                    Node::HList(BoxNode::new(BoxNodeFields {
+                        width: Scaled::from_raw(0),
+                        height: Scaled::from_raw(0),
+                        depth: Scaled::from_raw(0),
+                        shift: Scaled::from_raw(0),
+                        box_lr: BoxLr::Normal,
+                        glue_set: GlueSetRatio::ZERO,
+                        glue_sign: Sign::Normal,
+                        glue_order: tex_state::glue::Order::Normal,
+                        children,
+                    }))
+                };
+                let siblings = [1, 2].map(|amount| {
+                    let children = context.publish_page_nodes(vec![Node::Kern {
+                        amount: Scaled::from_raw(amount * 65_536),
+                        kind: tex_state::node::KernKind::Explicit,
+                    }]);
+                    make_box(children)
+                });
+                let margin = Node::MarginKern {
+                    amount: Scaled::from_raw(-100),
+                    side: MarginKernSide::Left,
+                    font: tex_state::font::NULL_FONT,
+                    ch: b'A',
+                };
+                let children = context.publish_page_nodes(vec![
+                    margin.clone(),
+                    siblings[0].clone(),
+                    siblings[1].clone(),
+                    margin,
+                ]);
+                let source = context.publish_page_nodes(vec![make_box(children)]);
+                context
+                    .assign_page_box(1, Some(source), tex_state::AssignmentScope::Global)
+                    .expect("source box register owns margin-bearing children");
+            });
+            let copied_before = stores.page_region_counters().page_to_durable_nodes_copied;
+            let source =
+                format!("\\setbox0=\\hbox{{\\{primitive}1\\global\\setbox2=\\lastbox}}\\end");
+            let mut control = super::pdftex_initex(stores);
+            register_source(&mut control, source.as_bytes());
+            run_to_end(&mut control, stores);
+
+            assert_eq!(
+                stores.page_region_counters().page_to_durable_nodes_copied - copied_before,
+                0,
+                "{name}: selected child body transfers after margin filtering"
+            );
+            let first = box_child_nodes(stores, 0);
+            let [Node::HList(first)] = first.as_slice() else {
+                panic!("{name}: first sibling survives without margins: {first:?}");
+            };
+            assert!(matches!(
+                page_vec(stores, first.children).as_slice(),
+                [Node::Kern { amount, .. }] if amount.raw() == 65_536
+            ));
+            assert!(matches!(
+                box_child_nodes(stores, 2).as_slice(),
+                [Node::Kern { amount, .. }] if amount.raw() == 2 * 65_536
+            ));
+            if name == "copy" {
+                let source_children = box_child_nodes(stores, 1);
+                assert!(matches!(
+                    source_children.first(),
+                    Some(Node::MarginKern { .. })
+                ));
+                assert!(matches!(
+                    source_children.last(),
+                    Some(Node::MarginKern { .. })
+                ));
+            } else {
+                assert!(admitted!(stores, |context| context.box_register(1)).is_none());
+            }
+        });
+    }
+}

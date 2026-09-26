@@ -11,7 +11,6 @@ use crate::vertical::is_outer_vertical;
 use super::append_node_to_current_list;
 use crate::{ExecError, Mode, ModeNest};
 
-use crate::box_runtime::first_box_node;
 use crate::box_runtime::hmode::flush_pending_hchars;
 
 pub(crate) fn execute_scanned_unbox_with_error_context<G, F>(
@@ -84,12 +83,8 @@ where
         stores.copy_box_to_page(index)
     }
     .expect("admitted box register remains live");
-    let node = first_box_node(stores, Some(register)).expect("admitted box kind remains valid");
-    let children = match node {
-        Node::HList(node) | Node::VList(node) => node.children,
-        _ => unreachable!(),
-    };
-    append_unboxed(nest, stores, diagnostic_effects, Some(children), fuel)
+    let children = stores.consumed_box_children(register);
+    append_unboxed(nest, stores, diagnostic_effects, children, fuel)
 }
 
 /// Splices one of e-TeX 2.6 `etex.ch` [45.999]'s saved vertical-discard
@@ -583,12 +578,10 @@ fn append_unboxed<G>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
-    source: Option<tex_state::page_node_arena::PageListId>,
+    source: tex_state::page_node_arena::ConsumedBoxChildren,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
-    let Some(children) = source else {
-        return Ok(());
-    };
+    let children = source.list();
     flush_pending_hchars(nest, stores, diagnostic_effects, fuel)?;
     // pdfTeX's margin-kern nodes are line-breaking annotations owned by the
     // containing packed line. Copying the box preserves them, but either
@@ -622,30 +615,7 @@ fn append_unboxed<G>(
         }
         return Ok(());
     }
-    let mut retained = tex_state::page_node_arena::PageMaterialActiveListBuilder::default();
-    stores.open_page_active_list(&mut retained);
-    for index in 0..children.len() {
-        let remove = stores
-            .page_node_list(children)
-            .expect("unboxed children belong to the live page arena")
-            .nodes()
-            .get(index)
-            .is_some_and(|node| {
-                matches!(
-                    node,
-                    tex_state::node_view::NodeView::MarginKern { .. }
-                        | tex_state::node_view::NodeView::Kern {
-                            kind: KernKind::LeftMargin | KernKind::RightMargin,
-                            ..
-                        }
-                )
-            });
-        if !remove {
-            stores.append_page_active_list_range(&mut retained, children, index..index + 1);
-        }
-    }
-    let retained = stores.finalize_page_active_list(&mut retained);
-    let retained = stores.reclaim_unique_page_list(retained);
+    let retained = stores.project_consumed_box_children(source, has_margin_kern);
     if is_outer_vertical(nest) {
         stores.append_unique_page_contributions(retained);
     } else {

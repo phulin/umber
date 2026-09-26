@@ -287,6 +287,24 @@ pub(super) fn decode_box_construction_descriptor(
         migrations,
     })
 }
+
+/// Encodes original construction geometry in private fixed-body scratch.
+/// Both the paired sidecar and final wrapper positions are authenticated by
+/// the caller's publication reservation before this body becomes visible.
+pub(crate) fn write_original_box_body(
+    body: &mut [u32],
+    segment: crate::node_region::PageBoxSegment,
+    migrations: Option<crate::page_node_arena::PageBoxMigrationKey>,
+) -> Option<()> {
+    if body.len() != BOX_PAYLOAD_WORDS || body[28..].iter().any(|word| *word != 0) {
+        return None;
+    }
+    body[28..36].copy_from_slice(&segment.words());
+    if let Some(migrations) = migrations {
+        body[36..43].copy_from_slice(&migrations.words());
+    }
+    Some(())
+}
 /// The largest fixed body accepted by both the typed writer and prepared copy.
 /// Math choices use 40 words; a larger box construction sidecar raises this
 /// bound without changing the relocation storage in a separate place.

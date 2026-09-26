@@ -100,6 +100,134 @@ fn stamped_box_interval_moves_and_rollback_restores_original_nodes() {
 }
 
 #[test]
+fn consumed_unbox_projection_rebinds_sibling_boxes_without_copying_their_bodies() {
+    page_arena!(arena, pool, state, 65_536);
+    let mut nested = Vec::new();
+    let mut original_wrappers = Vec::new();
+    for penalty in [31, 47] {
+        let start = arena.begin_closure_build().expect("nested box start");
+        let child = arena
+            .publish_owned([Node::Penalty(penalty)])
+            .expect("nested child");
+        arena
+            .rotate_box_wrapper_tail()
+            .expect("nested wrapper boundary");
+        let root = arena.publish_owned([boxed(child)]).expect("nested wrapper");
+        let segment = arena
+            .stamp_box_segment(&start, root, None)
+            .expect("original nested stamp");
+        original_wrappers.push((segment.node_range().end - 1, segment.annex_range().end - 1));
+        arena.close_box_segment(start).expect("nested box end");
+        nested.push(root);
+    }
+    let margin = Node::MarginKern {
+        amount: Scaled::from_raw(-100),
+        side: crate::node::MarginKernSide::Left,
+        font: crate::font::NULL_FONT,
+        ch: b'A',
+    };
+    let mut children = PageMaterialActiveListBuilder::vacant();
+    arena
+        .open_active_list(&mut children)
+        .expect("outer child list");
+    arena
+        .push_active_list(&mut children, margin.clone())
+        .expect("leading margin kern");
+    for root in nested {
+        let span = arena.admit_span(root).expect("nested wrapper span");
+        let unique = arena.reclaim_unique_span(span).expect("consumed wrapper");
+        arena
+            .append_unique_active_list(&mut children, unique)
+            .expect("append original wrapper without copying");
+    }
+    arena
+        .push_active_list(&mut children, margin)
+        .expect("trailing margin kern");
+    let outer_children = arena
+        .finalize_active_list(&mut children)
+        .expect("outer children");
+    let mut outer = arena
+        .publish_owned([boxed(outer_children)])
+        .expect("consumed outer box");
+    let copied_before = arena.counters().source_nodes_copied;
+    let mut projected = PageListId::empty();
+    for pass in 0..3 {
+        let consumed = arena
+            .consumed_box_children(outer)
+            .expect("actual consumed wrapper");
+        let retained = arena
+            .project_consumed_box_children(consumed, pass == 0)
+            .expect("one shallow direct-record projection");
+        projected = arena.publish_unique_list(retained);
+        assert_eq!(projected.len(), 2, "margin kerns are removed");
+        for (index, &(old_node, old_annex)) in original_wrappers.iter().enumerate() {
+            let selected = arena
+                .slice_sequence(projected, index..index + 1, &mut Vec::new())
+                .expect("sibling slice");
+            let metadata = arena
+                .box_migration_metadata(selected)
+                .expect("rebound wrapper descriptor");
+            assert!(
+                metadata.exclusions.len() <= 2,
+                "repeated rewrite coalesces obsolete wrapper and sidecar gaps"
+            );
+            if pass == 2 {
+                assert_ne!(
+                    metadata.segment.node_range().end - 1 - old_node,
+                    metadata.segment.annex_range().end - 1 - old_annex,
+                    "node and annex wrapper offsets grow independently"
+                );
+            }
+        }
+        if pass != 2 {
+            outer = arena
+                .publish_owned([boxed(projected)])
+                .expect("next consumed outer box");
+        }
+    }
+    assert_eq!(
+        arena.counters().source_nodes_copied - copied_before,
+        6,
+        "three projections copy exactly two direct wrappers each"
+    );
+
+    let taken = arena
+        .slice_sequence(projected, 1..2, &mut Vec::new())
+        .expect("selected sibling");
+    let survivor = arena
+        .slice_sequence(projected, 0..1, &mut Vec::new())
+        .expect("surviving sibling");
+    let metadata = arena
+        .box_migration_metadata(taken)
+        .expect("current wrapper authorizes its body");
+    assert!(arena.can_finish_interleaved_page_box(taken, &metadata, false));
+    let (owner, loan) = arena
+        .finish_interleaved_page_box(taken, metadata, false)
+        .expect("selected child body moves without a closure copy");
+    assert_eq!(
+        arena
+            .durable_transition_counters()
+            .page_to_durable_nodes_copied,
+        0
+    );
+    let survivor_nodes = resolved(&arena, survivor);
+    let [Node::HList(sibling)] = survivor_nodes.as_slice() else {
+        panic!("surviving wrapper remains live");
+    };
+    assert_eq!(resolved(&arena, sibling.children), penalties(&[31]));
+    let mut owner = Some(owner);
+    arena
+        .rollback_interleaved_page_box(&mut owner, loan)
+        .expect("selected body returns to its original page slots");
+    assert!(owner.is_none());
+    let restored_nodes = resolved(&arena, taken);
+    let [Node::HList(restored)] = restored_nodes.as_slice() else {
+        panic!("rolled-back wrapper remains live");
+    };
+    assert_eq!(resolved(&arena, restored.children), penalties(&[47]));
+}
+
+#[test]
 fn nested_original_box_stamp_rebases_after_whole_region_moves() {
     page_arena!(arena, pool, state, 65_536);
     arena
