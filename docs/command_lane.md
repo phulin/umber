@@ -63,8 +63,8 @@ change an invariant, or leaves the lane after settling when it might have.
 - No page-region succession, paragraph checkpoint cut, pending leader,
   output-routine opening brace, or alignment-recovery brace is pending.
 - No diagnostic effect or first recoverable diagnostic is pending.
-- `\tracingcommands` is not positive. It is re-read before each lane
-  command, since a lane assignment can change it.
+- `\tracingcommands` is not positive. It is re-read after each lane
+  command, since a group transition can restore it.
 - The run is below its operation limit.
 
 The first lane generation keeps the existing admitted-loop entry. It enters
@@ -76,17 +76,15 @@ episode's rollback, fuel, and slice-limit contracts are unchanged.
 ```text
 lane:
   loop
-    status = processor.lane_fetch(&mut hot)     // expanded, unmaterialized
-    if status is not Command         -> hand off status
-    match lane_family(hot.meaning)
+    status = processor.preflight(&mut slot)     // ordinary expanded delivery
+    if status is not Command or a report is pending -> Delivered
+    match lane_family(slot.meaning, innermost group)
       Relax                          -> settle, continue
-      Prefix(global)                 -> fold prefix, fetch next, reswitch
-      Let | FutureLet                -> scan; apply; afterassignment; settle
-      MacroDefinition                -> scan; apply; afterassignment; settle
+      Let | FutureLet                -> scan; commit; afterassignment; settle
+      MacroDefinition                -> scan; commit; afterassignment; settle
+      CatCode                        -> scan; commit; afterassignment; settle
       SemiSimpleGroup | SimpleGroup  -> enter/leave; aftergroup; settle
-      CatCode                        -> scan; apply; afterassignment; settle
-      ScalarAssignment               -> scan; apply; afterassignment; settle
-      _                              -> materialize, hand off command
+      _                              -> Delivered
 ```
 
 The classification is one match on the resolved meaning. It never consults
@@ -95,48 +93,74 @@ barrier, and a family that could need one is not a lane family. A `}`
 closing a group owned by an active box can reach page or shipout work, so it
 is a lane family only when its group kind is not an active box's.
 
-A settled lane command performs exactly these steps:
+A lane command is settled only below the operation limit. Settling it
+performs exactly these steps:
 
-1. Increment the episode's operation count. Leave the lane at the limit.
-2. Roll the operation mark. A journal whose position did not move keeps its
-   frame. A command that consumed only input merges into the next command's
-   rollback unit, as described below.
-3. Re-check the three facts a settled command can change: diagnostic
-   effects, artifact and effect counts for commands that can publish, and
-   `\tracingcommands`.
+1. Re-check the facts a settled command can change: pending reports and
+   diagnostic effects, artifact and effect counts, and `\tracingcommands`.
+   If any changed, leave through the _Applied_ exit.
+2. Fold the checked save-stack words into the run's maximum.
+3. Increment the episode's operation count. The command joins the lane's
+   rollback unit, as described below, so no journal is rolled.
 
 Only the commands that can change page, box, or host state, which are never
 lane families, need the admitted loop's full continuation predicate.
 
 ## Hand-off
 
-A command the lane does not own is materialized once, with its delivery
-stamp, into the episode's command slot. The admitted loop then resumes that
-command, exactly as it already resumes a character-loop boundary command
-through `resume_current_command`. It never backs up or re-delivers the
-token. Fetch status `End` and `ReplayCompleted` hand off unchanged. A fetch
-or scan error leaves through the same error path as ordinary preflight.
+The lane borrows the admitted run's command processor and applies lane
+commands through it, so a lane command never becomes a `ColdOperation`, and
+the processor, its sampled facts, and the episode frame are reused across
+lane commands. The processor lends its admitted state, command root, and
+diagnostic sink to the hot committers between two deliveries; none of its
+processor-local facts caches a meaning, category code, or group level.
+
+The lane leaves through exactly one of four exits, each with the slot's
+command where ordinary delivery would have left it:
+
+- _Delivered_: the delivery status and any unscanned command, which the
+  admitted run dispatches. A command is resumed in place, never backed up or
+  re-delivered.
+- _Scanned_: a lane command whose delivery or scan left a report. The
+  admitted run publishes the report before it applies the scanned operation,
+  as it does for its own hot operations.
+- _Scan failed_: the admitted run's dispatch-error path.
+- _Applied_: a lane command applied in place that failed, or left a report,
+  an effect, an artifact, or a positive `\tracingcommands`. It settles
+  through the admitted run's continuation predicate, which publishes the
+  report, counts the operation, and ends or continues the run.
 
 ## Rollback units
 
 An operation mark delimits a replayable suffix: discarding it restores every
-journal to the mark. A `\relax` changes no journaled state except input
-consumption, so it can merge into the following command's rollback unit. The
-discarded suffix then re-reads the `\relax`, which has no effect. The
-operation count still advances, so the slice limit and cancellation cadence
-are unchanged. Lane commands that write journaled state still roll their
-mark. The roll is cheap when a journal's position is unchanged, and the lane
-performs no other per-command capture.
+journal to the mark. Every command the lane settles in place joins one
+rollback unit with the command that ends the lane. The lane publishes
+nothing, since any report, effect, or artifact ends it, so discarding the
+unit restores every write the lane made and re-reads its commands, which
+then produce the same writes. The operation count still advances per
+command, so the slice limit and cancellation cadence are unchanged.
+
+The state journal cannot reopen a group that closed below the depth at which
+its operation opened. A group transition entered and left inside one unit
+merges, but a lane command that closes a group already open when the unit
+began settles the unit in place: it rolls the state and command-attempt
+journals exactly as the admitted run's roll does. Lane commands never write
+the mode nest, the page list, or the active boxes, so those marks stay valid
+across the lane.
+
+Only a resource suspension discards an admitted unit, and its retry follows
+provisioning of the missing resource, so the replay makes progress. A fatal
+error commits the unit, as it commits any partially executed operation.
 
 ## Fetch
 
 The lane fetch is the ordinary expanded delivery (`get_x_token`), minus the
 per-command wrapper work the generic preflight adds:
 
-- It returns the compact `HotCommand`. A lane command never becomes a
-  `CurrentCommand`, and only a hand-off materializes.
 - It never records a delivery cursor, prepares a command trace, or drains
   semantic diagnostics, because lane eligibility forbids all three.
+- A later stage returns the compact `HotCommand`, so a lane command never
+  becomes a `CurrentCommand` and only a hand-off materializes.
 
 The shared delivery kernel stays the only reader. Fetch-kernel improvements
 (dense meaning decode, the frame-local resident reader, fuel batching) apply
@@ -188,10 +212,13 @@ save stack.
 1. The lane skeleton: eligibility, a single match, `\relax` settlement and
    merge, and the hand-off.
 2. `\let`, `\futurelet`, macro definitions, `\catcode`, and group
-   transitions through the existing hot scanners and appliers. `\global`
-   folds into its following assignment.
-3. Rootless scalar assignments and `\advance`/`\multiply`/`\divide`.
-4. Per-command generic overhead that the lane still shares: journal roll,
+   transitions through the existing hot scanners and committers.
+3. Prefixes. `\global` folds into a following lane assignment. A prefix
+   followed by a command the lane does not own needs a hand-off that carries
+   the prefix into the admitted run's transaction path without backing up
+   the command it fetched.
+4. Rootless scalar assignments and `\advance`/`\multiply`/`\divide`.
+5. Per-command generic overhead that the lane still shares: journal roll,
    facade construction, and the fetch wrapper.
-5. Expansion fast arms, in census order: macro calls, `\expandafter`, and
+6. Expansion fast arms, in census order: macro calls, `\expandafter`, and
    conditionals.

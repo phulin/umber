@@ -241,6 +241,7 @@ impl<G> MainControl<G> {
                 hot_admission = None;
                 hot_operation = None;
                 direct_cold_operation = false;
+                let mut lane_applied = None;
                 let mode = self.modes.current_mode();
                 if self.active_alignment.is_some()
                     || (mode == Mode::DisplayMath
@@ -258,7 +259,7 @@ impl<G> MainControl<G> {
                         &mut self.operation_observations,
                     );
                 }
-                let innermost_group = context.innermost_group_kind();
+                let mut innermost_group = context.innermost_group_kind();
                 let tracked_region_is_active = context.tracked_region_is_active();
                 let job_is_all_over = crate::page_output::job_is_all_over(context);
                 let display_eq_no = self.modes.current_list().display_eq_no().is_some();
@@ -406,15 +407,35 @@ impl<G> MainControl<G> {
                         leader_pending: self.boxes.pending_leader.is_some(),
                         characters_pending: self.modes.current_list().pending_hchars().is_some(),
                     };
+                    let mut lane_exit = None;
                     let delivery = if raw_main_loop_delivery {
                         processor.main_loop_lookahead_into(&mut frame.command)
                     } else if lane.is_eligible() && diagnostics.is_empty() {
-                        super::lane::lane_fetch(
+                        let mut owners = super::lane::LaneOwners {
+                            boxes: &self.boxes,
+                            max_save_stack: &mut self.max_save_stack,
+                            operation_mark: operation_mark
+                                .as_mut()
+                                .expect("admitted run owns its current operation mark"),
+                        };
+                        let exit = super::lane::run(
                             &mut processor,
                             &mut frame.command,
                             operations,
                             max_operations,
-                        )
+                            &mut owners,
+                        );
+                        // Lane group transitions move the innermost group,
+                        // which the hand-off command's dispatch selects on.
+                        innermost_group = processor.lane_parts().0.innermost_group_kind();
+                        match exit {
+                            Ok(super::lane::LaneExit::Delivered(status)) => Ok(status),
+                            Ok(exit) => {
+                                lane_exit = Some(exit);
+                                Ok(tex_command::DeliveryStatus::Command)
+                            }
+                            Err(error) => Err(error),
+                        }
                     } else {
                         processor.preflight_command_into(&mut frame.command)
                     };
@@ -445,10 +466,31 @@ impl<G> MainControl<G> {
                         self.shown_mode = Some(mode);
                     }
                     let mut reported = false;
-                    // Diagnostics are a real reporting barrier: preserve their
-                    // established ordering before command tracing or operand work.
-                    // The common diagnostic-free path continues in this same borrow.
-                    if diagnostics.is_empty() && status == tex_command::DeliveryStatus::Command {
+                    // A lane exit has already scanned, and possibly applied,
+                    // the slot's command; only its settlement remains.
+                    if let Some(exit) = lane_exit {
+                        match exit {
+                            super::lane::LaneExit::Delivered(_) => {
+                                unreachable!("delivered lane exits return their status")
+                            }
+                            super::lane::LaneExit::Scanned(operation) => {
+                                frame.retain_source_role();
+                                frame.clear_preflight();
+                                hot_operation = Some(operation);
+                            }
+                            super::lane::LaneExit::ScanFailed(error) => {
+                                frame.discard_resident_command();
+                                frame.error = Some(error);
+                            }
+                            super::lane::LaneExit::Applied(applied) => {
+                                frame.retain_source_role();
+                                frame.clear_preflight();
+                                lane_applied = Some(applied);
+                            }
+                        }
+                    } else if diagnostics.is_empty()
+                        && status == tex_command::DeliveryStatus::Command
+                    {
                         let continues_main_loop = self.main_loop_active
                             && matches!(
                                 frame.current().meaning(),
@@ -593,6 +635,29 @@ impl<G> MainControl<G> {
                         &mut operation,
                     );
                     hot_admission = Some((admission, output_start));
+                }
+                if let Some(applied) = lane_applied.take() {
+                    let output_start = OperationOutputStart {
+                        outer_paragraph_was_active,
+                        source_role: frame.operation_source_role(),
+                        artifact_count: applied.artifact_count,
+                        effect_count: applied.effect_count,
+                        prepared_page_count: self.prepared_dvi_pages.len(),
+                        tracked_region_is_active: false,
+                    };
+                    host_preparation.record_checked_save_stack_words(applied.save_stack_words);
+                    let settled_in_admission = applied.result.is_ok();
+                    hot_admission = Some((
+                        HotApplyAdmission {
+                            result: applied.result,
+                            main_loop_active: None,
+                            settled_in_admission,
+                            fires_afterassignment: applied.fires_afterassignment,
+                            pending_page_output: PendingPageOutputFacts::capture(context),
+                            assignment_receipts: None,
+                        },
+                        output_start,
+                    ));
                 }
                 if diagnostics.is_empty() && direct_cold_operation {
                     let output_start = OperationOutputStart {
@@ -3331,7 +3396,7 @@ pub(super) fn scan_command<G>(
     }
     if let Some(operation) = hot_apply::scan(
         processor,
-        command,
+        command.meaning(),
         &mut scalar,
         global,
         flags,

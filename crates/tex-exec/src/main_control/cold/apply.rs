@@ -12,13 +12,12 @@ use super::support::*;
 
 pub(in crate::main_control) fn enter_group<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut PersistentInterpreter<G>,
+    command: &mut tex_command::CommandState<G>,
     diagnostic_effects: &mut DiagnosticEffects,
     kind: GroupKind,
 ) {
     let entered_line = command.current_file_line_number();
     let frame = command
-        .state_mut()
         .begin_group(stores, kind, entered_line)
         .expect("executor and command group stacks remain synchronized");
     let level = u32::try_from(stores.execution_group_depth()).unwrap_or(u32::MAX);
@@ -27,7 +26,7 @@ pub(in crate::main_control) fn enter_group<G>(
 
 pub(in crate::main_control) fn leave_group_payloads<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
-    command: &mut PersistentInterpreter<G>,
+    command: &mut tex_command::CommandState<G>,
     diagnostic_effects: &mut DiagnosticEffects,
     kind: GroupKind,
 ) -> Result<Vec<tex_state::token::TracedTokenWord>, tex_command::CommandGroupError> {
@@ -37,7 +36,7 @@ pub(in crate::main_control) fn leave_group_payloads<G>(
         .copied()
         .ok_or(tex_command::CommandGroupError::NoOpenGroup)?;
     let level = u32::try_from(stores.execution_group_depth()).unwrap_or(u32::MAX);
-    let closed = command.state_mut().end_group(stores, kind)?;
+    let closed = command.end_group(stores, kind)?;
     // e-TeX [19.282--283]: each trace observes the already restored/retained
     // live word, and all of them precede §282's `\aftergroup` backups.
     crate::assignments::tracing::trace_group_restorations(

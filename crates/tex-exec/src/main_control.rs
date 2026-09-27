@@ -2743,6 +2743,19 @@ impl<G> MainControl<G> {
         command: &tex_command::CommandState<G>,
         profile: CommandProfile,
     ) {
+        preparation.record_checked_save_stack_words(Self::save_stack_words(
+            stores, boxes, command, profile,
+        ));
+    }
+
+    /// The checked save-stack words §273 would count for the live group,
+    /// `\aftergroup`, and active-box state.
+    fn save_stack_words(
+        stores: &CommandContext<'_, G>,
+        boxes: &ReplayBoxes<G>,
+        command: &tex_command::CommandState<G>,
+        profile: CommandProfile,
+    ) -> usize {
         // TeX82 §§645/1083 keeps ordinary box specs immediately below their
         // §273 boundaries. Vcenters and insertions deliberately have smaller
         // projections (§§1167/1099), so derive the words from each live kind.
@@ -2753,14 +2766,13 @@ impl<G> MainControl<G> {
             .fold(0_usize, usize::saturating_add);
         let (aftergroup_words, latest_aftergroup_position) =
             command.aftergroup_save_stack_projection();
-        let checked = stores
+        stores
             .checked_save_stack_words(
                 aftergroup_words,
                 latest_aftergroup_position,
                 profile.capabilities().supports_etex(),
             )
-            .saturating_add(box_spec_words);
-        preparation.record_checked_save_stack_words(checked);
+            .saturating_add(box_spec_words)
     }
 
     /// Drains the field-level save projection after application. Exceptional

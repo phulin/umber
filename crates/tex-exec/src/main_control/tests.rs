@@ -1538,6 +1538,8 @@ fn with_etex<R>(
 mod alignment;
 #[path = "tests/assignments.rs"]
 mod assignments;
+#[path = "tests/command_lane.rs"]
+mod command_lane;
 #[path = "tests/diagnostics_recovery.rs"]
 mod diagnostics_recovery;
 #[path = "tests/episode_observation.rs"]

@@ -161,6 +161,14 @@ impl<G> StateOperation<G> {
         self.group_depth
     }
 
+    /// The execution-group depth at which this operation opened. Restoring
+    /// the operation cannot reopen a group closed below this depth, so an
+    /// owner that closes one must settle the operation first.
+    #[must_use]
+    pub const fn opening_group_depth(&self) -> usize {
+        self.group_depth
+    }
+
     pub(crate) const fn save_stack(&self) -> SaveStackProjection {
         self.save_stack
     }

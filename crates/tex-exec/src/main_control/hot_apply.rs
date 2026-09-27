@@ -68,13 +68,13 @@ impl<G> HotOperation<G> {
 /// mode/group cases have selected the ordinary assignment arm.
 pub(super) fn scan<G>(
     processor: &mut CommandProcessor<'_, '_, G>,
-    command: &mut CommandEpisode<G>,
+    meaning: tex_state::meaning::ResolvedMeaning<G>,
     scalar: &mut tex_command::ScalarScanFrame,
     global: bool,
     flags: MeaningFlags,
     innermost_group: Option<GroupKind>,
 ) -> Result<Option<HotOperation<G>>, ExecError> {
-    let operation = match command.meaning() {
+    let operation = match meaning {
         tex_state::meaning::ResolvedMeaning::Static(Meaning::CharToken {
             cat: Catcode::BeginGroup,
             ..
@@ -197,21 +197,13 @@ fn apply_macro_definition<G>(
     command: &mut CommandMachine<'_, '_, G>,
 ) -> Result<ReplayStep, ExecError> {
     let observed_definition = command.observes_mutations().then_some(definition);
-    assignment_tracing::trace_meaning_write(
+    commit_macro_definition(
+        target,
+        definition,
+        flags,
+        global,
         stores,
         command.diagnostic_effects,
-        Token::Cs(target),
-        true,
-        global,
-        |stores| {
-            stores
-                .assign_resolved_meaning(
-                    target,
-                    tex_state::meaning::ResolvedMeaning::Macro { flags, definition },
-                    assignment_scope(global),
-                )
-                .expect("macro target belongs to the admitted generation");
-        },
     );
 
     // TeX82 §1211's trace seam reports the stored body. Walking that body is
@@ -251,13 +243,67 @@ fn apply_macro_definition<G>(
     Ok(ReplayStep::Continue)
 }
 
+/// Commits §1218's macro definition and its §1211 assignment trace.
+pub(super) fn commit_macro_definition<G>(
+    target: Symbol,
+    definition: tex_state::DefinitionRef<G>,
+    flags: MeaningFlags,
+    global: bool,
+    stores: &mut tex_state::CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
+) {
+    assignment_tracing::trace_meaning_write(
+        stores,
+        diagnostic_effects,
+        Token::Cs(target),
+        true,
+        global,
+        |stores| {
+            stores
+                .assign_resolved_meaning(
+                    target,
+                    tex_state::meaning::ResolvedMeaning::Macro { flags, definition },
+                    assignment_scope(global),
+                )
+                .expect("macro target belongs to the admitted generation");
+        },
+    );
+}
+
 fn apply_let<G>(
     target: Symbol,
-    mut meaning: tex_state::meaning::ResolvedMeaning<G>,
+    meaning: tex_state::meaning::ResolvedMeaning<G>,
     global: bool,
     stores: &mut tex_state::CommandContext<'_, G>,
     command: &mut CommandMachine<'_, '_, G>,
 ) -> Result<ReplayStep, ExecError> {
+    let committed = commit_let(target, meaning, global, stores, command.diagnostic_effects)?;
+    if let Some(meaning) = committed
+        && command.observes_mutations()
+    {
+        let record = MutationRecord {
+            target: MutationTarget::Meaning,
+            key: ObservationValue::Name(stores.resolve(target).to_owned()),
+            value: meaning_mutation_value(meaning, stores),
+            global,
+        };
+        command.retain_assignment_receipt(
+            crate::assignments::committer::MutationReceipt::observed(record),
+        );
+    }
+    Ok(ReplayStep::Continue)
+}
+
+/// Commits §1221's `\let` through §277's `eq_define`, returning the
+/// meaning it wrote, or `None` when e-TeX suppressed a redundant local
+/// definition.
+pub(super) fn commit_let<G>(
+    target: Symbol,
+    mut meaning: tex_state::meaning::ResolvedMeaning<G>,
+    global: bool,
+    stores: &mut tex_state::CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
+) -> Result<Option<tex_state::meaning::ResolvedMeaning<G>>, ExecError> {
     if global && let tex_state::meaning::ResolvedMeaning::Macro { definition, .. } = &mut meaning {
         *definition = stores.promote_definition_global(*definition).map_err(|_| {
             ExecError::Command(tex_command::CommandError::Fatal(
@@ -275,10 +321,9 @@ fn apply_let<G>(
         false
     };
     let committed = !redundant;
-    let observed_meaning = (committed && command.observes_mutations()).then_some(meaning);
     assignment_tracing::trace_meaning_write(
         stores,
-        command.diagnostic_effects,
+        diagnostic_effects,
         Token::Cs(target),
         committed,
         global,
@@ -290,18 +335,7 @@ fn apply_let<G>(
             }
         },
     );
-    if let Some(meaning) = observed_meaning {
-        let record = MutationRecord {
-            target: MutationTarget::Meaning,
-            key: ObservationValue::Name(stores.resolve(target).to_owned()),
-            value: meaning_mutation_value(meaning, stores),
-            global,
-        };
-        command.retain_assignment_receipt(
-            crate::assignments::committer::MutationReceipt::observed(record),
-        );
-    }
-    Ok(ReplayStep::Continue)
+    Ok(committed.then_some(meaning))
 }
 
 fn apply_catcode<G>(
@@ -314,34 +348,13 @@ fn apply_catcode<G>(
     let value =
         recover_code_table_value(UnexpandablePrimitive::CatCode, raw_value, stores, command)?;
     let catcode = catcode_from_value(value)?;
-    let old = stores.catcode(character);
-    let committed = AssignmentCommitter::new(stores, command.diagnostic_effects)
-        .direct_scoped_word(
-            old,
-            catcode,
-            global,
-            |stores, global| {
-                stores
-                    .assign_code(
-                        tex_state::env::CodeTableKind::Catcode,
-                        character,
-                        i64::from(catcode as u8),
-                        assignment_scope(global),
-                    )
-                    .expect("catcode target belongs to the admitted generation");
-            },
-            |stores, diagnostic_effects, _| {
-                assignment_tracing::trace_code(
-                    stores,
-                    diagnostic_effects,
-                    "catcode",
-                    character,
-                    global,
-                    old as i32,
-                    catcode as i32,
-                )
-            },
-        );
+    let committed = commit_catcode(
+        character,
+        catcode,
+        global,
+        stores,
+        command.diagnostic_effects,
+    );
     if committed && command.observes_mutations() {
         let record = MutationRecord {
             target: MutationTarget::Catcode,
@@ -360,7 +373,45 @@ fn apply_catcode<G>(
     Ok(ReplayStep::Continue)
 }
 
-fn catcode_from_value(value: i32) -> Result<Catcode, ExecError> {
+/// Commits §1232's validated category code through §277's `eq_define`,
+/// returning whether the code table changed.
+pub(super) fn commit_catcode<G>(
+    character: char,
+    catcode: Catcode,
+    global: bool,
+    stores: &mut tex_state::CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
+) -> bool {
+    let old = stores.catcode(character);
+    AssignmentCommitter::new(stores, diagnostic_effects).direct_scoped_word(
+        old,
+        catcode,
+        global,
+        |stores, global| {
+            stores
+                .assign_code(
+                    tex_state::env::CodeTableKind::Catcode,
+                    character,
+                    i64::from(catcode as u8),
+                    assignment_scope(global),
+                )
+                .expect("catcode target belongs to the admitted generation");
+        },
+        |stores, diagnostic_effects, _| {
+            assignment_tracing::trace_code(
+                stores,
+                diagnostic_effects,
+                "catcode",
+                character,
+                global,
+                old as i32,
+                catcode as i32,
+            )
+        },
+    )
+}
+
+pub(super) fn catcode_from_value(value: i32) -> Result<Catcode, ExecError> {
     match value {
         0 => Ok(Catcode::Escape),
         1 => Ok(Catcode::BeginGroup),

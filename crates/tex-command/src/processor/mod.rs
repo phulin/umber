@@ -706,6 +706,29 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
             || self.diagnostic_effects.has_first_recoverable()
     }
 
+    /// Lends the admitted state, the command root, and the diagnostic sink
+    /// to main control's command lane, which applies a settled assignment or
+    /// group transition between two deliveries of this same processor.
+    ///
+    /// Every processor-local fact survives such an application unchanged:
+    /// none caches a meaning, category code, or group level across
+    /// deliveries. The one sampled parameter, `\tracingcommands`, is the
+    /// lane's own eligibility condition, which it re-reads after each
+    /// application.
+    pub fn lane_parts(
+        &mut self,
+    ) -> (
+        &mut CommandContext<'admission, G>,
+        &mut CommandState<G>,
+        &mut tex_state::diagnostic::DiagnosticEffects,
+    ) {
+        (
+            &mut *self.state,
+            &mut *self.command,
+            &mut *self.diagnostic_effects,
+        )
+    }
+
     /// Number of §299 command traces printed during this processor episode.
     ///
     /// Nested operations use this to distinguish a trace they emitted from
