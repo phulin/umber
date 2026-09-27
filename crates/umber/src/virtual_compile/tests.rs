@@ -5358,6 +5358,95 @@ fn requested_html_and_dvi_share_one_committed_compile() {
 }
 
 #[test]
+fn diagnostic_only_provenance_preserves_exact_outputs_across_revisions() {
+    let source = "\\font\\tenrm=cmr10\\relax \\tenrm \\immediate\\openout1=result.aux \\immediate\\write1{same} \\immediate\\closeout1 \\shipout\\hbox{A}\\end";
+    let mut diagnostic = VirtualCompileSession::new(SessionOptions {
+        font_layout_policy: tex_fonts::FontLayoutPolicy::ClassicTfmExact,
+        provenance_demand: tex_state::ProvenanceDemand::DIAGNOSTICS,
+        ..SessionOptions::default()
+    })
+    .expect("diagnostic-only session");
+    let mut rendered = VirtualCompileSession::new(SessionOptions {
+        font_layout_policy: tex_fonts::FontLayoutPolicy::ClassicTfmExact,
+        ..SessionOptions::default()
+    })
+    .expect("default rendered-source session");
+    for session in [&mut diagnostic, &mut rendered] {
+        session
+            .add_user_file("cmr10.tfm", CMR10.to_vec())
+            .expect("local TFM");
+        session
+            .add_user_file("main.tex", source.as_bytes().to_vec())
+            .expect("main source");
+    }
+
+    for (revision, text) in [(1, source.to_owned()), (2, source.replace("{A}", "{B}"))] {
+        if revision == 2 {
+            for session in [&mut diagnostic, &mut rendered] {
+                apply_text_replacement(session, revision, source, "{A}", "{B}");
+            }
+        }
+        let CompileAttemptResult::Complete(diagnostic_output) = diagnostic.compile_attempt() else {
+            panic!("diagnostic-only revision {revision} must complete");
+        };
+        let CompileAttemptResult::Complete(rendered_output) = rendered.compile_attempt() else {
+            panic!("rendered-source revision {revision} must complete");
+        };
+        assert_eq!(
+            diagnostic_output, rendered_output,
+            "revision {revision}: {text}"
+        );
+        let diagnostic_page = &diagnostic
+            .accepted_engine_output
+            .as_ref()
+            .expect("diagnostic accepted output")
+            .pages()[0];
+        let rendered_page = &rendered
+            .accepted_engine_output
+            .as_ref()
+            .expect("rendered accepted output")
+            .pages()[0];
+        assert_eq!(diagnostic_page.artifact().render_node_count(), 0);
+        assert_eq!(diagnostic_page.artifact().render_provenance_bytes(), 0);
+        assert!(rendered_page.artifact().render_node_count() > 0);
+        assert!(rendered_page.artifact().render_provenance_bytes() > 0);
+        let output_id = diagnostic.rendered_output_id().expect("output id");
+        assert!(
+            diagnostic
+                .rendered_source_location(1, 0, Some(0), output_id, RevisionId::new(revision))
+                .expect("opted-out query")
+                .is_none()
+        );
+    }
+}
+
+#[test]
+fn diagnostic_only_provenance_preserves_recoverable_error_context() {
+    let source = "\\errorcontextlines=2 \\nonesuch \\end";
+    let mut rendered = session(source);
+    let mut diagnostic = VirtualCompileSession::new(SessionOptions {
+        font_layout_policy: tex_fonts::FontLayoutPolicy::ClassicTfmExact,
+        provenance_demand: tex_state::ProvenanceDemand::DIAGNOSTICS,
+        ..SessionOptions::default()
+    })
+    .expect("diagnostic-only session");
+    diagnostic
+        .add_user_file("main.tex", source.as_bytes().to_vec())
+        .expect("main source");
+    let CompileAttemptResult::Complete(rendered_output) = rendered.compile_attempt() else {
+        panic!("default provenance should recover from the undefined control sequence");
+    };
+    let CompileAttemptResult::Complete(diagnostic_output) = diagnostic.compile_attempt() else {
+        panic!("diagnostic-only provenance should recover from the undefined control sequence");
+    };
+    assert_eq!(diagnostic_output, rendered_output);
+    assert!(
+        String::from_utf8_lossy(&diagnostic_output.log).contains("Undefined control sequence"),
+        "the paired output must include a real TeX diagnostic"
+    );
+}
+
+#[test]
 fn accepted_user_tfm_remains_available_across_incremental_patch() {
     let source =
         "\\font\\tenrm=cmr10\\relax\\tenrm %a\n\\shipout\\hbox{\\char65}\\shipout\\hbox{B}\\end";

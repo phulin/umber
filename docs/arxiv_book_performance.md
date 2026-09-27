@@ -564,6 +564,18 @@ SHA-256 is
 
 ## Heap attribution beyond superblock backing
 
+### Batch rendered-source ownership
+
+Native PDF and DVI runs have no rendered-source lookup consumer. Their compile
+sessions should request diagnostic provenance only, so shipout omits the
+node-to-source sidecars and detached source recipes used by editor lookups.
+HTML and editor sessions retain the full rendered-source policy, including
+across edited revisions. This choice is fixed at session creation and is
+independent of the normal bounded checkpoint budget: resource retries still
+need checkpoints. A rendered-source query on a session that opted out returns
+no mapping. The heap attribution below motivates the change but is not a
+measurement of its effect on the full book.
+
 Heaptrack 1.5.0 ran the same compacted profiling binary at 100 and 200 million
 fuel actions. Both runs reached the exact fuel boundary under the original
 120-second and 1,536 MiB guards. Instrumentation and concurrent builds make

@@ -8,6 +8,56 @@ use umber_distribution::{ManifestShard, pack_shard};
 use super::*;
 
 #[test]
+fn native_output_selection_controls_rendered_source_sidecars() {
+    for (engine, outputs, expected_rendered_source) in [
+        (EngineMode::Tex82, OutputCapabilitySet::DVI, false),
+        (EngineMode::PdfTex, OutputCapabilitySet::PDF, false),
+        (EngineMode::Tex82, OutputCapabilitySet::HTML, true),
+    ] {
+        let directory = TempDir::new().expect("temporary project");
+        let input = directory.path().join("main.tex");
+        std::fs::write(
+            &input,
+            b"\\shipout\\hbox{\\vrule width 1pt height 1pt}\\end",
+        )
+        .expect("rule-only source");
+        let options = NativeRunOptions {
+            input,
+            format: None,
+            initial_prefetch_keys: Vec::new(),
+            engine,
+            pdf_output_mode: None,
+            outputs,
+            html_asset_directory: None,
+            distribution: None,
+            distribution_ahash64: None,
+            offline: true,
+            expansion_fuel: Some(100_000),
+            execution_steps: Some(100_000),
+        };
+        let mut session = NativeCompileSession::new_with_cache(
+            &options,
+            &FetchCancellation::new(),
+            BlobStore::new(directory.path().join("cache")),
+        )
+        .expect("native session");
+        session
+            .compile(&FetchCancellation::new())
+            .expect("native rule-only compile");
+        let finalization = session
+            .into_accepted_finalization()
+            .expect("accepted native finalization");
+        let pages = finalization.completion.pages();
+        assert_eq!(pages.len(), 1, "{outputs:?}");
+        assert_eq!(
+            pages[0].artifact().render_provenance_bytes() > 0,
+            expected_rendered_source,
+            "{outputs:?}"
+        );
+    }
+}
+
+#[test]
 fn local_startup_prefetch_is_visible_to_input() {
     let directory = TempDir::new().expect("temporary project");
     std::fs::write(directory.path().join("main.tex"), b"\\input class \\end").expect("main");

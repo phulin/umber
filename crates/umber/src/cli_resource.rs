@@ -694,6 +694,11 @@ impl<'owner> NativeCompileSession<'owner> {
                     ..SessionLimits::default()
                 },
                 outputs: options.outputs,
+                provenance_demand: if options.outputs.contains(OutputCapability::Html) {
+                    tex_state::ProvenanceDemand::DIAGNOSTICS_AND_RENDERED_SOURCE
+                } else {
+                    tex_state::ProvenanceDemand::DIAGNOSTICS
+                },
                 html_asset_mode: options.html_asset_directory.as_ref().map_or(
                     tex_out::html::AssetMode::Embedded,
                     |relative_directory| tex_out::html::AssetMode::Manifest {

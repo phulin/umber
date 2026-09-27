@@ -226,6 +226,9 @@ pub struct SessionOptions {
     pub pdf_output_mode: Option<PdfOutputMode>,
     pub clock: JobClock,
     pub limits: SessionLimits,
+    /// Provenance consumers retained at shipout. Batch jobs can keep exact
+    /// diagnostics without retaining rendered-source lookup sidecars.
+    pub provenance_demand: tex_state::ProvenanceDemand,
     /// Downstream products requested independently from engine compatibility.
     pub outputs: OutputCapabilitySet,
     /// HTML asset publication policy fixed before execution.
@@ -250,6 +253,7 @@ impl Default for SessionOptions {
             pdf_output_mode: None,
             clock: JobClock::DEFAULT,
             limits: SessionLimits::default(),
+            provenance_demand: tex_state::ProvenanceDemand::DIAGNOSTICS_AND_RENDERED_SOURCE,
             outputs: OutputCapabilitySet::DVI,
             html_asset_mode: tex_out::html::AssetMode::Embedded,
             accepted_font_containers: AcceptedFontContainers::WASM,
@@ -864,6 +868,7 @@ pub struct VirtualCompileSession<'store> {
     pdf_output_mode: Option<PdfOutputMode>,
     clock: JobClock,
     limits: SessionLimits,
+    provenance_demand: tex_state::ProvenanceDemand,
     checkpoint_budget: usize,
     resources: VirtualResourceState,
     attempts: u32,
@@ -1179,6 +1184,7 @@ impl<'store> VirtualCompileSession<'store> {
             pdf_output_mode: options.pdf_output_mode,
             clock: options.clock,
             limits,
+            provenance_demand: options.provenance_demand,
             // One-shot resource misses use the same bounded restart policy as
             // incremental sessions so they can replay from a full checkpoint.
             checkpoint_budget: limits.cached_file_bytes,
@@ -1236,6 +1242,7 @@ impl<'store> VirtualCompileSession<'store> {
             pdf_output_mode: self.pdf_output_mode,
             clock: self.clock,
             limits: self.limits,
+            provenance_demand: self.provenance_demand,
             outputs: self.outputs,
             html_asset_mode: self.html_asset_mode.clone(),
             accepted_font_containers: self.accepted_font_containers,
@@ -1480,6 +1487,7 @@ impl<'store> VirtualCompileSession<'store> {
     }
 
     /// Resolves one HTML page/event/unit against the currently accepted output.
+    /// Sessions without rendered-source demand always return no mapping.
     pub fn rendered_source_location(
         &self,
         page: u32,
@@ -1488,7 +1496,10 @@ impl<'store> VirtualCompileSession<'store> {
         output_id: tex_incr::RenderedOutputId,
         revision: tex_incr::RevisionId,
     ) -> Result<Option<RenderedSourceResult>, CompileError> {
-        if self.accepted_output.is_none() || self.pending_patch.is_some() {
+        if !self.provenance_demand.rendered_source()
+            || self.accepted_output.is_none()
+            || self.pending_patch.is_some()
+        {
             return Ok(None);
         }
         let Some(session) = self.incremental.as_ref() else {
@@ -2315,7 +2326,7 @@ impl<'store> VirtualCompileSession<'store> {
             candidate.set_cumulative_fuel_limit(self.limits.engine_fuel);
             candidate.set_execution_budgets(self.execution_budgets());
             candidate.set_provenance_config(
-                tex_state::ProvenanceDemand::DIAGNOSTICS_AND_RENDERED_SOURCE,
+                self.provenance_demand,
                 tex_state::ProvenanceBudgets::default(),
             );
             Box::new(RetainedCandidate {
@@ -2343,7 +2354,7 @@ impl<'store> VirtualCompileSession<'store> {
             candidate.set_cumulative_fuel_limit(self.limits.engine_fuel);
             candidate.set_execution_budgets(self.execution_budgets());
             candidate.set_provenance_config(
-                tex_state::ProvenanceDemand::DIAGNOSTICS_AND_RENDERED_SOURCE,
+                self.provenance_demand,
                 tex_state::ProvenanceBudgets::default(),
             );
             Box::new(RetainedCandidate {

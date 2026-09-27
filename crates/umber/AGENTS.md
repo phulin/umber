@@ -66,7 +66,7 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
   selected while detached virtual-font packets are lowered.
 - `src/pdf_output/finalization_input/virtual_fonts/tests.rs`: unified pdfTeX
   engine/VF internal-font timeline regression coverage.
-- `src/virtual_compile.rs`: host-neutral persistent compile session over one typed file/OpenType/PK resource state, versioned mapped-TFM layout policy, revision-checked root patches, rollback-safe batch and synchronous blocking admission through incremental registration and candidate-view preparation, retryable initial loaded formats, one retained canonical HTML render document, output-budgeted rendered-source caches, retained immutable resources, independently configurable restart-history retention, and execution/resource accounting.
+- `src/virtual_compile.rs`: host-neutral persistent compile session over one typed file/OpenType/PK resource state, versioned mapped-TFM layout policy, revision-checked root patches, rollback-safe batch and synchronous blocking admission through incremental registration and candidate-view preparation, retryable initial loaded formats, one retained canonical HTML render document, session-selected diagnostic/rendered-source provenance, output-budgeted rendered-source caches, retained immutable resources, bounded restart checkpoints for resource retries, and execution/resource accounting.
 - `src/virtual_compile/publication.rs`: private accepted-output preparation and final publication for completed compile candidates, including detached memory effects, auxiliary/DVI/HTML output, HTML update planning, and the synchronized accepted revision/output/render state.
 - `src/virtual_compile/path.rs`: logical TeX/TFM request normalization over `umber-vfs` canonical paths.
 - `src/virtual_compile/pdf_resources.rs`: post-execution typed VF/local-TFM/map/encoding/program closure discovery and immutable parsed cache.
@@ -79,8 +79,8 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `src/cli_resource.rs`: retained native project/cache/distribution resolution,
   the source/digest/offline-bounded authenticated root plus touched packed-shard
   byte owners, cancellation-aware resource retries, incremental source
-  replacement, one-shot zero restart-history ownership independent of the
-  resource cache, finite engine fuel/step/frame/journal/effect configuration,
+  replacement, native PDF/DVI diagnostic-only provenance selection, normal
+  bounded restart checkpoints, finite engine fuel/step/frame/journal/effect configuration,
   accepted-run telemetry handoff, shared `PrefetchPlanner` admission/replay
   callbacks, and identity-pinned PDF font-closure receipt projection. Packed
   misses are authoritative; do not restore selected-record or selected-miss
