@@ -88,6 +88,20 @@ impl super::RegionValue<ActiveLane> for u32 {
     fn rebrand_region_lists(&mut self, _destination_arena: u32) {}
 }
 
+/// A leaf lane whose values can never name a list. Its visitor panics, so a
+/// closure preflight that still walks individual values fails loudly.
+enum LeafLane {}
+
+impl super::RegionValue<LeafLane> for u32 {
+    const HAS_INLINE_REGION_LISTS: bool = false;
+
+    fn visit_region_lists(&self, _visit: &mut dyn FnMut(super::ArenaListId<LeafLane>)) {
+        panic!("leaf-lane closure preflight visited a value");
+    }
+
+    fn rebrand_region_lists(&mut self, _destination_arena: u32) {}
+}
+
 impl super::RegionValue<PageLane> for u32 {
     fn visit_region_lists(&self, _visit: &mut dyn FnMut(super::ArenaListId<PageLane>)) {}
 
@@ -2236,6 +2250,25 @@ fn batch_sealing_rejects_unfinished_dependency_metadata() {
         .seal_batch(&mut pool, mark, vec![root])
         .expect("completed publication seals");
     arena.cancel_batch(batch).expect("cancel sealed test batch");
+}
+
+#[test]
+fn leaf_lane_closure_preflights_never_visit_values() {
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(32);
+    let mut arena = ForkArena::<u32, LeafLane>::new();
+    let mark = arena.begin_batch(&mut pool).expect("batch boundary");
+    let root = arena
+        .append_unsealed_list(&mut pool, 0..64)
+        .expect("multi-chunk leaf list");
+    assert!(arena.live_payload_len() > 1);
+
+    arena
+        .preflight_batch_closure(&pool, &mark, &[root])
+        .expect("leaf batch closure needs only root and chunk proofs");
+    let destination = ForkArena::<u32, LeafLane>::new();
+    arena
+        .preflight_whole_region_transfer(&pool, &destination, Some(root))
+        .expect("leaf whole-region closure needs only chunk metadata");
 }
 
 #[test]

@@ -155,6 +155,11 @@ impl<T, Lane> ForkArena<T, Lane> {
         for list in lists {
             self.validate_list_in_suffix(pool, *list, mark.payload_start as usize)?;
         }
+        // Leaf lanes store no inline list coordinate, so the root checks
+        // above are the whole closure proof.
+        if !T::HAS_INLINE_REGION_LISTS {
+            return Ok(());
+        }
         for key in payload {
             let used = pool.payload.used(key, self.owner)?;
             for offset in 0..used {

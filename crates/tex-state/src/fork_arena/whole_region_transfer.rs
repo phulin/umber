@@ -69,6 +69,11 @@ impl<T, Lane> ForkArena<T, Lane> {
             {
                 return Err(ForkArenaError::InvalidRegion);
             }
+            // Leaf lanes store no inline list coordinate; their chunk
+            // metadata above is the whole closure proof.
+            if !T::HAS_INLINE_REGION_LISTS {
+                continue;
+            }
             let used = pool.payload.used(key, self.owner)?;
             for offset in 0..used {
                 let value = pool
