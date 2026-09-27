@@ -108,6 +108,7 @@ mod delivery;
 mod discretionary;
 mod executor_facts;
 mod hot_apply;
+mod lane;
 mod resources;
 mod root_source;
 mod settlement;

@@ -396,8 +396,25 @@ impl<G> MainControl<G> {
                     // otherwise ordinary preflight publishes the unexpandable
                     // command's expanded observation directly and continues in place
                     // only when expansion is actually required.
+                    let lane = super::lane::LaneContext {
+                        mode,
+                        raw_main_loop_delivery,
+                        observing,
+                        tracked_region_is_active,
+                        host_boundary_pending: self.page_region_succession_pending
+                            || self.paragraph_checkpoint_cut,
+                        leader_pending: self.boxes.pending_leader.is_some(),
+                        characters_pending: self.modes.current_list().pending_hchars().is_some(),
+                    };
                     let delivery = if raw_main_loop_delivery {
                         processor.main_loop_lookahead_into(&mut frame.command)
+                    } else if lane.is_eligible() && diagnostics.is_empty() {
+                        super::lane::lane_fetch(
+                            &mut processor,
+                            &mut frame.command,
+                            operations,
+                            max_operations,
+                        )
                     } else {
                         processor.preflight_command_into(&mut frame.command)
                     };

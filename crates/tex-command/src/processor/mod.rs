@@ -694,6 +694,18 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
         self.command_trace_printed
     }
 
+    /// Whether delivery left anything main control must publish before it
+    /// may settle another command in place: a semantic diagnostic, a
+    /// detached diagnostic effect or trace, a first recoverable diagnostic,
+    /// or a command trace.
+    #[must_use]
+    pub fn has_pending_reports(&self) -> bool {
+        self.command_trace_printed
+            || !self.command.semantic_diagnostics.is_empty()
+            || !self.diagnostic_effects.is_empty()
+            || self.diagnostic_effects.has_first_recoverable()
+    }
+
     /// Number of §299 command traces printed during this processor episode.
     ///
     /// Nested operations use this to distinguish a trace they emitted from

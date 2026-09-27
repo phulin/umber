@@ -102,6 +102,10 @@ Command operands are scanned by `tex-command` into typed request and result valu
   continuations never cross a resource-need unwind. Delivery fields remain in
   the same caller slot and no fact cache, compatibility preparation path, or
   per-token payload exists.
+- `src/main_control/lane.rs`: the command lane (`docs/command_lane.md`), the
+  admitted run's minimal inner loop. It samples lane eligibility once per
+  admitted iteration and settles lane-owned commands in place, handing every
+  other command to the admitted run in its unchanged command slot.
 - `src/main_control/hot_apply.rs`: fused family-sized scan operands and direct
   in-place semantic handlers for the measured definition, let, catcode, and
   ordinary-group families. These commands bypass `ColdOperation`; dispatch
