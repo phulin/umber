@@ -41,7 +41,13 @@ path. The consuming handoff now releases the incremental session after reading
 its statistics, before extracting the owned completion. An ownership test checks
 that both canonical and PDF page allocations survive that handoff unchanged;
 this removes the clone without changing retained-session reuse semantics.
-The resulting whole-book memory reduction still needs measurement.
+The isolated full-book heaptrack run at `616b4610a` reduced maximum RSS from
+2,241,328 to 1,795,804 KiB, about 435 MiB or 20%. Its per-page image and text
+hashes match the previous run on all 588 pages. The candidate capture is under
+`target/perf-tex-copy-plan/finalization-move-heaptrack/fuel-2000000000/`.
+This remains above the original 1,536 MiB guard. Both runs were instrumented
+and shared the machine with other work, so their elapsed times do not establish
+a speed improvement.
 The raw capture, heap report, and allocation timeline are under
 `target/perf-tex-copy-plan/late-book-heaptrack-7ef/fuel-2000000000/`.
 Its 545.78-second instrumented runtime is not a shipping speed measurement.
@@ -138,6 +144,19 @@ The reason census is in
 `.worktrees/slot-2/target/perf-generated-box-ownership/gate-reason-census/fuel-200000000/`;
 it records its pre-commit source-diff hash as well as the binary hash. These
 instrumented runs establish copy volume and origin, not runtime improvement.
+
+The unique vertical-source transfer at `1ee115c65` removes most destructive
+`\vsplit` source copies through the existing reversible durable-to-page loan.
+At the same 200-million-action endpoint, that origin falls from 868 calls and
+758,681 nodes to 14 calls and 3,731 nodes. Total region-copy volume falls from
+5,647,640 to 4,897,690 nodes: the net reduction is 749,950 because other
+structural fallbacks add 5,000 nodes under the changed ownership layout.
+Token and fuel-work counters match. This checkpoint passes all seven validation
+stages and exact PDF comparisons for all 93 arXiv rows and eight annual TeX Live
+representatives. The counter comparison and shipping parity receipts are under
+`.worktrees/slot-3/target/perf-tex-copy-plan/vsplit-transfer/`,
+`vsplit-shipping-parity-93/`, and `vsplit-shipping-representatives/`.
+These measurements establish copy-volume reduction, not a latency estimate.
 
 ## Book identity and workload
 
