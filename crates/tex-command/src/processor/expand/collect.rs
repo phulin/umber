@@ -2,6 +2,7 @@
 
 use super::{ResidentColdOutcome, consume::TokenMeaning};
 use crate::command::HotCommand;
+use crate::execution_scratch::{ArgumentRunAdmission, DefinitionReplacementSink};
 use crate::token_collector::{ClassifiedToken, TokenCollector};
 use crate::{CommandError, CommandProcessor, DeliveryStatus};
 use tex_state::interner::Symbol;
@@ -24,12 +25,45 @@ impl<G> CommandProcessor<'_, '_, G> {
         result
     }
 
+    /// Moves the plain prefix of the current resident span straight into an
+    /// open definition's replacement text, as macro arguments do. Every word
+    /// the run leaves behind is delivered by the scalar loop below.
+    fn consume_replacement_run(
+        &mut self,
+        macro_definition: bool,
+        collector: &mut TokenCollector<G>,
+    ) -> Result<(), CommandError> {
+        let Some((writer, cursor)) = collector.replacement_run() else {
+            return Ok(());
+        };
+        // The body's own closing brace (depth one) ends the run.
+        let admission =
+            ArgumentRunAdmission::with_commands(self.state, None, None, cursor.brace_depth(), 1)
+                .stopping_at_parameters(macro_definition);
+        let admission = if self.command.delivery_mode.alignment_active() {
+            admission.characters_only()
+        } else {
+            admission
+        };
+        let mut sink = DefinitionReplacementSink {
+            writer,
+            depth_delta: 0,
+        };
+        self.command
+            .consume_plain_resident_run(&mut sink, self.fuel, admission)?;
+        cursor.advance_balanced_depth(sink.depth_delta);
+        Ok(())
+    }
+
     fn collect_unexpanded_words<const OBSERVED: bool>(
         &mut self,
         parameters: Option<(u8, Option<Symbol>)>,
         collector: &mut TokenCollector<G>,
     ) -> Result<(), CommandError> {
         loop {
+            if !OBSERVED {
+                self.consume_replacement_run(parameters.is_some(), collector)?;
+            }
             // Source creation is the reader's policy for this consumer. No
             // mutable processor flag needs setting and clearing per body word.
             let word = match self.read_raw_word(true)? {

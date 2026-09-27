@@ -1081,7 +1081,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             admission
         };
         self.command
-            .consume_plain_macro_body_argument_run(tokens, self.fuel, admission)
+            .consume_plain_resident_run(tokens, self.fuel, admission)
     }
 
     /// Builds KMP failure links over one immutable parameter-text delimiter.

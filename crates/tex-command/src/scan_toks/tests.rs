@@ -1139,3 +1139,151 @@ fn direct_definition_collection_matches_observed_recovery_at_every_fuel_cut() {
         assert_eq!(run(false, limit), run(true, limit), "fuel {limit}");
     }
 }
+
+/// Unobserved definitions consume plain resident spans as batched runs. The
+/// observed scalar path is the reference: both must agree on the stored body,
+/// fuel, diagnostics, and `align_state` at every fuel cut, whether the body
+/// comes from a macro body or from a substituted macro argument.
+#[test]
+fn batched_definition_runs_match_scalar_collection_from_resident_sources() {
+    struct Observer;
+    impl crate::CommandObserver for Observer {
+        fn committed(&mut self, _: crate::CommandObservation) {}
+    }
+    fn install<G>(
+        universe: &mut tex_state::Universe<G>,
+        name: &str,
+        parameters: &[Token],
+        replacement: &[Token],
+    ) -> Token {
+        let pack = |tokens: &[Token]| tokens.iter().copied().map(TokenWord::pack).collect::<Vec<_>>();
+        let definition = universe
+            .allocate_definition(&pack(parameters), &pack(replacement))
+            .expect("macro definition");
+        let symbol = universe.intern(name).expect("macro name");
+        universe
+            .assign_meaning(
+                symbol,
+                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                AssignmentScope::Global,
+            )
+            .expect("macro meaning");
+        Token::Cs(symbol.symbol())
+    }
+    let run = |from_argument: bool, observed: bool, limit: u64| {
+        crate::test_harness::with_universe(|universe| {
+            let retained = Token::Cs(universe.intern("retained").expect("symbol").symbol());
+            // `x`, then the parameter text `#1`, then a body whose plain
+            // spans are interrupted by nested braces, a stored `#1`, a doubled
+            // `##`, and an illegal `#2` that is backed up and read again.
+            let text = [
+                token('x', Catcode::Letter),
+                token('#', Catcode::Parameter),
+                token('1', Catcode::Other),
+                token('{', Catcode::BeginGroup),
+                token('a', Catcode::Letter),
+                token('{', Catcode::BeginGroup),
+                token('b', Catcode::Letter),
+                retained,
+                token('}', Catcode::EndGroup),
+                token('c', Catcode::Letter),
+                token('#', Catcode::Parameter),
+                token('1', Catcode::Other),
+                token('d', Catcode::Letter),
+                token('#', Catcode::Parameter),
+                token('#', Catcode::Parameter),
+                token('e', Catcode::Letter),
+                token('#', Catcode::Parameter),
+                token('2', Catcode::Other),
+                token('f', Catcode::Letter),
+                token('}', Catcode::EndGroup),
+            ];
+            let input = if from_argument {
+                let carrier = install(universe, "carrier", &[Token::Param(1)], &[Token::Param(1)]);
+                std::iter::once(carrier)
+                    .chain(std::iter::once(token('{', Catcode::BeginGroup)))
+                    .chain(text)
+                    .chain(std::iter::once(token('}', Catcode::EndGroup)))
+                    .collect::<Vec<_>>()
+            } else {
+                vec![install(universe, "carrier", &[], &text)]
+            };
+            let mut command = CommandState::default();
+            let _operation = command.begin_attempt_operation();
+            crate::test_harness::push(&mut command, input);
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut fuel = crate::CommandFuelLedger::new(limit).expect("fuel");
+            let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut observer = Observer;
+            let mut context = universe.command_context().expect("context");
+            let processor = crate::test_harness::processor(
+                &mut command,
+                &mut context,
+                &mut capabilities,
+                &mut fuel,
+                &mut effects,
+            );
+            let mut processor = if observed {
+                processor.with_observer(&mut observer)
+            } else {
+                processor
+            };
+            // Expanding the carrier leaves its body (or argument) resident.
+            let mut destination = None;
+            match processor.get_x_token_into(&mut destination) {
+                Ok(_) => {}
+                Err(crate::CommandError::FuelExhausted { .. }) => return None,
+                Err(error) => panic!("unexpected expansion failure: {error:?}"),
+            }
+            processor.command.profile_reset_macro_kernel_counters();
+            let result = processor.scan_toks_buffers(ScanToksMode::MacroDefinition {
+                expanded: false,
+                global: false,
+            });
+            let body = match result {
+                Ok(scanned) => Some(
+                    processor
+                        .state
+                        .definition(scanned.definition().expect("definition"))
+                        .replacement_text()
+                        .iter()
+                        .map(|word| word.semantic_token())
+                        .collect::<Vec<_>>(),
+                ),
+                Err(crate::CommandError::FuelExhausted { .. }) => None,
+                Err(error) => panic!("unexpected scan failure: {error:?}"),
+            };
+            let (body_words, _, _, _, argument_words, ..) =
+                processor.command.profile_macro_kernel_counters();
+            Some((
+                (
+                    body,
+                    processor.fuel.burned(),
+                    processor.command.semantic_diagnostics.len(),
+                    processor.command.roots.alignment.align_state,
+                ),
+                body_words + argument_words,
+            ))
+        })
+    };
+    for from_argument in [false, true] {
+        let (complete, batched) = run(from_argument, false, 1_000).expect("carrier expands");
+        assert!(batched >= 6, "plain spans are consumed as runs: {batched}");
+        let body = complete.0.as_ref().expect("body");
+        assert_eq!(
+            body.len(),
+            13,
+            "a{{b\\retained}}c#1d#e#2f with a converted #1: {body:?}"
+        );
+        assert!(body.contains(&Token::Param(1)));
+        let fuel = complete.1;
+        assert_eq!(run(from_argument, true, 1_000).map(|run| run.0), Some(complete));
+        for limit in 1..=fuel + 1 {
+            assert_eq!(
+                run(from_argument, false, limit).map(|run| run.0),
+                run(from_argument, true, limit).map(|run| run.0),
+                "argument source {from_argument}, fuel {limit}"
+            );
+        }
+    }
+}

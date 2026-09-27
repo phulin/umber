@@ -1092,17 +1092,17 @@ impl<G> InputStack<G> {
 }
 
 impl<G> crate::CommandState<G> {
-    /// Consumes the ordinary literal prefix of the active macro-body span
-    /// directly into an argument writer.
+    /// Consumes the ordinary prefix of the active macro-body or argument span
+    /// directly into a macro-argument writer or an open definition.
     ///
     /// The prefix stops before every token that needs the canonical delivery
-    /// machine: control sequences (including active characters), parameter
-    /// substitution, brace/alignment accounting, or input exhaustion. The
+    /// machine, as decided by the caller's admission: outer or alignment-bound
+    /// commands, parameter substitution, closing braces, or input exhaustion. The
     /// scanner therefore crosses the input/scratch boundary once for the
     /// whole admitted physical span rather than once per ordinary token.
-    pub(crate) fn consume_plain_macro_body_argument_run(
+    pub(crate) fn consume_plain_resident_run(
         &mut self,
-        writer: &mut crate::execution_scratch::MacroArgumentWriter<G>,
+        writer: &mut impl crate::execution_scratch::PlainRunSink<G>,
         fuel: &mut crate::fuel::CommandFuel,
         mut admission: crate::execution_scratch::ArgumentRunAdmission<'_, '_, G>,
     ) -> Result<u32, crate::CommandError> {
@@ -1143,11 +1143,7 @@ impl<G> crate::CommandState<G> {
                         .take_while(|word| admission.admits(word.get()))
                         .count();
                     if count != 0
-                        && let Err(error) = scratch.append_plain_argument_cell_span(
-                            writer,
-                            &span[..count],
-                            tex_state::token::OriginId::UNKNOWN,
-                        )
+                        && let Err(error) = writer.append_body_span(scratch, &span[..count])
                     {
                         append_error = Some(error);
                     }
@@ -1163,12 +1159,12 @@ impl<G> crate::CommandState<G> {
                 (consumed, false)
             }
             super::ResidentTokenStorage::MacroArgument(argument) => {
-                let consumed = scratch
-                    .append_plain_from_argument_span(
+                let consumed = writer
+                    .append_argument_span(
+                        scratch,
                         argument.range,
                         position,
                         &mut argument.origin_run,
-                        writer,
                         available,
                         &mut admission,
                     )

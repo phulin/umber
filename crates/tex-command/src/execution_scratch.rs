@@ -496,6 +496,42 @@ impl MacroWordLane {
         Ok(consumed)
     }
 
+    /// Reads the admitted plain prefix of one argument span into a sink
+    /// outside this lane. Classification matches [`Self::append_plain_range_at`].
+    fn visit_plain_range_at<G, E>(
+        &self,
+        source: MacroArgumentRange<G>,
+        position: u32,
+        origin_run: &mut u32,
+        limit: usize,
+        admission: &mut ArgumentRunAdmission<'_, '_, G>,
+        mut visit: impl FnMut(TokenWord) -> Result<(), E>,
+    ) -> Result<u32, ScratchError> {
+        let start = source
+            .start
+            .checked_add(position)
+            .ok_or(ScratchError::CapacityOverflow)?;
+        let limit = u32::try_from(limit).unwrap_or(u32::MAX);
+        let mut consumed = 0_u32;
+        while consumed < limit {
+            let absolute = start
+                .checked_add(consumed)
+                .ok_or(ScratchError::CapacityOverflow)?;
+            if absolute >= source.end {
+                break;
+            }
+            let (word, _) = self
+                .get_sequential_parts(absolute, origin_run)
+                .ok_or(ScratchError::InvalidCoordinate)?;
+            if !admission.admits(word) {
+                break;
+            }
+            visit(word).map_err(|_| ScratchError::InvalidCoordinate)?;
+            consumed += 1;
+        }
+        Ok(consumed)
+    }
+
     fn get(&self, index: u32) -> Option<TracedTokenWord> {
         if index >= self.len {
             return None;
@@ -936,6 +972,21 @@ impl<G> ExecutionScratch<G> {
             .append_plain_range_at(source, position, origin_run, writer, limit, admission)?;
         writer.visible_end = writer.append.absolute;
         Ok(count)
+    }
+
+    /// Reads the admitted plain prefix of one argument span into a sink that
+    /// does not live in the macro word lane.
+    pub(crate) fn visit_plain_from_argument_span<E>(
+        &self,
+        source: MacroArgumentRange<G>,
+        position: u32,
+        origin_run: &mut u32,
+        limit: usize,
+        admission: &mut ArgumentRunAdmission<'_, '_, G>,
+        visit: impl FnMut(TokenWord) -> Result<(), E>,
+    ) -> Result<u32, ScratchError> {
+        self.macro_words
+            .visit_plain_range_at(source, position, origin_run, limit, admission, visit)
     }
 
     /// Appends a delimiter candidate to the same parent-owned word lane as
@@ -1598,6 +1649,96 @@ impl<G> ExecutionScratch<G> {
 /// meaning, a brace that would close the argument, and the delimiter's first
 /// token at depth zero return the run to scalar delivery. Without a command
 /// context only literal non-brace, non-active characters are admitted.
+/// Destination of one batched run of plain resident words.
+///
+/// Macro-body spans arrive as one physical slice; argument spans are read from
+/// the scratch word lane, which a macro-argument writer also appends to.
+pub(crate) trait PlainRunSink<G> {
+    fn append_body_span(
+        &mut self,
+        scratch: &mut ExecutionScratch<G>,
+        words: &[Cell<TokenWord>],
+    ) -> Result<(), ScratchError>;
+
+    fn append_argument_span(
+        &mut self,
+        scratch: &mut ExecutionScratch<G>,
+        source: MacroArgumentRange<G>,
+        position: u32,
+        origin_run: &mut u32,
+        limit: usize,
+        admission: &mut ArgumentRunAdmission<'_, '_, G>,
+    ) -> Result<u32, ScratchError>;
+}
+
+impl<G> PlainRunSink<G> for MacroArgumentWriter<G> {
+    fn append_body_span(
+        &mut self,
+        scratch: &mut ExecutionScratch<G>,
+        words: &[Cell<TokenWord>],
+    ) -> Result<(), ScratchError> {
+        scratch.append_plain_argument_cell_span(self, words, OriginId::UNKNOWN)
+    }
+
+    fn append_argument_span(
+        &mut self,
+        scratch: &mut ExecutionScratch<G>,
+        source: MacroArgumentRange<G>,
+        position: u32,
+        origin_run: &mut u32,
+        limit: usize,
+        admission: &mut ArgumentRunAdmission<'_, '_, G>,
+    ) -> Result<u32, ScratchError> {
+        scratch.append_plain_from_argument_span(source, position, origin_run, self, limit, admission)
+    }
+}
+
+/// Writes a plain run into an open definition's replacement text and tracks
+/// the net brace depth the run's interior groups leave behind.
+pub(crate) struct DefinitionReplacementSink<'w, G> {
+    pub(crate) writer: &'w mut tex_state::DefinitionBuildWriter<G>,
+    pub(crate) depth_delta: i32,
+}
+
+impl<G> DefinitionReplacementSink<'_, G> {
+    #[inline(always)]
+    fn push(&mut self, word: TokenWord) -> Result<(), tex_state::DefinitionBuildError> {
+        self.depth_delta += match word.literal_catcode() {
+            Some(Catcode::BeginGroup) => 1,
+            Some(Catcode::EndGroup) => -1,
+            _ => 0,
+        };
+        self.writer.push_replacement(word)
+    }
+}
+
+impl<G> PlainRunSink<G> for DefinitionReplacementSink<'_, G> {
+    fn append_body_span(
+        &mut self,
+        _: &mut ExecutionScratch<G>,
+        words: &[Cell<TokenWord>],
+    ) -> Result<(), ScratchError> {
+        words
+            .iter()
+            .try_for_each(|word| self.push(word.get()))
+            .map_err(|_| ScratchError::InvalidCoordinate)
+    }
+
+    fn append_argument_span(
+        &mut self,
+        scratch: &mut ExecutionScratch<G>,
+        source: MacroArgumentRange<G>,
+        position: u32,
+        origin_run: &mut u32,
+        limit: usize,
+        admission: &mut ArgumentRunAdmission<'_, '_, G>,
+    ) -> Result<u32, ScratchError> {
+        scratch.visit_plain_from_argument_span(source, position, origin_run, limit, admission, |word| {
+            self.push(word)
+        })
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct ArgumentRunAdmission<'a, 'admission, G> {
     state: Option<&'a tex_state::CommandContext<'admission, G>>,
@@ -1609,6 +1750,9 @@ pub(crate) struct ArgumentRunAdmission<'a, 'admission, G> {
     /// delimited argument.
     close_floor: u32,
     brace_delta: i32,
+    /// A macro definition's replacement text gives §479 meaning to parameter
+    /// characters, so its runs stop before them.
+    stop_at_parameter: bool,
 }
 
 impl<'a, 'admission, G> ArgumentRunAdmission<'a, 'admission, G> {
@@ -1626,6 +1770,15 @@ impl<'a, 'admission, G> ArgumentRunAdmission<'a, 'admission, G> {
             depth,
             close_floor,
             brace_delta: 0,
+            stop_at_parameter: false,
+        }
+    }
+
+    /// The same admission, also stopping before parameter characters.
+    pub(crate) const fn stopping_at_parameters(self, stop: bool) -> Self {
+        Self {
+            stop_at_parameter: stop,
+            ..self
         }
     }
 
@@ -1660,6 +1813,7 @@ impl<'a, 'admission, G> ArgumentRunAdmission<'a, 'admission, G> {
                 true
             }
             Some(Catcode::BeginGroup | Catcode::EndGroup | Catcode::AlignmentTab) => false,
+            Some(Catcode::Parameter) => !self.stop_at_parameter,
             Some(Catcode::Active) => self.admits_command(word),
             Some(_) => true,
             None => {

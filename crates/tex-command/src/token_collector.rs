@@ -280,6 +280,21 @@ impl<G> TokenCollector<G> {
         self.definition_writer.as_mut()
     }
 
+    /// Lends the definition writer to a batched replacement run together with
+    /// the balanced-body depth the run starts from. Runs are only possible
+    /// while no `#` awaits its §479 continuation.
+    pub(crate) fn replacement_run(
+        &mut self,
+    ) -> Option<(
+        &mut tex_state::DefinitionBuildWriter<G>,
+        &mut crate::scanner_kernel::ScannerCursor,
+    )> {
+        if self.phase != TokenCollectorPhase::Replacement || self.pending_parameter.is_some() {
+            return None;
+        }
+        Some((self.definition_writer.as_mut()?, &mut self.cursor))
+    }
+
     pub(crate) fn take_definition_writer(&mut self) -> Option<tex_state::DefinitionBuildWriter<G>> {
         self.definition_writer.take()
     }

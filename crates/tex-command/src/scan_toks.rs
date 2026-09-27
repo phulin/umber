@@ -970,7 +970,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         // Token collection is an ordinary synchronous scanner.  A resource
         // miss is cleaned up below and propagated to the host checkpoint; no
         // collector owner is published into execution scratch.
-        let attempt_opening = self.command.attempt.arena().mark();
+        // Only attempt-arena sinks are allocated before the scanner scope
+        // opens; other destinations leave nothing there for failure to trim.
+        let attempt_opening = matches!(config.destination, ScanToksDestination::Attempt)
+            .then(|| self.command.attempt.arena().mark());
         let mut collector = TokenCollector::default();
         if let Err(error) = self.prepare_scan_toks_collector(
             &mut collector,
@@ -978,22 +981,14 @@ impl<G> CommandProcessor<'_, '_, G> {
             config.destination,
             self.is_observed(),
         ) {
-            self.command
-                .attempt
-                .arena_mut()
-                .truncate(attempt_opening)
-                .map_err(attempt_command_error)?;
+            self.truncate_attempt_opening(attempt_opening)?;
             return Err(error);
         }
         let scope = match self.command.begin_attempt_scanner_scope() {
             Ok(scope) => scope,
             Err(error) => {
                 self.discard_scan_toks_collector(&mut collector)?;
-                self.command
-                    .attempt
-                    .arena_mut()
-                    .truncate(attempt_opening)
-                    .map_err(attempt_command_error)?;
+                self.truncate_attempt_opening(attempt_opening)?;
                 return Err(attempt_command_error(error));
             }
         };
@@ -1028,11 +1023,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 self.command
                     .discard_attempt_scope_suffix(scope)
                     .map_err(attempt_command_error)?;
-                self.command
-                    .attempt
-                    .arena_mut()
-                    .truncate(attempt_opening)
-                    .map_err(attempt_command_error)?;
+                self.truncate_attempt_opening(attempt_opening)?;
                 return Err(error);
             }
         };
@@ -1120,17 +1111,27 @@ impl<G> CommandProcessor<'_, '_, G> {
         collector: &mut TokenCollector<G>,
         episode: ScannerEpisode,
         scope: crate::attempt::OwnedAttemptScope,
-        attempt_opening: AttemptMark,
+        attempt_opening: Option<AttemptMark>,
     ) -> Result<(), CommandError> {
         self.finish_scanner_episode(episode);
         self.discard_scan_toks_collector(collector)?;
         self.command
             .discard_attempt_scope_suffix(scope)
             .map_err(attempt_command_error)?;
+        self.truncate_attempt_opening(attempt_opening)
+    }
+
+    fn truncate_attempt_opening(
+        &mut self,
+        attempt_opening: Option<AttemptMark>,
+    ) -> Result<(), CommandError> {
+        let Some(mark) = attempt_opening else {
+            return Ok(());
+        };
         self.command
             .attempt
             .arena_mut()
-            .truncate(attempt_opening)
+            .truncate(mark)
             .map_err(attempt_command_error)
     }
 

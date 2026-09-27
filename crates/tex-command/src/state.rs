@@ -700,6 +700,11 @@ impl<G> CommandState<G> {
         &mut self,
         state: &CommandContext<'_, G>,
     ) -> Result<Option<TracedTokenWord>, CommandGroupError> {
+        // Nearly every assignment finds no pending token; taking nothing
+        // leaves the root unchanged and needs no rollback record.
+        if self.afterassignment.is_none() {
+            return Ok(None);
+        }
         self.validate_group_payloads(state)?;
         self.timeline.record_afterassignment(self.afterassignment);
         Ok(self.afterassignment.take().map(|payload| payload.spelling))

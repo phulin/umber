@@ -85,4 +85,14 @@ impl ScannerCursor {
     pub(crate) fn open_balanced_body(&mut self) {
         self.brace_depth = 1;
     }
+
+    /// Settles a batched balanced-body run whose interior braces never closed
+    /// the body.
+    pub(crate) fn advance_balanced_depth(&mut self, delta: i32) {
+        self.brace_depth = self
+            .brace_depth
+            .checked_add_signed(delta)
+            .filter(|depth| *depth != 0)
+            .expect("a replacement run never closes its balanced body");
+    }
 }
