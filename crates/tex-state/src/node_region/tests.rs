@@ -1033,6 +1033,70 @@ fn consumed_interleaved_box_interval_moves_and_restores_both_lanes() {
 }
 
 #[test]
+fn output_envelope_rejects_retired_predecessor_without_rejecting_live_root() {
+    let mut pool = NodePool::with_chunk_bytes(64);
+    let mut page = pool.start_region::<PageRole>().expect("page");
+    let obsolete = page
+        .publish_owned(
+            &mut pool,
+            [Node::Penalty(1), Node::Penalty(2), Node::Penalty(3)],
+        )
+        .expect("two-chunk obsolete list");
+    page.seal_checkpoint_boundary(&mut pool)
+        .expect("old list sealed");
+    let mut retired_child = pool
+        .start_region::<DurableRole>()
+        .expect("prior destination");
+    transfer_page_interior_intervals(
+        &mut pool,
+        &mut page,
+        std::slice::from_ref(&(0..1)),
+        &[],
+        &mut retired_child,
+    )
+    .expect("first obsolete chunk moved away");
+    pool.retire_region(retired_child)
+        .map_err(|(error, _)| error)
+        .expect("independently owned obsolete child retires");
+    let live = page
+        .publish_owned(&mut pool, [Node::Penalty(7)])
+        .expect("independent live output");
+    page.seal_checkpoint_boundary(&mut pool)
+        .expect("live output sealed");
+    let mut durable = pool
+        .start_region::<DurableRole>()
+        .expect("output destination");
+    let nodes = page.pub_arena.live_payload_interval();
+    let annex = page.annex_arena.live_payload_interval();
+
+    let admission = preflight_page_interior_closure_staged(
+        &pool,
+        &page,
+        live,
+        nodes.clone(),
+        annex.clone(),
+        &durable,
+    );
+    assert!(
+        matches!(
+            admission,
+            Err(PageInteriorClosurePreflightError::Envelope(
+                ForkArenaError::InvalidChunk
+            ))
+        ),
+        "{admission:?}"
+    );
+    let copied = copy_region_root_into(&mut pool, &page, live, &mut durable, false)
+        .expect("ordinary copy reads the valid live root");
+    assert_eq!(durable.list(&pool, copied).expect("copied output").len(), 1);
+    assert!(matches!(
+        preflight_page_interior_closure_staged(&pool, &page, obsolete, nodes, annex, &durable),
+        Err(PageInteriorClosurePreflightError::Root(_))
+    ));
+    assert!(copy_region_root_into(&mut pool, &page, obsolete, &mut durable, false).is_err());
+}
+
+#[test]
 fn paired_box_rollback_checks_annex_before_returning_node_chunks() {
     let mut pool = NodePool::with_chunk_bytes(64);
     let mut page = pool.start_region::<PageRole>().expect("page");

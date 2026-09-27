@@ -118,7 +118,7 @@ impl PageMaterialArena<'_> {
         };
         let nodes = self.region.pub_arena.live_payload_interval();
         let annex = self.region.annex_arena.live_payload_interval();
-        if let Err(error) = preflight_page_interior_closure(
+        if let Err(error) = preflight_page_interior_closure_staged(
             self.pool,
             self.region,
             source_root,
@@ -133,10 +133,12 @@ impl PageMaterialArena<'_> {
             successor
                 .retire(self.pool)
                 .expect("unpublished survivor copies retire");
-            return Err(if error == ForkArenaError::InvalidRegion {
-                OutputCarrierTakeError::UnsupportedGeometry
-            } else {
-                arena_error(error)
+            return Err(match error {
+                PageInteriorClosurePreflightError::Envelope(
+                    ForkArenaError::InvalidRegion | ForkArenaError::InvalidChunk,
+                ) => OutputCarrierTakeError::UnsupportedGeometry,
+                PageInteriorClosurePreflightError::Root(error)
+                | PageInteriorClosurePreflightError::Envelope(error) => arena_error(error),
             });
         }
 
@@ -214,10 +216,16 @@ impl PageMaterialArena<'_> {
                     continue;
                 }
                 let cursor = arena.node_cursor(list)?;
-                count = count.saturating_add(u64::try_from(cursor.len()).unwrap_or(u64::MAX));
+                let expected = cursor.len();
+                let mut observed = 0_usize;
                 for node in cursor {
+                    observed = observed.saturating_add(1);
                     node.visit_semantic_node_lists(|child| pending.push(*child));
                 }
+                if observed != expected {
+                    return Err(ForkArenaError::InvalidChunk);
+                }
+                count = count.saturating_add(u64::try_from(observed).unwrap_or(u64::MAX));
             }
             Ok(count)
         }

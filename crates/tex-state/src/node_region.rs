@@ -1636,17 +1636,54 @@ pub(crate) fn preflight_page_interior_closure(
     annex_range: std::ops::Range<usize>,
     destination: &NodeRegion<DurableRole>,
 ) -> Result<(), ForkArenaError> {
-    pool.validate_region(source)?;
-    pool.validate_region(destination)?;
-    if root.region != source.id {
-        return Err(ForkArenaError::InvalidRegion);
+    preflight_page_interior_closure_staged(pool, source, root, node_range, annex_range, destination)
+        .map_err(PageInteriorClosurePreflightError::error)
+}
+
+/// Separates live-root admission from the historical records carried by a
+/// proposed whole-envelope transfer. A caller may decline the latter and
+/// independently copy its live root; a rejected live root cannot authorize
+/// that decline.
+#[derive(Debug)]
+pub(crate) enum PageInteriorClosurePreflightError {
+    Root(ForkArenaError),
+    Envelope(ForkArenaError),
+}
+
+impl PageInteriorClosurePreflightError {
+    fn error(self) -> ForkArenaError {
+        match self {
+            Self::Root(error) | Self::Envelope(error) => error,
+        }
     }
-    source.pub_arena.preflight_interval_root(
-        &pool.chunks,
-        root.list.coordinate(),
-        node_range.start,
-        node_range.end,
-    )?;
+}
+
+pub(crate) fn preflight_page_interior_closure_staged(
+    pool: &NodePool,
+    source: &NodeRegion<PageRole>,
+    root: RegionRoot<PageRole>,
+    node_range: std::ops::Range<usize>,
+    annex_range: std::ops::Range<usize>,
+    destination: &NodeRegion<DurableRole>,
+) -> Result<(), PageInteriorClosurePreflightError> {
+    pool.validate_region(source)
+        .map_err(PageInteriorClosurePreflightError::Root)?;
+    pool.validate_region(destination)
+        .map_err(PageInteriorClosurePreflightError::Root)?;
+    if root.region != source.id {
+        return Err(PageInteriorClosurePreflightError::Root(
+            ForkArenaError::InvalidRegion,
+        ));
+    }
+    source
+        .pub_arena
+        .preflight_interval_root(
+            &pool.chunks,
+            root.list.coordinate(),
+            node_range.start,
+            node_range.end,
+        )
+        .map_err(PageInteriorClosurePreflightError::Root)?;
     let node_ranges = (!node_range.is_empty())
         .then_some(node_range)
         .into_iter()
@@ -1656,6 +1693,7 @@ pub(crate) fn preflight_page_interior_closure(
         .into_iter()
         .collect::<Vec<_>>();
     preflight_page_interior_intervals(pool, source, &node_ranges, &annex_ranges, destination)
+        .map_err(PageInteriorClosurePreflightError::Envelope)
 }
 
 fn interval_contains(ranges: &[std::ops::Range<usize>], position: usize) -> bool {

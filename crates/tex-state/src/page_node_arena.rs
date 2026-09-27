@@ -16,11 +16,12 @@ use crate::node::Node;
 use crate::node_record::{NodeAnnexView, NodeAnnexWriter, NodeRecord};
 use crate::node_region::{
     ClosureBuildMark, DurableRole, NodeCheckpointMark, NodePool, NodeRegion, NodeSealedBoundary,
-    OwnedNodeClosure, PageRole, StructuralCopyReason, copy_closure_into, copy_region_root_into,
-    loan_empty_page_box_body, preflight_empty_page_box_body, preflight_page_interior_closure,
-    preflight_page_interior_intervals, rollback_page_interior_closure, structural_copy_fallback,
-    transfer_closure_into, transfer_page_interior_closure, transfer_page_interior_intervals,
-    transfer_sealed_closure_into,
+    OwnedNodeClosure, PageInteriorClosurePreflightError, PageRole, StructuralCopyReason,
+    copy_closure_into, copy_region_root_into, loan_empty_page_box_body,
+    preflight_empty_page_box_body, preflight_page_interior_closure,
+    preflight_page_interior_closure_staged, preflight_page_interior_intervals,
+    rollback_page_interior_closure, structural_copy_fallback, transfer_closure_into,
+    transfer_page_interior_closure, transfer_page_interior_intervals, transfer_sealed_closure_into,
 };
 use crate::node_sequence::SemanticSequenceIdentity;
 

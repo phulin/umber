@@ -108,6 +108,11 @@ separately from moved output-box volume; if survivors are large, a later
 selected-range/cut transfer can improve that case without changing authority.
 The old region may contain unreachable records, which are retained with the
 box until that owner retires; none becomes a second semantic alias.
+Profiling reports exact moved envelope records/annex words and exact
+recursive survivor-copy nodes. Its semantic output and five-root counts
+deduplicate whole `PageListId` values, so overlapping list slices may count
+one physical record more than once. Their difference from the envelope count
+is not an exact unreachable-record count.
 The whole-envelope transfer still performs the existing mandatory paired
 node/annex admission and validates every direct child dependency. Avoiding
 new graph discovery does not weaken that check. The builder's insertion
@@ -115,6 +120,16 @@ slots are scalar class/status records; page marks refer to generation-owned
 token keys, not node-region chunks. Its five payload roots enumerate the
 page-owned node survivors. A page region with an incomplete external-root
 inventory cannot take this route.
+
+The old envelope can also contain an obsolete chunk whose predecessor was
+already moved into, then retired with, another owner. Whole-envelope
+admission rejects that chunk even when the live output and all four survivor
+roots remain readable. Root/region admission and envelope admission therefore
+have distinct errors: stale or foreign live-root admission is an error, while
+an `InvalidChunk` or `InvalidRegion` from the historical envelope alone
+declines the move before source consumption. The ordinary recursive copy then
+reads and validates the live output root independently. It still fails on a
+genuinely invalid reachable root; no stale coordinate becomes move authority.
 
 Admission uses the actual page-builder output-box slot and the existing
 successor's complete root inventory. It rejects a retained page-region
