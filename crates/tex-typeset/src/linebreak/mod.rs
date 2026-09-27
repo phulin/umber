@@ -877,6 +877,7 @@ fn run_pass<S: TypesetState>(
         .then_some(params.expansion_steps)
         .flatten();
     let mut displayed_through = 0;
+    let mut line_edges = crate::protrusion::LineEdgeCache::default();
 
     for (break_site, site) in tape.break_sites.iter().enumerate() {
         let break_site = u32::try_from(break_site).expect("paragraph break-site count exceeds u32");
@@ -923,8 +924,7 @@ fn run_pass<S: TypesetState>(
                     .width_position(&tape.break_sites)
                     .min(nodes.len());
                 let end = bp.protrusion_end.min(nodes.len()).max(start);
-                let protrusion =
-                    crate::protrusion::line_protrusion_cursor(state, nodes, start, end);
+                let protrusion = line_edges.line_protrusion(state, nodes, start, end);
                 if expansion_steps.is_some() {
                     let (stretch, shrink) = protrusion.margin_variation();
                     widths.add_font_variation(stretch, shrink);

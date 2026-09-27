@@ -1972,6 +1972,37 @@ fn reverse_tail_chunk_work_is_independent_of_list_size() {
 }
 
 #[test]
+fn ranged_iteration_matches_every_subrange_in_both_directions() {
+    let mut pool = ChunkPool::<u32>::with_chunk_bytes(8);
+    let mut arena = ForkArena::<u32, ActiveLane>::new();
+    let root = {
+        let mut builder = arena.begin_builder(&mut pool).expect("builder");
+        for value in 0..11 {
+            builder.push(value).expect("node");
+        }
+        builder.finish()
+    };
+    let view = arena.list(&pool, root).expect("direct view");
+    for start in 0..=12 {
+        for end in 0..=12 {
+            let expected = (start.min(end.min(11))..end.min(11))
+                .map(|value| value as u32)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                view.iter_range(start..end).copied().collect::<Vec<_>>(),
+                expected,
+                "forward {start}..{end}"
+            );
+            assert_eq!(
+                view.iter_range(start..end).rev().copied().collect::<Vec<_>>(),
+                expected.iter().rev().copied().collect::<Vec<_>>(),
+                "reverse {start}..{end}"
+            );
+        }
+    }
+}
+
+#[test]
 fn one_block_list_stores_its_direct_head_and_tail_cursors() {
     let mut pool = ChunkPool::<u32>::with_chunk_bytes(16);
     let mut arena = ForkArena::<u32, ActiveLane>::new();

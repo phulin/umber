@@ -6348,28 +6348,45 @@ impl<'a, T, Lane> ArenaListView<'a, T, Lane> {
     /// The initial position and actual block crossings use indexed
     /// resolution. Nodes within a block advance the cursor directly.
     pub fn iter_from(&self, start: usize) -> ArenaListIter<'a, T, Lane> {
-        let front = start.min(self.len());
-        let front_span = if front < self.len() {
+        self.iter_range(start..self.len())
+    }
+
+    /// Iterates one logical subrange in either direction.
+    ///
+    /// Each end resolves its packed block once; later steps and actual block
+    /// crossings follow the same rules as [`Self::iter_from`]. Reverse scans
+    /// over a prefix therefore avoid one tail-relative resolution per node.
+    pub fn iter_range(&self, range: Range<usize>) -> ArenaListIter<'a, T, Lane> {
+        let back = range.end.min(self.len());
+        let front = range.start.min(back);
+        let front_span = if front < back {
             self.cursor_span_at_node(front)
         } else {
             None
         };
         let front_chunk =
             front_span.and_then(|(cursor, end)| self.chunk_iter(cursor, cursor.offset..end));
-        let back_chunk = (front < self.len()).then(|| {
-            let tail = self.root.tail;
-            let start = if tail.position == self.root.head.position {
+        let back_chunk = (front < back).then(|| {
+            let (cursor, end) = if back == self.len() {
+                (self.root.tail, self.root.tail.offset)
+            } else {
+                let (cursor, _) = self
+                    .cursor_span_at_node(back)
+                    .expect("admitted range end remains initialized");
+                (cursor, cursor.offset)
+            };
+            let start = if cursor.position == self.root.head.position {
                 self.root.head.offset
             } else {
                 0
             };
-            self.chunk_iter(tail, start..tail.offset)
-                .expect("admitted tail range remains initialized")
+            self.chunk_iter(cursor, start..end)
+                .expect("admitted range end remains initialized")
         });
         ArenaListIter {
             view: *self,
             front,
-            back: self.len(),
+            back,
             front_chunk,
             back_chunk,
             forward_chunk_crossings: 0,

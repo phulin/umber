@@ -617,3 +617,43 @@ fn edge_search_distinguishes_transparent_zero_width_and_blocking_material() {
         );
     }
 }
+
+/// Break passes share edge searches across active-node/breakpoint pairs. Every
+/// bounded line must still stop exactly where an independent search stops.
+#[test]
+fn cached_line_edges_match_independent_searches_for_every_line() {
+    let mut state = TestState::new();
+    let font = state.intern_font(protruding_font());
+    state.set_pdf_font_code(PdfFontCode::Lp, font, b'A', 100);
+    state.set_pdf_font_code(PdfFontCode::Rp, font, b'.', 200);
+    state.set_pdf_font_code(PdfFontCode::Lp, font, b'.', 300);
+    state.set_pdf_font_code(PdfFontCode::Rp, font, b'A', 400);
+    let nodes = [
+        Node::Penalty(0),
+        character(font, 'A'),
+        Node::Kern {
+            amount: sp(0),
+            kind: KernKind::Explicit,
+        },
+        character(font, '.'),
+        Node::Rule {
+            width: Some(sp(1)),
+            height: None,
+            depth: None,
+        },
+        Node::Penalty(10),
+        character(font, 'A'),
+        Node::Penalty(20),
+    ];
+    let cursor = NodeCursor::owned(&nodes);
+    let mut cache = LineEdgeCache::default();
+    for start in 0..=nodes.len() {
+        for end in start..=nodes.len() {
+            assert_eq!(
+                cache.line_protrusion(&state, cursor, start, end),
+                line_protrusion_cursor(&state, cursor, start, end),
+                "line {start}..{end}"
+            );
+        }
+    }
+}

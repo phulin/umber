@@ -1,5 +1,6 @@
 //! Pure pdfTeX character-protrusion edge discovery and line materialization.
 
+use ahash::AHashMap;
 use tex_state::font::PdfFontCode;
 use tex_state::node::{GlueKind, GlueSpecOrigin, KernKind, MarginKernSide, Node};
 use tex_state::node_view::NodeCursor;
@@ -47,6 +48,14 @@ pub(crate) fn line_protrusion_cursor(
 ) -> LineProtrusion {
     let left = edge_glyph_cursor(state, nodes, start, end, Edge::Left);
     let right = edge_glyph_cursor(state, nodes, start, end, Edge::Right);
+    line_protrusion_from_edges(state, left, right)
+}
+
+fn line_protrusion_from_edges(
+    state: &impl TypesetState,
+    left: Option<Glyph>,
+    right: Option<Glyph>,
+) -> LineProtrusion {
     let zero = Scaled::from_raw(0);
     let left_variation = left.map_or((zero, zero), |glyph| margin_kern_variation(state, glyph));
     let right_variation = right.map_or((zero, zero), |glyph| margin_kern_variation(state, glyph));
@@ -62,6 +71,74 @@ pub(crate) fn line_protrusion_cursor(
             .checked_add(right_variation.1)
             .expect("the two left-protrusion shrink variations fit Scaled"),
     }
+}
+
+/// Line-edge discoveries shared by every candidate line of one break pass.
+///
+/// pdfTeX evaluates protrusion for each active-node/breakpoint pair, but the
+/// left search depends only on the line start and the right search only on its
+/// end. Each cached hit records the top-level node that stopped an unbounded
+/// search; a pair's bounded search stops at the same node exactly when that
+/// node lies inside the pair's line.
+#[derive(Default)]
+pub(crate) struct LineEdgeCache {
+    left: AHashMap<usize, Option<EdgeHit>>,
+    right: AHashMap<usize, Option<EdgeHit>>,
+}
+
+#[derive(Clone, Copy)]
+struct EdgeHit {
+    position: usize,
+    glyph: Option<Glyph>,
+}
+
+impl LineEdgeCache {
+    pub(crate) fn line_protrusion(
+        &mut self,
+        state: &impl TypesetState,
+        nodes: NodeCursor<'_>,
+        start: usize,
+        end: usize,
+    ) -> LineProtrusion {
+        let left = *self.left.entry(start).or_insert_with(|| {
+            edge_hit(state, (start..).zip(nodes.iter_range(start..nodes.len())), Edge::Left)
+        });
+        let right = *self.right.entry(end).or_insert_with(|| {
+            edge_hit(state, (0..end).rev().zip(nodes.iter_range(0..end).rev()), Edge::Right)
+        });
+        let left = left
+            .filter(|hit| hit.position < end)
+            .and_then(|hit| hit.glyph);
+        let right = right
+            .filter(|hit| hit.position >= start)
+            .and_then(|hit| hit.glyph);
+        line_protrusion_from_edges(state, left, right)
+    }
+}
+
+fn edge_hit<'a>(
+    state: &impl TypesetState,
+    nodes: impl Iterator<Item = (usize, tex_state::node_view::NodeView<'a>)>,
+    edge: Edge,
+) -> Option<EdgeHit> {
+    for (position, node) in nodes {
+        match search_node(state, node, edge) {
+            Search::Glyph(glyph) => {
+                return Some(EdgeHit {
+                    position,
+                    glyph: Some(glyph),
+                });
+            }
+            Search::Block => {
+                return Some(EdgeHit {
+                    position,
+                    glyph: None,
+                });
+            }
+            Search::Skip => {}
+        }
+    }
+    None
 }
 
 /// pdftex.web §822 deliberately uses `left_pw` for both edge characters when
@@ -215,31 +292,24 @@ pub fn plan_margin_kerns(
 }
 
 fn right_margin_position_cursor(nodes: NodeCursor<'_>) -> usize {
-    let Some(mut index) = (0..nodes.len()).rev().find(|index| {
+    let is_boundary = |node: &tex_state::node_view::NodeView<'_>| {
         matches!(
-            nodes.get(*index),
-            Some(
-                tex_state::node_view::NodeView::Glue {
-                    kind: GlueKind::ParFillSkip | GlueKind::RightSkip,
-                    ..
-                } | tex_state::node_view::NodeView::Direction(_)
-            )
+            node,
+            tex_state::node_view::NodeView::Glue {
+                kind: GlueKind::ParFillSkip | GlueKind::RightSkip,
+                ..
+            } | tex_state::node_view::NodeView::Direction(_)
         )
-    }) else {
+    };
+    let mut reversed = (0..nodes.len()).rev().zip(nodes.iter().rev());
+    let Some((mut index, _)) = reversed.find(|(_, node)| is_boundary(node)) else {
         return nodes.len();
     };
-    while index > 0
-        && matches!(
-            nodes.get(index - 1),
-            Some(
-                tex_state::node_view::NodeView::Glue {
-                    kind: GlueKind::ParFillSkip | GlueKind::RightSkip,
-                    ..
-                } | tex_state::node_view::NodeView::Direction(_)
-            )
-        )
-    {
-        index -= 1;
+    for (position, node) in reversed {
+        if !is_boundary(&node) {
+            break;
+        }
+        index = position;
     }
     index
 }
@@ -311,31 +381,22 @@ fn edge_search_cursor(
     end: usize,
     edge: Edge,
 ) -> Search {
-    let start = start.min(nodes.len());
-    let end = end.min(nodes.len()).max(start);
-    match edge {
-        Edge::Left => {
-            for index in start..end {
-                let node = nodes.get(index).expect("edge index belongs to source");
-                match search_node(state, node, edge) {
-                    Search::Glyph(glyph) => return Search::Glyph(glyph),
-                    Search::Skip => {}
-                    Search::Block => return Search::Block,
-                }
-            }
-        }
-        Edge::Right => {
-            for index in (start..end).rev() {
-                let node = nodes.get(index).expect("edge index belongs to source");
-                match search_node(state, node, edge) {
-                    Search::Glyph(glyph) => return Search::Glyph(glyph),
-                    Search::Skip => {}
-                    Search::Block => return Search::Block,
-                }
-            }
-        }
-    }
-    Search::Skip
+    let nodes = nodes.iter_range(start..end);
+    let found = match edge {
+        Edge::Left => search_nodes(state, nodes, edge),
+        Edge::Right => search_nodes(state, nodes.rev(), edge),
+    };
+    found.unwrap_or(Search::Skip)
+}
+
+fn search_nodes<'a>(
+    state: &impl TypesetState,
+    nodes: impl Iterator<Item = tex_state::node_view::NodeView<'a>>,
+    edge: Edge,
+) -> Option<Search> {
+    nodes
+        .map(|node| search_node(state, node, edge))
+        .find(|search| !matches!(search, Search::Skip))
 }
 
 fn search_node(

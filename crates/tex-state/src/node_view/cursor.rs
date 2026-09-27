@@ -441,15 +441,19 @@ impl<'a> NodeCursor<'a> {
     /// their admitted packed-block cursor rather than resolving every node by
     /// index.
     pub fn iter_from(&self, start: usize) -> NodeCursorIter<'a> {
+        self.iter_range(start..self.len())
+    }
+
+    /// Iterates one logical subrange in either direction. Arena-backed lists
+    /// resolve each end once instead of resolving every visited index.
+    pub fn iter_range(&self, range: core::ops::Range<usize>) -> NodeCursorIter<'a> {
         match self.source {
-            NodeCursorSource::Slice(nodes) => NodeCursorIter::Slice(
-                nodes
-                    .get(start.min(nodes.len())..)
-                    .unwrap_or_default()
-                    .iter(),
-            ),
+            NodeCursorSource::Slice(nodes) => {
+                let end = range.end.min(nodes.len());
+                NodeCursorIter::Slice(nodes[range.start.min(end)..end].iter())
+            }
             NodeCursorSource::Fork(view, annex) => {
-                NodeCursorIter::Fork(view.iter_from(start), annex)
+                NodeCursorIter::Fork(view.iter_range(range), annex)
             }
         }
     }
