@@ -57,10 +57,11 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `src/pdftex/tests/retained_fixture_properties.rs`: active retained pdfTeX-extension fixture runner that compares status, terminal, and log projections, including bug-linked strict xfails.
 - `src/pdf_output.rs`: thin detached-finalization adapter, error translation, diagnostics publication, and validated allocation-receipt replay; all lowering and serialization delegate to `tex-out`.
 - `src/pdf_output/tests.rs`: detached boundary tests for container classification, host-resolved font resources, and exact nested virtual-font identity, sizing, rejection, and independent-parse evidence.
-- `src/pdf_output/finalization_input.rs`: compatibility adapter that freezes
+- `src/pdf_output/finalization_input.rs`: adapter that freezes
   accepted engine state and host-resolved artifacts/resources into
   `tex_out::pdf::PdfFinalizationInput`; it is the only Umber-owned PDF
-  finalization boundary.
+  finalization boundary. Font discovery decodes one page or form at a time
+  while retaining only document-wide font summaries.
 - `src/pdf_output/finalization_input/virtual_fonts.rs`: destination-local,
   handle-free discovery and atomic allocation of the sized font instances
   selected while detached virtual-font packets are lowered.

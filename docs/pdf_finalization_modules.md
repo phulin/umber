@@ -28,6 +28,15 @@ PDF meaning:
   lowerers. It retains the established rounding and overflow behavior.
 
 The public detached input and PDF graph stay in `finalization.rs` and `pdf.rs`.
+The Umber input adapter decodes one committed page or form at a time when
+collecting font resources and physical character uses. Only the font summary
+survives that iteration; decoded page trees and positioned events are released
+before the next artifact. Pages precede forms, forms retain object-number
+order, duplicate font identities retain the last resource, and character uses
+retain their first-use watermark. Encoded artifacts remain owned by the final
+input for later content lowering. This bounds temporary decoded material by
+the largest artifact instead of the whole document.
+
 The version-24 artifact codec and its byte format are separate. Validation uses
 format-specific font and image observations plus the existing PDF parity and
 validator gates; deterministic serialization remains an exact-byte contract.

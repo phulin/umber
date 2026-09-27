@@ -93,22 +93,18 @@ pub fn pdf_finalization_input_with_raw_object_files(
         })
         .collect::<BTreeMap<_, _>>();
 
-    let artifacts = pages
+    let artifact_bytes = pages
         .iter()
         .map(|page| page.artifact_bytes.as_ref())
-        .chain(forms.values().map(|form| form.artifact_bytes.as_ref()))
-        .map(tex_out::PageArtifact::from_bytes)
-        .collect::<Result<Vec<_>, _>>()?;
-    let artifacts_by_font = artifacts
-        .iter()
-        .flat_map(|artifact| artifact.fonts.iter().cloned())
-        .map(|font| (font.semantic_identity, font))
-        .collect::<BTreeMap<_, _>>();
+        .chain(forms.values().map(|form| form.artifact_bytes.as_ref()));
+    let mut artifacts_by_font = BTreeMap::new();
     let mut artifact_font_uses = Vec::new();
     let mut seen_artifact_font_uses = BTreeSet::new();
-    for (page_index, artifact) in artifacts.iter().enumerate() {
+    for (page_index, bytes) in artifact_bytes.enumerate() {
+        // Font summaries outlive this iteration; decoded page trees do not.
+        let artifact = tex_out::PageArtifact::from_bytes(bytes)?;
         let positioned = tex_out::positioned::lower_page(
-            artifact,
+            &artifact,
             u32::try_from(page_index).unwrap_or(u32::MAX),
         )?;
         let font_watermark = pages.get(page_index).map_or_else(
@@ -145,6 +141,13 @@ pub fn pdf_finalization_input_with_raw_object_files(
                 },
             ));
         }
+        artifacts_by_font.extend(
+            artifact
+                .fonts
+                .iter()
+                .cloned()
+                .map(|font| (font.semantic_identity, font)),
+        );
     }
     let resolved_map = crate::virtual_compile::resolved_font_map_lines(pdf, resources)
         .into_iter()
