@@ -195,10 +195,37 @@ impl<'a> CopyContext<'a> {
         list: PageListId,
     ) -> Result<(PageListId, usize), ForkArenaError> {
         let admitted = self.source.admit_owned_root(self.pool, list.coordinate())?;
-        let mut cursors = SmallVec::<[AdmittedListChunkCursor<PageMaterialLane>; 2]>::new();
         let mut cursor =
             self.source
                 .admitted_tail_chunk_from_root(self.pool, list.coordinate(), admitted)?;
+        if list.len() == 1
+            && let Some(tail) = &cursor
+            && tail.len() == 1
+        {
+            let (_, record) = self.source.admitted_chunk_value_at(self.pool, tail, 0);
+            let record = *record;
+            if record.is_inline_leaf() {
+                let mut root = crate::fork_arena::ArenaListId::empty();
+                self.destination
+                    .reserve_constructed_list_run(self.pool, &mut root, 1)?
+                    .publish(&[record], None, None)?;
+                self.destination.finish_constructed_list(self.pool, root)?;
+                let identity = self.semantic_identity_enabled.then(|| {
+                    list.semantic_identity()
+                        .map(|hash| SemanticSequenceIdentity::from_raw(hash, 1))
+                        .unwrap_or_else(|| {
+                            let mut identity = SemanticSequenceIdentity::empty();
+                            identity.push_back(record.semantic_identity(NodeAnnexView::new(
+                                self.annex_pool,
+                                self.destination_annex,
+                            )));
+                            identity
+                        })
+                });
+                return Ok((PageListId::from_parts(root, identity), 1));
+            }
+        }
+        let mut cursors = SmallVec::<[AdmittedListChunkCursor<PageMaterialLane>; 2]>::new();
         while let Some(current) = cursor {
             cursor = self.source.admitted_previous_chunk(self.pool, &current)?;
             cursors.push(current);

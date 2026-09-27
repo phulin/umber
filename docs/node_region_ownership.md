@@ -223,6 +223,14 @@ available and otherwise accumulated from the relocated records.
 
 ### Complete-envelope bulk-copy proof
 
+A one-record inline leaf can be copied directly after ordinary root and chunk
+admission. Its encoding has neither child lists nor annex storage, so it needs
+one independent destination record and the ordinary destination publication
+and sealing steps. It does not need recursive chunk staging or annex scratch.
+Repeated occurrences still allocate distinct records, and the enclosing paired
+operation marks still restore failed copies. Semantic identity follows the
+same preserved-or-computed rule as general copies.
+
 A move-only `OwnedNodeClosure` proves ownership of a region and admission of
 its selected root. It does not by itself prove that every initialized record
 in the region belongs to that root or that the child graph is a tree. Whole-region
