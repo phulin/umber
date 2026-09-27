@@ -140,6 +140,16 @@ impl PageMaterialArena<'_> {
             });
         }
 
+        #[cfg(feature = "profiling")]
+        let measurement = self
+            .measure_output_carrier_transfer(output, survivors, &nodes, &annex)
+            .unwrap_or(crate::measurement::OutputCarrierTransferCensus {
+                observation_failures: 1,
+                ..crate::measurement::OutputCarrierTransferCensus::default()
+            });
+        #[cfg(feature = "profiling")]
+        let survivor_nodes_copied = successor.region.pub_arena.counters().source_nodes_copied;
+
         let (taken, builder_swap) = builder.take_output_carrier_for_region_swap();
         debug_assert_eq!(taken, output);
         let permit = self
@@ -163,6 +173,13 @@ impl PageMaterialArena<'_> {
         builder.publish_output_carrier_survivors(spans);
         // Consuming the non-Copy permit binds this one old owner to this one
         // output-slot removal. It is intentionally absent in the successor.
+        #[cfg(feature = "profiling")]
+        crate::measurement::record_output_carrier_transfer(
+            crate::measurement::OutputCarrierTransferCensus {
+                survivor_nodes_copied,
+                ..measurement
+            },
+        );
         Ok(PageOutputCarrierAssignment {
             closure,
             loan: PageOutputRegionLoan {
@@ -172,6 +189,63 @@ impl PageMaterialArena<'_> {
                 builder: builder_swap,
                 chunks,
             },
+        })
+    }
+
+    #[cfg(feature = "profiling")]
+    fn measure_output_carrier_transfer(
+        &self,
+        output: PageListId,
+        survivors: [PageListId; 4],
+        nodes: &std::ops::Range<usize>,
+        annex: &std::ops::Range<usize>,
+    ) -> Result<crate::measurement::OutputCarrierTransferCensus, ForkArenaError> {
+        use std::collections::HashSet;
+
+        fn semantic_nodes(
+            arena: &PageMaterialArena<'_>,
+            roots: impl IntoIterator<Item = PageListId>,
+        ) -> Result<u64, ForkArenaError> {
+            let mut seen = HashSet::new();
+            let mut pending = roots.into_iter().collect::<Vec<_>>();
+            let mut count = 0_u64;
+            while let Some(list) = pending.pop() {
+                if list.is_empty() || !seen.insert(list) {
+                    continue;
+                }
+                let cursor = arena.node_cursor(list)?;
+                count = count.saturating_add(u64::try_from(cursor.len()).unwrap_or(u64::MAX));
+                for node in cursor {
+                    node.visit_semantic_node_lists(|child| pending.push(*child));
+                }
+            }
+            Ok(count)
+        }
+
+        let output_semantic_nodes = semantic_nodes(self, [output])?;
+        let all_roots_semantic_nodes = semantic_nodes(self, [output].into_iter().chain(survivors))?;
+        let mut moved_envelope_nodes = 0_u64;
+        self.region
+            .pub_arena
+            .visit_interval_values(&self.pool.chunks, &[nodes.clone()], |_| {
+                moved_envelope_nodes = moved_envelope_nodes.saturating_add(1);
+                Ok(())
+            })?;
+        let mut moved_envelope_annex_words = 0_u64;
+        self.region.annex_arena.visit_interval_values(
+            &self.pool.annex_chunks,
+            &[annex.clone()],
+            |_| {
+                moved_envelope_annex_words = moved_envelope_annex_words.saturating_add(1);
+                Ok(())
+            },
+        )?;
+        Ok(crate::measurement::OutputCarrierTransferCensus {
+            output_semantic_nodes,
+            all_roots_semantic_nodes,
+            moved_envelope_nodes,
+            moved_envelope_annex_words,
+            ..crate::measurement::OutputCarrierTransferCensus::default()
         })
     }
 

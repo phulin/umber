@@ -6,6 +6,10 @@
 mod box_fallback;
 mod hot_core;
 mod node_copy_eligibility;
+mod output_carrier;
+
+pub(crate) use output_carrier::record_output_carrier_transfer;
+pub use output_carrier::{OutputCarrierTransferCensus, output_carrier_transfer_census};
 
 pub(crate) use node_copy_eligibility::{
     DurableSourceCopyKind, record_durable_source_copy, record_region_copy,

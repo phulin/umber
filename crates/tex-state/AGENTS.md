@@ -283,6 +283,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/measurement/node_copy_eligibility.rs`: Profiling-only observational
   counts of durable source copies born from fresh recursive construction;
   these counters never authorize a copy route or retain node roots.
+- `src/measurement/output_carrier.rs`: Profiling-only output-carrier transfer
+  volume, survivor-copy work, and old-envelope retention observations.
 - `src/memory_accounting.rs`: Generation-local constant-time TeX main-memory
   totals updated by immutable payload publication/final release and node-arena
   publication/release; it contains no root registry or liveness index.

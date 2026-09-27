@@ -140,6 +140,7 @@ struct HotCoreProfilingReport {
     retained_generations_before: tex_state::measurement::RetainedGenerationCensus,
     node_graph_before: tex_state::measurement::NodeGraphCensus,
     box_fallback_before: tex_state::measurement::BoxFallbackCensus,
+    output_carrier_before: tex_state::measurement::OutputCarrierTransferCensus,
     node_copy_eligibility_before: tex_state::measurement::NodeCopyEligibilityCensus,
 }
 
@@ -156,6 +157,7 @@ impl HotCoreProfilingReport {
             retained_generations_before: tex_state::measurement::retained_generation_census(),
             node_graph_before: tex_state::measurement::node_graph_census(),
             box_fallback_before: tex_state::measurement::box_fallback_census(),
+            output_carrier_before: tex_state::measurement::output_carrier_transfer_census(),
             node_copy_eligibility_before: tex_state::measurement::node_copy_eligibility_census(),
         }
     }
@@ -202,6 +204,18 @@ impl Drop for HotCoreProfilingReport {
         }
         fallback_json.push_str("]}");
         eprintln!("BOX_FALLBACK_CENSUS {fallback_json}");
+        let carrier = tex_state::measurement::output_carrier_transfer_census()
+            .saturating_sub(self.output_carrier_before);
+        eprintln!(
+            "OUTPUT_CARRIER_TRANSFER_CENSUS moves={} output_semantic_nodes={} all_roots_semantic_nodes={} moved_envelope_nodes={} moved_envelope_annex_words={} survivor_nodes_copied={} observation_failures={}",
+            carrier.moves,
+            carrier.output_semantic_nodes,
+            carrier.all_roots_semantic_nodes,
+            carrier.moved_envelope_nodes,
+            carrier.moved_envelope_annex_words,
+            carrier.survivor_nodes_copied,
+            carrier.observation_failures,
+        );
         let generations = tex_state::measurement::retained_generation_census()
             .saturating_sub(self.retained_generations_before);
         eprintln!(
