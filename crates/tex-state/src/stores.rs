@@ -732,12 +732,10 @@ impl<'a, G> AdmittedStateMut<'a, G> {
             batch.settle_next_definition(definition);
         }
         for _ in 0..token_list_count {
-            let word_count = batch.next_token_list_len();
-            let words = (0..word_count).map(|index| batch.next_token_list_word(index));
             let tokens = self
                 .generation
                 .token_lists_mut()
-                .allocate_from_iter(words)
+                .allocate_from_iter(batch.next_token_list_words())
                 .expect("the complete resident token-list batch was reserved");
             batch.settle_next_token_list(tokens);
         }

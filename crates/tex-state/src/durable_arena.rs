@@ -525,6 +525,9 @@ pub(crate) struct TokenListArena<G> {
     free_builder_slots: Vec<u32>,
     free_chunk_head: u32,
     next_builder_serial: u64,
+    /// Reusable contiguous staging for publication. A sealed list is copied
+    /// here once and then into its exact-size shared allocation.
+    staging: Vec<TokenWord>,
     accounting: MemoryAccounting,
     semantic_identity_enabled: bool,
     _brand: PhantomData<fn(&G) -> &G>,
@@ -584,13 +587,14 @@ impl<G> TokenListArena<G> {
             free_builder_slots: Vec::new(),
             free_chunk_head: NO_CHUNK,
             next_builder_serial: 1,
+            staging: Vec::new(),
             accounting,
             semantic_identity_enabled: false,
             _brand: PhantomData,
         }
     }
 
-    /// Cold/source-admission wrapper which streams once into final chunks.
+    /// Cold/source-admission wrapper which copies once into the final owner.
     /// Runtime scanners must use the destination-directed builder methods.
     pub(crate) fn allocate(
         &mut self,
@@ -601,8 +605,9 @@ impl<G> TokenListArena<G> {
 
     /// Publishes one cold token list from an exact-size word stream.
     ///
-    /// Format admission uses this path to translate packed wire words directly
-    /// into their final generation chunks without an intermediate word vector.
+    /// The words are final at admission, so they bypass builder chunks and
+    /// stream once through the reusable staging vector into their shared
+    /// allocation.
     pub(crate) fn allocate_from_iter<Words>(
         &mut self,
         words: Words,
@@ -610,15 +615,19 @@ impl<G> TokenListArena<G> {
     where
         Words: ExactSizeIterator<Item = TokenWord>,
     {
-        self.reserve_batch(1, words.len())?;
-        let builder = self.begin_builder()?;
-        for word in words {
-            if let Err(error) = self.push_builder_word(&builder, word) {
-                let _ = self.discard_builder(builder);
-                return Err(error);
-            }
-        }
-        self.seal_builder(builder)
+        next_row(self.next_serial as usize)?;
+        self.published
+            .try_reserve(1)
+            .map_err(|_| DurableAllocationError::AllocationFailed)?;
+        let mut staging = std::mem::take(&mut self.staging);
+        staging.clear();
+        staging
+            .try_reserve(words.len())
+            .map_err(|_| DurableAllocationError::AllocationFailed)?;
+        staging.extend(words);
+        let words = Rc::<[TokenWord]>::from(staging.as_slice());
+        self.staging = staging;
+        self.publish_words(words)
     }
 
     /// Installs a validated detached format prefix directly as the arena's
@@ -878,25 +887,28 @@ impl<G> TokenListArena<G> {
         &mut self,
         builder: TokenListBuilder<G>,
     ) -> Result<TokenListId<G>, DurableAllocationError> {
-        let serial = next_row(self.next_serial as usize)?;
+        next_row(self.next_serial as usize)?;
         let slot = *self.builder_slot(&builder)?;
+        let mut staging = std::mem::take(&mut self.staging);
+        staging.clear();
         let mut chunk = slot.head;
-        let mut remaining = slot.len as usize;
-        let words = std::iter::from_fn(|| {
-            if remaining == 0 {
-                return None;
-            }
+        while staging.len() < slot.len as usize {
             let current = &self.chunks[chunk as usize];
-            let consumed = slot.len as usize - remaining;
-            let offset = consumed % TOKEN_CHUNK_WORDS;
-            let word = current.words[offset];
-            remaining -= 1;
-            if offset + 1 == current.len as usize {
-                chunk = current.next;
-            }
-            Some(word)
-        })
-        .collect::<Rc<[_]>>();
+            staging.extend_from_slice(&current.words[..current.len as usize]);
+            chunk = current.next;
+        }
+        let words = Rc::<[TokenWord]>::from(staging.as_slice());
+        self.staging = staging;
+        self.release_builder_slot(builder, true)?;
+        self.publish_words(words)
+    }
+
+    /// Publishes one final word allocation as the next durable row.
+    fn publish_words(
+        &mut self,
+        words: Rc<[TokenWord]>,
+    ) -> Result<TokenListId<G>, DurableAllocationError> {
+        let serial = next_row(self.next_serial as usize)?;
         let publication_serial = self.next_publication_serial;
         self.next_publication_serial = self
             .next_publication_serial
@@ -913,7 +925,6 @@ impl<G> TokenListArena<G> {
         } else {
             0
         };
-        self.release_builder_slot(builder, true)?;
         self.published.push(PublishedTokenList {
             words: Rc::clone(&words),
             publication_serial,

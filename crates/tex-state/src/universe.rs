@@ -764,8 +764,8 @@ pub trait ResidentPromotionBatch<G> {
     fn token_list_count(&self) -> usize;
     fn token_list_len(&self, index: usize) -> usize;
     fn token_list_word(&self, index: usize, word: usize) -> TokenWord;
-    fn next_token_list_len(&self) -> usize;
-    fn next_token_list_word(&self, word: usize) -> TokenWord;
+    /// Streams the next unsettled source list once, in order.
+    fn next_token_list_words(&self) -> impl ExactSizeIterator<Item = TokenWord> + '_;
     fn settle_next_token_list(&mut self, tokens: TokenListId<G>);
 
     fn glue_source_count(&self) -> usize;

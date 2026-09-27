@@ -133,10 +133,16 @@ fn cross_chunk_replay_restarts_and_streaming_identity_are_exact() {
         let expected = (0..(super::TOKEN_CHUNK_WORDS * 2 + 7))
             .map(|raw| TokenWord::from_raw(raw as u32))
             .collect::<Vec<_>>();
-        let id = generation
-            .token_lists_mut()
-            .allocate(&expected)
-            .expect("multi-chunk list");
+        let arena = generation.token_lists_mut();
+        let builder = arena.begin_builder().expect("multi-chunk builder");
+        for word in &expected {
+            arena
+                .push_builder_word(&builder, *word)
+                .expect("multi-chunk word");
+        }
+        let id = arena.seal_builder(builder).expect("multi-chunk list");
+        let copied = arena.allocate(&expected).expect("cold copy");
+        assert_eq!(collect_words(arena.get(copied)), expected);
         let arena = generation.token_lists();
         let view = arena.get(id.clone());
         assert_eq!(view.iter().collect::<Vec<_>>(), expected);
@@ -213,8 +219,8 @@ fn warmed_alias_and_read_cycles_allocate_zero_heap() {
         assert_eq!(after.calls - before.calls, 0);
         assert_eq!(after.requested_bytes - before.requested_bytes, 0);
         assert_eq!(arena.len(), 1);
-        assert_eq!(arena.retained_chunk_len(), 1);
-        assert_eq!(arena.retained_builder_slot_len(), 1);
+        assert_eq!(arena.retained_chunk_len(), 0);
+        assert_eq!(arena.retained_builder_slot_len(), 0);
     });
 }
 

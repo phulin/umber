@@ -1994,7 +1994,10 @@ fn ranged_iteration_matches_every_subrange_in_both_directions() {
                 "forward {start}..{end}"
             );
             assert_eq!(
-                view.iter_range(start..end).rev().copied().collect::<Vec<_>>(),
+                view.iter_range(start..end)
+                    .rev()
+                    .copied()
+                    .collect::<Vec<_>>(),
                 expected.iter().rev().copied().collect::<Vec<_>>(),
                 "reverse {start}..{end}"
             );

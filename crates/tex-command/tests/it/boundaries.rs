@@ -395,7 +395,7 @@ fn attempt_promotion_preflights_then_writes_the_resident_destination_once() {
         .expect("infallible checked builder transfer");
     assert!(validation < publication);
     assert!(destination.contains("reserve_batch(definition_count, definition_words)?"));
-    assert!(destination.contains(".allocate_from_iter(words)"));
+    assert!(destination.contains(".allocate_from_iter(batch.next_token_list_words())"));
     assert!(destination.contains("batch.settle_next_definition(definition)"));
     assert!(destination.contains("batch.settle_next_token_list(tokens)"));
     assert!(!destination.contains("PromotionReceipt"));

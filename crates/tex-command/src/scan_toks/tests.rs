@@ -1156,7 +1156,13 @@ fn batched_definition_runs_match_scalar_collection_from_resident_sources() {
         parameters: &[Token],
         replacement: &[Token],
     ) -> Token {
-        let pack = |tokens: &[Token]| tokens.iter().copied().map(TokenWord::pack).collect::<Vec<_>>();
+        let pack = |tokens: &[Token]| {
+            tokens
+                .iter()
+                .copied()
+                .map(TokenWord::pack)
+                .collect::<Vec<_>>()
+        };
         let definition = universe
             .allocate_definition(&pack(parameters), &pack(replacement))
             .expect("macro definition");
@@ -1277,7 +1283,10 @@ fn batched_definition_runs_match_scalar_collection_from_resident_sources() {
         );
         assert!(body.contains(&Token::Param(1)));
         let fuel = complete.1;
-        assert_eq!(run(from_argument, true, 1_000).map(|run| run.0), Some(complete));
+        assert_eq!(
+            run(from_argument, true, 1_000).map(|run| run.0),
+            Some(complete)
+        );
         for limit in 1..=fuel + 1 {
             assert_eq!(
                 run(from_argument, false, limit).map(|run| run.0),

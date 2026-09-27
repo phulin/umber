@@ -101,10 +101,18 @@ impl LineEdgeCache {
         end: usize,
     ) -> LineProtrusion {
         let left = *self.left.entry(start).or_insert_with(|| {
-            edge_hit(state, (start..).zip(nodes.iter_range(start..nodes.len())), Edge::Left)
+            edge_hit(
+                state,
+                (start..).zip(nodes.iter_range(start..nodes.len())),
+                Edge::Left,
+            )
         });
         let right = *self.right.entry(end).or_insert_with(|| {
-            edge_hit(state, (0..end).rev().zip(nodes.iter_range(0..end).rev()), Edge::Right)
+            edge_hit(
+                state,
+                (0..end).rev().zip(nodes.iter_range(0..end).rev()),
+                Edge::Right,
+            )
         });
         let left = left
             .filter(|hit| hit.position < end)

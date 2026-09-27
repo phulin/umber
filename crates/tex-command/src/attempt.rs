@@ -1551,20 +1551,12 @@ where
             .token_word()
     }
 
-    fn next_token_list_len(&self) -> usize {
+    fn next_token_list_words(&self) -> impl ExactSizeIterator<Item = TokenWord> + '_ {
         self.arena
             .token_words(self.destination.next_token_root())
             .expect("the next preflighted token source remains resident")
-            .len()
-    }
-
-    fn next_token_list_word(&self, word: usize) -> TokenWord {
-        self.arena
-            .token_words(self.destination.next_token_root())
-            .expect("the next preflighted token source remains resident")
-            .get(word)
-            .expect("preflighted token word is inside the source list")
-            .token_word()
+            .iter()
+            .map(|word| word.token_word())
     }
 
     fn settle_next_token_list(&mut self, tokens: TokenListId<G>) {

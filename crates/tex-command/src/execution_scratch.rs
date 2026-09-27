@@ -1689,7 +1689,8 @@ impl<G> PlainRunSink<G> for MacroArgumentWriter<G> {
         limit: usize,
         admission: &mut ArgumentRunAdmission<'_, '_, G>,
     ) -> Result<u32, ScratchError> {
-        scratch.append_plain_from_argument_span(source, position, origin_run, self, limit, admission)
+        scratch
+            .append_plain_from_argument_span(source, position, origin_run, self, limit, admission)
     }
 }
 
@@ -1733,9 +1734,14 @@ impl<G> PlainRunSink<G> for DefinitionReplacementSink<'_, G> {
         limit: usize,
         admission: &mut ArgumentRunAdmission<'_, '_, G>,
     ) -> Result<u32, ScratchError> {
-        scratch.visit_plain_from_argument_span(source, position, origin_run, limit, admission, |word| {
-            self.push(word)
-        })
+        scratch.visit_plain_from_argument_span(
+            source,
+            position,
+            origin_run,
+            limit,
+            admission,
+            |word| self.push(word),
+        )
     }
 }
 
