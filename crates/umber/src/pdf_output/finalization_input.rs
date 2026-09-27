@@ -56,7 +56,7 @@ pub fn pdf_finalization_input_with_raw_object_files(
         .iter()
         .map(|page| PdfCommittedPageInput {
             artifact_hash: page.artifact,
-            artifact_bytes: Arc::from(page.artifact_bytes.as_slice()),
+            artifact_bytes: page.artifact_bytes.clone(),
             resources_object: page.resources_object,
             contents_object: page.contents_object,
             page_object: page.page_object,
@@ -81,7 +81,7 @@ pub fn pdf_finalization_input_with_raw_object_files(
                 PdfFormInput {
                     object: form.object,
                     resource: form.resource,
-                    artifact_bytes: Arc::from(form.artifact_bytes.as_slice()),
+                    artifact_bytes: form.artifact_bytes.clone(),
                     width: form.width,
                     height: form.height,
                     depth: form.depth,

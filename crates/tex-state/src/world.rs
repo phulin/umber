@@ -119,7 +119,7 @@ impl ArtifactEffectOrdinal {
 #[derive(Clone, Debug)]
 pub struct CommittedArtifact {
     hash: ContentHash,
-    bytes: Vec<u8>,
+    bytes: SharedBytes,
     render_provenance: ArtifactRenderProvenance,
     open_out_occurrences: Vec<(usize, ArtifactEffectOrdinal)>,
 }
@@ -267,7 +267,7 @@ impl ExactSizeIterator for RenderOriginIter<'_> {}
 #[derive(Clone, Debug)]
 pub struct VerifiedArtifact {
     hash: ContentHash,
-    bytes: Vec<u8>,
+    bytes: SharedBytes,
     render_provenance: ArtifactRenderProvenance,
     open_out_occurrences: Vec<(usize, ArtifactEffectOrdinal)>,
 }
@@ -278,7 +278,7 @@ impl VerifiedArtifact {
         let hash = ContentHash::for_domain(ContentDomain::Artifact, &bytes);
         Self {
             hash,
-            bytes,
+            bytes: bytes.into(),
             render_provenance: ArtifactRenderProvenance::live(Vec::new(), Vec::new()),
             open_out_occurrences: Vec::new(),
         }
@@ -369,7 +369,7 @@ impl VerifiedArtifact {
     pub(crate) fn into_parts(
         self,
     ) -> (
-        Vec<u8>,
+        SharedBytes,
         ArtifactRenderProvenance,
         Vec<(usize, ArtifactEffectOrdinal)>,
     ) {
@@ -398,7 +398,7 @@ impl CommittedArtifact {
     }
 
     #[must_use]
-    pub fn bytes(&self) -> &[u8] {
+    pub fn bytes(&self) -> &SharedBytes {
         &self.bytes
     }
 
@@ -447,7 +447,7 @@ impl CommittedArtifact {
     /// the page effect payload and therefore its final content identity.
     pub fn with_prepared_bytes(mut self, bytes: Vec<u8>) -> Self {
         self.hash = ContentHash::for_domain(ContentDomain::Artifact, &bytes);
-        self.bytes = bytes;
+        self.bytes = bytes.into();
         self
     }
 
@@ -457,7 +457,7 @@ impl CommittedArtifact {
     /// must only be used to exercise downstream rejection paths.
     #[doc(hidden)]
     pub fn with_testing_bytes_preserving_identity(mut self, bytes: Vec<u8>) -> Self {
-        self.bytes = bytes;
+        self.bytes = bytes.into();
         self
     }
 
@@ -530,7 +530,7 @@ impl CommittedArtifact {
 
     pub(crate) fn new(
         hash: ContentHash,
-        bytes: Vec<u8>,
+        bytes: SharedBytes,
         render_provenance: ArtifactRenderProvenance,
         open_out_occurrences: Vec<(usize, ArtifactEffectOrdinal)>,
     ) -> Self {
@@ -3872,21 +3872,21 @@ impl World {
                 Arc::make_mut(memory)
                     .artifacts
                     .entry(hash)
-                    .or_insert_with(|| bytes.to_vec());
+                    .or_insert_with(|| artifact.bytes.clone());
             }
         }
         Ok(hash)
     }
 
     /// Reads committed page artifact bytes from the content-addressed store.
-    pub fn read_artifact(&self, hash: ContentHash) -> Result<Option<Vec<u8>>, WorldError> {
+    pub fn read_artifact(&self, hash: ContentHash) -> Result<Option<SharedBytes>, WorldError> {
         match &self.backend {
             WorldBackend::Real { artifact_dir } => {
                 let path = artifact_dir.join(hash.hex());
                 match std::fs::read(&path) {
                     Ok(bytes) => {
                         verify_artifact_identity(hash, &bytes, Some(path))?;
-                        Ok(Some(bytes))
+                        Ok(Some(bytes.into()))
                     }
                     Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
                     Err(err) => Err(WorldError::new(
@@ -4133,7 +4133,7 @@ impl World {
     pub(crate) fn record_artifact_commit(
         &mut self,
         hash: ContentHash,
-        bytes: Vec<u8>,
+        bytes: SharedBytes,
         render_provenance: ArtifactRenderProvenance,
         open_out_occurrences: Vec<(usize, ArtifactEffectOrdinal)>,
         reservation: ArtifactPublicationReservation,
@@ -5643,7 +5643,7 @@ struct MemoryBackend {
     files: BTreeMap<PathBuf, SharedBytes>,
     modification_dates: BTreeMap<PathBuf, FileModificationDate>,
     outputs: BTreeMap<PathBuf, Vec<u8>>,
-    artifacts: BTreeMap<ContentHash, Vec<u8>>,
+    artifacts: BTreeMap<ContentHash, SharedBytes>,
     terminal_output: Vec<u8>,
     log_output: Vec<u8>,
 }

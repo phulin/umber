@@ -456,19 +456,17 @@ impl PreparedEnginePublication {
                         })?;
                 artifact = artifact.with_prepared_bytes(bytes);
             }
-            rewritten.push((old_hash, artifact.hash(), artifact.bytes().to_vec()));
+            rewritten.push((old_hash, artifact));
         }
 
         let retargeted =
             self.effects[self.cursor].retarget_detached_stream_open(slot, path, replacement);
         debug_assert!(retargeted);
-        for (page, (_, _, bytes)) in self.pages.iter_mut().zip(&rewritten) {
-            page.artifact = page.artifact.clone().with_prepared_bytes(bytes.clone());
-        }
-        if let Some(pdf) = &mut self.pdf {
-            for (old, new, bytes) in &rewritten {
-                pdf.retarget_page_artifact(*old, *new, bytes);
+        for (page, (old, artifact)) in self.pages.iter_mut().zip(rewritten) {
+            if let Some(pdf) = &mut self.pdf {
+                pdf.retarget_page_artifact(old, artifact.hash(), artifact.bytes());
             }
+            page.artifact = artifact;
         }
         self.retry_attempt = self.retry_attempt.saturating_add(1);
         Ok(())
@@ -688,7 +686,7 @@ fn validate_pdf<'a>(
             return Err(EngineCompletionError::PdfPageCount);
         }
         for (index, (page, artifact)) in pdf.pages().iter().zip(artifacts).enumerate() {
-            if page.artifact != artifact.hash() || page.artifact_bytes != artifact.bytes() {
+            if page.artifact != artifact.hash() || &page.artifact_bytes != artifact.bytes() {
                 return Err(EngineCompletionError::PdfPageArtifact { page: index });
             }
         }

@@ -86,7 +86,7 @@ pub struct PdfDocumentMetadataInput {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PdfCommittedPageInput {
     pub artifact_hash: ContentHash,
-    pub artifact_bytes: Arc<[u8]>,
+    pub artifact_bytes: tex_content::SharedBytes,
     pub resources_object: u32,
     pub contents_object: u32,
     pub page_object: u32,
@@ -109,7 +109,7 @@ pub struct PdfCommittedPageInput {
 pub struct PdfFormInput {
     pub object: u32,
     pub resource: u32,
-    pub artifact_bytes: Arc<[u8]>,
+    pub artifact_bytes: tex_content::SharedBytes,
     pub width: Scaled,
     pub height: Scaled,
     pub depth: Scaled,

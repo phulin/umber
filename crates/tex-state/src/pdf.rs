@@ -1204,7 +1204,7 @@ impl<G> std::hash::Hash for PdfFormRecord<G> {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PdfFormArtifact {
-    bytes: Vec<u8>,
+    bytes: SharedBytes,
     last_position: Option<(Scaled, Scaled)>,
     snap_reference: (Scaled, Scaled),
 }
@@ -1217,7 +1217,7 @@ impl PdfFormArtifact {
         snap_reference: (Scaled, Scaled),
     ) -> Self {
         Self {
-            bytes,
+            bytes: bytes.into(),
             last_position,
             snap_reference,
         }
@@ -3704,7 +3704,7 @@ impl<G> PdfState<G> {
             None => self.form_artifacts.get(&object)?,
         };
         Some(PdfFormArtifact {
-            bytes: self.payloads.get(entry.payload).to_vec(),
+            bytes: self.payloads.shared(entry.payload),
             last_position: entry.last_position,
             snap_reference: entry.snap_reference,
         })

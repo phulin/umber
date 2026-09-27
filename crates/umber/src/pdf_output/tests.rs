@@ -20,7 +20,7 @@ fn sfnt_program_classification_includes_supported_containers() {
 }
 
 #[test]
-fn accepted_pdf_finalization_includes_the_unpublished_page_suffix() {
+fn accepted_pdf_finalization_retains_artifact_payloads_and_page_suffix() {
     fn setup() -> tex_state::DetachedPdfCompletion {
         crate::with_engine_universe(|stores| {
             stores.set_interaction_mode(InteractionMode::Nonstop);
@@ -44,17 +44,41 @@ fn accepted_pdf_finalization_includes_the_unpublished_page_suffix() {
                 tex_command::CommandProfile::PDFTEX14029,
             )
             .expect("three package-independent pages ship");
-            stores
+            let completion = stores
                 .command_context()
                 .expect("admit terminal PDF completion")
                 .detach_pdf_completion()
-                .expect("detach three-page PDF")
+                .expect("detach three-page PDF");
+            for page in completion.pages() {
+                let stored = stores
+                    .world()
+                    .read_artifact(page.artifact)
+                    .expect("authenticate stored page")
+                    .expect("committed page exists");
+                assert!(tex_state::SharedBytes::ptr_eq(
+                    &stored,
+                    &page.artifact_bytes
+                ));
+            }
+            completion
         })
         .expect("fresh PDF test universe")
     }
 
     let completion = setup();
     assert_eq!(completion.pages().len(), 3);
+    let input = pdf_finalization_input(
+        &completion,
+        DEFAULT_PDF_PK_RESOLUTION,
+        &crate::PdfVirtualFontResources::default(),
+    )
+    .expect("detached pages cross the finalization boundary");
+    for (page, input) in completion.pages().iter().zip(&input.pages) {
+        assert!(tex_state::SharedBytes::ptr_eq(
+            &page.artifact_bytes,
+            &input.artifact_bytes,
+        ));
+    }
     let direct_pdf = pdf_from_accepted_artifacts_with_virtual_fonts(
         &completion,
         &crate::PdfVirtualFontResources::default(),

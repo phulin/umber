@@ -142,7 +142,8 @@ Command operands are scanned by `tex-command` into typed request and result valu
   resource-restart accounting, cancellation, and borrowed terminal page capture.
 - `src/engine_completion.rs`: handle-free terminal engine capture, aligned
   page/PDF projection, and non-clone effects-before-artifacts publication with
-  exact suffix retry.
+  exact suffix retry. Prepared openout replacements move complete artifact
+  receipts and share their immutable bytes with the matching PDF page rows.
 - `src/transaction_protocol.rs` and `src/transaction_protocol/tests.rs`:
   exhaustive uncommon-barrier classification for direct canonical dispatch.
   Ordinary commands produce no value; the resource and explicit late-failure

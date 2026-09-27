@@ -459,10 +459,27 @@ fn accepted_finalization_moves_page_allocations_out_of_consumed_session() {
     assert!(!pdf_artifact.is_empty());
     let artifact_allocation = artifact.as_ptr();
     let pdf_allocation = pdf_artifact.as_ptr();
+    let page_rows = accepted.pages().as_ptr();
+    let pdf_rows = accepted.pdf().expect("PDF completion").pages().as_ptr();
     let expected_artifact = artifact.to_vec();
     let expected_pdf_artifact = pdf_artifact.clone();
 
     let finalization = session.into_accepted_finalization().expect("finalization");
+    assert_eq!(
+        finalization.completion.pages().as_ptr(),
+        page_rows,
+        "consuming finalization must move the canonical page ledger"
+    );
+    assert_eq!(
+        finalization
+            .completion
+            .pdf()
+            .expect("PDF completion")
+            .pages()
+            .as_ptr(),
+        pdf_rows,
+        "consuming finalization must move the PDF page ledger"
+    );
     let artifact = finalization.completion.pages()[0].artifact().bytes();
     let pdf_artifact = &finalization
         .completion
@@ -470,7 +487,7 @@ fn accepted_finalization_moves_page_allocations_out_of_consumed_session() {
         .expect("PDF completion")
         .pages()[0]
         .artifact_bytes;
-    assert_eq!(artifact, expected_artifact);
+    assert_eq!(artifact.as_ref(), expected_artifact);
     assert_eq!(pdf_artifact, &expected_pdf_artifact);
     assert_eq!(
         artifact.as_ptr(),

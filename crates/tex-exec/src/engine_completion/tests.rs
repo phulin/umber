@@ -198,7 +198,7 @@ fn completion_aligns_effect_artifact_dvi_and_pdf_rows() {
         completion.pages()[0].artifact().hash()
     );
     assert_eq!(
-        pdf.pages()[0].artifact_bytes,
+        &pdf.pages()[0].artifact_bytes,
         completion.pages()[0].artifact().bytes()
     );
     assert!(completion.effects().iter().any(|effect| matches!(

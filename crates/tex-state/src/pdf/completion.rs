@@ -58,7 +58,7 @@ impl std::error::Error for PdfCompletionError {}
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DetachedPdfPage {
     pub artifact: ContentHash,
-    pub artifact_bytes: Vec<u8>,
+    pub artifact_bytes: crate::SharedBytes,
     pub resources_object: u32,
     pub contents_object: u32,
     pub page_object: u32,
@@ -78,7 +78,7 @@ pub struct DetachedPdfPage {
 pub struct DetachedPdfForm {
     pub object: u32,
     pub resource: u32,
-    pub artifact_bytes: Vec<u8>,
+    pub artifact_bytes: crate::SharedBytes,
     pub width: Scaled,
     pub height: Scaled,
     pub depth: Scaled,
@@ -367,13 +367,13 @@ impl DetachedPdfCompletion {
         &mut self,
         old: ContentHash,
         new: ContentHash,
-        bytes: &[u8],
+        bytes: &crate::SharedBytes,
     ) -> usize {
         let mut changed = 0;
         for page in &mut self.pages {
             if page.artifact == old {
                 page.artifact = new;
-                bytes.clone_into(&mut page.artifact_bytes);
+                page.artifact_bytes = bytes.clone();
                 changed += 1;
             }
         }
@@ -401,7 +401,7 @@ pub(crate) fn detach<G>(
     mut font_recipe: impl FnMut(crate::ids::FontId) -> FontArtifactRecipe,
     mut font_metrics: impl FnMut(crate::ids::FontId, u8) -> Option<crate::font::CharMetrics>,
     mut font_parameter: impl FnMut(crate::ids::FontId, u32) -> Scaled,
-    mut read_artifact: impl FnMut(ContentHash) -> Result<Option<Vec<u8>>, String>,
+    mut read_artifact: impl FnMut(ContentHash) -> Result<Option<crate::SharedBytes>, String>,
 ) -> Result<DetachedPdfCompletion, PdfCompletionError> {
     let pages = pdf
         .pages

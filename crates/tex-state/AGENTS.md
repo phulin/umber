@@ -381,7 +381,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
   identity lookups synchronized with row truncation and candidate settlement.
 - `src/pdf/completion.rs`: handle-free terminal projection of the checkpointed
   PDF ledger, including artifacts, resources, raw objects, actions, and final
-  document state.
+  document state. Frozen page/form bytes retain their immutable `SharedBytes`
+  owners through detachment and prepared-artifact replacement.
 - `src/pdf/tests.rs`: Generation-typed page/action/object coordinates, owned
   image payloads, atomic PDF checkpoint rollback, interleaved general/color
   candidate settlement, and handle-free format-ledger
@@ -495,7 +496,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   artifact receipt column whose hashes are derived on demand, and
   field/key-specific allocation-independent dependency projections.
   Stored artifacts are authenticated with the current artifact-domain content
-  hash; historical hash schemes are not accepted.
+  hash; historical hash schemes are not accepted. Verified, stored, and
+  committed artifact bytes share immutable `SharedBytes` owners, while effect
+  occurrences and rendered-source metadata retain their own rollback rules.
 - `src/world/input_dependencies.rs`: Input-dependency records and their
   rollback journal on the same `World` owner.
 - `src/world/effect_publication.rs`: Effect journal access, publication

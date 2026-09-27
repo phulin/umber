@@ -45,7 +45,7 @@ Use this crate for stable, driver-facing artifact structures and serialization c
 - `src/model.rs`: Detached page artifact, versioned font-layout/classic/OpenType identities, node, glue, kern, and output effect data model.
 - `src/node_cursor.rs`: Canonical explicit-stack artifact node/list event order shared by codec emission and validation.
 - `src/pdf.rs`: validated detached PDF object/page/resource graph, canonical ordering, and semantic identity.
-- `src/pdf/finalization.rs`: complete host-neutral PDF finalization input, including committed pages/forms, realized fonts/programs, images, metadata/navigation, allocation state, and explicit limits.
+- `src/pdf/finalization.rs`: complete host-neutral PDF finalization input, including immutable shared committed page/form bytes, realized fonts/programs, images, metadata/navigation, allocation state, and explicit limits.
 - `src/pdf/finalize.rs`: finalization coordinator, sole indirect-object allocation/publication authority, graph validation, deterministic serialization, and diagnostics.
 - `src/pdf/finalize/errors.rs`: public finalization errors and source conversions.
 - `src/pdf/finalize/content.rs`: private page/form content module wiring.

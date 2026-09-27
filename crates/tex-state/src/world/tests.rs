@@ -170,13 +170,13 @@ fn artifact_identity_excludes_owned_render_presentation() {
     let hash = ContentHash::for_domain(ContentDomain::Artifact, &bytes);
     let first = CommittedArtifact::new(
         hash,
-        bytes.clone(),
+        bytes.clone().into(),
         ArtifactRenderProvenance::live(vec![1], vec![source("one.tex", 0, 1)]),
         Vec::new(),
     );
     let second = CommittedArtifact::new(
         hash,
-        bytes,
+        bytes.into(),
         ArtifactRenderProvenance::live(vec![1], vec![source("two.tex", 2, 3)]),
         Vec::new(),
     );
@@ -210,7 +210,7 @@ fn reachable_future_state_identity_excludes_committed_artifact_history() {
         let reservation = world.reserve_artifact_publication_at(0);
         world.record_artifact_commit(
             hash,
-            bytes.to_vec(),
+            bytes.into(),
             ArtifactRenderProvenance::live(Vec::new(), Vec::new()),
             Vec::new(),
             reservation,
@@ -669,7 +669,7 @@ fn checkpoint_candidate_reuses_detached_storage_and_moves_owned_payloads() {
         let reservation = world.reserve_artifact_publication_at(0);
         world.record_artifact_commit(
             hash,
-            bytes,
+            bytes.into(),
             ArtifactRenderProvenance::live(Vec::new(), Vec::new()),
             Vec::new(),
             reservation,
@@ -926,6 +926,47 @@ fn committed_artifact_bytes_are_owned_and_rehash_on_preparation() {
         .with_prepared_bytes(vec![4, 5, 6]);
     assert_eq!(committed.bytes(), &[4, 5, 6]);
     assert_ne!(committed.hash(), original_hash);
+}
+
+#[test]
+fn immutable_artifact_payload_survives_publication_clone_and_rollback() {
+    let bytes = vec![1, 2, 3, 4];
+    let allocation = bytes.as_ptr();
+    let verified = VerifiedArtifact::new(bytes);
+    let hash = verified.hash();
+    assert_eq!(verified.bytes().as_ptr(), allocation);
+
+    let mut world = World::memory();
+    world
+        .begin_retained_session()
+        .expect("fresh retained world");
+    let before = world.snapshot();
+    world
+        .store_verified_artifact(&verified)
+        .expect("verified artifact is stored");
+    let stored = world
+        .read_artifact(hash)
+        .expect("stored bytes authenticate")
+        .expect("stored artifact exists");
+    assert!(SharedBytes::ptr_eq(&stored, &verified.bytes));
+    let reservation = world.reserve_artifact_publication_at(0);
+    let (bytes, provenance, occurrences) = verified.into_parts();
+    world.record_artifact_commit(hash, bytes, provenance, occurrences, reservation);
+    let accepted = world.committed_artifacts()[0].clone();
+    assert!(SharedBytes::ptr_eq(&stored, accepted.bytes()));
+
+    world.rollback(&before);
+    assert!(world.committed_artifacts().is_empty());
+    drop(world);
+    assert_eq!(accepted.bytes().as_ref(), &[1, 2, 3, 4]);
+    assert_eq!(accepted.bytes().as_ptr(), allocation);
+    assert_eq!(accepted.hash(), hash);
+
+    let replacement = accepted.clone().with_prepared_bytes(vec![5, 6]);
+    assert_eq!(accepted.bytes().as_ref(), &[1, 2, 3, 4]);
+    assert_eq!(replacement.bytes().as_ref(), &[5, 6]);
+    assert_ne!(replacement.hash(), hash);
+    assert!(!SharedBytes::ptr_eq(accepted.bytes(), replacement.bytes()));
 }
 
 #[test]

@@ -61,7 +61,8 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
   accepted engine state and host-resolved artifacts/resources into
   `tex_out::pdf::PdfFinalizationInput`; it is the only Umber-owned PDF
   finalization boundary. Font discovery decodes one page or form at a time
-  while retaining only document-wide font summaries.
+  while retaining only document-wide font summaries. Page/form input retains the detached immutable byte
+  owners without copying their payloads.
 - `src/pdf_output/finalization_input/virtual_fonts.rs`: destination-local,
   handle-free discovery and atomic allocation of the sized font instances
   selected while detached virtual-font packets are lowered.
