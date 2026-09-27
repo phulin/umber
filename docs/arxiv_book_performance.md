@@ -1,80 +1,69 @@
 # Long-book PDF performance audit
 
-Physical compaction of node and annex storage substantially reduces the book's
-memory footprint. At the same 200-million-action endpoint, a quiet shipping
-comparison of `99f75a4d9` and `7b9f40dbd` reduced median peak RSS by about
-225 MiB, while median user CPU improved by only 2.0%. The fixed-fuel profiling
-comparison below explains the storage reduction and the growth it does not
-attribute. These measurements do not establish full-book completion.
+The engine completes the 588-page book under explicitly increased diagnostic
+limits. All page geometry, rendered pixels, and extracted text match the earlier
+Umber output. Against the independent reference, all text matches and pages
+141, 161, 323, and 516 retain their known exact raster differences. No raster
+tolerance has changed.
 
-The book still does not complete within the original guards. The
-unchanged-guard run at `bf4a6a7ba` reached the 500-million-action fuel limit after
-118.12 seconds, before the wall timeout. Its receipt is
-`target/perf-tex-copy-plan/ownership-annex-original-book/summary.json`.
-The subsequent `41b8271d7` run timed out while parallel validation builds were
-active; its receipt is
-`target/perf-tex-copy-plan/direct-register-handoff-original-book/summary.json`.
-Neither run establishes completion or a matched speed comparison.
-Keep the 120-second, 1,536 MiB, 500,000,000 expansion-fuel, and 10,000,000
-execution-step acceptance guards. The reduced split controls below explain an
-earlier scaling defect; their speedups are not whole-book speedups.
+The original acceptance guards remain 120 seconds, 1,536 MiB RSS,
+500,000,000 expansion-fuel actions, and 10,000,000 execution steps. Full-book
+diagnostic completion does not satisfy those guards. The combined ownership
+build at `546781218` completes with profiling counters in 317.30 seconds and
+943,932 KiB peak RSS, using the increased 900-second, 6,144 MiB, and two-billion
+fuel limits. Concurrent work and profiling make this a completion and ownership
+check, not a matched runtime comparison. The original time/fuel acceptance and
+four reference raster differences remain unresolved.
 
-A separate `41b8271d7` diagnostic increased the time and fuel limits to
-600 seconds and two billion actions while retaining the 1,536 MiB RSS limit.
-It hit that memory limit after 292.41 seconds, with a measured maximum RSS of
-1,654,316 KiB, and produced no PDF. Its complete command and guard diagnostic
-are under
-`target/perf-tex-copy-plan/direct-register-handoff-extended-diagnostic/`.
-This later growth is outside the earlier 100–200 million-action heap captures;
-those captures cannot establish full-book peak memory or reclamation.
+## Measured full-book memory
 
-A full diagnostic run at `7ef1d1e6f`, with heaptrack and explicitly increased
-900-second, 6,144 MiB, and two-billion-action limits, completed all 588 pages.
-Requested heap peaked at 2,442,937,472 bytes; RSS peaked at 2,241,328 KiB.
-Node and annex pool backing accounted for only about 36.4 MB at their combined
-individual peaks. The large late consumers include canonical page artifacts,
-PDF page artifacts, source provenance, and clones of the detached completion.
-At that checkpoint, the consuming client finalization kept the incremental
-session's shared completion alive while extracting an owned completion, forcing
-a deep copy. The recorded stacks attribute about 480 MB to that finalization
-path. The consuming handoff now releases the incremental session after reading
-its statistics, before extracting the owned completion. An ownership test checks
-that both canonical and PDF page allocations survive that handoff unchanged;
-this removes the clone without changing retained-session reuse semantics.
-The isolated full-book heaptrack run at `616b4610a` reduced maximum RSS from
-2,241,328 to 1,795,804 KiB, about 435 MiB or 20%. Its per-page image and text
-hashes match the previous run on all 588 pages. The candidate capture is under
-`target/perf-tex-copy-plan/finalization-move-heaptrack/fuel-2000000000/`.
-Requested peak heap fell to 1,992,237,599 bytes, and peak allocation stacks
-attributed to `into_accepted_finalization` fell from 479,896,246 bytes to zero.
-This remains above the original 1,536 MiB guard. Both runs were instrumented
-and shared the machine with other work, so their elapsed times do not establish
-a speed improvement.
-The raw capture, heap report, and allocation timeline are under
-`target/perf-tex-copy-plan/late-book-heaptrack-7ef/fuel-2000000000/`.
-Its 545.78-second instrumented runtime is not a shipping speed measurement.
+The largest avoidable late allocations were copies of frozen page artifacts,
+not runtime node-pool backing. Two independent matched heaptrack comparisons
+establish the ownership fixes below. Each pair completes the same authenticated
+book; comparisons across pairs include other engine changes and do not isolate
+one fix.
 
-All 588 pages have identical extracted text to the reference, but pages 141,
-161, 323, and 516 differ in exact raster comparison. The earlier `bf4a6a7ba`
-shipping build also completes under diagnostic limits and produces identical
-per-page raster and text hashes to `7ef1d1e6f` on all 588 pages. Thus these four
-differences predate the direct durable-register handoff. They remain parity
-failures; no raster tolerance was changed. The earlier build's full receipt is
-`target/perf-tex-copy-plan/ownership-annex-full-diagnostic/summary.json`.
-Neither diagnostic completion satisfies the original acceptance guards.
+| Change                                                                              | Baseline → candidate      |    Requested peak heap, bytes |         Peak RSS, KiB |
+| ----------------------------------------------------------------------------------- | ------------------------- | ----------------------------: | --------------------: |
+| Release the consuming incremental session before extracting its completion          | `7ef1d1e6f` → `616b4610a` | 2,442,937,472 → 1,992,237,599 | 2,241,328 → 1,795,804 |
+| Share authenticated immutable artifact bytes through publication and PDF detachment | `83ef5225b` → `da8007417` | 1,642,984,091 → 1,108,469,185 |   1,485,680 → 976,200 |
 
-The combined `60326ecfc` diagnostic includes the unique-source split transfer
-and native batch provenance selection. It completes with requested peak heap
-of 1,643,410,778 bytes and maximum RSS of 1,625,792 KiB. All 588 per-page raster
-and text hashes match the earlier Umber runs; the same four reference raster
-differences remain. This is about 601 MiB below the earlier 2,241,328 KiB RSS,
-but still about 52 MiB above the original guard. The combined result cannot
-isolate the provenance policy's full-book effect from the split transfer.
-The capture and comparison receipt are under
-`target/perf-tex-copy-plan/batch-provenance-heaptrack/` and
-`target/perf-tex-copy-plan/batch-provenance-full-heap-comparison.json`.
-The peak is now before PDF finalization and still includes separate serialized
-artifact copies in the World store, committed output, and detached PDF rows.
+The first fix removes about 480 MB of peak allocations attributed to
+`into_accepted_finalization`. The second reduces matched RSS by about 498 MiB,
+or 34.3%. Three artifact-copy paths each held about 176 MB at the baseline
+peak: World storage, committed-artifact slice cloning, and detached PDF reads.
+Their candidate peak-stack attributions are 37,344, 48, and zero bytes.
+The original artifact emission allocation remains about 245 MB. These immutable
+byte owners are separate from the exclusive runtime node and annex owners;
+sharing bytes does not introduce node aliasing or first-write copies.
+
+The artifact comparison's node-copy counts match, and node/annex backing peaks
+are unchanged at 9,175,040 and 19,464,192 bytes. Both live-block gauges are zero
+after engine teardown. This establishes final release, not zero live ownership
+during execution. Pool metadata, token and definition storage, format state,
+and retained output remain distinct heap consumers. The originally reported
+4.7 GiB peak was not reproduced; these captures explain the peaks they measured.
+
+Font discovery also decodes one page or form artifact at a time instead of
+retaining every decoded tree. The artifact-byte baseline already includes that
+change and the integrated interpreter work, so this pair does not measure
+their separate effects. Native PDF/DVI provenance selection and compact PDF
+color history are measured separately below.
+
+The exact commands, binary/source hashes, heap reports, and comparison receipts
+are in `target/perf-tex-copy-plan/artifact-bytes-full-heap-comparison.json`,
+`artifact-bytes-baseline-heaptrack/`, and `artifact-bytes-candidate-heaptrack/`.
+The consuming-handoff comparison is in `finalization-move-heap-comparison.json`
+and `finalization-move-heaptrack/` under the same directory. Every 588-page output
+hash matches within these comparisons. Instrumented elapsed times are not
+shipping speed estimates.
+
+The combined build passes all seven native/quality stages and all 93 previously
+passing arXiv PDF cases plus eight LaTeX/pdfLaTeX cases across TeX Live 2023–2026.
+Those corpus runs retain their original guards and authenticated source dates.
+Their receipt is `target/perf-tex-copy-plan/carrier-inline-parity/verdict.json`.
+The full-book receipt and independent PDF comparison are under
+`.worktrees/slot-2/target/perf-generated-box-ownership/carrier-combined/full-book/`.
 
 ## Current CPU attribution and copy scope
 
@@ -124,6 +113,18 @@ samples and source/binary identities are in
 `.worktrees/slot-3/target/perf-tex-copy-plan/annex-token-candidate/quiet-comparison.json`.
 The 50 ns/node fixed-body target remains unmet.
 
+Single inline child lists now publish one independent destination record after
+ordinary source admission, bypassing general chunk and annex scratch. Existing
+copy tests cover repeated children, source retirement, computed identities, and
+rollback. In four paired CPU-4 runs with the team's heavy jobs held, the nested
+shape improved from 311.295 to 262.94 ns per copied node, about 15.5%. Long inline
+lists cost roughly one extra ns/node; variable payloads were approximately flat.
+Fixed-body benchmark results also improved, but that shape does not enter the
+new leaf path, so its code-generation effect is not attributed to leaf handling.
+Unrelated machine activity was not audited, and this is not a book speedup.
+The exact pre-carrier base, source diff, frozen binaries, and all shape results
+are in `.worktrees/slot-1/target/perf-copy-inline-leaves/quiet-comparison.json`.
+
 The direct durable-register handoff checkpoint `41b8271d7` passed all seven
 native/quality stages, all 93 previously passing arXiv PDF comparisons, and
 the eight LaTeX/pdfLaTeX cases across TeX Live 2023–2026. Its frozen shipping
@@ -138,53 +139,59 @@ remain incomplete, as described in
 
 ## Remaining copy origins
 
-At the authenticated 200-million-action endpoint, the profiling build at
-`7ef1d1e6f` counted 5,647,640 recursively copied nodes in 13,165 top-level
-copies. Each recursive descendant is charged once in this denominator.
+The full-book comparison between `da8007417` and `546781218` preserves all 588
+Umber page records while reducing total recursive node-copy volume by 7,288,679
+nodes, about 13.6%. Both builds include the unique-source split transfer and
+batch provenance policy. Rows below overlap and must not be summed.
 
-| Source class                        | Copied nodes |
-| ----------------------------------- | -----------: |
-| Explicit durable-to-page entrypoint |    4,755,326 |
-| Built-box structural fallback       |      791,159 |
-| Durable-to-durable history          |       16,082 |
-| Other region-copy entrypoints       |       85,073 |
+| Counter                                                          | Before output-carrier transfer | Combined build |
+| ---------------------------------------------------------------- | -----------------------------: | -------------: |
+| All recursive region-copy nodes                                  |                     53,602,118 |     46,313,439 |
+| Page-output register-take fallback nodes                         |                      7,739,037 |        222,153 |
+| Setbox-construction fallback nodes                               |                        625,790 |        625,790 |
+| Explicit durable-to-page copy nodes                              |                     44,254,975 |     44,254,975 |
+| Destructive split source-copy nodes, included in explicit copies |                          3,868 |          3,868 |
+| Survivor nodes copied to permit output-carrier moves             |                              0 |        227,607 |
 
-The explicit entrypoint includes both required TeX copies and callers such as
-`\vsplit` that currently materialize a copy before destructive work; its name
-does not prove that every caller must copy. Of the structural fallback nodes,
-698,707 came from 108 register-take events, 92,386 from 49 constructions, and
-66 from two last-box events. A subsequent gate-reason census proved that all
-108 register-take events consume the live page-owned box 255 carrier. None
-was a checkpoint-retained durable source. Thus the validated direct
-durable-register handoff leaves this book's dominant fallback unchanged.
-The next ownership change must address the actual page-builder carrier.
+The page-owned output carrier moves 560 times. The remaining 27 carrier copies
+are 20 cases with mode roots and seven with an armed successor. Each successful
+move copies only the four surviving page-builder roots into a fresh page owner,
+then transfers the old node/annex envelope into the durable box. The operation
+journal retains the inverse move until commit; rollback restores the box,
+region, and builder roots. See [Generated box ownership](generated_box_ownership.md).
 
-The conservative fresh-recursive-source marker covered only 24,188 nodes,
-or 0.428% of all copied nodes. This is measured constructor provenance, not
-an exact-tree certificate or a ceiling on all possible bulk-copy work: directly
-sealed owners are deliberately unmarked. Building a fast copier only for
-that marked class would cover little of this prefix.
+Whole-envelope transfer can encounter an obsolete chunk whose predecessor has
+already retired even though all selected live output is valid. Root admission
+errors remain fatal. An unsupported envelope instead declines the move and
+copies the live output through the ordinary validating copier. A reduced test
+covers both the valid-live-root case and a genuinely invalid selected root;
+the full-book transfer census reports zero observation failures.
 
-The combined census, frozen binary identity, archive and format hashes, and
-raw diagnostics are in
-`.worktrees/slot-3/target/perf-tex-copy-plan/combined-provenance/fuel-200000000/`.
-The reason census is in
-`.worktrees/slot-2/target/perf-generated-box-ownership/gate-reason-census/fuel-200000000/`;
-it records its pre-commit source-diff hash as well as the binary hash. These
-instrumented runs establish copy volume and origin, not runtime improvement.
+The carrier census counts 11,413,034 moved node records and 140,253,086 moved
+annex words. Its semantic traversal counts list visits, not unique physical
+nodes: overlapping slices can count a record more than once. Do not subtract
+semantic counts from envelope counts to infer unreachable storage. Node and
+annex pool backing peaks are 6,422,528 and 13,565,952 bytes in the combined run;
+both live-block gauges reach zero after teardown.
 
-The unique vertical-source transfer at `1ee115c65` removes most destructive
-`\vsplit` source copies through the existing reversible durable-to-page loan.
-At the same 200-million-action endpoint, that origin falls from 868 calls and
-758,681 nodes to 14 calls and 3,731 nodes. Total region-copy volume falls from
-5,647,640 to 4,897,690 nodes: the net reduction is 749,950 because other
-structural fallbacks add 5,000 nodes under the changed ownership layout.
-Token and fuel-work counters match. This checkpoint passes all seven validation
-stages and exact PDF comparisons for all 93 arXiv rows and eight annual TeX Live
-representatives. The counter comparison and shipping parity receipts are under
-`.worktrees/slot-3/target/perf-tex-copy-plan/vsplit-transfer/`,
-`vsplit-shipping-parity-93/`, and `vsplit-shipping-representatives/`.
-These measurements establish copy-volume reduction, not a latency estimate.
+The remaining 169 construction fallbacks are nested boxes. Destructive unbox
+imports are a plausible source of pre-existing children inside a later box
+construction, but the aggregate shape census does not prove that attribution.
+Carrying consumed-child authority through mode append and box packaging needs
+its own ownership proof and origin evidence before another transfer extension.
+
+The source-copy census also distinguishes required TeX copies from callers that
+can consume a unique owner. The earlier unique-source `\vsplit` change reduced
+that full-book origin from 4,789 calls/8,020,015 nodes to 48 calls/3,868 nodes.
+History-retained sources still copy. The old 200-million-action constructor
+marker covered only 0.428% of copied nodes; it was observational provenance,
+not a complete-tree certificate or a ceiling on all possible bulk copying.
+The [node ownership contract](node_region_ownership.md#complete-envelope-bulk-copy-proof)
+defines the stronger proof required for a whole-envelope copy optimization.
+
+Raw before/after counters are in the artifact-byte candidate's `stderr.log` and
+`.worktrees/slot-2/target/perf-generated-box-ownership/carrier-combined/full-book/result.json`.
+These counters establish removed copying and final retirement, not latency.
 
 ## Book identity and workload
 
