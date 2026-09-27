@@ -548,6 +548,14 @@ struct PagePayloadRoots {
     output_box: PageListSpan,
 }
 
+/// Exact live builder slots held while its consumed output carrier changes
+/// region ownership. The page transaction separately journals the output
+/// removal; these coordinates must be restored before that journal replays.
+pub(crate) struct PageOutputBuilderSwap {
+    roots: PagePayloadRoots,
+    successor_build: Option<PageClosureBuildMark>,
+}
+
 struct PageCheckpointFrame {
     id: u64,
     cursor: usize,
@@ -1044,6 +1052,18 @@ pub struct ModeListRegionPreflight {
     pub(crate) region: NodeRegionId,
 }
 
+/// One current page-history lend with no retained checkpoint or prepared
+/// successor. Only this module can mint it from the actual owner history.
+pub(crate) struct PageOutputRegionPermit {
+    region: NodeRegionId,
+}
+
+impl PageOutputRegionPermit {
+    pub(crate) const fn region(&self) -> NodeRegionId {
+        self.region
+    }
+}
+
 struct PreparedPageRegionSuccessor {
     current: Option<PageRegion>,
     /// Test-only compatibility projection for the focused region seam. The
@@ -1132,6 +1152,17 @@ impl PageRegionHistory {
     }
 
     pub(crate) fn parts_mut(&mut self) -> (PageMaterialArena<'_>, &mut PageBuilderState) {
+        let output_permit = (self.pending_successor.is_none()
+            && self.current().checkpoints.is_empty()
+            && self
+                .current()
+                .builder
+                .checkpoint_journal
+                .candidate_root_frame
+                .is_none())
+        .then(|| PageOutputRegionPermit {
+            region: self.current().id(),
+        });
         #[cfg(feature = "profiling")]
         let output_probe = if self.pending_successor.is_some() {
             crate::page_node_arena::PageOutputHistoryProbe::PendingSuccessor
@@ -1145,6 +1176,11 @@ impl PageRegionHistory {
             .last_mut()
             .expect("page history always has a current region");
         let arena = PageMaterialArena::new(&mut self.pool, &mut current.nodes);
+        let arena = if let Some(permit) = output_permit {
+            arena.with_output_region_permit(permit)
+        } else {
+            arena
+        };
         #[cfg(feature = "profiling")]
         let arena = arena.with_output_history_probe(output_probe);
         (arena, &mut current.builder)
@@ -2395,6 +2431,56 @@ impl Default for PageBuilderState {
 }
 
 impl PageBuilderState {
+    pub(crate) fn output_carrier_survivor_roots(&self) -> [PageListId; 4] {
+        [
+            self.contribution.list(),
+            self.current_page.list(),
+            self.page_discards.list(),
+            self.split_discards.list(),
+        ]
+    }
+
+    /// Consumes the actual output slot only after its survivor copies and
+    /// paired transfer admission have succeeded.
+    pub(crate) fn take_output_carrier_for_region_swap(
+        &mut self,
+    ) -> (PageListId, PageOutputBuilderSwap) {
+        let roots = self.payload_roots();
+        assert!(!roots.output_box.is_empty(), "output carrier is occupied");
+        let output = self.take_output_box();
+        let successor_build = self.output_successor_build.take();
+        (
+            output,
+            PageOutputBuilderSwap {
+                roots,
+                successor_build,
+            },
+        )
+    }
+
+    pub(crate) fn publish_output_carrier_survivors(&mut self, roots: [PageListSpan; 4]) {
+        let [contribution, current_page, page_discards, split_discards] = roots;
+        self.contribution = contribution;
+        self.current_page = current_page;
+        self.page_discards = page_discards;
+        self.split_discards = split_discards;
+        self.semantic_roots.contribution = list_identity(self.contribution);
+        self.semantic_roots.page_discards = list_identity(self.page_discards);
+        self.semantic_roots.split_discards = list_identity(self.split_discards);
+    }
+
+    pub(crate) fn restore_output_carrier_region(&mut self, swap: PageOutputBuilderSwap) {
+        self.contribution = swap.roots.contribution;
+        self.current_page = swap.roots.current_page;
+        self.page_discards = swap.roots.page_discards;
+        self.split_discards = swap.roots.split_discards;
+        self.output_box = swap.roots.output_box;
+        self.output_successor_build = swap.successor_build;
+        self.semantic_roots.contribution = list_identity(self.contribution);
+        self.semantic_roots.page_discards = list_identity(self.page_discards);
+        self.semantic_roots.split_discards = list_identity(self.split_discards);
+    }
+
     fn journal_and_inverse_target(
         &mut self,
     ) -> (&mut PageCheckpointJournal, PageInverseTarget<'_>) {

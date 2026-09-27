@@ -98,6 +98,10 @@ unreachable historical records. Before moving it, the existing page-region
 successor builder prepares a fresh region containing independent copies of
 every live _survivor_ root: contribution, current page/held-over insertions,
 page discards, and split discards. It excludes the consumed output box. A
+`prepare_box255` held-over list is installed in the builder's current-page
+root before the output routine begins, so it belongs to the copied survivor
+set; it is not an untracked sixth root. The builder's complete five-root
+inventory is thus four copied survivors plus the consumed output box. A
 complete old region can then move even if the selected box and survivor
 records share physical logical chunks. Survivor copy volume is measured
 separately from moved output-box volume; if survivors are large, a later

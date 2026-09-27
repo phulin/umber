@@ -728,6 +728,41 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
             })
         }
     }
+
+    pub(crate) fn box_register_output_carrier(
+        &mut self,
+        destination: u16,
+        global: bool,
+        modes: tex_state::page::ModeListRegionPreflight,
+    ) -> Result<MutationReceipt, tex_state::page_node_arena::OutputCarrierTakeError> {
+        tracing::trace_output_carrier_write(
+            self.stores,
+            self.diagnostic_effects,
+            destination,
+            global,
+            |stores| {
+                stores.assign_output_carrier_take(
+                    modes,
+                    destination,
+                    if global {
+                        tex_state::AssignmentScope::Global
+                    } else {
+                        tex_state::AssignmentScope::Local
+                    },
+                )
+            },
+        )?;
+        if destination <= 255 {
+            Ok(MutationReceipt::SILENT)
+        } else {
+            Ok(MutationReceipt::observed(MutationRecord {
+                target: MutationTarget::Register,
+                key: ObservationValue::Name(format!("box:{destination}")),
+                value: ObservationValue::Name("occupied".into()),
+                global,
+            }))
+        }
+    }
 }
 
 fn glue_value(value: &GlueSpec) -> ObservationValue {

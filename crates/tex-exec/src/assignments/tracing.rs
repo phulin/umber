@@ -625,6 +625,59 @@ pub(crate) fn trace_box_write<G>(
     new: Option<&tex_state::page_node_arena::PageListId>,
     write: impl FnOnce(&mut CommandContext<'_, G>),
 ) {
+    if stores.int_param(IntParam::TRACING_ASSIGNS) <= 0 {
+        write(stores);
+        return;
+    }
+    let old = stores.copy_box_to_page(index);
+    let old_text = stores.box_assignment_trace_text(old);
+    // A construction write may move the exact page closure into durable
+    // ownership. Render while the page handle is still admitted.
+    let new_text = stores.box_assignment_trace_text(new.cloned());
+    let changed = old.as_ref() != new;
+    trace_box_write_rendered(
+        stores,
+        diagnostic_effects,
+        index,
+        global,
+        (old_text, new_text),
+        changed,
+        |stores| {
+            write(stores);
+            Ok::<(), std::convert::Infallible>(())
+        },
+    )
+    .unwrap_or_else(|never| match never {});
+}
+
+/// The output-carrier source is formatted from its borrowed live page root
+/// before consumption. Its destination's old value is formatted after TeX's
+/// conceptual source clear, without promoting box 255 into durable storage.
+pub(crate) fn trace_output_carrier_write<G>(
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
+    index: u16,
+    global: bool,
+    write: impl FnOnce(
+        &mut CommandContext<'_, G>,
+    ) -> Result<(), tex_state::page_node_arena::OutputCarrierTakeError>,
+) -> Result<(), tex_state::page_node_arena::OutputCarrierTakeError> {
+    if stores.int_param(IntParam::TRACING_ASSIGNS) <= 0 {
+        return write(stores);
+    }
+    let text = stores.output_carrier_assignment_trace_text(index);
+    trace_box_write_rendered(stores, diagnostic_effects, index, global, text, true, write)
+}
+
+fn trace_box_write_rendered<G, E>(
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
+    index: u16,
+    global: bool,
+    (old_text, new_text): (String, String),
+    changed: bool,
+    write: impl FnOnce(&mut CommandContext<'_, G>) -> Result<(), E>,
+) -> Result<(), E> {
     fn print_box_trace<G>(
         stores: &mut CommandContext<'_, G>,
         diagnostic_effects: &mut DiagnosticEffects,
@@ -648,43 +701,28 @@ pub(crate) fn trace_box_write<G>(
         diagnostic.end(false);
     }
 
-    let tracing_before = stores.int_param(IntParam::TRACING_ASSIGNS) > 0;
-    if !tracing_before {
-        write(stores);
-        return;
-    }
-    let old = stores.copy_box_to_page(index);
     let name = escaped(stores, &format!("box{index}"));
-    let old_text = stores.box_assignment_trace_text(old);
-    // A construction write may move the exact page closure into durable
-    // ownership. Render its diagnostic while the owner-relative page handle
-    // is still admitted instead of requiring a hidden post-transfer copy.
-    let new_text = stores.box_assignment_trace_text(new.cloned());
-    write(stores);
-    let changed = old.as_ref() != new;
+    write(stores)?;
     if global {
-        if tracing_before {
-            print_box_trace(
-                stores,
-                diagnostic_effects,
-                "globally changing",
-                &name,
-                &old_text,
-            );
-        }
+        print_box_trace(
+            stores,
+            diagnostic_effects,
+            "globally changing",
+            &name,
+            &old_text,
+        );
         if stores.int_param(IntParam::TRACING_ASSIGNS) > 0 {
             print_box_trace(stores, diagnostic_effects, "into", &name, &new_text);
         }
     } else if changed {
-        if tracing_before {
-            print_box_trace(stores, diagnostic_effects, "changing", &name, &old_text);
-        }
+        print_box_trace(stores, diagnostic_effects, "changing", &name, &old_text);
         if stores.int_param(IntParam::TRACING_ASSIGNS) > 0 {
             print_box_trace(stores, diagnostic_effects, "into", &name, &new_text);
         }
     } else if stores.int_param(IntParam::TRACING_ASSIGNS) > 0 {
         print_box_trace(stores, diagnostic_effects, "reassigning", &name, &new_text);
     }
+    Ok(())
 }
 
 /// Renders one of e-TeX's four penalty arrays as merged `etex.web` §17

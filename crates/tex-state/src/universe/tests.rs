@@ -86,6 +86,194 @@ fn command_operation_restores_page_owned_box_dimension_without_promotion() {
 }
 
 #[test]
+fn consumed_output_carrier_restores_page_owner_before_command_rollback() {
+    with_universe(budget(), |universe| {
+        let mut context = universe.command_context().expect("command context");
+        let child = context.publish_page_nodes(vec![Node::Penalty(47)]);
+        let root = context.publish_page_nodes(vec![output_box_node(child, 10)]);
+        context
+            .install_page_output_box(root)
+            .expect("page-owned output wrapper");
+        let original = context.box_register(255).expect("output metadata");
+        let operation = context.begin_state_operation();
+        let modes = context.seal_mode_list_region_preflight();
+        context
+            .assign_output_carrier_take(modes, 7, AssignmentScope::Global)
+            .expect("unretained page owner moves");
+        assert!(context.box_register(255).is_none());
+        assert!(context.box_register(7).is_some());
+        context
+            .restore_state_operation(operation)
+            .expect("durable loan reverses before page state");
+        assert_eq!(context.box_register(255), Some(original));
+        assert!(context.box_register(7).is_none());
+        assert_eq!(
+            context.box_dimension(255, BoxDimension::Width),
+            Some(Scaled::from_raw(10))
+        );
+        let retry = context.begin_state_operation();
+        let modes = context.seal_mode_list_region_preflight();
+        context
+            .assign_output_carrier_take(modes, 7, AssignmentScope::Global)
+            .expect("rollback returns the one-use page owner permit");
+        context.commit_state_operation(retry);
+        assert!(context.box_register(255).is_none());
+        assert!(context.box_register(7).is_some());
+    })
+    .expect("universe allocation");
+}
+
+#[test]
+fn committed_output_carrier_keeps_exclusive_durable_root() {
+    with_universe(budget(), |universe| {
+        let mut context = universe.command_context().expect("command context");
+        let child = context.publish_page_nodes(vec![Node::Penalty(47)]);
+        let root = context.publish_page_nodes(vec![output_box_node(child, 10)]);
+        context
+            .install_page_output_box(root)
+            .expect("page-owned output wrapper");
+        let operation = context.begin_state_operation();
+        let modes = context.seal_mode_list_region_preflight();
+        context
+            .assign_output_carrier_take(modes, 7, AssignmentScope::Global)
+            .expect("unretained page owner moves");
+        context.commit_state_operation(operation);
+        assert!(context.box_register(255).is_none());
+        assert!(context.box_register(7).is_some());
+        assert_eq!(
+            context.box_dimension(7, BoxDimension::Width),
+            Some(Scaled::from_raw(10))
+        );
+    })
+    .expect("universe allocation");
+}
+
+#[test]
+fn shipout_rollback_restores_output_carrier_after_region_swap() {
+    with_universe(budget(), |universe| {
+        let original = {
+            let mut context = universe.command_context().expect("command context");
+            let child = context.publish_page_nodes(vec![Node::Penalty(47)]);
+            let root = context.publish_page_nodes(vec![output_box_node(child, 10)]);
+            context
+                .install_page_output_box(root)
+                .expect("page-owned output wrapper");
+            let sibling = context.publish_page_nodes(vec![Node::Penalty(91)]);
+            context.push_current_page_list(sibling);
+            context.box_register(255).expect("output metadata")
+        };
+        {
+            let mut shipout = universe.begin_shipout();
+            let mut context = shipout.command_context().expect("shipout context");
+            let operation = context.begin_state_operation();
+            let modes = context.seal_mode_list_region_preflight();
+            context
+                .assign_output_carrier_take(modes, 7, AssignmentScope::Global)
+                .expect("output carrier moves before shipout rollback");
+            context.commit_state_operation(operation);
+            assert!(context.box_register(255).is_none());
+            assert!(context.box_register(7).is_some());
+            assert_eq!(context.current_page_nodes().count(), 1);
+        }
+        let context = universe.command_context().expect("restored context");
+        assert_eq!(context.box_register(255), Some(original));
+        assert!(context.box_register(7).is_none());
+        assert_eq!(context.current_page_nodes().count(), 1);
+        assert!(matches!(
+            context.current_page_nodes().next(),
+            Some(crate::NodeView::Penalty(91))
+        ));
+    })
+    .expect("universe allocation");
+}
+
+#[test]
+fn rejected_output_transfer_after_seal_keeps_source_and_survivor_owned() {
+    with_universe(budget(), |universe| {
+        let mut context = universe.command_context().expect("command context");
+        let child = context.publish_page_nodes(vec![Node::Penalty(47)]);
+        let root = context.publish_page_nodes(vec![output_box_node(child, 10)]);
+        context
+            .install_page_output_box(root)
+            .expect("page-owned output wrapper");
+        let heldover = context.publish_page_nodes(vec![Node::Penalty(91)]);
+        context.push_current_page_list(heldover);
+        let original = context.box_register(255).expect("output metadata");
+        let operation = context.begin_state_operation();
+        context.testing_reject_output_carrier_after_seal();
+        let modes = context.seal_mode_list_region_preflight();
+        assert!(matches!(
+            context.assign_output_carrier_take(modes, 7, AssignmentScope::Global),
+            Err(crate::page_node_arena::OutputCarrierTakeError::UnsupportedGeometry)
+        ));
+        assert_eq!(context.box_register(255), Some(original));
+        assert!(context.box_register(7).is_none());
+        assert_eq!(context.current_page_nodes().count(), 1);
+        let fallback = context
+            .take_box_to_page(255)
+            .expect("source remains consumable");
+        context
+            .assign_page_box(7, Some(fallback), AssignmentScope::Global)
+            .expect("ordinary independent copy follows rejected transfer");
+        assert!(context.box_register(255).is_none());
+        assert_eq!(
+            context.box_dimension(7, BoxDimension::Width),
+            Some(Scaled::from_raw(10))
+        );
+        context
+            .restore_state_operation(operation)
+            .expect("copy and rejected transfer leave operation reversible");
+        // The ordinary `\box255` path consumes the page slot outside the
+        // destination binding journal; its existing rollback leaves it void.
+        assert!(context.box_register(255).is_none());
+        assert!(context.box_register(7).is_none());
+        assert_eq!(context.current_page_nodes().count(), 1);
+    })
+    .expect("universe allocation");
+}
+
+#[test]
+fn rejected_output_destination_history_returns_exclusive_page_owner() {
+    with_universe(budget(), |universe| {
+        let mut context = universe.command_context().expect("command context");
+        let destination = context.publish_page_nodes(vec![output_box_node(
+            crate::page_node_arena::PageListId::empty(),
+            22,
+        )]);
+        context
+            .assign_page_box(7, Some(destination), AssignmentScope::Global)
+            .expect("old destination");
+        let old_destination = context.box_register(7).expect("destination metadata");
+        let child = context.publish_page_nodes(vec![Node::Penalty(47)]);
+        let root = context.publish_page_nodes(vec![output_box_node(child, 10)]);
+        context
+            .install_page_output_box(root)
+            .expect("page-owned output wrapper");
+        let old_output = context.box_register(255).expect("output metadata");
+        context
+            .begin_group(GroupKind::Simple, 1)
+            .expect("local group");
+        let operation = context.begin_state_operation();
+        context.testing_fail_next_box_history_copy();
+        let modes = context.seal_mode_list_region_preflight();
+        assert!(matches!(
+            context.assign_output_carrier_take(modes, 7, AssignmentScope::Local),
+            Err(crate::page_node_arena::OutputCarrierTakeError::Promotion(
+                crate::NodePromotionError::Values(_)
+            ))
+        ));
+        assert_eq!(context.box_register(255), Some(old_output));
+        assert_eq!(context.box_register(7), Some(old_destination));
+        context
+            .restore_state_operation(operation)
+            .expect("failed assignment retained its operation journal");
+        assert_eq!(context.box_register(255), Some(old_output));
+        assert_eq!(context.box_register(7), Some(old_destination));
+    })
+    .expect("universe allocation");
+}
+
+#[test]
 fn shipout_rollback_restores_edited_output_box_after_take_or_replacement() {
     for replace in [false, true] {
         with_universe(budget(), |universe| {

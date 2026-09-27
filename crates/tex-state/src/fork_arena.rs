@@ -3140,6 +3140,12 @@ impl<T, Lane> ForkArena<T, Lane> {
         self.live_payload_len()
     }
 
+    /// Authenticated owner-relative envelope bounds for a complete accepted
+    /// region. Callers still preflight selection and direct dependencies.
+    pub(crate) fn live_payload_interval(&self) -> Range<usize> {
+        self.base_payload_chunks as usize..self.live_payload_len()
+    }
+
     #[cfg(feature = "profiling")]
     pub(crate) fn profiling_current_physical_tokens(&self, pool: &ChunkPool<T>) -> Vec<u64> {
         let mut tokens = Vec::new();

@@ -10,7 +10,7 @@ use crate::env::banks::IntParam;
 use crate::env::{
     AssignmentScope, CodeTableKind, DurableNodeMetadata, StateError, UniqueBoxRegisterTake,
 };
-use crate::env::{DurableBoxState, DurableFormState};
+use crate::env::{DurableBoxState, DurableFormState, OutputCarrierTarget};
 use crate::font::FontStore;
 use crate::fork_arena::ForkArenaError;
 use crate::glue::GlueSpec;
@@ -1882,6 +1882,78 @@ impl<'a, G> CommandContext<'a, G> {
             && self.durable_boxes.has_unique_current(source)
     }
 
+    /// A live box 255 carrier can consume its unretained page region only
+    /// through the actual PageBuilder slot and a mode-root preflight.
+    #[must_use]
+    pub fn can_assign_output_carrier_take(&self, source: u16) -> bool {
+        source == u16::from(u8::MAX)
+            && !self.page.output_box().is_empty()
+            && self.page_nodes.can_take_output_carrier()
+            && !self.durable_boxes.has_pending_page_region_loan()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn testing_reject_output_carrier_after_seal(&mut self) {
+        self.page_nodes.testing_reject_output_after_seal();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn testing_fail_next_box_history_copy(&mut self) {
+        self.durable_boxes.testing_fail_next_history_copy();
+    }
+
+    /// Formats the source and destination before the page carrier moves.
+    /// The destination's diagnostic is deliberately read from the durable
+    /// shadow for box 255, because TeX clears that page source first.
+    pub fn output_carrier_assignment_trace_text(&mut self, destination: u16) -> (String, String) {
+        let source = self.page.output_box();
+        assert!(!source.is_empty(), "output carrier trace has a live source");
+        let new_text = self.box_assignment_trace_text(Some(source));
+        let old = if destination == u16::from(u8::MAX) {
+            self.durable_boxes
+                .copy_to_page(&mut self.page_nodes, destination)
+                .expect("box trace copy allocation")
+        } else {
+            self.copy_box_to_page(destination)
+        };
+        (self.box_assignment_trace_text(old), new_text)
+    }
+
+    pub fn assign_output_carrier_take(
+        &mut self,
+        modes: crate::page::ModeListRegionPreflight,
+        destination: u16,
+        scope: AssignmentScope,
+    ) -> Result<(), crate::page_node_arena::OutputCarrierTakeError> {
+        if !self.can_assign_output_carrier_take(u16::from(u8::MAX)) {
+            return Err(crate::page_node_arena::OutputCarrierTakeError::Promotion(
+                crate::NodePromotionError::Nodes(ForkArenaError::InvalidRegion),
+            ));
+        }
+        let assignment = self
+            .page_nodes
+            .take_output_carrier_to_durable(self.page, modes)?;
+        let current_level = self.admitted.state_ref().current_level();
+        let group_save_position = self.admitted.state_ref().save_stack_order_position();
+        self.durable_boxes
+            .assign_output_carrier(
+                &mut self.page_nodes,
+                self.page,
+                OutputCarrierTarget {
+                    index: destination,
+                    scope,
+                    current_level,
+                    group_save_position,
+                },
+                assignment,
+            )
+            .map_err(|_| {
+                crate::page_node_arena::OutputCarrierTakeError::Promotion(
+                    crate::NodePromotionError::Values(crate::PromotionError::AllocationFailed),
+                )
+            })
+    }
+
     /// Classifies a declined direct take at the same scanner boundary that
     /// supplies the built-box origin. The label is carried to the eventual
     /// structural fallback, so unrelated empty-register probes are excluded.
@@ -1909,7 +1981,7 @@ impl<'a, G> CommandContext<'a, G> {
                         BuiltBoxOrigin::SetBoxRegisterTakeOutputModeRoots
                     } else if !replay_boxes_clear {
                         BuiltBoxOrigin::SetBoxRegisterTakeOutputActiveBox
-                    } else if self.durable_boxes.has_pending_durable_to_page_loan() {
+                    } else if self.durable_boxes.has_pending_page_region_loan() {
                         BuiltBoxOrigin::SetBoxRegisterTakeOutputPendingLoan
                     } else if self.page.has_output_successor_build() {
                         BuiltBoxOrigin::SetBoxRegisterTakeOutputReadyArmed

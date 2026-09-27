@@ -894,6 +894,46 @@ pub(in crate::main_control) fn commit_unique_register_take_target<G>(
     command.retain_assignment_receipt(receipt);
 }
 
+pub(in crate::main_control) fn commit_output_carrier_take_target<G>(
+    pending: PendingSetBox,
+    modes: tex_state::page::ModeListRegionPreflight,
+    stores: &mut tex_state::CommandContext<'_, G>,
+    command: &mut CommandMachine<'_, '_, G>,
+) -> Result<
+    (),
+    Box<(
+        PendingSetBox,
+        tex_state::page_node_arena::OutputCarrierTakeError,
+    )>,
+> {
+    let PendingSetBox {
+        target,
+        region,
+        origin,
+    } = pending;
+    stores
+        .release_page_node_region(region)
+        .expect("direct output handoff releases its empty setbox suffix");
+    match AssignmentCommitter::new(stores, command.diagnostic_effects).box_register_output_carrier(
+        target.index,
+        target.global,
+        modes,
+    ) {
+        Ok(receipt) => {
+            command.retain_assignment_receipt(receipt);
+            Ok(())
+        }
+        Err(error) => Err(Box::new((
+            PendingSetBox {
+                target,
+                region: stores.begin_page_node_region(),
+                origin,
+            },
+            error,
+        ))),
+    }
+}
+
 pub(in crate::main_control) fn commit_interleaved_set_box_target<G>(
     pending: PendingSetBox,
     root: tex_state::page_node_arena::PageListId,

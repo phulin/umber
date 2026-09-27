@@ -27,6 +27,93 @@ fn automatic_output_box_remains_page_owned_until_shipout() {
 }
 
 #[test]
+fn output_carrier_register_take_moves_page_owner_without_structural_copy() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\output={\global\setbox0=\box255\shipout\copy0}\vsize=5pt\hrule height10pt\penalty-10000\end",
+        );
+
+        run_to_end(&mut control, stores);
+
+        assert_eq!(stores.world().committed_artifacts().len(), 1);
+        assert_eq!(
+            stores.page_region_counters().page_to_durable_nodes_copied,
+            0,
+            "the output carrier moves its old page owner"
+        );
+        assert_eq!(
+            stores
+                .page_closure_transition_counters()
+                .interleaved_prefix_fallbacks,
+            0,
+            "the wrapper's predating page children do not trigger a recursive copy"
+        );
+        assert!(
+            stores
+                .command_context()
+                .expect("admission")
+                .box_register(0)
+                .is_some()
+        );
+    });
+}
+
+#[test]
+fn traced_same_register_output_take_observes_cleared_destination() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let _initialized = MainControl::tex82_initex(stores);
+        tex_command::install_etex_expandable_primitives(stores);
+        crate::install_etex_unexpandable_primitives(stores);
+        let mut control = MainControl::with_profile(CommandProfile::ETEX26);
+        register_source(
+            &mut control,
+            br"\tracingassigns=1\tracingonline=1\output={\global\setbox255=\box255\shipout\box255}\vsize=5pt\hrule height10pt\penalty-10000\end",
+        );
+
+        run_to_end(&mut control, stores);
+
+        assert_eq!(stores.world().committed_artifacts().len(), 1);
+        let trace = terminal_text(stores);
+        assert!(
+            trace.contains("globally changing \\box255=void"),
+            "{trace:?}"
+        );
+        assert_eq!(
+            stores.page_region_counters().page_to_durable_nodes_copied,
+            0
+        );
+    });
+}
+
+#[test]
+fn output_carrier_with_live_mode_root_keeps_safe_copy_path() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\output={\setbox9=\hbox{\global\setbox0=\box255}\shipout\copy0}\vsize=5pt\hrule height10pt\penalty-10000\end",
+        );
+
+        run_to_end(&mut control, stores);
+
+        assert_eq!(stores.world().committed_artifacts().len(), 1);
+        assert!(
+            stores
+                .command_context()
+                .expect("admission")
+                .box_register(0)
+                .is_some()
+        );
+        assert!(
+            stores.page_region_counters().page_to_durable_nodes_copied > 0,
+            "an active mode list bars complete-region ownership transfer"
+        );
+    });
+}
+
+#[test]
 fn output_routine_dimension_edit_keeps_box255_page_owned() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);

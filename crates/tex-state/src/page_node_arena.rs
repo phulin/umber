@@ -30,10 +30,20 @@ type SelectedBoxBodyRanges = (Vec<Range<usize>>, Vec<Range<usize>>);
 type PreflightedBoxBody = (Node<PageListId>, Vec<Range<usize>>, Vec<Range<usize>>);
 
 mod consumed_source;
+mod output_carrier;
 pub use consumed_source::{
     ConsumedPageSource, ConsumedPageWindow, GeneratedLineBody, PageDirectChunkSelection,
     PublishedGeneratedBoxBody,
 };
+pub(crate) use output_carrier::{PageOutputCarrierAssignment, PageOutputRegionLoan};
+
+/// A consumed output carrier whose complete physical envelope cannot move may
+/// still take the ordinary, independent structural-copy path.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OutputCarrierTakeError {
+    UnsupportedGeometry,
+    Promotion(crate::NodePromotionError),
+}
 
 /// Opaque typed-annex coordinate for page-owned intervals excluded from a box.
 #[derive(Clone, Copy, Debug)]
@@ -970,6 +980,9 @@ pub struct PageMaterialArena<'a> {
     region: &'a mut NodeRegion<PageRole>,
     semantic_identity_enabled: &'a mut bool,
     durable_transitions: &'a mut DurableTransitionCounters,
+    output_region_permit: Option<crate::page::PageOutputRegionPermit>,
+    #[cfg(test)]
+    output_fail_after_seal: bool,
     #[cfg(feature = "profiling")]
     output_history_probe: PageOutputHistoryProbe,
 }
@@ -1185,9 +1198,20 @@ impl<'a> PageMaterialArena<'a> {
             region: &mut state.region,
             semantic_identity_enabled: &mut state.semantic_identity_enabled,
             durable_transitions: &mut state.durable_transitions,
+            output_region_permit: None,
+            #[cfg(test)]
+            output_fail_after_seal: false,
             #[cfg(feature = "profiling")]
             output_history_probe: PageOutputHistoryProbe::Unavailable,
         }
+    }
+
+    pub(crate) fn with_output_region_permit(
+        mut self,
+        permit: crate::page::PageOutputRegionPermit,
+    ) -> Self {
+        self.output_region_permit = Some(permit);
+        self
     }
 
     #[cfg(feature = "profiling")]

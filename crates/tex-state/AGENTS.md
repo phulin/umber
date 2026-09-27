@@ -347,6 +347,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/page_node_arena/consumed_source.rs`: Move-only semantic page-source
   partition and reversible consumed-window head detachment for generated
   paragraph and alignment box ownership.
+- `src/page_node_arena/output_carrier.rs`: Current PageBuilder output-box
+  consumption, independent survivor-root projection, paired whole-region
+  durable loan, and exact command rollback before page-journal restoration.
 - `src/page_node_arena/fallback_profile.rs`: Profiling-only classification of
   built-box immediate children after a construction-mark transfer rejects;
   this observation never grants move authority.

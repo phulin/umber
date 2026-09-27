@@ -8,7 +8,7 @@ mod meaning_bank;
 mod restoration;
 pub(crate) use durable_boxes::{
     AcceptedDurableBoxTail, DurableBoxCursor, DurableBoxOperation, DurableBoxState,
-    DurableFormState, PageBoxAssignment,
+    DurableFormState, OutputCarrierTarget, PageBoxAssignment,
 };
 pub use durable_boxes::{DurableNodeMetadata, UniqueBoxRegisterTake};
 mod font_runtime;

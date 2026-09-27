@@ -254,6 +254,18 @@ struct PageBoxTransferLoan {
     loan: crate::node_region::PageInteriorTransferLoan,
 }
 
+struct PageOutputCarrierLoan {
+    owner: DurableOwnerId,
+    loan: crate::page_node_arena::PageOutputRegionLoan,
+}
+
+pub(crate) struct OutputCarrierTarget {
+    pub(crate) index: u16,
+    pub(crate) scope: super::AssignmentScope,
+    pub(crate) current_level: u32,
+    pub(crate) group_save_position: u32,
+}
+
 struct RegisterTakeLoan {
     source: u16,
     destination: u16,
@@ -283,18 +295,27 @@ enum DurableOperationAction {
     RegisterTake(RegisterTakeLoan),
     DurableToPage(DurableBoxTransferLoan),
     PageToDurable(PageBoxTransferLoan),
+    OutputCarrier(Box<PageOutputCarrierLoan>),
     Dimension(DurableDimensionMutation),
     PageScalar(crate::page::PageOutputBoxDimensionInverse),
 }
 
 impl DurableBoxState {
-    /// A live durable-to-page loan may still name the current page region.
-    /// The output-carrier probe only reads this operation journal.
-    #[cfg(feature = "profiling")]
-    pub(crate) fn has_pending_durable_to_page_loan(&self) -> bool {
-        self.operation_actions
-            .iter()
-            .any(|action| matches!(action, DurableOperationAction::DurableToPage(_)))
+    /// A live cross-region loan may still name the current page region.
+    pub(crate) fn has_pending_page_region_loan(&self) -> bool {
+        self.operation_actions.iter().any(|action| {
+            matches!(
+                action,
+                DurableOperationAction::DurableToPage(_)
+                    | DurableOperationAction::PageToDurable(_)
+                    | DurableOperationAction::OutputCarrier(_)
+            )
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn testing_fail_next_history_copy(&mut self) {
+        self.fail_history_copy_after = Some(0);
     }
 }
 
@@ -1300,6 +1321,59 @@ impl DurableBoxState {
         )
     }
 
+    /// Publishes the consumed output carrier after its page-region swap.
+    /// Historical destination copies remain fallible, so a rejected install
+    /// immediately returns the complete old region and builder slots before
+    /// the caller can attempt another assignment.
+    pub(crate) fn assign_output_carrier(
+        &mut self,
+        arena: &mut PageMaterialArena,
+        page: &mut crate::page::PageBuilderState,
+        target: OutputCarrierTarget,
+        assignment: crate::page_node_arena::PageOutputCarrierAssignment,
+    ) -> Result<(), BankError> {
+        assert!(
+            self.operation_is_active(),
+            "output carrier needs an operation"
+        );
+        let owner = self.owners.insert(assignment.closure);
+        self.operation_actions
+            .push(DurableOperationAction::OutputCarrier(Box::new(
+                PageOutputCarrierLoan {
+                    owner,
+                    loan: assignment.loan,
+                },
+            )));
+        let before_level = self.cell(target.index).map_or(LEVEL_ONE, |cell| cell.level);
+        let level = match target.scope {
+            super::AssignmentScope::Global => LEVEL_ONE,
+            super::AssignmentScope::Local => target.current_level,
+        };
+        let saved_at = (target.scope == super::AssignmentScope::Local
+            && target.current_level != LEVEL_ONE
+            && before_level != target.current_level)
+            .then_some(target.current_level);
+        if let Err(error) = self.install_mutation(
+            arena,
+            target.index,
+            Some(owner),
+            level,
+            saved_at,
+            target.group_save_position,
+        ) {
+            let Some(DurableOperationAction::OutputCarrier(loan)) = self.operation_actions.pop()
+            else {
+                unreachable!("rejected binding did not publish an inverse")
+            };
+            arena
+                .rollback_output_carrier_loan(page, self.owners.owner_slot_mut(owner), loan.loan)
+                .expect("rejected binding returns its exact output region");
+            self.owners.retire(arena, owner);
+            return Err(error);
+        }
+        Ok(())
+    }
+
     pub(crate) fn replace(
         &mut self,
         arena: &mut PageMaterialArena,
@@ -1865,6 +1939,11 @@ impl DurableBoxState {
                     DurableOperationAction::DurableToPage(loan) => {
                         arena.commit_durable_transfer_loan(loan.loan);
                     }
+                    DurableOperationAction::OutputCarrier(loan) => {
+                        arena
+                            .commit_output_carrier_loan(loan.loan)
+                            .expect("committed output loan retires its emptied old region");
+                    }
                     DurableOperationAction::Binding(_)
                     | DurableOperationAction::RegisterTake(RegisterTakeLoan {
                         destination_binding: Some(_),
@@ -1948,6 +2027,15 @@ impl DurableBoxState {
                             loan.loan,
                         )
                         .expect("page interval loan restores its original chunks");
+                }
+                DurableOperationAction::OutputCarrier(loan) => {
+                    arena
+                        .rollback_output_carrier_loan(
+                            page,
+                            self.owners.owner_slot_mut(loan.owner),
+                            loan.loan,
+                        )
+                        .expect("page output loan restores its original region");
                 }
                 DurableOperationAction::Dimension(mutation) => {
                     self.apply_dimension_inverse(arena, mutation);

@@ -2532,6 +2532,35 @@ pub(in crate::main_control) fn apply<G>(
                             commit_unique_register_take_target(pending, *index, stores, command);
                             return Ok(ReplayStep::Continue);
                         }
+                        if !*copy
+                            && stores.can_assign_output_carrier_take(*index)
+                            && boxes.active_boxes.is_empty()
+                            && active_alignment.is_none()
+                            && active_discretionaries.is_empty()
+                            && active_math_choices.is_empty()
+                            && active_math_fields.is_empty()
+                            && let Some(modes) = modes.preflight_page_region_succession(stores)
+                        {
+                            let pending = boxes
+                                .pending_setbox
+                                .take()
+                                .expect("setbox target remains pending");
+                            match commit_output_carrier_take_target(
+                                pending, modes, stores, command,
+                            ) {
+                                Ok(()) => return Ok(ReplayStep::Continue),
+                                Err(declined) => match *declined {
+                                    (pending, tex_state::page_node_arena::OutputCarrierTakeError::UnsupportedGeometry) => {
+                                        boxes.pending_setbox = Some(pending);
+                                    }
+                                    (_pending, tex_state::page_node_arena::OutputCarrierTakeError::Promotion(_error)) => {
+                                        return Err(ExecError::Fatal(FatalError::confusion(
+                                            "output carrier transfer",
+                                        )));
+                                    }
+                                },
+                            }
+                        }
                         boxes
                             .pending_setbox
                             .as_mut()
