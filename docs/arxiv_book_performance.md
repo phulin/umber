@@ -45,6 +45,8 @@ The isolated full-book heaptrack run at `616b4610a` reduced maximum RSS from
 2,241,328 to 1,795,804 KiB, about 435 MiB or 20%. Its per-page image and text
 hashes match the previous run on all 588 pages. The candidate capture is under
 `target/perf-tex-copy-plan/finalization-move-heaptrack/fuel-2000000000/`.
+Requested peak heap fell to 1,992,237,599 bytes, and peak allocation stacks
+attributed to `into_accepted_finalization` fell from 479,896,246 bytes to zero.
 This remains above the original 1,536 MiB guard. Both runs were instrumented
 and shared the machine with other work, so their elapsed times do not establish
 a speed improvement.
@@ -61,7 +63,33 @@ failures; no raster tolerance was changed. The earlier build's full receipt is
 `target/perf-tex-copy-plan/ownership-annex-full-diagnostic/summary.json`.
 Neither diagnostic completion satisfies the original acceptance guards.
 
+The combined `60326ecfc` diagnostic includes the unique-source split transfer
+and native batch provenance selection. It completes with requested peak heap
+of 1,643,410,778 bytes and maximum RSS of 1,625,792 KiB. All 588 per-page raster
+and text hashes match the earlier Umber runs; the same four reference raster
+differences remain. This is about 601 MiB below the earlier 2,241,328 KiB RSS,
+but still about 52 MiB above the original guard. The combined result cannot
+isolate the provenance policy's full-book effect from the split transfer.
+The capture and comparison receipt are under
+`target/perf-tex-copy-plan/batch-provenance-heaptrack/` and
+`target/perf-tex-copy-plan/batch-provenance-full-heap-comparison.json`.
+The peak is now before PDF finalization and still includes separate serialized
+artifact copies in the World store, committed output, and detached PDF rows.
+
 ## Current CPU attribution and copy scope
+
+A full-book shipping profile at `1ee115c65` completed under diagnostic guards
+with 35,569 cycle samples and no lost samples. Recursive list copying accounts
+for 9.08% inclusive CPU and 1.43% self CPU; expanded token delivery accounts for
+23.72% inclusive CPU. Page-root durable finalization accounts for 6.70%
+inclusive CPU. These nested percentages must not be added. Backward chunk
+cursor traversal is 2.48% self CPU, including 1.67% of total CPU from the
+line-breaking pass through positional node reads. This identifies a remaining
+bounded-traversal opportunity rather than proving that a replacement is faster.
+All 588 output page hashes match the earlier Umber runs. Concurrent work and
+the increased guards make this attribution evidence, not runtime acceptance.
+The capture is under
+`target/perf-tex-copy-plan/vsplit-full-cpu-diagnostic-user/2606.24937/`.
 
 A shipping CPU profile at `84367177d` reached the authenticated
 200-million-action endpoint with the original wall, memory, and execution-step
@@ -567,7 +595,7 @@ SHA-256 is
 ### Batch rendered-source ownership
 
 Native PDF and DVI runs have no rendered-source lookup consumer. Their compile
-sessions should request diagnostic provenance only, so shipout omits the
+sessions request diagnostic provenance only, so shipout omits the
 node-to-source sidecars and detached source recipes used by editor lookups.
 HTML and editor sessions retain the full rendered-source policy, including
 across edited revisions. This choice is fixed at session creation and is
@@ -575,6 +603,17 @@ independent of the normal bounded checkpoint budget: resource retries still
 need checkpoints. A rendered-source query on a session that opted out returns
 no mapping. The heap attribution below motivates the change but is not a
 measurement of its effect on the full book.
+
+At the authenticated 200-million-action endpoint, the policy change reduced
+maximum RSS from 376,900 to 353,096 KiB while node-copy and page-owner censuses
+matched. The consuming-finalization change is not reached at this endpoint.
+No latency improvement is claimed. The `60326ecfc` build passed all seven
+native/quality stages and exact raster/text comparison for the 93 previously
+passing arXiv papers plus eight LaTeX/pdfLaTeX representatives across TeX Live
+2023–2026. The corrected corpus replay uses each authority receipt's source
+date and the pinned MuPDF consumer. Receipts are in
+`.worktrees/slot-3/target/perf-batch-provenance/200m/comparison.json` and
+`.worktrees/slot-3/target/perf-batch-provenance/parity-pinned/verdict.json`.
 
 Heaptrack 1.5.0 ran the same compacted profiling binary at 100 and 200 million
 fuel actions. Both runs reached the exact fuel boundary under the original
