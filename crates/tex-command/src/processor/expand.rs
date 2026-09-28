@@ -3,7 +3,10 @@
 mod collect;
 mod consume;
 mod input;
+mod lane;
 mod resident;
+
+pub use lane::LaneCommandSlot;
 
 use consume::ExpansionCandidate;
 

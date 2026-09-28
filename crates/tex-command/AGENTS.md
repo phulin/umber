@@ -162,6 +162,9 @@ collector (see `src/conditionals.rs`).
   input/fuel authority; observation specializes at synchronous entry. Final
   delivery and exceptional settlement materialize commands at their semantic
   boundary. Macro chains remain iterative; failure unwinds for host replay.
+- `src/processor/expand/lane.rs`: the command lane's expanded delivery,
+  which is main-control preflight that leaves an ordinary command compact in
+  a `LaneCommandSlot` and materializes it only for the admitted run.
 - `src/processor/expand/input.rs`: source reads, borrowed source-character
   admission, and cold line/retirement/recovery transitions. Reads return token
   facts without constructing commands or publishing backup authority. Source

@@ -180,8 +180,8 @@ per-command wrapper work the generic preflight adds:
 
 - It never records a delivery cursor, prepares a command trace, or drains
   semantic diagnostics, because lane eligibility forbids all three.
-- A later stage returns the compact `HotCommand`, so a lane command never
-  becomes a `CurrentCommand` and only a hand-off materializes.
+- It leaves the command compact in a `LaneCommandSlot`, so a lane command
+  never becomes a `CurrentCommand` and only a hand-off materializes.
 
 The shared delivery kernel stays the only reader. Fetch-kernel improvements
 (dense meaning decode, the frame-local resident reader, fuel batching) apply

@@ -110,21 +110,44 @@ pub(super) fn run<G>(
             .preflight_command_into(destination)
             .map(LaneExit::Delivered);
     }
+    // The lane keeps each command compact and materializes only the one it
+    // hands to the admitted run, into the slot where preflight would have
+    // left it.
+    let mut slot = tex_command::LaneCommandSlot::default();
+    let exit = run_compact(
+        processor,
+        &mut slot,
+        destination,
+        operations,
+        max_operations,
+        owners,
+    );
+    if !slot.is_empty() {
+        *destination = slot.take_current();
+    }
+    exit
+}
+
+fn run_compact<G>(
+    processor: &mut CommandProcessor<'_, '_, G>,
+    slot: &mut tex_command::LaneCommandSlot<G>,
+    destination: &mut Option<tex_command::CurrentCommand<G>>,
+    operations: &mut usize,
+    max_operations: usize,
+    owners: &mut LaneOwners<'_, G>,
+) -> Result<LaneExit<G>, tex_command::CommandError> {
     loop {
-        let status = processor.preflight_command_into(destination)?;
+        let status = processor.lane_command_into(slot)?;
         if status != tex_command::DeliveryStatus::Command
             || *operations + 1 >= max_operations
             || processor.has_pending_reports()
         {
             return Ok(LaneExit::Delivered(status));
         }
-        let command = destination
-            .as_ref()
-            .expect("command status initializes destination");
-        let mut meaning = command.meaning();
+        let mut meaning = slot.meaning();
         // Errors carry the origin of the command that began the dispatch,
         // which for a prefixed assignment is its first prefix.
-        let origin = command.origin();
+        let origin = slot.origin();
         let innermost_group = processor.lane_parts().0.innermost_group_kind();
         let mut family = lane_family(meaning, owners.boxes, innermost_group);
         let mut prefixed = false;
@@ -133,6 +156,7 @@ pub(super) fn run<G>(
             // (cur_cmd<>spacer)and(cur_cmd<>relax)`, then fold the prefix
             // into a lane assignment or hand the command it fetched to the
             // admitted run's own loop.
+            slot.clear();
             *destination = None;
             let fetched = next_non_blank_non_relax_x_token_into(processor, destination);
             match fetched {
@@ -215,6 +239,8 @@ pub(super) fn run<G>(
                 }
             }
         }
+        // A prefixed command was fetched into `destination` instead.
+        slot.clear();
         destination.take();
         *operations += 1;
         settle_unit(processor, owners.operation_mark);
