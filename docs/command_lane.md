@@ -17,24 +17,27 @@ buffer clearing, and journal re-capture.
 
 Per-operation user-mode instruction counts (`perf stat`, 100,000 iterations
 of ten operations inside one `\iter` macro, the empty-loop run subtracted)
-at `9e9fcfb06`:
+at `9e9fcfb06`, before the lane, and after stage 6:
 
-| Operation                 | Instructions |
-| ------------------------- | -----------: |
-| `\relax`                  |        2,808 |
-| `\let\a\relax`            |        3,896 |
-| `\def\a{x}`               |        6,565 |
-| `\begingroup\endgroup`    |        7,802 |
-| `\count1=5`               |        6,847 |
-| empty macro call          |          383 |
-| one-argument macro call   |        2,751 |
-| `\ifx\a\a\fi`             |        2,561 |
-| `\iffalse x\fi`           |        1,902 |
-| `\expandafter` (net)      |       ~1,850 |
-| `\csname relax\endcsname` |        7,141 |
+| Operation                 | Before | Stage 6 |
+| ------------------------- | -----: | ------: |
+| `\relax`                  |  2,808 |     573 |
+| `\let\a\relax`            |  3,896 |   1,907 |
+| `\def\a{x}`               |  6,565 |   4,734 |
+| `\begingroup\endgroup`    |  7,802 |   4,105 |
+| `\count1=5`               |  6,847 |   4,879 |
+| empty macro call          |    383 |     387 |
+| one-argument macro call   |  2,751 |   1,888 |
+| `\ifx\a\a\fi`             |  2,561 |   2,145 |
+| `\iffalse x\fi`           |  1,902 |   1,730 |
+| `\expandafter` (net)      | ~1,850 |  ~1,770 |
+| `\csname relax\endcsname` |  7,141 |   4,856 |
 
-pdfTeX spends roughly 90 instructions on `\relax`. The `\relax` floor
-decomposes into the admitted-loop body (~710), the expanded fetch of one
+The book (2606.24937) runs 1,138.4B instructions before the lane and 1,063.0B
+after stage 6, with byte-identical auxiliary output.
+
+pdfTeX spends roughly 90 instructions on `\relax`. The pre-lane `\relax`
+floor decomposes into the admitted-loop body (~710), the expanded fetch of one
 resident macro-body word (~540), the dispatcher and cold `Relax`
 materialization (~400), the four journal rolls (~450), command-processor
 construction (~100), clearing an empty page-observation buffer (~100), and
@@ -191,21 +194,31 @@ equally to lane and generic delivery. See
 ## Expansion fast arms
 
 The census shows expansion events outnumbering main-control commands two to
-one. They follow the same principle, applied inside the one expansion loop:
+one. The fast arms stay inside `tex-command`'s one expansion loop; they are
+not a separate expansion engine.
 
-- Macro calls with only undelimited parameters, whose arguments are single
-  tokens or balanced groups without `\par` or outer tokens, match inside the
-  argument run and publish their argument frame without the delimited-matcher
-  setup.
-- `\expandafter` reads its two tokens through the resident reader and
-  expands the second in place. The first is pushed through the single-token
-  backup slot.
-- `\ifx`, `\iftrue`, `\iffalse`, `\else`, and `\fi` evaluate and settle
-  inside the conditional stack without materializing a command for either
-  comparand.
+- Macro calls. A matched macro with an empty replacement, such as
+  `\@gobble`, discards its arguments instead of pushing a row that the next
+  `get_next` would retire at once. An empty parameterless macro already
+  elided its row. Both record the logical input and parameter stack maxima.
+  The elision applies only to unobserved, untraced activations without a
+  replay-completion descendant. §390 stack conservation retires ordinary
+  popped rows, depleted macro bodies included, through the resident
+  retirement primitive rather than the generic source-aware path. §391's
+  `par_token` is cached per processor episode.
+- `\expandafter` reads its two tokens compactly and expands the second in
+  place. The first returns through a one-word backed-up row. Its remaining
+  cost is two raw deliveries and one row push and retirement.
+- Conditionals. `\ifx` compares both comparands' meanings without
+  materializing either. It skips §507's normal-status episode when the
+  scanner is already quiescent, and it compares an identical definition
+  without reading the definition arena. The skipped-text run (`pass_text`)
+  already consumed ordinary words in place.
 
-These arms remain owned by `tex-command`'s expansion loop. They are not a
-separate expansion engine.
+The remaining expansion cost is dominated by the shared raw delivery of about
+200 instructions per token and by input-row push and retirement. Both are
+shared with every consumer, so reducing them belongs to the delivery kernel
+rather than to a per-primitive arm.
 
 ## Semantics and observation
 
@@ -229,6 +242,8 @@ save stack.
   Book PDF and aux output must remain byte-identical.
 
 ## Stages
+
+All six stages are implemented.
 
 1. The lane skeleton: eligibility, a single match, `\relax` settlement and
    merge, and the hand-off.
