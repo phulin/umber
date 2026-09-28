@@ -91,7 +91,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 DeliveryStatus::Command => {}
                 _ => return Err(CommandError::input_invariant()),
             };
-            let command = destination.take().ok_or(CommandError::input_invariant())?;
+            let command = destination
+                .take()
+                .ok_or_else(|| CommandError::input_invariant())?;
             let provenance = StructuredProvenance {
                 primary: command.origin(),
             };
@@ -229,7 +231,9 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
             DeliveryStatus::ReplayCompleted(_) => unreachable!(),
         }
-        let command = destination.take().ok_or(CommandError::input_invariant())?;
+        let command = destination
+            .take()
+            .ok_or_else(|| CommandError::input_invariant())?;
         let primary = command.origin();
         let code = match command.command_word().static_meaning() {
             Some(Meaning::CharToken {
@@ -360,7 +364,9 @@ impl<G> CommandProcessor<'_, '_, G> {
             DeliveryStatus::Command => {}
             _ => return Err(CommandError::input_invariant()),
         };
-        let command = destination.take().ok_or(CommandError::input_invariant())?;
+        let command = destination
+            .take()
+            .ok_or_else(|| CommandError::input_invariant())?;
         let primary = command.origin();
         let code = match static_meaning(command.meaning()) {
             Some(Meaning::CharToken {

@@ -98,7 +98,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         if self.get_token_into(&mut destination)? != DeliveryStatus::Command {
             return Err(CommandError::input_invariant());
         }
-        let command = destination.take().ok_or(CommandError::input_invariant())?;
+        let command = destination
+            .take()
+            .ok_or_else(|| CommandError::input_invariant())?;
         let token = command.spelling().semantic_token();
         let content = match token {
             Token::Cs(_)
@@ -209,7 +211,9 @@ impl<G> CommandProcessor<'_, '_, G> {
             DeliveryStatus::Command => {}
             _ => return Err(CommandError::input_invariant()),
         };
-        let command = destination.take().ok_or(CommandError::input_invariant())?;
+        let command = destination
+            .take()
+            .ok_or_else(|| CommandError::input_invariant())?;
         match static_meaning(command.meaning()) {
             Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Box)) => {
                 let result = self.scan_eight_bit_register_index_retained();
@@ -512,7 +516,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 DeliveryStatus::Command => {}
                 _ => return Err(CommandError::input_invariant()),
             };
-            let command = destination.take().ok_or(CommandError::input_invariant())?;
+            let command = destination
+                .take()
+                .ok_or_else(|| CommandError::input_invariant())?;
             match static_meaning(command.meaning()) {
                 Some(Meaning::CharToken {
                     cat: Catcode::Space,

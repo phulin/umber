@@ -58,7 +58,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let source = self
             .command
             .active_source_snapshot()
-            .ok_or(CommandError::input_invariant())?;
+            .ok_or_else(|| CommandError::input_invariant())?;
         // e-TeX 2.6 etex.ch §53a assigns `name=19` while
         // `\tracingscantokens>0`, and `name=18` otherwise. TeX82 §48's
         // initial character strings render those names as `^^S` and `^^R`.
@@ -135,7 +135,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.command
             .end_current_source_after_current_line()
             .then_some(())
-            .ok_or(CommandError::input_invariant())
+            .ok_or_else(|| CommandError::input_invariant())
     }
 }
 

@@ -12,7 +12,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .builders
             .iter()
             .find(|live| live.identity == builder.0)
-            .ok_or(CommandError::input_invariant())?
+            .ok_or_else(|| CommandError::input_invariant())?
             .tokens;
         self.command
             .attempt
@@ -65,7 +65,9 @@ impl<G> CommandProcessor<'_, '_, G> {
             if self.request_expanded_token(&mut destination)? != DeliveryStatus::Command {
                 return Err(CommandError::input_invariant());
             }
-            let opening = destination.take().ok_or(CommandError::input_invariant())?;
+            let opening = destination
+                .take()
+                .ok_or_else(|| CommandError::input_invariant())?;
             match static_meaning(opening.meaning()) {
                 Some(Meaning::CharToken {
                     cat: Catcode::Space,
@@ -97,7 +99,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .map_err(|_| CommandError::input_invariant())?;
         let lookahead = self
             .next_alignment_lookahead()?
-            .ok_or(CommandError::input_invariant())?;
+            .ok_or_else(|| CommandError::input_invariant())?;
         {
             if matches!(
                 static_meaning(lookahead.command().meaning()),
@@ -159,7 +161,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .command
                 .alignment
                 .active_alignment
-                .ok_or(CommandError::input_invariant())?;
+                .ok_or_else(|| CommandError::input_invariant())?;
             self.command
                 .alignment
                 .set_preamble_phase(alignment)
@@ -278,9 +280,9 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
             let mut destination = None;
             let command = match self.get_preamble_token(&mut destination) {
-                Ok(DeliveryStatus::Command) => {
-                    destination.take().ok_or(CommandError::input_invariant())?
-                }
+                Ok(DeliveryStatus::Command) => destination
+                    .take()
+                    .ok_or_else(|| CommandError::input_invariant())?,
                 Ok(DeliveryStatus::End) => {
                     self.abort_alignment_preamble(pending)?;
                     return Err(CommandError::input_invariant());

@@ -178,7 +178,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         };
         let macro_name = call
             .control_sequence()
-            .ok_or(CommandError::input_invariant())?;
+            .ok_or_else(|| CommandError::input_invariant())?;
         let call_site = call.origin();
         self.macro_call_parts(flags, definition, macro_name, call_site, |processor| {
             processor.report_macro_prefix_mismatch(call);

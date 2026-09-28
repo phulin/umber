@@ -535,7 +535,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .conditions
             .frame(condition)
             .cloned()
-            .ok_or(CommandError::input_invariant())?;
+            .ok_or_else(|| CommandError::input_invariant())?;
         self.trace_conditional_enter(&frame);
         self.observe_condition("push", &frame, None);
         Ok(condition)
@@ -684,7 +684,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             crate::DeliveryStatus::Command => {}
             _ => return Err(CommandError::input_invariant()),
         }
-        let next = next.take().ok_or(CommandError::input_invariant())?;
+        let next = next.take().ok_or_else(|| CommandError::input_invariant())?;
         let kind = next
             .command_word()
             .expandable_primitive()
@@ -735,7 +735,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .conditions
             .frame(condition)
             .cloned()
-            .ok_or(CommandError::input_invariant())?;
+            .ok_or_else(|| CommandError::input_invariant())?;
         let branch = if result { "true" } else { "false" };
         self.trace_boolean_result(branch);
         self.observe_condition("branch", &evaluating, Some(branch));
@@ -746,13 +746,13 @@ impl<G> CommandProcessor<'_, '_, G> {
             .conditions
             .change_if_limit(condition, IfLimit::Else)
             .then_some(())
-            .ok_or(CommandError::input_invariant())?;
+            .ok_or_else(|| CommandError::input_invariant())?;
         let frame = self
             .command
             .conditions
             .frame(condition)
             .cloned()
-            .ok_or(CommandError::input_invariant())?;
+            .ok_or_else(|| CommandError::input_invariant())?;
         self.observe_condition("limit", &frame, None);
         Ok(())
     }
@@ -794,13 +794,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .conditions
                 .change_if_limit(condition, IfLimit::Or)
                 .then_some(())
-                .ok_or(CommandError::input_invariant())?;
+                .ok_or_else(|| CommandError::input_invariant())?;
             let frame = self
                 .command
                 .conditions
                 .frame(condition)
                 .cloned()
-                .ok_or(CommandError::input_invariant())?;
+                .ok_or_else(|| CommandError::input_invariant())?;
             self.observe_condition("limit", &frame, None);
             self.observe_condition("branch", &frame, Some("case"));
         }
@@ -1029,27 +1029,40 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// `scanner_status := normal` across both deliveries, then restoring the
     /// complete prior scanner state.
     fn evaluate_ifx(&mut self) -> Result<bool, CommandError> {
+        // Installing `normal` over a quiescent scanner is the identity, and
+        // every nested episode restores its own state, so the common case
+        // needs no episode at all.
+        if self.command.scanner.is_quiescent() {
+            let comparison = self.compare_ifx_operands();
+            debug_assert!(self.command.scanner.is_quiescent());
+            return comparison;
+        }
         let episode =
             self.begin_scanner_episode(ScannerStatus::Normal, ScannerStatusVisibility::Observed);
-        let comparison = (|| {
-            let mut first = None;
-            if self.get_next_into(&mut first)? != crate::DeliveryStatus::Command {
-                return Err(CommandError::input_invariant());
-            }
-            let mut second = None;
-            if self.get_next_into(&mut second)? != crate::DeliveryStatus::Command {
-                return Err(CommandError::input_invariant());
-            }
-            let first = first
-                .as_ref()
-                .expect("command status initializes destination");
-            let second = second
-                .as_ref()
-                .expect("command status initializes destination");
-            Ok::<_, CommandError>(self.ifx_meaning_eq(first.meaning_ref(), second.meaning_ref()))
-        })();
+        let comparison = self.compare_ifx_operands();
         self.finish_scanner_episode(episode);
         comparison
+    }
+
+    /// Reads both `\ifx` operands and compares their meanings. Both stay
+    /// compact: §507 reads only their meanings.
+    #[inline(always)]
+    fn compare_ifx_operands(&mut self) -> Result<bool, CommandError> {
+        let mut first = None;
+        if self.get_next_hot_into(&mut first)? != crate::DeliveryStatus::Command {
+            return Err(CommandError::input_invariant());
+        }
+        let first = first
+            .expect("command status initializes destination")
+            .resolved_meaning();
+        let mut second = None;
+        if self.get_next_hot_into(&mut second)? != crate::DeliveryStatus::Command {
+            return Err(CommandError::input_invariant());
+        }
+        let second = second
+            .expect("command status initializes destination")
+            .resolved_meaning();
+        Ok(self.ifx_meaning_eq(&first, &second))
     }
 
     /// TeX compares macro meanings by their defining token lists, not by the
@@ -1073,8 +1086,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         if first_flags != second_flags {
             return false;
         }
-        self.state
-            .definition_contents_equal(*first_definition, *second_definition)
+        // One definition trivially equals itself; skip the arena read.
+        first_definition == second_definition
+            || self
+                .state
+                .definition_contents_equal(*first_definition, *second_definition)
     }
 
     /// TeX.web §503's relation lookahead for `\ifnum`/`\ifdim`: fetches the
@@ -1192,7 +1208,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .command
                         .conditions
                         .pop()
-                        .ok_or(CommandError::input_invariant())?;
+                        .ok_or_else(|| CommandError::input_invariant())?;
                     self.observe_condition("pop", &frame, None);
                 }
                 continue;
@@ -1229,7 +1245,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .command
                         .conditions
                         .pop()
-                        .ok_or(CommandError::input_invariant())?;
+                        .ok_or_else(|| CommandError::input_invariant())?;
                     self.observe_condition("pop", &frame, None);
                 }
                 continue;
@@ -1258,7 +1274,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .command
                 .conditions
                 .pop()
-                .ok_or(CommandError::input_invariant())?;
+                .ok_or_else(|| CommandError::input_invariant())?;
             self.observe_condition("pop", &frame, None);
             return Ok(());
         }
@@ -1266,13 +1282,13 @@ impl<G> CommandProcessor<'_, '_, G> {
             .conditions
             .change_if_limit(condition, IfLimit::Fi)
             .then_some(())
-            .ok_or(CommandError::input_invariant())?;
+            .ok_or_else(|| CommandError::input_invariant())?;
         let frame = self
             .command
             .conditions
             .frame(condition)
             .cloned()
-            .ok_or(CommandError::input_invariant())?;
+            .ok_or_else(|| CommandError::input_invariant())?;
         self.observe_condition("limit", &frame, None);
         Ok(())
     }
@@ -1342,7 +1358,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .command
             .conditions
             .pop()
-            .ok_or(CommandError::input_invariant())?;
+            .ok_or_else(|| CommandError::input_invariant())?;
         self.observe_condition("pop", &popped, None);
         Ok(())
     }
@@ -1651,6 +1667,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         frame: &ConditionFrame,
         branch: Option<&'static str>,
     ) {
+        if !self.is_observed() {
+            return;
+        }
         // e-TeX 2.6 etex.ch [17.4713--4751] stores `\unless` by adding
         // `unless_code` to `cur_if`. The immediate boolean-result observation
         // is deliberately about `this_if` (the unprefixed predicate), while
@@ -1679,7 +1698,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.command
             .conditions
             .limit(condition)
-            .ok_or(CommandError::input_invariant())?;
+            .ok_or_else(|| CommandError::input_invariant())?;
 
         let mut nested_conditions = 0_u32;
         let mut destination = None;

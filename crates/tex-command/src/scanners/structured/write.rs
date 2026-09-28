@@ -48,7 +48,9 @@ impl<G> CommandProcessor<'_, '_, G> {
             if self.request_expanded_token(&mut destination)? != DeliveryStatus::Command {
                 return Err(CommandError::input_invariant());
             }
-            let command = destination.take().ok_or(CommandError::input_invariant())?;
+            let command = destination
+                .take()
+                .ok_or_else(|| CommandError::input_invariant())?;
             if !matches!(
                 static_meaning(command.meaning()),
                 Some(Meaning::CharToken {
@@ -201,7 +203,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let endwrite = self
             .state
             .primitive_token("endwrite")
-            .ok_or(CommandError::input_invariant())?;
+            .ok_or_else(|| CommandError::input_invariant())?;
         let right_brace = Token::Char {
             ch: '}',
             cat: Catcode::EndGroup,
@@ -298,7 +300,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         if self.get_token_into(&mut destination)? != DeliveryStatus::Command {
             return Err(CommandError::input_invariant());
         }
-        let mut stopper = destination.take().ok_or(CommandError::input_invariant())?;
+        let mut stopper = destination
+            .take()
+            .ok_or_else(|| CommandError::input_invariant())?;
         let unbalanced =
             self.outer_recovered_while_absorbing || stopper.spelling().semantic_token() != endwrite;
         self.outer_recovered_while_absorbing = false;
@@ -310,7 +314,9 @@ impl<G> CommandProcessor<'_, '_, G> {
             if self.get_token_into(&mut destination)? != DeliveryStatus::Command {
                 return Err(CommandError::input_invariant());
             }
-            stopper = destination.take().ok_or(CommandError::input_invariant())?;
+            stopper = destination
+                .take()
+                .ok_or_else(|| CommandError::input_invariant())?;
         }
         self.retire_delivery_level(stopper.delivery_stamp())?;
         if unbalanced {

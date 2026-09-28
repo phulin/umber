@@ -24,9 +24,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         let mut destination = None;
         let first = loop {
             let command = match self.request_expanded_token(&mut destination) {
-                Ok(DeliveryStatus::Command) => {
-                    destination.take().ok_or(CommandError::input_invariant())?
-                }
+                Ok(DeliveryStatus::Command) => destination
+                    .take()
+                    .ok_or_else(|| CommandError::input_invariant())?,
                 Ok(DeliveryStatus::End) | Ok(_) => {
                     return Err(CommandError::input_invariant());
                 }
@@ -76,9 +76,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         let mut destination = None;
         loop {
             let command = match self.request_expanded_token(&mut destination) {
-                Ok(DeliveryStatus::Command) => {
-                    destination.take().ok_or(CommandError::input_invariant())?
-                }
+                Ok(DeliveryStatus::Command) => destination
+                    .take()
+                    .ok_or_else(|| CommandError::input_invariant())?,
                 Ok(DeliveryStatus::End) => break,
                 Ok(_) => return Err(CommandError::input_invariant()),
                 Err(error) => return Err(error),
@@ -392,7 +392,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             if !matches!(
                 destination
                     .as_ref()
-                    .ok_or(CommandError::input_invariant())?
+                    .ok_or_else(|| CommandError::input_invariant())?
                     .spelling()
                     .semantic_token(),
                 Token::Char {
@@ -425,7 +425,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 static_meaning(
                     destination
                         .as_ref()
-                        .ok_or(CommandError::input_invariant())?
+                        .ok_or_else(|| CommandError::input_invariant())?
                         .meaning()
                 ),
                 Some(

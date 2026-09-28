@@ -213,7 +213,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .command
             .alignment
             .correct_unbalanced_delimiter()
-            .ok_or(CommandError::input_invariant())?;
+            .ok_or_else(|| CommandError::input_invariant())?;
         let recovery_name = match recovery {
             Token::Char {
                 cat: Catcode::BeginGroup,
@@ -270,7 +270,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let frozen_cr = self
             .state
             .primitive_token("cr")
-            .ok_or(CommandError::input_invariant())?;
+            .ok_or_else(|| CommandError::input_invariant())?;
         let level = self.command.push_token_level(
             PackedTokenSpanHandle::transient([TracedTokenWord::pack(frozen_cr, OriginId::UNKNOWN)]),
             TokenBehavior::Recovery,
@@ -383,7 +383,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             Token::Cs(
                 self.state
                     .symbol("par")
-                    .ok_or(CommandError::input_invariant())?,
+                    .ok_or_else(|| CommandError::input_invariant())?,
             ),
             OriginId::UNKNOWN,
         );
@@ -423,7 +423,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         let par = Token::Cs(
             self.state
                 .symbol("par")
-                .ok_or(CommandError::input_invariant())?,
+                .ok_or_else(|| CommandError::input_invariant())?,
         );
         let level = self.command.push_token_level(
             PackedTokenSpanHandle::transient([TracedTokenWord::pack(par, OriginId::UNKNOWN)]),
@@ -564,7 +564,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub fn frozen_primitive_token(&self, name: &str) -> Result<Token, CommandError> {
         self.state
             .primitive_token(name)
-            .ok_or(CommandError::input_invariant())
+            .ok_or_else(|| CommandError::input_invariant())
     }
     /// Restores a command and composes the report §82 will render.
     ///

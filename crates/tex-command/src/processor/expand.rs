@@ -2120,7 +2120,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                     DeliveryStatus::Command => {}
                     _ => return Err(CommandError::input_invariant()),
                 }
-                let target = target.take().ok_or(CommandError::input_invariant())?;
+                let target = target
+                    .take()
+                    .ok_or_else(|| CommandError::input_invariant())?;
                 let scanned = self.scan_internal_value_or_zero_from_target(&target)?;
                 self.expand_the_value(origin, scanned.value)
             }
@@ -2304,7 +2306,9 @@ impl<G> CommandProcessor<'_, '_, G> {
             DeliveryStatus::Command | DeliveryStatus::PendingExpanded => {}
             _ => return Err(CommandError::input_invariant()),
         }
-        let first = first.take().ok_or(CommandError::input_invariant())?;
+        let first = first
+            .take()
+            .ok_or_else(|| CommandError::input_invariant())?;
         let Some(digit) = hot_decimal_digit(&first) else {
             let scan = self.scan_integer_from_leading_hot(first)?;
             let text = if roman {
@@ -2324,7 +2328,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 DeliveryStatus::Command | DeliveryStatus::PendingExpanded => {}
                 _ => return Err(CommandError::input_invariant()),
             }
-            let next = next.take().ok_or(CommandError::input_invariant())?;
+            let next = next.take().ok_or_else(|| CommandError::input_invariant())?;
             if let Some(digit) = hot_decimal_digit(&next) {
                 match value
                     .checked_mul(10)

@@ -111,7 +111,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         loop {
             match self.get_x_or_protected_with_replay_completion_into(&mut destination)? {
                 DeliveryStatus::Command => {
-                    let command = destination.take().ok_or(CommandError::input_invariant())?;
+                    let command = destination
+                        .take()
+                        .ok_or_else(|| CommandError::input_invariant())?;
                     self.command
                         .attempt
                         .arena_mut()
@@ -183,16 +185,18 @@ impl<G> CommandProcessor<'_, '_, G> {
         let mut destination = None;
         loop {
             let command = match self.next_non_space_raw_hot_into(&mut destination)? {
-                DeliveryStatus::Command => {
-                    destination.take().ok_or(CommandError::input_invariant())?
-                }
+                DeliveryStatus::Command => destination
+                    .take()
+                    .ok_or_else(|| CommandError::input_invariant())?,
                 DeliveryStatus::End => {
                     if self.next_non_space_raw_hot_into(&mut destination)?
                         != DeliveryStatus::Command
                     {
                         return Err(CommandError::input_invariant());
                     }
-                    destination.take().ok_or(CommandError::input_invariant())?
+                    destination
+                        .take()
+                        .ok_or_else(|| CommandError::input_invariant())?
                 }
                 _ => return Err(CommandError::input_invariant()),
             };

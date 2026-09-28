@@ -425,7 +425,9 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<PdfNavigationRequest, CommandError> {
         Ok(PdfNavigationRequest::Destination(PdfDestinationRequest {
             structure: progress.structure,
-            identifier: progress.identifier.ok_or(CommandError::input_invariant())?,
+            identifier: progress
+                .identifier
+                .ok_or_else(|| CommandError::input_invariant())?,
             kind,
         }))
     }

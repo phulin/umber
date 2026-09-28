@@ -108,7 +108,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             let top = self
                 .command
                 .top_input_level_identity()
-                .ok_or(CommandError::input_invariant())?;
+                .ok_or_else(|| CommandError::input_invariant())?;
             if top < level {
                 return Ok(());
             }

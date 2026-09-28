@@ -209,7 +209,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .command
             .alignment
             .active_alignment
-            .ok_or(CommandError::input_invariant())?;
+            .ok_or_else(|| CommandError::input_invariant())?;
         let delimiter = Self::saved_alignment_delimiter(command)?;
         let delimiter_line = command
             .direct_source_line_number()
@@ -234,7 +234,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .command
             .alignment
             .active_alignment
-            .ok_or(CommandError::input_invariant())?;
+            .ok_or_else(|| CommandError::input_invariant())?;
         let delimiter = match delivery.alignment_adjustment() {
             crate::processor::AlignmentDeliveryAdjustment::Delimiter(
                 crate::processor::alignment::AlignmentDelimiter::Tab,

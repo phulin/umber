@@ -39,7 +39,9 @@ impl<G> CommandProcessor<'_, '_, G> {
             DeliveryStatus::Command => {}
             _ => return Err(CommandError::input_invariant()),
         };
-        let command = destination.take().ok_or(CommandError::input_invariant())?;
+        let command = destination
+            .take()
+            .ok_or_else(|| CommandError::input_invariant())?;
         let provenance = StructuredProvenance {
             primary: command.origin(),
         };

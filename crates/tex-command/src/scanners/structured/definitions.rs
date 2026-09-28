@@ -117,7 +117,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         };
         let definition = scanned
             .definition()
-            .ok_or(CommandError::input_invariant())?;
+            .ok_or_else(|| CommandError::input_invariant())?;
         Ok(ScannedMacroDefinition {
             target,
             definition,
@@ -153,12 +153,12 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
             let second = second_destination
                 .take()
-                .ok_or(CommandError::input_invariant())?;
+                .ok_or_else(|| CommandError::input_invariant())?;
             let meaning = second.resolved_meaning();
             self.back_input_hot(second)?;
             let first = first_destination
                 .take()
-                .ok_or(CommandError::input_invariant())?;
+                .ok_or_else(|| CommandError::input_invariant())?;
             self.back_input_saved_hot(first)?;
             meaning
         } else {
@@ -175,7 +175,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 if self.get_token_hot_into(&mut destination)? != DeliveryStatus::Command {
                     return Err(CommandError::input_invariant());
                 }
-                let source = destination.take().ok_or(CommandError::input_invariant())?;
+                let source = destination
+                    .take()
+                    .ok_or_else(|| CommandError::input_invariant())?;
                 if !is_space(&source) {
                     break source;
                 }
@@ -190,12 +192,16 @@ impl<G> CommandProcessor<'_, '_, G> {
                 if self.get_token_hot_into(&mut destination)? != DeliveryStatus::Command {
                     return Err(CommandError::input_invariant());
                 }
-                source = destination.take().ok_or(CommandError::input_invariant())?;
+                source = destination
+                    .take()
+                    .ok_or_else(|| CommandError::input_invariant())?;
                 if is_space(&source) {
                     if self.get_token_hot_into(&mut destination)? != DeliveryStatus::Command {
                         return Err(CommandError::input_invariant());
                     }
-                    source = destination.take().ok_or(CommandError::input_invariant())?;
+                    source = destination
+                        .take()
+                        .ok_or_else(|| CommandError::input_invariant())?;
                 }
             }
             source.resolved_meaning()

@@ -57,7 +57,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 PdfActionScalarPhase::FileKeyword => {
                     let result = self.scan_keyword_retained("file");
                     if result.into_result()?.value {
-                        let _ = progress.goto.ok_or(CommandError::input_invariant())?;
+                        let _ = progress
+                            .goto
+                            .ok_or_else(|| CommandError::input_invariant())?;
                         progress.file = Some(self.scan_pdf_action_owned_text()?.tokens);
                     }
                     progress.phase = PdfActionScalarPhase::StructureKeyword;
@@ -65,7 +67,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 PdfActionScalarPhase::StructureKeyword => {
                     let result = self.scan_keyword_retained("struct");
                     if result.into_result()?.value {
-                        let goto = progress.goto.ok_or(CommandError::input_invariant())?;
+                        let goto = progress
+                            .goto
+                            .ok_or_else(|| CommandError::input_invariant())?;
                         if !goto {
                             return Err(CommandError::PdfNavigation(
                                 "pdfTeX error (ext1): only GoTo action can be used with `struct'",
@@ -86,7 +90,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 PdfActionScalarPhase::StructureNameKeyword => {
                     let result = self.scan_keyword_retained("name");
                     if result.into_result()?.value {
-                        let _ = progress.goto.ok_or(CommandError::input_invariant())?;
+                        let _ = progress
+                            .goto
+                            .ok_or_else(|| CommandError::input_invariant())?;
                         progress.structure = Some(PdfActionIdentifier::Name(
                             self.scan_pdf_action_owned_text()?.tokens,
                         ));
@@ -115,7 +121,10 @@ impl<G> CommandProcessor<'_, '_, G> {
                 PdfActionScalarPhase::PageKeyword => {
                     let result = self.scan_keyword_retained("page");
                     if result.into_result()?.value {
-                        if !progress.goto.ok_or(CommandError::input_invariant())? {
+                        if !progress
+                            .goto
+                            .ok_or_else(|| CommandError::input_invariant())?
+                        {
                             return Err(CommandError::PdfNavigation(
                                 "pdfTeX error (ext1): only GoTo action can be used with `page'",
                             ));
@@ -132,7 +141,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                         "page number",
                         false,
                     )?;
-                    let _ = progress.goto.ok_or(CommandError::input_invariant())?;
+                    let _ = progress
+                        .goto
+                        .ok_or_else(|| CommandError::input_invariant())?;
                     let view = self.scan_pdf_action_owned_text()?.tokens;
                     progress.target = Some(PdfActionTarget::Page { number, view });
                     progress.phase = PdfActionScalarPhase::NewWindowKeyword;
@@ -140,7 +151,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 PdfActionScalarPhase::NameKeyword => {
                     let result = self.scan_keyword_retained("name");
                     if result.into_result()?.value {
-                        let _ = progress.goto.ok_or(CommandError::input_invariant())?;
+                        let _ = progress
+                            .goto
+                            .ok_or_else(|| CommandError::input_invariant())?;
                         let name = self.scan_pdf_action_owned_text()?.tokens;
                         progress.target = Some(PdfActionTarget::Destination(
                             PdfActionIdentifier::Name(name),
@@ -157,7 +170,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                             "pdfTeX error (ext1): identifier type missing",
                         ));
                     }
-                    let goto = progress.goto.ok_or(CommandError::input_invariant())?;
+                    let goto = progress
+                        .goto
+                        .ok_or_else(|| CommandError::input_invariant())?;
                     if goto && progress.file.is_some() {
                         return Err(CommandError::PdfNavigation(
                             "pdfTeX error (ext1): `goto' option cannot be used with both `file' and `num'",
@@ -207,7 +222,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         progress: PdfActionScalarProgress,
         window: tex_state::PdfActionWindow,
     ) -> Result<(PendingPdfActionOwner, PdfActionSpec), CommandError> {
-        let goto = progress.goto.ok_or(CommandError::input_invariant())?;
+        let goto = progress
+            .goto
+            .ok_or_else(|| CommandError::input_invariant())?;
         if window != tex_state::PdfActionWindow::Unspecified && (!goto || progress.file.is_none()) {
             return Err(CommandError::PdfNavigation(
                 "pdfTeX error (ext1): `newwindow'/`nonewwindow' must be used with `goto' and `file' option",
@@ -216,7 +233,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         let action = PdfActionDestination {
             file: progress.file,
             structure: progress.structure,
-            target: progress.target.ok_or(CommandError::input_invariant())?,
+            target: progress
+                .target
+                .ok_or_else(|| CommandError::input_invariant())?,
             window,
         };
         Ok((

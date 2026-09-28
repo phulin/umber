@@ -84,7 +84,9 @@ impl<G> CommandProcessor<'_, '_, G> {
             let status = match self.read_expansion_candidate::<false, false, true>(hot) {
                 Ok(ExpansionCandidate::ExpandedMacro) => self.expanded_next_hot(hot, None),
                 Ok(ExpansionCandidate::Command) => {
-                    let command = hot.as_ref().ok_or_else(CommandError::input_invariant)?;
+                    let command = hot
+                        .as_ref()
+                        .ok_or_else(|| CommandError::input_invariant())?;
                     match classify_hot_command(command) {
                         ExpandedCommandAction::Return => return Ok(DeliveryStatus::Command),
                         ExpandedCommandAction::EndTemplate => {
@@ -121,7 +123,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 Ok(DeliveryStatus::AlignmentEndTemplate) => {
                     let command = hot
                         .take()
-                        .ok_or_else(CommandError::input_invariant)?
+                        .ok_or_else(|| CommandError::input_invariant())?
                         .materialize();
                     self.begin_scalar_alignment_v_template(&command)?;
                 }
