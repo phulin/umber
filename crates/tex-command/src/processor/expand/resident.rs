@@ -4,7 +4,7 @@
 use super::ResidentStorageKind;
 use super::{ReadSite, ResidentWord, ResidentWordRead};
 use crate::input::{InputLevel, PackedInputFrame, ResidentTokenStorage};
-use crate::{CommandProcessor, CommandState};
+use crate::{CommandError, CommandProcessor, CommandState};
 use std::ops::ControlFlow;
 use tex_state::token::{OriginId, TokenWord};
 
@@ -90,6 +90,41 @@ fn read_selected_run(
 }
 
 impl<G> CommandProcessor<'_, '_, G> {
+    /// Settles the input transition that ended a resident run, so the
+    /// caller's next run resumes on the newly exposed frame: TeX82 §324's
+    /// end of a drained token list, or §357's out-parameter reference in a
+    /// macro body. Returns whether one was settled; every other boundary is
+    /// left to scalar delivery.
+    pub(crate) fn settle_resident_run_boundary(&mut self) -> Result<bool, CommandError> {
+        if self.depleted_input_top().is_some() {
+            self.conserve_input_stack()?;
+            return Ok(true);
+        }
+        let levels = &self.command.roots.input.levels;
+        let Some(InputLevel::Resident(row)) =
+            levels.top.checked_sub(1).map(|top| &levels.rows[top])
+        else {
+            return Ok(false);
+        };
+        let ResidentTokenStorage::MacroBody(body) = &row.storage else {
+            return Ok(false);
+        };
+        if row.header.frame.position() >= row.header.frame.limit()
+            || body
+                .body
+                .load_current_word()
+                .and_then(|word| word.out_parameter_slot())
+                .is_none()
+        {
+            return Ok(false);
+        }
+        let selected = self.read_resident_word();
+        match self.transition_resident_word(selected, self.create_source_control_sequences)? {
+            super::ResidentColdOutcome::Retry => Ok(true),
+            _ => Err(CommandError::input_invariant()),
+        }
+    }
+
     #[inline(always)]
     pub(super) fn read_resident_word(&mut self) -> ResidentWordRead<G> {
         match Self::read_resident_run(self.command, |_, _| ResidentAdmission::Boundary) {

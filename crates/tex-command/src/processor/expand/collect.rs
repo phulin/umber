@@ -27,14 +27,15 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     /// Moves the plain prefix of the current resident span straight into an
     /// open definition's replacement text, as macro arguments do. Every word
-    /// the run leaves behind is delivered by the scalar loop below.
+    /// the run leaves behind is delivered by the scalar loop below. Returns
+    /// whether the run ended at a transition its caller may settle in place.
     fn consume_replacement_run(
         &mut self,
         macro_definition: bool,
         collector: &mut TokenCollector<G>,
-    ) -> Result<(), CommandError> {
+    ) -> Result<bool, CommandError> {
         let Some((writer, cursor)) = collector.replacement_run() else {
-            return Ok(());
+            return Ok(false);
         };
         // The body's own closing brace (depth one) ends the run.
         let admission =
@@ -49,10 +50,11 @@ impl<G> CommandProcessor<'_, '_, G> {
             writer,
             depth_delta: 0,
         };
-        self.command
+        let run = self
+            .command
             .consume_plain_resident_run(&mut sink, self.fuel, admission)?;
         cursor.advance_balanced_depth(sink.depth_delta);
-        Ok(())
+        Ok(run.at_transition)
     }
 
     fn collect_unexpanded_words<const OBSERVED: bool>(
@@ -62,7 +64,11 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<(), CommandError> {
         loop {
             if !OBSERVED {
-                self.consume_replacement_run(parameters.is_some(), collector)?;
+                // A run ending at a drained frame or a parameter reference
+                // resumes on the frame that transition exposes.
+                while self.consume_replacement_run(parameters.is_some(), collector)?
+                    && self.settle_resident_run_boundary()?
+                {}
             }
             // Source creation is the reader's policy for this consumer. No
             // mutable processor flag needs setting and clearing per body word.

@@ -1091,6 +1091,17 @@ impl<G> InputStack<G> {
     }
 }
 
+/// The result of one plain resident run.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ResidentRun {
+    /// Words admitted and appended.
+    pub(crate) consumed: u32,
+    /// The run ended at an input transition rather than a refused word: its
+    /// frame is exhausted, or the next macro-body word is an out-parameter.
+    /// The caller may settle it in place and run again.
+    pub(crate) at_transition: bool,
+}
+
 impl<G> crate::CommandState<G> {
     /// Consumes the ordinary prefix of the active macro-body or argument span
     /// directly into a macro-argument writer or an open definition.
@@ -1105,17 +1116,20 @@ impl<G> crate::CommandState<G> {
         writer: &mut impl crate::execution_scratch::PlainRunSink<G>,
         fuel: &mut crate::fuel::CommandFuel,
         mut admission: crate::execution_scratch::ArgumentRunAdmission<'_, '_, G>,
-    ) -> Result<u32, crate::CommandError> {
+    ) -> Result<ResidentRun, crate::CommandError> {
         let Some(resident_index) = self.roots.input.levels.top.checked_sub(1) else {
-            return Ok(0);
+            return Ok(ResidentRun::default());
         };
         let (roots, scratch) = (&mut self.roots, &mut self.scratch);
         let InputLevel::Resident(row) = &mut roots.input.levels.rows[resident_index] else {
-            return Ok(0);
+            return Ok(ResidentRun::default());
         };
         let position = row.header.frame.position();
         if position >= row.header.frame.limit() {
-            return Ok(0);
+            return Ok(ResidentRun {
+                consumed: 0,
+                at_transition: true,
+            });
         }
         let frame_remaining = (row.header.frame.limit() - position) as usize;
         // A `\noexpand`-marked frame settles its control sequences through
@@ -1133,15 +1147,21 @@ impl<G> crate::CommandState<G> {
             unreachable!("zero remaining fuel must fail")
         }
         let mut body_run = false;
+        let mut parameter_next = false;
         let (consumed, argument_source) = match &mut row.storage {
             super::ResidentTokenStorage::MacroBody(body) => {
                 let mut append_error = None;
                 let consumed = body.body.with_contiguous_span(|span| {
+                    let bound = available.min(frame_remaining);
                     let count = span
                         .iter()
-                        .take(available.min(frame_remaining))
+                        .take(bound)
                         .take_while(|word| admission.admits(word.get()))
                         .count();
+                    parameter_next = count < bound
+                        && span
+                            .get(count)
+                            .is_some_and(|word| word.get().out_parameter_slot().is_some());
                     if count != 0
                         && let Err(error) = writer.append_body_span(scratch, &span[..count])
                     {
@@ -1171,12 +1191,15 @@ impl<G> crate::CommandState<G> {
                     .map_err(|_| crate::CommandError::input_invariant())?;
                 (consumed, true)
             }
-            _ => return Ok(0),
+            _ => return Ok(ResidentRun::default()),
         };
         #[cfg(not(any(test, feature = "profiling")))]
         let _ = argument_source;
         if consumed == 0 {
-            return Ok(0);
+            return Ok(ResidentRun {
+                consumed: 0,
+                at_transition: parameter_next,
+            });
         }
         // The span append above succeeded in full, so the authoritative cursor
         // and fuel settle as one atomic scalar run. Rollback was captured when
@@ -1197,6 +1220,7 @@ impl<G> crate::CommandState<G> {
                 body.body.advance_chunk_cold(row.header.frame.position());
             }
         }
+        let exhausted = row.header.frame.position() >= row.header.frame.limit();
         // TeX82 §347 counts the run's interior braces in `align_state`; no
         // alignment is active when the admission accepts braces.
         if admission.brace_delta() != 0 {
@@ -1237,7 +1261,10 @@ impl<G> crate::CommandState<G> {
                     .saturating_add(1);
             }
         }
-        Ok(consumed)
+        Ok(ResidentRun {
+            consumed,
+            at_transition: parameter_next || exhausted,
+        })
     }
 
     #[inline(always)]

@@ -550,7 +550,7 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     /// The top row §§325 and 390 would retire, with its end-of-level action.
     #[inline(always)]
-    fn depleted_input_top(&self) -> Option<(InputLevelId, RetirementBehavior)> {
+    pub(super) fn depleted_input_top(&self) -> Option<(InputLevelId, RetirementBehavior)> {
         match self.command.input.levels.last() {
             Some(level @ InputLevel::Resident(row))
                 if drains_for_stack_conservation(&row.header.behavior())

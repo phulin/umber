@@ -837,13 +837,17 @@ impl<G> CommandProcessor<'_, '_, G> {
             // group, completing the argument without scalar delivery. It
             // stops before a leading space, a stray closing brace, and every
             // word needing ordinary settlement.
-            if !self.is_observed()
-                && self.consume_argument_run(&mut tokens, paragraph_token, None)? != 0
-            {
-                if tokens.brace_depth() == 0 {
-                    return self.strip_argument_outer_group(tokens);
+            if !self.is_observed() {
+                let run = self.consume_argument_run(&mut tokens, paragraph_token, None)?;
+                if run.consumed != 0 {
+                    if tokens.brace_depth() == 0 {
+                        return self.strip_argument_outer_group(tokens);
+                    }
+                    break;
                 }
-                break;
+                if run.at_transition && self.settle_resident_run_boundary()? {
+                    continue;
+                }
             }
             if self.get_macro_match_token(&mut delivery)? != crate::DeliveryStatus::Command {
                 return Err(CommandError::ParagraphInMacroArgument);
@@ -874,13 +878,14 @@ impl<G> CommandProcessor<'_, '_, G> {
             break;
         }
         loop {
-            if !self.is_observed()
-                && self.consume_argument_run(&mut tokens, paragraph_token, None)? != 0
-            {
-                if tokens.brace_depth() == 0 {
+            if !self.is_observed() {
+                let run = self.consume_argument_run(&mut tokens, paragraph_token, None)?;
+                if run.consumed != 0 && tokens.brace_depth() == 0 {
                     return self.strip_argument_outer_group(tokens);
                 }
-                continue;
+                if run.at_transition && self.settle_resident_run_boundary()? {
+                    continue;
+                }
             }
             if self.get_macro_match_token(&mut delivery)? != crate::DeliveryStatus::Command {
                 return Err(CommandError::ParagraphInMacroArgument);
@@ -961,7 +966,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                     == 0
             {
                 let stop_word = plan.delimiter_word(delimiter, 0)?;
-                if self.consume_argument_run(&mut tokens, paragraph_token, Some(stop_word))? != 0 {
+                let run =
+                    self.consume_argument_run(&mut tokens, paragraph_token, Some(stop_word))?;
+                if run.at_transition && self.settle_resident_run_boundary()? {
                     continue;
                 }
             }
@@ -1097,7 +1104,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         tokens: &mut MacroArgumentWriter<G>,
         paragraph_token: Option<TokenWord>,
         stop_word: Option<TokenWord>,
-    ) -> Result<u32, CommandError> {
+    ) -> Result<crate::input::ResidentRun, CommandError> {
         // An undelimited argument (no delimiter stop word) ends at its own
         // closing brace, which its run admits last; a delimited argument may
         // close any group it opened.

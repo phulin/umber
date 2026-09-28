@@ -15,7 +15,7 @@ mod tests;
 
 pub use history::BorrowedSourceCharacterRun;
 pub(crate) use history::{
-    InputStack, InputStackContextCoordinate, InputStackMark, ResidentSourceAdvance,
+    InputStack, InputStackContextCoordinate, InputStackMark, ResidentRun, ResidentSourceAdvance,
     ResidentSourceCharacterRun, ResidentSourceTop, observed_retirement_reason,
 };
 #[cfg(any(test, feature = "profiling"))]

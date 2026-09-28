@@ -834,10 +834,14 @@ fn nested_macro_argument_reader_counts_loaded_words_not_exhaustion() {
         }
         let (_, _, _, _, argument_words, argument_advances, argument_writes) =
             processor.command.profile_macro_kernel_counters();
-        assert!(argument_words >= 3);
+        // `\inner`'s matcher run loads `a` from the substituted argument
+        // frame without writing a command; delivering `a`, `b`, and `c` then
+        // loads and writes one word each. The cold exhaustion probe loads
+        // nothing.
+        assert_eq!(argument_words, 4);
         assert_eq!(argument_advances, argument_words);
         assert_eq!(
-            argument_writes, argument_words,
+            argument_writes, 3,
             "the tiny frame reader counts loaded argument words, not the cold exhaustion probe"
         );
     });
