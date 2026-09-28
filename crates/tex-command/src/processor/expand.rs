@@ -767,12 +767,15 @@ impl<G> CommandProcessor<'_, '_, G> {
                     cat: Catcode::Letter | Catcode::Other,
                 } = word.semantic_token()
                 else {
-                    return Ok(ResidentAdmission::Boundary);
+                    return ResidentAdmission::Boundary;
                 };
                 if !allows_characters {
-                    return Ok(ResidentAdmission::Boundary);
+                    return ResidentAdmission::Boundary;
                 }
-                self.fuel.charge()?;
+                if !self.fuel.try_charge() {
+                    // The boundary's own delivery charge reports exhaustion.
+                    return ResidentAdmission::Boundary;
+                }
                 consumed_characters = true;
                 #[cfg(feature = "profiling")]
                 {
@@ -785,25 +788,21 @@ impl<G> CommandProcessor<'_, '_, G> {
                     self.diagnostic_effects,
                     MainCharacterInput::Scalar { ch, origin },
                 );
-                Ok(if admission.continue_run() {
+                if admission.continue_run() {
                     ResidentAdmission::Continue
                 } else {
                     ResidentAdmission::Stop
-                })
+                }
             });
             let selected = match selected {
-                Ok(std::ops::ControlFlow::Continue(selected)) => selected,
-                Ok(std::ops::ControlFlow::Break(())) => {
+                std::ops::ControlFlow::Continue(selected) => selected,
+                std::ops::ControlFlow::Break(()) => {
                     self.invalidate_delivery_freshness();
                     #[cfg(feature = "profiling")]
                     if let Some(kind) = character_run_kind.take() {
                         self.fuel.record_raw_run(false, kind, character_run_count);
                     }
                     return Ok(DeliveryStatus::CharacterRun);
-                }
-                Err(failure) => {
-                    self.invalidate_delivery_freshness();
-                    return Err(failure);
                 }
             };
             if matches!(selected, ResidentWordRead::NoResident) {

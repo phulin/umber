@@ -184,10 +184,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 None => SkippedWord::Boundary,
             };
-            if matches!(effect, SkippedWord::Boundary) {
-                return Ok(ResidentAdmission::Boundary);
+            // The run stops as soon as its budget is spent, so the charge
+            // below is always funded and an over-budget word stays unread.
+            if matches!(effect, SkippedWord::Boundary) || !fuel.try_charge() {
+                return ResidentAdmission::Boundary;
             }
-            fuel.charge()?;
             match effect {
                 SkippedWord::Brace(delta) => brace_delta += delta,
                 SkippedWord::NestedConditional => *nested_conditions += 1,
@@ -196,11 +197,11 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
             consumed += 1;
             if fuel.remaining() == 0 || consumed == u32::MAX {
-                Ok(ResidentAdmission::Stop)
+                ResidentAdmission::Stop
             } else {
-                Ok(ResidentAdmission::Continue)
+                ResidentAdmission::Continue
             }
-        })?;
+        });
         if brace_delta != 0 {
             let alignment = &mut self.command.roots.alignment;
             self.command

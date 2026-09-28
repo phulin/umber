@@ -4,7 +4,7 @@
 use super::ResidentStorageKind;
 use super::{ReadSite, ResidentWord, ResidentWordRead};
 use crate::input::{InputLevel, PackedInputFrame, ResidentTokenStorage};
-use crate::{CommandError, CommandProcessor, CommandState};
+use crate::{CommandProcessor, CommandState};
 use std::ops::ControlFlow;
 use tex_state::token::{OriginId, TokenWord};
 
@@ -55,6 +55,9 @@ fn next_macro_body_word_from_current_frame<G>(
     Some((word, OriginId::UNKNOWN, position))
 }
 
+/// One admission decision. It is deliberately infallible: a consumer whose
+/// admission can fail records the failure itself and answers `Stop`, so the
+/// per-word decision stays a register-sized value on the run's hot loop.
 pub(super) enum ResidentAdmission {
     Continue,
     Stop,
@@ -68,19 +71,19 @@ type LoadedWord = (TokenWord, OriginId, u32);
 #[inline(always)]
 fn read_selected_run(
     mut load: impl FnMut() -> Option<LoadedWord>,
-    admit: &mut impl FnMut(TokenWord, OriginId) -> Result<ResidentAdmission, CommandError>,
+    admit: &mut impl FnMut(TokenWord, OriginId) -> ResidentAdmission,
     loaded: &mut u64,
-) -> Result<ControlFlow<(), Option<LoadedWord>>, CommandError> {
+) -> ControlFlow<(), Option<LoadedWord>> {
     loop {
         let Some((word, origin, position)) = load() else {
-            return Ok(ControlFlow::Continue(None));
+            return ControlFlow::Continue(None);
         };
         *loaded += 1;
-        match admit(word, origin)? {
-            ResidentAdmission::Stop => return Ok(ControlFlow::Break(())),
+        match admit(word, origin) {
+            ResidentAdmission::Stop => return ControlFlow::Break(()),
             ResidentAdmission::Continue => {}
             ResidentAdmission::Boundary => {
-                return Ok(ControlFlow::Continue(Some((word, origin, position))));
+                return ControlFlow::Continue(Some((word, origin, position)));
             }
         }
     }
@@ -89,9 +92,9 @@ fn read_selected_run(
 impl<G> CommandProcessor<'_, '_, G> {
     #[inline(always)]
     pub(super) fn read_resident_word(&mut self) -> ResidentWordRead<G> {
-        match Self::read_resident_run(self.command, |_, _| Ok(ResidentAdmission::Boundary)) {
-            Ok(ControlFlow::Continue(read)) => read,
-            _ => unreachable!("single-word admission cannot stop or fail"),
+        match Self::read_resident_run(self.command, |_, _| ResidentAdmission::Boundary) {
+            ControlFlow::Continue(read) => read,
+            ControlFlow::Break(()) => unreachable!("single-word admission cannot stop"),
         }
     }
 
@@ -101,10 +104,10 @@ impl<G> CommandProcessor<'_, '_, G> {
     #[inline(always)]
     pub(super) fn read_resident_run(
         command_state: &mut CommandState<G>,
-        mut admit: impl FnMut(TokenWord, OriginId) -> Result<ResidentAdmission, CommandError>,
-    ) -> Result<ControlFlow<(), ResidentWordRead<G>>, CommandError> {
+        mut admit: impl FnMut(TokenWord, OriginId) -> ResidentAdmission,
+    ) -> ControlFlow<(), ResidentWordRead<G>> {
         let Some(resident_index) = command_state.roots.input.levels.top.checked_sub(1) else {
-            return Ok(ControlFlow::Continue(ResidentWordRead::NoResident));
+            return ControlFlow::Continue(ResidentWordRead::NoResident);
         };
         #[cfg(test)]
         {
@@ -120,9 +123,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
         let row = match &mut command_state.roots.input.levels.rows[resident_index] {
             InputLevel::Source(_) => {
-                return Ok(ControlFlow::Continue(ResidentWordRead::Source {
-                    resident_index,
-                }));
+                return ControlFlow::Continue(ResidentWordRead::Source { resident_index });
             }
             InputLevel::Resident(row) => row,
         };
@@ -376,8 +377,8 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
         }
 
-        let current = match current? {
-            ControlFlow::Break(()) => return Ok(ControlFlow::Break(())),
+        let current = match current {
+            ControlFlow::Break(()) => return ControlFlow::Break(()),
             ControlFlow::Continue(current) => current,
         };
         let exhausted_identity = row.header.identity();
@@ -387,10 +388,10 @@ impl<G> CommandProcessor<'_, '_, G> {
             tex_state::packed_input::InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE,
         );
         let Some((word, origin, position)) = current else {
-            return Ok(ControlFlow::Continue(ResidentWordRead::Exhausted {
+            return ControlFlow::Continue(ResidentWordRead::Exhausted {
                 resident_index,
                 identity: exhausted_identity,
-            }));
+            });
         };
 
         if let Some(slot) = word.out_parameter_slot() {
@@ -423,27 +424,25 @@ impl<G> CommandProcessor<'_, '_, G> {
                     | ResidentStorageKind::Source
                     | ResidentStorageKind::Synthetic => {}
                 }
-                return Ok(ControlFlow::Continue(ResidentWordRead::Parameter {
+                return ControlFlow::Continue(ResidentWordRead::Parameter {
                     slot,
                     arguments,
                     active_source,
-                }));
+                });
             }
         }
-        Ok(ControlFlow::Continue(ResidentWordRead::Word(
-            ResidentWord {
-                word,
-                origin,
-                identity,
-                position: u64::from(position),
-                active_source,
-                suppress_expandable,
-                site: ReadSite::Resident,
-                #[cfg(test)]
-                storage_kind,
-                #[cfg(feature = "profiling")]
-                raw_kind,
-            },
-        )))
+        ControlFlow::Continue(ResidentWordRead::Word(ResidentWord {
+            word,
+            origin,
+            identity,
+            position: u64::from(position),
+            active_source,
+            suppress_expandable,
+            site: ReadSite::Resident,
+            #[cfg(test)]
+            storage_kind,
+            #[cfg(feature = "profiling")]
+            raw_kind,
+        }))
     }
 }

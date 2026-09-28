@@ -176,12 +176,23 @@ impl CommandFuel {
     ///
     /// Execution-layer state machines use the same monotonic ledger as token
     /// delivery so rollback cannot refund work performed below the scanner.
+    #[inline]
     pub fn charge(&mut self) -> Result<(), crate::CommandError> {
         if self.remaining == 0 {
             return Err(self.exhausted_error());
         }
         self.remaining -= 1;
         Ok(())
+    }
+
+    /// Charges one transition when the budget still funds it. A batched
+    /// consumer uses this to stop before an unfunded word and leave that word
+    /// to ordinary delivery, whose [`Self::charge`] reports the exhaustion.
+    #[inline(always)]
+    pub(crate) fn try_charge(&mut self) -> bool {
+        let funded = self.remaining != 0;
+        self.remaining -= u64::from(funded);
+        funded
     }
 
     /// Number of command transitions still available to a bounded operation.
@@ -191,6 +202,7 @@ impl CommandFuel {
     }
 
     /// Charges one already-classified contiguous run.
+    #[inline]
     pub fn charge_run(&mut self, count: u32) -> Result<(), crate::CommandError> {
         if u64::from(count) > self.remaining {
             return Err(self.exhausted_error());
