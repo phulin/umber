@@ -1759,6 +1759,11 @@ pub(crate) struct ArgumentRunAdmission<'a, 'admission, G> {
     /// A macro definition's replacement text gives §479 meaning to parameter
     /// characters, so its runs stop before them.
     stop_at_parameter: bool,
+    /// An undelimited argument's run may admit the word that completes the
+    /// argument: its sole token at depth zero, or the brace closing its
+    /// group. `closed` then refuses every later word.
+    completes_undelimited: bool,
+    closed: bool,
 }
 
 impl<'a, 'admission, G> ArgumentRunAdmission<'a, 'admission, G> {
@@ -1777,6 +1782,19 @@ impl<'a, 'admission, G> ArgumentRunAdmission<'a, 'admission, G> {
             close_floor,
             brace_delta: 0,
             stop_at_parameter: false,
+            completes_undelimited: false,
+            closed: false,
+        }
+    }
+
+    /// An undelimited argument's admission, which also admits the word that
+    /// completes it (TeX82 §392-§394). A space before the argument, a stray
+    /// closing brace, and every word the ordinary admission refuses stay with
+    /// the scalar matcher.
+    pub(crate) const fn completing_undelimited(self) -> Self {
+        Self {
+            completes_undelimited: true,
+            ..self
         }
     }
 
@@ -1804,20 +1822,25 @@ impl<'a, 'admission, G> ArgumentRunAdmission<'a, 'admission, G> {
 
     #[inline(always)]
     pub(crate) fn admits(&mut self, word: TokenWord) -> bool {
-        if self.depth == 0 && Some(word) == self.stop_word {
+        if self.closed || (self.depth == 0 && Some(word) == self.stop_word) {
             return false;
         }
-        match word.literal_catcode() {
+        let admitted = match word.literal_catcode() {
             Some(Catcode::BeginGroup) if self.state.is_some() => {
                 self.depth += 1;
                 self.brace_delta += 1;
-                true
+                return true;
             }
-            Some(Catcode::EndGroup) if self.state.is_some() && self.depth > self.close_floor => {
+            Some(Catcode::EndGroup)
+                if self.state.is_some()
+                    && (self.depth > self.close_floor
+                        || (self.completes_undelimited && self.depth == 1)) =>
+            {
                 self.depth -= 1;
                 self.brace_delta -= 1;
                 true
             }
+            Some(Catcode::Space) if self.completes_undelimited && self.depth == 0 => false,
             Some(Catcode::BeginGroup | Catcode::EndGroup | Catcode::AlignmentTab) => false,
             Some(Catcode::Parameter) => !self.stop_at_parameter,
             Some(Catcode::Active) => self.admits_command(word),
@@ -1827,7 +1850,9 @@ impl<'a, 'admission, G> ArgumentRunAdmission<'a, 'admission, G> {
                     && Some(word) != self.paragraph_token
                     && self.admits_command(word)
             }
-        }
+        };
+        self.closed = admitted && self.completes_undelimited && self.depth == 0;
+        admitted
     }
 
     #[inline(always)]
@@ -2579,5 +2604,46 @@ mod tests {
         assert_eq!(scratch.retained_word_capacity(), capacity);
         assert_eq!(capacity, MACRO_WORD_RESERVE);
         assert!(scratch.is_quiescent());
+    }
+
+    #[test]
+    fn undelimited_admission_completes_on_its_sole_token_or_closing_brace() {
+        crate::test_harness::with_universe(|universe| {
+            let context = universe.command_context().expect("command context");
+            let char_word = |ch, cat| TokenWord::pack(Token::Char { ch, cat });
+            let letter = |ch| char_word(ch, Catcode::Letter);
+            let open = char_word('{', Catcode::BeginGroup);
+            let close = char_word('}', Catcode::EndGroup);
+            let admission = || {
+                ArgumentRunAdmission::with_commands(&context, None, None, 0, 1)
+                    .completing_undelimited()
+            };
+
+            // TeX82 §392: a sole ordinary token is the whole argument.
+            let mut run = admission();
+            assert!(run.admits(letter('x')));
+            assert!(!run.admits(letter('y')), "the argument is already complete");
+
+            // §394: a group completes at its own closing brace, and interior
+            // groups balance within it.
+            let mut run = admission();
+            for word in [open, open, letter('a'), close, letter('b'), close] {
+                assert!(run.admits(word));
+            }
+            assert!(!run.admits(letter('c')), "the argument is already complete");
+            assert_eq!(run.brace_delta(), 0);
+
+            // §393's skipped leading space and §395's stray closing brace stay
+            // with the scalar matcher.
+            assert!(!admission().admits(char_word(' ', Catcode::Space)));
+            assert!(!admission().admits(close));
+
+            // An interior run resumes inside the group and still completes it.
+            let mut run = ArgumentRunAdmission::with_commands(&context, None, None, 1, 1)
+                .completing_undelimited();
+            assert!(run.admits(char_word(' ', Catcode::Space)));
+            assert!(run.admits(close));
+            assert!(!run.admits(letter('d')));
+        });
     }
 }

@@ -822,8 +822,29 @@ impl<G> CommandProcessor<'_, '_, G> {
         flags: MeaningFlags,
         paragraph_token: Option<TokenWord>,
     ) -> Result<MacroArgumentWriter<G>, CommandError> {
+        // TeX82 §394 links the opening left brace into the temporary
+        // argument list and removes the matching outer pair only after the
+        // argument completes.  Keep that ownership here too: §396's
+        // runaway pseudoprint must still see an unmatched opening brace.
+        let mut tokens = self
+            .command
+            .scratch
+            .begin_argument_writer(matching)
+            .map_err(|_| CommandError::input_invariant())?;
         let mut delivery = None;
-        let first = loop {
+        loop {
+            // A resident run admits a sole ordinary token or a whole balanced
+            // group, completing the argument without scalar delivery. It
+            // stops before a leading space, a stray closing brace, and every
+            // word needing ordinary settlement.
+            if !self.is_observed()
+                && self.consume_argument_run(&mut tokens, paragraph_token, None)? != 0
+            {
+                if tokens.brace_depth() == 0 {
+                    return self.strip_argument_outer_group(tokens);
+                }
+                break;
+            }
             if self.get_macro_match_token(&mut delivery)? != crate::DeliveryStatus::Command {
                 return Err(CommandError::ParagraphInMacroArgument);
             }
@@ -841,41 +862,24 @@ impl<G> CommandProcessor<'_, '_, G> {
                     delivery.take().ok_or_else(CommandError::input_invariant)?,
                 );
             }
-            break delivery.take().ok_or_else(CommandError::input_invariant)?;
-        };
-        self.check_argument_paragraph(&first, paragraph_token, flags, None)?;
-        if first.literal_catcode() != Some(Catcode::BeginGroup) {
-            let mut tokens = self
+            self.check_argument_paragraph(current, paragraph_token, flags, None)?;
+            let depth = self
                 .command
                 .scratch
-                .begin_argument_writer(matching)
+                .append_hot_delivery(&mut tokens, current, true, paragraph_token)
                 .map_err(|_| CommandError::input_invariant())?;
-            self.command
-                .scratch
-                .append_hot_delivery(&mut tokens, &first, true, paragraph_token)
-                .map_err(|_| CommandError::input_invariant())?;
-            return Ok(tokens);
+            if depth == 0 {
+                return Ok(tokens);
+            }
+            break;
         }
-
-        // TeX82 §394 links the opening left brace into the temporary
-        // argument list and removes the matching outer pair only after the
-        // argument completes.  Keep that ownership here too: §396's
-        // runaway pseudoprint must still see an unmatched opening brace.
-        let mut tokens = self
-            .command
-            .scratch
-            .begin_argument_writer(matching)
-            .map_err(|_| CommandError::input_invariant())?;
-        let first_depth = self
-            .command
-            .scratch
-            .append_hot_delivery(&mut tokens, &first, true, paragraph_token)
-            .map_err(|_| CommandError::input_invariant())?;
-        debug_assert_eq!(first_depth, 1);
         loop {
             if !self.is_observed()
                 && self.consume_argument_run(&mut tokens, paragraph_token, None)? != 0
             {
+                if tokens.brace_depth() == 0 {
+                    return self.strip_argument_outer_group(tokens);
+                }
                 continue;
             }
             if self.get_macro_match_token(&mut delivery)? != crate::DeliveryStatus::Command {
@@ -1095,7 +1099,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         stop_word: Option<TokenWord>,
     ) -> Result<u32, CommandError> {
         // An undelimited argument (no delimiter stop word) ends at its own
-        // closing brace; a delimited argument may close any group it opened.
+        // closing brace, which its run admits last; a delimited argument may
+        // close any group it opened.
         let close_floor = u32::from(stop_word.is_none());
         let admission = ArgumentRunAdmission::with_commands(
             self.state,
@@ -1104,6 +1109,11 @@ impl<G> CommandProcessor<'_, '_, G> {
             tokens.brace_depth(),
             close_floor,
         );
+        let admission = if stop_word.is_none() {
+            admission.completing_undelimited()
+        } else {
+            admission
+        };
         let admission = if self.command.delivery_mode.alignment_active()
             || self.outer_recovered_while_matching
         {
