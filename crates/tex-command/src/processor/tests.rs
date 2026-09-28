@@ -276,9 +276,10 @@ fn stack_conservation_remains_an_explicit_counted_retirement_branch() {
             .expect("explicit conservation drains exhausted levels");
 
         assert_eq!(processor.command.input_level_count(), 0);
+        // Ordinary popped rows retire through the shared resident primitive.
         assert_eq!(
             processor.command.profile_resident_retirement_counters(),
-            (0, 0, 0, 0, 0, 0, 2)
+            (2, 0, 0, 0, 0, 0, 2)
         );
     });
 }

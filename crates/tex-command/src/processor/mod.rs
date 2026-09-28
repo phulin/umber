@@ -241,6 +241,9 @@ pub struct CommandProcessor<'episode, 'admission, G> {
     /// value affect input semantics.
     immediate_write_retirement: Option<InputLevelId>,
     pending_file_warning_context: Option<(InputLevelId, String)>,
+    /// §391's `par_token`, cached once the interner knows `par`. A symbol
+    /// never changes slot once interned, so only an absent lookup repeats.
+    paragraph_word: Option<tex_state::token::TokenWord>,
     /// Candidate for this raw fetch only. Every fetch clears it, and only a
     /// settled §342 command can publish it to the journaled command root.
     pending_diagnostic_location: Option<crate::DiagnosticLocation>,
@@ -396,6 +399,19 @@ impl<G> CommandProcessor<'_, '_, G> {
         position
             .and_then(|position| u64::try_from(position).ok())
             .is_some_and(|position| stamp.position().checked_add(1) == Some(position))
+    }
+
+    /// §391's `par_token` for the `\long` argument check.
+    #[inline(always)]
+    pub(crate) fn paragraph_word(&mut self) -> Option<tex_state::token::TokenWord> {
+        if self.paragraph_word.is_none() {
+            self.paragraph_word = self
+                .state
+                .symbol("par")
+                .map(tex_state::token::Token::Cs)
+                .map(tex_state::token::TokenWord::pack);
+        }
+        self.paragraph_word
     }
 
     #[inline(always)]
@@ -763,6 +779,7 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
             diagnostic_effects,
             immediate_write_retirement: None,
             pending_file_warning_context: None,
+            paragraph_word: None,
             pending_diagnostic_location: None,
             delivery_authority: DeliveryAuthority::Unavailable,
             last_integer_terminator: None,

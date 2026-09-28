@@ -819,7 +819,7 @@ impl<G> InputStack<G> {
     }
 
     pub(crate) fn push_macro_body(&mut self, value: InputLevel<G>, parameter_count: usize) {
-        assert!(matches!(
+        debug_assert!(matches!(
             value,
             InputLevel::Resident(super::ResidentTokenRow {
                 storage: super::ResidentTokenStorage::MacroBody(_),

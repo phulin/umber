@@ -11,7 +11,8 @@ use crate::execution_scratch::{
     ArgumentRunAdmission, ArgumentSetId, MacroArgumentWriter, PendingArgumentSet,
 };
 use crate::processor::status::{
-    ArgumentBuilderId, MatchingContext, ScannerStatus, ScannerStatusVisibility, ScannerWarning,
+    ArgumentBuilderId, MatchingContext, ScannerEpisode, ScannerStatus, ScannerStatusVisibility,
+    ScannerWarning,
 };
 use crate::{CommandError, CommandProcessor};
 
@@ -323,6 +324,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         // finished stored replay -- before `begin_token_list(..., macro)`.
         // Those retirements must precede this body's input push. The pending
         // frame stays canonical if an older active frame retires beneath it.
+        if activation == MacroActivationClass::Matching && plan.body.is_empty() {
+            return self.finish_empty_matching_macro(matching, episode, parameter_count);
+        }
         self.conserve_input_stack_for_descendant()?;
         let arguments = if parameter_count == 0 {
             if let Some(matching) = matching {
@@ -365,6 +369,33 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }),
             }),
         );
+        if let Some(episode) = episode {
+            self.finish_scanner_episode(episode);
+        }
+        Ok(true)
+    }
+
+    /// Completes a matched macro whose replacement is empty, such as
+    /// `\@gobble`. TeX82 §390 would push a replacement row that the next
+    /// `get_next` retires at once through §324's `end_token_list`, and no
+    /// command can run in between. An unobserved, untraced activation without
+    /// a replay-completion descendant therefore discards its arguments
+    /// directly, as an empty parameterless macro elides its row.
+    fn finish_empty_matching_macro(
+        &mut self,
+        matching: Option<PendingArgumentSet<G>>,
+        episode: Option<ScannerEpisode>,
+        parameter_count: usize,
+    ) -> Result<bool, CommandError> {
+        self.conserve_input_stack()?;
+        self.command
+            .record_empty_matching_macro_activation(parameter_count);
+        if let Some(matching) = matching {
+            self.command
+                .scratch
+                .discard_macro_match(matching)
+                .map_err(|_| CommandError::input_invariant())?;
+        }
         if let Some(episode) = episode {
             self.finish_scanner_episode(episode);
         }
@@ -490,7 +521,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         matching: Option<&PendingArgumentSet<G>>,
         plan: &MacroPlan<G>,
     ) -> Result<(), CommandError> {
-        let paragraph_token = self.state.symbol("par").map(Token::Cs).map(TokenWord::pack);
+        let paragraph_token = self.paragraph_word();
         let parameter_count = plan.pattern.parameter_count();
         let leading_end = plan.pattern.leading_end(plan.parameter_len);
         let mut delivery = None;

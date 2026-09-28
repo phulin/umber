@@ -546,11 +546,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                     if drains_for_stack_conservation(&row.header.behavior())
                         && level.stored_is_exhausted() == Some(true) =>
                 {
-                    Some(row.header.identity())
+                    Some((row.header.identity(), row.header.retirement()))
                 }
                 Some(InputLevel::Resident(_)) | Some(InputLevel::Source(_)) | None => None,
             };
-            let Some(identity) = depleted else {
+            let Some((identity, retirement)) = depleted else {
                 return Ok(());
             };
             #[cfg(test)]
@@ -563,7 +563,27 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .conservation_retirements
                     .saturating_add(1);
             }
-            let retirement = self.retire_input_top(identity)?;
+            // An ordinary popped token list, the common depleted macro body
+            // included, retires through the resident path directly: no
+            // source ancestry, file warning, or file close can apply to it.
+            let retirement = if retirement == RetirementBehavior::Pop {
+                self.invalidate_delivery_freshness();
+                let index = self.command.input.levels.len() - 1;
+                match self
+                    .command
+                    .retire_resident_ordinary_input(
+                        index,
+                        &mut self.observer,
+                        &mut self.immediate_write_retirement,
+                    )
+                    .map_err(|_| CommandError::input_invariant())?
+                {
+                    Some(episode) => RetirementHandoff::Completed(episode),
+                    None => RetirementHandoff::Continue,
+                }
+            } else {
+                self.retire_input_top(identity)?
+            };
             match retirement {
                 // Finished stored replay episodes queue their completion in
                 // command state. Draining continues so the whole depleted run

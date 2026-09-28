@@ -461,6 +461,19 @@ impl<G> CommandState<G> {
         self.stack_usage.input_stack = self.stack_usage.input_stack.max(self.input.levels.len());
     }
 
+    /// Accounts for an empty-replacement macro with parameters: the logical
+    /// `begin_token_list` boundary and the §390 parameter pushes that its
+    /// immediately depleted row would have held.
+    pub(crate) fn record_empty_matching_macro_activation(&mut self, parameter_count: usize) {
+        self.record_empty_macro_activation();
+        let parameter_ptr = self
+            .input
+            .levels
+            .active_macro_parameters()
+            .saturating_add(parameter_count);
+        self.stack_usage.record_parameter_push(parameter_ptr);
+    }
+
     pub(crate) fn push_token_level<P: super::PackedTokenSpanSource<G>>(
         &mut self,
         source: P,
