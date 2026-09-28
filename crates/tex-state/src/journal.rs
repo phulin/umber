@@ -153,6 +153,32 @@ impl<G> StateOperation<G> {
         }
     }
 
+    /// Reopens this operation in place at a new transaction position and
+    /// group coordinate, keeping its durable-box token.
+    #[inline]
+    pub(crate) fn reopen(
+        &mut self,
+        position: usize,
+        group_depth: usize,
+        save_stack: SaveStackProjection,
+        save_position: u32,
+        group_entries: usize,
+        group_sparse_start: Option<usize>,
+    ) {
+        self.transaction_position = position;
+        self.group_depth = group_depth;
+        self.save_stack = save_stack;
+        self.save_position = save_position;
+        self.group_entries = group_entries;
+        self.group_sparse_start = group_sparse_start;
+    }
+
+    pub(crate) fn durable_box_mut(&mut self) -> &mut crate::env::DurableBoxOperation {
+        self.durable_box
+            .as_mut()
+            .expect("aggregate operation carries its durable box lane")
+    }
+
     pub(crate) const fn transaction_position(&self) -> usize {
         self.transaction_position
     }
@@ -737,6 +763,18 @@ impl<G> SaveJournal<G> {
         scratch.clear();
         self.sparse_scratch = scratch;
         self.refresh_group_capacity_bytes();
+    }
+
+    /// Settles the innermost transaction's suffix and reopens it in place,
+    /// keeping the transaction depth. At depth one every entry belongs to
+    /// the settled operation, so the whole suffix is dead.
+    #[inline]
+    pub(crate) fn roll_transaction(&mut self) -> usize {
+        debug_assert!(self.transaction_depth != 0, "state transaction is active");
+        if self.transaction_depth == 1 {
+            self.transaction_entries.clear();
+        }
+        self.transaction_entries.len()
     }
 
     pub(crate) fn commit_transaction(&mut self, position: usize) {

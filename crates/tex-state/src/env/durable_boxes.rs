@@ -1912,6 +1912,29 @@ impl DurableBoxState {
         self.operation_depth != 0
     }
 
+    /// Settles an operation and reopens it in place. An operation that
+    /// recorded nothing is already its own successor, so only one that
+    /// touched a box register takes the full commit and begin.
+    #[inline]
+    pub(crate) fn roll_operation(
+        &mut self,
+        arena: &mut PageMaterialArena,
+        operation: &mut DurableBoxOperation,
+    ) {
+        let unchanged = operation.depth == self.operation_depth
+            && operation.position == self.operation_entries.len()
+            && operation.action_position == self.operation_actions.len()
+            && operation.scalar_position == self.scalar_entries.len()
+            && operation.group_position == self.groups.len()
+            && operation.group_entry_position
+                == self.groups.last().map_or(0, |group| group.entries.len());
+        if unchanged {
+            return;
+        }
+        self.commit_operation(arena, *operation);
+        *operation = self.begin_operation();
+    }
+
     pub(crate) fn commit_operation(
         &mut self,
         arena: &mut PageMaterialArena,

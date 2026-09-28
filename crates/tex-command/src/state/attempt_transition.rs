@@ -137,13 +137,11 @@ impl<G> CommandState<G> {
         &mut self,
         _operation: &crate::CommandAttemptOperation,
     ) -> Result<(), crate::AttemptError> {
-        let mut mark = self
+        let mark = self
             .active_attempt_operation
+            .as_mut()
             .ok_or(crate::AttemptError::InvalidCoordinate)?;
-        self.attempt
-            .roll_operation(&mut mark, self.scratch.frame_len())?;
-        self.active_attempt_operation = Some(mark);
-        Ok(())
+        self.attempt.roll_operation(mark, self.scratch.frame_len())
     }
 
     pub fn commit_attempt_operation(

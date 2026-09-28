@@ -753,14 +753,13 @@ impl<'a, G> CommandContext<'a, G> {
 
     /// Commits an operation opened by [`Self::begin_state_operation`] and
     /// opens its successor in the same slot.
+    ///
+    /// The roll keeps the enclosing transaction open and updates the
+    /// operation in place; see `docs/positional_journal_marks.md`.
     pub fn roll_state_operation(&mut self, operation: &mut crate::StateOperation<G>) {
-        let durable = operation.take_durable_box();
         self.durable_boxes
-            .commit_operation(&mut self.page_nodes, durable);
-        self.admitted
-            .state()
-            .commit_state_transaction(operation.transaction_position());
-        *operation = self.begin_state_operation();
+            .roll_operation(&mut self.page_nodes, operation.durable_box_mut());
+        self.admitted.state().roll_state_transaction(operation);
     }
 
     /// Restores an operation opened by [`Self::begin_state_operation`].

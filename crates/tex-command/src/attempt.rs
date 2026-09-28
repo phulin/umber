@@ -715,6 +715,34 @@ impl<G> AttemptArena<G> {
         }
     }
 
+    /// Whether every table sits exactly at `mark`, compared directly on the
+    /// raw lengths so the per-command roll needs no mark capture.
+    #[inline]
+    fn is_at(&self, mark: &AttemptMark) -> bool {
+        self.traced_words.len() == mark.traced_words as usize
+            && self.traced_origins.len() == mark.traced_origins as usize
+            && self.token_scratch.len() == mark.token_scratch as usize
+            && self.origin_scratch.len() == mark.origin_scratch as usize
+            && self.token_builders.len() == mark.token_builders as usize
+            && self.token_lists.len() == mark.token_lists as usize
+            && self.glue_values.len() == mark.glue_values as usize
+            && self.definitions.len() == mark.definitions as usize
+            && self.token_buffers.len() == mark.token_buffers as usize
+            && self.provenance.len() == mark.provenance as usize
+            && self.test_names_are_at(mark)
+    }
+
+    #[cfg(test)]
+    fn test_names_are_at(&self, mark: &AttemptMark) -> bool {
+        self.name_bytes.len() == mark.name_bytes as usize && self.names.len() == mark.names as usize
+    }
+
+    #[cfg(not(test))]
+    #[inline(always)]
+    const fn test_names_are_at(&self, _mark: &AttemptMark) -> bool {
+        true
+    }
+
     pub(crate) fn validate_mark(&self, mark: AttemptMark) -> Result<(), AttemptError> {
         if mark.key != self.key.0 {
             return Err(AttemptError::ForeignAttempt);
@@ -1769,14 +1797,17 @@ impl<G> CommandAttempt<G> {
         mark: &mut CommandAttemptMark,
         macro_depth: usize,
     ) -> Result<(), AttemptError> {
-        let unchanged = self.active_operation.as_ref().is_some_and(|owner| {
-            self.active_operation_origin == Some(mark.operation)
-                && owner.coordinate() == mark.operation
-                && owner.close_through_serial == owner.serial
-                && owner.opening == mark.opening
-                && self.arena.top_scope == owner.serial
-                && self.arena.mark() == mark.opening
-        }) && usize::try_from(mark.macro_depth) == Ok(macro_depth);
+        // Scope serials are unique within an arena key, so a matching
+        // coordinate names the owner `mark` was taken from, with the same
+        // opening. A scope handed to a child or a changed top scope shows in
+        // the two serial comparisons.
+        let unchanged = mark.macro_depth as usize == macro_depth
+            && self.active_operation.as_ref().is_some_and(|owner| {
+                owner.coordinate() == mark.operation
+                    && owner.close_through_serial == owner.serial
+                    && self.arena.top_scope == owner.serial
+            })
+            && self.arena.is_at(&mark.opening);
         if unchanged {
             return Ok(());
         }

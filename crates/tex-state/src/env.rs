@@ -1924,6 +1924,24 @@ impl<G> DenseState<G> {
         )
     }
 
+    /// Settles the operation's state suffix and reopens it in place at the
+    /// current group coordinate, without ending the enclosing transaction.
+    #[inline]
+    pub(crate) fn roll_state_transaction(&mut self, operation: &mut StateOperation<G>) {
+        let group_depth = self.groups.len();
+        let journal = self.journal_mut();
+        let position = journal.roll_transaction();
+        let (group_entries, group_sparse_start) = journal.current_group_save_metadata();
+        operation.reopen(
+            position,
+            group_depth,
+            journal.current_save_stack(),
+            journal.current_save_position(),
+            group_entries,
+            group_sparse_start,
+        );
+    }
+
     pub(crate) fn commit_state_transaction(&mut self, position: usize) {
         self.journal_mut().commit_transaction(position);
     }
