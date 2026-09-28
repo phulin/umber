@@ -1328,7 +1328,7 @@ impl<G> crate::CommandState<G> {
         self.settle_retirement(
             retirement.identity,
             retirement.action,
-            retirement.reason,
+            Some(retirement.reason),
             retirement.name_class.zip(retirement.source),
             observer,
             immediate_write_retirement,
@@ -1340,7 +1340,7 @@ impl<G> crate::CommandState<G> {
         &mut self,
         identity: super::InputLevelId,
         action: super::InputRetirementAction,
-        reason: super::InputRetirementReason,
+        reason: Option<super::InputRetirementReason>,
         observer: &mut Option<&mut dyn CommandObserver>,
         immediate_write_retirement: &mut Option<super::InputLevelId>,
     ) -> Option<crate::CommandReplayEpisode> {
@@ -1364,20 +1364,27 @@ impl<G> crate::CommandState<G> {
         &mut self,
         identity: super::InputLevelId,
         action: super::InputRetirementAction,
-        retirement_reason: super::InputRetirementReason,
+        retirement_reason: Option<super::InputRetirementReason>,
         source_context: Option<(super::SourceNameClass, tex_state::SourceId)>,
         observer: &mut Option<&mut dyn CommandObserver>,
         immediate_write_retirement: &mut Option<super::InputLevelId>,
     ) -> Option<crate::CommandReplayEpisode> {
-        let reason = if *immediate_write_retirement == Some(identity) {
+        // Unobserved retirements may omit the reason, which only names the
+        // observer's records; the write-retirement slot still clears.
+        debug_assert!(observer.is_none() || retirement_reason.is_some());
+        let write = *immediate_write_retirement == Some(identity);
+        if write {
             *immediate_write_retirement = None;
-            InputReason::Write
-        } else {
-            observed_retirement_reason(action, retirement_reason)
-        };
+        }
         if !matches!(action, super::InputRetirementAction::VTemplateRetained)
             && let Some(sink) = observer.as_deref_mut()
+            && let Some(retirement_reason) = retirement_reason
         {
+            let reason = if write {
+                InputReason::Write
+            } else {
+                observed_retirement_reason(action, retirement_reason)
+            };
             sink.committed(CommandObservation::Input(InputRecord {
                 transition: if matches!(action, super::InputRetirementAction::TerminalStop) {
                     InputTransition::Stop
@@ -1393,9 +1400,11 @@ impl<G> crate::CommandState<G> {
         }
         if let Some(transition) = match retirement_reason {
             _ if matches!(action, super::InputRetirementAction::VTemplateRetained) => None,
-            super::InputRetirementReason::AlignmentUTemplate => Some("u_template_retire"),
-            super::InputRetirementReason::AlignmentVTemplate => Some("v_template_retire"),
-            super::InputRetirementReason::AlignmentOmitTemplate => Some("omit_template_retire"),
+            Some(super::InputRetirementReason::AlignmentUTemplate) => Some("u_template_retire"),
+            Some(super::InputRetirementReason::AlignmentVTemplate) => Some("v_template_retire"),
+            Some(super::InputRetirementReason::AlignmentOmitTemplate) => {
+                Some("omit_template_retire")
+            }
             _ => None,
         } && let Some(sink) = observer.as_deref_mut()
         {

@@ -308,7 +308,10 @@ impl<G> CommandState<G> {
             return Ok(None);
         }
         let identity = row.header.identity();
-        let reason = input_retirement_reason(&row.header.behavior(), &row.trace());
+        // The retirement reason names only the observer's record.
+        let reason = observer
+            .is_some()
+            .then(|| input_retirement_reason(&row.header.behavior(), &row.trace()));
         let (macro_body, arguments, replay) = match &row.storage {
             ResidentTokenStorage::MacroBody(body) => (true, body.arguments, None),
             ResidentTokenStorage::Replay { replay, .. } => (false, None, Some(*replay)),
@@ -333,7 +336,7 @@ impl<G> CommandState<G> {
             return Ok(self.settle_resident_retirement(
                 identity,
                 InputRetirementAction::TokenListPopped,
-                InputRetirementReason::Macro,
+                Some(InputRetirementReason::Macro),
                 observer,
                 immediate_write_retirement,
             ));

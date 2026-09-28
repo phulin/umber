@@ -536,21 +536,39 @@ impl<G> CommandProcessor<'_, '_, G> {
         self.conserve_input_stack_with_owner(Some(owner))
     }
 
+    /// Most pushes find a live top row, so only that test stays inline.
+    #[inline(always)]
     fn conserve_input_stack_with_owner(
         &mut self,
         descendant: Option<InputLevelId>,
     ) -> Result<(), CommandError> {
+        if self.depleted_input_top().is_none() {
+            return Ok(());
+        }
+        self.drain_depleted_input(descendant)
+    }
+
+    /// The top row §§325 and 390 would retire, with its end-of-level action.
+    #[inline(always)]
+    fn depleted_input_top(&self) -> Option<(InputLevelId, RetirementBehavior)> {
+        match self.command.input.levels.last() {
+            Some(level @ InputLevel::Resident(row))
+                if drains_for_stack_conservation(&row.header.behavior())
+                    && level.stored_is_exhausted() == Some(true) =>
+            {
+                Some((row.header.identity(), row.header.retirement()))
+            }
+            Some(InputLevel::Resident(_)) | Some(InputLevel::Source(_)) | None => None,
+        }
+    }
+
+    #[inline(never)]
+    fn drain_depleted_input(
+        &mut self,
+        descendant: Option<InputLevelId>,
+    ) -> Result<(), CommandError> {
         loop {
-            let depleted = match self.command.input.levels.last() {
-                Some(level @ InputLevel::Resident(row))
-                    if drains_for_stack_conservation(&row.header.behavior())
-                        && level.stored_is_exhausted() == Some(true) =>
-                {
-                    Some((row.header.identity(), row.header.retirement()))
-                }
-                Some(InputLevel::Resident(_)) | Some(InputLevel::Source(_)) | None => None,
-            };
-            let Some((identity, retirement)) = depleted else {
+            let Some((identity, retirement)) = self.depleted_input_top() else {
                 return Ok(());
             };
             #[cfg(test)]
