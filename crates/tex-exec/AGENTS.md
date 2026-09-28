@@ -106,6 +106,9 @@ Command operands are scanned by `tex-command` into typed request and result valu
   admitted run's minimal inner loop. It samples lane eligibility once per
   admitted iteration and settles lane-owned commands in place, handing every
   other command to the admitted run in its unchanged command slot.
+- `src/main_control/lane/scalar.rs`: the lane's scalar family. Register and
+  parameter assignments and register arithmetic scan through the admitted
+  run's cold scanners and commit through the cold arms' scalar committer.
 - `src/main_control/hot_apply.rs`: fused family-sized scan operands and direct
   in-place semantic handlers for the measured definition, let, catcode, and
   ordinary-group families. These commands bypass `ColdOperation`; dispatch

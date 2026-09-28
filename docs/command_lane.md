@@ -85,6 +85,8 @@ lane:
       Let | FutureLet                -> scan; commit; afterassignment; settle
       MacroDefinition                -> scan; commit; afterassignment; settle
       CatCode                        -> scan; commit; afterassignment; settle
+      Scalar                         -> cold scan; commit; afterassignment;
+                                        settle
       SemiSimpleGroup | SimpleGroup  -> enter/leave; aftergroup; settle
       _                              -> Delivered
 ```
@@ -102,8 +104,8 @@ performs exactly these steps:
    diagnostic effects, artifact and effect counts, and `\tracingcommands`.
    If any changed, leave through the _Applied_ exit.
 2. Fold the checked save-stack words into the run's maximum.
-3. Increment the episode's operation count. The command joins the lane's
-   rollback unit, as described below, so no journal is rolled.
+3. Increment the episode's operation count and settle the command's
+   rollback unit, as described below.
 
 Only the commands that can change page, box, or host state, which are never
 lane families, need the admitted loop's full continuation predicate.
@@ -117,7 +119,7 @@ lane commands. The processor lends its admitted state, command root, and
 diagnostic sink to the hot committers between two deliveries; none of its
 processor-local facts caches a meaning, category code, or group level.
 
-The lane leaves through exactly one of five exits, each with the slot's
+The lane leaves through exactly one of six exits, each with the slot's
 command where ordinary delivery would have left it:
 
 - _Delivered_: the delivery status and any unscanned command, which the
@@ -133,6 +135,11 @@ command where ordinary delivery would have left it:
 - _Scanned_: a lane command whose delivery or scan left a report. The
   admitted run publishes the report before it applies the scanned operation,
   as it does for its own hot operations.
+- _Scanned cold_: a scalar command left in the admitted run's cold slot
+  because its delivery or scan left a report, its target is invalid, or its
+  arithmetic overflowed. §1236 reports these before writing, so the lane
+  declines the write and the admitted run applies the cold operation,
+  including its report.
 - _Scan failed_: the admitted run's dispatch-error path.
 - _Applied_: a lane command applied in place that failed, or left a report,
   an effect, an artifact, or a positive `\tracingcommands`. It settles
@@ -142,30 +149,25 @@ command where ordinary delivery would have left it:
 ## Rollback units
 
 An operation mark delimits a replayable suffix: discarding it restores every
-journal to the mark. Every command the lane settles in place joins one
-rollback unit with the command that ends the lane. The lane publishes
-nothing, since any report, effect, or artifact ends it, so discarding the
-unit restores every write the lane made and re-reads its commands, which
-then produce the same writes. The operation count still advances per
-command, so the slice limit and cancellation cadence are unchanged.
+journal to the mark. The admitted run discards the current unit on a
+resource suspension and on every non-fatal error it returns, so the failing
+command's partial writes vanish while every earlier command stays. Each
+command the lane settles in place therefore settles its own unit, exactly as
+the admitted run's roll does, and the unit that ends the lane holds only the
+command that ended it. Lane commands never write the mode nest, the page
+list, or the active boxes, so the state and command-attempt journals are the
+only ones the lane rolls.
 
-The state journal cannot reopen a group that closed below the depth at which
-its operation opened. A group transition entered and left inside one unit
-merges, but a lane command that closes a group already open when the unit
-began settles the unit in place: it rolls the state and command-attempt
-journals exactly as the admitted run's roll does. Lane commands never write
-the mode nest, the page list, or the active boxes, so those marks stay valid
-across the lane.
-
-Only a resource suspension discards an admitted unit, and its retry follows
-provisioning of the missing resource, so the replay makes progress. A fatal
-error commits the unit, as it commits any partially executed operation.
+The rolls are the lane's largest remaining per-command cost. The
+[Positional journal marks](positional_journal_marks.md) design replaces them
+with position captures.
 
 ## Prefixes
 
 `\global` is §1211's prefix loop run inside the lane: fetch §404's next
 non-blank, non-`\relax` command, and fold the prefix into it when it is a
-lane assignment (`\let`, `\futurelet`, a macro definition, or `\catcode`).
+lane assignment (`\let`, `\futurelet`, a macro definition, `\catcode`, or a
+scalar assignment).
 §1214's `\globaldefs` is resolved once, before the scan, as the admitted
 run does. `\long`, `\outer`, and `\protected` apply only to definitions,
 are rare, and stay with the admitted run. A scan error keeps the origin of

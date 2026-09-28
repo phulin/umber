@@ -421,6 +421,7 @@ impl<G> MainControl<G> {
                     } else if lane.is_eligible() && diagnostics.is_empty() {
                         let mut owners = super::lane::LaneOwners {
                             boxes: &self.boxes,
+                            cold: &mut *cold,
                             max_save_stack: &mut self.max_save_stack,
                             operation_mark: operation_mark
                                 .as_mut()
@@ -490,6 +491,21 @@ impl<G> MainControl<G> {
                                 frame.retain_source_role();
                                 frame.clear_preflight();
                                 hot_operation = Some(operation);
+                            }
+                            super::lane::LaneExit::ScannedCold => {
+                                frame.retain_source_role();
+                                frame.clear_preflight();
+                                // Scalar lane operations are admitted scalar
+                                // assignments or §1236's invalid target, and
+                                // the lane runs only unobserved.
+                                let operation = frame.unavailable(cold);
+                                if operation.executes_directly()
+                                    || operation.is_admitted_scalar_assignment()
+                                {
+                                    direct_cold_operation = true;
+                                } else {
+                                    host_preparation.fill_delivery(OperationDelivery::ResidentCold);
+                                }
                             }
                             super::lane::LaneExit::ScanFailed(error) => {
                                 frame.discard_resident_command();

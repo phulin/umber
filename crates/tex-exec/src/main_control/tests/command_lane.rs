@@ -157,10 +157,8 @@ fn lane_futurelet_sees_the_following_token() {
 
 #[test]
 fn lane_units_discard_through_a_resource_suspension() {
-    // `\count1=1` settles a unit inside the brace group. The lane then
-    // closes that already-open group, which it must settle in place, and
-    // merges a balanced semi-simple group into the unit that `\input`
-    // suspends and discards.
+    // Every command the lane settles, including its group transitions,
+    // settles its own unit, so `\input` suspends and discards only its own.
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);
         register_source(
@@ -237,4 +235,40 @@ fn lane_reports_prefixes_on_non_prefixed_commands() {
 fn lane_reports_a_prefix_at_the_end_of_input() {
     let (lane, generic) = lane_and_generic_error(br"\let\q\relax\global");
     assert_eq!(lane, generic);
+}
+
+#[test]
+fn lane_settles_register_and_parameter_assignments() {
+    assert_lane_matches_generic(
+        br"\countdef\c=3 \dimendef\d=4 {\count1=5 \c=-7\relax\dimen2=1.5pt \d=2pt\global\count5=9 \global\dimen6=3pt \tolerance=321 \global\hsize=10pt}\message{A:\the\count1,\the\c,\the\dimen2,\the\d,\the\count5,\the\dimen6,\the\tolerance,\the\hsize}\end",
+        false,
+        &["A:0,0,0.0pt,0.0pt,9,3.0pt,10000,10.0pt"],
+    );
+}
+
+#[test]
+fn lane_settles_register_arithmetic() {
+    assert_lane_matches_generic(
+        br"\count1=5 \dimen1=2pt \skip1=1pt plus 1fil {\advance\count1 by 3 \multiply\count1 2 \global\divide\count1 by 4 \advance\dimen1 1pt \global\multiply\dimen1 3 \advance\skip1 by 2pt \global\advance\tolerance -5 }\message{A:\the\count1,\the\dimen1,\the\skip1,\the\tolerance}\end",
+        false,
+        &["A:4,9.0pt,1.0pt plus 1.0fil,9995"],
+    );
+}
+
+#[test]
+fn lane_hands_arithmetic_reports_to_the_admitted_run() {
+    assert_lane_matches_generic(
+        br"\count1=2 \multiply\count1 by 2147483647 \let\a\relax\advance\a by 1 \divide\count1 by 0 \count2=x \message{A:\the\count1,\the\count2}\end",
+        false,
+        &["Arithmetic overflow", "You can't use `\\relax' after \\advance", "Missing number", "A:2,0"],
+    );
+}
+
+#[test]
+fn lane_scalar_assignments_fire_afterassignment_and_traces() {
+    assert_lane_matches_generic(
+        br"\def\x{\message{X}}\afterassignment\x\count1=4 \afterassignment\x\advance\count1 by 1 \message{A:\the\count1}\tracingonline=1 \tracingassigns=1 \count1=6 \dimen0=1pt \tracingassigns=0 \end",
+        true,
+        &["X X A:5", "{changing \\count1=5}", "{into \\count1=6}", "{into \\dimen0=1.0pt}"],
+    );
 }

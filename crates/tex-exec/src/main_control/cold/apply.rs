@@ -53,6 +53,66 @@ pub(in crate::main_control) fn leave_group_payloads<G>(
     Ok(closed.into_aftergroup())
 }
 
+/// Commits one rootless register or parameter assignment, TeX82 §1228's
+/// `word_define` or `define` of a scanned value. The admitted run's cold
+/// arms and the command lane share it. Returns `None` for every other
+/// operation.
+pub(in crate::main_control) fn commit_scalar_assignment<G>(
+    operation: &ColdOperation<G>,
+    profile: CommandProfile,
+    stores: &mut tex_state::CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
+) -> Option<crate::assignments::committer::MutationReceipt> {
+    let mut committer = AssignmentCommitter::new(stores, diagnostic_effects);
+    let receipt = match operation {
+        ColdOperation::Count {
+            index,
+            value,
+            global,
+        } => committer.count(*index, *value, *global),
+        ColdOperation::Dimen {
+            index,
+            value,
+            global,
+        } => committer.dimension(*index, *value, *global),
+        ColdOperation::IntParam {
+            index,
+            value,
+            global,
+        } => {
+            let key = parameter_mutation_key_for_dialect(
+                profile.dialect(),
+                ParameterClass::Integer,
+                *index,
+            );
+            committer.int_parameter(*index, *value, key, *global)
+        }
+        ColdOperation::DimenParam {
+            index,
+            value,
+            global,
+        } => {
+            let key = parameter_mutation_key_for_dialect(
+                profile.dialect(),
+                ParameterClass::Dimension,
+                *index,
+            );
+            committer.dimension_parameter(*index, *value, key, *global)
+        }
+        ColdOperation::GlueParam {
+            index,
+            value,
+            global,
+        } => {
+            let key =
+                parameter_mutation_key_for_dialect(profile.dialect(), ParameterClass::Glue, *index);
+            committer.glue_parameter(*index, *value, key, *global)
+        }
+        _ => return None,
+    };
+    Some(receipt)
+}
+
 #[allow(clippy::too_many_arguments)] // applies the complete canonical replay state atomically
 pub(in crate::main_control) fn apply<G>(
     scanned: &mut PreparedColdCommand<G>,
@@ -258,23 +318,18 @@ pub(in crate::main_control) fn apply<G>(
             }
             Ok(ReplayStep::End)
         }
-        ColdOperation::Count {
-            index,
-            value,
-            global,
-        } => {
-            let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
-                .count(*index, *value, *global);
-            command.retain_assignment_receipt(receipt);
-            Ok(ReplayStep::Continue)
-        }
-        ColdOperation::Dimen {
-            index,
-            value,
-            global,
-        } => {
-            let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
-                .dimension(*index, *value, *global);
+        operation @ (ColdOperation::Count { .. }
+        | ColdOperation::Dimen { .. }
+        | ColdOperation::IntParam { .. }
+        | ColdOperation::DimenParam { .. }
+        | ColdOperation::GlueParam { .. }) => {
+            let receipt = commit_scalar_assignment(
+                operation,
+                command.state.profile(),
+                stores,
+                command.diagnostic_effects,
+            )
+            .expect("scalar assignment arms commit through the scalar committer");
             command.retain_assignment_receipt(receipt);
             Ok(ReplayStep::Continue)
         }
@@ -956,36 +1011,6 @@ pub(in crate::main_control) fn apply<G>(
             command.retain_assignment_receipt(receipt);
             Ok(ReplayStep::Continue)
         }
-        ColdOperation::IntParam {
-            index,
-            value,
-            global,
-        } => {
-            let key = parameter_mutation_key_for_dialect(
-                command.state.profile().dialect(),
-                ParameterClass::Integer,
-                *index,
-            );
-            let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
-                .int_parameter(*index, *value, key, *global);
-            command.retain_assignment_receipt(receipt);
-            Ok(ReplayStep::Continue)
-        }
-        ColdOperation::DimenParam {
-            index,
-            value,
-            global,
-        } => {
-            let key = parameter_mutation_key_for_dialect(
-                command.state.profile().dialect(),
-                ParameterClass::Dimension,
-                *index,
-            );
-            let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
-                .dimension_parameter(*index, *value, key, *global);
-            command.retain_assignment_receipt(receipt);
-            Ok(ReplayStep::Continue)
-        }
         ColdOperation::TokParam {
             index,
             tokens,
@@ -1016,21 +1041,6 @@ pub(in crate::main_control) fn apply<G>(
                     key,
                     *global,
                 );
-            command.retain_assignment_receipt(receipt);
-            Ok(ReplayStep::Continue)
-        }
-        ColdOperation::GlueParam {
-            index,
-            value,
-            global,
-        } => {
-            let key = parameter_mutation_key_for_dialect(
-                command.state.profile().dialect(),
-                ParameterClass::Glue,
-                *index,
-            );
-            let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
-                .glue_parameter(*index, *value, key, *global);
             command.retain_assignment_receipt(receipt);
             Ok(ReplayStep::Continue)
         }

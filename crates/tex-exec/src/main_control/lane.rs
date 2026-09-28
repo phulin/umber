@@ -11,6 +11,8 @@
 
 use super::*;
 
+mod scalar;
+
 /// The admitted-run facts that make a context lane-eligible. They are
 /// sampled once per admitted-loop iteration, and no command the lane settles
 /// can change any of them.
@@ -54,6 +56,10 @@ pub(super) enum LaneExit<G> {
     /// The slot's lane command has been scanned, but delivery or scanning
     /// left reports the admitted run must publish before it applies.
     Scanned(hot_apply::HotOperation<G>),
+    /// The slot's lane command scanned into the admitted run's cold slot, but
+    /// delivery or scanning left a report, or its application owes a report,
+    /// which the admitted run's direct cold application publishes.
+    ScannedCold,
     /// Scanning the slot's lane command failed.
     ScanFailed(ExecError),
     /// The slot's lane command was applied in place. It settles through the
@@ -74,6 +80,8 @@ pub(super) struct LaneApplied {
 /// The executor owners the lane reads or updates besides the processor.
 pub(super) struct LaneOwners<'a, G> {
     pub(super) boxes: &'a ReplayBoxes<G>,
+    /// The admitted run's cold slot, where scalar assignments scan.
+    pub(super) cold: &'a mut ColdOperationSlot<G>,
     pub(super) max_save_stack: &'a mut usize,
     /// The admitted run's current rollback unit.
     pub(super) operation_mark: &'a mut DirectOperationMark<G>,
@@ -82,13 +90,10 @@ pub(super) struct LaneOwners<'a, G> {
 /// Delivers commands and settles every lane command in place until one the
 /// lane does not own, a report, or the operation limit ends the lane.
 ///
-/// A lane command settled in place joins one rollback unit with every other
-/// command the lane settles in this admission, and with the command that
-/// ends the lane. Discarding the unit re-reads them all: they published
-/// nothing, and each of their journaled writes rolls back with the unit.
-/// Each still counts as one operation, so the slice limit is unchanged. The
-/// one write a unit cannot discard is closing a group that was open when
-/// the unit began, so that group transition settles the unit in place.
+/// Each lane command settled in place settles its own rollback unit, exactly
+/// as the admitted run's roll does, so a later discard, whether for a
+/// resource suspension or an error, restores only the command that ends the
+/// lane.
 ///
 /// `\relax` is TeX82 §1045's `any_mode(relax): do_nothing`. In an eligible
 /// context no character run is pending, so its §1030 word boundary flushes
@@ -151,7 +156,10 @@ pub(super) fn run<G>(
             prefixed = true;
             family = lane_family(meaning, owners.boxes, innermost_group);
             if processor.has_pending_reports()
-                || !matches!(family, Some(LaneFamily::Global | LaneFamily::Assignment))
+                || !matches!(
+                    family,
+                    Some(LaneFamily::Global | LaneFamily::Assignment | LaneFamily::Scalar)
+                )
             {
                 return Ok(LaneExit::Prefixed { global: true });
             }
@@ -162,8 +170,15 @@ pub(super) fn run<G>(
             Some(LaneFamily::Relax) => {}
             Some(LaneFamily::EndSimpleGroup) => {
                 let operation = hot_apply::HotOperation::end_ordinary_group();
-                if let Some(applied) = apply(processor, owners, &operation) {
-                    return Ok(LaneExit::Applied(applied));
+                if let Some(exit) = apply_hot(processor, owners, &operation) {
+                    return Ok(exit);
+                }
+            }
+            Some(LaneFamily::Scalar) => {
+                // §1214 resolves `\globaldefs` once, before the assignment.
+                let global = effective_global(processor.int_param(IntParam::GLOBAL_DEFS), prefixed);
+                if let Some(exit) = scalar::run(processor, owners, meaning, origin, global) {
+                    return Ok(exit);
                 }
             }
             Some(LaneFamily::Scanned | LaneFamily::Assignment) => {
@@ -195,13 +210,14 @@ pub(super) fn run<G>(
                 if processor.has_pending_reports() || !applies_in_place(&operation) {
                     return Ok(LaneExit::Scanned(operation));
                 }
-                if let Some(applied) = apply(processor, owners, &operation) {
-                    return Ok(LaneExit::Applied(applied));
+                if let Some(exit) = apply_hot(processor, owners, &operation) {
+                    return Ok(exit);
                 }
             }
         }
         destination.take();
         *operations += 1;
+        settle_unit(processor, owners.operation_mark);
     }
 }
 
@@ -218,6 +234,9 @@ enum LaneFamily {
     EndSimpleGroup,
     /// A non-prefixable command whose operand the hot scanner reads.
     Scanned,
+    /// A rootless register or parameter assignment, or register arithmetic,
+    /// scanned by the admitted run's cold scanners.
+    Scalar,
 }
 
 /// Classifies a delivered command by the single meaning match of
@@ -246,6 +265,19 @@ fn lane_family<G>(
         ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
             UnexpandablePrimitive::BeginGroup,
         )) => LaneFamily::Scanned,
+        ResolvedMeaning::Static(
+            Meaning::CountRegister(_)
+            | Meaning::DimenRegister(_)
+            | Meaning::IntParam(_)
+            | Meaning::DimenParam(_)
+            | Meaning::UnexpandablePrimitive(
+                UnexpandablePrimitive::Count
+                | UnexpandablePrimitive::Dimen
+                | UnexpandablePrimitive::Advance
+                | UnexpandablePrimitive::Multiply
+                | UnexpandablePrimitive::Divide,
+            ),
+        ) => LaneFamily::Scalar,
         ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
             UnexpandablePrimitive::EndGroup,
         )) if innermost_group == Some(GroupKind::SemiSimple) => LaneFamily::Scanned,
@@ -275,23 +307,52 @@ const fn applies_in_place<G>(operation: &hot_apply::HotOperation<G>) -> bool {
     }
 }
 
-/// Applies one scanned lane command in place. Returns `None` when it settled
-/// silently and the lane continues, or the settlement the admitted run must
-/// complete when it failed or left a report, an effect, an artifact, or a
-/// positive `\tracingcommands` behind.
-fn apply<G>(
+/// Applies one scanned hot lane operation in place. Returns `None` when it
+/// settled and the lane continues.
+fn apply_hot<G>(
     processor: &mut CommandProcessor<'_, '_, G>,
     owners: &mut LaneOwners<'_, G>,
     operation: &hot_apply::HotOperation<G>,
-) -> Option<LaneApplied> {
+) -> Option<LaneExit<G>> {
+    match apply(
+        processor,
+        owners,
+        operation.fires_afterassignment(),
+        |processor| Some(apply_operation(processor, operation)),
+    ) {
+        Settlement::Settled => None,
+        Settlement::Declined => unreachable!("hot operations always apply"),
+        Settlement::HandOff(applied) => Some(LaneExit::Applied(applied)),
+    }
+}
+
+/// How one lane command's application ended.
+enum Settlement {
+    /// It settled silently, and the lane continues.
+    Settled,
+    /// It wrote nothing because its application owes a report the admitted
+    /// run publishes.
+    Declined,
+    /// It failed, or left a report, an effect, an artifact, or a positive
+    /// `\tracingcommands` behind, and settles through the admitted run.
+    HandOff(LaneApplied),
+}
+
+/// Applies one lane command through `commit`, which returns `None` when it
+/// declines to write anything.
+fn apply<'p, 'q, G>(
+    processor: &mut CommandProcessor<'p, 'q, G>,
+    owners: &mut LaneOwners<'_, G>,
+    fires_afterassignment: bool,
+    commit: impl FnOnce(&mut CommandProcessor<'p, 'q, G>) -> Option<Result<ReplayStep, ExecError>>,
+) -> Settlement {
     let (artifact_count, effect_count) = {
         let (stores, _, _) = processor.lane_parts();
         (stores.artifact_commit_count(), stores.effect_record_count())
     };
-    let closes_unit_group = matches!(operation, hot_apply::HotOperation::LeaveGroup { .. })
-        && processor.lane_parts().0.execution_group_depth()
-            <= owners.operation_mark.state.opening_group_depth();
-    let result = apply_operation(processor, operation);
+    let Some(result) = commit(processor) else {
+        return Settlement::Declined;
+    };
     let profile = processor.profile();
     let (stores, command, _) = processor.lane_parts();
     let save_stack_words = MainControl::save_stack_words(stores, owners.boxes, command, profile);
@@ -302,14 +363,11 @@ fn apply<G>(
         && !processor.has_pending_reports();
     if settled {
         *owners.max_save_stack = (*owners.max_save_stack).max(save_stack_words);
-        if closes_unit_group {
-            settle_unit(processor, owners.operation_mark);
-        }
-        return None;
+        return Settlement::Settled;
     }
-    Some(LaneApplied {
+    Settlement::HandOff(LaneApplied {
         result,
-        fires_afterassignment: operation.fires_afterassignment(),
+        fires_afterassignment,
         artifact_count,
         effect_count,
         save_stack_words,
@@ -404,7 +462,7 @@ fn settle_unit<G>(processor: &mut CommandProcessor<'_, '_, G>, mark: &mut Direct
         .expect("the lane's unit owns a valid command-attempt scope");
 }
 
-fn schedule_afterassignment<G>(
+pub(super) fn schedule_afterassignment<G>(
     processor: &mut CommandProcessor<'_, '_, G>,
 ) -> Result<(), ExecError> {
     let token = {
