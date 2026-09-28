@@ -6477,6 +6477,7 @@ impl<G> MainControl<G> {
                                             &mut diagnostics,
                                             None,
                                             false,
+                                            None,
                                         )?
                                     }
                                     _ => {

@@ -46,6 +46,11 @@ pub(super) enum LaneExit<G> {
     /// Ordinary delivery status. A delivered command in the slot has not
     /// been scanned, and the admitted run dispatches it.
     Delivered(tex_command::DeliveryStatus),
+    /// §1211's prefix loop consumed `\global` and delivered the slot's
+    /// command, which the lane does not own. The admitted run dispatches it
+    /// with the accumulated prefix, exactly as its own prefix loop would
+    /// continue.
+    Prefixed { global: bool },
     /// The slot's lane command has been scanned, but delivery or scanning
     /// left reports the admitted run must publish before it applies.
     Scanned(hot_apply::HotOperation<G>),
@@ -111,10 +116,49 @@ pub(super) fn run<G>(
         let command = destination
             .as_ref()
             .expect("command status initializes destination");
-        let meaning = command.meaning();
+        let mut meaning = command.meaning();
+        // Errors carry the origin of the command that began the dispatch,
+        // which for a prefixed assignment is its first prefix.
+        let origin = command.origin();
         let innermost_group = processor.lane_parts().0.innermost_group_kind();
-        match lane_family(meaning, owners.boxes, innermost_group) {
+        let mut family = lane_family(meaning, owners.boxes, innermost_group);
+        let mut prefixed = false;
+        while matches!(family, Some(LaneFamily::Global)) {
+            // §1211's `prefixed_command` loop: `repeat get_x_token until
+            // (cur_cmd<>spacer)and(cur_cmd<>relax)`, then fold the prefix
+            // into a lane assignment or hand the command it fetched to the
+            // admitted run's own loop.
+            *destination = None;
+            let fetched = next_non_blank_non_relax_x_token_into(processor, destination);
+            match fetched {
+                Ok(tex_command::DeliveryStatus::Command) => {}
+                Ok(tex_command::DeliveryStatus::End) => {
+                    return Ok(LaneExit::ScanFailed(
+                        ExecError::MissingPrefixedCommand.capture_command_origin(origin),
+                    ));
+                }
+                Ok(_) => unreachable!("ordinary expanded delivery returns only commands"),
+                Err(error) => {
+                    return Ok(LaneExit::ScanFailed(
+                        command_error(error).capture_command_origin(origin),
+                    ));
+                }
+            }
+            let command = destination
+                .as_ref()
+                .expect("command status initializes destination");
+            meaning = command.meaning();
+            prefixed = true;
+            family = lane_family(meaning, owners.boxes, innermost_group);
+            if processor.has_pending_reports()
+                || !matches!(family, Some(LaneFamily::Global | LaneFamily::Assignment))
+            {
+                return Ok(LaneExit::Prefixed { global: true });
+            }
+        }
+        match family {
             None => return Ok(LaneExit::Delivered(status)),
+            Some(LaneFamily::Global) => unreachable!("the prefix loop consumes every prefix"),
             Some(LaneFamily::Relax) => {}
             Some(LaneFamily::EndSimpleGroup) => {
                 let operation = hot_apply::HotOperation::end_ordinary_group();
@@ -122,16 +166,17 @@ pub(super) fn run<G>(
                     return Ok(LaneExit::Applied(applied));
                 }
             }
-            Some(LaneFamily::Scanned) => {
-                let origin = command.origin();
+            Some(LaneFamily::Scanned | LaneFamily::Assignment) => {
+                // §1214 resolves `\globaldefs` once, before the assignment.
                 let global = effective_global(
                     processor.int_param(IntParam::GLOBAL_DEFS),
-                    matches!(
-                        meaning,
-                        ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
-                            UnexpandablePrimitive::Gdef | UnexpandablePrimitive::Xdef
-                        ))
-                    ),
+                    prefixed
+                        || matches!(
+                            meaning,
+                            ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
+                                UnexpandablePrimitive::Gdef | UnexpandablePrimitive::Xdef
+                            ))
+                        ),
                 );
                 let mut scalar = tex_command::ScalarScanFrame::default();
                 let operation = match hot_apply::scan(
@@ -163,10 +208,15 @@ pub(super) fn run<G>(
 #[derive(Clone, Copy)]
 enum LaneFamily {
     Relax,
+    /// §1211's `\global` prefix. `\long`, `\outer`, and `\protected`
+    /// apply only to definitions and stay with the admitted run.
+    Global,
+    /// A prefixable assignment whose operand the hot scanner reads.
+    Assignment,
     /// §1068's `simple_group` arm of `handle_right_brace`, which the
     /// admitted run's dispatch selects without a scanner.
     EndSimpleGroup,
-    /// A family whose operand the hot scanner reads.
+    /// A non-prefixable command whose operand the hot scanner reads.
     Scanned,
 }
 
@@ -181,6 +231,9 @@ fn lane_family<G>(
 ) -> Option<LaneFamily> {
     let family = match meaning {
         ResolvedMeaning::Static(Meaning::Relax) => LaneFamily::Relax,
+        ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Global)) => {
+            LaneFamily::Global
+        }
         ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
             UnexpandablePrimitive::Let
             | UnexpandablePrimitive::FutureLet
@@ -188,8 +241,10 @@ fn lane_family<G>(
             | UnexpandablePrimitive::Edef
             | UnexpandablePrimitive::Gdef
             | UnexpandablePrimitive::Xdef
-            | UnexpandablePrimitive::CatCode
-            | UnexpandablePrimitive::BeginGroup,
+            | UnexpandablePrimitive::CatCode,
+        )) => LaneFamily::Assignment,
+        ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
+            UnexpandablePrimitive::BeginGroup,
         )) => LaneFamily::Scanned,
         ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
             UnexpandablePrimitive::EndGroup,

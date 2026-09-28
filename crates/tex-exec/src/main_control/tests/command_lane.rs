@@ -44,6 +44,37 @@ fn lane_and_generic_terminals(source: &[u8], etex: bool) -> (String, String) {
     (run(false), run(true))
 }
 
+/// Runs `source` unobserved and observed until it fails, and returns both
+/// errors.
+fn lane_and_generic_error(source: &[u8]) -> (String, String) {
+    let run = |observed: bool| {
+        let mut rendered = String::new();
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = MainControl::tex82_initex(stores);
+            register_source(&mut control, source);
+            let mut observer = ObservationRecorder::default();
+            for _ in 0..TEST_STEP_LIMIT {
+                let step = if observed {
+                    control.advance_with_observer(stores, &mut observer)
+                } else {
+                    control.advance_episode(stores)
+                };
+                match step {
+                    Err(error) => {
+                        rendered = format!("{error:?}");
+                        return;
+                    }
+                    Ok(StepResult::Progress(MainControlStep::Continue)) => {}
+                    Ok(step) => panic!("job ended without failing: {step:?}"),
+                }
+            }
+            panic!("failing job exceeded the bounded {TEST_STEP_LIMIT}-step driver");
+        });
+        rendered
+    };
+    (run(false), run(true))
+}
+
 fn assert_lane_matches_generic(source: &[u8], etex: bool, expected: &[&str]) {
     let (lane, generic) = lane_and_generic_terminals(source, etex);
     assert_eq!(lane, generic, "lane and generic terminals differ");
@@ -158,4 +189,52 @@ fn lane_group_closes_update_the_hand_off_dispatch_group() {
         false,
         &["W:1.0pt"],
     );
+}
+
+#[test]
+fn lane_folds_global_into_its_assignments() {
+    assert_lane_matches_generic(
+        br"{\global\let\a\relax\global \relax\global\def\b{b}\global\catcode`\Z=11 \global\global\futurelet\c\relax}\message{A:\meaning\a B:\meaning\b C:\meaning\c Z:\the\catcode`\Z}\end",
+        false,
+        &["A:\\relaxB:macro:->bC:end-group character }Z:11"],
+    );
+}
+
+#[test]
+fn lane_global_respects_negative_globaldefs() {
+    assert_lane_matches_generic(
+        br"\globaldefs=-1 {\global\let\a\relax\global\def\b{b}}\message{A:\meaning\a B:\meaning\b}\end",
+        false,
+        &["A:undefinedB:undefined"],
+    );
+}
+
+#[test]
+fn lane_hands_prefixed_commands_it_does_not_own_to_the_admitted_run() {
+    // `\count` and `\advance` dispatch inline with the consumed prefix;
+    // `\long` makes the command a prefix barrier, which continues §1211 from
+    // the resident command.
+    assert_lane_matches_generic(
+        br"{\let\q\relax\global\count1=5 \global\advance\count1 by 2 \global\long\def\b#1{#1}}\message{C:\the\count1 B:\meaning\b}\end",
+        false,
+        &["C:7B:\\long macro:#1->#1"],
+    );
+}
+
+#[test]
+fn lane_reports_prefixes_on_non_prefixed_commands() {
+    assert_lane_matches_generic(
+        br"\let\q\relax\global\relax\message{after}\global{\let\a\relax}\global\hbox{}\end",
+        false,
+        &[
+            "You can't use a prefix with `\\message'",
+            "You can't use a prefix with `begin-group character {'",
+        ],
+    );
+}
+
+#[test]
+fn lane_reports_a_prefix_at_the_end_of_input() {
+    let (lane, generic) = lane_and_generic_error(br"\let\q\relax\global");
+    assert_eq!(lane, generic);
 }

@@ -80,6 +80,8 @@ lane:
     if status is not Command or a report is pending -> Delivered
     match lane_family(slot.meaning, innermost group)
       Relax                          -> settle, continue
+      Global                         -> fetch §404's next command; fold it
+                                        into an assignment or hand it off
       Let | FutureLet                -> scan; commit; afterassignment; settle
       MacroDefinition                -> scan; commit; afterassignment; settle
       CatCode                        -> scan; commit; afterassignment; settle
@@ -115,12 +117,19 @@ lane commands. The processor lends its admitted state, command root, and
 diagnostic sink to the hot committers between two deliveries; none of its
 processor-local facts caches a meaning, category code, or group level.
 
-The lane leaves through exactly one of four exits, each with the slot's
+The lane leaves through exactly one of five exits, each with the slot's
 command where ordinary delivery would have left it:
 
 - _Delivered_: the delivery status and any unscanned command, which the
   admitted run dispatches. A command is resumed in place, never backed up or
   re-delivered.
+- _Prefixed_: a command that §1211's prefix loop fetched after a `\global`,
+  when the lane does not own it. The admitted run's dispatcher continues the
+  prefix loop from that command with the accumulated prefix, including
+  §1212's error for a command that takes no prefix. When the command needs a
+  barrier or a report is pending, it becomes resident with a _prefixed_
+  delivery phase, which the resident dispatch continues in the same way and
+  which the transaction predicate treats exactly as a resident prefix.
 - _Scanned_: a lane command whose delivery or scan left a report. The
   admitted run publishes the report before it applies the scanned operation,
   as it does for its own hot operations.
@@ -151,6 +160,16 @@ across the lane.
 Only a resource suspension discards an admitted unit, and its retry follows
 provisioning of the missing resource, so the replay makes progress. A fatal
 error commits the unit, as it commits any partially executed operation.
+
+## Prefixes
+
+`\global` is §1211's prefix loop run inside the lane: fetch §404's next
+non-blank, non-`\relax` command, and fold the prefix into it when it is a
+lane assignment (`\let`, `\futurelet`, a macro definition, or `\catcode`).
+§1214's `\globaldefs` is resolved once, before the scan, as the admitted
+run does. `\long`, `\outer`, and `\protected` apply only to definitions,
+are rare, and stay with the admitted run. A scan error keeps the origin of
+the first prefix, as the admitted dispatcher's does.
 
 ## Fetch
 

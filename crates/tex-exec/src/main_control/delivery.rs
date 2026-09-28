@@ -196,6 +196,11 @@ pub(super) fn command_requires_transaction_from_facts<G>(
     {
         return true;
     }
+    // A resident command whose prefix the lane consumed continues §1211
+    // exactly as a resident prefix would.
+    if matches!(frame.phase, Some(PreflightCommandPhase::Prefixed { .. })) {
+        return true;
+    }
     frame.current_option().is_some_and(|command| {
         matches!(
             command.meaning(),
@@ -408,6 +413,9 @@ impl<G> MainControl<G> {
                         characters_pending: self.modes.current_list().pending_hchars().is_some(),
                     };
                     let mut lane_exit = None;
+                    // A prefix the lane consumed before a command it does
+                    // not own; that command's dispatch continues §1211.
+                    let mut lane_prefix = None;
                     let delivery = if raw_main_loop_delivery {
                         processor.main_loop_lookahead_into(&mut frame.command)
                     } else if lane.is_eligible() && diagnostics.is_empty() {
@@ -430,6 +438,10 @@ impl<G> MainControl<G> {
                         innermost_group = processor.lane_parts().0.innermost_group_kind();
                         match exit {
                             Ok(super::lane::LaneExit::Delivered(status)) => Ok(status),
+                            Ok(super::lane::LaneExit::Prefixed { global }) => {
+                                lane_prefix = Some(global);
+                                Ok(tex_command::DeliveryStatus::Command)
+                            }
                             Ok(exit) => {
                                 lane_exit = Some(exit);
                                 Ok(tex_command::DeliveryStatus::Command)
@@ -470,7 +482,8 @@ impl<G> MainControl<G> {
                     // the slot's command; only its settlement remains.
                     if let Some(exit) = lane_exit {
                         match exit {
-                            super::lane::LaneExit::Delivered(_) => {
+                            super::lane::LaneExit::Delivered(_)
+                            | super::lane::LaneExit::Prefixed { .. } => {
                                 unreachable!("delivered lane exits return their status")
                             }
                             super::lane::LaneExit::Scanned(operation) => {
@@ -522,7 +535,14 @@ impl<G> MainControl<G> {
                             frame.current().meaning(),
                         )
                         .then(|| processor.int_param(IntParam::PDF_OUTPUT));
+                        // §1212's prefix error is reported by the resident
+                        // path, as it is for a resident prefix.
+                        let prefix_error = lane_prefix.is_some()
+                            && !tex_command::exceeds_max_non_prefixed_command(static_meaning(
+                                frame.current().meaning(),
+                            ));
                         let needs_barrier = tracked_region_is_active
+                            || prefix_error
                             || barrier.is_some()
                             || command_requires_transaction_from_facts(
                                 mode,
@@ -554,6 +574,7 @@ impl<G> MainControl<G> {
                                 &mut diagnostics,
                                 None,
                                 true,
+                                lane_prefix.map(|global| (global, MeaningFlags::EMPTY)),
                             );
                             diagnostics.extend(
                                 processor
@@ -609,7 +630,9 @@ impl<G> MainControl<G> {
                                         )
                                 )
                             );
-                        if raw_main_loop_delivery && continues_main_loop {
+                        if let Some(global) = lane_prefix {
+                            frame.mark_resident_prefixed(global, Some(cursor));
+                        } else if raw_main_loop_delivery && continues_main_loop {
                             frame.mark_resident_raw(Some(cursor));
                         } else {
                             frame.mark_resident_settled(Some(cursor));
@@ -1238,6 +1261,7 @@ pub(super) fn scan_noalign_body<G>(
                 diagnostics,
                 None,
                 true,
+                None,
             )
         }
     }
@@ -1399,6 +1423,7 @@ pub(super) fn scan_alignment_delivery_step<G>(
                 diagnostics,
                 Some(alignment),
                 true,
+                None,
             )
         }
         tex_command::DeliveryStatus::AlignmentEndTemplate => {
@@ -1483,8 +1508,14 @@ pub(super) fn scan_preflight_command<G>(
         .phase
         .expect("operation frame owns its delivery phase")
     {
-        PreflightCommandPhase::Settled | PreflightCommandPhase::Raw => {
+        phase @ (PreflightCommandPhase::Settled
+        | PreflightCommandPhase::Raw
+        | PreflightCommandPhase::Prefixed { .. }) => {
             processor.resume_current_command(command.current());
+            let prefix = match phase {
+                PreflightCommandPhase::Prefixed { global } => Some((global, MeaningFlags::EMPTY)),
+                _ => None,
+            };
             dispatch_main_control_command(
                 processor,
                 command,
@@ -1498,6 +1529,7 @@ pub(super) fn scan_preflight_command<G>(
                 diagnostics,
                 None,
                 true,
+                prefix,
             )
         }
         PreflightCommandPhase::ImmediatePdfRetry(primitive) => {
@@ -1625,6 +1657,7 @@ pub(super) fn scan_step<G>(
         diagnostics,
         None,
         true,
+        None,
     )
 }
 
@@ -2247,6 +2280,7 @@ pub(super) fn dispatch_main_control_command<G>(
     diagnostics: &mut Vec<PendingDiagnostic<G>>,
     alignment: Option<AlignmentIdentity>,
     set_box_allowed: bool,
+    initial_prefix: Option<(bool, MeaningFlags)>,
 ) -> Result<ScannedOperation<G>, ExecError> {
     // TeX82 §1078 uses §404's non-blank, non-relax fetch after every leader
     // payload. Constructed boxes close in a separate replay step, so the first
@@ -2292,7 +2326,7 @@ pub(super) fn dispatch_main_control_command<G>(
         diagnostics,
         alignment,
         set_box_allowed,
-        None,
+        initial_prefix,
     )
     .map_err(|error| error.capture_command_origin(origin))
 }
@@ -2421,10 +2455,45 @@ pub(super) fn dispatch_main_control_command_inner<G>(
     // This loop is that label.
     let mut suppress_left_boundary = false;
     loop {
+        // A prefix the caller's own §1211 loop consumed has already fetched
+        // the current command, which is checked exactly as a command this
+        // loop fetches.
+        let mut prefixed = initial_prefix.is_some();
         let (mut global, mut flags) = initial_prefix
             .take()
             .unwrap_or((false, MeaningFlags::EMPTY));
         loop {
+            if prefixed {
+                // §1211's `if cur_cmd<=max_non_prefixed_command then <Discard
+                // erroneous prefixes and return>`: §209's partition, not a
+                // hand-listed set of assignment families.
+                if !tex_command::exceeds_max_non_prefixed_command(static_meaning(
+                    command.current().meaning(),
+                )) {
+                    let printed = tex_command::PrintCommand::from_current(command.current());
+                    // §1212's `back_error`: the substantive command is retained
+                    // and re-delivered without the discarded prefixes.
+                    let site = processor.capture_diagnostic_site(Some(command.current()));
+                    processor
+                        .back_input(command.take_current())
+                        .map_err(command_error)?;
+                    // `back_error` is `back_input` *then* `error`, so §82 renders
+                    // the context with the backed-up level already on the stack.
+                    let etex = processor.profile().capabilities().supports_etex();
+                    let site = Some(processor.complete_diagnostic_site(site));
+                    diagnostics.push(PendingDiagnostic::PrefixOnNonPrefixedCommand(
+                        printed,
+                        processor.error_context(),
+                        etex,
+                        site,
+                    ));
+                    return Ok(retain_cold_operation(
+                        command,
+                        cold,
+                        ColdOperation::<G>::Continue,
+                    ));
+                }
+            }
             #[cfg(feature = "profiling")]
             {
                 let meaning = command.current().meaning_ref();
@@ -2469,35 +2538,7 @@ pub(super) fn dispatch_main_control_command_inner<G>(
                 Err(error) => return Err(command_error(error)),
             };
             command.replace_current(next);
-            // §1211's `if cur_cmd<=max_non_prefixed_command then <Discard
-            // erroneous prefixes and return>`: §209's partition, not a
-            // hand-listed set of assignment families.
-            if !tex_command::exceeds_max_non_prefixed_command(static_meaning(
-                command.current().meaning(),
-            )) {
-                let printed = tex_command::PrintCommand::from_current(command.current());
-                // §1212's `back_error`: the substantive command is retained
-                // and re-delivered without the discarded prefixes.
-                let site = processor.capture_diagnostic_site(Some(command.current()));
-                processor
-                    .back_input(command.take_current())
-                    .map_err(command_error)?;
-                // `back_error` is `back_input` *then* `error`, so §82 renders
-                // the context with the backed-up level already on the stack.
-                let etex = processor.profile().capabilities().supports_etex();
-                let site = Some(processor.complete_diagnostic_site(site));
-                diagnostics.push(PendingDiagnostic::PrefixOnNonPrefixedCommand(
-                    printed,
-                    processor.error_context(),
-                    etex,
-                    site,
-                ));
-                return Ok(retain_cold_operation(
-                    command,
-                    cold,
-                    ColdOperation::<G>::Continue,
-                ));
-            }
+            prefixed = true;
         }
         // §1213's `<Discard the prefixes \long and \outer if they are
         // irrelevant>`. §1214 deliberately leaves `a` unadjusted, so the
