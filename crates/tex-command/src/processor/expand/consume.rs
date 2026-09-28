@@ -2,7 +2,7 @@
 
 use super::{
     ExpandedCommandAction, ExpansionDispatch, ReadSite, ResidentColdOutcome, ResidentWord,
-    classify_hot_command, resident::ResidentAdmission,
+    ResidentWordRead, classify_hot_command, resident::ResidentAdmission,
 };
 use crate::command::HotCommand;
 use crate::input::InputLevel;
@@ -129,8 +129,10 @@ impl ResidentWord {
 
 impl<G> CommandProcessor<'_, '_, G> {
     /// TeX.web §494's raw skip consumer. Literal resident characters that
-    /// cannot affect skipping share one physical-frame admission; the first
-    /// exceptional word is returned by that same reader for normal settlement.
+    /// cannot affect skipping share one physical-frame admission. A run that
+    /// ends at its frame's end or at a parameter reference settles that input
+    /// transition in place and keeps skipping; the first exceptional word is
+    /// returned by the same reader for normal settlement.
     pub(crate) fn get_next_skipping_into(
         &mut self,
         destination: &mut Option<HotCommand<G>>,
@@ -142,12 +144,75 @@ impl<G> CommandProcessor<'_, '_, G> {
         {
             return self.get_next_hot_into(destination);
         }
-        let Some(index) = self.command.roots.input.levels.top.checked_sub(1) else {
-            return self.get_next_hot_into(destination);
-        };
+        loop {
+            let Some(selected) = self.skip_resident_run(nested_conditions) else {
+                return self.get_next_hot_into(destination);
+            };
+            let ControlFlow::Continue(selected) = selected else {
+                return self.get_next_hot_into(destination);
+            };
+            self.pending_diagnostic_location = None;
+            let result = (|| {
+                let outcome = if matches!(
+                    selected,
+                    ResidentWordRead::Exhausted { .. } | ResidentWordRead::Parameter { .. }
+                ) {
+                    // The transition itself is free; only a word it yields
+                    // is charged, exactly as the scalar reader charges the
+                    // word its transitions eventually select.
+                    match self
+                        .transition_resident_word(selected, self.create_source_control_sequences)?
+                    {
+                        ResidentColdOutcome::Retry => return Ok(None),
+                        outcome => {
+                            self.charge_command_action()?;
+                            outcome
+                        }
+                    }
+                } else {
+                    self.charge_command_action()?;
+                    self.finish_charged_raw_read(selected, self.create_source_control_sequences)?
+                };
+                match outcome {
+                    ResidentColdOutcome::Word(word) => self
+                        .finish_selected_hot_word::<false>(word, destination)
+                        .map(Some),
+                    ResidentColdOutcome::Finished(status) => {
+                        destination.take();
+                        Ok(Some(status))
+                    }
+                    ResidentColdOutcome::Retry => {
+                        unreachable!("charged raw reader settles transitions")
+                    }
+                }
+            })();
+            return match result {
+                Ok(None) => continue,
+                Ok(Some(status)) => match self.settle_hot_raw_step(status, destination)? {
+                    Some(status) => Ok(status),
+                    None => self.get_next_hot_into(destination),
+                },
+                Err(failure) => self.fail_hot_expanded_delivery(
+                    destination,
+                    self.command.transient.active_expansion_depth,
+                    failure,
+                ),
+            };
+        }
+    }
+
+    /// One skipped-text run over the exposed resident frame, with its brace
+    /// and fuel effects settled. `None` leaves the next word to the scalar
+    /// reader: the top is not a resident frame or no fuel remains.
+    #[inline(always)]
+    fn skip_resident_run(
+        &mut self,
+        nested_conditions: &mut u32,
+    ) -> Option<ControlFlow<(), ResidentWordRead<G>>> {
+        let index = self.command.roots.input.levels.top.checked_sub(1)?;
         let Some(InputLevel::Resident(row)) = self.command.roots.input.levels.rows.get(index)
         else {
-            return self.get_next_hot_into(destination);
+            return None;
         };
         #[cfg(any(test, feature = "profiling"))]
         let argument = matches!(row.storage, ResidentTokenStorage::MacroArgument(_));
@@ -158,10 +223,9 @@ impl<G> CommandProcessor<'_, '_, G> {
             tex_state::packed_input::InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE,
         );
         if self.fuel.remaining() == 0 {
-            return self.get_next_hot_into(destination);
+            return None;
         }
 
-        self.pending_diagnostic_location = None;
         let mut consumed = 0_u32;
         // TeX82 §347 counts every skipped brace in `align_state`. No
         // alignment is active on this path, so the run's net brace change is
@@ -230,40 +294,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 consumed,
             );
         }
-        match selected {
-            ControlFlow::Continue(selected) => {
-                self.pending_diagnostic_location = None;
-                let result = (|| {
-                    self.charge_command_action()?;
-                    match self
-                        .finish_charged_raw_read(selected, self.create_source_control_sequences)?
-                    {
-                        ResidentColdOutcome::Word(word) => {
-                            self.finish_selected_hot_word::<false>(word, destination)
-                        }
-                        ResidentColdOutcome::Finished(status) => {
-                            destination.take();
-                            Ok(status)
-                        }
-                        ResidentColdOutcome::Retry => {
-                            unreachable!("charged raw reader settles transitions")
-                        }
-                    }
-                })();
-                match result {
-                    Ok(status) => match self.settle_hot_raw_step(status, destination)? {
-                        Some(status) => Ok(status),
-                        None => self.get_next_hot_into(destination),
-                    },
-                    Err(failure) => self.fail_hot_expanded_delivery(
-                        destination,
-                        self.command.transient.active_expansion_depth,
-                        failure,
-                    ),
-                }
-            }
-            ControlFlow::Break(()) => self.get_next_hot_into(destination),
-        }
+        Some(selected)
     }
 
     /// TeX82 §494 `pass_text` inspects only `cur_cmd`: a conditional

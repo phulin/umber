@@ -309,3 +309,55 @@ fn resident_character_fuel_failure_preserves_exact_consumed_prefix() {
         });
     }
 }
+
+#[test]
+fn skipped_resident_run_crosses_an_exhausted_frame_without_scalar_delivery() {
+    crate::test_harness::with_universe(|universe| {
+        let fi = install_static(
+            universe,
+            "fiish",
+            Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::Fi),
+        );
+        let letter = Token::Char {
+            ch: 'x',
+            cat: Catcode::Letter,
+        };
+        let mut command = CommandState::default();
+        // TeX82 §324 pops an exhausted token list inside §494's `get_next`
+        // without delivering anything, so the skip continues into the
+        // enclosing frame and only its `\fi` is materialized.
+        crate::test_harness::push(&mut command, [letter, letter, fi]);
+        crate::test_harness::push(&mut command, [letter, letter, letter]);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = crate::CommandFuelLedger::new(64).expect("skip fuel");
+        let mut effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut context = universe.command_context().expect("command context");
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            &mut context,
+            &mut capabilities,
+            &mut fuel,
+            &mut effects,
+        );
+        let mut destination = None;
+        assert_eq!(
+            processor
+                .get_next_skipping_into(&mut destination, &mut 0)
+                .expect("skip delivery"),
+            crate::DeliveryStatus::Command
+        );
+        assert_eq!(
+            destination.expect("boundary command").static_meaning(),
+            Some(Meaning::ExpandablePrimitive(
+                tex_state::meaning::ExpandablePrimitive::Fi
+            ))
+        );
+        drop(processor);
+        assert_eq!(fuel.burned(), 6, "every skipped word is charged once");
+        assert_eq!(
+            command.roots.input.levels.top, 1,
+            "the exhausted frame is popped"
+        );
+        assert_eq!(command.stored_token_advance_counters.command_writes, 1);
+    });
+}
