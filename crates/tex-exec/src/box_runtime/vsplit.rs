@@ -20,7 +20,7 @@ pub(crate) fn split_vbox_register<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     geometry: &mut dyn crate::geometry::PackGeometrySink,
-    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
+    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext<'_, G>,
     index: u16,
     height: Scaled,
     error_context: &str,
@@ -140,7 +140,7 @@ fn normalize_split_infinite_shrink<G>(
     stores: &mut CommandContext<'_, G>,
     nodes: tex_state::page_node_arena::PageListId,
     indices: &[usize],
-    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
+    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
 ) -> Result<tex_state::page_node_arena::PageListId, ExecError> {
     // TeX82 §976 changes only glue whose shrink order is infinite. Most
@@ -205,7 +205,7 @@ fn replace_split_source<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     geometry: &mut dyn crate::geometry::PackGeometrySink,
-    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
+    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext<'_, G>,
     index: u16,
     remainder: tex_state::page_node_arena::PageListId,
     split_top_skip: tex_state::glue::GlueSpec,

@@ -39,7 +39,7 @@ pub(super) fn set_alignment_nodes<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     geometry: &mut dyn crate::geometry::PackGeometrySink,
-    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
+    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext<'_, G>,
 ) -> Result<PageListId, ExecError> {
     let config = SetConfig {
         kind,
@@ -157,7 +157,7 @@ fn set_running_rule<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     geometry: &mut dyn crate::geometry::PackGeometrySink,
-    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
+    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext<'_, G>,
 ) -> Node {
     let prototype = &config.prototype.box_node;
     // TeX82 §808 applies all three tests independently; alignment direction

@@ -136,6 +136,22 @@ pub(crate) fn build_page_if_outer_vertical_with_error_context<G>(
     Ok(())
 }
 
+pub(crate) fn build_page_if_outer_vertical_with_diagnostic_context<G>(
+    nest: &ModeNest,
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
+    diagnostic_context: &crate::diagnostics::ExecutionDiagnosticContext<'_, G>,
+) -> Result<(), ExecError> {
+    if is_outer_vertical(nest) {
+        crate::page_builder::build_page_with_diagnostic_context(
+            stores,
+            diagnostic_effects,
+            diagnostic_context,
+        )?;
+    }
+    Ok(())
+}
+
 pub(crate) fn build_page_if_outer_vertical<G>(
     nest: &ModeNest,
     stores: &mut CommandContext<'_, G>,

@@ -558,7 +558,7 @@ pub(in crate::main_control) fn finish_replay_alignment_with_origin<G>(
     diagnostic_effects: &mut DiagnosticEffects,
     geometry: &mut dyn crate::geometry::PackGeometrySink,
     alignment: &mut crate::mode::ModeLevelSummary,
-    diagnostic_context: &crate::diagnostics::ExecutionDiagnosticContext,
+    diagnostic_context: &crate::diagnostics::ExecutionDiagnosticContext<'_, G>,
 ) -> Result<(), ExecError> {
     let rows = alignment.list_mutation().take_nodes();
     let columns = std::mem::take(&mut active.columns)
@@ -621,11 +621,11 @@ pub(in crate::main_control) fn finish_replay_alignment_with_origin<G>(
             },
         );
     }
-    crate::vertical::build_page_if_outer_vertical_with_error_context(
+    crate::vertical::build_page_if_outer_vertical_with_diagnostic_context(
         modes,
         stores,
         diagnostic_effects,
-        &diagnostic_context.output_context,
+        diagnostic_context,
     )?;
     Ok(())
 }

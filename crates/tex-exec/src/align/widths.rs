@@ -32,7 +32,7 @@ pub(crate) fn finish_alignment<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     geometry: &mut dyn crate::geometry::PackGeometrySink,
-    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
+    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext<'_, G>,
 ) -> Result<PageListId, ExecError> {
     let resolved = resolution::resolve_widths(
         state,
@@ -86,7 +86,7 @@ fn pack_prototype<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     geometry: &mut dyn crate::geometry::PackGeometrySink,
-    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
+    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext<'_, G>,
 ) -> Prototype {
     let list = prototype_nodes(state.kind(), resolved, empty, stores);
     let spec = pack_spec(state.pack_spec());

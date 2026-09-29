@@ -2623,7 +2623,10 @@ pub(in crate::main_control) fn apply<G>(
                         if let Some(context) = &split.missing_to_context {
                             report_missing_vsplit_to(context, command.diagnostic_effects, stores)?;
                         }
-                        let diagnostic_context = command_diagnostic_context(command, stores);
+                        let diagnostic_context = command_diagnostic_context(
+                            command.state,
+                            command.output_routine_active,
+                        );
                         let mut geometry = pack_geometry_sink(command.state, command.observations);
                         let node = crate::box_runtime::split_vbox_register(
                             stores,
@@ -2669,7 +2672,8 @@ pub(in crate::main_control) fn apply<G>(
                 )?;
             }
             let start = isolated_append.then(|| stores.begin_page_node_region());
-            let diagnostic_context = command_diagnostic_context(command, stores);
+            let diagnostic_context =
+                command_diagnostic_context(command.state, command.output_routine_active);
             let mut geometry = pack_geometry_sink(command.state, command.observations);
             let node = crate::box_runtime::split_vbox_register(
                 stores,
@@ -3238,7 +3242,8 @@ pub(in crate::main_control) fn apply<G>(
             // internal vertical list; merely popping it discards the paragraph.
             // `end_paragraph` is the shared spelling of §1096: it ignores
             // non-horizontal modes and pops a null paragraph without a line.
-            let diagnostic_context = command_diagnostic_context(command, stores);
+            let diagnostic_context =
+                command_diagnostic_context(command.state, command.output_routine_active);
             let mut geometry = pack_geometry_sink(command.state, command.observations);
             crate::paragraph_end::end_paragraph_with_fuel(
                 modes,
@@ -3505,7 +3510,8 @@ pub(in crate::main_control) fn apply<G>(
             // char node -- and left the box's real internal-vertical level open
             // on the mode nest (`umber2-johp.232`).
             if !box_kind.horizontal() {
-                let mut diagnostic_context = command_diagnostic_context(command, stores);
+                let mut diagnostic_context =
+                    command_diagnostic_context(command.state, command.output_routine_active);
                 // The closing brace can exhaust and retire its source before
                 // this cold operation is applied. TeX82 §661 nevertheless
                 // uses the brace's live `line` as the ending line of every
@@ -4010,7 +4016,8 @@ pub(in crate::main_control) fn apply<G>(
             // the brace, so the following rows were built on the horizontal
             // level and `fin_align` popped that level instead of the alignment
             // (`umber2-usol`).
-            let diagnostic_context = command_diagnostic_context(command, stores);
+            let diagnostic_context =
+                command_diagnostic_context(command.state, command.output_routine_active);
             let mut geometry = pack_geometry_sink(command.state, command.observations);
             crate::paragraph_end::end_paragraph_with_fuel(
                 modes,
@@ -4157,7 +4164,8 @@ pub(in crate::main_control) fn apply<G>(
                     command.state.state(),
                 )?;
             } else {
-                let mut diagnostic_context = command_diagnostic_context(command, stores);
+                let mut diagnostic_context =
+                    command_diagnostic_context(command.state, command.output_routine_active);
                 diagnostic_context.current_line = *current_line;
                 let mut geometry = pack_geometry_sink(command.state, command.observations);
                 crate::paragraph_end::end_paragraph_with_fuel(

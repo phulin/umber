@@ -196,7 +196,7 @@ pub(crate) fn natural_vlist_size<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     geometry: &mut dyn crate::geometry::PackGeometrySink,
-    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
+    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext<'_, G>,
     content: PageListId,
 ) -> Result<Scaled, ExecError> {
     let packed = vpack_natural(
@@ -216,7 +216,7 @@ pub(crate) fn vpack_natural<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     geometry: &mut dyn crate::geometry::PackGeometrySink,
-    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
+    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext<'_, G>,
     content: PageListId,
 ) -> BoxNode {
     crate::packing_params::vpack(

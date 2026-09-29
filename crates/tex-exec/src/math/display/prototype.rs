@@ -74,7 +74,7 @@ pub(super) fn package_directed_display_line<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     geometry: &mut dyn crate::geometry::PackGeometrySink,
-    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
+    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext<'_, G>,
     display_line: BoxNode,
     prototype: Option<BoxNode>,
     mut displacement: Scaled,

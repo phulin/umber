@@ -55,17 +55,16 @@ pub(in crate::main_control) fn command_pack_context<G>(
     }
 }
 
+/// Borrows the live command for a kernel that reports before this command's
+/// input stack can change; §311's context text renders only on report.
 pub(in crate::main_control) fn command_diagnostic_context<G>(
-    command: &CommandMachine<'_, '_, G>,
-    stores: &tex_state::CommandContext<'_, G>,
-) -> crate::diagnostics::ExecutionDiagnosticContext {
-    // Error paths that outlive this command borrow need detached input text.
-    // Packing alone uses command_pack_context and never requests that text.
-    crate::diagnostics::ExecutionDiagnosticContext::new(
-        i32::try_from(command.state.current_file_line_number()).unwrap_or(i32::MAX),
-        0,
-        command.output_routine_active,
-        command.state.output_open_context(stores),
+    state: &CommandState<G>,
+    output_routine_active: bool,
+) -> crate::diagnostics::ExecutionDiagnosticContext<'_, G> {
+    crate::diagnostics::ExecutionDiagnosticContext::live(
+        i32::try_from(state.current_file_line_number()).unwrap_or(i32::MAX),
+        output_routine_active,
+        state,
     )
 }
 
@@ -683,7 +682,8 @@ pub(in crate::main_control) fn apply_box_shift<G>(
             if let Some(context) = &split.missing_to_context {
                 report_missing_vsplit_to(context, command.diagnostic_effects, stores)?;
             }
-            let diagnostic_context = command_diagnostic_context(command, stores);
+            let diagnostic_context =
+                command_diagnostic_context(command.state, command.output_routine_active);
             let mut geometry = pack_geometry_sink(command.state, command.observations);
             let node = crate::box_runtime::split_vbox_register(
                 stores,
@@ -1011,7 +1011,8 @@ pub(in crate::main_control) fn apply_scanned_rule<G>(
         match modes.current_mode() {
             Mode::Vertical | Mode::InternalVertical => {}
             Mode::Horizontal => {
-                let diagnostic_context = command_diagnostic_context(command, stores);
+                let diagnostic_context =
+                    command_diagnostic_context(command.state, command.output_routine_active);
                 let mut geometry = pack_geometry_sink(command.state, command.observations);
                 crate::paragraph_end::end_paragraph_with_fuel(
                     modes,
@@ -1282,11 +1283,10 @@ pub(in crate::main_control) fn start_paragraph<G>(
     diagnostic_effects: &mut DiagnosticEffects,
     indent: bool,
 ) -> Result<(), ExecError> {
-    let diagnostic_context = crate::diagnostics::ExecutionDiagnosticContext::new(
+    let diagnostic_context = crate::diagnostics::ExecutionDiagnosticContext::live(
         i32::try_from(command.current_file_line_number()).unwrap_or(i32::MAX),
-        0,
         false,
-        command.output_open_context(stores),
+        command,
     );
     crate::paragraph_end::start_paragraph(
         modes,
@@ -1343,14 +1343,16 @@ pub(in crate::main_control) fn finish_insert_or_adjust_group<G>(
     // before main control fetches another command. Preserve this closing
     // brace's still-live input stack for `ensure_vbox` -> `box_error` -> §82.
     let page_error_context = command.state.output_open_context(stores);
-    let diagnostic_context = command_diagnostic_context(command, stores);
+    let diagnostic_context =
+        command_diagnostic_context(command.state, command.output_routine_active);
+    let pack_context = diagnostic_context.packing();
     let mut geometry = pack_geometry_sink(command.state, command.observations);
     crate::paragraph_end::end_paragraph_with_fuel(
         modes,
         stores,
         command.diagnostic_effects,
         &mut geometry,
-        diagnostic_context.clone(),
+        diagnostic_context,
         command.fuel,
     )?;
     let split_top_skip = stores
@@ -1385,7 +1387,7 @@ pub(in crate::main_control) fn finish_insert_or_adjust_group<G>(
         stores,
         command.diagnostic_effects,
         &mut geometry,
-        &diagnostic_context.packing(),
+        &pack_context,
         content,
         PackSpec::Natural,
         params,

@@ -695,7 +695,7 @@ pub(crate) fn break_current_paragraph<G>(
     stores: &mut CommandContext<'_, G>,
     widow_penalty_selector: tex_typeset::linebreak::WidowPenaltySelector,
     reset_paragraph: bool,
-    diagnostic_context: crate::pack_report::ExecutionDiagnosticContext,
+    diagnostic_context: crate::pack_report::ExecutionDiagnosticContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     geometry: &mut dyn crate::geometry::PackGeometrySink,
     fuel: &mut tex_command::CommandFuel,
@@ -897,11 +897,11 @@ pub(crate) fn break_current_paragraph<G>(
     if reset_paragraph {
         reset_after_par(nest, stores, diagnostic_effects);
     }
-    crate::vertical::build_page_if_outer_vertical_with_error_context(
+    crate::vertical::build_page_if_outer_vertical_with_diagnostic_context(
         nest,
         stores,
         diagnostic_effects,
-        &diagnostic_context.output_context,
+        &diagnostic_context,
     )?;
     Ok(ParagraphBreakResult {
         last_line,
@@ -1383,7 +1383,7 @@ fn normalize_paragraph_infinite_shrink<G>(
     params: &mut ParagraphParams,
     nodes: tex_state::page_node_arena::PageListId,
     tracing: bool,
-    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
+    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
 ) -> Result<tex_state::page_node_arena::PageListId, ExecError> {
     let mut reported = false;
@@ -1443,7 +1443,7 @@ fn normalize_paragraph_chunk_prefix<G>(
     source: tex_state::page_node_arena::AdmittedPageList,
     mut chunk: tex_state::page_node_arena::PageListChunkCursor,
     tracing: bool,
-    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
+    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     reported: &mut bool,
     output: &mut Option<tex_state::page_node_arena::PageMaterialActiveListBuilder>,
@@ -1513,7 +1513,7 @@ fn normalize_paragraph_glue<G>(
     stores: &mut CommandContext<'_, G>,
     spec: &mut tex_state::glue::GlueSpec,
     tracing: bool,
-    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
+    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     reported: &mut bool,
 ) -> Result<(), ExecError> {
@@ -2040,7 +2040,7 @@ pub(crate) fn start_paragraph<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     indent: bool,
-    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
+    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext<'_, G>,
 ) -> Result<(), ExecError> {
     match nest.current_mode() {
         crate::Mode::Vertical | crate::Mode::InternalVertical => {
@@ -2057,11 +2057,11 @@ pub(crate) fn start_paragraph<G>(
                         leader: None,
                     },
                 );
-                crate::vertical::build_page_if_outer_vertical_with_error_context(
+                crate::vertical::build_page_if_outer_vertical_with_diagnostic_context(
                     nest,
                     stores,
                     diagnostic_effects,
-                    &diagnostic_context.output_context,
+                    diagnostic_context,
                 )?;
             }
             nest.push_at_line(crate::Mode::Horizontal, diagnostic_context.current_line)?;

@@ -16,20 +16,67 @@ use crate::node_dump::{DumpConfig, dump_node_slice};
 #[cfg(test)]
 mod tests;
 
+/// TeX82 §311's `show_context` text for an execution-time diagnostic.
+///
+/// Most kernels run under a still-live command whose input stack cannot
+/// change before they return, and almost none of them reports an error. They
+/// borrow that command and render its context only when a report asks for
+/// it. Contexts that cross a suspension or publication boundary carry text
+/// rendered at that boundary.
+pub(crate) enum DiagnosticOutputContext<'a, G> {
+    Rendered(String),
+    Live(&'a tex_command::CommandState<G>),
+}
+
+impl<G> Clone for DiagnosticOutputContext<'_, G> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Rendered(text) => Self::Rendered(text.clone()),
+            Self::Live(command) => Self::Live(command),
+        }
+    }
+}
+
+impl<G> std::fmt::Debug for DiagnosticOutputContext<'_, G> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Rendered(text) => f.debug_tuple("Rendered").field(text).finish(),
+            Self::Live(_) => f.write_str("Live"),
+        }
+    }
+}
+
 /// Detached command-owned values needed by execution-time diagnostics.
 ///
 /// Execution barriers populate this from command and mode state. Hot kernels
 /// carry the value beside their admitted [`CommandContext`] and never recover
 /// input, source, or mode ownership while reporting.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub(crate) struct ExecutionDiagnosticContext {
+#[derive(Debug)]
+pub(crate) struct ExecutionDiagnosticContext<'a, G> {
     pub(crate) current_line: i32,
     pub(crate) pack_begin_line: i32,
     pub(crate) output_routine_active: bool,
-    pub(crate) output_context: String,
+    output_context: DiagnosticOutputContext<'a, G>,
 }
 
-impl ExecutionDiagnosticContext {
+impl<G> Clone for ExecutionDiagnosticContext<'_, G> {
+    fn clone(&self) -> Self {
+        Self {
+            current_line: self.current_line,
+            pack_begin_line: self.pack_begin_line,
+            output_routine_active: self.output_routine_active,
+            output_context: self.output_context.clone(),
+        }
+    }
+}
+
+impl<G> Default for ExecutionDiagnosticContext<'_, G> {
+    fn default() -> Self {
+        Self::source_free(String::new())
+    }
+}
+
+impl<'a, G> ExecutionDiagnosticContext<'a, G> {
     pub(crate) const fn packing(&self) -> crate::pack_report::PackDiagnosticContext {
         crate::pack_report::PackDiagnosticContext {
             current_line: self.current_line,
@@ -48,14 +95,30 @@ impl ExecutionDiagnosticContext {
             current_line,
             pack_begin_line,
             output_routine_active,
-            output_context: output_context.into(),
+            output_context: DiagnosticOutputContext::Rendered(output_context.into()),
+        }
+    }
+
+    /// Borrows `command`'s live input stack, rendering it only on report.
+    pub(crate) fn live(
+        current_line: i32,
+        output_routine_active: bool,
+        command: &'a tex_command::CommandState<G>,
+    ) -> Self {
+        Self {
+            current_line,
+            pack_begin_line: 0,
+            output_routine_active,
+            output_context: DiagnosticOutputContext::Live(command),
         }
     }
 
     pub(crate) fn source_free(output_context: impl Into<String>) -> Self {
         Self {
-            output_context: output_context.into(),
-            ..Self::default()
+            current_line: 0,
+            pack_begin_line: 0,
+            output_routine_active: false,
+            output_context: DiagnosticOutputContext::Rendered(output_context.into()),
         }
     }
 
@@ -63,6 +126,18 @@ impl ExecutionDiagnosticContext {
         Self {
             pack_begin_line,
             ..self.clone()
+        }
+    }
+
+    pub(crate) const fn output_context(&self) -> &DiagnosticOutputContext<'a, G> {
+        &self.output_context
+    }
+
+    /// Materializes §311's context text for one report.
+    pub(crate) fn output_text(&self, stores: &CommandContext<'_, G>) -> String {
+        match &self.output_context {
+            DiagnosticOutputContext::Rendered(text) => text.clone(),
+            DiagnosticOutputContext::Live(command) => command.output_open_context(stores),
         }
     }
 }
@@ -802,12 +877,13 @@ pub(crate) fn report_dimension_diagnostic<G>(
 pub(crate) fn report_page_infinite_shrinkage<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
-    context: &ExecutionDiagnosticContext,
+    context: &ExecutionDiagnosticContext<'_, G>,
 ) -> Result<(), ExecError> {
     // TeX82 §1004 reaches §82's `error` while handling the command that
     // contributed this glue. Synchronous page building renders from that
     // borrowed live command only after selecting this recovery; replay after
     // a real suspension/publication boundary supplies the same detached text.
+    let output_context = context.output_text(stores);
     crate::error_report::report_ordered_error(
         stores,
         diagnostic_effects,
@@ -818,7 +894,7 @@ pub(crate) fn report_page_infinite_shrinkage<G>(
             "Such glue doesn't belong there; but you can safely proceed,",
             "since the offensive shrinkability has been made finite.",
         ],
-        context.output_context.clone(),
+        output_context,
     )?;
     Ok(())
 }
@@ -827,8 +903,9 @@ pub(crate) fn report_page_infinite_shrinkage<G>(
 pub(crate) fn report_paragraph_infinite_shrinkage<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
-    context: &ExecutionDiagnosticContext,
+    context: &ExecutionDiagnosticContext<'_, G>,
 ) -> Result<(), ExecError> {
+    let output_context = context.output_text(stores);
     crate::error_report::report_error(
         stores,
         diagnostic_effects,
@@ -840,7 +917,7 @@ pub(crate) fn report_paragraph_infinite_shrinkage<G>(
             "of any length to fit on one line. But it's safe to proceed,",
             "since the offensive shrinkability has been made finite.",
         ],
-        context.output_context.clone(),
+        output_context,
     )?;
     Ok(())
 }
@@ -850,7 +927,7 @@ pub(crate) fn report_paragraph_infinite_shrinkage<G>(
 pub(crate) fn report_split_infinite_shrinkage<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
-    context: &ExecutionDiagnosticContext,
+    context: &ExecutionDiagnosticContext<'_, G>,
 ) -> Result<(), ExecError> {
     if stores.int_param(IntParam::IGNORE_PRIMITIVE_ERROR) & 1 != 0 {
         let mut diagnostic = stores.begin_online_diagnostic(diagnostic_effects);
@@ -862,6 +939,7 @@ pub(crate) fn report_split_infinite_shrinkage<G>(
     // TeX82 §976 is shared by command-time `\vsplit` and page-builder
     // insertion splitting. Both callers render the applicable command
     // context before crossing this diagnostic boundary.
+    let output_context = context.output_text(stores);
     crate::error_report::report_error(
         stores,
         diagnostic_effects,
@@ -872,7 +950,7 @@ pub(crate) fn report_split_infinite_shrinkage<G>(
             "Such glue doesn't belong there; but you can safely proceed,",
             "since the offensive shrinkability has been made finite.",
         ],
-        context.output_context.clone(),
+        output_context,
     )?;
     Ok(())
 }
@@ -882,8 +960,9 @@ pub(crate) fn report_insertion_skip_infinite_shrinkage<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     class: u16,
-    context: &ExecutionDiagnosticContext,
+    context: &ExecutionDiagnosticContext<'_, G>,
 ) -> Result<(), ExecError> {
+    let output_context = context.output_text(stores);
     crate::error_report::report_ordered_error(
         stores,
         diagnostic_effects,
@@ -893,7 +972,7 @@ pub(crate) fn report_insertion_skip_infinite_shrinkage<G>(
             "must have finite shrinkability. But you may proceed,",
             "since the offensive shrinkability has been made finite.",
         ],
-        context.output_context.clone(),
+        output_context,
     )?;
     Ok(())
 }

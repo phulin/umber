@@ -41,7 +41,7 @@ pub(crate) fn select_pending_page_output<G>(
     diagnostic_effects: &mut DiagnosticEffects,
     geometry: &mut dyn crate::geometry::PackGeometrySink,
     fire_up: PageFireUp,
-    diagnostic_context: ExecutionDiagnosticContext,
+    diagnostic_context: ExecutionDiagnosticContext<'_, G>,
 ) -> Result<SelectedPageOutput, ExecError> {
     prepare_box255(
         stores,
@@ -66,12 +66,8 @@ pub(crate) fn select_pending_page_output<G>(
     }
     let dead_cycles = stores.page_integer(PageInteger::DeadCycles);
     if dead_cycles >= stores.int_param(IntParam::MAX_DEAD_CYCLES) {
-        report_output_loop(
-            stores,
-            diagnostic_effects,
-            dead_cycles,
-            diagnostic_context.output_context.clone(),
-        )?;
+        let context = diagnostic_context.output_text(stores);
+        report_output_loop(stores, diagnostic_effects, dead_cycles, context)?;
         prepend_output_heldover(
             stores,
             tex_state::page_node_arena::PageListId::empty(),
@@ -91,15 +87,11 @@ pub(crate) fn resume_page_builder_after_output<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     output_nodes: tex_state::page_node_arena::PageListId,
-    diagnostic_context: ExecutionDiagnosticContext,
+    diagnostic_context: ExecutionDiagnosticContext<'_, G>,
 ) -> Result<(), ExecError> {
     if let Some(box255) = stores.take_box_to_page(255) {
-        report_box255_not_emptied(
-            stores,
-            diagnostic_effects,
-            box255,
-            diagnostic_context.output_context.clone(),
-        )?;
+        let context = diagnostic_context.output_text(stores);
+        report_box255_not_emptied(stores, diagnostic_effects, box255, context)?;
     }
     stores.clear_page_discards();
     prepend_output_heldover(stores, output_nodes, false);
@@ -119,15 +111,11 @@ pub(crate) fn prepare_box255<G>(
     diagnostic_effects: &mut DiagnosticEffects,
     geometry: &mut dyn crate::geometry::PackGeometrySink,
     fire_up: PageFireUp,
-    diagnostic_context: &ExecutionDiagnosticContext,
+    diagnostic_context: &ExecutionDiagnosticContext<'_, G>,
 ) -> Result<(), ExecError> {
     if let Some(box255) = stores.take_box_to_page(255) {
-        report_box255_not_void(
-            stores,
-            diagnostic_effects,
-            box255,
-            Some(&diagnostic_context.output_context),
-        )?;
+        let context = diagnostic_context.output_text(stores);
+        report_box255_not_void(stores, diagnostic_effects, box255, Some(&context))?;
     }
 
     let split_index = fire_up.best_break().index();
@@ -281,7 +269,7 @@ fn distribute_insertions<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     geometry: &mut dyn crate::geometry::PackGeometrySink,
-    diagnostic_context: &ExecutionDiagnosticContext,
+    diagnostic_context: &ExecutionDiagnosticContext<'_, G>,
     page_nodes: tex_state::page_node_arena::PageListId,
 ) -> Result<DistributedInsertions, ExecError> {
     if stores.int_param(IntParam::HOLDING_INSERTS) > 0 {
@@ -399,7 +387,7 @@ fn insertion_box_nodes<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     class: u16,
-    diagnostic_context: &ExecutionDiagnosticContext,
+    diagnostic_context: &ExecutionDiagnosticContext<'_, G>,
 ) -> Result<tex_state::page_node_arena::PageListId, ExecError> {
     // TeX82 §1018 calls §993's `ensure_vbox` again here because an output
     // routine or assignment can replace the class register after page setup.
@@ -433,7 +421,7 @@ fn split_insertion_remainder<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     geometry: &mut dyn crate::geometry::PackGeometrySink,
-    diagnostic_context: &ExecutionDiagnosticContext,
+    diagnostic_context: &ExecutionDiagnosticContext<'_, G>,
     queue: &mut InsertionQueue,
     context: SplitInsertionContext,
 ) -> Result<Option<Node>, ExecError> {
@@ -481,7 +469,7 @@ fn package_insertion_box<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     geometry: &mut dyn crate::geometry::PackGeometrySink,
-    diagnostic_context: &ExecutionDiagnosticContext,
+    diagnostic_context: &ExecutionDiagnosticContext<'_, G>,
     class: u16,
     nodes: tex_state::page_node_arena::PageListId,
 ) {

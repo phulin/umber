@@ -26,27 +26,29 @@ pub(crate) enum ParagraphEndContinuation {
 }
 
 /// Command-owned paragraph completion inputs.
-pub(crate) struct ParagraphEnd {
+pub(crate) struct ParagraphEnd<'a, G> {
     continuation: ParagraphEndContinuation,
-    diagnostic_context: ExecutionDiagnosticContext,
+    diagnostic_context: ExecutionDiagnosticContext<'a, G>,
 }
 
-impl ParagraphEnd {
-    pub(crate) fn end(diagnostic_context: ExecutionDiagnosticContext) -> Self {
+impl<'a, G> ParagraphEnd<'a, G> {
+    pub(crate) fn end(diagnostic_context: ExecutionDiagnosticContext<'a, G>) -> Self {
         Self {
             continuation: ParagraphEndContinuation::End,
             diagnostic_context,
         }
     }
 
-    pub(crate) fn display_interruption(diagnostic_context: ExecutionDiagnosticContext) -> Self {
+    pub(crate) fn display_interruption(
+        diagnostic_context: ExecutionDiagnosticContext<'a, G>,
+    ) -> Self {
         Self {
             continuation: ParagraphEndContinuation::DisplayInterruption,
             diagnostic_context,
         }
     }
 
-    pub(crate) fn finish<G>(
+    pub(crate) fn finish(
         self,
         nest: &mut ModeNest,
         stores: &mut CommandContext<'_, G>,
@@ -63,11 +65,11 @@ impl ParagraphEnd {
             let _ = commit_current_list(nest, stores, diagnostic_effects, fuel)?;
             if !is_display {
                 normal_paragraph(nest, stores, diagnostic_effects);
-                crate::vertical::build_page_if_outer_vertical_with_error_context(
+                crate::vertical::build_page_if_outer_vertical_with_diagnostic_context(
                     nest,
                     stores,
                     diagnostic_effects,
-                    &self.diagnostic_context.output_context,
+                    &self.diagnostic_context,
                 )?;
             }
             return Ok(ParagraphBreakResult::empty());
@@ -95,7 +97,7 @@ pub(crate) fn end_paragraph_with_fuel<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     geometry: &mut dyn crate::geometry::PackGeometrySink,
-    diagnostic_context: ExecutionDiagnosticContext,
+    diagnostic_context: ExecutionDiagnosticContext<'_, G>,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     ParagraphEnd::end(diagnostic_context).finish(
@@ -114,7 +116,7 @@ pub(crate) fn end_paragraph_with_context<G>(
     diagnostic_effects: &mut DiagnosticEffects,
     geometry: &mut dyn crate::geometry::PackGeometrySink,
     fuel: &mut tex_command::CommandFuel,
-    diagnostic_context: ExecutionDiagnosticContext,
+    diagnostic_context: ExecutionDiagnosticContext<'_, G>,
 ) -> Result<(), ExecError> {
     ParagraphEnd::end(diagnostic_context).finish(
         nest,
@@ -132,7 +134,7 @@ pub(crate) fn interrupt_paragraph_for_display<G>(
     diagnostic_effects: &mut DiagnosticEffects,
     geometry: &mut dyn crate::geometry::PackGeometrySink,
     fuel: &mut tex_command::CommandFuel,
-    diagnostic_context: ExecutionDiagnosticContext,
+    diagnostic_context: ExecutionDiagnosticContext<'_, G>,
 ) -> Result<ParagraphBreakResult, ExecError> {
     let result = ParagraphEnd::display_interruption(diagnostic_context).finish(
         nest,

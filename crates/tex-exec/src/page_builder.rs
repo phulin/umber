@@ -60,12 +60,12 @@ pub(crate) fn build_page_with_error_context<G>(
 pub(crate) fn build_page_with_diagnostic_context<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
-    diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
+    diagnostic_context: &diagnostics::ExecutionDiagnosticContext<'_, G>,
 ) -> Result<(), ExecError> {
     build_page_impl(
         stores,
         diagnostic_effects,
-        PageDiagnosticContext::Rendered(&diagnostic_context.output_context),
+        PageDiagnosticContext::from(diagnostic_context),
     )
 }
 
@@ -81,6 +81,17 @@ impl<G> Clone for PageDiagnosticContext<'_, G> {
 }
 
 impl<G> Copy for PageDiagnosticContext<'_, G> {}
+
+impl<'a, G> From<&'a diagnostics::ExecutionDiagnosticContext<'_, G>>
+    for PageDiagnosticContext<'a, G>
+{
+    fn from(context: &'a diagnostics::ExecutionDiagnosticContext<'_, G>) -> Self {
+        match context.output_context() {
+            diagnostics::DiagnosticOutputContext::Rendered(text) => Self::Rendered(text),
+            diagnostics::DiagnosticOutputContext::Live(command) => Self::Live(command),
+        }
+    }
+}
 
 impl<G> PageDiagnosticContext<'_, G> {
     fn render(self, stores: &CommandContext<'_, G>) -> String {
@@ -441,13 +452,13 @@ pub(crate) fn ensure_insertion_vbox<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     class: u16,
-    diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
+    diagnostic_context: &diagnostics::ExecutionDiagnosticContext<'_, G>,
 ) -> Result<Option<tex_state::page_node_arena::PageListId>, ExecError> {
     ensure_insertion_vbox_with_context(
         stores,
         diagnostic_effects,
         class,
-        PageDiagnosticContext::Rendered(&diagnostic_context.output_context),
+        PageDiagnosticContext::from(diagnostic_context),
     )
 }
 
@@ -456,13 +467,13 @@ fn insertion_box_size<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     class: u16,
-    diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
+    diagnostic_context: &diagnostics::ExecutionDiagnosticContext<'_, G>,
 ) -> Result<Scaled, ExecError> {
     insertion_box_size_with_context(
         stores,
         diagnostic_effects,
         class,
-        PageDiagnosticContext::Rendered(&diagnostic_context.output_context),
+        PageDiagnosticContext::from(diagnostic_context),
     )
 }
 
@@ -471,13 +482,13 @@ fn prepare_insertion<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     node: &Node,
-    diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
+    diagnostic_context: &diagnostics::ExecutionDiagnosticContext<'_, G>,
 ) -> Result<Option<Node>, ExecError> {
     prepare_insertion_with_context(
         stores,
         diagnostic_effects,
         node,
-        PageDiagnosticContext::Rendered(&diagnostic_context.output_context),
+        PageDiagnosticContext::from(diagnostic_context),
     )
 }
 
