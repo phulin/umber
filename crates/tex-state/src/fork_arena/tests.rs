@@ -2267,7 +2267,7 @@ fn leaf_lane_closure_preflights_never_visit_values() {
         .expect("leaf batch closure needs only root and chunk proofs");
     let destination = ForkArena::<u32, LeafLane>::new();
     arena
-        .preflight_whole_region_transfer(&pool, &destination, Some(root))
+        .preflight_suffix_move(&pool, &destination, 0, &[root], None)
         .expect("leaf whole-region closure needs only chunk metadata");
 }
 

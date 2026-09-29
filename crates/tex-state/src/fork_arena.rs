@@ -30,6 +30,8 @@ pub(crate) use hole_transfer::TransferredHoleIntervals;
 mod physical_extents;
 pub(crate) use packed_source::PackedSourceChunkReader;
 mod sparse_chunks;
+mod suffix_move;
+pub(crate) use suffix_move::{PairedFloorRebase, SuffixFloorRebase};
 mod whole_region_transfer;
 
 use sparse_chunks::SparseChunks;
@@ -2597,19 +2599,6 @@ pub struct SealedBatch<Lane> {
     lists: Vec<ArenaListId<Lane>>,
 }
 
-/// Fixed-size whole-region transfer receipt.
-///
-/// The semantic boundary has either one declared root (the node lane) or no
-/// declared root (its paired annex lane). The arena and pool retain all block
-/// tables and traversal metadata; this receipt carries only scalar frontiers
-/// and the optional list coordinate needed by the caller.
-pub(crate) struct WholeRegionBatch<Lane> {
-    arena: u32,
-    serial: u64,
-    payload_end: u32,
-    root: Option<ArenaListId<Lane>>,
-}
-
 /// A prevalidated whole-chunk suffix temporarily loaned out of its source
 /// arena. The chunk payload remains owned by the source arena until the loan
 /// is either returned or committed into a destination arena.
@@ -2694,12 +2683,6 @@ impl<Lane> Clone for BatchMark<Lane> {
 impl<Lane> Copy for BatchMark<Lane> {}
 
 impl<Lane> BatchMark<Lane> {
-    pub(crate) const fn payload_start(&self) -> usize {
-        self.payload_start as usize
-    }
-}
-
-impl<Lane> DetachedBatch<Lane> {
     pub(crate) const fn payload_start(&self) -> usize {
         self.payload_start as usize
     }
@@ -3189,55 +3172,6 @@ impl<T, Lane> ForkArena<T, Lane> {
             .chain(detached_prior.payload.iter_live_with_positions())
             .filter_map(|(_, key)| pool.payload.profiling_physical_token(key))
             .collect()
-    }
-
-    pub(crate) fn rebase_paired_dependency_suffix(
-        &mut self,
-        pool: &mut ChunkPool<T>,
-        payload_start: usize,
-        source_paired_start: usize,
-        destination_paired_start: usize,
-    ) -> Result<(), ForkArenaError> {
-        for (_, key) in self.live_positions_from(payload_start) {
-            let meta =
-                pool.payload
-                    .validate_exclusive_lineage_mut(key, self.owner, self.lineage)?;
-            if meta.paired_dependency_floor == usize::MAX {
-                continue;
-            }
-            let relative = meta
-                .paired_dependency_floor
-                .checked_sub(source_paired_start)
-                .ok_or(ForkArenaError::InvalidRegion)?;
-            meta.paired_dependency_floor = destination_paired_start
-                .checked_add(relative)
-                .ok_or(ForkArenaError::CapacityOverflow)?;
-        }
-        Ok(())
-    }
-
-    pub(crate) fn rebase_dependency_suffix(
-        &mut self,
-        pool: &mut ChunkPool<T>,
-        payload_start: usize,
-        source_start: usize,
-    ) -> Result<(), ForkArenaError> {
-        for (_, key) in self.live_positions_from(payload_start) {
-            let meta =
-                pool.payload
-                    .validate_exclusive_lineage_mut(key, self.owner, self.lineage)?;
-            if meta.dependency_floor == usize::MAX {
-                continue;
-            }
-            let relative = meta
-                .dependency_floor
-                .checked_sub(source_start)
-                .ok_or(ForkArenaError::InvalidRegion)?;
-            meta.dependency_floor = payload_start
-                .checked_add(relative)
-                .ok_or(ForkArenaError::CapacityOverflow)?;
-        }
-        Ok(())
     }
 
     #[cfg(test)]

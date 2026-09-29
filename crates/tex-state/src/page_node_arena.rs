@@ -21,7 +21,7 @@ use crate::node_region::{
     preflight_empty_page_box_body, preflight_page_interior_closure,
     preflight_page_interior_intervals, rollback_page_interior_closure, structural_copy_fallback,
     transfer_closure_into, transfer_page_interior_closure, transfer_page_interior_closure_staged,
-    transfer_page_interior_intervals, transfer_sealed_closure_into,
+    transfer_page_interior_intervals,
 };
 use crate::node_sequence::SemanticSequenceIdentity;
 
@@ -1117,35 +1117,15 @@ impl PageMaterialRegion {
             Ok(receipt) => receipt,
             Err(error) => return Err((error, Some(mark))),
         };
-        let sealed = source
+        // Coordinates are pool-stable, so the move rescans no values.
+        source
             .region
-            .seal_closure(pool, mark, source_root, receipt)
+            .move_closure_suffix_into(pool, mark, source_root, receipt, &mut destination.region)
+            .map(|root| (root.page_list(), 0))
             .map_err(|failure| {
                 let (error, mark) = failure.into_parts();
                 (error, Some(mark))
-            })?;
-        let before = pool.closure_transition_counters().rebrand_scan_nodes;
-        match transfer_sealed_closure_into(
-            pool,
-            &mut source.region,
-            sealed,
-            &mut destination.region,
-        ) {
-            Ok(root) => Ok((
-                root.page_list(),
-                pool.closure_transition_counters()
-                    .rebrand_scan_nodes
-                    .saturating_sub(before),
-            )),
-            Err(failure) => {
-                let (error, sealed) = failure.into_parts();
-                assert!(
-                    source.region.rollback_closure(pool, sealed).is_ok(),
-                    "failed page transfer returns its exact suffix"
-                );
-                Err((error, None))
-            }
-        }
+            })
     }
 
     pub(crate) fn cancel_closure_build(
@@ -1446,21 +1426,36 @@ impl<'a> PageMaterialArena<'a> {
     ) -> Result<DurableNodeClosure, ForkArenaError> {
         let source_root = self.region.root(self.pool, root)?;
         let receipt = self.region.consumed_closure_roots_receipt(&mark)?;
-        let sealed = match self
-            .region
-            .seal_closure(self.pool, mark, source_root, receipt)
-        {
-            Ok(sealed) => sealed,
+        let mut durable = match self.pool.start_region::<DurableRole>() {
+            Ok(durable) => durable,
+            Err(error) => {
+                self.region.cancel_closure_build(self.pool, mark)?;
+                return Err(error);
+            }
+        };
+        let moved = self.region.move_closure_suffix_into(
+            self.pool,
+            mark,
+            source_root,
+            receipt,
+            &mut durable,
+        );
+        let durable_root = match moved {
+            Ok(root) => root,
             Err(failure) => {
                 let (error, mark) = failure.into_parts();
                 if error != ForkArenaError::InvalidRegion {
+                    assert!(
+                        self.pool.retire_region(durable).is_ok(),
+                        "rejected suffix destination remains quiescent"
+                    );
                     self.region.cancel_closure_build(self.pool, mark)?;
                     return Err(error);
                 }
                 #[cfg(feature = "profiling")]
                 let shape = crate::measurement::box_fallback_census_enabled()
                     .then(|| self.profile_built_fallback_shape(root));
-                let mut durable = self.pool.start_region::<DurableRole>()?;
+                // The rejected move left the fresh destination untouched.
                 let before = durable.counters().source_nodes_copied;
                 let copied = match structural_copy_fallback(
                     self.pool,
@@ -1511,32 +1506,6 @@ impl<'a> PageMaterialArena<'a> {
             }
         };
 
-        let mut durable = self.pool.start_region::<DurableRole>()?;
-        let before = self.pool.closure_transition_counters().rebrand_scan_nodes;
-        let durable_root =
-            match transfer_sealed_closure_into(self.pool, self.region, sealed, &mut durable) {
-                Ok(root) => root,
-                Err(failure) => {
-                    let (error, sealed) = failure.into_parts();
-                    self.region
-                        .rollback_closure(self.pool, sealed)
-                        .map_err(|failure| failure.into_parts().0)?;
-                    assert!(
-                        self.pool.retire_region(durable).is_ok(),
-                        "failed transfer destination remains quiescent"
-                    );
-                    return Err(error);
-                }
-            };
-        let scanned = self
-            .pool
-            .closure_transition_counters()
-            .rebrand_scan_nodes
-            .saturating_sub(before);
-        self.durable_transitions.node_closure_scan_nodes = self
-            .durable_transitions
-            .node_closure_scan_nodes
-            .saturating_add(scanned);
         durable
             .into_closure(self.pool, durable_root)
             .map_err(|(error, region)| {

@@ -201,8 +201,11 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/fork_arena/hole_transfer.rs`: Exact selected-chunk moves into vacant
   destination positions between shallow cut projections, with an inverse
   receipt that preserves both owners' sparse logical coordinates.
-- `src/fork_arena/whole_region_transfer.rs`: Whole-region closure proofs,
-  coordinate validation, and exact suffix detachment for that same lane.
+- `src/fork_arena/suffix_move.rs`: Fused closed-suffix moves between arenas:
+  one mutation-free ownership, closure, sealing, and floor proof, then one
+  pass rewriting each chunk's owner, lineage position, and rebased floors.
+- `src/fork_arena/whole_region_transfer.rs`: Interval-root preflight, suffix
+  and list-in-suffix validation, and exact suffix detachment for that lane.
 - `src/format.rs` and `src/format/tests.rs`: Consuming destination-stamped
   format staging, detached-count-sized initial generation construction,
   decoded-row draining into final owners, and infallible atomic publication
@@ -345,6 +348,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/node_region/consumed_cut.rs`: Bounded shallow selected-record projection
   from one consumed logical chunk into a durable owner, with child-coordinate
   mapping and paired destination-mark rollback on rejection.
+- `src/node_region/suffix_transfer.rs`: One-proof move of a sealed
+  construction suffix and its paired annex suffix into another region,
+  returning the live build authority on any rejection.
 - `src/node_region/generated_transfer.rs`: Prepared generated inline-body
   projection and complete-chunk hole transfer, including the inverse receipt
   for links, floors, sparse owner positions, and projected cuts.

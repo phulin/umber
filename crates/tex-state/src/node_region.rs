@@ -10,9 +10,9 @@ use core::marker::PhantomData;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::fork_arena::{
-    BatchMark, CheckpointMark, ChunkPool, ConsumedHeadEdgeLoan, ConsumedInlineFloorLoan,
-    DetachedBatch, ForkArena, ForkArenaCounters, ForkArenaError, NodePoolStorageClass,
-    PageMaterialLane, RegionValue, SealedBoundary, SequenceSummaryWork, TransferredHoleIntervals,
+    BatchMark, CheckpointMark, ChunkPool, ConsumedHeadEdgeLoan, ConsumedInlineFloorLoan, ForkArena,
+    ForkArenaCounters, ForkArenaError, NodePoolStorageClass, PageMaterialLane, PairedFloorRebase,
+    RegionValue, SealedBoundary, SequenceSummaryWork, SuffixFloorRebase, TransferredHoleIntervals,
     TransferredIntervals,
 };
 
@@ -33,6 +33,7 @@ pub(crate) use generated_transfer::{
     GeneratedInlinePiece, transfer_page_generated_inline_selected,
 };
 mod copy;
+mod suffix_transfer;
 pub(crate) use consumed_cut::copy_consumed_direct_cut_into;
 
 #[cfg(any(feature = "profiling", feature = "testing"))]
@@ -51,11 +52,6 @@ pub struct NodeSealedBoundary {
 pub struct NodeCheckpointMark {
     nodes: CheckpointMark<PageMaterialLane>,
     annex: CheckpointMark<NodeAnnexLane>,
-}
-
-struct NodeEnvelopeBatch {
-    nodes: DetachedBatch<PageMaterialLane>,
-    annex: DetachedBatch<NodeAnnexLane>,
 }
 
 /// Operation-local authority to return an older, exclusively removed box
@@ -885,126 +881,6 @@ impl<Role> NodeRegion<Role> {
         })
     }
 
-    /// Preflights and detaches one self-contained recursive closure suffix.
-    /// Any failure leaves all chunk envelopes attached to this region.
-    #[allow(clippy::result_large_err)] // Failure returns the sole move-only build authority.
-    pub(crate) fn seal_closure(
-        &mut self,
-        pool: &mut NodePool,
-        mark: ClosureBuildMark<Role>,
-        root: RegionRoot<Role>,
-        receipt: ConsumedClosureRootsReceipt<Role>,
-    ) -> Result<SealedNodeClosure<Role>, ClosureSealError<Role>> {
-        if let Err(error) = pool.validate_region(self) {
-            return Err(ClosureSealError { error, mark });
-        }
-        if mark.region != self.id
-            || receipt.region != self.id
-            || receipt.serial != mark.serial
-            || root.region != self.id
-        {
-            return Err(ClosureSealError {
-                error: ForkArenaError::InvalidRegion,
-                mark,
-            });
-        }
-        if let Err(error) = self.pub_arena.preflight_batch_closure(
-            &pool.chunks,
-            &mark.batch,
-            &[root.list.coordinate()],
-        ) {
-            return Err(ClosureSealError { error, mark });
-        }
-        if let Err(error) =
-            self.annex_arena
-                .preflight_batch_closure(&pool.annex_chunks, &mark.annex_batch, &[])
-        {
-            return Err(ClosureSealError { error, mark });
-        }
-        if let Err(error) = self.pub_arena.preflight_paired_dependency_floor(
-            &pool.chunks,
-            &[root.list.coordinate()],
-            mark.batch.payload_start(),
-            mark.annex_batch.payload_start(),
-        ) {
-            return Err(ClosureSealError { error, mark });
-        }
-        let batch = match self.pub_arena.seal_batch(
-            &mut pool.chunks,
-            mark.batch,
-            vec![root.list.coordinate()],
-        ) {
-            Ok(batch) => batch,
-            Err(error) => return Err(ClosureSealError { error, mark }),
-        };
-        let batch = match self.pub_arena.detach_batch(&mut pool.chunks, batch) {
-            Ok(batch) => batch,
-            Err(failure) => {
-                self.pub_arena
-                    .cancel_batch(failure.batch)
-                    .expect("failed closure preflight returns its source authority");
-                return Err(ClosureSealError {
-                    error: failure.error,
-                    mark,
-                });
-            }
-        };
-        let annex_batch = self
-            .annex_arena
-            .seal_batch(&mut pool.annex_chunks, mark.annex_batch, Vec::new())
-            .expect("paired empty annex suffix sealing is infallible");
-        let annex_batch = self
-            .annex_arena
-            .detach_batch(&mut pool.annex_chunks, annex_batch)
-            .unwrap_or_else(|_| unreachable!("paired annex suffix was just sealed"));
-        Ok(SealedNodeClosure {
-            source: self.id,
-            root,
-            batch: NodeEnvelopeBatch {
-                nodes: batch,
-                annex: annex_batch,
-            },
-        })
-    }
-
-    /// Returns a transient transfer loan to the exact construction suffix.
-    #[allow(clippy::result_large_err)] // Failure returns the move-only closure loan without allocation.
-    pub(crate) fn rollback_closure(
-        &mut self,
-        pool: &mut NodePool,
-        closure: SealedNodeClosure<Role>,
-    ) -> Result<(), SealedNodeClosureError<Role>> {
-        if closure.source != self.id || closure.root.region != self.id {
-            return Err(SealedNodeClosureError {
-                error: ForkArenaError::InvalidRegion,
-                closure,
-            });
-        }
-        if let Err(error) = self
-            .pub_arena
-            .can_reattach_batch(&pool.chunks, &closure.batch.nodes)
-        {
-            return Err(SealedNodeClosureError { error, closure });
-        }
-        if let Err(error) = self
-            .annex_arena
-            .can_reattach_batch(&pool.annex_chunks, &closure.batch.annex)
-        {
-            return Err(SealedNodeClosureError { error, closure });
-        }
-        self.pub_arena
-            .reattach_batch(&mut pool.chunks, closure.batch.nodes)
-            .unwrap_or_else(|_| unreachable!("paired node rollback was preflighted"));
-        self.annex_arena
-            .reattach_batch(&mut pool.annex_chunks, closure.batch.annex)
-            .unwrap_or_else(|_| unreachable!("paired annex rollback was preflighted"));
-        pool.closure_transitions.transient_rollbacks = pool
-            .closure_transitions
-            .transient_rollbacks
-            .saturating_add(1);
-        Ok(())
-    }
-
     pub(crate) fn root(
         &self,
         pool: &NodePool,
@@ -1276,26 +1152,6 @@ pub(crate) struct ConsumedClosureRootsReceipt<Role> {
     _role: PhantomData<fn(Role) -> Role>,
 }
 
-/// Move-only detached closure suffix. Payload addresses remain stable while
-/// this loan is transferred or rolled back.
-#[must_use = "a detached closure loan must be transferred or rolled back"]
-pub(crate) struct SealedNodeClosure<Role> {
-    source: NodeRegionId,
-    root: RegionRoot<Role>,
-    batch: NodeEnvelopeBatch,
-}
-
-pub(crate) struct SealedNodeClosureError<Role> {
-    pub(crate) error: ForkArenaError,
-    pub(crate) closure: SealedNodeClosure<Role>,
-}
-
-impl<Role> SealedNodeClosureError<Role> {
-    pub(crate) fn into_parts(self) -> (ForkArenaError, SealedNodeClosure<Role>) {
-        (self.error, self.closure)
-    }
-}
-
 /// Failed seal with the original move-only construction authority restored.
 pub(crate) struct ClosureSealError<Role> {
     pub(crate) error: ForkArenaError,
@@ -1479,86 +1335,6 @@ impl OwnedNodeClosure<DurableRole> {
         }
         Ok(previous)
     }
-}
-
-/// Commits a detached construction suffix into a destination region. Failed
-/// destination validation returns the move-only suffix loan unchanged.
-#[allow(clippy::result_large_err)] // Failure returns the move-only closure loan without allocation.
-pub(crate) fn transfer_sealed_closure_into<Source, Destination>(
-    pool: &mut NodePool,
-    source: &mut NodeRegion<Source>,
-    closure: SealedNodeClosure<Source>,
-    destination: &mut NodeRegion<Destination>,
-) -> Result<RegionRoot<Destination>, SealedNodeClosureError<Source>> {
-    if pool.validate_region(source).is_err()
-        || pool.validate_region(destination).is_err()
-        || closure.source != source.id
-        || closure.root.region != source.id
-    {
-        return Err(SealedNodeClosureError {
-            error: ForkArenaError::InvalidRegion,
-            closure,
-        });
-    }
-    let original_root = closure.root;
-    if let Err(error) = source.pub_arena.can_promote_detached_batch_into(
-        &pool.chunks,
-        &destination.pub_arena,
-        &closure.batch.nodes,
-    ) {
-        return Err(SealedNodeClosureError { error, closure });
-    }
-    if let Err(error) = source.annex_arena.can_promote_detached_batch_into(
-        &pool.annex_chunks,
-        &destination.annex_arena,
-        &closure.batch.annex,
-    ) {
-        return Err(SealedNodeClosureError { error, closure });
-    }
-    let source_annex_start = closure.batch.annex.payload_start();
-    let destination_node_start = destination.pub_arena.live_payload_chunks();
-    let destination_annex_start = destination.annex_arena.live_payload_chunks();
-    let (coordinates, scanned) = source
-        .pub_arena
-        .promote_detached_batch_into(
-            &mut pool.chunks,
-            &mut destination.pub_arena,
-            closure.batch.nodes,
-        )
-        .unwrap_or_else(|_| unreachable!("paired node transfer was preflighted"));
-    let (annex_roots, annex_scanned) = source
-        .annex_arena
-        .promote_detached_batch_into(
-            &mut pool.annex_chunks,
-            &mut destination.annex_arena,
-            closure.batch.annex,
-        )
-        .unwrap_or_else(|_| unreachable!("paired annex transfer was preflighted"));
-    debug_assert!(annex_roots.is_empty());
-    debug_assert_eq!(annex_scanned, 0);
-    destination
-        .pub_arena
-        .rebase_paired_dependency_suffix(
-            &mut pool.chunks,
-            destination_node_start,
-            source_annex_start,
-            destination_annex_start,
-        )
-        .expect("paired detached transfer preserves relative annex floors");
-    let [coordinate]: [_; 1] = coordinates
-        .try_into()
-        .expect("one sealed closure root produces one transferred root");
-    pool.closure_transitions.envelope_moves =
-        pool.closure_transitions.envelope_moves.saturating_add(1);
-    pool.closure_transitions.rebrand_scan_nodes = pool
-        .closure_transitions
-        .rebrand_scan_nodes
-        .saturating_add(scanned);
-    Ok(RegionRoot {
-        region: destination.id,
-        list: original_root.list.with_coordinate(coordinate),
-        _role: PhantomData,
-    })
 }
 
 /// Moves a completed, exclusively consumed box interval that precedes the
@@ -1890,105 +1666,61 @@ pub(crate) fn transfer_closure_into<Source, Destination>(
 ) -> Result<RegionRoot<Destination>, ForkArenaError> {
     let source_node_base = closure.region.pub_arena.payload_base_position();
     let source_annex_base = closure.region.annex_arena.payload_base_position();
-    let preflight = pool
-        .validate_region(&closure.region)
-        .and_then(|()| pool.validate_region(destination))
-        .and_then(|()| {
-            if closure.root.region != closure.region.id {
-                return Err(ForkArenaError::InvalidRegion);
-            }
-            closure.region.pub_arena.preflight_whole_region_transfer(
-                &pool.chunks,
-                &destination.pub_arena,
-                Some(closure.root.list.coordinate()),
-            )?;
-            closure.region.annex_arena.preflight_whole_region_transfer(
-                &pool.annex_chunks,
-                &destination.annex_arena,
-                None,
-            )?;
-            closure.region.pub_arena.preflight_paired_dependency_floor(
-                &pool.chunks,
-                &[closure.root.list.coordinate()],
-                source_node_base,
-                source_annex_base,
-            )?;
-            let nodes = closure.region.pub_arena.payload_position_end() - source_node_base;
-            let annex = closure.region.annex_arena.payload_position_end() - source_annex_base;
-            if destination
-                .pub_arena
-                .payload_position_end()
-                .checked_add(nodes)
-                .is_none_or(|end| end > u32::MAX as usize)
-                || destination
-                    .annex_arena
-                    .payload_position_end()
-                    .checked_add(annex)
-                    .is_none_or(|end| end > u32::MAX as usize)
-            {
-                return Err(ForkArenaError::CapacityOverflow);
-            }
-            Ok(())
-        });
-    preflight?;
+    pool.validate_region(&closure.region)?;
+    pool.validate_region(destination)?;
+    if closure.root.region != closure.region.id {
+        return Err(ForkArenaError::InvalidRegion);
+    }
+    if closure.region.pub_arena.is_forked() || closure.region.annex_arena.is_forked() {
+        return Err(ForkArenaError::AlreadyForked);
+    }
+    // The whole owner is the suffix from its base, so one proof per lane
+    // covers ownership, closure, both floor bounds, and capacity.
+    closure.region.pub_arena.preflight_suffix_move(
+        &pool.chunks,
+        &destination.pub_arena,
+        source_node_base,
+        &[closure.root.list.coordinate()],
+        Some(source_annex_base),
+    )?;
+    closure.region.annex_arena.preflight_suffix_move(
+        &pool.annex_chunks,
+        &destination.annex_arena,
+        source_annex_base,
+        &[],
+        None,
+    )?;
 
     #[cfg(feature = "profiling")]
     {
         closure.profiled_fresh_recursive_copy = false;
     }
 
-    let batch = closure
-        .region
-        .pub_arena
-        .seal_whole_region_batch(&mut pool.chunks, Some(closure.root.list.coordinate()))
-        .expect("whole-region transfer was preflighted");
-    let annex_batch = closure
-        .region
-        .annex_arena
-        .seal_whole_region_batch(&mut pool.annex_chunks, None)
-        .expect("whole-region annex transfer was preflighted");
-    let destination_node_start = destination.pub_arena.live_payload_chunks();
     let destination_annex_start = destination.annex_arena.live_payload_chunks();
-    let promoted = closure
-        .region
-        .pub_arena
-        .promote_whole_region_into(&mut pool.chunks, &mut destination.pub_arena, batch)
-        .expect("whole-region promotion was preflighted");
-    let annex_promoted = closure
-        .region
-        .annex_arena
-        .promote_whole_region_into(
-            &mut pool.annex_chunks,
-            &mut destination.annex_arena,
-            annex_batch,
-        )
-        .expect("whole-region annex promotion was preflighted");
-    debug_assert!(annex_promoted.is_none());
-    destination
-        .pub_arena
-        .rebase_dependency_suffix(&mut pool.chunks, destination_node_start, source_node_base)
-        .expect("whole-region node dependency floors were preflighted");
-    destination
-        .annex_arena
-        .rebase_dependency_suffix(
-            &mut pool.annex_chunks,
-            destination_annex_start,
-            source_annex_base,
-        )
-        .expect("whole-region annex dependency floors were preflighted");
-    destination
-        .pub_arena
-        .rebase_paired_dependency_suffix(
-            &mut pool.chunks,
-            destination_node_start,
-            source_annex_base,
-            destination_annex_start,
-        )
-        .expect("paired whole-region transfer preserves relative annex floors");
-    let coordinate = promoted.expect("one declared closure root produces one promoted root");
+    closure.region.pub_arena.move_proved_suffix_into(
+        &mut pool.chunks,
+        &mut destination.pub_arena,
+        source_node_base,
+        SuffixFloorRebase {
+            nodes: true,
+            paired: Some(PairedFloorRebase {
+                source: source_annex_base,
+                destination: destination_annex_start,
+            }),
+        },
+    );
+    closure.region.annex_arena.move_proved_suffix_into(
+        &mut pool.annex_chunks,
+        &mut destination.annex_arena,
+        source_annex_base,
+        SuffixFloorRebase {
+            nodes: true,
+            paired: None,
+        },
+    );
     let root = RegionRoot {
         region: destination.id,
-        list: closure.root.list.with_coordinate(coordinate),
+        list: closure.root.list,
         _role: PhantomData,
     };
     pool.retire_region_in_place(&mut closure.region)
