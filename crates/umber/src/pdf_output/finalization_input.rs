@@ -2,7 +2,7 @@
 
 mod virtual_fonts;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 use tex_out::pdf::{
@@ -159,14 +159,7 @@ pub(crate) fn positioned_pdf_finalization_input(
         .into_iter()
         .map(|entry| (entry.tex_name.clone(), entry))
         .collect::<BTreeMap<_, _>>();
-    let glyph_mappings = pdf
-        .font_operations()
-        .iter()
-        .filter_map(|operation| match operation {
-            DetachedPdfFontOperation::GlyphToUnicode(mapping) => Some(mapping),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
+    let glyph_mappings = GlyphToUnicodeIndex::new(pdf);
     let configuration = pdf.font_configuration();
     let mut fonts = BTreeMap::new();
     for detached in pdf.fonts() {
@@ -410,29 +403,54 @@ pub(crate) fn positioned_pdf_finalization_input(
     Ok((input, lowered))
 }
 
-fn glyph_to_unicode_mapping<'a>(
-    mappings: &'a [&tex_state::PdfGlyphToUnicode],
-    tfm_name: &[u8],
-    glyph_name: &[u8],
-) -> Option<&'a tex_state::PdfGlyphToUnicode> {
-    mappings
-        .iter()
-        .rev()
-        .find(|mapping| {
-            mapping.tfm_name.as_deref() == Some(tfm_name) && mapping.glyph_name == glyph_name
-        })
-        .copied()
-        .or_else(|| {
-            mappings
+/// The document's `\pdfglyphtounicode` assignments, keyed by TFM namespace
+/// and glyph name. A later assignment replaces an earlier one with the same
+/// key, as pdfTeX's hash-table insertion does.
+pub(super) struct GlyphToUnicodeIndex<'a> {
+    mappings: HashMap<(Option<&'a [u8]>, &'a [u8]), &'a tex_state::PdfGlyphToUnicode>,
+}
+
+impl<'a> GlyphToUnicodeIndex<'a> {
+    pub(super) fn new(pdf: &'a DetachedPdfCompletion) -> Self {
+        Self::from_mappings(
+            pdf.font_operations()
                 .iter()
-                .rev()
-                .find(|mapping| mapping.tfm_name.is_none() && mapping.glyph_name == glyph_name)
-                .copied()
-        })
+                .filter_map(|operation| match operation {
+                    DetachedPdfFontOperation::GlyphToUnicode(mapping) => Some(mapping),
+                    _ => None,
+                }),
+        )
+    }
+
+    fn from_mappings(mappings: impl IntoIterator<Item = &'a tex_state::PdfGlyphToUnicode>) -> Self {
+        Self {
+            mappings: mappings
+                .into_iter()
+                .map(|mapping| {
+                    (
+                        (mapping.tfm_name.as_deref(), mapping.glyph_name.as_slice()),
+                        mapping,
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.mappings.is_empty()
+    }
+
+    /// A mapping in `tfm_name`'s namespace precedes a global one.
+    fn get(&self, tfm_name: &[u8], glyph_name: &[u8]) -> Option<&'a tex_state::PdfGlyphToUnicode> {
+        self.mappings
+            .get(&(Some(tfm_name), glyph_name))
+            .or_else(|| self.mappings.get(&(None, glyph_name)))
+            .copied()
+    }
 }
 
 fn glyph_to_unicode_mappings(
-    mappings: &[&tex_state::PdfGlyphToUnicode],
+    mappings: &GlyphToUnicodeIndex<'_>,
     tfm_name: &[u8],
     glyph_names: impl IntoIterator<Item = Vec<u8>>,
 ) -> BTreeMap<Vec<u8>, Vec<u32>> {
@@ -452,7 +470,8 @@ fn glyph_to_unicode_mappings(
     lookup_names
         .into_iter()
         .filter_map(|name| {
-            glyph_to_unicode_mapping(mappings, tfm_name, &name)
+            mappings
+                .get(tfm_name, &name)
                 .map(|mapping| (name, mapping.unicode.clone()))
         })
         .collect()
@@ -778,7 +797,7 @@ fn annotation_dimensions(dimensions: PdfAnnotationDimensions) -> PdfAnnotationDi
 
 #[cfg(test)]
 mod tests {
-    use super::{glyph_to_unicode_mapping, glyph_to_unicode_mappings};
+    use super::{GlyphToUnicodeIndex, glyph_to_unicode_mappings};
     use tex_state::PdfGlyphToUnicode;
 
     #[test]
@@ -795,11 +814,11 @@ mod tests {
         };
 
         assert_eq!(
-            glyph_to_unicode_mapping(&[&scoped, &later_global], b"cmr10", b"A"),
+            GlyphToUnicodeIndex::from_mappings([&scoped, &later_global]).get(b"cmr10", b"A"),
             Some(&scoped)
         );
         assert_eq!(
-            glyph_to_unicode_mapping(&[&scoped, &later_global], b"cmr7", b"A"),
+            GlyphToUnicodeIndex::from_mappings([&scoped, &later_global]).get(b"cmr7", b"A"),
             Some(&later_global)
         );
     }
@@ -818,7 +837,7 @@ mod tests {
             glyph_name: glyph_name.to_vec(),
             unicode,
         });
-        let references = mappings.iter().collect::<Vec<_>>();
+        let references = GlyphToUnicodeIndex::from_mappings(&mappings);
 
         assert_eq!(
             glyph_to_unicode_mappings(

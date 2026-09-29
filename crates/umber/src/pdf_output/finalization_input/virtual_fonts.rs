@@ -7,10 +7,7 @@ use tex_arith::{FontSizeSpec, Scaled, tfm_fix_word_to_scaled};
 use tex_fonts::{RealizedFontIdentity, VfCommand};
 use tex_out::pdf::{PdfFontInput, PdfFontMetricsInput, PdfFontProgramInput};
 use tex_out::{FontResource, FontResourceConstruction};
-use tex_state::{
-    DetachedPdfCompletion, DetachedPdfFontOperation, FontArtifactConstructionRecipe,
-    FontArtifactRecipe,
-};
+use tex_state::{DetachedPdfCompletion, FontArtifactConstructionRecipe, FontArtifactRecipe};
 
 use super::{detached_encoding, detached_font_program, glyph_to_unicode_mappings};
 use crate::PdfBuildError;
@@ -145,14 +142,7 @@ pub(super) fn materialize_destination_font_instances(
         .into_iter()
         .map(|entry| (entry.tex_name.clone(), entry))
         .collect::<BTreeMap<_, _>>();
-    let glyph_mappings = pdf
-        .font_operations()
-        .iter()
-        .filter_map(|operation| match operation {
-            DetachedPdfFontOperation::GlyphToUnicode(mapping) => Some(mapping),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
+    let glyph_mappings = super::GlyphToUnicodeIndex::new(pdf);
     let mut pending = roots;
     let mut visited = BTreeSet::new();
     let mut loaded_virtual_fonts = BTreeSet::new();
@@ -280,7 +270,7 @@ fn materialize_local_instance(
     resources: &crate::PdfVirtualFontResources,
     driver_dpi: i32,
     resolved_map: &BTreeMap<Vec<u8>, tex_fonts::PdfFontMapEntry>,
-    glyph_mappings: &[&tex_state::PdfGlyphToUnicode],
+    glyph_mappings: &super::GlyphToUnicodeIndex<'_>,
     parent: &LocalInstance,
     number: i32,
     fonts: &mut BTreeMap<RealizedFontIdentity, PdfFontInput>,
