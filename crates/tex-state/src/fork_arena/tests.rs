@@ -1514,11 +1514,10 @@ fn canonical_forward_range_beats_compatibility_iteration_at_required_chunk_count
         assert!(completed.is_continue());
         assert_eq!(compatibility_checksum, expected_checksum);
         assert_eq!(direct_checksum, expected_checksum);
-        assert_eq!(compatibility_resolutions, u64::from(chunks));
-        assert_eq!(
-            compatibility_steps,
-            u64::from(chunks) * u64::from(chunks - 1) / 2
-        );
+        // The iterator resolves its front once and, at its first crossing,
+        // records the remaining chain once; the walk stays linear.
+        assert_eq!(compatibility_resolutions, if chunks == 1 { 1 } else { 2 });
+        assert_eq!(compatibility_steps, u64::from(chunks - 1));
         assert_eq!(direct_resolutions, 0);
         assert_eq!(direct_steps, 0);
         assert_eq!(direct_crossings, u64::from(chunks - 1));

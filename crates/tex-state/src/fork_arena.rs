@@ -6366,8 +6366,10 @@ impl<'a, T, Lane> ArenaListView<'a, T, Lane> {
             view: *self,
             front,
             back,
+            front_position: front_span.map_or(u32::MAX, |(cursor, _)| cursor.position),
             front_chunk,
             back_chunk,
+            forward_chunks: Vec::new(),
             forward_chunk_crossings: 0,
             reverse_chunk_crossings: 0,
         }
@@ -6911,13 +6913,44 @@ pub struct ArenaListIter<'arena, T, Lane> {
     view: ArenaListView<'arena, T, Lane>,
     front: usize,
     back: usize,
+    /// Arena position of the chunk that `front_chunk` reads.
+    front_position: u32,
     front_chunk: Option<DenseBlockIter<'arena, T>>,
     back_chunk: Option<DenseBlockIter<'arena, T>>,
+    /// Chunks after the front chunk, nearest last, with their list end
+    /// offsets. Lists link only to predecessors, so the first forward
+    /// crossing records the remaining chain once instead of re-walking it
+    /// from the tail at every crossing.
+    forward_chunks: Vec<(AdmittedChunkCursor<Lane>, u32)>,
     forward_chunk_crossings: usize,
     reverse_chunk_crossings: usize,
 }
 
 impl<T, Lane> ArenaListIter<'_, T, Lane> {
+    /// Advances `front_chunk` to the chunk after the exhausted front chunk.
+    fn cross_forward(&mut self) {
+        if self.forward_chunks.is_empty() {
+            let Some((mut cursor, mut end)) = self.view.cursor_span_at_node(self.back - 1) else {
+                self.front_chunk = None;
+                return;
+            };
+            while cursor.position != self.front_position {
+                self.forward_chunks.push((cursor, end));
+                let Some(previous) = self.view.previous_cursor(cursor) else {
+                    self.forward_chunks.clear();
+                    break;
+                };
+                end = previous.offset;
+                cursor = previous;
+            }
+        }
+        self.front_chunk = self.forward_chunks.pop().and_then(|(cursor, end)| {
+            self.front_position = cursor.position;
+            self.view.chunk_iter(cursor, 0..end)
+        });
+        self.forward_chunk_crossings = self.forward_chunk_crossings.saturating_add(1);
+    }
+
     /// Number of actual packed-block boundaries crossed by reverse traversal.
     #[must_use]
     pub const fn reverse_chunk_crossings(&self) -> usize {
@@ -6943,9 +6976,7 @@ impl<'arena, T, Lane> Iterator for ArenaListIter<'arena, T, Lane> {
         if self.front == self.back {
             self.front_chunk = None;
         } else if self.front_chunk.as_ref()?.len() == 0 {
-            let (cursor, end) = self.view.cursor_span_at_node(self.front)?;
-            self.front_chunk = self.view.chunk_iter(cursor, cursor.offset..end);
-            self.forward_chunk_crossings = self.forward_chunk_crossings.saturating_add(1);
+            self.cross_forward();
         }
         Some(value)
     }

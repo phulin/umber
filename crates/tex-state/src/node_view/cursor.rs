@@ -589,6 +589,10 @@ impl<'a> IntoIterator for NodeCursor<'a> {
     }
 }
 
+#[allow(
+    clippy::large_enum_variant,
+    reason = "a stack-local iterator; boxing the arena walk would allocate per traversal"
+)]
 pub enum NodeCursorIter<'a> {
     Slice(core::slice::Iter<'a, Node>),
     Fork(
