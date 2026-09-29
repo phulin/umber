@@ -95,8 +95,14 @@ impl PdfDocument {
         }
         pdf.set_trailer_raw_entries(self.trailer().raw_entries.clone());
 
+        // Stream compression is the dominant serialization cost and is a pure
+        // function of each payload, so compress every flate stream up front
+        // (in parallel on native hosts) and consume the results in order.
+        let mut precompressed =
+            precompress_streams(&self.0.objects, options.stream_compression).into_iter();
         for indirect in graph.objects() {
             let reference = writer_ref(indirect.id)?;
+            let compressed = precompressed.next().flatten().transpose()?;
             if indirect.role == PdfObjectRole::Catalog {
                 let PdfObject::Value(PdfValue::Dictionary(dictionary)) = indirect.object else {
                     unreachable!("validated PDF catalog is a dictionary")
@@ -259,13 +265,9 @@ impl PdfDocument {
                         .rectangle(writer_ref(bead.rectangle)?);
                     writer.finish();
                 }
-                PdfObject::Stream { dictionary, data } => write_stream(
-                    &mut pdf,
-                    reference,
-                    dictionary,
-                    data,
-                    options.stream_compression,
-                )?,
+                PdfObject::Stream { dictionary, data } => {
+                    write_stream(&mut pdf, reference, dictionary, data, compressed)?
+                }
                 PdfObject::EncodedStream { dictionary, data } => {
                     write_encoded_stream(&mut pdf, reference, dictionary, data)?
                 }
@@ -275,13 +277,7 @@ impl PdfDocument {
                     bbox,
                     matrix,
                 } => write_form_xobject(
-                    &mut pdf,
-                    reference,
-                    dictionary,
-                    data,
-                    *bbox,
-                    *matrix,
-                    options.stream_compression,
+                    &mut pdf, reference, dictionary, data, *bbox, *matrix, compressed,
                 )?,
                 PdfObject::ImageXObject {
                     image,
@@ -574,10 +570,10 @@ fn write_form_xobject(
     data: &[u8],
     bbox: [PdfNumber; 4],
     matrix: Option<[PdfNumber; 6]>,
-    compression: PdfStreamCompression,
+    compressed: Option<Vec<u8>>,
 ) -> Result<(), PdfSerializeError> {
-    match compression {
-        PdfStreamCompression::None => {
+    match compressed {
+        None => {
             let mut form = pdf.form_xobject(reference, data);
             form.raw_entries(dictionary.raw_entries());
             write_fixed_number_array(form.insert(Name(b"BBox")), &bbox);
@@ -587,8 +583,7 @@ fn write_form_xobject(
             write_form_entries(&mut form, dictionary)?;
             form.finish();
         }
-        PdfStreamCompression::Flate { level } => {
-            let compressed = deflate(data, level)?;
+        Some(compressed) => {
             let mut form = pdf.form_xobject(reference, &compressed);
             form.raw_entries(dictionary.raw_entries());
             write_fixed_number_array(form.insert(Name(b"BBox")), &bbox);
@@ -630,16 +625,15 @@ fn write_stream(
     reference: Ref,
     dictionary: &PdfDictionary,
     data: &[u8],
-    compression: PdfStreamCompression,
+    compressed: Option<Vec<u8>>,
 ) -> Result<(), PdfSerializeError> {
-    match compression {
-        PdfStreamCompression::None => {
+    match compressed {
+        None => {
             let mut stream = pdf.stream(reference, data);
             write_dictionary_entries(&mut stream, dictionary, None)?;
             stream.finish();
         }
-        PdfStreamCompression::Flate { level } => {
-            let compressed = deflate(data, level)?;
+        Some(compressed) => {
             let mut stream = pdf.stream(reference, &compressed);
             stream.filter(Filter::FlateDecode);
             write_dictionary_entries(&mut stream, dictionary, None)?;
@@ -659,6 +653,23 @@ fn write_encoded_stream(
     write_dictionary_entries(&mut stream, dictionary, None)?;
     stream.finish();
     Ok(())
+}
+
+/// Flate-compresses each stream and form payload under `compression`, in
+/// object order; other objects and uncompressed output yield `None`.
+fn precompress_streams(
+    objects: &[super::PdfIndirectObject],
+    compression: PdfStreamCompression,
+) -> Vec<Option<Result<Vec<u8>, PdfSerializeError>>> {
+    let PdfStreamCompression::Flate { level } = compression else {
+        return Vec::new();
+    };
+    crate::parallel::map_ordered(objects, |_, indirect| match &indirect.object {
+        PdfObject::Stream { data, .. } | PdfObject::FormXObject { data, .. } => {
+            Some(deflate(data, level))
+        }
+        _ => None,
+    })
 }
 
 fn deflate(data: &[u8], level: u8) -> Result<Vec<u8>, PdfSerializeError> {

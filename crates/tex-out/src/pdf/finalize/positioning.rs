@@ -25,6 +25,17 @@ impl PdfPositionedArtifacts {
         pages: &[super::super::PdfCommittedPageInput],
         forms: &BTreeMap<u32, super::super::PdfFormInput>,
     ) -> Result<Self, PdfBuildError> {
+        // Pages lower independently; the ordered map keeps output and the
+        // first reported error identical to a sequential pass.
+        let lowered_pages = crate::parallel::map_ordered(pages, |page_index, record| {
+            let artifact = PageArtifact::from_bytes(&record.artifact_bytes)?;
+            let extents = pdf_page_extents(&artifact, record)?;
+            let page = crate::positioned::lower_page(
+                &artifact,
+                u32::try_from(page_index).unwrap_or(u32::MAX),
+            )?;
+            Ok::<_, PdfBuildError>((extents, page))
+        });
         let mut lowered = Self {
             pages: Vec::with_capacity(pages.len()),
             page_extents: Vec::with_capacity(pages.len()),
@@ -32,15 +43,10 @@ impl PdfPositionedArtifacts {
             forms: Vec::with_capacity(forms.len()),
             form_sources: Vec::with_capacity(forms.len()),
         };
-        for (page_index, record) in pages.iter().enumerate() {
-            let artifact = PageArtifact::from_bytes(&record.artifact_bytes)?;
-            lowered
-                .page_extents
-                .push(pdf_page_extents(&artifact, record)?);
-            lowered.pages.push(crate::positioned::lower_page(
-                &artifact,
-                u32::try_from(page_index).unwrap_or(u32::MAX),
-            )?);
+        for (result, record) in lowered_pages.into_iter().zip(pages) {
+            let (extents, page) = result?;
+            lowered.page_extents.push(extents);
+            lowered.pages.push(page);
             lowered.page_sources.push(record.artifact_bytes.clone());
         }
         for form in forms.values() {

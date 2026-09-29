@@ -36,6 +36,7 @@ mod geometry;
 pub mod html;
 mod model;
 mod node_cursor;
+mod parallel;
 pub mod pdf;
 pub mod positioned;
 mod snapping;

@@ -42,6 +42,7 @@ Use this crate for stable, driver-facing artifact structures and serialization c
 - `src/html/incremental/patch.rs`: deterministic bounded typed diff planning from one canonical render revision to its successor.
 - `src/html/tests.rs`: deterministic-byte, exact-metadata, mapping-failure, and injection regression tests.
 - `src/lib.rs`: Crate documentation, module wiring, tests module registration, and public re-exports.
+- `src/parallel.rs`: Order-preserving scoped-thread map for independent finalization work (page lowering, stream deflate); sequential on wasm.
 - `src/model.rs`: Detached page artifact, versioned font-layout/classic/OpenType identities, node, glue, kern, and output effect data model.
 - `src/node_cursor.rs`: Canonical explicit-stack artifact node/list event order shared by codec emission and validation.
 - `src/pdf.rs`: validated detached PDF object/page/resource graph, canonical ordering, and semantic identity.
