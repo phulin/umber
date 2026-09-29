@@ -6425,22 +6425,32 @@ impl<'a, T, Lane> ArenaListView<'a, T, Lane> {
                 .get()
                 .saturating_add(1),
         );
-        let mut cursor = self.root.tail;
+        // Walk predecessor links by logical key alone; only the chunk that
+        // holds `index` needs its arena position and physical block.
+        let mut key = self.list.tail.raw;
+        let mut end = self.root.tail.offset;
         let mut remaining = self.len() - index;
         loop {
-            let start = if cursor.position == self.root.head.position {
-                self.root.head.offset
-            } else {
-                0
-            };
-            if cursor.offset < start {
-                return None;
-            }
-            let available = (cursor.offset - start) as usize;
+            let is_head = key == self.list.head.raw;
+            let start = if is_head { self.root.head.offset } else { 0 };
+            let available = end.checked_sub(start)? as usize;
             if remaining <= available {
-                let block_end = cursor.offset;
-                cursor.offset -= remaining as u32;
-                return Some((cursor, block_end));
+                let mut cursor = if key == self.list.tail.raw {
+                    self.root.tail
+                } else if is_head {
+                    self.root.head
+                } else {
+                    let (position, block) = self
+                        .pool
+                        .payload
+                        .admitted_chunk_coordinate(key, self.arena.lineage)?;
+                    AdmittedChunkCursor::new(u32::try_from(position).ok()?, block, end)
+                };
+                cursor.offset = end - remaining as u32;
+                return Some((cursor, end));
+            }
+            if is_head {
+                return None;
             }
             remaining -= available;
             #[cfg(any(test, feature = "testing"))]
@@ -6451,7 +6461,7 @@ impl<'a, T, Lane> ArenaListView<'a, T, Lane> {
                     .get()
                     .saturating_add(1),
             );
-            cursor = self.previous_cursor(cursor)?;
+            (key, end) = self.pool.payload.admitted_previous_link(key)?;
         }
     }
 
