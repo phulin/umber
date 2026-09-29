@@ -2033,6 +2033,7 @@ impl<G> InputStack<G> {
     /// checkpoint begins or a pop exposes it, before control can return to a
     /// token consumer. Cursor advancement can therefore update only the
     /// authoritative row and perform no rollback test or journal access.
+    #[inline]
     fn capture_exposed_top(&mut self) {
         if !self.recording {
             return;
@@ -2043,6 +2044,12 @@ impl<G> InputStack<G> {
         if self.rows[index].rollback_marker().in_epoch(self.interval) {
             return;
         }
+        self.capture_uncaptured_row(index);
+    }
+
+    /// Records the first in-epoch rollback state of the exposed row.
+    #[inline(never)]
+    fn capture_uncaptured_row(&mut self, index: usize) {
         match &self.rows[index] {
             InputLevel::Source(source) => {
                 let state = SourceLexExecutionState::capture(source, self.source_slot(source.slot));
