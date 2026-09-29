@@ -1505,6 +1505,21 @@ impl DurableBoxState {
             || self.checkpoint_stamps.get(&index).copied() == Some(self.checkpoint_epoch)
     }
 
+    /// Whether an assignment to `index` in `scope` at `current_level`
+    /// replaces its binding without saving the previous value, as TeX82
+    /// §277/§279's `eq_define` at the binding's own level and
+    /// `geq_define` do.
+    pub(crate) fn assignment_destroys_binding(
+        &self,
+        index: u16,
+        scope: super::AssignmentScope,
+        current_level: u32,
+    ) -> bool {
+        scope == super::AssignmentScope::Global
+            || current_level == LEVEL_ONE
+            || self.cell(index).map_or(LEVEL_ONE, |cell| cell.level) == current_level
+    }
+
     pub(crate) fn has_unique_current(&self, index: u16) -> bool {
         self.cell(index).and_then(|cell| cell.value).is_some() && self.can_take_unique(index)
     }

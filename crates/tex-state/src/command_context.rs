@@ -1881,6 +1881,25 @@ impl<'a, G> CommandContext<'a, G> {
             && self.durable_boxes.has_unique_current(source)
     }
 
+    /// Whether `\setbox<index>=\copy<index>` in `scope` can move the
+    /// register's closure instead of copying it.
+    ///
+    /// TeX82 §1077 assigns the copy with `eq_define` or `geq_define`. When
+    /// that assignment destroys rather than saves the old binding, the old
+    /// box is unobservable afterwards, so moving the source into its own
+    /// binding leaves exactly the state the copy would. `\tracingassigns`
+    /// reports the old value before the change and keeps the copying path.
+    #[must_use]
+    pub fn self_copy_moves_box_register(&self, index: u16, scope: AssignmentScope) -> bool {
+        self.int_param(IntParam::TRACING_ASSIGNS) <= 0
+            && self.durable_boxes.assignment_destroys_binding(
+                index,
+                scope,
+                self.admitted.state_ref().current_level(),
+            )
+            && self.can_take_unique_box_source(index)
+    }
+
     /// A live box 255 carrier can consume its unretained page region only
     /// through the actual PageBuilder slot and a mode-root preflight.
     #[must_use]

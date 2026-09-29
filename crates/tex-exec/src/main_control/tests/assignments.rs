@@ -3042,3 +3042,62 @@ fn margin_filtered_unbox_keeps_siblings_and_moves_lastbox_body() {
         });
     }
 }
+
+#[test]
+fn same_level_self_copy_moves_the_register_closure() {
+    // TeX82 §1077 destroys the binding a same-level `\setbox` replaces, so
+    // `\setbox0=\copy0` leaves exactly the state of moving box 0 into itself.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\setbox0=\hbox to3pt{\kern1pt\hbox{\kern2pt}}\setbox0=\copy0 \wd0=7pt
+               {\global\setbox0=\copy0}\count1=\wd0 \shipout\box0\end",
+        );
+        run_to_end(&mut control, stores);
+
+        assert_eq!(stores.count(1).expect("moved width"), 7 * 65536);
+        assert_eq!(stores.world().committed_artifacts().len(), 1);
+        assert_eq!(stores.page_region_counters().tex_copy_nodes_copied, 0);
+    });
+}
+
+#[test]
+fn inner_level_self_copy_preserves_the_saved_binding() {
+    // An inner-group `\setbox0=\copy0` saves the outer binding (§279's
+    // `eq_save`), so the old box must survive the local dimension change.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\setbox0=\hbox to3pt{\kern1pt}{\setbox0=\copy0 \wd0=9pt \global\count1=\wd0}
+               \count2=\wd0 \end",
+        );
+        run_to_end(&mut control, stores);
+
+        assert_eq!(stores.count(1).expect("inner width"), 9 * 65536);
+        assert_eq!(stores.count(2).expect("restored width"), 3 * 65536);
+        assert!(stores.page_region_counters().tex_copy_nodes_copied > 0);
+    });
+}
+
+#[test]
+fn traced_self_copy_reports_the_replaced_box() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = etex_initex(stores);
+        register_source(
+            &mut control,
+            br"\setbox0=\hbox to2pt{}\tracingonline=1\tracingassigns=1 \setbox0=\copy0 \end",
+        );
+        run_to_end(&mut control, stores);
+
+        assert_eq!(
+            pending_sink_text(stores, true),
+            concat!(
+                "{into \\tracingassigns=1}\n",
+                "{changing \\box0=\n\\hbox(0.0+0.0)x2.0}\n",
+                "{into \\box0=\n\\hbox(0.0+0.0)x2.0}\n",
+            )
+        );
+    });
+}

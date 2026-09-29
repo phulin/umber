@@ -2533,7 +2533,21 @@ pub(in crate::main_control) fn apply<G>(
                         report_improper_setbox(context, stores, command.diagnostic_effects)?;
                     }
                     ScannedBoxShiftPayload::BoxRegister { index, copy } => {
-                        if !*copy && stores.can_take_unique_box_source(*index) {
+                        let moves = if *copy {
+                            let target = &boxes
+                                .pending_setbox
+                                .as_ref()
+                                .expect("setbox target remains pending")
+                                .target;
+                            target.index == *index
+                                && stores.self_copy_moves_box_register(
+                                    *index,
+                                    assignment_scope(target.global),
+                                )
+                        } else {
+                            stores.can_take_unique_box_source(*index)
+                        };
+                        if moves {
                             let pending = boxes
                                 .pending_setbox
                                 .take()
