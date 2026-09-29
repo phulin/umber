@@ -6,7 +6,7 @@ import {
 const DEFAULT_LIMITS = Object.freeze({
 	attempts: 32,
 	userFiles: 512,
-	resolvedFiles: 512,
+	resolvedFiles: 2048,
 	oneFileBytes: 96 * 1024 * 1024,
 	cachedFileBytes: 64 * 1024 * 1024,
 	userSourceBytes: 16 * 1024 * 1024,

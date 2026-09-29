@@ -146,7 +146,7 @@ impl Default for VfsLimits {
     fn default() -> Self {
         Self {
             user_files: 512,
-            resolved_files: 512,
+            resolved_files: 2048,
             stage_files: 512,
             generated_files: 2048,
             one_file_bytes: 96 * 1024 * 1024,

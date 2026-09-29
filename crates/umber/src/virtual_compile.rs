@@ -192,7 +192,7 @@ impl Default for SessionLimits {
         Self {
             attempts: 32,
             user_files: 512,
-            resolved_files: 512,
+            resolved_files: 2048,
             one_file_bytes: 96 * 1024 * 1024,
             cached_file_bytes: 64 * 1024 * 1024,
             user_source_bytes: 16 * 1024 * 1024,
