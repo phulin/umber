@@ -132,6 +132,21 @@ impl<'a> DirectNodeView<'a> {
         }
     }
 
+    /// Whether this is glue with a leader, decoding no leader payload.
+    #[must_use]
+    pub fn has_glue_leader(self) -> bool {
+        match self.source {
+            DirectNodeSource::Owned(node) => matches!(
+                node,
+                Node::Glue {
+                    leader: Some(_),
+                    ..
+                }
+            ),
+            DirectNodeSource::Page(node) => node.has_glue_leader(),
+        }
+    }
+
     #[must_use]
     pub fn direction(self) -> Option<crate::node::Direction> {
         match self.source {

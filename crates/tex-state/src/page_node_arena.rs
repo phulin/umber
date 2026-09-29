@@ -312,6 +312,11 @@ impl<'a> PageMaterialNodeRef<'a> {
     }
 
     #[must_use]
+    pub fn has_glue_leader(self) -> bool {
+        self.record.has_glue_leader()
+    }
+
+    #[must_use]
     pub fn is_math_on(self) -> bool {
         self.record.is_math_on()
     }

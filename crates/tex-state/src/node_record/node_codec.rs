@@ -489,6 +489,12 @@ impl NodeRecord<PageMaterialLane> {
         self.kind() == Some(NodeKind::Glue)
     }
 
+    /// Whether this is glue carrying a rule or box leader, without decoding
+    /// the leader payload.
+    pub(crate) fn has_glue_leader(self) -> bool {
+        self.is_glue() && self.flags() & 3 != 0
+    }
+
     pub(crate) fn penalty(self) -> Option<i32> {
         (self.kind()? == NodeKind::Penalty
             && self.subtype() == 0

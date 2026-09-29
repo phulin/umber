@@ -239,20 +239,24 @@ fn normalization_work_cursor(
     let mut permutation = (box_lr != tex_state::node::BoxLr::Reversed)
         .then(|| DirectionPermutationBuilder::new(nodes.len()));
     let mut active_indices = SmallVec::<[usize; 32]>::new();
-    nodes.for_each_range(0..nodes.len(), |index, node| {
-        if node_view_requires_normalization(&node) {
-            active_indices.push(index);
-        }
-        if let Some(permutation) = &mut permutation {
-            permutation.push(
-                index,
-                match node {
-                    tex_state::NodeView::Direction(direction) => Some(direction),
-                    _ => None,
-                },
-            );
-        }
-    });
+    // Classify borrowed records by kind; only the active subset is decoded,
+    // later, by `normalize_index`.
+    let _: core::ops::ControlFlow<core::convert::Infallible> =
+        nodes.try_for_each_direct_range(0..nodes.len(), |index, node| {
+            let kind = node.kind();
+            if direct_node_requires_normalization(kind, node) {
+                active_indices.push(index);
+            }
+            if let Some(permutation) = &mut permutation {
+                permutation.push(
+                    index,
+                    (kind == Some(tex_state::node::NodeKind::Direction))
+                        .then(|| node.direction())
+                        .flatten(),
+                );
+            }
+            core::ops::ControlFlow::Continue(())
+        });
     let permutation = permutation.and_then(DirectionPermutationBuilder::finish);
     if let Some(order) = permutation.as_deref() {
         // The forward walk already identified the active subset. Reorder that
@@ -316,28 +320,31 @@ fn node_requires_normalization<List, Glue, Tokens>(node: &Node<List, Glue, Token
     )
 }
 
-fn node_view_requires_normalization(node: &tex_state::NodeView<'_>) -> bool {
-    matches!(
-        node,
-        tex_state::NodeView::HList(_)
-            | tex_state::NodeView::VList(_)
-            | tex_state::NodeView::Unset(_)
-            | tex_state::NodeView::Disc { .. }
-            | tex_state::NodeView::Ins { .. }
-            | tex_state::NodeView::Whatsit(_)
-            | tex_state::NodeView::Direction(_)
-            | tex_state::NodeView::MathNoad(_)
-            | tex_state::NodeView::FractionNoad(_)
-            | tex_state::NodeView::MathStyle(_)
-            | tex_state::NodeView::MathChoice(_)
-            | tex_state::NodeView::MathList(_)
-            | tex_state::NodeView::Nonscript
-            | tex_state::NodeView::Adjust(_)
-            | tex_state::NodeView::Glue {
-                leader: Some(_),
-                ..
-            }
-    )
+fn direct_node_requires_normalization(
+    kind: Option<tex_state::node::NodeKind>,
+    node: tex_state::node_view::DirectNodeView<'_>,
+) -> bool {
+    use tex_state::node::NodeKind;
+    match kind {
+        Some(
+            NodeKind::HList
+            | NodeKind::VList
+            | NodeKind::Unset
+            | NodeKind::Disc
+            | NodeKind::Ins
+            | NodeKind::Whatsit
+            | NodeKind::Direction
+            | NodeKind::MathNoad
+            | NodeKind::FractionNoad
+            | NodeKind::MathStyle
+            | NodeKind::MathChoice
+            | NodeKind::MathList
+            | NodeKind::Nonscript
+            | NodeKind::Adjust,
+        ) => true,
+        Some(NodeKind::Glue) => node.has_glue_leader(),
+        _ => false,
+    }
 }
 
 #[allow(clippy::too_many_arguments)] // Recursive normalization carries explicit replay and overlay state.
