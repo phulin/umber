@@ -49,17 +49,18 @@ impl<T> ChunkStorage<T> {
             .find(|entry| entry.id == source.1)
             .expect("suffix move proved the source lineage");
         entry.id = destination.1;
-        entry.position = position;
+        entry.position = narrow_position(position);
         if let Some((source_start, destination_start)) = node_floor
-            && meta.dependency_floor != usize::MAX
+            && meta.dependency_floor() != usize::MAX
         {
-            meta.dependency_floor = destination_start + (meta.dependency_floor - source_start);
+            meta.set_dependency_floor(destination_start + (meta.dependency_floor() - source_start));
         }
         if let Some(paired) = paired
-            && meta.paired_dependency_floor != usize::MAX
+            && meta.paired_dependency_floor() != usize::MAX
         {
-            meta.paired_dependency_floor =
-                paired.destination + (meta.paired_dependency_floor - paired.source);
+            meta.set_paired_dependency_floor(
+                paired.destination + (meta.paired_dependency_floor() - paired.source),
+            );
         }
     }
 }
@@ -129,8 +130,8 @@ impl<T, Lane> ForkArena<T, Lane> {
                 return Err(ForkArenaError::UnsealedBoundary);
             }
             if !meta.dependency_metadata_complete
-                || meta.dependency_floor < payload_start
-                || paired_start.is_some_and(|start| meta.paired_dependency_floor < start)
+                || meta.dependency_floor() < payload_start
+                || paired_start.is_some_and(|start| meta.paired_dependency_floor() < start)
             {
                 return Err(ForkArenaError::InvalidRegion);
             }

@@ -65,25 +65,15 @@ impl<T> ChunkStorage<T> {
         }
         block.live_chunks += 1;
         self.logical_rows[key.ordinal as usize].physical_capacity = len as u32;
-        let meta = ChunkMeta {
-            generation: key.incarnation,
+        let meta = ChunkMeta::fresh(
+            key.incarnation,
             arena,
-            lineages: [
-                ChunkLineage {
-                    id: lineage,
-                    position: usize::MAX,
-                },
-                VACANT_CHUNK_LINEAGE,
-            ],
-            used: len as u32,
-            live: true,
-            sealed: true,
-            sequence_summary: None,
-            previous_in_list: None,
+            lineage,
+            len as u32,
+            true,
             dependency_floor,
-            dependency_metadata_complete: true,
             paired_dependency_floor,
-        };
+        );
         if key.ordinal as usize == self.chunks.len() {
             self.chunks.push(meta);
         } else {

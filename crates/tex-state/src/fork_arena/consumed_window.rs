@@ -80,15 +80,15 @@ impl<T, Lane> ForkArena<T, Lane> {
                 if !meta.sealed || !meta.dependency_metadata_complete {
                     return Err(ForkArenaError::InvalidRegion);
                 }
-                floors.push((key, meta.dependency_floor, meta.paired_dependency_floor));
+                floors.push((key, meta.dependency_floor(), meta.paired_dependency_floor()));
             }
         }
         for &(key, _, _) in &floors {
             let meta =
                 pool.payload
                     .validate_exclusive_lineage_mut(key, self.owner, self.lineage)?;
-            meta.dependency_floor = usize::MAX;
-            meta.paired_dependency_floor = usize::MAX;
+            meta.set_dependency_floor(usize::MAX);
+            meta.set_paired_dependency_floor(usize::MAX);
         }
         Ok(ConsumedInlineFloorLoan {
             owner: self.owner,
@@ -110,7 +110,8 @@ impl<T, Lane> ForkArena<T, Lane> {
             let meta =
                 pool.payload
                     .validate_exclusive_lineage_mut(key, self.owner, self.lineage)?;
-            if meta.dependency_floor != usize::MAX || meta.paired_dependency_floor != usize::MAX {
+            if meta.dependency_floor() != usize::MAX || meta.paired_dependency_floor() != usize::MAX
+            {
                 return Err(ForkArenaError::InvalidRegion);
             }
         }
@@ -118,8 +119,8 @@ impl<T, Lane> ForkArena<T, Lane> {
             let meta =
                 pool.payload
                     .validate_exclusive_lineage_mut(key, self.owner, self.lineage)?;
-            meta.dependency_floor = old_dependency;
-            meta.paired_dependency_floor = old_paired;
+            meta.set_dependency_floor(old_dependency);
+            meta.set_paired_dependency_floor(old_paired);
         }
         Ok(())
     }
@@ -137,8 +138,8 @@ impl<T, Lane> ForkArena<T, Lane> {
                 .payload
                 .validate_lineage(key, self.owner, self.lineage)?;
             if meta.lineages.iter().filter(|entry| entry.id != 0).count() != 1
-                || meta.dependency_floor != usize::MAX
-                || meta.paired_dependency_floor != usize::MAX
+                || meta.dependency_floor() != usize::MAX
+                || meta.paired_dependency_floor() != usize::MAX
             {
                 return Err(ForkArenaError::InvalidRegion);
             }
@@ -159,7 +160,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             .payload
             .validate_lineage(loan.head, self.owner, self.lineage)?;
         if meta.lineages.iter().filter(|entry| entry.id != 0).count() != 1
-            || meta.paired_dependency_floor != loan.detached_floor
+            || meta.paired_dependency_floor() != loan.detached_floor
             || pool.payload.previous_in_list(loan.head, self.owner)?
                 != prefix.map(|prefix| (prefix.tail.raw, prefix.tail.offset))
         {
@@ -253,14 +254,14 @@ impl<T, Lane> ForkArena<T, Lane> {
         if !meta.sealed {
             return Err(ForkArenaError::InvalidRegion);
         }
-        let old_paired_floor = meta.paired_dependency_floor;
+        let old_paired_floor = meta.paired_dependency_floor();
         let old_previous = pool.payload.previous_in_list(head, self.owner)?;
         pool.payload
             .set_previous_in_list(head, self.owner, self.lineage, None)?;
         let meta = pool
             .payload
             .validate_exclusive_lineage_mut(head, self.owner, self.lineage)?;
-        meta.paired_dependency_floor = intrinsic_paired_floor;
+        meta.set_paired_dependency_floor(intrinsic_paired_floor);
         Ok(ConsumedHeadEdgeLoan {
             owner: self.owner,
             lineage: self.lineage,
@@ -285,7 +286,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         let meta =
             pool.payload
                 .validate_exclusive_lineage_mut(loan.head, self.owner, self.lineage)?;
-        if meta.paired_dependency_floor != loan.detached_floor
+        if meta.paired_dependency_floor() != loan.detached_floor
             || pool
                 .payload
                 .previous_in_list(loan.head, self.owner)?
@@ -298,7 +299,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         let meta =
             pool.payload
                 .validate_exclusive_lineage_mut(loan.head, self.owner, self.lineage)?;
-        meta.paired_dependency_floor = loan.paired_floor;
+        meta.set_paired_dependency_floor(loan.paired_floor);
         Ok(())
     }
 
@@ -321,7 +322,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         let head =
             pool.payload
                 .validate_exclusive_lineage_mut(loan.head, self.owner, self.lineage)?;
-        head.paired_dependency_floor = loan.detached_floor;
+        head.set_paired_dependency_floor(loan.detached_floor);
         Ok(())
     }
 }

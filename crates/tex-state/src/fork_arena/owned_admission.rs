@@ -56,7 +56,7 @@ impl<T> ChunkStorage<T> {
             .lineages
             .iter()
             .find(|entry| entry.id == lineage)?
-            .position;
+            .position();
         if position == usize::MAX {
             return None;
         }
@@ -89,18 +89,7 @@ impl<T> ChunkStorage<T> {
     ) -> Option<(LogicalChunkId, u32)> {
         let meta = self.chunks.get(key.ordinal as usize)?;
         debug_assert!(meta.live && meta.generation == key.incarnation);
-        let previous = meta.previous_in_list?;
-        let block = previous.block();
-        if block.space() != self.logical_space {
-            return None;
-        }
-        Some((
-            LogicalChunkId {
-                ordinal: block.ordinal(),
-                incarnation: block.incarnation(),
-            },
-            previous.offset(),
-        ))
+        meta.previous_in_list()
     }
 
     /// Resolves the arena position and physical block of a chunk reached
@@ -116,7 +105,7 @@ impl<T> ChunkStorage<T> {
             .lineages
             .iter()
             .find(|entry| entry.id == lineage)?
-            .position;
+            .position();
         if position == usize::MAX {
             return None;
         }

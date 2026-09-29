@@ -12,7 +12,9 @@ use core::hash::{Hash, Hasher};
 use core::marker::PhantomData;
 use std::ops::Range;
 use std::sync::atomic::{AtomicU32, Ordering};
-use tex_dense_arena::{AcceptedBlockTable, LogicalBlockId as DenseLogicalBlockId, LogicalPosition};
+use tex_dense_arena::AcceptedBlockTable;
+#[cfg(test)]
+use tex_dense_arena::{LogicalBlockId as DenseLogicalBlockId, LogicalPosition};
 use tex_dense_prefix::Superblock;
 
 use crate::node_sequence::SemanticSequenceIdentity;
@@ -79,6 +81,7 @@ const VACANT_LOGICAL_CHUNK: LogicalChunkId = LogicalChunkId {
 };
 
 impl LogicalChunkId {
+    #[cfg(test)]
     fn block(self, space: u32) -> Result<DenseLogicalBlockId, ForkArenaError> {
         DenseLogicalBlockId::from_parts(space, self.ordinal, self.incarnation)
             .ok_or(ForkArenaError::InvalidChunk)
@@ -94,7 +97,15 @@ struct LogicalChunkRow {
     physical_capacity: u32,
 }
 
+/// Metadata for one logical chunk, packed into a single cache line.
+///
+/// Every admission, suffix proof, and release reads this row, often for
+/// thousands of chunks in one pass, so positions and floors are stored as
+/// `u32` (with `u32::MAX` as the vacant sentinel) and the optional sequence
+/// summary and predecessor link are flattened with sentinel encodings.
+/// Accessors restore the wide `usize` and `Option` forms at the boundary.
 #[derive(Clone, Copy, Debug)]
+#[repr(align(64))]
 struct ChunkMeta {
     generation: u32,
     arena: u32,
@@ -106,24 +117,183 @@ struct ChunkMeta {
     used: u32,
     live: bool,
     sealed: bool,
-    sequence_summary: Option<SemanticSequenceIdentity>,
-    previous_in_list: Option<LogicalPosition>,
-    /// Lowest owner-relative payload-chunk position named by any child list
-    /// stored in this chunk. `usize::MAX` means no child coordinate.
-    dependency_floor: usize,
     dependency_metadata_complete: bool,
-    paired_dependency_floor: usize,
+    /// Predecessor chunk ordinal in its list, or `u32::MAX` for none.
+    previous_ordinal: u32,
+    previous_incarnation: u32,
+    previous_end: u32,
+    /// Lowest owner-relative payload-chunk position named by any child list
+    /// stored in this chunk. `u32::MAX` means no child coordinate.
+    dependency_floor: u32,
+    paired_dependency_floor: u32,
+    /// Sequence-summary length, or `u32::MAX` when identity is disabled.
+    summary_len: u32,
+    summary_hash: u64,
+}
+
+const _: () = assert!(size_of::<ChunkMeta>() == 64);
+
+/// Widens a stored `u32` position or floor, preserving the vacant sentinel.
+#[inline(always)]
+const fn wide_position(value: u32) -> usize {
+    if value == u32::MAX {
+        usize::MAX
+    } else {
+        value as usize
+    }
+}
+
+/// Narrows a position or floor for storage, preserving the vacant sentinel.
+#[inline(always)]
+fn narrow_position(value: usize) -> u32 {
+    if value == usize::MAX {
+        u32::MAX
+    } else {
+        u32::try_from(value)
+            .ok()
+            .filter(|value| *value != u32::MAX)
+            .expect("chunk position fits u32")
+    }
+}
+
+impl ChunkMeta {
+    #[inline(always)]
+    fn dependency_floor(&self) -> usize {
+        wide_position(self.dependency_floor)
+    }
+
+    #[inline(always)]
+    fn set_dependency_floor(&mut self, floor: usize) {
+        self.dependency_floor = narrow_position(floor);
+    }
+
+    #[inline(always)]
+    fn paired_dependency_floor(&self) -> usize {
+        wide_position(self.paired_dependency_floor)
+    }
+
+    #[inline(always)]
+    fn set_paired_dependency_floor(&mut self, floor: usize) {
+        self.paired_dependency_floor = narrow_position(floor);
+    }
+
+    #[inline(always)]
+    fn sequence_summary(&self) -> Option<SemanticSequenceIdentity> {
+        (self.summary_len != u32::MAX).then(|| {
+            SemanticSequenceIdentity::from_raw(self.summary_hash, self.summary_len as usize)
+        })
+    }
+
+    #[inline(always)]
+    fn has_sequence_summary(&self) -> bool {
+        self.summary_len != u32::MAX
+    }
+
+    #[inline(always)]
+    fn set_sequence_summary(&mut self, summary: Option<SemanticSequenceIdentity>) {
+        match summary {
+            Some(summary) => {
+                self.summary_hash = summary.raw();
+                self.summary_len = u32::try_from(summary.len())
+                    .ok()
+                    .filter(|len| *len != u32::MAX)
+                    .expect("chunk sequence summary length fits u32");
+            }
+            None => {
+                self.summary_hash = 0;
+                self.summary_len = u32::MAX;
+            }
+        }
+    }
+
+    /// Applies `update` to the summary, starting from empty when absent.
+    #[inline(always)]
+    fn update_sequence_summary(&mut self, update: impl FnOnce(&mut SemanticSequenceIdentity)) {
+        let mut summary = self
+            .sequence_summary()
+            .unwrap_or(SemanticSequenceIdentity::empty());
+        update(&mut summary);
+        self.set_sequence_summary(Some(summary));
+    }
+
+    #[inline(always)]
+    fn previous_in_list(&self) -> Option<(LogicalChunkId, u32)> {
+        (self.previous_ordinal != u32::MAX).then_some((
+            LogicalChunkId {
+                ordinal: self.previous_ordinal,
+                incarnation: self.previous_incarnation,
+            },
+            self.previous_end,
+        ))
+    }
+
+    #[inline(always)]
+    fn set_previous_in_list(&mut self, previous: Option<(LogicalChunkId, u32)>) {
+        (
+            self.previous_ordinal,
+            self.previous_incarnation,
+            self.previous_end,
+        ) = match previous {
+            Some((key, end)) => (key.ordinal, key.incarnation, end),
+            None => (u32::MAX, 0, 0),
+        };
+    }
+
+    /// A live, unsealed, exclusively owned chunk with no contents.
+    fn fresh(
+        generation: u32,
+        arena: u32,
+        lineage: u32,
+        used: u32,
+        sealed: bool,
+        dependency_floor: usize,
+        paired_dependency_floor: usize,
+    ) -> Self {
+        let mut meta = Self {
+            generation,
+            arena,
+            lineages: [
+                ChunkLineage {
+                    id: lineage,
+                    position: u32::MAX,
+                },
+                VACANT_CHUNK_LINEAGE,
+            ],
+            used,
+            live: true,
+            sealed,
+            dependency_metadata_complete: true,
+            previous_ordinal: u32::MAX,
+            previous_incarnation: 0,
+            previous_end: 0,
+            dependency_floor: 0,
+            paired_dependency_floor: 0,
+            summary_len: u32::MAX,
+            summary_hash: 0,
+        };
+        meta.set_dependency_floor(dependency_floor);
+        meta.set_paired_dependency_floor(paired_dependency_floor);
+        meta
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
 struct ChunkLineage {
     id: u32,
-    position: usize,
+    /// Owner-relative position, or `u32::MAX` while unindexed.
+    position: u32,
+}
+
+impl ChunkLineage {
+    #[inline(always)]
+    const fn position(self) -> usize {
+        wide_position(self.position)
+    }
 }
 
 const VACANT_CHUNK_LINEAGE: ChunkLineage = ChunkLineage {
     id: 0,
-    position: usize::MAX,
+    position: u32::MAX,
 };
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -430,7 +600,7 @@ impl<T> AdmittedAppendRun<'_, T> {
         assert!(self.offset < self.end, "admitted append run has capacity");
         debug_assert!(self.meta.live && self.meta.generation == self.key.incarnation);
         debug_assert_eq!(self.meta.used, self.offset);
-        debug_assert!(!self.meta.sealed && self.meta.sequence_summary.is_none());
+        debug_assert!(!self.meta.sealed && self.meta.sequence_summary().is_none());
 
         self.payload.initialize_admitted(self.index, value);
         self.index += 1;
@@ -586,7 +756,7 @@ impl<T> ChunkStorage<T> {
         if meta.sealed || meta.lineages.iter().filter(|entry| entry.id != 0).count() != 1 {
             return Err(ForkArenaError::ChunkShared);
         }
-        if meta.used != 0 && meta.sequence_summary.is_some() != identity_enabled {
+        if meta.used != 0 && meta.has_sequence_summary() != identity_enabled {
             return Err(ForkArenaError::IdentityModeMismatch);
         }
         let start = meta.used;
@@ -613,17 +783,16 @@ impl<T> ChunkStorage<T> {
         }
         let capacity = self.slots_per_chunk;
         let meta = self.validate_exclusive_lineage_mut(key, arena, lineage)?;
-        let prefix_summary = meta.sequence_summary;
+        let prefix_summary = meta.sequence_summary();
         meta.used = end;
         meta.sealed = end as usize == capacity;
         meta.dependency_metadata_complete = false;
         if identity_enabled {
-            let summary = meta
-                .sequence_summary
-                .get_or_insert(SemanticSequenceIdentity::empty());
-            for _ in 0..count {
-                summary.push_back(0);
-            }
+            meta.update_sequence_summary(|summary| {
+                for _ in 0..count {
+                    summary.push_back(0);
+                }
+            });
         }
         Ok((start, prefix_summary))
     }
@@ -839,34 +1008,6 @@ impl<T> ChunkStorage<T> {
 
     const fn logical_space(&self) -> u32 {
         self.logical_space
-    }
-
-    fn logical_position(
-        &self,
-        key: LogicalChunkId,
-        offset: u32,
-    ) -> Result<LogicalPosition, ForkArenaError> {
-        self.physical(key)?;
-        Ok(LogicalPosition::from_parts(
-            key.block(self.logical_space)?,
-            offset,
-        ))
-    }
-
-    fn compact_position(
-        &self,
-        position: LogicalPosition,
-    ) -> Result<(LogicalChunkId, u32), ForkArenaError> {
-        let block = position.block();
-        if block.space() != self.logical_space {
-            return Err(ForkArenaError::InvalidChunk);
-        }
-        let key = LogicalChunkId {
-            ordinal: block.ordinal(),
-            incarnation: block.incarnation(),
-        };
-        self.physical(key)?;
-        Ok((key, position.offset()))
     }
 
     fn release_logical(&mut self, key: LogicalChunkId) -> Result<DenseBlockKey, ForkArenaError> {
@@ -1201,25 +1342,15 @@ impl<T> ChunkStorage<T> {
     fn allocate(&mut self, arena: u32, lineage: u32) -> Result<LogicalChunkId, ForkArenaError> {
         let (physical, physical_base) = self.allocate_dense_range()?;
         let key = self.allocate_logical(physical, physical_base)?;
-        let meta = ChunkMeta {
-            generation: key.incarnation,
+        let meta = ChunkMeta::fresh(
+            key.incarnation,
             arena,
-            lineages: [
-                ChunkLineage {
-                    id: lineage,
-                    position: usize::MAX,
-                },
-                VACANT_CHUNK_LINEAGE,
-            ],
-            used: 0,
-            live: true,
-            sealed: false,
-            sequence_summary: None,
-            previous_in_list: None,
-            dependency_floor: usize::MAX,
-            dependency_metadata_complete: true,
-            paired_dependency_floor: usize::MAX,
-        };
+            lineage,
+            0,
+            false,
+            usize::MAX,
+            usize::MAX,
+        );
         if key.ordinal as usize == self.chunks.len() {
             self.chunks.push(meta);
         } else {
@@ -1326,7 +1457,7 @@ impl<T> ChunkStorage<T> {
             .ok_or(ForkArenaError::TooManyLineages)?;
         *vacant = ChunkLineage {
             id: destination_lineage,
-            position: destination_position,
+            position: narrow_position(destination_position),
         };
         Ok(())
     }
@@ -1341,16 +1472,18 @@ impl<T> ChunkStorage<T> {
         let paired_prefix_floor = previous
             .map(|(key, _)| {
                 self.validate(key, arena)
-                    .map(|meta| meta.paired_dependency_floor)
+                    .map(|meta| meta.paired_dependency_floor())
             })
             .transpose()?;
-        let previous = previous
-            .map(|(key, offset)| self.logical_position(key, offset))
-            .transpose()?;
+        if let Some((previous, _)) = previous {
+            self.physical(previous)?;
+        }
         let meta = self.validate_exclusive_lineage_mut(key, arena, lineage)?;
-        meta.previous_in_list = previous;
+        meta.set_previous_in_list(previous);
         if let Some(paired_prefix_floor) = paired_prefix_floor {
-            meta.paired_dependency_floor = meta.paired_dependency_floor.min(paired_prefix_floor);
+            meta.set_paired_dependency_floor(
+                meta.paired_dependency_floor().min(paired_prefix_floor),
+            );
         }
         Ok(())
     }
@@ -1421,7 +1554,7 @@ impl<T> ChunkStorage<T> {
             if meta.sealed || meta.used as usize == self.slots_per_chunk {
                 return Err(ForkArenaError::ChunkSealed);
             }
-            if meta.used != 0 && meta.sequence_summary.is_some() != item_identity.is_some() {
+            if meta.used != 0 && meta.has_sequence_summary() != item_identity.is_some() {
                 return Err(ForkArenaError::IdentityModeMismatch);
             }
             meta.used
@@ -1443,13 +1576,10 @@ impl<T> ChunkStorage<T> {
         meta.used += 1;
         meta.sealed = became_full;
         if let Some(item_identity) = item_identity {
-            let summary = meta
-                .sequence_summary
-                .get_or_insert(SemanticSequenceIdentity::empty());
-            summary.push_back(item_identity);
+            meta.update_sequence_summary(|summary| summary.push_back(item_identity));
         }
         if let Some(dependency_floor) = dependency_floor {
-            meta.dependency_floor = meta.dependency_floor.min(dependency_floor);
+            meta.set_dependency_floor(meta.dependency_floor().min(dependency_floor));
         }
         meta.dependency_metadata_complete &= dependency_metadata_complete;
         Ok(ReservedChunkPosition {
@@ -1471,7 +1601,7 @@ impl<T> ChunkStorage<T> {
         if meta.sealed || meta.used as usize == self.slots_per_chunk {
             return Err(ForkArenaError::ChunkSealed);
         }
-        if meta.used != 0 && meta.sequence_summary.is_some() {
+        if meta.used != 0 && meta.has_sequence_summary() {
             return Err(ForkArenaError::IdentityModeMismatch);
         }
         if meta.lineages.iter().filter(|entry| entry.id != 0).count() != 1 {
@@ -1519,7 +1649,7 @@ impl<T> ChunkStorage<T> {
         if meta.sealed || meta.used as usize == self.slots_per_chunk {
             return Err(ForkArenaError::ChunkSealed);
         }
-        if meta.used != 0 && meta.sequence_summary.is_some() {
+        if meta.used != 0 && meta.has_sequence_summary() {
             return Err(ForkArenaError::IdentityModeMismatch);
         }
         if meta.lineages.iter().filter(|entry| entry.id != 0).count() != 1 {
@@ -1556,11 +1686,11 @@ impl<T> ChunkStorage<T> {
         let meta = &mut self.chunks[cursor.key.ordinal as usize];
         debug_assert!(meta.live && meta.generation == cursor.key.incarnation);
         debug_assert_eq!(meta.used, offset);
-        debug_assert!(!meta.sealed && meta.sequence_summary.is_none());
+        debug_assert!(!meta.sealed && meta.sequence_summary().is_none());
         meta.used = next_offset;
         meta.sealed = became_full;
         if let Some(dependency_floor) = dependency_floor {
-            meta.dependency_floor = meta.dependency_floor.min(dependency_floor);
+            meta.set_dependency_floor(meta.dependency_floor().min(dependency_floor));
         }
 
         cursor.index += 1;
@@ -1668,15 +1798,14 @@ impl<T> ChunkStorage<T> {
         {
             return Err(ForkArenaError::InvalidRange);
         }
-        if let (Some(placeholder), Some(identity), Some(summary)) = (
-            placeholder_identity,
-            item_identity,
-            meta.sequence_summary.as_mut(),
-        ) {
+        if let (Some(placeholder), Some(identity), Some(mut summary)) =
+            (placeholder_identity, item_identity, meta.sequence_summary())
+        {
             summary.replace(summary.len() - 1, placeholder, identity);
+            meta.set_sequence_summary(Some(summary));
         }
         if let Some(dependency_floor) = dependency_floor {
-            meta.dependency_floor = meta.dependency_floor.min(dependency_floor);
+            meta.set_dependency_floor(meta.dependency_floor().min(dependency_floor));
         }
         meta.dependency_metadata_complete = true;
         Ok(())
@@ -1691,7 +1820,7 @@ impl<T> ChunkStorage<T> {
         key: LogicalChunkId,
         arena: u32,
     ) -> Result<Option<SemanticSequenceIdentity>, ForkArenaError> {
-        Ok(self.validate(key, arena)?.sequence_summary)
+        Ok(self.validate(key, arena)?.sequence_summary())
     }
 
     fn is_sealed(&self, key: LogicalChunkId, arena: u32) -> Result<bool, ForkArenaError> {
@@ -1741,8 +1870,7 @@ impl<T> ChunkStorage<T> {
         }
         if sequence_summary.is_some_and(|summary| summary.len() != used as usize)
             || (used != 0
-                && self.validate(key, arena)?.sequence_summary.is_some()
-                    != sequence_summary.is_some())
+                && self.validate(key, arena)?.has_sequence_summary() != sequence_summary.is_some())
         {
             return Err(ForkArenaError::IdentityModeMismatch);
         }
@@ -1766,7 +1894,7 @@ impl<T> ChunkStorage<T> {
         let capacity = self.slots_per_chunk;
         let meta = self.validate_exclusive_lineage_mut(key, arena, lineage)?;
         meta.used = used;
-        meta.sequence_summary = sequence_summary;
+        meta.set_sequence_summary(sequence_summary);
         if used as usize != capacity {
             meta.sealed = false;
         }
@@ -1842,8 +1970,8 @@ impl<T> ChunkStorage<T> {
         meta.arena = 0;
         meta.lineages = [VACANT_CHUNK_LINEAGE; 2];
         meta.used = 0;
-        meta.sequence_summary = None;
-        meta.previous_in_list = None;
+        meta.set_sequence_summary(None);
+        meta.set_previous_in_list(None);
         self.release_dense_extent(physical, physical_base, physical_capacity)?;
         self.release_logical(key)?;
         self.admission_epoch = next_epoch;
@@ -1863,7 +1991,7 @@ impl<T> ChunkStorage<T> {
             .iter_mut()
             .find(|entry| entry.id == lineage)
             .ok_or(ForkArenaError::InvalidChunk)?;
-        entry.position = position;
+        entry.position = narrow_position(position);
         Ok(())
     }
 
@@ -1874,7 +2002,7 @@ impl<T> ChunkStorage<T> {
             && meta.arena == arena
             && let Some(entry) = meta.lineages.iter_mut().find(|entry| entry.id == lineage)
         {
-            entry.position = usize::MAX;
+            entry.position = u32::MAX;
         }
     }
 
@@ -1891,7 +2019,7 @@ impl<T> ChunkStorage<T> {
             .lineages
             .iter()
             .find(|entry| entry.id == lineage)?
-            .position;
+            .position();
         (position != usize::MAX).then_some(position)
     }
 
@@ -1911,7 +2039,7 @@ impl<T> ChunkStorage<T> {
         self.physical(key).ok()?;
         let meta = self.chunks.get(key.ordinal as usize)?;
         debug_assert!(meta.live && meta.generation == key.incarnation);
-        let (previous_key, end) = self.compact_position(meta.previous_in_list?).ok()?;
+        let (previous_key, end) = meta.previous_in_list()?;
         self.physical(previous_key).ok()?;
         let previous = self.chunks.get(previous_key.ordinal as usize)?;
         debug_assert!(previous.live && previous.generation == previous_key.incarnation);
@@ -1919,7 +2047,7 @@ impl<T> ChunkStorage<T> {
             .lineages
             .iter()
             .find(|entry| entry.id == lineage)?
-            .position;
+            .position();
         if position == usize::MAX {
             return None;
         }
@@ -1992,10 +2120,11 @@ impl<T> ChunkStorage<T> {
         #[cfg(test)]
         self.previous_link_reads
             .set(self.previous_link_reads.get().saturating_add(1));
-        self.validate(key, arena)?
-            .previous_in_list
-            .map(|position| self.compact_position(position))
-            .transpose()
+        let previous = self.validate(key, arena)?.previous_in_list();
+        if let Some((previous, _)) = previous {
+            self.physical(previous)?;
+        }
+        Ok(previous)
     }
 
     fn transfer(
@@ -3719,7 +3848,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             payload_chunks: self.live_payload_len() as u32,
             payload_tail_used: tail.map_or(0, |meta| meta.used),
             payload_tail_sealed: tail.is_some_and(|meta| meta.sealed),
-            payload_tail_summary: tail.and_then(|meta| meta.sequence_summary),
+            payload_tail_summary: tail.and_then(|meta| meta.sequence_summary()),
             _lane: PhantomData,
         }
     }
@@ -3801,7 +3930,7 @@ impl<T, Lane> ForkArena<T, Lane> {
                         .validate_lineage(key, self.owner, self.lineage)?;
                     meta.used == tail_used
                         && meta.sealed == tail_sealed
-                        && meta.sequence_summary == tail_summary
+                        && meta.sequence_summary() == tail_summary
                 };
                 // A retained checkpoint can share the mark's sealed tail with a
                 // candidate. Rolling back an empty construction leaves that
@@ -4311,7 +4440,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             let floor = pool
                 .payload
                 .validate_lineage(key, self.owner, self.lineage)?
-                .paired_dependency_floor;
+                .paired_dependency_floor();
             if floor < paired_start {
                 return Err(ForkArenaError::InvalidRegion);
             }
@@ -4408,8 +4537,9 @@ impl<T, Lane> ForkArena<T, Lane> {
                 let meta =
                     pool.payload
                         .validate_exclusive_lineage_mut(key, self.owner, self.lineage)?;
-                meta.paired_dependency_floor =
-                    meta.paired_dependency_floor.min(paired_dependency_floor);
+                meta.set_paired_dependency_floor(
+                    meta.paired_dependency_floor().min(paired_dependency_floor),
+                );
             }
             Ok((item_identity, observation))
         })();
@@ -4515,7 +4645,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             {
                 Ok(meta) => {
                     paired_dependency_floor =
-                        paired_dependency_floor.min(meta.paired_dependency_floor);
+                        paired_dependency_floor.min(meta.paired_dependency_floor());
                 }
                 Err(_) => valid = false,
             }
@@ -4543,7 +4673,7 @@ impl<T, Lane> ForkArena<T, Lane> {
                     .resolved_position(pool, list.head.raw)
                     .ok_or(ForkArenaError::InvalidRange)?;
                 let meta = pool.payload.validate(list.tail.raw, self.owner)?;
-                Ok((head, meta.paired_dependency_floor))
+                Ok((head, meta.paired_dependency_floor()))
             }) {
                 Ok((head, paired)) => {
                     dependency_floor = dependency_floor.min(head);
@@ -4573,7 +4703,7 @@ impl<T, Lane> ForkArena<T, Lane> {
         let floor = pool
             .payload
             .validate(list.tail.raw, self.owner)?
-            .paired_dependency_floor;
+            .paired_dependency_floor();
         Ok((floor != usize::MAX).then_some(floor))
     }
 
@@ -4693,15 +4823,16 @@ impl<T, Lane> ForkArena<T, Lane> {
             let meta =
                 pool.payload
                     .validate_exclusive_lineage_mut(key, self.owner, self.lineage)?;
-            meta.sequence_summary = match (prefix_summary, run_summary) {
+            meta.set_sequence_summary(match (prefix_summary, run_summary) {
                 (Some(prefix), Some(run)) => Some(prefix.concat(run)),
                 (None, Some(run)) => Some(run),
                 (None, None) => None,
                 (Some(_), None) => return Err(ForkArenaError::IdentityModeMismatch),
-            };
-            meta.dependency_floor = meta.dependency_floor.min(dependency_floor);
-            meta.paired_dependency_floor =
-                meta.paired_dependency_floor.min(paired_dependency_floor);
+            });
+            meta.set_dependency_floor(meta.dependency_floor().min(dependency_floor));
+            meta.set_paired_dependency_floor(
+                meta.paired_dependency_floor().min(paired_dependency_floor),
+            );
             meta.dependency_metadata_complete = true;
         }
         self.complete_admitted_payload_run(
@@ -4814,14 +4945,16 @@ impl<T, Lane> ForkArena<T, Lane> {
                     return Err(ForkArenaError::InvalidRange);
                 }
                 let count = run.extend_copy_parts(None, &values[first..first + segment.count]);
-                run.meta.dependency_floor = run
-                    .meta
-                    .dependency_floor
-                    .min(dependency_floor.unwrap_or(usize::MAX));
-                run.meta.paired_dependency_floor = run
-                    .meta
-                    .paired_dependency_floor
-                    .min(paired_dependency_floor.unwrap_or(usize::MAX));
+                run.meta.set_dependency_floor(
+                    run.meta
+                        .dependency_floor()
+                        .min(dependency_floor.unwrap_or(usize::MAX)),
+                );
+                run.meta.set_paired_dependency_floor(
+                    run.meta
+                        .paired_dependency_floor()
+                        .min(paired_dependency_floor.unwrap_or(usize::MAX)),
+                );
                 run.meta.dependency_metadata_complete = true;
                 (start, count, run.is_full())
             };
@@ -5903,7 +6036,9 @@ impl<T, Lane> ForkArenaBuilder<'_, T, Lane> {
             self.arena.owner,
             self.arena.lineage,
         )?;
-        meta.paired_dependency_floor = meta.paired_dependency_floor.min(paired_dependency_floor);
+        meta.set_paired_dependency_floor(
+            meta.paired_dependency_floor().min(paired_dependency_floor),
+        );
         Ok(())
     }
 
@@ -6789,8 +6924,9 @@ impl<T, Lane> ForkArena<T, Lane> {
             return Err(ForkArenaError::InvalidRegion);
         }
         Ok((
-            (meta.dependency_floor != usize::MAX).then_some(meta.dependency_floor),
-            (meta.paired_dependency_floor != usize::MAX).then_some(meta.paired_dependency_floor),
+            (meta.dependency_floor() != usize::MAX).then_some(meta.dependency_floor()),
+            (meta.paired_dependency_floor() != usize::MAX)
+                .then_some(meta.paired_dependency_floor()),
         ))
     }
 

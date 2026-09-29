@@ -1938,7 +1938,7 @@ fn exhaustive_test_audit_rejects_unconstructible_length_and_chain_roots() {
     pool.payload
         .validate_mut(previous.0, arena.owner)
         .expect("middle metadata")
-        .previous_in_list = None;
+        .set_previous_in_list(None);
     assert_eq!(
         arena.audit_owned_list(&pool, root),
         Err(ForkArenaError::InvalidRange)
