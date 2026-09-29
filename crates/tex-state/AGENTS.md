@@ -195,6 +195,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/fork_arena/exact_chunks.rs`: Single-admission reads of roots inside
   one logical chunk and exact-extent publication of short private lists as
   already sealed logical chunks.
+- `src/fork_arena/owned_admission.rs`: Fused one-read admission of an owned
+  logical chunk's row, metadata, lineage position, and physical block for
+  root admission.
 - `src/fork_arena/hole_transfer.rs`: Exact selected-chunk moves into vacant
   destination positions between shallow cut projections, with an inverse
   receipt that preserves both owners' sparse logical coordinates.

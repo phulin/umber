@@ -118,29 +118,17 @@ impl<T, Lane> ForkArena<T, Lane> {
         if list.space != pool.payload.logical_space() {
             return Err(ForkArenaError::ForeignArena);
         }
-        let (key, head_offset) = pool
+        let chunk = pool
             .payload
-            .compact_position(list.head_position()?)
-            .map_err(|_| ForkArenaError::InvalidRange)?;
-        if key != list.head.raw || head_offset != list.head.offset {
-            return Err(ForkArenaError::InvalidRange);
-        }
-        self.resolved_position(pool, key)
+            .admit_owned_chunk(list.head.raw, self.owner, self.lineage)
             .ok_or(ForkArenaError::InvalidRange)?;
-        let meta = pool
-            .payload
-            .validate(key, self.owner)
-            .map_err(|_| ForkArenaError::InvalidRange)?;
         if list.head.offset >= list.tail.offset
-            || list.tail.offset > meta.used
+            || list.tail.offset > chunk.used
             || list.tail.offset - list.head.offset != list.len
         {
             return Err(ForkArenaError::InvalidRange);
         }
-        let block = pool
-            .payload
-            .admit_dense_block(key)
-            .ok_or(ForkArenaError::InvalidRange)?;
+        let block = chunk.block;
         match pool
             .payload
             .admitted_dense_slice(block, list.head.offset..list.tail.offset)

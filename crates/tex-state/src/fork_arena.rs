@@ -23,6 +23,7 @@ mod compound_transfer;
 mod consumed_window;
 mod exact_chunks;
 mod hole_transfer;
+mod owned_admission;
 mod packed_source;
 pub(crate) use consumed_window::{ConsumedHeadEdgeLoan, ConsumedInlineFloorLoan};
 pub(crate) use hole_transfer::TransferredHoleIntervals;
@@ -2294,6 +2295,7 @@ impl<Lane> ChunkCursor<Lane> {
         }
     }
 
+    #[cfg(test)]
     fn logical_position(self, space: u32) -> Result<LogicalPosition, ForkArenaError> {
         Ok(LogicalPosition::from_parts(
             self.raw.block(space)?,
@@ -2379,10 +2381,12 @@ impl<Lane> Hash for ArenaListId<Lane> {
 }
 
 impl<Lane> ArenaListId<Lane> {
+    #[cfg(test)]
     fn head_position(self) -> Result<LogicalPosition, ForkArenaError> {
         self.head.logical_position(self.space)
     }
 
+    #[cfg(test)]
     fn tail_position(self) -> Result<LogicalPosition, ForkArenaError> {
         self.tail.logical_position(self.space)
     }
@@ -5660,53 +5664,27 @@ impl<T, Lane> ForkArena<T, Lane> {
         if list.space != pool.payload.logical_space() {
             return Err(ForkArenaError::ForeignArena);
         }
-        let (head_key, head_offset) = pool
-            .payload
-            .compact_position(list.head_position()?)
-            .map_err(|_| ForkArenaError::InvalidRange)?;
-        let (tail_key, tail_offset) = pool
-            .payload
-            .compact_position(list.tail_position()?)
-            .map_err(|_| ForkArenaError::InvalidRange)?;
-        if head_key != list.head.raw
-            || head_offset != list.head.offset
-            || tail_key != list.tail.raw
-            || tail_offset != list.tail.offset
-        {
-            return Err(ForkArenaError::InvalidRange);
-        }
-        let head_position = self
-            .resolved_position(pool, list.head.raw)
-            .ok_or(ForkArenaError::InvalidRange)?;
-        let tail_position = self
-            .resolved_position(pool, list.tail.raw)
-            .ok_or(ForkArenaError::InvalidRange)?;
         let head = pool
             .payload
-            .validate(list.head.raw, self.owner)
-            .map_err(|_| ForkArenaError::InvalidRange)?;
-        let tail = pool
-            .payload
-            .validate(list.tail.raw, self.owner)
-            .map_err(|_| ForkArenaError::InvalidRange)?;
+            .admit_owned_chunk(list.head.raw, self.owner, self.lineage)
+            .ok_or(ForkArenaError::InvalidRange)?;
+        let same_chunk = list.head.raw == list.tail.raw;
+        let tail = if same_chunk {
+            head
+        } else {
+            pool.payload
+                .admit_owned_chunk(list.tail.raw, self.owner, self.lineage)
+                .ok_or(ForkArenaError::InvalidRange)?
+        };
         if list.head.offset >= head.used
             || list.tail.offset == 0
             || list.tail.offset > tail.used
-            || (list.head.raw == list.tail.raw && list.head.offset >= list.tail.offset)
+            || (same_chunk && list.head.offset >= list.tail.offset)
         {
             return Err(ForkArenaError::InvalidRange);
         }
-        let head_block = pool
-            .payload
-            .admit_dense_block(list.head.raw)
-            .ok_or(ForkArenaError::InvalidRange)?;
-        let tail_block = if list.head.raw == list.tail.raw {
-            head_block
-        } else {
-            pool.payload
-                .admit_dense_block(list.tail.raw)
-                .ok_or(ForkArenaError::InvalidRange)?
-        };
+        let (head_position, head_block) = (head.position, head.block);
+        let (tail_position, tail_block) = (tail.position, tail.block);
         Ok(AdmittedListRoot {
             owner: self.owner,
             admission_epoch: pool.payload.admission_epoch,

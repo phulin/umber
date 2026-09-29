@@ -1149,8 +1149,9 @@ fn direct_root_admission_work_is_constant_at_one_sixty_four_and_four_thousand_ni
         );
     }
 
-    assert!(observed.windows(2).all(|pair| pair[0] == pair[1]));
-    assert_eq!(observed[0], (2, 2, 2));
+    // One validation per distinct endpoint chunk, independent of length.
+    assert_eq!(observed[0], (1, 1, 1));
+    assert!(observed[1..].iter().all(|work| *work == (2, 2, 2)));
 }
 
 #[test]
