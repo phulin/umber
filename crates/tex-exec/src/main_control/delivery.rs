@@ -698,6 +698,13 @@ impl<G> MainControl<G> {
                         output_start,
                     ));
                 }
+                if !diagnostics.is_empty() && direct_cold_operation {
+                    // Scanning the operand raised a recoverable diagnostic
+                    // (for example §373's missing `\endcsname` inside
+                    // `scan_int`). Report it first, then settle the already
+                    // scanned operation through the ordinary resident path.
+                    host_preparation.fill_delivery(OperationDelivery::ResidentCold);
+                }
                 if diagnostics.is_empty() && direct_cold_operation {
                     let output_start = OperationOutputStart {
                         outer_paragraph_was_active,

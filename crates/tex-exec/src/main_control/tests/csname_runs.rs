@@ -73,3 +73,23 @@ fn csname_runs_leave_noexpand_frames_to_scalar_settlement() {
     );
     assert_eq!(counts[0], 3);
 }
+
+#[test]
+fn csname_recovery_inside_integer_scan_keeps_delivery() {
+    // §373's recovery backs up `\relax` while §440's `scan_int` owns the
+    // input; the relaxed control sequence then ends the number with its own
+    // "Missing number" recovery, and main control resumes at ` 5 \end`.
+    let (terminal, counts) = csname_parity(br"\count1=\csname ab\relax 5 \end");
+    // Matches e-TeX 2.6: both recoveries report, then `\count1` is zero.
+    assert!(
+        terminal.starts_with("! Missing \\endcsname inserted."),
+        "{terminal}"
+    );
+    assert!(
+        terminal.contains(
+            "! Missing number, treated as zero.\n<to be read again> \n                   \\ab \n"
+        ),
+        "{terminal}"
+    );
+    assert_eq!(counts, [0, 0, 0]);
+}
