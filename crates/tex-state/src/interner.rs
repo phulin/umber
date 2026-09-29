@@ -378,7 +378,6 @@ struct IndexBucket(u64);
 
 const INDEX_FINGERPRINT_MASK: u8 = 0x0f;
 const INDEX_KIND_SHIFT: u8 = 4;
-const INDEX_KIND_MASK: u8 = 0x07;
 const INDEX_HASH_BIT: u8 = 0x80;
 const INDEX_CONTROL_MASK: u8 = !INDEX_HASH_BIT;
 
@@ -401,11 +400,6 @@ impl IndexBucket {
     #[must_use]
     const fn occupied(control: u8, symbol: u32) -> Self {
         Self(((control as u64) << 32) | (symbol as u64))
-    }
-
-    #[must_use]
-    const fn kind(self) -> Option<EntryKind> {
-        entry_kind_from_tag((self.control() >> INDEX_KIND_SHIFT) & INDEX_KIND_MASK)
     }
 
     #[must_use]
@@ -495,6 +489,10 @@ pub struct Interner {
     arena: BytePool,
     /// One packed NameRecord per dense Symbol; capacity is reserved once.
     entries: Vec<NameRecord>,
+    /// One entry-kind tag per dense Symbol, with [`INDEX_HASH_BIT`] set for
+    /// §259 hash entries. It mirrors the index bucket's control metadata so
+    /// reverse kind queries need no spelling probe; capacity is reserved once.
+    metadata: Vec<u8>,
     index: FixedIndex,
     short_lookup: Cell<Option<ShortLookup>>,
     profile: Option<crate::EngineCapacityProfile>,
@@ -506,31 +504,15 @@ impl Interner {
     }
 
     pub(crate) fn capture_format_names(&self) -> Vec<crate::format::schema::FormatName> {
-        let mut names: Vec<_> = self
-            .entries
+        self.entries
             .iter()
-            .copied()
-            .map(|record| crate::format::schema::FormatName {
-                kind: 5,
-                hash_entry: false,
-                text: self.entry_text(record).to_owned(),
+            .zip(&self.metadata)
+            .map(|(record, metadata)| crate::format::schema::FormatName {
+                kind: format_kind(entry_kind_from_tag(metadata & !INDEX_HASH_BIT)),
+                hash_entry: metadata & INDEX_HASH_BIT != 0,
+                text: self.entry_text(*record).to_owned(),
             })
-            .collect();
-        // The fixed index is the only metadata owner besides the reverse
-        // rows. Fill the already-required format output by dense Symbol slot,
-        // preserving wire order without adding a persistent sidecar.
-        for bucket in self.index.buckets.iter().copied() {
-            if bucket.empty() {
-                continue;
-            }
-            let slot = usize::try_from(bucket.symbol()).expect("Symbol fits native usize");
-            let row = names
-                .get_mut(slot)
-                .expect("every live NameRecord has one index bucket");
-            row.kind = format_kind(bucket.kind());
-            row.hash_entry = bucket.hash_entry();
-        }
-        names
+            .collect()
     }
 
     /// Checks a complete format name table before the first destination row is
@@ -714,6 +696,7 @@ impl Interner {
             retired: false,
             arena: BytePool::with_capacity(byte_capacity),
             entries: Vec::with_capacity(slot_capacity),
+            metadata: Vec::with_capacity(slot_capacity),
             index: FixedIndex::with_capacity(slot_capacity),
             short_lookup: Cell::new(None),
             profile,
@@ -846,6 +829,7 @@ impl Interner {
                         self.index.mark_hash_entry_at(bucket),
                         "hash observation addresses an unoccupied index bucket"
                     );
+                    self.metadata[slot as usize] |= INDEX_HASH_BIT;
                     self.hash_entries += 1;
                 }
                 return Ok((SymbolId::new(self.epoch, slot), false));
@@ -990,6 +974,8 @@ impl Interner {
         })?;
         let slot = self.usage.slots;
         self.entries.push(record);
+        self.metadata
+            .push(entry_kind_tag(kind) | if hash_entry { INDEX_HASH_BIT } else { 0 });
         self.index
             .insert(lookup_hash(kind, value), kind, slot, hash_entry);
         self.usage = InternerUsage {
@@ -1078,25 +1064,11 @@ impl Interner {
     }
 
     fn metadata_for_symbol(&self, symbol: u32) -> Option<(EntryKind, bool)> {
-        let record = self
-            .entries
-            .get(usize::try_from(symbol).expect("Symbol fits native usize"))
-            .copied()?;
-        let value = self.entry_text(record);
-        [
-            EntryKind::ControlSequence(ControlSequenceKind::Null),
-            EntryKind::ControlSequence(ControlSequenceKind::SingleCharacter),
-            EntryKind::ControlSequence(ControlSequenceKind::Named),
-            EntryKind::ControlSequence(ControlSequenceKind::ActiveCharacter),
-            EntryKind::ControlSequence(ControlSequenceKind::Internal),
-            EntryKind::Spelling,
-        ]
-        .into_iter()
-        .find_map(|kind| {
-            let bucket = self.lookup_bucket(kind, value)?;
-            let candidate = self.index.buckets[bucket];
-            (candidate.symbol() == symbol).then_some((kind, candidate.hash_entry()))
-        })
+        let metadata = *self
+            .metadata
+            .get(usize::try_from(symbol).expect("Symbol fits native usize"))?;
+        let kind = entry_kind_from_tag(metadata & !INDEX_HASH_BIT)?;
+        Some((kind, metadata & INDEX_HASH_BIT != 0))
     }
 
     /// Resolves a session-qualified control-sequence identity.
