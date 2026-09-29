@@ -4,6 +4,7 @@ use tex_state::meaning::ExpandablePrimitive;
 use tex_state::token::{OriginId, Token, TracedTokenWord};
 
 use crate::command::{CommandClass, HotCommand};
+use crate::execution_scratch::{ArgumentRunAdmission, CsnameNameSink};
 use crate::input::{
     BackupTreatment, PackedTokenSpanHandle, ReplayTrace, RetirementBehavior, TokenBehavior,
 };
@@ -106,6 +107,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         let result = (|| {
             let mut destination = None;
             loop {
+                if !self.is_observed() && self.consume_csname_run(&mut name)? {
+                    continue;
+                }
                 let status = self.request_expanded_hot_token(&mut destination)?;
                 match status {
                     DeliveryStatus::End => return Err(CommandError::input_invariant()),
@@ -149,6 +153,28 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
         self.is_in_csname = previous;
         result
+    }
+
+    /// Appends the literal-character prefix of the current macro body or
+    /// argument to a `\csname` name in one resident run. Braces, alignment
+    /// tabs, active characters, and control sequences stay with the scalar
+    /// scan, which owns their `align_state` and expansion effects. Returns
+    /// whether a settled transition allows another run before scalar delivery.
+    fn consume_csname_run(&mut self, name: &mut String) -> Result<bool, CommandError> {
+        let run = self.command.consume_plain_resident_run(
+            &mut CsnameNameSink { name },
+            self.fuel,
+            ArgumentRunAdmission::characters(),
+        )?;
+        if run.consumed != 0 {
+            self.invalidate_delivery_freshness();
+        }
+        // A run that stopped before a refused word leaves it to the scalar
+        // scan; one that drained its frame may resume on the next.
+        if run.at_transition {
+            return self.settle_resident_run_boundary();
+        }
+        Ok(false)
     }
 
     /// TeX82 section 372's complete `\csname` expansion.  The character

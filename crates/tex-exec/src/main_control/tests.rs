@@ -1540,6 +1540,8 @@ mod alignment;
 mod assignments;
 #[path = "tests/command_lane.rs"]
 mod command_lane;
+#[path = "tests/csname_runs.rs"]
+mod csname_runs;
 #[path = "tests/diagnostics_recovery.rs"]
 mod diagnostics_recovery;
 #[path = "tests/episode_observation.rs"]

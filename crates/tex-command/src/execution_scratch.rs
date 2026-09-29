@@ -1745,6 +1745,49 @@ impl<G> PlainRunSink<G> for DefinitionReplacementSink<'_, G> {
     }
 }
 
+/// Appends a plain run of literal characters to a `\\csname` name.
+pub(crate) struct CsnameNameSink<'n> {
+    pub(crate) name: &'n mut String,
+}
+
+impl CsnameNameSink<'_> {
+    #[inline(always)]
+    fn push(&mut self, word: TokenWord) -> Result<(), ScratchError> {
+        self.name
+            .push(word.literal_char().ok_or(ScratchError::InvalidCoordinate)?);
+        Ok(())
+    }
+}
+
+impl<G> PlainRunSink<G> for CsnameNameSink<'_> {
+    fn append_body_span(
+        &mut self,
+        _: &mut ExecutionScratch<G>,
+        words: &[Cell<TokenWord>],
+    ) -> Result<(), ScratchError> {
+        words.iter().try_for_each(|word| self.push(word.get()))
+    }
+
+    fn append_argument_span(
+        &mut self,
+        scratch: &mut ExecutionScratch<G>,
+        source: MacroArgumentRange<G>,
+        position: u32,
+        origin_run: &mut u32,
+        limit: usize,
+        admission: &mut ArgumentRunAdmission<'_, '_, G>,
+    ) -> Result<u32, ScratchError> {
+        scratch.visit_plain_from_argument_span(
+            source,
+            position,
+            origin_run,
+            limit,
+            admission,
+            |word| self.push(word),
+        )
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct ArgumentRunAdmission<'a, 'admission, G> {
     state: Option<&'a tex_state::CommandContext<'admission, G>>,
@@ -1780,6 +1823,22 @@ impl<'a, 'admission, G> ArgumentRunAdmission<'a, 'admission, G> {
             stop_word,
             depth,
             close_floor,
+            brace_delta: 0,
+            stop_at_parameter: false,
+            completes_undelimited: false,
+            closed: false,
+        }
+    }
+
+    /// Literal characters only, outside any group: every brace, alignment
+    /// tab, active character, and control sequence stops the run.
+    pub(crate) const fn characters() -> Self {
+        Self {
+            state: None,
+            paragraph_token: None,
+            stop_word: None,
+            depth: 0,
+            close_floor: 0,
             brace_delta: 0,
             stop_at_parameter: false,
             completes_undelimited: false,

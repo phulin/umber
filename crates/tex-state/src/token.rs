@@ -329,6 +329,17 @@ impl TokenWord {
         }
     }
 
+    /// Returns the character of a literal character spelling.
+    #[must_use]
+    #[inline(always)]
+    pub const fn literal_char(self) -> Option<char> {
+        if self.0 >> Self::KIND_SHIFT == Self::KIND_CHAR {
+            char::from_u32((self.0 & Self::PAYLOAD_MASK) >> Self::CATCODE_BITS)
+        } else {
+            None
+        }
+    }
+
     /// Whether this word spells an ordinary (non-frozen) control sequence.
     #[must_use]
     #[inline(always)]
