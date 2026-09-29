@@ -21,6 +21,7 @@ mod batch_transfer;
 mod checkpoint_lifecycle;
 mod compound_transfer;
 mod consumed_window;
+mod exact_chunks;
 mod hole_transfer;
 mod packed_source;
 pub(crate) use consumed_window::{ConsumedHeadEdgeLoan, ConsumedInlineFloorLoan};

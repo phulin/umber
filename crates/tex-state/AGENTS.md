@@ -192,6 +192,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/fork_arena/consumed_window.rs`: Reversible consumed-window head edge
   detachment and rebinding that restores both its predecessor and exact paired
   dependency floor after rejected transfers.
+- `src/fork_arena/exact_chunks.rs`: Single-admission reads of roots inside
+  one logical chunk and exact-extent publication of short private lists as
+  already sealed logical chunks.
 - `src/fork_arena/hole_transfer.rs`: Exact selected-chunk moves into vacant
   destination positions between shallow cut projections, with an inverse
   receipt that preserves both owners' sparse logical coordinates.
@@ -326,12 +329,16 @@ All production mutation of live TeX state should pass through `Universe` or simi
   32-byte `NodeRecord` and region-owned typed `u32` annex settle together;
   there is no descriptor lane, pool-global annex arena, or resident owned-node
   fallback.
-- `src/node_region/copy.rs`: Explicit recursive closure copies, one source
-  chunk admission and one destination run settlement per copied chunk, with
-  temporary compact record scratch and independently relocated children. Its
+- `src/node_region/copy.rs`: Explicit recursive closure copies. Lists of at
+  most one chunk publish as exact sealed chunks; longer lists settle one
+  reserved run per source chunk. Staging lives on context-owned frame stacks
+  and children relocate independently. Its
   testing-axis entry point backs the opt-in `tex-state-copy-timing` binary in
   `benchmarks/tex-state/timing`; that timing package excludes profiling
   counters.
+- `src/node_region/copy/harness.rs`: Synthetic inline, fixed, nested,
+  variable-span, paragraph, and listing shapes for the opt-in node-copy timing
+  tier.
 - `src/node_region/consumed_cut.rs`: Bounded shallow selected-record projection
   from one consumed logical chunk into a durable owner, with child-coordinate
   mapping and paired destination-mark rollback on rejection.

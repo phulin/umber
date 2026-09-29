@@ -18,12 +18,14 @@ fn main() {
         ("fixed_annex", ExplicitCopyShape::FixedAnnex, 16_384),
         ("nested", ExplicitCopyShape::Nested, 4_096),
         ("variable_span", ExplicitCopyShape::VariableSpan, 4_096),
+        ("paragraph", ExplicitCopyShape::Paragraph, 40),
+        ("listing", ExplicitCopyShape::Listing, 40),
     ] {
         if selected.as_deref().is_some_and(|selected| selected != name) {
             continue;
         }
         let mut harness = ExplicitCopyHarness::new(shape, nodes);
-        black_box(harness.copy_once());
+        let copied_nodes = black_box(harness.copy_once());
         harness.restore();
         let mut timings = Vec::with_capacity(samples);
         for _ in 0..samples {
@@ -36,12 +38,6 @@ fn main() {
         }
         timings.sort_unstable();
         let median_ns = timings[timings.len() / 2];
-        let copied_nodes = nodes
-            * if matches!(shape, ExplicitCopyShape::Nested) {
-                2
-            } else {
-                1
-            };
         println!(
             "EXPLICIT_COPY shape={name} root_nodes={nodes} copied_nodes={copied_nodes} samples={samples} median_ns={median_ns} median_ns_per_node={:.2}",
             median_ns as f64 / copied_nodes as f64

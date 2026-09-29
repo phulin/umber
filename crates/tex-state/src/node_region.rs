@@ -10,10 +10,10 @@ use core::marker::PhantomData;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::fork_arena::{
-    AdmittedListChunkCursor, BatchMark, CheckpointMark, ChunkPool, ConsumedHeadEdgeLoan,
-    ConsumedInlineFloorLoan, DetachedBatch, ForkArena, ForkArenaCounters, ForkArenaError,
-    NodePoolStorageClass, PageMaterialLane, RegionValue, SealedBoundary, SequenceSummaryWork,
-    TransferredHoleIntervals, TransferredIntervals,
+    BatchMark, CheckpointMark, ChunkPool, ConsumedHeadEdgeLoan, ConsumedInlineFloorLoan,
+    DetachedBatch, ForkArena, ForkArenaCounters, ForkArenaError, NodePoolStorageClass,
+    PageMaterialLane, RegionValue, SealedBoundary, SequenceSummaryWork, TransferredHoleIntervals,
+    TransferredIntervals,
 };
 
 #[cfg(feature = "profiling")]
@@ -1998,7 +1998,7 @@ pub(crate) fn copy_region_root_into<Source, Destination>(
     let copied = copy::CopyContext::new(pool, source, destination, semantic_identity_enabled)
         .copy_list(root.list);
     let (list, count) = match copied {
-        Ok(copied) => copied,
+        Ok(copied) => (copied.list, copied.count),
         Err(error) => {
             destination
                 .pub_arena

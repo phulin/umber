@@ -165,6 +165,23 @@ The stamp binds the actual wrapper positions to the exact child interval, so
 sibling wrappers may share the parent chunk. Unique consumption moves only
 that child interval and reconstructs one wrapper.
 
+A copied list no longer than one logical chunk publishes as one fresh, already
+sealed logical chunk whose physical extent is exactly its length. This is the
+state a full-width reservation, append, seal, and tail compaction would leave,
+without the reservation plan. A source root inside one logical chunk is read
+through a single admission; a short root fragmented across several source
+chunks is gathered tail to head along its predecessor edges and reversed once.
+Its node position is known before annex publication, so box stamps need no
+reservation. Every child copy returns its root's dependency floors, so the
+parent floor is a fold over child results rather than a second walk. Longer
+lists keep the per-chunk reserved-run path above.
+
+Recursive copies stage records, pending fixed bodies, box envelopes, flat
+annex words, and variable-record children on context-owned stacks. Each list
+copy opens a frame of marks and truncates back to them on return, so a Rust
+call frame holds only scalars however deeply boxes nest. Staged records are
+copied out by value before recursion because a child may grow the shared stack.
+
 Annex envelope boundaries remain logical chunk boundaries, even when a child's
 actual annex body contains only a few words. Both node and annex physical
 storage may return the unused suffix of a sealed logical chunk when that
