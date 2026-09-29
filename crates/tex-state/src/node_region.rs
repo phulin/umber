@@ -1539,26 +1539,29 @@ pub(crate) fn preflight_page_interior_intervals(
         .pub_arena
         .visit_interval_values(&pool.chunks, node_ranges, |record| {
             let mut closed = true;
+            let mut annex_closed = true;
             record
-                .visit_node_lists(annex, |child| {
-                    if child.is_empty() {
-                        return;
-                    }
-                    let admitted = source
-                        .pub_arena
-                        .owner_relative_list_block_range(&pool.chunks, child.coordinate())
-                        .ok();
-                    closed &= admitted.is_some_and(|range| {
-                        interval_contains(node_ranges, range.start)
-                            && interval_contains(node_ranges, range.end - 1)
-                    });
-                })
+                .visit_closure_references(
+                    annex,
+                    |child| {
+                        if child.is_empty() {
+                            return;
+                        }
+                        let admitted = source
+                            .pub_arena
+                            .owner_relative_list_block_range(&pool.chunks, child.coordinate())
+                            .ok();
+                        closed &= admitted.is_some_and(|range| {
+                            interval_contains(node_ranges, range.start)
+                                && interval_contains(node_ranges, range.end - 1)
+                        });
+                    },
+                    |range| {
+                        annex_closed &= interval_contains_range(annex_ranges, range);
+                    },
+                )
                 .ok_or(ForkArenaError::InvalidRange)?;
-            record
-                .visit_annex_block_ranges(annex, |range| {
-                    closed &= interval_contains_range(annex_ranges, range);
-                })
-                .ok_or(ForkArenaError::InvalidRange)?;
+            closed &= annex_closed;
             closed.then_some(()).ok_or(ForkArenaError::InvalidRegion)
         })
 }

@@ -763,15 +763,26 @@ impl<'a> NodeAnnexView<'a> {
             .ok()
     }
 
+    /// Admits a fixed payload once and returns both its words and the owner
+    /// block range that holds them.
+    pub(super) fn fixed_words_and_block_range<Kind>(
+        self,
+        key: AnnexKey<Kind>,
+        body_words: usize,
+    ) -> Option<(&'a [u32], std::ops::Range<usize>)> {
+        let list = key.list(self.pool.logical_space(), self.pool.chunk_capacity())?;
+        let view = self.arena.list(self.pool, list).ok()?;
+        let range = view.owner_block_range()?;
+        let words = view.contiguous_packed_slice()?;
+        (words.len() == body_words.checked_add(1)? && words.first()? == &key.words[6])
+            .then_some((words, range))
+    }
+
     pub(super) fn key_block_range<Kind>(
         self,
         key: AnnexKey<Kind>,
     ) -> Option<std::ops::Range<usize>> {
-        self.list(key)?;
-        let list = key.list(self.pool.logical_space(), self.pool.chunk_capacity())?;
-        self.arena
-            .owner_relative_list_block_range(self.pool, list)
-            .ok()
+        self.list(key)?.owner_block_range()
     }
 
     pub(super) fn visit_span<Kind>(

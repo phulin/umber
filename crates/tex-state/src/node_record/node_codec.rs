@@ -236,6 +236,55 @@ impl NodeRecord<PageMaterialLane> {
         }
     }
 
+    /// Visits this record's direct child lists, then its direct typed-annex
+    /// blocks, exactly as [`Self::visit_node_lists`] followed by
+    /// [`Self::visit_annex_block_ranges`], but admits a fixed payload once.
+    pub(crate) fn visit_closure_references(
+        self,
+        annex: NodeAnnexView<'_>,
+        mut visit_list: impl FnMut(PageListId),
+        mut visit_annex: impl FnMut(std::ops::Range<usize>),
+    ) -> Option<()> {
+        let kind = self.kind()?;
+        if self.is_inline_leaf() {
+            return Some(());
+        }
+        if !self.has_fixed_copy_payload() {
+            return self.visit_annex_block_ranges(annex, visit_annex);
+        }
+        let (words, range) = annex.fixed_words_and_block_range(
+            key_from_record::<()>(self),
+            self.fixed_copy_body_len()?,
+        )?;
+        let body = words.get(1..)?;
+        let fields = FixedCopyFields::new(self, body)?;
+        for &offset in fields.offsets() {
+            let offset = usize::from(offset);
+            visit_list(PageListId::from_words(
+                body.get(offset..offset + 10)?.try_into().ok()?,
+            )?);
+        }
+        visit_annex(range);
+        if matches!(kind, NodeKind::HList | NodeKind::VList) {
+            match decode_box_construction_descriptor(body)? {
+                BoxConstructionDescriptor::Original {
+                    migrations: Some(key),
+                    ..
+                } => {
+                    visit_annex(annex.key_block_range(
+                        AnnexKey::<BoxMigrationSegments>::from_words(key.words()),
+                    )?)
+                }
+                BoxConstructionDescriptor::Positive { key, .. } => visit_annex(
+                    annex
+                        .key_block_range(AnnexKey::<BoxPositiveRanges>::from_words(key.words()))?,
+                ),
+                _ => {}
+            }
+        }
+        Some(())
+    }
+
     /// Visits the direct typed-annex blocks held by this record. A partition
     /// preflight calls this once per selected record; it does not follow TeX
     /// child lists or scan unrelated page roots.

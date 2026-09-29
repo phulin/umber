@@ -4283,18 +4283,13 @@ impl<T, Lane> ForkArena<T, Lane> {
         pool: &ChunkPool<T>,
         list: ArenaListId<Lane>,
     ) -> Result<std::ops::Range<usize>, ForkArenaError> {
-        self.validate_list(pool, list)?;
         if list.is_empty() {
+            self.validate_list(pool, list)?;
             return Err(ForkArenaError::InvalidRange);
         }
-        let head = self
-            .resolved_position(pool, list.head.raw)
-            .ok_or(ForkArenaError::InvalidRange)?;
-        let tail = self
-            .resolved_position(pool, list.tail.raw)
-            .ok_or(ForkArenaError::InvalidRange)?;
-        (head <= tail)
-            .then_some(head..tail + 1)
+        // Admission already resolved both endpoint positions.
+        self.admit_owned_root(pool, list)?
+            .owner_block_range()
             .ok_or(ForkArenaError::InvalidRange)
     }
 
@@ -6048,6 +6043,15 @@ pub(crate) struct AdmittedListRoot<Lane> {
     tail: AdmittedChunkCursor<Lane>,
 }
 
+impl<Lane> AdmittedListRoot<Lane> {
+    /// Owner-relative chunk positions spanned by a nonempty admitted root.
+    fn owner_block_range(&self) -> Option<std::ops::Range<usize>> {
+        let head = self.head.position as usize;
+        let tail = self.tail.position as usize;
+        (head <= tail).then_some(head..tail + 1)
+    }
+}
+
 impl<Lane> Clone for AdmittedListRoot<Lane> {
     fn clone(&self) -> Self {
         *self
@@ -6176,6 +6180,14 @@ impl<T, Lane> core::fmt::Debug for ArenaListView<'_, T, Lane> {
 }
 
 impl<'a, T, Lane> ArenaListView<'a, T, Lane> {
+    /// Owner-relative chunk positions spanned by this nonempty view.
+    pub(crate) fn owner_block_range(&self) -> Option<std::ops::Range<usize>> {
+        if self.list.is_empty() {
+            return None;
+        }
+        self.root.owner_block_range()
+    }
+
     #[must_use]
     pub const fn nodes(self) -> Self {
         self
