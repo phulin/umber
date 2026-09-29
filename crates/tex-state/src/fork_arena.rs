@@ -535,7 +535,9 @@ fn copy_packed_chunk<T: Copy>(source: &[T], destination: &mut [T]) {
 struct ChunkStorage<T> {
     layout: ChunkStorageLayout,
     logical_space: u32,
-    logical_free: Vec<u32>,
+    /// Released logical rows with the incarnation they held, so reuse
+    /// advances the generation without first loading the cold row.
+    logical_free: Vec<LogicalChunkId>,
     chunk_bytes: usize,
     slots_per_chunk: usize,
     packed_initializer: Option<PackedChunkInitializer<T>>,
@@ -981,18 +983,19 @@ impl<T> ChunkStorage<T> {
         physical: DenseBlockKey,
         physical_base: u32,
     ) -> Result<LogicalChunkId, ForkArenaError> {
-        if let Some(&ordinal) = self.logical_free.last() {
+        if let Some(&released) = self.logical_free.last() {
+            let ordinal = released.ordinal;
+            let incarnation = released
+                .incarnation
+                .checked_add(1)
+                .ok_or(ForkArenaError::CapacityOverflow)?;
             let row = self
                 .chunks
                 .get_mut(ordinal as usize)
                 .ok_or(ForkArenaError::InvalidChunk)?;
-            let incarnation = row
-                .generation
-                .checked_add(1)
-                .ok_or(ForkArenaError::CapacityOverflow)?;
+            debug_assert_eq!(row.generation, released.incarnation);
             self.logical_free.pop();
             *row = ChunkMeta::mapped(incarnation, physical, physical_base);
-            self.summaries[ordinal as usize] = ChunkSummary::NONE;
             return Ok(LogicalChunkId {
                 ordinal,
                 incarnation,
@@ -1065,7 +1068,7 @@ impl<T> ChunkStorage<T> {
         row.physical_base = 0;
         row.physical_compact = false;
         self.summaries[key.ordinal as usize] = ChunkSummary::NONE;
-        self.logical_free.push(key.ordinal);
+        self.logical_free.push(key);
         Ok(physical)
     }
 
@@ -1230,7 +1233,7 @@ impl<T> ChunkStorage<T> {
             .saturating_add(
                 self.logical_free
                     .capacity()
-                    .saturating_mul(std::mem::size_of::<u32>()),
+                    .saturating_mul(std::mem::size_of::<LogicalChunkId>()),
             )
             .saturating_add(
                 self.blocks
