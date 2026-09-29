@@ -557,7 +557,8 @@ fn rollback_regrows_sealed_packed_tail_without_changing_logical_key() {
         .seal_boundary(&mut pool)
         .expect("temporarily seal marked tail");
     assert_eq!(
-        pool.payload.logical_rows[first.head.raw.ordinal as usize].physical_capacity,
+        pool.payload.chunks[first.head.raw.ordinal as usize]
+            .physical_capacity(pool.payload.slots_per_chunk),
         1
     );
 
@@ -652,16 +653,12 @@ fn rollback_regrows_sealed_packed_tail_without_changing_logical_key() {
         Some(&99)
     );
     assert!(
-        pool.payload
-            .logical_rows
-            .iter()
-            .enumerate()
-            .any(|(index, row)| {
-                pool.payload.chunks[index].live
-                    && row.physical_slot == remapped_physical.0.slot
-                    && row.physical_incarnation == remapped_physical.0.incarnation
-                    && row.physical_base == remapped_physical.1
-            }),
+        pool.payload.chunks.iter().any(|row| {
+            row.live
+                && row.physical_slot == remapped_physical.0.slot
+                && row.physical_incarnation == remapped_physical.0.incarnation
+                && row.physical_base == remapped_physical.1
+        }),
         "another logical key occupies the former physical range"
     );
     assert!(first_owner.admitted_view(&pool, first, admitted).is_err());

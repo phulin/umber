@@ -43,13 +43,12 @@ impl<T> ChunkStorage<T> {
         if key.incarnation == 0 {
             return None;
         }
-        let ordinal = key.ordinal as usize;
-        let row = self.logical_rows.get(ordinal)?;
-        if row.incarnation != key.incarnation || row.physical_slot == u32::MAX {
-            return None;
-        }
-        let meta = self.chunks.get(ordinal)?;
-        if !meta.live || meta.generation != key.incarnation || meta.arena != arena {
+        let meta = self.chunks.get(key.ordinal as usize)?;
+        if !meta.live
+            || meta.generation != key.incarnation
+            || meta.arena != arena
+            || meta.physical_slot == u32::MAX
+        {
             return None;
         }
         let position = meta
@@ -60,11 +59,12 @@ impl<T> ChunkStorage<T> {
         if position == usize::MAX {
             return None;
         }
-        let end = row.physical_base.checked_add(row.physical_capacity)?;
-        let block = self.blocks.get(row.physical_slot as usize)?;
-        if block.incarnation != row.physical_incarnation
+        let capacity = meta.physical_capacity(self.slots_per_chunk);
+        let end = meta.physical_base.checked_add(capacity)?;
+        let block = self.blocks.get(meta.physical_slot as usize)?;
+        if block.incarnation != meta.physical_incarnation
             || end as usize > block.payload().len()
-            || meta.used > row.physical_capacity
+            || meta.used > capacity
         {
             return None;
         }
@@ -72,8 +72,8 @@ impl<T> ChunkStorage<T> {
             position,
             used: meta.used,
             block: AdmittedDenseBlock {
-                page: row.physical_slot,
-                base: row.physical_base,
+                page: meta.physical_slot,
+                base: meta.physical_base,
             },
         })
     }

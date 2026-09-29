@@ -7,20 +7,18 @@ impl<T> ChunkStorage<T> {
     /// The logical key and its physical base remain unchanged, so already
     /// admitted reads of the initialized prefix still name the same values.
     pub(super) fn compact_sealed_tail(&mut self, key: LogicalChunkId) {
-        let row = self.logical_rows[key.ordinal as usize];
-        let physical = DenseBlockKey {
-            slot: row.physical_slot,
-            incarnation: row.physical_incarnation,
-        };
+        let row = self.chunks[key.ordinal as usize];
+        let physical = row.physical();
         if self.tail_block != Some(physical) {
             return;
         }
-        let used = self.chunks[key.ordinal as usize].used;
-        if used >= row.physical_capacity {
+        let used = row.used;
+        let capacity = row.physical_capacity(self.slots_per_chunk);
+        if used >= capacity {
             return;
         }
         let block = &mut self.blocks[physical.slot as usize];
-        if row.physical_base as usize + row.physical_capacity as usize != block.payload().len() {
+        if row.physical_base as usize + capacity as usize != block.payload().len() {
             return;
         }
         if let DenseBlockPayload::Optional(payload) = block.payload() {
@@ -33,7 +31,7 @@ impl<T> ChunkStorage<T> {
         block
             .payload_mut()
             .truncate(row.physical_base as usize + used as usize);
-        self.logical_rows[key.ordinal as usize].physical_capacity = used;
+        self.chunks[key.ordinal as usize].physical_compact = true;
     }
 
     /// Releases one physical extent. Only a full-width extent is reusable as
@@ -233,22 +231,22 @@ impl<T> ChunkStorage<T> {
         &mut self,
         key: LogicalChunkId,
     ) -> Result<(), ForkArenaError> {
-        let row = self.logical_rows[key.ordinal as usize];
-        if row.physical_capacity as usize == self.slots_per_chunk {
+        let row = self.chunks[key.ordinal as usize];
+        let capacity = row.physical_capacity(self.slots_per_chunk);
+        if capacity as usize == self.slots_per_chunk {
+            // A compact extent that is exactly full needs no regrowth.
+            self.chunks[key.ordinal as usize].physical_compact = false;
             return Ok(());
         }
-        let old_physical = DenseBlockKey {
-            slot: row.physical_slot,
-            incarnation: row.physical_incarnation,
-        };
-        let missing = self.slots_per_chunk - row.physical_capacity as usize;
+        let old_physical = row.physical();
+        let missing = self.slots_per_chunk - capacity as usize;
         let block_capacity = match self.layout {
             ChunkStorageLayout::OptionalSlots => Superblock::<Option<T>>::capacity(),
             ChunkStorageLayout::PackedCopy => Superblock::<T>::capacity(),
         };
         if self.tail_block == Some(old_physical)
             && self.dense_block(old_physical)?.payload().len()
-                == row.physical_base as usize + row.physical_capacity as usize
+                == row.physical_base as usize + capacity as usize
             && self.dense_block(old_physical)?.payload().len() + missing <= block_capacity
         {
             let initializer = self.packed_initializer;
@@ -260,7 +258,7 @@ impl<T> ChunkStorage<T> {
                     initializer.ok_or(ForkArenaError::InvalidChunk)?(payload, missing)?
                 }
             }
-            self.logical_rows[key.ordinal as usize].physical_capacity = self.slots_per_chunk as u32;
+            self.chunks[key.ordinal as usize].physical_compact = false;
             return Ok(());
         }
         let next_epoch = self.admission_epoch.saturating_add(1);
@@ -278,13 +276,13 @@ impl<T> ChunkStorage<T> {
             self.release_dense_extent(replacement.0, replacement.1, self.slots_per_chunk as u32)?;
             return Err(error);
         }
-        let current = &mut self.logical_rows[key.ordinal as usize];
+        let current = &mut self.chunks[key.ordinal as usize];
         current.physical_slot = replacement.0.slot;
         current.physical_incarnation = replacement.0.incarnation;
         current.physical_base = replacement.1;
-        current.physical_capacity = self.slots_per_chunk as u32;
+        current.physical_compact = false;
         self.admission_epoch = next_epoch;
-        self.release_dense_extent(old_physical, row.physical_base, row.physical_capacity)?;
+        self.release_dense_extent(old_physical, row.physical_base, capacity)?;
         Ok(())
     }
 }

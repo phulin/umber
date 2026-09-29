@@ -64,24 +64,15 @@ impl<T> ChunkStorage<T> {
                 .map_err(|_| ForkArenaError::CapacityOverflow)?,
         }
         block.live_chunks += 1;
-        self.logical_rows[key.ordinal as usize].physical_capacity = len as u32;
-        let meta = ChunkMeta::fresh(
-            key.incarnation,
+        self.chunks[key.ordinal as usize].activate(
             arena,
             lineage,
             len as u32,
             true,
+            true,
             dependency_floor,
             paired_dependency_floor,
         );
-        if key.ordinal as usize == self.chunks.len() {
-            self.chunks.push(meta);
-        } else {
-            *self
-                .chunks
-                .get_mut(key.ordinal as usize)
-                .ok_or(ForkArenaError::InvalidChunk)? = meta;
-        }
         Ok(key)
     }
 }

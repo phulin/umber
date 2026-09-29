@@ -58,7 +58,7 @@ impl<T, Lane> ForkArena<T, Lane> {
                 .validate_lineage(key, self.owner, self.lineage)?;
             if meta.used != rollback.payload_tail_used
                 || meta.sealed != rollback.payload_tail_sealed
-                || meta.sequence_summary() != rollback.payload_tail_summary
+                || pool.payload.summary(key) != rollback.payload_tail_summary
             {
                 return Err(ForkArenaError::InvalidOperationMark);
             }
