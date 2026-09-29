@@ -61,12 +61,17 @@ impl<T, Lane> ForkArena<T, Lane> {
         list: ArenaListId<Lane>,
         payload_start: usize,
     ) -> Result<(), ForkArenaError> {
+        // Admission proves the endpoints; the predecessor walk below proves
+        // suffix residence and exits at the first earlier chunk. The
+        // exhaustive range audit stays reserved for cold ingress, so a
+        // negative answer for a long list costs one step, not a full walk.
         self.validate_list(pool, list)?;
-        self.audit_direct_chain(pool, list)?;
         if list.is_empty() {
             return Ok(());
         }
+        let bound = self.live_payload_len().saturating_sub(payload_start);
         let mut key = list.tail.raw;
+        let mut crossings = 0_usize;
         loop {
             if self
                 .resolved_position(pool, key)
@@ -76,6 +81,10 @@ impl<T, Lane> ForkArena<T, Lane> {
             }
             if key == list.head.raw {
                 break;
+            }
+            crossings += 1;
+            if crossings >= bound {
+                return Err(ForkArenaError::InvalidRegion);
             }
             key = pool
                 .payload

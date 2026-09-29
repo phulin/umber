@@ -114,6 +114,9 @@ impl<T, Lane> ForkArena<T, Lane> {
         }
         let boundary = self.seal_boundary(pool)?;
         for list in &lists {
+            // Sealing is a cold ingress boundary: audit each declared root's
+            // complete chain before proving its suffix residence.
+            self.audit_direct_chain(pool, *list)?;
             self.validate_list_in_suffix(pool, *list, mark.payload_start as usize)?;
         }
         let serial = self.next_batch_serial;
