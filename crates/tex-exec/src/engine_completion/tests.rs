@@ -590,3 +590,21 @@ fn terminal_completion_values_forbid_live_and_publication_handles() {
         );
     }
 }
+
+#[test]
+fn captured_decode_proof_survives_until_a_splice() {
+    // Capture at effect base zero already decoded every artifact against its
+    // effects; a spliced suffix rebases open-out ordinals and must be decoded
+    // again at publication.
+    let source = br"\immediate\openout3=proof.tex\shipout\hbox{\openout4=late.tex}\end";
+    let mut completion = capture(source, EngineCompletionDemand::without_pdf());
+    assert!(completion.artifacts_decoded);
+    let retained = completion.clone();
+    completion
+        .splice_retained_suffix(&retained, 0, 0, 0, 0)
+        .expect("identity splice");
+    assert!(!completion.artifacts_decoded);
+    completion
+        .into_publication()
+        .expect("spliced completion revalidates");
+}

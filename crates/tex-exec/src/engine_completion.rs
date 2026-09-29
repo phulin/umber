@@ -73,6 +73,10 @@ pub struct DetachedEngineCompletion {
     stream_open_contexts: Vec<Option<String>>,
     pages: Vec<DetachedPreparedPage>,
     pdf: Option<DetachedPdfCompletion>,
+    /// Every page artifact was decoded and its open-out occurrences checked
+    /// against `effects` at effect base zero, so publication need recheck
+    /// only artifact identity.
+    artifacts_decoded: bool,
 }
 
 impl DetachedEngineCompletion {
@@ -107,6 +111,7 @@ impl DetachedEngineCompletion {
         let new_artifact_prefix = new_artifact_prefix.min(self.pages.len());
         let old_artifact_prefix = old_artifact_prefix.min(retained.pages.len());
         self.pages.truncate(new_artifact_prefix);
+        self.artifacts_decoded = false;
         for page in &retained.pages[old_artifact_prefix..] {
             let mut page = page.clone();
             page.artifact
@@ -189,6 +194,7 @@ impl DetachedEngineCompletion {
             validate_pdf(pdf, artifacts)?;
         }
         Ok(Self {
+            artifacts_decoded: effect_base == 0,
             effect_base,
             effects,
             stream_open_contexts,
@@ -235,7 +241,12 @@ impl DetachedEngineCompletion {
         if self.effect_base != 0 {
             return Err(EnginePublicationError::MaterializedEffectBase);
         }
-        validate_prepared(&self.effects, &self.pages, self.pdf.as_ref())?;
+        validate_prepared(
+            &self.effects,
+            &self.pages,
+            self.pdf.as_ref(),
+            self.artifacts_decoded,
+        )?;
         Ok(PreparedEnginePublication {
             effects: self.effects,
             stream_open_contexts: self.stream_open_contexts,
@@ -624,14 +635,30 @@ fn validate_prepared(
     effects: &[EffectRecord],
     pages: &[DetachedPreparedPage],
     pdf: Option<&DetachedPdfCompletion>,
+    artifacts_decoded: bool,
 ) -> Result<(), EnginePublicationError> {
     for (index, page) in pages.iter().enumerate() {
-        validate_artifact(index, &page.artifact, 0, effects)
-            .map_err(publication_validation_error)?;
+        if artifacts_decoded {
+            validate_artifact_identity(index, &page.artifact)
+        } else {
+            validate_artifact(index, &page.artifact, 0, effects)
+        }
+        .map_err(publication_validation_error)?;
     }
     if let Some(pdf) = pdf {
         let artifacts: Vec<_> = pages.iter().map(|page| page.artifact.clone()).collect();
         validate_pdf(pdf, artifacts.iter()).map_err(publication_validation_error)?;
+    }
+    Ok(())
+}
+
+fn validate_artifact_identity(
+    page: usize,
+    artifact: &CommittedArtifact,
+) -> Result<(), EngineCompletionError> {
+    let expected = ContentHash::for_domain(ContentDomain::Artifact, artifact.bytes());
+    if expected != artifact.hash() {
+        return Err(EngineCompletionError::InvalidArtifactIdentity { page });
     }
     Ok(())
 }
@@ -642,10 +669,7 @@ fn validate_artifact(
     effect_base: u64,
     effects: &[EffectRecord],
 ) -> Result<(), EngineCompletionError> {
-    let expected = ContentHash::for_domain(ContentDomain::Artifact, artifact.bytes());
-    if expected != artifact.hash() {
-        return Err(EngineCompletionError::InvalidArtifactIdentity { page });
-    }
+    validate_artifact_identity(page, artifact)?;
     let model = tex_out::PageArtifact::from_bytes(artifact.bytes()).map_err(|error| {
         EngineCompletionError::InvalidArtifact {
             page,
