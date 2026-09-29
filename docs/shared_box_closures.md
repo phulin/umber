@@ -66,50 +66,53 @@ frozen, is shallow:
 The destination region logs one share of F. The cost is O(top-level
 records), independent of depth.
 
-The general recursive copy walk (`CopyContext`) shares any child coordinate
-that the source region does not own. That coordinate is already borrowed,
-so copying it would be wasted work. The walk logs the share in the
-destination. As a result, structural-copy fallbacks, page-to-durable copies,
-and held-over evacuation of material with borrowed children stay shallow at
-every borrowed boundary.
+The general recursive copy walk (`CopyContext`) shares a box body when
+every nonempty child list of the box is frozen. That body is already
+borrowed, so copying it would be wasted work. The walk logs the share in
+the destination, and the copied wrapper carries no body stamp, so no
+interval move can claim the borrowed body. As a result, structural-copy
+fallbacks, page-to-durable copies, and held-over evacuation of material with
+borrowed children stay shallow at every borrowed boundary.
+
+Only closures of at least eight live payload chunks freeze. A smaller box
+copies faster than it splits.
 
 The automatic output box 255 is page-owned and is still deep-copied.
 `\shipout\copy` keeps its pinned in-place read.
 
 ## Lifetime
 
-Each `NodeRegion` carries an append-only _borrow log_ of frozen-region
-references. Each log entry holds one share, counted in the pool's
-frozen-region registry. A region's log is a superset of the frozen regions
-its records name:
+Each `NodeRegion` carries a _borrow log_: a duplicate-free set of
+frozen-region references. Each log entry holds one share, counted in the
+pool's frozen-region registry. A region's log is a superset of the frozen
+regions its records name:
 
 - A shallow copy or `CopyContext` share logs its frozen region in the
   destination as it publishes the borrowed coordinate.
-- A whole-region transfer or merge (unique take loans, nested unique
-  children) logs every entry of the source into the destination.
-- A suffix move (closure build, successor adoption) logs the source entries
-  appended after the move's mark was taken.
+- Every move of records from one region into another logs every entry of
+  the source into the destination. This covers whole-region transfers,
+  suffix moves (closure builds), interior-interval moves (unique takes and
+  generated boxes), shared-prefix successors, and consumed-cut rewrites
+  whose mapped children may keep borrowed coordinates.
 - Rollback never removes entries. An over-long log only delays reclamation
   until the region retires.
+
+The inheritance is deliberately conservative. A borrowed list adds no
+dependency floor, so it never forces a structural copy, and no move needs
+to prove which borrowed coordinates it carries.
 
 Retiring any region (`NodePool::retire_region_in_place`) releases its
 log's shares. When a frozen region's share count reaches zero, it retires
 too, releasing its own log. The release uses an explicit worklist, not
 recursion.
 
-A suffix move carries only the entries logged after its mark. This is sound
-because records republished by value inside the suffix cannot hide older
-borrows:
-
-- A borrowed child contributes dependency floor 0 when its record is
-  published.
-- So a suffix that contains any record with a borrowed child is not
-  self-contained unless its mark is at position 0.
-- A mark at position 0 means the source region held no live records when
-  the mark was taken, so every borrowed coordinate in the suffix was logged
-  after the mark.
-- Any other suffix takes the existing structural-copy fallback, which logs
-  exactly the shares it copies.
+The page region is the one long-lived region that sheds material without
+retiring: unique-successor adoption keeps its region and drops the consumed
+prefix. Adoption therefore rebuilds the log exactly. It scans the adopted
+suffix's records for frozen child lists, logs those, and then releases the
+old entries. The scan runs only when the log is nonempty, and it costs one
+pass over the held-over material. No checkpoint survives adoption, so no
+rollback can restore a record that named a released entry.
 
 Checkpoint candidates move page regions and durable owners, never the pool.
 The registry therefore stays single-lineage. Accepting or rejecting a

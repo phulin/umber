@@ -78,6 +78,8 @@ pub(super) struct CopyContext<'a> {
     /// Every node publication by this context leaves the destination tail
     /// sealed, so only the first box envelope needs an explicit boundary.
     node_tail_sealed: bool,
+    /// Frozen slots of box bodies borrowed instead of copied.
+    shared: Vec<u32>,
 }
 
 impl FixedBatchPublisher<'_> {
@@ -198,14 +200,15 @@ impl<'a> CopyContext<'a> {
     }
 
     pub(super) fn new<Source, Destination>(
-        pool: &'a mut NodePool,
+        chunks: &'a mut ChunkPool<RegionNode>,
+        annex_chunks: &'a mut ChunkPool<u32>,
         source: &'a NodeRegion<Source>,
         destination: &'a mut NodeRegion<Destination>,
         semantic_identity_enabled: bool,
     ) -> Self {
         Self {
-            pool: &mut pool.chunks,
-            annex_pool: &mut pool.annex_chunks,
+            pool: chunks,
+            annex_pool: annex_chunks,
             source: &source.pub_arena,
             source_annex: &source.annex_arena,
             annex_reader: NodeAnnexCopyReader::new(&source.annex_arena),
@@ -221,7 +224,14 @@ impl<'a> CopyContext<'a> {
             children: Vec::new(),
             semantic_identity_enabled,
             node_tail_sealed: false,
+            shared: Vec::new(),
         }
+    }
+
+    /// Frozen registry slots whose box bodies this copy borrowed. The caller
+    /// logs them in the destination once the copy is published.
+    pub(super) fn into_shared(self) -> Vec<u32> {
+        self.shared
     }
 
     pub(super) fn copy_list(&mut self, list: PageListId) -> Result<CopiedList, ForkArenaError> {
@@ -509,6 +519,11 @@ impl<'a> CopyContext<'a> {
                 .fixed_child(body_start + usize::from(offset))?
                 .is_empty();
         }
+        if is_box && has_nonempty_child && self.share_box_body(body_start)? {
+            // The borrowed body keeps its coordinate, and the copied wrapper
+            // carries no body stamp: no interval move may claim the body.
+            has_nonempty_child = false;
+        }
         let child_start = if is_box && has_nonempty_child {
             *defer_fixed_publication = true;
             Some(self.begin_box_body()?)
@@ -555,6 +570,33 @@ impl<'a> CopyContext<'a> {
             )?;
         }
         Ok(())
+    }
+
+    /// Borrows a box body owned by a frozen region instead of copying it.
+    /// Only box bodies are shared, so every other child list kind stays
+    /// exclusively owned by the region that names it. A body is shared only
+    /// whole: every nonempty child list of the box must be frozen.
+    fn share_box_body(&mut self, body_start: usize) -> Result<bool, ForkArenaError> {
+        let mut slots = [None; 2];
+        for (slot, offset) in slots
+            .iter_mut()
+            .zip([BOX_CHILDREN_OFFSET, BOX_DIAGNOSTIC_CHILDREN_OFFSET])
+        {
+            let list = self.fixed_child(body_start + offset)?;
+            if list.is_empty() {
+                continue;
+            }
+            let Some(frozen) = self.pool.frozen_slot_of_list(list.coordinate()) else {
+                return Ok(false);
+            };
+            *slot = Some(frozen);
+        }
+        for slot in slots.into_iter().flatten() {
+            if !self.shared.contains(&slot) {
+                self.shared.push(slot);
+            }
+        }
+        Ok(true)
     }
 
     fn fixed_child(&self, start: usize) -> Result<PageListId, ForkArenaError> {
@@ -606,6 +648,11 @@ impl<'a> CopyContext<'a> {
         Ok(())
     }
 }
+
+/// Fixed-body word offsets of an H/V box's primary and diagnostic child
+/// lists (see `encode_box_payload`).
+const BOX_CHILDREN_OFFSET: usize = 7;
+const BOX_DIAGNOSTIC_CHILDREN_OFFSET: usize = 17;
 
 /// Dependency floors accumulated while relocating one staged chunk;
 /// `usize::MAX` means no dependency.

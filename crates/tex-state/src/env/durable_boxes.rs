@@ -1684,10 +1684,15 @@ impl DurableBoxState {
     }
 
     pub(crate) fn copy_to_page(
-        &self,
+        &mut self,
         arena: &mut PageMaterialArena,
         index: u16,
     ) -> Result<Option<crate::page_node_arena::PageListId>, BankError> {
+        if let Some(id) = self.cell(index).and_then(|cell| cell.value)
+            && self.owners.shipout_source != Some(id)
+        {
+            arena.share_durable_body(self.owners.owner_slot_mut(id));
+        }
         self.value(index)
             .map(|owner| arena.copy_durable_to_page(owner))
             .transpose()

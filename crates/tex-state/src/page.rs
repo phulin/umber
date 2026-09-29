@@ -1098,6 +1098,10 @@ impl PageRegionHistory {
         self.pool.closure_transition_counters()
     }
 
+    pub(crate) const fn frozen_region_counters(&self) -> crate::node_region::FrozenRegionCounters {
+        self.pool.frozen_region_counters()
+    }
+
     pub(crate) fn current(&self) -> &PageRegion {
         self.regions
             .last()

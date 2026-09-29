@@ -408,13 +408,15 @@ fn insertion_box_nodes<G>(
     else {
         return Ok(tex_state::page_node_arena::PageListId::empty());
     };
-    match node {
-        tex_state::node_view::NodeView::VList(box_node) => Ok(box_node.children),
+    let children = match node {
+        tex_state::node_view::NodeView::VList(box_node) => box_node.children,
         tex_state::node_view::NodeView::HList(_) => {
             unreachable!("ensure_insertion_vbox rejected the hbox")
         }
-        _ => Ok(tex_state::page_node_arena::PageListId::empty()),
-    }
+        _ => return Ok(tex_state::page_node_arena::PageListId::empty()),
+    };
+    // §1018 splices insertions onto this body, so it must be page-owned.
+    Ok(stores.owned_page_list(children))
 }
 
 fn split_insertion_remainder<G>(

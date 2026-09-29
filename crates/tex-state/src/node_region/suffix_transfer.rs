@@ -50,6 +50,9 @@ impl<Role> NodeRegion<Role> {
         if let Err(error) = preflight {
             return Err(ClosureSealError { error, mark });
         }
+        // Moved records may name borrowed bodies; logging every source
+        // entry keeps the destination's log a superset.
+        pool.inherit_borrows(self, destination);
         let destination_annex_start = destination.annex_arena.live_payload_chunks();
         self.pub_arena.move_proved_suffix_into(
             &mut pool.chunks,

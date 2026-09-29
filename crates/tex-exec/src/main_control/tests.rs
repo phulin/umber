@@ -1558,6 +1558,8 @@ mod paragraph_math;
 mod pdf_commands;
 #[path = "tests/resource_replay.rs"]
 mod resource_replay;
+#[path = "tests/shared_box_bodies.rs"]
+mod shared_box_bodies;
 #[path = "tests/shipout.rs"]
 mod shipout;
 #[path = "tests/tracing.rs"]

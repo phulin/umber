@@ -22,6 +22,7 @@ use crate::node::Node;
 use crate::node_record::{NodeAnnexView, NodeAnnexWriter, NodeRecord};
 use crate::node_sequence::SemanticSequenceIdentity;
 use crate::page_node_arena::PageListId;
+pub use frozen::FrozenRegionCounters;
 
 #[cfg(test)]
 #[path = "node_region/tests.rs"]
@@ -33,6 +34,7 @@ pub(crate) use generated_transfer::{
     GeneratedInlinePiece, transfer_page_generated_inline_selected,
 };
 mod copy;
+mod frozen;
 mod suffix_transfer;
 pub(crate) use consumed_cut::copy_consumed_direct_cut_into;
 
@@ -142,6 +144,8 @@ pub struct NodePool {
     regions: Vec<RegionSlot>,
     free_regions: Vec<u32>,
     closure_transitions: ClosureTransitionCounters,
+    frozen: frozen::FrozenRegistry,
+    frozen_counters: FrozenRegionCounters,
 }
 
 #[cfg(feature = "profiling")]
@@ -198,6 +202,8 @@ impl NodePool {
             regions: Vec::new(),
             free_regions: Vec::new(),
             closure_transitions: ClosureTransitionCounters::default(),
+            frozen: frozen::FrozenRegistry::default(),
+            frozen_counters: FrozenRegionCounters::default(),
         }
     }
 
@@ -291,6 +297,7 @@ impl NodePool {
             annex_arena,
             active_annex_operation: None,
             next_closure_build: 1,
+            borrows: Vec::new(),
             _role: PhantomData,
         })
     }
@@ -326,7 +333,10 @@ impl NodePool {
             .annex_arena
             .share_sealed_prefix(&mut self.annex_chunks, mark.annex_batch, &[])
             .expect("paired annex prefix sharing was preflighted");
-        self.install_region(arena, annex_arena)
+        let mut shared = self.install_region(arena, annex_arena)?;
+        // The shared prefix carries no floor proof against borrowed bodies.
+        self.inherit_borrows(source, &mut shared);
+        Ok(shared)
     }
 
     fn validate_region<Role>(&self, region: &NodeRegion<Role>) -> Result<(), ForkArenaError> {
@@ -401,6 +411,20 @@ impl NodePool {
         &mut self,
         region: &mut NodeRegion<Role>,
     ) -> Result<(), ForkArenaError> {
+        self.retire_region_storage(region)?;
+        let borrows = core::mem::take(&mut region.borrows);
+        if !borrows.is_empty() {
+            self.release_borrows(borrows);
+        }
+        Ok(())
+    }
+
+    /// Returns a region's chunks and identity to the pool, leaving its
+    /// borrow log to the caller.
+    fn retire_region_storage<Role>(
+        &mut self,
+        region: &mut NodeRegion<Role>,
+    ) -> Result<(), ForkArenaError> {
         self.validate_region(region)?;
         region.pub_arena.can_retire_region(&self.chunks)?;
         region.annex_arena.can_retire_region(&self.annex_chunks)?;
@@ -445,6 +469,9 @@ pub struct NodeRegion<Role> {
     pub(crate) annex_arena: ForkArena<u32, NodeAnnexLane>,
     pub(crate) active_annex_operation: Option<crate::fork_arena::OperationMark<NodeAnnexLane>>,
     next_closure_build: u64,
+    /// Frozen registry slots whose lists this region's records may name.
+    /// Each entry holds one share; rollback never removes entries.
+    borrows: Vec<u32>,
     _role: PhantomData<fn(Role) -> Role>,
 }
 
@@ -852,6 +879,11 @@ impl<Role> NodeRegion<Role> {
         roots: [PageListId; N],
     ) -> Result<(), ForkArenaError> {
         self.preflight_unique_successor_adoption(pool, &mark, roots)?;
+        // The page region outlives every page through adoption, so its log
+        // is rebuilt from the frozen bodies the successor still names.
+        let named = (!self.borrows.is_empty())
+            .then(|| pool.frozen_slots_named_from(self, mark.batch.payload_start()))
+            .transpose()?;
         let coordinates = roots.map(PageListId::coordinate);
         self.pub_arena
             .adopt_unique_successor_suffix(&mut pool.chunks, mark.batch, &coordinates)?;
@@ -860,6 +892,13 @@ impl<Role> NodeRegion<Role> {
             .expect("paired successor annex adoption was preflighted");
         pool.advance_region(self)
             .expect("unique-successor region generation was preflighted");
+        if let Some(named) = named {
+            let released = std::mem::take(&mut self.borrows);
+            for slot in named {
+                pool.log_borrow(self, slot);
+            }
+            pool.release_borrows(released);
+        }
         Ok(())
     }
 
@@ -1267,8 +1306,10 @@ impl<Role> OwnedNodeClosure<Role> {
         pool: &'region NodePool,
         list: PageListId,
     ) -> Result<crate::node_view::NodeCursor<'region>, ForkArenaError> {
-        let root = self.region.root(pool, list)?;
-        self.region.list(pool, root)
+        match self.region.root(pool, list) {
+            Ok(root) => self.region.list(pool, root),
+            Err(error) => pool.borrowed_cursor(list).ok_or(error),
+        }
     }
 
     /// Resolves any list owned by this closure with one admission.
@@ -1278,10 +1319,10 @@ impl<Role> OwnedNodeClosure<Role> {
         list: PageListId,
     ) -> Result<crate::node_view::NodeCursor<'region>, ForkArenaError> {
         pool.validate_region(&self.region)?;
-        let view = self
-            .region
-            .pub_arena
-            .list(&pool.chunks, list.coordinate())?;
+        let view = match self.region.pub_arena.list(&pool.chunks, list.coordinate()) {
+            Ok(view) => view,
+            Err(error) => return pool.borrowed_cursor(list).ok_or(error),
+        };
         let annex = NodeAnnexView::new(&pool.annex_chunks, &self.region.annex_arena);
         Ok(crate::node_view::NodeCursor::fork_arena(view, annex))
     }
@@ -1613,6 +1654,7 @@ fn move_page_interior_intervals(
         &mut destination.annex_arena,
         annex_ranges,
     )?;
+    pool.inherit_borrows(source, destination);
     pool.closure_transitions.envelope_moves =
         pool.closure_transitions.envelope_moves.saturating_add(1);
     Ok(PageInteriorTransferLoan {
@@ -1741,6 +1783,7 @@ pub(crate) fn transfer_closure_into<Source, Destination>(
         list: closure.root.list,
         _role: PhantomData,
     };
+    pool.inherit_borrows(&closure.region, destination);
     pool.retire_region_in_place(&mut closure.region)
         .unwrap_or_else(|_| unreachable!("empty transferred region retires infallibly"));
     Ok(root)
@@ -1780,24 +1823,118 @@ pub(crate) fn copy_region_root_into<Source, Destination>(
     if root.region != source.id {
         return Err(ForkArenaError::InvalidRegion);
     }
-    let operation = destination.pub_arena.operation_mark(&pool.chunks);
-    let annex_operation = destination.annex_arena.operation_mark(&pool.annex_chunks);
-    let copied = copy::CopyContext::new(pool, source, destination, semantic_identity_enabled)
-        .copy_list(root.list);
-    let (list, count) = match copied {
-        Ok(copied) => (copied.list, copied.count),
+    let (list, count, shared) = copy_list_between(
+        &mut pool.chunks,
+        &mut pool.annex_chunks,
+        source,
+        root.list,
+        destination,
+        semantic_identity_enabled,
+    )?;
+    Ok(pool.finish_region_copy(destination, list, count, shared, semantic_identity_enabled))
+}
+
+/// Copies the top-level records of borrowed `list` out of its frozen owner.
+/// Nested box bodies stay borrowed, so the copy costs one record per
+/// top-level node. Operations that need to own a borrowed box body use this
+/// to materialize it first.
+pub(crate) fn copy_borrowed_list_into<Destination>(
+    pool: &mut NodePool,
+    list: PageListId,
+    destination: &mut NodeRegion<Destination>,
+    semantic_identity_enabled: bool,
+) -> Result<RegionRoot<Destination>, ForkArenaError> {
+    pool.validate_region(destination)?;
+    let slot = pool
+        .frozen_slot_of(list)
+        .ok_or(ForkArenaError::InvalidRegion)?;
+    let (list, count, shared) = {
+        let NodePool {
+            chunks,
+            annex_chunks,
+            frozen,
+            ..
+        } = &mut *pool;
+        let source = frozen.region(slot).ok_or(ForkArenaError::InvalidRegion)?;
+        copy_list_between(
+            chunks,
+            annex_chunks,
+            source,
+            list,
+            destination,
+            semantic_identity_enabled,
+        )?
+    };
+    // Every frozen list the copy names is a borrowed box body, logged
+    // through `shared`; the copied top-level records name nothing else of F.
+    let _ = slot;
+    pool.frozen_counters.materialized_lists =
+        pool.frozen_counters.materialized_lists.saturating_add(1);
+    Ok(pool.finish_region_copy(destination, list, count, shared, semantic_identity_enabled))
+}
+
+/// Runs one recursive copy, rolling the destination back on failure.
+fn copy_list_between<Source, Destination>(
+    chunks: &mut ChunkPool<RegionNode>,
+    annex_chunks: &mut ChunkPool<u32>,
+    source: &NodeRegion<Source>,
+    list: PageListId,
+    destination: &mut NodeRegion<Destination>,
+    semantic_identity_enabled: bool,
+) -> Result<(PageListId, usize, Vec<u32>), ForkArenaError> {
+    let operation = destination.pub_arena.operation_mark(chunks);
+    let annex_operation = destination.annex_arena.operation_mark(annex_chunks);
+    let mut context = copy::CopyContext::new(
+        chunks,
+        annex_chunks,
+        source,
+        destination,
+        semantic_identity_enabled,
+    );
+    let copied = context.copy_list(list);
+    let shared = context.into_shared();
+    match copied {
+        Ok(copied) => Ok((copied.list, copied.count, shared)),
         Err(error) => {
             destination
                 .pub_arena
-                .restore_operation(&mut pool.chunks, operation)
+                .restore_operation(chunks, operation)
                 .expect("copy destination rollback mark remains valid");
             destination
                 .annex_arena
-                .restore_operation(&mut pool.annex_chunks, annex_operation)
+                .restore_operation(annex_chunks, annex_operation)
                 .expect("copy annex rollback mark remains valid");
-            return Err(error);
+            Err(error)
         }
-    };
+    }
+}
+
+impl NodePool {
+    fn finish_region_copy<Destination>(
+        &mut self,
+        destination: &mut NodeRegion<Destination>,
+        list: PageListId,
+        count: usize,
+        shared: Vec<u32>,
+        semantic_identity_enabled: bool,
+    ) -> RegionRoot<Destination> {
+        self.frozen_counters.shared_bodies = self
+            .frozen_counters
+            .shared_bodies
+            .saturating_add(shared.len() as u64);
+        for slot in shared {
+            self.log_borrow(destination, slot);
+        }
+        finish_copied_root(destination, list, count, semantic_identity_enabled)
+    }
+}
+
+fn finish_copied_root<Destination>(
+    destination: &mut NodeRegion<Destination>,
+    list: PageListId,
+    count: usize,
+    semantic_identity_enabled: bool,
+) -> RegionRoot<Destination> {
     destination.pub_arena.record_source_nodes_copied(count);
     #[cfg(feature = "profiling")]
     crate::measurement::record_region_copy(count);
@@ -1809,11 +1946,11 @@ pub(crate) fn copy_region_root_into<Source, Destination>(
                 ..SequenceSummaryWork::default()
             });
     }
-    Ok(RegionRoot {
+    RegionRoot {
         region: destination.id,
         list,
         _role: PhantomData,
-    })
+    }
 }
 
 /// Explicit bounded structural-copy fallback. The reason is observed but

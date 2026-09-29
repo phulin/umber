@@ -83,7 +83,7 @@ pub(crate) fn split_vbox_register<G>(
         return Ok(None);
     };
 
-    let split_nodes = source_box.children;
+    let split_nodes = stores.owned_page_list(source_box.children);
     let split = vert_break(
         &crate::typeset_context::TypesetContext::new(stores),
         stores

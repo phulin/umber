@@ -519,15 +519,21 @@ fn extract_box_migrations<G>(
                     | tex_state::node_view::NodeView::Adjust(_)
             )
         });
-    let obsolete_input_positions = if migrates {
-        let positions = stores
-            .page_list_chunk_positions(children)
-            .expect("consumed hpack input list has exact chunk positions");
-        stores.rotate_page_box_wrapper_tail();
-        positions
-    } else {
-        Vec::new()
-    };
+    if !migrates {
+        return (
+            tex_state::page_node_arena::PageListId::empty(),
+            tex_state::page_node_arena::PageListId::empty(),
+            Vec::new(),
+            None,
+        );
+    }
+    // The split rebuilds the children in the page arena, so a body shared
+    // from a frozen box register is first materialized there.
+    let children = stores.owned_page_list(children);
+    let obsolete_input_positions = stores
+        .page_list_chunk_positions(children)
+        .expect("consumed hpack input list has exact chunk positions");
+    stores.rotate_page_box_wrapper_tail();
     let (retained, pre_migrated, migrated, projection) = split_hpack_migrations(stores, children);
     if !pre_migrated.is_empty() || !migrated.is_empty() {
         boxed.children = retained;

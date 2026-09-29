@@ -3539,6 +3539,12 @@ impl<G> Universe<G> {
         self.page_region.closure_transition_counters()
     }
 
+    /// Shared box-body lifecycle counters (see `docs/shared_box_closures.md`).
+    #[must_use]
+    pub fn frozen_region_counters(&self) -> crate::node_region::FrozenRegionCounters {
+        self.page_region.frozen_region_counters()
+    }
+
     /// Demand-free page-material ownership counters for lifecycle gates.
     #[must_use]
     pub fn page_material_counters(&self) -> crate::fork_arena::ForkArenaCounters {

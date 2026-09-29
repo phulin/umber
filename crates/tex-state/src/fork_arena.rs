@@ -24,6 +24,7 @@ mod checkpoint_lifecycle;
 mod compound_transfer;
 mod consumed_window;
 mod exact_chunks;
+mod frozen_lists;
 mod hole_transfer;
 mod owned_admission;
 mod packed_source;
@@ -2232,6 +2233,7 @@ pub struct ChunkPool<T> {
     owner: u32,
     payload: ChunkStorage<T>,
     next_publication_serial: u32,
+    frozen: frozen_lists::FrozenArenaIndex,
 }
 
 impl<T> Default for ChunkPool<T> {
@@ -2252,6 +2254,7 @@ impl<T> ChunkPool<T> {
             owner: NEXT_POOL_OWNER.fetch_add(1, Ordering::Relaxed),
             payload: ChunkStorage::with_chunk_bytes(chunk_bytes),
             next_publication_serial: 1,
+            frozen: frozen_lists::FrozenArenaIndex::default(),
         }
     }
 
@@ -2265,6 +2268,7 @@ impl<T> ChunkPool<T> {
             owner: NEXT_POOL_OWNER.fetch_add(1, Ordering::Relaxed),
             payload: ChunkStorage::with_packed_chunk_bytes(chunk_bytes),
             next_publication_serial: 1,
+            frozen: frozen_lists::FrozenArenaIndex::default(),
         }
     }
 
@@ -2279,6 +2283,7 @@ impl<T> ChunkPool<T> {
             owner: NEXT_POOL_OWNER.fetch_add(1, Ordering::Relaxed),
             payload: ChunkStorage::with_packed_chunk_bytes(chunk_bytes),
             next_publication_serial: 1,
+            frozen: frozen_lists::FrozenArenaIndex::default(),
         }
     }
 
@@ -2294,6 +2299,7 @@ impl<T> ChunkPool<T> {
                 class,
             ),
             next_publication_serial: 1,
+            frozen: frozen_lists::FrozenArenaIndex::default(),
         }
     }
 
@@ -2312,6 +2318,7 @@ impl<T> ChunkPool<T> {
                 class,
             ),
             next_publication_serial: 1,
+            frozen: frozen_lists::FrozenArenaIndex::default(),
         };
         pool.payload.packed_initializer = Some(initialize_packed_chunk::<T>);
         pool.payload.packed_copier = Some(copy_packed_chunk::<T>);
@@ -4654,15 +4661,10 @@ impl<T, Lane> ForkArena<T, Lane> {
             if list.is_empty() {
                 return;
             }
-            if self.validate_list(pool, list).is_err() {
-                valid = false;
-                return;
+            match self.list_dependency(pool, list) {
+                Ok((head, _)) => dependency_floor = dependency_floor.min(head),
+                Err(_) => valid = false,
             }
-            let Some(head) = self.resolved_position(pool, list.head.raw) else {
-                valid = false;
-                return;
-            };
-            dependency_floor = dependency_floor.min(head);
         });
         if !valid {
             return Err(ForkArenaError::InvalidRegion);
@@ -4681,13 +4683,9 @@ impl<T, Lane> ForkArena<T, Lane> {
             if list.is_empty() {
                 return;
             }
-            match self
-                .validate_list(pool, list)
-                .and_then(|()| pool.payload.validate(list.tail.raw, self.owner))
-            {
-                Ok(meta) => {
-                    paired_dependency_floor =
-                        paired_dependency_floor.min(meta.paired_dependency_floor());
+            match self.list_dependency(pool, list) {
+                Ok((_, paired)) => {
+                    paired_dependency_floor = paired_dependency_floor.min(paired);
                 }
                 Err(_) => valid = false,
             }
@@ -4710,13 +4708,7 @@ impl<T, Lane> ForkArena<T, Lane> {
             if list.is_empty() || !valid {
                 return;
             }
-            match self.validate_list(pool, list).and_then(|()| {
-                let head = self
-                    .resolved_position(pool, list.head.raw)
-                    .ok_or(ForkArenaError::InvalidRange)?;
-                let meta = pool.payload.validate(list.tail.raw, self.owner)?;
-                Ok((head, meta.paired_dependency_floor()))
-            }) {
+            match self.list_dependency(pool, list) {
                 Ok((head, paired)) => {
                     dependency_floor = dependency_floor.min(head);
                     paired_dependency_floor = paired_dependency_floor.min(paired);

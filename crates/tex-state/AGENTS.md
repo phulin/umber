@@ -204,6 +204,10 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/fork_arena/suffix_move.rs`: Fused closed-suffix moves between arenas:
   one mutation-free ownership, closure, sealing, and floor proof, then one
   pass rewriting each chunk's owner, lineage position, and rebased floors.
+- `src/fork_arena/frozen_lists.rs`: Pool index of frozen arenas whose lists
+  other arenas borrow, borrowed-list recognition by head-chunk owner, list
+  dependency floors that treat borrowed lists as unconstrained, and a
+  suffix value visitor.
 - `src/fork_arena/whole_region_transfer.rs`: Interval-root preflight, suffix
   and list-in-suffix validation, and exact suffix detachment for that lane.
 - `src/format.rs` and `src/format/tests.rs`: Consuming destination-stamped
@@ -345,6 +349,10 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/node_region/copy/harness.rs`: Synthetic inline, fixed, nested,
   variable-span, paragraph, and listing shapes for the opt-in node-copy timing
   tier.
+- `src/node_region/frozen.rs`: Pool-owned frozen durable regions, per-region
+  borrow logs with share counts and worklist release, borrowed-list cursors,
+  and the split of a large single-box durable closure into a frozen body plus
+  a one-record wrapper (`docs/shared_box_closures.md`).
 - `src/node_region/consumed_cut.rs`: Bounded shallow selected-record projection
   from one consumed logical chunk into a durable owner, with child-coordinate
   mapping and paired destination-mark rollback on rejection.

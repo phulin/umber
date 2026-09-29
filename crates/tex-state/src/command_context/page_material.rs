@@ -112,12 +112,21 @@ impl<'a, G> CommandContext<'a, G> {
     /// projection. The source wrapper was taken from a register or freshly
     /// copied to page material before this call.
     pub fn consumed_box_children(
-        &self,
+        &mut self,
         wrapper: PageListId,
     ) -> crate::page_node_arena::ConsumedBoxChildren {
         self.page_nodes
             .consumed_box_children(wrapper)
             .expect("consumed unbox wrapper is one admitted page box")
+    }
+
+    /// Returns an exclusively page-owned equivalent of `list` for an
+    /// operation that splits or splices it, materializing a borrowed box
+    /// body (see `docs/shared_box_closures.md`).
+    pub fn owned_page_list(&mut self, list: PageListId) -> PageListId {
+        self.page_nodes
+            .materialize_list(list)
+            .expect("box body belongs to the page or a frozen region")
     }
 
     /// Converts move-only whole-list authority into an immutable embedded

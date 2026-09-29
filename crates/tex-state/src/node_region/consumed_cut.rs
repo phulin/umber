@@ -79,7 +79,11 @@ pub(crate) fn copy_consumed_direct_cut_into<Source, Destination>(
         Ok(PageListId::from_parts(root, identity))
     })();
     match copied {
-        Ok(root) => Ok(root),
+        Ok(root) => {
+            // Mapped children may keep borrowed coordinates.
+            pool.inherit_borrows(source, destination);
+            Ok(root)
+        }
         Err(error) => {
             destination
                 .pub_arena

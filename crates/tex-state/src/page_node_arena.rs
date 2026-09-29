@@ -17,7 +17,7 @@ use crate::node_record::{NodeAnnexView, NodeAnnexWriter, NodeRecord};
 use crate::node_region::{
     ClosureBuildMark, DurableRole, NodeCheckpointMark, NodePool, NodeRegion, NodeSealedBoundary,
     OwnedNodeClosure, PageInteriorClosurePreflightError, PageRole, StructuralCopyReason,
-    copy_closure_into, copy_region_root_into, loan_empty_page_box_body,
+    copy_borrowed_list_into, copy_closure_into, copy_region_root_into, loan_empty_page_box_body,
     preflight_empty_page_box_body, preflight_page_interior_closure,
     preflight_page_interior_intervals, rollback_page_interior_closure, structural_copy_fallback,
     transfer_closure_into, transfer_page_interior_closure, transfer_page_interior_closure_staged,
@@ -2007,6 +2007,23 @@ impl<'a> PageMaterialArena<'a> {
         self.finish_built_page_root_to_durable(loan.build, loan.root)
     }
 
+    /// Freezes a copied durable box's body so this and later explicit
+    /// copies borrow it instead of copying it (see
+    /// `docs/shared_box_closures.md`). Ineligible owners are unchanged.
+    pub(crate) fn share_durable_body(&mut self, owner: &mut Option<DurableNodeClosure>) {
+        let Some(closure) = owner.take() else {
+            return;
+        };
+        *owner = Some(
+            match self
+                .pool
+                .freeze_closure_body(closure, *self.semantic_identity_enabled)
+            {
+                Ok(closure) | Err(closure) => closure,
+            },
+        );
+    }
+
     /// Implements TeX's explicit recursive copy while retaining the source
     /// durable owner.
     pub(crate) fn copy_durable_to_page(
@@ -2713,18 +2730,27 @@ impl<'a> PageMaterialArena<'a> {
         &self,
         list: PageListId,
     ) -> Result<crate::node_view::NodeCursor<'_>, ForkArenaError> {
-        self.admit_span(list)
-            .and_then(|span| self.span_node_cursor(span))
+        match self.admit_span(list) {
+            Ok(span) => self.span_node_cursor(span),
+            Err(error) => self.pool.borrowed_cursor(list).ok_or(error),
+        }
     }
 
     pub fn span_node_cursor(
         &self,
         span: PageListSpan,
     ) -> Result<crate::node_view::NodeCursor<'_>, ForkArenaError> {
-        self.region
+        match self
+            .region
             .pub_arena
             .validated_list(&self.pool.chunks, span.list.coordinate())
-            .map(|view| crate::node_view::NodeCursor::fork_arena(view, self.annex_view()))
+        {
+            Ok(view) => Ok(crate::node_view::NodeCursor::fork_arena(
+                view,
+                self.annex_view(),
+            )),
+            Err(error) => self.pool.borrowed_cursor(span.list).ok_or(error),
+        }
     }
 
     pub fn admitted_node_cursor(
@@ -3122,7 +3148,7 @@ impl<'a> PageMaterialArena<'a> {
     /// or `\unvbox`. The caller must have removed or independently copied that
     /// semantic wrapper before asking for this one-shot projection authority.
     pub fn consumed_box_children(
-        &self,
+        &mut self,
         wrapper: PageListId,
     ) -> Result<ConsumedBoxChildren, ForkArenaError> {
         if wrapper.len() != 1 {
@@ -3138,8 +3164,26 @@ impl<'a> PageMaterialArena<'a> {
             }
             _ => return Err(ForkArenaError::InvalidRange),
         };
-        self.admit_span(child)?;
-        Ok(ConsumedBoxChildren { list: child })
+        Ok(ConsumedBoxChildren {
+            list: self.materialize_list(child)?,
+        })
+    }
+
+    /// Returns `list` itself when this page region owns it. A borrowed box
+    /// body is materialized instead: the result owns fresh copies of its
+    /// top-level records, whose own bodies stay borrowed.
+    pub fn materialize_list(&mut self, list: PageListId) -> Result<PageListId, ForkArenaError> {
+        match self.admit_span(list) {
+            Ok(_) => Ok(list),
+            Err(error) if self.pool.frozen_slot_of(list).is_none() => Err(error),
+            Err(_) => copy_borrowed_list_into(
+                self.pool,
+                list,
+                self.region,
+                *self.semantic_identity_enabled,
+            )
+            .map(|root| root.list()),
+        }
     }
 
     pub fn cancel_closure_build(
@@ -3292,32 +3336,36 @@ impl<'a> PageMaterialView<'a> {
         &self,
         list: PageListId,
     ) -> Result<crate::node_view::NodeCursor<'a>, ForkArenaError> {
-        self.state
+        match self
+            .state
             .region
             .pub_arena
             .validated_list(&self.pool.chunks, list.coordinate())
-            .map(|view| {
-                crate::node_view::NodeCursor::fork_arena(
-                    view,
-                    NodeAnnexView::new(&self.pool.annex_chunks, &self.state.region.annex_arena),
-                )
-            })
+        {
+            Ok(view) => Ok(crate::node_view::NodeCursor::fork_arena(
+                view,
+                NodeAnnexView::new(&self.pool.annex_chunks, &self.state.region.annex_arena),
+            )),
+            Err(error) => self.pool.borrowed_cursor(list).ok_or(error),
+        }
     }
 
     pub fn span_node_cursor(
         &self,
         span: PageListSpan,
     ) -> Result<crate::node_view::NodeCursor<'a>, ForkArenaError> {
-        self.state
+        match self
+            .state
             .region
             .pub_arena
             .validated_list(&self.pool.chunks, span.list.coordinate())
-            .map(|view| {
-                crate::node_view::NodeCursor::fork_arena(
-                    view,
-                    NodeAnnexView::new(&self.pool.annex_chunks, &self.state.region.annex_arena),
-                )
-            })
+        {
+            Ok(view) => Ok(crate::node_view::NodeCursor::fork_arena(
+                view,
+                NodeAnnexView::new(&self.pool.annex_chunks, &self.state.region.annex_arena),
+            )),
+            Err(error) => self.pool.borrowed_cursor(span.list).ok_or(error),
+        }
     }
 
     pub(crate) fn durable_list(
