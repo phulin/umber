@@ -118,30 +118,6 @@ impl PageMaterialArena<'_> {
         };
         let nodes = self.region.pub_arena.live_payload_interval();
         let annex = self.region.annex_arena.live_payload_interval();
-        if let Err(error) = preflight_page_interior_closure_staged(
-            self.pool,
-            self.region,
-            source_root,
-            nodes.clone(),
-            annex.clone(),
-            &durable,
-        ) {
-            assert!(
-                self.pool.retire_region(durable).is_ok(),
-                "unpublished durable region retires"
-            );
-            successor
-                .retire(self.pool)
-                .expect("unpublished survivor copies retire");
-            return Err(match error {
-                PageInteriorClosurePreflightError::Envelope(
-                    ForkArenaError::InvalidRegion | ForkArenaError::InvalidChunk,
-                ) => OutputCarrierTakeError::UnsupportedGeometry,
-                PageInteriorClosurePreflightError::Root(error)
-                | PageInteriorClosurePreflightError::Envelope(error) => arena_error(error),
-            });
-        }
-
         #[cfg(feature = "profiling")]
         let measurement = self
             .measure_output_carrier_transfer(output, survivors, &nodes, &annex)
@@ -152,21 +128,40 @@ impl PageMaterialArena<'_> {
         #[cfg(feature = "profiling")]
         let survivor_nodes_copied = successor.region.pub_arena.counters().source_nodes_copied;
 
-        let (taken, builder_swap) = builder.take_output_carrier_for_region_swap();
-        debug_assert_eq!(taken, output);
-        let permit = self
-            .output_region_permit
-            .take()
-            .expect("page history permit was admitted");
-        let (durable_root, chunks) = transfer_page_interior_closure(
+        // One typed closure pass proves and moves the whole envelope before
+        // the output slot is consumed; a decline leaves both regions intact.
+        let (durable_root, chunks) = match transfer_page_interior_closure_staged(
             self.pool,
             self.region,
             source_root,
             nodes,
             annex,
             &mut durable,
-        )
-        .expect("paired whole-owner transfer was preflighted before consuming the output slot");
+        ) {
+            Ok(moved) => moved,
+            Err(error) => {
+                assert!(
+                    self.pool.retire_region(durable).is_ok(),
+                    "unpublished durable region retires"
+                );
+                successor
+                    .retire(self.pool)
+                    .expect("unpublished survivor copies retire");
+                return Err(match error {
+                    PageInteriorClosurePreflightError::Envelope(
+                        ForkArenaError::InvalidRegion | ForkArenaError::InvalidChunk,
+                    ) => OutputCarrierTakeError::UnsupportedGeometry,
+                    PageInteriorClosurePreflightError::Root(error)
+                    | PageInteriorClosurePreflightError::Envelope(error) => arena_error(error),
+                });
+            }
+        };
+        let (taken, builder_swap) = builder.take_output_carrier_for_region_swap();
+        debug_assert_eq!(taken, output);
+        let permit = self
+            .output_region_permit
+            .take()
+            .expect("page history permit was admitted");
         let closure = durable
             .into_closure(self.pool, durable_root)
             .unwrap_or_else(|(error, _)| panic!("preflighted output closure: {error:?}"));

@@ -1573,24 +1573,32 @@ pub(crate) fn transfer_page_interior_closure(
     annex_range: std::ops::Range<usize>,
     destination: &mut NodeRegion<DurableRole>,
 ) -> Result<(RegionRoot<DurableRole>, PageInteriorTransferLoan), ForkArenaError> {
-    preflight_page_interior_closure(
+    transfer_page_interior_closure_staged(pool, source, root, node_range, annex_range, destination)
+        .map_err(PageInteriorClosurePreflightError::error)
+}
+
+/// Proves and moves a whole box interval with one typed closure pass.
+/// Nothing moves on either error; an `Envelope` error lets the caller copy
+/// the live root instead.
+pub(crate) fn transfer_page_interior_closure_staged(
+    pool: &mut NodePool,
+    source: &mut NodeRegion<PageRole>,
+    root: RegionRoot<PageRole>,
+    node_range: std::ops::Range<usize>,
+    annex_range: std::ops::Range<usize>,
+    destination: &mut NodeRegion<DurableRole>,
+) -> Result<(RegionRoot<DurableRole>, PageInteriorTransferLoan), PageInteriorClosurePreflightError>
+{
+    let (node_ranges, annex_ranges) = preflight_page_interior_closure_ranges(
         pool,
         source,
         root,
-        node_range.clone(),
-        annex_range.clone(),
+        node_range,
+        annex_range,
         destination,
     )?;
-    let node_ranges = (!node_range.is_empty())
-        .then_some(node_range)
-        .into_iter()
-        .collect::<Vec<_>>();
-    let annex_ranges = (!annex_range.is_empty())
-        .then_some(annex_range)
-        .into_iter()
-        .collect::<Vec<_>>();
-    let loan =
-        transfer_page_interior_intervals(pool, source, &node_ranges, &annex_ranges, destination)?;
+    let loan = move_page_interior_intervals(pool, source, &node_ranges, &annex_ranges, destination)
+        .map_err(PageInteriorClosurePreflightError::Envelope)?;
     Ok((
         RegionRoot {
             region: destination.id,
@@ -1666,6 +1674,20 @@ pub(crate) fn preflight_page_interior_closure_staged(
     annex_range: std::ops::Range<usize>,
     destination: &NodeRegion<DurableRole>,
 ) -> Result<(), PageInteriorClosurePreflightError> {
+    preflight_page_interior_closure_ranges(pool, source, root, node_range, annex_range, destination)
+        .map(drop)
+}
+
+type PageInteriorRanges = (Vec<std::ops::Range<usize>>, Vec<std::ops::Range<usize>>);
+
+fn preflight_page_interior_closure_ranges(
+    pool: &NodePool,
+    source: &NodeRegion<PageRole>,
+    root: RegionRoot<PageRole>,
+    node_range: std::ops::Range<usize>,
+    annex_range: std::ops::Range<usize>,
+    destination: &NodeRegion<DurableRole>,
+) -> Result<PageInteriorRanges, PageInteriorClosurePreflightError> {
     pool.validate_region(source)
         .map_err(PageInteriorClosurePreflightError::Root)?;
     pool.validate_region(destination)
@@ -1693,7 +1715,8 @@ pub(crate) fn preflight_page_interior_closure_staged(
         .into_iter()
         .collect::<Vec<_>>();
     preflight_page_interior_intervals(pool, source, &node_ranges, &annex_ranges, destination)
-        .map_err(PageInteriorClosurePreflightError::Envelope)
+        .map_err(PageInteriorClosurePreflightError::Envelope)?;
+    Ok((node_ranges, annex_ranges))
 }
 
 fn interval_contains(ranges: &[std::ops::Range<usize>], position: usize) -> bool {
@@ -1772,6 +1795,20 @@ pub(crate) fn transfer_page_interior_intervals(
     destination: &mut NodeRegion<DurableRole>,
 ) -> Result<PageInteriorTransferLoan, ForkArenaError> {
     preflight_page_interior_intervals(pool, source, node_ranges, annex_ranges, destination)?;
+    move_page_interior_intervals(pool, source, node_ranges, annex_ranges, destination)
+}
+
+/// Moves intervals whose typed closure the caller has just proved with
+/// [`preflight_page_interior_intervals`] under the same exclusive borrows.
+/// The generic arena transfer still rechecks chunk ownership and
+/// predecessors, so only the per-record walk is elided.
+fn move_page_interior_intervals(
+    pool: &mut NodePool,
+    source: &mut NodeRegion<PageRole>,
+    node_ranges: &[std::ops::Range<usize>],
+    annex_ranges: &[std::ops::Range<usize>],
+    destination: &mut NodeRegion<DurableRole>,
+) -> Result<PageInteriorTransferLoan, ForkArenaError> {
     let nodes = source.pub_arena.transfer_interior_intervals(
         &mut pool.chunks,
         &mut destination.pub_arena,

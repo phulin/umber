@@ -19,9 +19,9 @@ use crate::node_region::{
     OwnedNodeClosure, PageInteriorClosurePreflightError, PageRole, StructuralCopyReason,
     copy_closure_into, copy_region_root_into, loan_empty_page_box_body,
     preflight_empty_page_box_body, preflight_page_interior_closure,
-    preflight_page_interior_closure_staged, preflight_page_interior_intervals,
-    rollback_page_interior_closure, structural_copy_fallback, transfer_closure_into,
-    transfer_page_interior_closure, transfer_page_interior_intervals, transfer_sealed_closure_into,
+    preflight_page_interior_intervals, rollback_page_interior_closure, structural_copy_fallback,
+    transfer_closure_into, transfer_page_interior_closure, transfer_page_interior_closure_staged,
+    transfer_page_interior_intervals, transfer_sealed_closure_into,
 };
 use crate::node_sequence::SemanticSequenceIdentity;
 
@@ -1591,27 +1591,33 @@ impl<'a> PageMaterialArena<'a> {
         let mut durable = self.pool.start_region::<DurableRole>()?;
         let partitioned =
             reset_shift || metadata.wrapper_rebuild || !metadata.exclusions.is_empty();
+        // A whole-envelope move proves and transfers in one typed pass; any
+        // decline leaves both regions untouched for the interleaved path.
         let whole = if partitioned {
-            Err(ForkArenaError::InvalidRegion)
+            None
         } else {
-            preflight_page_interior_closure(
+            transfer_page_interior_closure(
                 self.pool,
                 self.region,
                 source_root,
                 segment.node_range(),
                 segment.annex_range(),
-                &durable,
+                &mut durable,
             )
+            .ok()
         };
-        let result = if partitioned {
-            let (mut wrapper, nodes, annex) =
-                match self.preflight_partitioned_box_body(root, &metadata, &durable) {
-                    Ok(value) => value,
-                    Err(error) => {
-                        assert!(self.pool.retire_region(durable).is_ok());
-                        return Err(error);
-                    }
-                };
+        let whole_moved = whole.is_some();
+        let result = if let Some(moved) = whole {
+            Ok(moved)
+        } else if partitioned {
+            let (mut wrapper, nodes, annex) = match self.admit_partitioned_box_body(root, &metadata)
+            {
+                Ok(value) => value,
+                Err(error) => {
+                    assert!(self.pool.retire_region(durable).is_ok());
+                    return Err(error);
+                }
+            };
             if reset_shift {
                 match &mut wrapper {
                     Node::HList(boxed) | Node::VList(boxed) => {
@@ -1637,24 +1643,15 @@ impl<'a> PageMaterialArena<'a> {
                         }
                     }
                 })
-        } else if whole.is_ok() {
-            transfer_page_interior_closure(
-                self.pool,
-                self.region,
-                source_root,
-                segment.node_range(),
-                segment.annex_range(),
-                &mut durable,
-            )
         } else {
-            let (wrapper, child) =
-                match self.preflight_interleaved_box_body(root, segment, &durable) {
-                    Ok(value) => value,
-                    Err(error) => {
-                        assert!(self.pool.retire_region(durable).is_ok());
-                        return Err(error);
-                    }
-                };
+            let (wrapper, child) = match self.admit_interleaved_box_wrapper(root, segment, &durable)
+            {
+                Ok(value) => value,
+                Err(error) => {
+                    assert!(self.pool.retire_region(durable).is_ok());
+                    return Err(error);
+                }
+            };
             let loaned = if let Some(child) = child {
                 let source_child = self.region.root(self.pool, child)?;
                 transfer_page_interior_closure(
@@ -1693,7 +1690,7 @@ impl<'a> PageMaterialArena<'a> {
                 return Err(error);
             }
         };
-        if whole.is_err() {
+        if !whole_moved {
             self.durable_transitions.interleaved_box_wrappers_built = self
                 .durable_transitions
                 .interleaved_box_wrappers_built
@@ -1763,6 +1760,29 @@ impl<'a> PageMaterialArena<'a> {
         segment: crate::node_region::PageBoxSegment,
         destination: &NodeRegion<DurableRole>,
     ) -> Result<(Node<PageListId>, Option<PageListId>), ForkArenaError> {
+        let (wrapper, child) = self.admit_interleaved_box_wrapper(root, segment, destination)?;
+        if let Some(child) = child {
+            preflight_page_interior_closure(
+                self.pool,
+                self.region,
+                self.region.root(self.pool, child)?,
+                segment.body_node_range(),
+                segment.body_annex_range(),
+                destination,
+            )?;
+        }
+        Ok((wrapper, child))
+    }
+
+    /// Admits an interleaved box wrapper and its body coordinates without
+    /// the typed closure walk over the body, which the caller either runs as
+    /// a preflight or folds into the body transfer.
+    fn admit_interleaved_box_wrapper(
+        &self,
+        root: PageListId,
+        segment: crate::node_region::PageBoxSegment,
+        destination: &NodeRegion<DurableRole>,
+    ) -> Result<(Node<PageListId>, Option<PageListId>), ForkArenaError> {
         if root.len() != 1 || segment.region() != self.region.id() {
             return Err(ForkArenaError::InvalidRegion);
         }
@@ -1801,14 +1821,7 @@ impl<'a> PageMaterialArena<'a> {
             )?;
             return Ok((wrapper, None));
         };
-        preflight_page_interior_closure(
-            self.pool,
-            self.region,
-            self.region.root(self.pool, child)?,
-            body_nodes.clone(),
-            body_annex,
-            destination,
-        )?;
+        self.region.root(self.pool, child)?;
         if let Some(diagnostic) = diagnostic {
             self.region.pub_arena.preflight_interval_root(
                 &self.pool.chunks,
@@ -1825,6 +1838,19 @@ impl<'a> PageMaterialArena<'a> {
         root: PageListId,
         metadata: &PageBoxMigrationMetadata,
         destination: &NodeRegion<DurableRole>,
+    ) -> Result<PreflightedBoxBody, ForkArenaError> {
+        let (wrapper, nodes, annex) = self.admit_partitioned_box_body(root, metadata)?;
+        preflight_page_interior_intervals(self.pool, self.region, &nodes, &annex, destination)?;
+        Ok((wrapper, nodes, annex))
+    }
+
+    /// Admits a partitioned box wrapper and selects its body intervals
+    /// without the typed closure walk, which
+    /// [`transfer_page_interior_intervals`] runs itself.
+    fn admit_partitioned_box_body(
+        &self,
+        root: PageListId,
+        metadata: &PageBoxMigrationMetadata,
     ) -> Result<PreflightedBoxBody, ForkArenaError> {
         let segment = metadata.segment;
         if root.len() != 1 || segment.region() != self.region.id() {
@@ -1877,7 +1903,6 @@ impl<'a> PageMaterialArena<'a> {
                 return Err(ForkArenaError::InvalidRegion);
             }
         }
-        preflight_page_interior_intervals(self.pool, self.region, &nodes, &annex, destination)?;
         Ok((wrapper, nodes, annex))
     }
 
