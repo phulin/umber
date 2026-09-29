@@ -39,6 +39,7 @@ pub(crate) struct InputLevelId(pub(crate) u64);
 
 pub(crate) use tex_state::packed_input::InputFrame as PackedInputFrame;
 
+#[inline]
 fn packed_frame_kind(behavior: &TokenBehavior, trace: &ReplayTrace) -> InputFrameKind {
     // TeX82 §789 gives both an ordinary v-part and `omit_template` the
     // `v_template` token behavior. The trace is the sole distinction that
@@ -84,6 +85,7 @@ fn packed_frame_kind(behavior: &TokenBehavior, trace: &ReplayTrace) -> InputFram
     }
 }
 
+#[inline]
 pub(crate) fn packed_token_frame(
     identity: InputLevelId,
     len: usize,
