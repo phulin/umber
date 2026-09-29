@@ -68,6 +68,17 @@ pub(in crate::main_control) fn command_diagnostic_context<G>(
     )
 }
 
+/// Materializes a scan-time context coordinate against the live `state`.
+pub(in crate::main_control) fn render_diagnostic_context<G>(
+    state: &CommandState<G>,
+    stores: &tex_state::CommandContext<'_, G>,
+    coordinate: tex_command::DiagnosticContextCoordinate,
+) -> Result<String, ExecError> {
+    state
+        .render_diagnostic_context(coordinate, stores)
+        .map_err(|_| ExecError::Command(tex_command::CommandError::StaleDelivery))
+}
+
 pub(in crate::main_control) fn render_diagnostic_coordinate<G>(
     command: &CommandMachine<'_, '_, G>,
     stores: &tex_state::CommandContext<'_, G>,
@@ -668,12 +679,13 @@ pub(in crate::main_control) fn apply_box_shift<G>(
             Ok(ReplayStep::Continue)
         }
         ScannedBoxShiftPayload::LastBox { error_context } => {
+            let state = &*command.state;
             let node = crate::box_runtime::take_last_box(
                 modes,
                 stores,
                 command.diagnostic_effects,
                 command.fuel,
-                |_| Ok(std::mem::take(error_context)),
+                |stores| render_diagnostic_context(state, stores, **error_context),
             )?;
             append_shifted_box(modes, stores, node, shift.delta, command)?;
             Ok(ReplayStep::Continue)

@@ -539,7 +539,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastBox)) => {
                     return Ok(ScannedBoxShiftPayload::LastBox {
-                        error_context: self.error_context(),
+                        error_context: Box::new(self.diagnostic_context_coordinate()),
                     });
                 }
                 Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VSplit)) => {

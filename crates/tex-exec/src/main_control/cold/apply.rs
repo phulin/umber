@@ -2466,13 +2466,14 @@ pub(in crate::main_control) fn apply<G>(
             if let ScannedSetBoxPath::Payload(ScannedBoxShiftPayload::LastBox { error_context }) =
                 path
             {
+                let state = &*command.state;
                 let removed: Option<crate::box_runtime::RemovedLastBox> =
                     crate::box_runtime::take_last_box_with_segment(
                         modes,
                         stores,
                         command.diagnostic_effects,
                         command.fuel,
-                        |_| Ok(std::mem::take(error_context)),
+                        |stores| render_diagnostic_context(state, stores, **error_context),
                     )?;
                 if let Some(removed) = &removed
                     && let (Some(root), Some(metadata)) =

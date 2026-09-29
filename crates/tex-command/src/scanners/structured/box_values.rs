@@ -95,7 +95,7 @@ pub enum ScannedBoxShiftPayload {
     },
     /// §1081 may diagnose against the live input while taking the last box.
     LastBox {
-        error_context: String,
+        error_context: Box<crate::DiagnosticContextCoordinate>,
     },
     VSplit(ScannedVSplit),
     Construction(ScannedBoxConstruction),
