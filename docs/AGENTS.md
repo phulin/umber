@@ -193,6 +193,10 @@ and durable regions, TeX move/copy transitions, two-lineage suffix settlement,
 held-over evacuation, and the static prohibition on naked owning list
 coordinates. It supersedes page-batch dependency/refcount designs.
 
+`shared_box_closures.md` amends the ownership contract for explicit box
+copies: frozen pool-owned regions, borrowed child coordinates, append-only
+region borrow logs, and shallow `\copy`/`\unhcopy`/`\unvcopy`.
+
 `durable_box_root_mutation.md` records the TeX82 basis for scalar box-root
 mutation and destructive box/unbox transfer through current, group, checkpoint,
 and operation owners.

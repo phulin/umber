@@ -36,6 +36,10 @@ rollback, and retirement consume a single paired value, so neither lane can be
 admitted independently. The pool supplies shared physical block allocation,
 but owns no global annex arena and no resident owned-node representation.
 
+[Shared box closures](shared_box_closures.md) amends this contract for
+explicit box copies: a pool-owned frozen region may be named by borrowed child
+coordinates in other regions, under its own lifetime rules.
+
 The following are explicitly rejected:
 
 - `PageMaterialBatch` dependency graphs and transitive batch counts;
