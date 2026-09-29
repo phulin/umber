@@ -523,6 +523,26 @@ fn let_endgroup_alias_runs_off_save_and_restores_the_primitive() {
 }
 
 #[test]
+fn shipout_copy_leaves_its_register_readable_and_intact() {
+    // TeX82 §1075 ships `\copy0` as an independent copy. Umber reads the
+    // register in place instead, so a deferred write expanded during that
+    // shipout must still see the register, which survives for `\box0`.
+    // `\shipout\box0` voids the register before its own writes expand.
+    let transcript = run_tex82(
+        br"\setbox0=\vbox{\hbox{\kern1pt}\write16{[w=\the\wd0]}}\shipout\copy0 \message{[after=\the\wd0]}\shipout\box0 \message{[void=\ifvoid0 y\fi]}\end",
+        false,
+    );
+    assert!(transcript.contains("[w=1.0pt]"), "{transcript}");
+    assert!(transcript.contains("[after=1.0pt]"), "{transcript}");
+    assert!(transcript.contains("[w=0.0pt]"), "{transcript}");
+    assert!(transcript.contains("[void=y]"), "{transcript}");
+    let first = transcript.find("[w=1.0pt]").expect("copy write");
+    let after = transcript.find("[after=1.0pt]").expect("register survives");
+    let second = transcript.find("[w=0.0pt]").expect("box write");
+    assert!(first < after && after < second, "{transcript}");
+}
+
+#[test]
 fn restricted_horizontal_hrule_reports_source_before_rule_spec_lookahead() {
     // TeX82 §1095 diagnoses this command in `head_for_vmode`, before §463
     // scans a rule specification. §82 must therefore display the physical

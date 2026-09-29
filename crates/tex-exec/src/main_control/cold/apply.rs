@@ -2727,8 +2727,19 @@ pub(in crate::main_control) fn apply<G>(
                 )?;
             }
             let start = isolated_append.then(|| stores.begin_page_node_region());
-            let id = read_box_register(*index, *copy, stores, command);
-            let node = crate::box_runtime::first_box_node(stores, id);
+            // `\shipout\copy` reads the register in place: shipout only
+            // expands deferred token lists, so the register cannot change
+            // before the staged page is released.
+            let pinned = (*ships_out && *copy)
+                .then(|| stores.pin_box_for_shipout(*index))
+                .flatten();
+            let node = match pinned {
+                Some(node) => Some(node),
+                None => {
+                    let id = read_box_register(*index, *copy, stores, command);
+                    crate::box_runtime::first_box_node(stores, id)
+                }
+            };
             let context = boxes.take_box_context(*ships_out);
             if let Some(start) = start {
                 debug_assert!(matches!(context, BoxContext::Append(_)));

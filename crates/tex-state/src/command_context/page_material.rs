@@ -547,11 +547,44 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     /// Resolves one page-lifetime list while the admitted context is live.
+    ///
+    /// While a `\shipout\copy` source is pinned, lists inside its durable
+    /// closure resolve too, so shipout reads the register in place.
     pub fn page_node_list(
         &self,
         list: PageListId,
     ) -> Result<crate::node_view::NodeCursor<'_>, ForkArenaError> {
-        self.page_nodes.node_cursor(list)
+        match self.durable_boxes.shipout_source() {
+            Some(source) => self
+                .page_nodes
+                .durable_node_cursor(source, list)
+                .or_else(|_| self.page_nodes.node_cursor(list)),
+            None => self.page_nodes.node_cursor(list),
+        }
+    }
+
+    /// Reads box register `index` for `\shipout\copy` without copying it.
+    ///
+    /// Returns the root box with its child lists still in the register's
+    /// durable closure, which stays pinned as a readable source until
+    /// [`crate::Universe::release_shipout_source`]. The shipped page is not
+    /// reachable state, so its lists need no page-minted semantic identity.
+    /// Returns `None` when the caller must copy instead: a void register or
+    /// the output-box carrier.
+    pub fn pin_box_for_shipout(&mut self, index: u16) -> Option<crate::node::Node> {
+        if index == u16::from(u8::MAX) || self.durable_boxes.shipout_source().is_some() {
+            return None;
+        }
+        let source = self.durable_boxes.pin_shipout_source(index)?;
+        let root = self
+            .page_nodes
+            .durable_list(source)
+            .ok()
+            .and_then(|list| list.get(0).map(|node| node.to_owned()));
+        if root.is_none() {
+            self.durable_boxes.release_shipout_source();
+        }
+        root
     }
 
     /// Exact top-level chunk coordinates of one admitted page list. This is
@@ -640,7 +673,7 @@ impl<'a, G> CommandContext<'a, G> {
         &self,
         sequence: crate::page_node_arena::PageListId,
     ) -> Result<crate::node_view::NodeCursor<'_>, crate::fork_arena::ForkArenaError> {
-        self.page_nodes.node_cursor(sequence)
+        self.page_node_list(sequence)
     }
 
     /// Resolves shipout-only derived nodes while the aggregate transaction is
@@ -764,8 +797,7 @@ impl<'a, G> CommandContext<'a, G> {
         match source.list {
             crate::ShipoutListId::Page(list) => {
                 let tokens = self
-                    .page_nodes
-                    .node_cursor(list)
+                    .page_node_list(list)
                     .ok()
                     .and_then(|list| list.get(source.index))
                     .expect("shipout token source belongs to the live page row");
@@ -809,8 +841,7 @@ impl<'a, G> CommandContext<'a, G> {
         match source.list {
             crate::ShipoutListId::Page(list) => {
                 let node = self
-                    .page_nodes
-                    .node_cursor(list)
+                    .page_node_list(list)
                     .expect("page shipout token row is live")
                     .get(source.index)
                     .expect("page shipout token index is live");
@@ -883,7 +914,7 @@ impl<'a, G> CommandContext<'a, G> {
         &self,
         list: PageListId,
     ) -> Result<crate::node_view::NodeCursor<'_>, ForkArenaError> {
-        self.page_nodes.node_cursor(list)
+        self.page_node_list(list)
     }
 
     /// Returns the generation-checked owner of every page-list coordinate

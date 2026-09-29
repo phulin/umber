@@ -102,6 +102,11 @@ struct DurableOwnerStore {
     slots: Vec<DurableOwnerSlot>,
     free: Vec<u32>,
     next_lineage: u64,
+    /// Owner read in place by the one staged `\shipout\copy`. Shipout
+    /// expands only deferred token lists, which cannot assign registers, so
+    /// the pinned closure stays live and unchanged below its root until the
+    /// staging boundary releases the pin.
+    shipout_source: Option<DurableOwnerId>,
 }
 
 impl DurableOwnerStore {
@@ -182,6 +187,11 @@ impl DurableOwnerStore {
     }
 
     fn retire(&mut self, arena: &mut PageMaterialArena, id: DurableOwnerId) {
+        assert_ne!(
+            self.shipout_source,
+            Some(id),
+            "a staged shipout source cannot retire before its shipout ends"
+        );
         let slot = self.slot_mut(id);
         arena
             .retire_durable_in_place(&mut slot.owner)
@@ -775,6 +785,30 @@ impl DurableBoxState {
         self.cell(index)
             .and_then(|cell| cell.value)
             .map(|id| self.owners.owner(id))
+    }
+
+    /// Pins register `index` as the in-place source of one `\shipout\copy`
+    /// and returns its closure, or `None` for a void register.
+    pub(crate) fn pin_shipout_source(&mut self, index: u16) -> Option<&DurableNodeClosure> {
+        let id = self.cell(index)?.value?;
+        debug_assert!(self.owners.shipout_source.is_none());
+        self.owners.shipout_source = Some(id);
+        Some(self.owners.owner(id))
+    }
+
+    /// The closure pinned by [`Self::pin_shipout_source`], while it remains
+    /// in its owner slot.
+    pub(crate) fn shipout_source(&self) -> Option<&DurableNodeClosure> {
+        let id = self.owners.shipout_source?;
+        self.owners
+            .slots
+            .get(id.slot as usize)
+            .filter(|slot| slot.live && slot.incarnation == id.incarnation)
+            .and_then(|slot| slot.owner.as_ref())
+    }
+
+    pub(crate) fn release_shipout_source(&mut self) {
+        self.owners.shipout_source = None;
     }
 
     pub(crate) fn visit_current(&self, mut visit: impl FnMut(u16, &DurableNodeClosure)) {

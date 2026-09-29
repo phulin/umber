@@ -2452,12 +2452,25 @@ impl<G> Universe<G> {
         self.publish_page_nodes_owned(nodes.to_vec())
     }
 
-    /// Resolves one list through this episode's page arena.
+    /// Resolves one list through this episode's page arena, or through the
+    /// pinned `\shipout\copy` source while a shipout reads it in place.
     pub fn page_node_list(
         &self,
         id: PageListId,
     ) -> Result<crate::node_view::NodeCursor<'_>, ForkArenaError> {
-        self.page_region.nodes().node_cursor(id)
+        let nodes = self.page_region.nodes();
+        match self.durable_boxes.shipout_source() {
+            Some(source) => nodes
+                .durable_node_cursor(source, id)
+                .or_else(|_| nodes.node_cursor(id)),
+            None => nodes.node_cursor(id),
+        }
+    }
+
+    /// Ends the in-place read begun by
+    /// [`crate::CommandContext::pin_box_for_shipout`].
+    pub fn release_shipout_source(&mut self) {
+        self.durable_boxes.release_shipout_source();
     }
 
     /// Opens one final shipout-scratch row for direct construction.
@@ -2716,10 +2729,7 @@ impl<G> Universe<G> {
         &self,
         id: PageListId,
     ) -> Result<crate::node_view::NodeCursor<'_>, UniverseError> {
-        self.page_region
-            .nodes()
-            .node_cursor(id)
-            .map_err(UniverseError::PageNodes)
+        self.page_node_list(id).map_err(UniverseError::PageNodes)
     }
 
     /// Resolves a generation-owned token payload for borrow-only shipout

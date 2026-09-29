@@ -2135,6 +2135,15 @@ impl<'a> PageMaterialArena<'a> {
         closure.list(self.pool)
     }
 
+    /// Resolves one list anywhere inside a durable closure.
+    pub(crate) fn durable_node_cursor<'b>(
+        &'b self,
+        closure: &'b DurableNodeClosure,
+        list: PageListId,
+    ) -> Result<crate::node_view::NodeCursor<'b>, ForkArenaError> {
+        closure.node_cursor(self.pool, list)
+    }
+
     pub(crate) fn set_durable_root_box_dimension(
         &mut self,
         closure: &mut DurableNodeClosure,
@@ -3311,6 +3320,15 @@ impl<'a> PageMaterialView<'a> {
         closure: &'a DurableNodeClosure,
     ) -> Result<crate::node_view::NodeCursor<'a>, ForkArenaError> {
         closure.list(self.pool)
+    }
+
+    /// Resolves one list anywhere inside a durable closure.
+    pub(crate) fn durable_node_cursor(
+        &self,
+        closure: &'a DurableNodeClosure,
+        list: PageListId,
+    ) -> Result<crate::node_view::NodeCursor<'a>, ForkArenaError> {
+        closure.node_cursor(self.pool, list)
     }
 
     pub(crate) fn durable_child_list(

@@ -7618,15 +7618,15 @@ impl<G> MainControl<G> {
                 stores
                     .world_mut()
                     .publish_diagnostic_effects_preserving(command.diagnostic_effects);
-                if let Some(receipt) =
-                    shipout_replay_box(shipout, stores, &mut command, &self.modes)?
-                        .and_then(|publication| publication.dvi)
-                {
+                let staged = shipout_replay_box(shipout, stores, &mut command, &self.modes);
+                stores.release_shipout_source();
+                if let Some(receipt) = staged?.and_then(|publication| publication.dvi) {
                     push_prepared_dvi_page(&mut self.prepared_dvi_pages, receipt);
                 }
             }
         } else {
             command.immediate_prints.clear();
+            stores.release_shipout_source();
             if let Some(shipout) = command.prepared_shipout.take()
                 && let Some(region) = shipout.region
             {

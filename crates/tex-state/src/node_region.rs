@@ -1271,6 +1271,21 @@ impl<Role> OwnedNodeClosure<Role> {
         self.region.list(pool, root)
     }
 
+    /// Resolves any list owned by this closure with one admission.
+    pub(crate) fn node_cursor<'region>(
+        &'region self,
+        pool: &'region NodePool,
+        list: PageListId,
+    ) -> Result<crate::node_view::NodeCursor<'region>, ForkArenaError> {
+        pool.validate_region(&self.region)?;
+        let view = self
+            .region
+            .pub_arena
+            .list(&pool.chunks, list.coordinate())?;
+        let annex = NodeAnnexView::new(&pool.annex_chunks, &self.region.annex_arena);
+        Ok(crate::node_view::NodeCursor::fork_arena(view, annex))
+    }
+
     pub(crate) fn into_region(self) -> NodeRegion<Role> {
         self.region
     }

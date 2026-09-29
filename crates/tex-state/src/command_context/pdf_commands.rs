@@ -545,8 +545,7 @@ impl<'a, G> CommandContext<'a, G> {
         match source.list {
             crate::ShipoutListId::Page(list) => {
                 let action = action(
-                    self.page_nodes
-                        .node_cursor(list)
+                    self.page_node_list(list)
                         .expect("page shipout color row is live")
                         .get(source.index)
                         .expect("page shipout color index is live"),
