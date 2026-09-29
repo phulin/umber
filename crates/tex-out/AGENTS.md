@@ -48,6 +48,7 @@ Use this crate for stable, driver-facing artifact structures and serialization c
 - `src/pdf/finalization.rs`: complete host-neutral PDF finalization input, including immutable shared committed page/form bytes, realized fonts/programs, images, metadata/navigation, allocation state, and explicit limits.
 - `src/pdf/finalize.rs`: finalization coordinator, sole indirect-object allocation/publication authority, graph validation, deterministic serialization, and diagnostics.
 - `src/pdf/finalize/errors.rs`: public finalization errors and source conversions.
+- `src/pdf/finalize/positioning.rs`: `PdfPositionedArtifacts`, the one-pass decode and positioned lowering of every page and form artifact, reusable by `finalize_pdf_positioned` when built from the same artifacts.
 - `src/pdf/finalize/content.rs`: private page/form content module wiring.
 - `src/pdf/finalize/content/traversal.rs`: positioned traversal, form validation, font-use collection, and resource classification.
 - `src/pdf/finalize/content/assembly.rs`: page/form event lowering and resource object assembly with borrowed allocation and object state.

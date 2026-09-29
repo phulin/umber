@@ -155,16 +155,14 @@ pub(in crate::pdf::finalize) fn outline_visible(
 }
 
 pub(in crate::pdf::finalize) fn lower_page_destinations(
-    _input: &PdfFinalizationInput,
     records: &[crate::pdf::PdfCommittedPageInput],
     pages: &[PositionedPage],
+    extents: &[(Scaled, Scaled)],
     decimal_digits: i32,
 ) -> Result<Vec<ShippedDestination>, PdfBuildError> {
     let mut seen = BTreeSet::new();
     let mut result = Vec::new();
-    for (page, record) in pages.iter().zip(records) {
-        let artifact = PageArtifact::from_bytes(&record.artifact_bytes)?;
-        let (_, page_height) = pdf_page_extents(&artifact, record)?;
+    for ((page, record), &(_, page_height)) in pages.iter().zip(records).zip(extents) {
         let page_object = object_id(record.page_object())?;
         let mut boxes = BTreeMap::new();
         for event in &page.events {

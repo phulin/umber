@@ -29,7 +29,10 @@ pub use finalization::{
     PdfRawObjectPayloadInput, PdfReservedDocumentObjects, PdfThreadBeadInput, PdfThreadInput,
     PdfVirtualFontInput, PdfVirtualLocalTfmInput,
 };
-pub use finalize::{PdfBuildError, PdfFinalizationOutput, finalize_pdf};
+pub use finalize::{
+    PdfBuildError, PdfFinalizationOutput, PdfPositionedArtifacts, finalize_pdf,
+    finalize_pdf_positioned,
+};
 
 use graph::{PdfGraphView, PdfValueCursor, PdfValueEvent};
 use paint::PdfPaintProgram;

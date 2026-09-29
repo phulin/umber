@@ -6,6 +6,8 @@ use super::*;
 pub enum PdfBuildError {
     PdfOutputDisabled,
     MissingArtifact(ContentHash),
+    /// Pre-lowered artifacts were not built from the finalized input.
+    PositionedArtifactMismatch,
     InvalidVersionParameters,
     InvalidCompressionLevel(i32),
     InvalidObjectCompressionLevel(i32),
@@ -131,6 +133,9 @@ impl std::fmt::Display for PdfBuildError {
             }
             Self::MissingArtifact(hash) => {
                 write!(f, "shipped page artifact {} is missing", hash.hex())
+            }
+            Self::PositionedArtifactMismatch => {
+                f.write_str("positioned artifacts do not match the finalization input")
             }
             Self::InvalidVersionParameters => {
                 f.write_str("pdfTeX PDF version parameters are outside 0..=255")

@@ -44,13 +44,14 @@ pub fn pdf_from_completion_at_dpi(
     virtual_fonts: &crate::PdfVirtualFontResources,
     raw_object_files: &crate::PdfRawObjectFileReceipt,
 ) -> Result<Vec<u8>, PdfBuildError> {
-    let input = pdf_finalization_input_with_raw_object_files(
+    let (input, positioned) = finalization_input::positioned_pdf_finalization_input(
         pdf,
         driver_dpi,
         virtual_fonts,
         raw_object_files,
     )?;
-    let output = tex_out::pdf::finalize_pdf(&input).map_err(map_finalization_error)?;
+    let output = tex_out::pdf::finalize_pdf_positioned(&input, positioned)
+        .map_err(map_finalization_error)?;
     Ok(output.bytes)
 }
 

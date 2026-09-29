@@ -7,6 +7,8 @@ use super::*;
 pub(in crate::pdf::finalize) struct ContentInputs<'a> {
     pub input: &'a PdfFinalizationInput,
     pub positioned_pages: &'a [PositionedPage],
+    /// Media extents of each page, in `positioned_pages` order.
+    pub page_extents: &'a [(Scaled, Scaled)],
     pub positioned_forms: &'a BTreeMap<u32, PositionedPage>,
     pub mapped_font_names: &'a BTreeSet<Vec<u8>>,
     pub font_usage: &'a BTreeMap<u32, BTreeSet<u8>>,
@@ -35,6 +37,7 @@ pub(in crate::pdf::finalize) fn append_content_objects(
     let ContentInputs {
         input,
         positioned_pages,
+        page_extents,
         positioned_forms,
         mapped_font_names,
         font_usage,
@@ -64,9 +67,8 @@ pub(in crate::pdf::finalize) fn append_content_objects(
         .collect::<BTreeSet<_>>();
     let mut font_embed_ns = 0_u128;
     for (page_index, record) in page_records.iter().enumerate() {
-        let artifact = PageArtifact::from_bytes(&record.artifact_bytes)?;
         let positioned = positioned_pages[page_index].clone();
-        let (page_width, page_height) = pdf_page_extents(&artifact, record)?;
+        let (page_width, page_height) = page_extents[page_index];
         let mut content_operations = Vec::new();
         let mut page_forms = BTreeMap::<u32, PdfObjectId>::new();
         let mut page_images = BTreeMap::<Vec<u8>, PdfObjectId>::new();

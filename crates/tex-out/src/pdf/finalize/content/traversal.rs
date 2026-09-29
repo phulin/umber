@@ -282,30 +282,3 @@ pub(in crate::pdf::finalize) fn collect_font_usage(
     }
     Ok(usage)
 }
-
-pub(in crate::pdf::finalize) fn positioned_pages(
-    input: &PdfFinalizationInput,
-) -> Result<Vec<PositionedPage>, PdfBuildError> {
-    input
-        .pages
-        .iter()
-        .enumerate()
-        .map(|(page_index, record)| {
-            let artifact = PageArtifact::from_bytes(&record.artifact_bytes)?;
-            Ok(crate::positioned::lower_page(&artifact, page_index as u32)?)
-        })
-        .collect()
-}
-
-pub(in crate::pdf::finalize) fn positioned_forms(
-    input: &PdfFinalizationInput,
-) -> Result<Vec<(u32, PositionedPage)>, PdfBuildError> {
-    input
-        .forms
-        .values()
-        .map(|form| {
-            let artifact = PageArtifact::from_bytes(&form.artifact_bytes)?;
-            Ok((form.object, crate::positioned::lower_page(&artifact, 0)?))
-        })
-        .collect()
-}

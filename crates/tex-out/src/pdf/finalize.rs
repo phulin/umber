@@ -28,8 +28,10 @@ mod fonts;
 mod images;
 mod navigation;
 mod numeric;
+mod positioning;
 
 pub use errors::PdfBuildError;
+pub use positioning::PdfPositionedArtifacts;
 
 use content::*;
 use fonts::*;
@@ -201,8 +203,20 @@ impl super::PdfAnnotationInput {
 }
 
 /// Purely validates and lowers one complete detached PDF input.
-#[allow(clippy::disallowed_methods)] // Optional process telemetry is observational only.
 pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutput, PdfBuildError> {
+    let positioned = PdfPositionedArtifacts::lower(&input.pages, &input.forms)?;
+    finalize_pdf_positioned(input, positioned)
+}
+
+/// [`finalize_pdf`] over artifacts the caller already lowered from `input`.
+#[allow(clippy::disallowed_methods)] // Optional process telemetry is observational only.
+pub fn finalize_pdf_positioned(
+    input: &PdfFinalizationInput,
+    positioned: PdfPositionedArtifacts,
+) -> Result<PdfFinalizationOutput, PdfBuildError> {
+    if !positioned.matches(input) {
+        return Err(PdfBuildError::PositionedArtifactMismatch);
+    }
     let total_started = std::time::Instant::now();
     let parameters = FinalizationParameters {
         major_version: i32::from(input.document.version.0),
@@ -221,9 +235,13 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
         .collect::<BTreeSet<_>>();
     let map_resolve_ns = map_started.elapsed().as_nanos();
     let positioning_started = std::time::Instant::now();
-    let mut positioned_pages = positioned_pages(input)?;
+    let PdfPositionedArtifacts {
+        pages: mut positioned_pages,
+        page_extents,
+        forms: positioned_form_entries,
+        ..
+    } = positioned;
     let page_count = positioned_pages.len();
-    let positioned_form_entries = positioned_forms(input)?;
     let positioned_form_objects = positioned_form_entries
         .iter()
         .map(|(object, _)| *object)
@@ -256,9 +274,9 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
     let font_usage_ns = font_usage_started.elapsed().as_nanos();
     let destinations_started = std::time::Instant::now();
     let shipped_destinations = lower_page_destinations(
-        input,
         page_records,
         &positioned_pages,
+        &page_extents,
         parameters.decimal_digits,
     )?;
     let destinations_ns = destinations_started.elapsed().as_nanos();
@@ -510,6 +528,7 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
     let content_output = content::append_content_objects(content::ContentInputs {
         input,
         positioned_pages: &positioned_pages,
+        page_extents: &page_extents,
         positioned_forms: &positioned_forms,
         mapped_font_names: &mapped_font_names,
         font_usage: &font_usage,

@@ -173,6 +173,25 @@ fn external_pdf_resource_keeps_one_owner_through_finalization() {
     let first = tex_out::pdf::finalize_pdf(&input).expect("first deterministic finalization");
     let second = tex_out::pdf::finalize_pdf(&input).expect("second deterministic finalization");
     assert_eq!(first.bytes, second.bytes);
+    // Reusing the builder's positioned lowering is exact, and a lowering of
+    // other artifacts is refused.
+    let (positioned_input, positioned) =
+        super::finalization_input::positioned_pdf_finalization_input(
+            &completion,
+            DEFAULT_PDF_PK_RESOLUTION,
+            &crate::PdfVirtualFontResources::default(),
+            &crate::PdfRawObjectFileReceipt::default(),
+        )
+        .expect("positioned finalization input");
+    let reused = tex_out::pdf::finalize_pdf_positioned(&positioned_input, positioned)
+        .expect("positioned finalization");
+    assert_eq!(reused.bytes, first.bytes);
+    let foreign =
+        tex_out::pdf::PdfPositionedArtifacts::lower(&[], &input.forms).expect("empty lowering");
+    assert!(matches!(
+        tex_out::pdf::finalize_pdf_positioned(&input, foreign),
+        Err(tex_out::pdf::PdfBuildError::PositionedArtifactMismatch)
+    ));
     let query = test_support::pdf_query::PdfQuery::new(
         &first.bytes,
         test_support::pdf_query::QueryLimits::default(),

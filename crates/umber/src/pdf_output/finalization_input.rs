@@ -12,9 +12,9 @@ use tex_out::pdf::{
     PdfFinalizationLimits, PdfFontInput, PdfFontMetricsInput, PdfFontProgramInput, PdfFormInput,
     PdfImageGammaInput, PdfImageMetadataInput, PdfIndirectActionInput, PdfLinkInput,
     PdfNavigationInput, PdfOutlineInput, PdfPageBoxInput, PdfPageRotationInput,
-    PdfRasterColorSpaceInput, PdfRasterFormatInput, PdfRawObjectInput, PdfRawObjectPayloadInput,
-    PdfReservedDocumentObjects, PdfThreadBeadInput, PdfThreadInput, PdfVirtualFontInput,
-    PdfVirtualLocalTfmInput,
+    PdfPositionedArtifacts, PdfRasterColorSpaceInput, PdfRasterFormatInput, PdfRawObjectInput,
+    PdfRawObjectPayloadInput, PdfReservedDocumentObjects, PdfThreadBeadInput, PdfThreadInput,
+    PdfVirtualFontInput, PdfVirtualLocalTfmInput,
 };
 use tex_state::{
     DetachedPdfAction, DetachedPdfActionIdentifier, DetachedPdfActionRecord,
@@ -44,6 +44,20 @@ pub fn pdf_finalization_input_with_raw_object_files(
     resources: &crate::PdfVirtualFontResources,
     raw_object_files: &crate::PdfRawObjectFileReceipt,
 ) -> Result<PdfFinalizationInput, PdfBuildError> {
+    positioned_pdf_finalization_input(pdf, driver_dpi, resources, raw_object_files)
+        .map(|(input, _)| input)
+}
+
+/// Builds the finalization input together with the positioned lowering of
+/// its artifacts. Font-use collection needs that lowering before the input
+/// exists, and [`tex_out::pdf::finalize_pdf_positioned`] reuses it, so each
+/// artifact is decoded and lowered once per document.
+pub(crate) fn positioned_pdf_finalization_input(
+    pdf: &DetachedPdfCompletion,
+    driver_dpi: i32,
+    resources: &crate::PdfVirtualFontResources,
+    raw_object_files: &crate::PdfRawObjectFileReceipt,
+) -> Result<(PdfFinalizationInput, PdfPositionedArtifacts), PdfBuildError> {
     let parameters = pdf
         .output_parameters()
         .ok_or(PdfBuildError::PdfOutputDisabled)?;
@@ -93,20 +107,12 @@ pub fn pdf_finalization_input_with_raw_object_files(
         })
         .collect::<BTreeMap<_, _>>();
 
-    let artifact_bytes = pages
-        .iter()
-        .map(|page| page.artifact_bytes.as_ref())
-        .chain(forms.values().map(|form| form.artifact_bytes.as_ref()));
+    let lowered =
+        PdfPositionedArtifacts::lower(&pages, &forms).map_err(super::map_finalization_error)?;
     let mut artifacts_by_font = BTreeMap::new();
     let mut artifact_font_uses = Vec::new();
     let mut seen_artifact_font_uses = BTreeSet::new();
-    for (page_index, bytes) in artifact_bytes.enumerate() {
-        // Font summaries outlive this iteration; decoded page trees do not.
-        let artifact = tex_out::PageArtifact::from_bytes(bytes)?;
-        let positioned = tex_out::positioned::lower_page(
-            &artifact,
-            u32::try_from(page_index).unwrap_or(u32::MAX),
-        )?;
+    for (page_index, positioned) in lowered.pages().iter().chain(lowered.forms()).enumerate() {
         let font_watermark = pages.get(page_index).map_or_else(
             || {
                 positioned
@@ -142,7 +148,7 @@ pub fn pdf_finalization_input_with_raw_object_files(
             ));
         }
         artifacts_by_font.extend(
-            artifact
+            positioned
                 .fonts
                 .iter()
                 .cloned()
@@ -368,7 +374,7 @@ pub fn pdf_finalization_input_with_raw_object_files(
         })
         .collect();
     let dpi = configuration.resolved_pk_resolution(driver_dpi);
-    Ok(PdfFinalizationInput {
+    let input = PdfFinalizationInput {
         document: PdfDocumentInput {
             version: (version.major(), version.minor()),
             serialization: serialization_options(parameters)?,
@@ -400,7 +406,8 @@ pub fn pdf_finalization_input_with_raw_object_files(
             next_object,
         },
         limits: PdfFinalizationLimits::default(),
-    })
+    };
+    Ok((input, lowered))
 }
 
 fn glyph_to_unicode_mapping<'a>(
