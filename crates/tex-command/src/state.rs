@@ -587,11 +587,18 @@ impl<G> CommandState<G> {
         state: &CommandContext<'_, G>,
     ) -> Result<(), CommandGroupError> {
         let state_frames = state.group_frames();
+        // Both stacks open and close in lockstep, and every frame carries a
+        // fresh group lineage, so equal depths with equal innermost frames
+        // identify the same stack. Debug builds still compare every level.
         let matches = state_frames.len() == self.group_payloads.len()
-            && state_frames
-                .iter()
-                .zip(&self.group_payloads)
-                .all(|(state, command)| *state == command.frame);
+            && state_frames.last() == self.group_payloads.last().map(|command| &command.frame);
+        debug_assert!(
+            !matches
+                || state_frames
+                    .iter()
+                    .zip(&self.group_payloads)
+                    .all(|(state, command)| *state == command.frame)
+        );
         if matches {
             Ok(())
         } else {
@@ -635,18 +642,39 @@ impl<G> CommandState<G> {
     }
 
     /// Command-owned live §276 words and the state-journal coordinate of
-    /// their newest push. The fold borrows existing payloads and allocates
-    /// nothing.
+    /// their newest push.
+    ///
+    /// Level payload ranges tile the live payload stack: a level opens at the
+    /// current payload top and only the innermost level grows. Journal
+    /// positions never fall below a live level's start, so the newest push
+    /// belongs to the innermost level that has one. Both answers therefore
+    /// come from the stack ends rather than a walk over every open group.
     #[must_use]
     pub fn aftergroup_save_stack_projection(&self) -> (usize, Option<u32>) {
-        self.group_payloads
-            .iter()
-            .fold((0_usize, None), |(words, latest), group| {
-                (
-                    words.saturating_add(group.token_top - group.token_start),
-                    latest.max(group.latest_aftergroup_position),
-                )
-            })
+        let groups = self.group_payloads.as_slice();
+        let words = groups.first().map_or(0, |outer| {
+            self.aftergroup_payloads.len() - outer.token_start
+        });
+        let latest = if words == 0 {
+            None
+        } else {
+            groups
+                .iter()
+                .rev()
+                .find_map(|group| group.latest_aftergroup_position)
+        };
+        debug_assert_eq!(
+            (words, latest),
+            groups
+                .iter()
+                .fold((0_usize, None), |(words, latest), group| {
+                    (
+                        words + (group.token_top - group.token_start),
+                        latest.max(group.latest_aftergroup_position),
+                    )
+                })
+        );
+        (words, latest)
     }
 
     /// Restores one exact state save level and returns its ordered restoration
