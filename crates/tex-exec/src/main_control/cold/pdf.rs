@@ -1428,10 +1428,17 @@ impl crate::output_provenance::ArtifactSourceResolver for DetachedArtifactSource
 }
 
 impl DetachedArtifactSourceResolver {
+    /// Captures the recipes of every origin under `node` when rendered-source
+    /// provenance is demanded. Emission consults the resolver only under
+    /// that demand, so other runs skip the page traversal.
     fn capture<G>(
         node: tex_state::NodeView<'_>,
         stores: &tex_state::CommandContext<'_, G>,
+        demand: tex_state::ProvenanceDemand,
     ) -> Self {
+        if !demand.rendered_source() {
+            return Self::default();
+        }
         fn visit<G>(
             node: tex_state::NodeView<'_>,
             stores: &tex_state::CommandContext<'_, G>,
@@ -1469,11 +1476,15 @@ impl DetachedArtifactSourceResolver {
     pub(in crate::main_control) fn capture_page_list<G>(
         list: tex_state::page_node_arena::PageListId,
         stores: &tex_state::CommandContext<'_, G>,
+        demand: tex_state::ProvenanceDemand,
     ) -> Self {
         let mut recipes = std::collections::HashMap::new();
+        if !demand.rendered_source() {
+            return Self { recipes };
+        }
         if let Ok(list) = stores.page_node_list(list) {
             list.nodes().for_each(|node| {
-                recipes.extend(Self::capture(node, stores).recipes);
+                recipes.extend(Self::capture(node, stores, demand).recipes);
             });
         }
         Self { recipes }
@@ -1521,7 +1532,7 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
             (tracing_stats > 1).then_some((usage.memory_words, usage.font_info_words));
         let source_resolver = match &source {
             PreparedShipoutSource::Page(node) => {
-                DetachedArtifactSourceResolver::capture(node.into(), &context)
+                DetachedArtifactSourceResolver::capture(node.into(), &context, provenance_demand)
             }
         };
         let traced_dump = (tracing_output > 0).then(|| {

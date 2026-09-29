@@ -7410,8 +7410,11 @@ impl<G> MainControl<G> {
                 let form_page = context
                     .copy_pdf_form_to_page(form.object())
                     .ok_or(ExecError::PdfXFormVoidBox)?;
-                let source_resolver =
-                    DetachedArtifactSourceResolver::capture_page_list(form_page, context);
+                let source_resolver = DetachedArtifactSourceResolver::capture_page_list(
+                    form_page,
+                    context,
+                    provenance_demand,
+                );
                 let post_apply_facts =
                     PostApplyFacts::capture(parking, self.modes.current_mode(), context);
                 Ok::<_, ExecError>((form, source_resolver, post_apply_facts, effect))
