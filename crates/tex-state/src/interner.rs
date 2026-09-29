@@ -1037,7 +1037,7 @@ impl Interner {
                 if self
                     .entries
                     .get(usize::try_from(candidate_slot).expect("Symbol fits native usize"))
-                    .is_some_and(|record| self.entry_text(*record) == value)
+                    .is_some_and(|record| self.arena.value(*record) == Some(value.as_bytes()))
                 {
                     break Some(bucket);
                 }
@@ -1323,15 +1323,29 @@ pub(crate) fn named_kind(name: &str) -> ControlSequenceKind {
     }
 }
 
+/// In-memory index hash: one folded 64x64->128 multiply per eight bytes.
+/// Both the bucket (low bits) and the fingerprint (high bits) see every
+/// input bit. The index is rebuilt on load, so the function is not a format
+/// or wire commitment.
 fn lookup_hash(kind: EntryKind, value: &str) -> u64 {
-    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
-    hash ^= u64::from(entry_kind_tag(kind));
-    hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    for &byte in value.as_bytes() {
-        hash ^= u64::from(byte);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    const SEED: u64 = 0x243f_6a88_85a3_08d3;
+    const MUL: u64 = 0x9e37_79b9_7f4a_7c15;
+    fn fold(a: u64, b: u64) -> u64 {
+        let product = u128::from(a) * u128::from(b);
+        (product as u64) ^ ((product >> 64) as u64)
     }
-    hash
+    let bytes = value.as_bytes();
+    let mut hash = SEED ^ (u64::from(entry_kind_tag(kind)) << 56) ^ bytes.len() as u64;
+    let (words, tail) = bytes.as_chunks::<8>();
+    for word in words {
+        hash = fold(hash ^ u64::from_le_bytes(*word), MUL);
+    }
+    if !tail.is_empty() {
+        let mut word = [0_u8; 8];
+        word[..tail.len()].copy_from_slice(tail);
+        hash = fold(hash ^ u64::from_le_bytes(word), MUL);
+    }
+    fold(hash, MUL ^ SEED)
 }
 
 fn index_control(hash: u64, kind: EntryKind, hash_entry: bool) -> u8 {
