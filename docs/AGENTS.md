@@ -43,6 +43,10 @@ the mixed-source workload, negative destination and split controls, the measured
 and the test-versus-shipping build distinction while the full-book diagnosis
 remains open.
 
+`book_performance_refactors.md` proposes the compact input execution machine,
+definition-owned matcher and collector integration, and direct operation path
+using the current full-book profile and explicit acceptance boundaries.
+
 `paired_measurement.md` documents the owner-maintained prebuilt-executable
 paired runner in `scripts/paired-measure.py`, its JSON/JSONL receipt contract,
 inner-metric scope, and release-versus-structural evidence lanes.
