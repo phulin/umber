@@ -98,12 +98,7 @@ The focused commands are:
 
 ```bash
 scripts/check-snapshot-budgets.sh
-cargo run --release --manifest-path benchmarks/tex-command/Cargo.toml \
-  --bin packed_cutover_gate
-cargo run --release --manifest-path benchmarks/tex-command/Cargo.toml \
-  --bin command_allocations
-cargo run --release --manifest-path benchmarks/tex-command/Cargo.toml \
-  --bin command_allocations -- --perturb
+python3 scripts/interp-microbench.py --sudo --json receipt.json
 cargo bench --manifest-path benchmarks/tex-incr/Cargo.toml \
   --bench accepted_edit
 ```

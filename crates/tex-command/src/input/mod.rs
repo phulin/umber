@@ -28,11 +28,6 @@ pub(crate) use levels::{
     SourceOpenDepths, SourceRetirement, SourceSlot, StoredReplayReason, TokenBehavior,
     TokenRowHeader, packed_token_frame,
 };
-#[cfg(feature = "profiling")]
-pub use levels::{
-    LongMacroArgumentCursorBenchmark, LongMacroArgumentCursorReceipt, MixedPackedCursorBenchmark,
-    MixedPackedCursorReceipt,
-};
 pub(crate) use source::{LineBackingRegistry, RegisteredSource, SourceCursor, SourceOffsetMap};
 #[cfg(test)]
 pub(crate) use stack::source_registration_counters;

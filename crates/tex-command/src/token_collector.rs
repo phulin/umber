@@ -101,7 +101,7 @@ impl ClassifiedToken {
         matches!(self.spelling().literal_catcode(), Some(Catcode::Parameter))
     }
 
-    #[cfg(any(test, feature = "profiling"))]
+    #[cfg(test)]
     pub(crate) const fn rejects_non_long_paragraph(&self, paragraph_checked: bool) -> bool {
         paragraph_checked && self.paragraph
     }

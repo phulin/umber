@@ -403,35 +403,6 @@ fn sequential_replay_crosses_prefix_body_and_owned_runs_exactly() {
 }
 
 #[test]
-fn mixed_sources_share_one_cursor_and_restore_exact_nonzero_positions() {
-    crate::test_harness::with_universe(|universe| {
-        let mut benchmark = super::MixedPackedCursorBenchmark::new(universe);
-        let receipt = benchmark.run(8);
-        assert_eq!(receipt.calls, 40);
-        assert_eq!(receipt.retirements, 10);
-        assert_eq!(receipt.rollbacks, 1);
-        assert_ne!(receipt.checksum, 0);
-    });
-}
-
-#[test]
-fn long_macro_argument_crosses_fixed_chunks_with_one_scalar_cursor() {
-    let mut benchmark = super::LongMacroArgumentCursorBenchmark::<()>::new();
-    let receipt = benchmark.run(16_390);
-    assert_eq!(receipt.calls, 16_390);
-    assert_eq!(receipt.retirements, 1);
-    assert_eq!(receipt.rollbacks, 1);
-    assert_ne!(receipt.checksum, 0);
-}
-
-#[test]
-fn long_macro_argument_default_matches_new() {
-    let mut constructed = super::LongMacroArgumentCursorBenchmark::<()>::new();
-    let mut defaulted = super::LongMacroArgumentCursorBenchmark::<()>::default();
-    assert_eq!(defaulted.run(16_390), constructed.run(16_390));
-}
-
-#[test]
 fn resident_macro_cursor_layout_stays_compact_and_wrapper_free() {
     let body = std::mem::size_of::<super::MacroBodyCursor<()>>();
     let resident = std::mem::size_of::<tex_state::ResidentMacroBody<()>>();

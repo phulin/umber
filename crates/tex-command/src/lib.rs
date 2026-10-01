@@ -43,8 +43,6 @@ pub use attempt::{
 mod command;
 mod conditionals;
 pub use conditionals::{ActiveCondition, IncompleteCondition};
-#[cfg(feature = "profiling")]
-mod direct_command_delivery;
 mod error;
 mod execution_scratch;
 mod fatal;
@@ -87,8 +85,6 @@ mod tracing_nesting;
 mod test_harness;
 
 pub use command::CurrentCommand;
-#[cfg(feature = "profiling")]
-pub use direct_command_delivery::{DirectCommandDeliveryBenchmark, DirectCommandDeliveryReceipt};
 pub use error::{CommandError, DimensionDiagnostic, InsertedUnit};
 pub use fatal::{FATAL_SEVERITY, FatalError};
 pub use fuel::{
@@ -109,11 +105,6 @@ pub use input::{
     SourceControlSequenceKind, SourceFramingPolicy, SourceLocation, SourceNameClass,
     SourceProvenance, SourceRange, SourceRegistration, SourceRegistrationError, SourceRole,
     SourceScalarRange, SourceStepQueries, SourceToken, SourceTokenizationStep,
-};
-#[cfg(feature = "profiling")]
-pub use input::{
-    LongMacroArgumentCursorBenchmark, LongMacroArgumentCursorReceipt, MixedPackedCursorBenchmark,
-    MixedPackedCursorReceipt,
 };
 /// The single canonical naming vocabulary shared by every observation
 /// producer and transport (`docs/tex_command_core.md` §33.3).

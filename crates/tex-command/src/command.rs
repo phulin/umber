@@ -14,7 +14,7 @@ use tex_state::token::{Catcode, OriginId, PackedCommandTarget, Token, TokenWord,
 ///
 /// The counter is thread-local and absent from shipping builds. It records
 /// only explicit ownership operations, never semantic command state.
-#[cfg(any(test, feature = "profiling"))]
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct CommandOwnershipCounters {
     pub(crate) clones: u64,
@@ -27,7 +27,7 @@ pub(crate) struct CommandOwnershipCounters {
     pub(crate) hot_reconstructions: u64,
 }
 
-#[cfg(any(test, feature = "profiling"))]
+#[cfg(test)]
 thread_local! {
     static COMMAND_OWNERSHIP_COUNTERS: core::cell::Cell<CommandOwnershipCounters> =
         const { core::cell::Cell::new(CommandOwnershipCounters {
@@ -42,12 +42,12 @@ thread_local! {
         }) };
 }
 
-#[cfg(any(test, feature = "profiling"))]
+#[cfg(test)]
 pub(crate) fn command_ownership_counters() -> CommandOwnershipCounters {
     COMMAND_OWNERSHIP_COUNTERS.with(core::cell::Cell::get)
 }
 
-#[cfg(any(test, feature = "profiling"))]
+#[cfg(test)]
 fn update_command_ownership_counters(update: impl FnOnce(&mut CommandOwnershipCounters)) {
     COMMAND_OWNERSHIP_COUNTERS.with(|slot| {
         let mut counters = slot.get();
@@ -639,7 +639,7 @@ impl<G> HotCommand<G> {
         direct_source_line: Option<u32>,
         suppress_expandable: bool,
     ) -> Self {
-        #[cfg(any(test, feature = "profiling"))]
+        #[cfg(test)]
         update_command_ownership_counters(|counters| {
             counters.resolved_writes = counters.resolved_writes.saturating_add(1);
         });
@@ -899,7 +899,7 @@ impl<G> HotCommand<G> {
     }
 
     pub(crate) fn materialize(&self) -> CurrentCommand<G> {
-        #[cfg(any(test, feature = "profiling"))]
+        #[cfg(test)]
         update_command_ownership_counters(|counters| {
             counters.rich_materializations = counters.rich_materializations.saturating_add(1);
         });
@@ -930,7 +930,7 @@ impl<G> HotCommand<G> {
     }
 
     pub(crate) fn from_current(command: CurrentCommand<G>) -> Self {
-        #[cfg(any(test, feature = "profiling"))]
+        #[cfg(test)]
         update_command_ownership_counters(|counters| {
             counters.hot_reconstructions = counters.hot_reconstructions.saturating_add(1);
         });
@@ -952,7 +952,7 @@ impl<G> HotCommand<G> {
     }
 
     pub(crate) fn from_current_ref(command: &CurrentCommand<G>) -> Self {
-        #[cfg(any(test, feature = "profiling"))]
+        #[cfg(test)]
         update_command_ownership_counters(|counters| {
             counters.hot_reconstructions = counters.hot_reconstructions.saturating_add(1);
         });
@@ -1162,7 +1162,7 @@ impl<G> CurrentCommand<G> {
     /// Makes a fresh copy for the input backup path. `CurrentCommand` itself
     /// remains deliberately non-`Clone` at the public boundary.
     pub(crate) fn copy_for_backup(&self) -> Self {
-        #[cfg(any(test, feature = "profiling"))]
+        #[cfg(test)]
         update_command_ownership_counters(|counters| {
             counters.backup_copies = counters.backup_copies.saturating_add(1);
         });

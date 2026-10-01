@@ -12,7 +12,7 @@ use core::num::NonZeroU64;
 use tex_state::token::{Catcode, OriginId, TokenWord, TracedTokenWord};
 
 use crate::command::HotCommand;
-#[cfg(any(test, feature = "profiling"))]
+#[cfg(test)]
 use crate::token_collector::ClassifiedToken;
 
 const MACRO_WORD_RESERVE: usize = 4_096;
@@ -838,7 +838,7 @@ impl<G> ExecutionScratch<G> {
     /// authoritative new cursor, then the resident writer updates paragraph,
     /// brace-depth, and removable-outer-group facts from the same classification.
     /// Frame publication validates once when the argument finishes.
-    #[cfg(any(test, feature = "profiling"))]
+    #[cfg(test)]
     #[inline]
     pub(crate) fn append_argument_token(
         &mut self,
@@ -1286,20 +1286,6 @@ impl<G> ExecutionScratch<G> {
             .checked_add(u32::try_from(index).map_err(|_| ScratchError::CapacityOverflow)?)
             .ok_or(ScratchError::CapacityOverflow)?;
         if absolute >= range.end {
-            return Err(ScratchError::InvalidCoordinate);
-        }
-        self.macro_words
-            .get(absolute)
-            .ok_or(ScratchError::InvalidCoordinate)
-    }
-
-    #[cfg(any(test, feature = "profiling"))]
-    pub(crate) fn admitted_argument_word_at(
-        &self,
-        range: MacroArgumentRange<G>,
-        absolute: u32,
-    ) -> Result<TracedTokenWord, ScratchError> {
-        if absolute < range.start || absolute >= range.end {
             return Err(ScratchError::InvalidCoordinate);
         }
         self.macro_words

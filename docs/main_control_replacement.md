@@ -255,13 +255,6 @@ execution. If format capture or incremental convergence benefits from content
 identity, it computes or reuses a chunk fingerprint at that publication
 boundary.
 
-The `benchmarks/tex-command` `macro_argument_matching` row warms two complete
-invocations, backs up the already materialized third call token, and measures
-matching plus first replacement delivery. Its unobserved configuration must
-report zero allocation calls and zero requested bytes; external observation is
-reported separately because constructing owned observation payloads is a cold
-evidence boundary.
-
 ### Dense state
 
 Meanings and scalar registers remain packed words in dense banks. The hot core

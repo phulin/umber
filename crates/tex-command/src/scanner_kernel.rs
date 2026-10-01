@@ -32,7 +32,7 @@ impl ScannerCursor {
     /// Settles one scalar token after its caller has written it to the final
     /// sink. Classification, brace balance, and first-token state advance in
     /// this one cursor and are never represented in a second pending object.
-    #[cfg(any(test, feature = "profiling"))]
+    #[cfg(test)]
     #[inline(always)]
     pub(crate) fn settle_argument(
         &mut self,
