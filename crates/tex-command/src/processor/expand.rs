@@ -33,15 +33,6 @@ enum ResidentColdOutcome {
     Word(ResidentWord),
 }
 
-#[cfg(test)]
-#[derive(Clone, Copy)]
-enum ResidentStorageKind {
-    Stored,
-    MacroBody,
-    MacroArgument,
-    Source,
-    Synthetic,
-}
 enum InputFrameTransition<G> {
     Boundary(ResidentBoundary),
     ResidentExhausted {
@@ -84,8 +75,6 @@ struct ResidentWord {
     origin: OriginId,
     suppress_expandable: bool,
     site: ReadSite,
-    #[cfg(test)]
-    storage_kind: ResidentStorageKind,
     #[cfg(feature = "profiling")]
     raw_kind: crate::fuel::RawDeliveryKind,
 }
@@ -183,48 +172,9 @@ impl<G> CommandProcessor<'_, '_, G> {
             origin,
             suppress_expandable,
             site,
-            #[cfg(test)]
-            storage_kind,
             #[cfg(feature = "profiling")]
             raw_kind,
         } = selected;
-        #[cfg(test)]
-        match storage_kind {
-            ResidentStorageKind::Stored => {
-                self.command.stored_token_advance_counters.command_writes = self
-                    .command
-                    .stored_token_advance_counters
-                    .command_writes
-                    .saturating_add(1);
-                self.command.raw_delivery_path_counters.stored_direct = self
-                    .command
-                    .raw_delivery_path_counters
-                    .stored_direct
-                    .saturating_add(1);
-            }
-            ResidentStorageKind::MacroBody => {
-                self.command.macro_kernel_counters.body_command_writes = self
-                    .command
-                    .macro_kernel_counters
-                    .body_command_writes
-                    .saturating_add(1);
-            }
-            ResidentStorageKind::MacroArgument => {
-                self.command.macro_kernel_counters.argument_command_writes = self
-                    .command
-                    .macro_kernel_counters
-                    .argument_command_writes
-                    .saturating_add(1);
-                self.command
-                    .raw_delivery_path_counters
-                    .macro_argument_direct = self
-                    .command
-                    .raw_delivery_path_counters
-                    .macro_argument_direct
-                    .saturating_add(1);
-            }
-            ResidentStorageKind::Source | ResidentStorageKind::Synthetic => {}
-        }
         let direct_source_line = match site {
             ReadSite::Source(line) => line,
             _ => None,
@@ -238,14 +188,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             suppress_expandable,
             self.state,
         );
-        #[cfg(test)]
-        if matches!(storage_kind, ResidentStorageKind::Stored) {
-            self.command.stored_token_advance_counters.meaning_lookups = self
-                .command
-                .stored_token_advance_counters
-                .meaning_lookups
-                .saturating_add(u64::from(resolution.meaning_lookup()));
-        }
         #[cfg(feature = "profiling")]
         self.fuel.record_raw_delivery(
             self.command.delivery_mode.scanner_active(),
@@ -799,22 +741,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             }
 
             if let ResidentWordRead::Source { resident_index } = selected {
-                #[cfg(test)]
-                {
-                    self.command
-                        .roots
-                        .input
-                        .levels
-                        .cursor_mutations
-                        .source_branch_entries = self
-                        .command
-                        .roots
-                        .input
-                        .levels
-                        .cursor_mutations
-                        .source_branch_entries
-                        .saturating_add(1);
-                }
                 if self
                     .advance_source_character_step(resident_index, consume)?
                     .is_some()

@@ -557,16 +557,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             let Some((identity, retirement)) = self.depleted_input_top() else {
                 return Ok(());
             };
-            #[cfg(test)]
-            {
-                self.command
-                    .raw_delivery_path_counters
-                    .conservation_retirements = self
-                    .command
-                    .raw_delivery_path_counters
-                    .conservation_retirements
-                    .saturating_add(1);
-            }
             // An ordinary popped token list, the common depleted macro body
             // included, retires through the resident path directly: no
             // source ancestry, file warning, or file close can apply to it.

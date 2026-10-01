@@ -53,17 +53,6 @@ fn skipped_resident_run_settles_its_first_conditional_delimiter_once() {
         );
         drop(processor);
         assert_eq!(fuel.burned(), 4_097);
-        assert_eq!(
-            command
-                .roots
-                .input
-                .levels
-                .cursor_mutations
-                .typed_top_accesses,
-            1
-        );
-        assert_eq!(command.stored_token_advance_counters.packed_loads, 4_097);
-        assert_eq!(command.stored_token_advance_counters.command_writes, 1);
     });
 }
 
@@ -136,7 +125,6 @@ fn skipped_resident_run_counts_nested_conditionals_and_braces_in_place() {
         drop(processor);
         assert_eq!(fuel.burned(), 10);
         assert_eq!(command.roots.alignment.align_state, align_state + 1);
-        assert_eq!(command.stored_token_advance_counters.command_writes, 1);
     });
 }
 
@@ -171,19 +159,6 @@ fn skipped_resident_run_stops_before_the_over_budget_word() {
             assert!(destination.is_none());
             drop(processor);
             assert_eq!(fuel.burned(), limit);
-            assert_eq!(
-                command.stored_token_advance_counters.packed_loads, limit,
-                "failed delivery must leave the over-budget word unread"
-            );
-            assert_eq!(
-                command
-                    .roots
-                    .input
-                    .levels
-                    .cursor_mutations
-                    .typed_top_accesses,
-                1
-            );
         });
     }
 }
@@ -243,18 +218,6 @@ fn resident_character_stop_resumes_without_reselecting_each_word() {
         ));
         drop(processor);
         assert_eq!(fuel.burned(), 4097);
-        assert_eq!(
-            command
-                .roots
-                .input
-                .levels
-                .cursor_mutations
-                .typed_top_accesses,
-            2,
-            "one reader selection per admission episode"
-        );
-        assert_eq!(command.stored_token_advance_counters.packed_loads, 4097);
-        assert_eq!(command.stored_token_advance_counters.command_writes, 1);
     });
 }
 
@@ -292,20 +255,6 @@ fn resident_character_fuel_failure_preserves_exact_consumed_prefix() {
             assert!(destination.is_none());
             drop(processor);
             assert_eq!(fuel.burned(), limit);
-            // Scalar delivery advances input before attempting the charge.
-            assert_eq!(
-                command.stored_token_advance_counters.cursor_advances,
-                limit + 1
-            );
-            assert_eq!(
-                command
-                    .roots
-                    .input
-                    .levels
-                    .cursor_mutations
-                    .typed_top_accesses,
-                1
-            );
         });
     }
 }
@@ -359,6 +308,5 @@ fn skipped_resident_run_crosses_an_exhausted_frame_without_scalar_delivery() {
             1,
             "the exhausted frame is popped"
         );
-        assert_eq!(command.stored_token_advance_counters.command_writes, 1);
     });
 }

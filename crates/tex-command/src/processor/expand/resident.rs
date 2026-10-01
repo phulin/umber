@@ -1,7 +1,5 @@
 //! Direct borrowing of the semantic input stack's physical readers.
 
-#[cfg(test)]
-use super::ResidentStorageKind;
 use super::{ReadSite, ResidentWord, ResidentWordRead};
 use crate::input::{InputLevel, PackedInputFrame, ResidentTokenStorage};
 use crate::{CommandError, CommandProcessor, CommandState};
@@ -140,29 +138,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         else {
             return ControlFlow::Continue(ResidentWordRead::NoResident);
         };
-        #[cfg(test)]
-        {
-            command_state
-                .roots
-                .input
-                .levels
-                .cursor_mutations
-                .typed_top_accesses += 1;
-            command_state
-                .raw_delivery_path_counters
-                .resident_transitions += 1;
-        }
         let row = match &mut command_state.roots.input.levels.rows[resident_index] {
             InputLevel::Source(_) => {
                 return ControlFlow::Continue(ResidentWordRead::Source { resident_index });
             }
             InputLevel::Resident(row) => row,
-        };
-        #[cfg(test)]
-        let storage_kind = match &row.storage {
-            ResidentTokenStorage::MacroBody(_) => ResidentStorageKind::MacroBody,
-            ResidentTokenStorage::MacroArgument(_) => ResidentStorageKind::MacroArgument,
-            _ => ResidentStorageKind::Stored,
         };
         #[cfg(feature = "profiling")]
         let raw_kind = match &row.storage {
@@ -172,105 +152,32 @@ impl<G> CommandProcessor<'_, '_, G> {
 
         let mut loaded = 0;
         let current = match &mut row.storage {
-            ResidentTokenStorage::Replay { replay, cursor } => {
-                #[cfg(test)]
-                {
-                    command_state
-                        .roots
-                        .input
-                        .levels
-                        .cursor_mutations
-                        .replay_domain_dispatches = command_state
-                        .roots
-                        .input
-                        .levels
-                        .cursor_mutations
-                        .replay_domain_dispatches
-                        .saturating_add(1);
-                    command_state.stored_token_advance_counters.span_selections = command_state
-                        .stored_token_advance_counters
-                        .span_selections
-                        .saturating_add(1);
-                    command_state
-                        .roots
-                        .input
-                        .levels
-                        .cursor_mutations
-                        .stored_token_branch_entries = command_state
-                        .roots
-                        .input
-                        .levels
-                        .cursor_mutations
-                        .stored_token_branch_entries
-                        .saturating_add(1);
-                }
-                read_selected_run(
-                    || {
-                        next_word_from_current_frame(&mut row.header.frame, |_position| {
-                            command_state
-                                .roots
-                                .input
-                                .replay
-                                .advance_sequential(
-                                    *replay,
-                                    cursor,
-                                    #[cfg(test)]
-                                    &mut command_state
-                                        .stored_token_advance_counters
-                                        .replay_segment_inspections,
-                                    #[cfg(test)]
-                                    &mut command_state
-                                        .stored_token_advance_counters
-                                        .replay_run_transitions,
-                                )
-                                .map(|word| (word.token_word(), word.origin()))
-                        })
-                    },
-                    &mut admit,
-                    &mut loaded,
-                )
-            }
-            ResidentTokenStorage::Attempt(list) => {
-                #[cfg(test)]
-                {
-                    command_state
-                        .roots
-                        .input
-                        .levels
-                        .cursor_mutations
-                        .attempt_domain_dispatches = command_state
-                        .roots
-                        .input
-                        .levels
-                        .cursor_mutations
-                        .attempt_domain_dispatches
-                        .saturating_add(1);
-                    command_state
-                        .roots
-                        .input
-                        .levels
-                        .cursor_mutations
-                        .stored_token_branch_entries = command_state
-                        .roots
-                        .input
-                        .levels
-                        .cursor_mutations
-                        .stored_token_branch_entries
-                        .saturating_add(1);
-                }
-                read_selected_run(
-                    || {
-                        next_word_from_current_frame(&mut row.header.frame, |position| {
-                            command_state
-                                .attempt
-                                .resident_token_word(list, position as usize)
-                                .map(|word| (word.token_word(), word.origin()))
-                        })
-                    },
-                    &mut admit,
-                    &mut loaded,
-                )
-            }
+            ResidentTokenStorage::Replay { replay, cursor } => read_selected_run(
+                || {
+                    next_word_from_current_frame(&mut row.header.frame, |_position| {
+                        command_state
+                            .roots
+                            .input
+                            .replay
+                            .advance_sequential(*replay, cursor)
+                            .map(|word| (word.token_word(), word.origin()))
+                    })
+                },
+                &mut admit,
+                &mut loaded,
+            ),
+            ResidentTokenStorage::Attempt(list) => read_selected_run(
+                || {
+                    next_word_from_current_frame(&mut row.header.frame, |position| {
+                        command_state
+                            .attempt
+                            .resident_token_word(list, position as usize)
+                            .map(|word| (word.token_word(), word.origin()))
+                    })
+                },
+                &mut admit,
+                &mut loaded,
+            ),
             ResidentTokenStorage::BackedUpWord(word) => {
                 let word = *word;
                 read_selected_run(
@@ -283,129 +190,31 @@ impl<G> CommandProcessor<'_, '_, G> {
                     &mut loaded,
                 )
             }
-            ResidentTokenStorage::Durable(list) => {
-                #[cfg(test)]
-                {
-                    command_state
-                        .roots
-                        .input
-                        .levels
-                        .cursor_mutations
-                        .durable_domain_dispatches = command_state
-                        .roots
-                        .input
-                        .levels
-                        .cursor_mutations
-                        .durable_domain_dispatches
-                        .saturating_add(1);
-                    command_state
-                        .roots
-                        .input
-                        .levels
-                        .cursor_mutations
-                        .stored_token_branch_entries = command_state
-                        .roots
-                        .input
-                        .levels
-                        .cursor_mutations
-                        .stored_token_branch_entries
-                        .saturating_add(1);
-                }
-                read_selected_run(
-                    || {
-                        next_word_from_current_frame(&mut row.header.frame, |position| {
-                            list.word_at(position as usize)
-                                .map(|word| (word, tex_state::token::OriginId::UNKNOWN))
-                        })
-                    },
-                    &mut admit,
-                    &mut loaded,
-                )
-            }
-            ResidentTokenStorage::MacroBody(body) => {
-                #[cfg(test)]
-                {
-                    command_state
-                        .roots
-                        .input
-                        .levels
-                        .cursor_mutations
-                        .macro_body_domain_dispatches = command_state
-                        .roots
-                        .input
-                        .levels
-                        .cursor_mutations
-                        .macro_body_domain_dispatches
-                        .saturating_add(1);
-                }
-                read_selected_run(
-                    || next_macro_body_word_from_current_frame(&mut row.header.frame, body),
-                    &mut admit,
-                    &mut loaded,
-                )
-            }
-            ResidentTokenStorage::MacroArgument(argument) => {
-                #[cfg(test)]
-                {
-                    command_state
-                        .roots
-                        .input
-                        .levels
-                        .cursor_mutations
-                        .macro_argument_branch_entries = command_state
-                        .roots
-                        .input
-                        .levels
-                        .cursor_mutations
-                        .macro_argument_branch_entries
-                        .saturating_add(1);
-                }
-                read_selected_run(
-                    || {
-                        next_word_from_current_frame(&mut row.header.frame, |position| {
-                            argument.advance_delivery(position, &command_state.scratch)
-                        })
-                    },
-                    &mut admit,
-                    &mut loaded,
-                )
-            }
+            ResidentTokenStorage::Durable(list) => read_selected_run(
+                || {
+                    next_word_from_current_frame(&mut row.header.frame, |position| {
+                        list.word_at(position as usize)
+                            .map(|word| (word, tex_state::token::OriginId::UNKNOWN))
+                    })
+                },
+                &mut admit,
+                &mut loaded,
+            ),
+            ResidentTokenStorage::MacroBody(body) => read_selected_run(
+                || next_macro_body_word_from_current_frame(&mut row.header.frame, body),
+                &mut admit,
+                &mut loaded,
+            ),
+            ResidentTokenStorage::MacroArgument(argument) => read_selected_run(
+                || {
+                    next_word_from_current_frame(&mut row.header.frame, |position| {
+                        argument.advance_delivery(position, &command_state.scratch)
+                    })
+                },
+                &mut admit,
+                &mut loaded,
+            ),
         };
-
-        #[cfg(test)]
-        match storage_kind {
-            ResidentStorageKind::Stored => {
-                command_state.stored_token_advance_counters.packed_loads = command_state
-                    .stored_token_advance_counters
-                    .packed_loads
-                    .saturating_add(loaded);
-                command_state.stored_token_advance_counters.cursor_advances = command_state
-                    .stored_token_advance_counters
-                    .cursor_advances
-                    .saturating_add(loaded);
-            }
-            ResidentStorageKind::MacroBody => {
-                command_state.macro_kernel_counters.body_words = command_state
-                    .macro_kernel_counters
-                    .body_words
-                    .saturating_add(loaded);
-                command_state.macro_kernel_counters.body_frame_advances = command_state
-                    .macro_kernel_counters
-                    .body_frame_advances
-                    .saturating_add(loaded);
-            }
-            ResidentStorageKind::Source | ResidentStorageKind::Synthetic => unreachable!(),
-            ResidentStorageKind::MacroArgument => {
-                command_state.macro_kernel_counters.argument_words = command_state
-                    .macro_kernel_counters
-                    .argument_words
-                    .saturating_add(loaded);
-                command_state.macro_kernel_counters.argument_cursor_advances = command_state
-                    .macro_kernel_counters
-                    .argument_cursor_advances
-                    .saturating_add(loaded);
-            }
-        }
 
         let current = match current {
             ControlFlow::Break(()) => return ControlFlow::Break(()),
@@ -428,26 +237,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 | ResidentTokenStorage::Attempt(_) => Some(None),
             };
             if let Some(arguments) = arguments {
-                #[cfg(test)]
-                match storage_kind {
-                    ResidentStorageKind::Stored => {
-                        command_state
-                            .stored_token_advance_counters
-                            .parameter_interceptions = command_state
-                            .stored_token_advance_counters
-                            .parameter_interceptions
-                            .saturating_add(1);
-                    }
-                    ResidentStorageKind::MacroBody => {
-                        command_state.macro_kernel_counters.body_parameter_pushes = command_state
-                            .macro_kernel_counters
-                            .body_parameter_pushes
-                            .saturating_add(1);
-                    }
-                    ResidentStorageKind::MacroArgument
-                    | ResidentStorageKind::Source
-                    | ResidentStorageKind::Synthetic => {}
-                }
                 return ControlFlow::Continue(ResidentWordRead::Parameter {
                     slot,
                     arguments,
@@ -463,8 +252,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             origin,
             suppress_expandable,
             site: ReadSite::Resident,
-            #[cfg(test)]
-            storage_kind,
             #[cfg(feature = "profiling")]
             raw_kind,
         }))

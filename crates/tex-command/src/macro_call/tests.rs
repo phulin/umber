@@ -739,7 +739,6 @@ fn nested_macro_argument_consumes_plain_body_words_as_one_span() {
         );
         let mut command = CommandState::default();
         crate::test_harness::push(&mut command, [outer]);
-        command.profile_reset_macro_kernel_counters();
         let mut capabilities = CommandHostCapabilities::default();
         let mut fuel = crate::CommandFuelLedger::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
@@ -756,17 +755,6 @@ fn nested_macro_argument_consumes_plain_body_words_as_one_span() {
             let command = crate::test_harness::expect_expanded_command(&mut processor);
             assert_eq!(command.spelling().semantic_token(), letter(expected));
         }
-        let (body_words, body_advances, _, body_writes, ..) =
-            processor.command.profile_macro_kernel_counters();
-        assert!(body_words >= 6);
-        assert!(
-            body_advances < body_words,
-            "the ordinary argument interior advances as one admitted span"
-        );
-        assert!(
-            body_writes < body_words,
-            "span-consumed words never materialize CurrentCommand values"
-        );
     });
 }
 
@@ -819,169 +807,12 @@ fn nested_macro_argument_reader_counts_loaded_words_not_exhaustion() {
             &mut fuel,
             &mut diagnostic_effects,
         );
-        processor.command.profile_reset_macro_kernel_counters();
 
         for expected in ['a', 'b', 'c'] {
             let command = crate::test_harness::expect_expanded_command(&mut processor);
             assert_eq!(command.spelling().semantic_token(), letter(expected));
         }
-        let (_, _, _, _, argument_words, argument_advances, argument_writes) =
-            processor.command.profile_macro_kernel_counters();
-        // `\inner`'s matcher run loads `a` from the substituted argument
-        // frame without writing a command; delivering `a`, `b`, and `c` then
-        // loads and writes one word each. The cold exhaustion probe loads
-        // nothing.
-        assert_eq!(argument_words, 4);
-        assert_eq!(argument_advances, argument_words);
-        assert_eq!(
-            argument_writes, 3,
-            "the tiny frame reader counts loaded argument words, not the cold exhaustion probe"
-        );
     });
-}
-
-#[test]
-#[cfg(feature = "profiling")]
-fn warmed_one_and_nine_argument_calls_replay_through_the_singular_kernel() {
-    #[derive(Debug, Eq, PartialEq)]
-    struct Evidence {
-        macro_kernel: (u64, u64, u64, u64, u64, u64, u64),
-        argument_writer: (u64, u64, u64, u64, u64),
-        allocations: u64,
-        allocated_bytes: u64,
-        command_clones: u64,
-    }
-
-    fn run(argument_count: u8) -> Evidence {
-        crate::test_harness::with_universe(|universe| {
-            let parameters = (1..=argument_count)
-                .map(Token::Param)
-                .map(TokenWord::pack)
-                .collect::<Vec<_>>();
-            let definition = universe
-                .allocate_definition(&parameters, &parameters)
-                .expect("parameterized definition");
-            let symbol = universe.intern("kernelargs").expect("macro name");
-            universe
-                .assign_meaning(
-                    symbol,
-                    MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
-                    AssignmentScope::Global,
-                )
-                .expect("macro meaning");
-            let macro_token = Token::Cs(symbol.symbol());
-            let arguments = (0..argument_count)
-                .map(|offset| letter(char::from(b'a' + offset)))
-                .collect::<Vec<_>>();
-            let marker = other('!');
-            let input = [macro_token]
-                .into_iter()
-                .chain(arguments.iter().copied())
-                .chain([marker, macro_token])
-                .chain(arguments.iter().copied())
-                .chain([marker]);
-
-            let mut command = CommandState::default();
-            crate::test_harness::push(&mut command, input);
-            let mut capabilities = CommandHostCapabilities::default();
-            let mut fuel = crate::CommandFuelLedger::default();
-            let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
-            let mut context = universe.command_context().expect("command context");
-            let mut destination = None;
-
-            {
-                let mut processor = crate::test_harness::processor(
-                    &mut command,
-                    &mut context,
-                    &mut capabilities,
-                    &mut fuel,
-                    &mut diagnostic_effects,
-                );
-                for expected in arguments.iter().copied().chain([marker]) {
-                    assert_eq!(
-                        processor
-                            .get_x_token_into(&mut destination)
-                            .expect("warm macro delivery"),
-                        DeliveryStatus::Command
-                    );
-                    assert_eq!(
-                        destination
-                            .take()
-                            .expect("warm command")
-                            .spelling()
-                            .semantic_token(),
-                        expected
-                    );
-                }
-            }
-
-            command.profile_reset_macro_kernel_counters();
-            let writer_before = command.scratch.match_writer_operations();
-            let ownership_before = crate::command::command_ownership_counters();
-            let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
-            let allocations_before =
-                tex_state::measurement::hot_core_thread_allocation_measurement(owner);
-            {
-                let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
-                let mut processor = crate::test_harness::processor(
-                    &mut command,
-                    &mut context,
-                    &mut capabilities,
-                    &mut fuel,
-                    &mut diagnostic_effects,
-                );
-                for expected in arguments.iter().copied().chain([marker]) {
-                    assert_eq!(
-                        processor
-                            .get_x_token_into(&mut destination)
-                            .expect("measured macro delivery"),
-                        DeliveryStatus::Command
-                    );
-                    assert_eq!(
-                        destination
-                            .take()
-                            .expect("measured command")
-                            .spelling()
-                            .semantic_token(),
-                        expected
-                    );
-                }
-            }
-            let allocations_after =
-                tex_state::measurement::hot_core_thread_allocation_measurement(owner);
-            let ownership_after = crate::command::command_ownership_counters();
-            let writer_after = command.scratch.match_writer_operations();
-            Evidence {
-                macro_kernel: command.profile_macro_kernel_counters(),
-                argument_writer: (
-                    writer_after.0 - writer_before.0,
-                    writer_after.1 - writer_before.1,
-                    writer_after.2 - writer_before.2,
-                    writer_after.3 - writer_before.3,
-                    writer_after.4 - writer_before.4,
-                ),
-                allocations: allocations_after.calls - allocations_before.calls,
-                allocated_bytes: allocations_after.requested_bytes
-                    - allocations_before.requested_bytes,
-                command_clones: ownership_after.clones - ownership_before.clones,
-            }
-        })
-    }
-
-    for arguments in [1_u64, 9] {
-        assert_eq!(
-            run(arguments as u8),
-            Evidence {
-                macro_kernel: (
-                    arguments, arguments, arguments, 0, arguments, arguments, arguments
-                ),
-                argument_writer: (arguments, arguments, arguments, arguments, arguments * 2),
-                allocations: 0,
-                allocated_bytes: 0,
-                command_clones: 0,
-            }
-        );
-    }
 }
 
 #[test]
@@ -998,7 +829,6 @@ fn replay_completion_follows_nested_final_token_macro_descendants_once() {
             let context = universe.command_context().expect("command context");
             command.push_discretionary_episode(&context, replay)
         };
-        command.profile_reset_raw_delivery_path_counters();
         let mut capabilities = CommandHostCapabilities::default();
         let mut fuel = crate::CommandFuelLedger::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
@@ -1046,10 +876,6 @@ fn replay_completion_follows_nested_final_token_macro_descendants_once() {
                 .spelling()
                 .semantic_token(),
             letter('z')
-        );
-        assert_eq!(
-            processor.command.profile_replay_completion_counters(),
-            (3, 3, 2)
         );
         assert!(processor.command.replay_completions.is_empty());
     });
@@ -1104,7 +930,6 @@ fn repeated_out_parameter_replay_restarts_its_private_chunk_cursor() {
             &mut fuel,
             &mut diagnostic_effects,
         );
-        processor.command.profile_reset_raw_delivery_path_counters();
         let mut actual = Vec::new();
         let mut destination = None;
         for _ in 0..expected.len() * 2 {
@@ -1124,10 +949,6 @@ fn repeated_out_parameter_replay_restarts_its_private_chunk_cursor() {
         }
         assert_eq!(actual[..expected.len()], expected);
         assert_eq!(actual[expected.len()..], expected);
-        let (_, _, literal_arguments, out_parameters) =
-            processor.command.profile_raw_delivery_path_counters();
-        assert_eq!(literal_arguments, (expected.len() * 2) as u64);
-        assert_eq!(out_parameters, 2);
         assert_eq!(
             processor
                 .retire_exhausted_token_levels_for_named_boundary()

@@ -158,74 +158,10 @@ pub struct CommandState<G> {
     /// Reusable capacity for TeX82 §372's `\csname` name buffer. It is empty
     /// between uses and never part of command semantics or snapshots.
     pub(crate) csname_scratch: String,
-    /// Assertion-bearing proof that ordinary input bypasses out-parameter
-    /// interception. Shipping builds contain neither the counters nor updates.
-    #[cfg(test)]
-    pub(crate) raw_delivery_path_counters: RawDeliveryPathCounters,
     /// Assertion-bearing proof for the shared resident token collector. These
     /// counters are operational test/profiling evidence, never semantic state.
     #[cfg(test)]
     pub(crate) token_collector_path_counters: TokenCollectorPathCounters,
-    /// Operational proof for the singular resident macro-delivery kernel.
-    /// Shipping builds contain neither the counters nor their updates.
-    #[cfg(test)]
-    pub(crate) macro_kernel_counters: MacroKernelCounters,
-    /// Focused proof that resident success is a scalar return and status
-    /// materialization is confined to cold transitions.
-    /// Exact operation census for the singular inline stored-token advance.
-    /// Shipping builds contain neither the counters nor their updates.
-    #[cfg(test)]
-    pub(crate) stored_token_advance_counters: StoredTokenAdvanceCounters,
-}
-
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct MacroKernelCounters {
-    pub(crate) body_words: u64,
-    /// Authoritative packed-frame position updates. The resident body only
-    /// advances its physical cache and has no second logical update to count.
-    pub(crate) body_frame_advances: u64,
-    pub(crate) body_parameter_pushes: u64,
-    pub(crate) body_command_writes: u64,
-    pub(crate) argument_words: u64,
-    pub(crate) argument_cursor_advances: u64,
-    pub(crate) argument_command_writes: u64,
-}
-
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct StoredTokenAdvanceCounters {
-    pub(crate) span_selections: u64,
-    pub(crate) packed_loads: u64,
-    pub(crate) cursor_advances: u64,
-    pub(crate) command_writes: u64,
-    pub(crate) meaning_lookups: u64,
-    pub(crate) parameter_interceptions: u64,
-    pub(crate) intermediate_relays: u64,
-    pub(crate) replay_segment_inspections: u64,
-    pub(crate) replay_run_transitions: u64,
-}
-
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct RawDeliveryPathCounters {
-    pub(crate) source_direct: u64,
-    pub(crate) stored_direct: u64,
-    pub(crate) macro_argument_direct: u64,
-    pub(crate) out_parameter_interceptions: u64,
-    pub(crate) resident_transitions: u64,
-    pub(crate) intermediate_result_redispatches: u64,
-    pub(crate) whole_input_frame_copies: u64,
-    pub(crate) resident_ordinary_retirements: u64,
-    pub(crate) exhaustion_status_relays: u64,
-    pub(crate) retirement_top_lookups: u64,
-    pub(crate) retirement_owner_validations: u64,
-    pub(crate) retirement_whole_token_copies: u64,
-    pub(crate) cold_source_retirements: u64,
-    pub(crate) conservation_retirements: u64,
-    pub(crate) replay_completion_retirement_checks: u64,
-    pub(crate) replay_completion_claims: u64,
-    pub(crate) replay_completion_transfers: u64,
 }
 
 #[cfg(test)]
@@ -313,13 +249,7 @@ impl<G> Default for CommandState<G> {
             delivery_mode: DeliveryMode::default(),
             csname_scratch: String::new(),
             #[cfg(test)]
-            raw_delivery_path_counters: RawDeliveryPathCounters::default(),
-            #[cfg(test)]
             token_collector_path_counters: TokenCollectorPathCounters::default(),
-            #[cfg(test)]
-            macro_kernel_counters: MacroKernelCounters::default(),
-            #[cfg(test)]
-            stored_token_advance_counters: StoredTokenAdvanceCounters::default(),
         }
     }
 }
@@ -897,114 +827,6 @@ impl<G> CommandState<G> {
         )
     }
 
-    /// Resets the focused resident-input cursor mutation counters.
-    #[doc(hidden)]
-    #[cfg(test)]
-    pub fn profile_reset_input_cursor_mutation_counters(&mut self) {
-        self.input.levels.reset_cursor_mutation_counters();
-    }
-
-    /// Returns `(typed top accesses, exposure captures, closure dispatches)` for
-    /// the direct resident-input mutation boundary.
-    #[doc(hidden)]
-    #[cfg(test)]
-    #[must_use]
-    pub fn profile_input_cursor_mutation_counters(&self) -> (u64, u64, u64) {
-        let counters = self.input.levels.cursor_mutation_counters();
-        (
-            counters.typed_top_accesses,
-            counters.exposure_captures,
-            counters.closure_dispatches,
-        )
-    }
-
-    /// Returns `(top selections, source entries, stored-token entries,
-    /// macro-argument entries)` for the typed resident-input front.
-    #[doc(hidden)]
-    #[cfg(test)]
-    #[must_use]
-    pub fn profile_resident_input_branch_counters(&self) -> (u64, u64, u64, u64) {
-        let counters = self.input.levels.cursor_mutation_counters();
-        (
-            counters.typed_top_accesses,
-            counters.source_branch_entries,
-            counters.stored_token_branch_entries,
-            counters.macro_argument_branch_entries,
-        )
-    }
-
-    /// Returns exact resident dispatches for source, replay, durable, attempt,
-    /// macro-body, and macro-argument top-row domains.
-    #[doc(hidden)]
-    #[cfg(test)]
-    #[must_use]
-    pub fn profile_resident_domain_dispatch_counters(&self) -> (u64, u64, u64, u64, u64, u64) {
-        let counters = self.input.levels.cursor_mutation_counters();
-        (
-            counters.source_branch_entries,
-            counters.replay_domain_dispatches,
-            counters.durable_domain_dispatches,
-            counters.attempt_domain_dispatches,
-            counters.macro_body_domain_dispatches,
-            counters.macro_argument_branch_entries,
-        )
-    }
-
-    /// Resets the focused ordinary raw-delivery path counters.
-    #[doc(hidden)]
-    #[cfg(test)]
-    pub fn profile_reset_raw_delivery_path_counters(&mut self) {
-        self.raw_delivery_path_counters = RawDeliveryPathCounters::default();
-    }
-
-    /// Returns `(source direct, stored direct, literal macro-argument direct,
-    /// out-parameter interceptions)` for focused raw-delivery measurements.
-    #[doc(hidden)]
-    #[cfg(test)]
-    #[must_use]
-    pub fn profile_raw_delivery_path_counters(&self) -> (u64, u64, u64, u64) {
-        let counters = self.raw_delivery_path_counters;
-        (
-            counters.source_direct,
-            counters.stored_direct,
-            counters.macro_argument_direct,
-            counters.out_parameter_interceptions,
-        )
-    }
-
-    /// Resets the resident macro word/advance/write evidence.
-    #[doc(hidden)]
-    #[cfg(test)]
-    pub fn profile_reset_macro_kernel_counters(&mut self) {
-        self.macro_kernel_counters = MacroKernelCounters::default();
-    }
-
-    /// Returns body `(words, frame advances, parameter pushes, command
-    /// writes)` and argument `(words, advances, command writes)` for the
-    /// singular kernel.
-    #[doc(hidden)]
-    #[cfg(test)]
-    #[must_use]
-    pub fn profile_macro_kernel_counters(&self) -> (u64, u64, u64, u64, u64, u64, u64) {
-        let counters = self.macro_kernel_counters;
-        (
-            counters.body_words,
-            counters.body_frame_advances,
-            counters.body_parameter_pushes,
-            counters.body_command_writes,
-            counters.argument_words,
-            counters.argument_cursor_advances,
-            counters.argument_command_writes,
-        )
-    }
-
-    /// Resets exact operation evidence for inline stored-token advancement.
-    #[doc(hidden)]
-    #[cfg(test)]
-    pub fn profile_reset_stored_token_advance_counters(&mut self) {
-        self.stored_token_advance_counters = StoredTokenAdvanceCounters::default();
-    }
-
     /// Admits one replay-lane stored span for the focused production-path
     /// advance gate. This exists only in test/profiling resolutions.
     #[doc(hidden)]
@@ -1042,76 +864,6 @@ impl<G> CommandState<G> {
             crate::input::ReplayTrace::Inserted,
         )
         .expect("profiling attempt span extent admits");
-    }
-
-    /// Returns `(span selections, packed loads, cursor advances, command
-    /// writes, meaning lookups, parameter interceptions, intermediate relays,
-    /// replay segment inspections, replay run transitions)`.
-    #[doc(hidden)]
-    #[cfg(test)]
-    #[must_use]
-    pub fn profile_stored_token_advance_counters(
-        &self,
-    ) -> (u64, u64, u64, u64, u64, u64, u64, u64, u64) {
-        let counters = self.stored_token_advance_counters;
-        (
-            counters.span_selections,
-            counters.packed_loads,
-            counters.cursor_advances,
-            counters.command_writes,
-            counters.meaning_lookups,
-            counters.parameter_interceptions,
-            counters.intermediate_relays,
-            counters.replay_segment_inspections,
-            counters.replay_run_transitions,
-        )
-    }
-
-    /// Returns `(resident transitions, intermediate-result redispatches,
-    /// whole-input-frame copies)` for focused raw-delivery gates.
-    #[doc(hidden)]
-    #[cfg(test)]
-    #[must_use]
-    pub fn profile_resident_delivery_transition_counters(&self) -> (u64, u64, u64) {
-        let counters = self.raw_delivery_path_counters;
-        (
-            counters.resident_transitions,
-            counters.intermediate_result_redispatches,
-            counters.whole_input_frame_copies,
-        )
-    }
-
-    /// Returns structural resident-retirement facts in field order: ordinary
-    /// pops, status relays, repeated top lookups, repeated owner validations,
-    /// whole-token copies, cold source retirements, conservation retirements.
-    #[doc(hidden)]
-    #[cfg(test)]
-    #[must_use]
-    pub fn profile_resident_retirement_counters(&self) -> (u64, u64, u64, u64, u64, u64, u64) {
-        let counters = self.raw_delivery_path_counters;
-        (
-            counters.resident_ordinary_retirements,
-            counters.exhaustion_status_relays,
-            counters.retirement_top_lookups,
-            counters.retirement_owner_validations,
-            counters.retirement_whole_token_copies,
-            counters.cold_source_retirements,
-            counters.conservation_retirements,
-        )
-    }
-
-    /// Returns `(retirement checks, ownership claims, descendant transfers)` for
-    /// the ownership-directed replay-completion boundary.
-    #[doc(hidden)]
-    #[cfg(test)]
-    #[must_use]
-    pub fn profile_replay_completion_counters(&self) -> (u64, u64, u64) {
-        let counters = self.raw_delivery_path_counters;
-        (
-            counters.replay_completion_retirement_checks,
-            counters.replay_completion_claims,
-            counters.replay_completion_transfers,
-        )
     }
 
     /// Resets focused shared token-collector counters.
@@ -1312,24 +1064,9 @@ impl<G> CommandState<G> {
         &mut self,
         identity: InputLevelId,
     ) -> Option<CommandReplayEpisode> {
-        #[cfg(test)]
-        {
-            self.raw_delivery_path_counters
-                .replay_completion_retirement_checks = self
-                .raw_delivery_path_counters
-                .replay_completion_retirement_checks
-                .saturating_add(1);
-        }
         let completion = self.replay_completions.last().copied()?;
         if completion.owner != identity {
             return None;
-        }
-        #[cfg(test)]
-        {
-            self.raw_delivery_path_counters.replay_completion_claims = self
-                .raw_delivery_path_counters
-                .replay_completion_claims
-                .saturating_add(1);
         }
         self.replay_completions.pop();
         Some(CommandReplayEpisode(completion.episode))
@@ -1343,13 +1080,6 @@ impl<G> CommandState<G> {
         owner: InputLevelId,
     ) {
         if let Some(CommandReplayEpisode(episode)) = episode {
-            #[cfg(test)]
-            {
-                self.raw_delivery_path_counters.replay_completion_transfers = self
-                    .raw_delivery_path_counters
-                    .replay_completion_transfers
-                    .saturating_add(1);
-            }
             self.replay_completions
                 .push(ReplayCompletionFence { episode, owner });
         }

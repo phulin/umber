@@ -6,7 +6,7 @@ use super::{
 };
 use crate::command::HotCommand;
 use crate::input::InputLevel;
-#[cfg(any(test, feature = "profiling"))]
+#[cfg(feature = "profiling")]
 use crate::input::ResidentTokenStorage;
 use crate::{CommandError, CommandProcessor, DeliveryStatus};
 use std::ops::ControlFlow;
@@ -211,7 +211,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         else {
             return None;
         };
-        #[cfg(any(test, feature = "profiling"))]
+        #[cfg(feature = "profiling")]
         let argument = matches!(row.storage, ResidentTokenStorage::MacroArgument(_));
         // A `\noexpand`-marked frame settles its control sequence through
         // the ordinary reader; every other resident control sequence is
@@ -267,14 +267,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             self.command.roots.alignment.align_state += brace_delta;
         }
         if consumed != 0 {
-            #[cfg(test)]
-            if argument {
-                self.command
-                    .raw_delivery_path_counters
-                    .macro_argument_direct += u64::from(consumed);
-            } else {
-                self.command.raw_delivery_path_counters.stored_direct += u64::from(consumed);
-            }
             #[cfg(feature = "profiling")]
             self.fuel.record_raw_run(
                 self.command.delivery_mode.scanner_active(),
@@ -387,7 +379,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             return Ok(ExpansionCandidate::ExpandedMacro);
         }
         let command = destination.insert(word.materialize(&meaning));
-        self.admit_materialized_read(&word);
         self.settle_hot_delivery_in::<OBSERVED>(command, resolution.literal_catcode())?;
         Ok(ExpansionCandidate::Command)
     }
@@ -406,46 +397,14 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     #[inline(always)]
     pub(super) fn record_consumed_read(&mut self, word: &ResidentWord, lookup: bool) {
-        #[cfg(test)]
-        match word.storage_kind {
-            super::ResidentStorageKind::Stored => {
-                self.command.raw_delivery_path_counters.stored_direct += 1;
-                self.command.stored_token_advance_counters.meaning_lookups += u64::from(lookup);
-            }
-            super::ResidentStorageKind::MacroArgument => {
-                self.command
-                    .raw_delivery_path_counters
-                    .macro_argument_direct += 1;
-            }
-            _ => {}
-        }
         #[cfg(feature = "profiling")]
         self.fuel.record_raw_delivery(
             self.command.delivery_mode.scanner_active(),
             lookup,
             word.raw_kind,
         );
-        #[cfg(not(any(test, feature = "profiling")))]
+        #[cfg(not(feature = "profiling"))]
         let _ = (word, lookup);
-    }
-
-    #[inline(always)]
-    pub(super) fn admit_materialized_read(&mut self, word: &ResidentWord) {
-        #[cfg(test)]
-        match word.storage_kind {
-            super::ResidentStorageKind::Stored => {
-                self.command.stored_token_advance_counters.command_writes += 1
-            }
-            super::ResidentStorageKind::MacroBody => {
-                self.command.macro_kernel_counters.body_command_writes += 1
-            }
-            super::ResidentStorageKind::MacroArgument => {
-                self.command.macro_kernel_counters.argument_command_writes += 1
-            }
-            _ => {}
-        }
-        #[cfg(not(test))]
-        let _ = word;
     }
 
     /// The ordinary expansion consumer owns one read/interpret back edge.

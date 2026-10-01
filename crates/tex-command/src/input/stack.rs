@@ -344,14 +344,6 @@ impl<G> CommandState<G> {
                 unreachable!("cold retirement returned before resident pop")
             }
         };
-        #[cfg(test)]
-        {
-            self.raw_delivery_path_counters
-                .resident_ordinary_retirements = self
-                .raw_delivery_path_counters
-                .resident_ordinary_retirements
-                .saturating_add(1);
-        }
         Ok(self.settle_resident_retirement(
             identity,
             action,

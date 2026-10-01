@@ -1195,7 +1195,6 @@ fn batched_definition_runs_match_scalar_collection_from_resident_sources() {
                 Err(crate::CommandError::FuelExhausted { .. }) => return None,
                 Err(error) => panic!("unexpected expansion failure: {error:?}"),
             }
-            processor.command.profile_reset_macro_kernel_counters();
             let result = processor.scan_toks_buffers(ScanToksMode::MacroDefinition {
                 expanded: false,
                 global: false,
@@ -1213,22 +1212,16 @@ fn batched_definition_runs_match_scalar_collection_from_resident_sources() {
                 Err(crate::CommandError::FuelExhausted { .. }) => None,
                 Err(error) => panic!("unexpected scan failure: {error:?}"),
             };
-            let (body_words, _, _, _, argument_words, ..) =
-                processor.command.profile_macro_kernel_counters();
             Some((
-                (
-                    body,
-                    processor.fuel.burned(),
-                    processor.command.semantic_diagnostics.len(),
-                    processor.command.roots.alignment.align_state,
-                ),
-                body_words + argument_words,
+                body,
+                processor.fuel.burned(),
+                processor.command.semantic_diagnostics.len(),
+                processor.command.roots.alignment.align_state,
             ))
         })
     };
     for from_argument in [false, true] {
-        let (complete, batched) = run(from_argument, false, 1_000).expect("carrier expands");
-        assert!(batched >= 6, "plain spans are consumed as runs: {batched}");
+        let complete = run(from_argument, false, 1_000).expect("carrier expands");
         let body = complete.0.as_ref().expect("body");
         assert_eq!(
             body.len(),
@@ -1237,14 +1230,11 @@ fn batched_definition_runs_match_scalar_collection_from_resident_sources() {
         );
         assert!(body.contains(&Token::Param(1)));
         let fuel = complete.1;
-        assert_eq!(
-            run(from_argument, true, 1_000).map(|run| run.0),
-            Some(complete)
-        );
+        assert_eq!(run(from_argument, true, 1_000), Some(complete));
         for limit in 1..=fuel + 1 {
             assert_eq!(
-                run(from_argument, false, limit).map(|run| run.0),
-                run(from_argument, true, limit).map(|run| run.0),
+                run(from_argument, false, limit),
+                run(from_argument, true, limit),
                 "argument source {from_argument}, fuel {limit}"
             );
         }

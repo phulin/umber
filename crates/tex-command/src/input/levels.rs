@@ -628,10 +628,7 @@ impl<'a, G> PackedTokenSources<'a, G> {
         replay: &'a ReplayLane<G>,
         attempt: &'a crate::attempt::AttemptArena<G>,
     ) -> Self {
-        Self {
-            replay,
-            attempt,
-        }
+        Self { replay, attempt }
     }
 
     /// Peeks through an admitted span without advancing its input frame.
@@ -919,21 +916,13 @@ impl<T> SegmentedReplayLane<T> {
     }
 
     #[inline(always)]
-    fn advance_sequential(
-        &self,
-        cursor: &mut ResidentReplayCursor,
-        #[cfg(test)] segment_inspections: &mut u64,
-    ) -> Option<&T> {
+    fn advance_sequential(&self, cursor: &mut ResidentReplayCursor) -> Option<&T> {
         if cursor.remaining == 0 {
             return None;
         }
         debug_assert_ne!(cursor.remaining, 0);
         if cursor.offset == cursor.segment_end {
-            self.refresh_resident_cursor(
-                cursor,
-                #[cfg(test)]
-                segment_inspections,
-            )?;
+            self.refresh_resident_cursor(cursor)?;
         }
         let segment = self.active.get(cursor.segment as usize)?;
         let value = segment.storage.values.get(usize::from(cursor.offset))?;
@@ -945,21 +934,13 @@ impl<T> SegmentedReplayLane<T> {
     /// Crosses the uncommon exhausted-span or fixed-segment boundary.
     #[cold]
     #[inline(never)]
-    fn refresh_resident_cursor(
-        &self,
-        cursor: &mut ResidentReplayCursor,
-        #[cfg(test)] segment_inspections: &mut u64,
-    ) -> Option<()> {
+    fn refresh_resident_cursor(&self, cursor: &mut ResidentReplayCursor) -> Option<()> {
         debug_assert_eq!(cursor.offset, cursor.segment_end);
         debug_assert_ne!(cursor.remaining, 0);
         cursor.segment = cursor.segment.checked_add(1)?;
         cursor.offset = 0;
         let segment = self.active.get(cursor.segment as usize)?;
         cursor.segment_end = segment.used;
-        #[cfg(test)]
-        {
-            *segment_inspections = segment_inspections.saturating_add(1);
-        }
         Some(())
     }
 
@@ -1433,41 +1414,22 @@ impl<G> ReplayLane<G> {
         &self,
         replay: ReplayPayloadId<G>,
         cursor: &mut ResidentReplayCursor,
-        #[cfg(test)] segment_inspections: &mut u64,
-        #[cfg(test)] run_transitions: &mut u64,
     ) -> Option<TracedTokenWord> {
         if cursor.run == ResidentReplayRun::Prefix && cursor.remaining == 0 {
-            self.refresh_resident_run(
-                replay,
-                cursor,
-                #[cfg(test)]
-                segment_inspections,
-                #[cfg(test)]
-                run_transitions,
-            )?;
+            self.refresh_resident_run(replay, cursor)?;
         }
         match cursor.run {
             ResidentReplayRun::Empty => None,
-            ResidentReplayRun::Prefix | ResidentReplayRun::SegmentedBody => self
-                .words
-                .advance_sequential(
-                    cursor,
-                    #[cfg(test)]
-                    segment_inspections,
-                )
-                .copied(),
+            ResidentReplayRun::Prefix | ResidentReplayRun::SegmentedBody => {
+                self.words.advance_sequential(cursor).copied()
+            }
             ResidentReplayRun::OwnedBody => {
                 self.entries
                     .get(replay.entry as usize)
                     .and_then(|entry| match &entry.body_words {
-                        ReplayBodyWords::Owned(words) if !entry.released => words
-                            .lane
-                            .advance_sequential(
-                                cursor,
-                                #[cfg(test)]
-                                segment_inspections,
-                            )
-                            .copied(),
+                        ReplayBodyWords::Owned(words) if !entry.released => {
+                            words.lane.advance_sequential(cursor).copied()
+                        }
                         ReplayBodyWords::Segmented(_) | ReplayBodyWords::Owned(_) => None,
                     })
             }
@@ -1481,21 +1443,12 @@ impl<G> ReplayLane<G> {
         &self,
         replay: ReplayPayloadId<G>,
         cursor: &mut ResidentReplayCursor,
-        #[cfg(test)] segment_inspections: &mut u64,
-        #[cfg(test)] run_transitions: &mut u64,
     ) -> Option<()> {
         let entry = self.entries.get(replay.entry as usize)?;
         if entry.released {
             return None;
         }
         *cursor = self.body_resident_cursor(entry)?;
-        #[cfg(test)]
-        {
-            *run_transitions = run_transitions.saturating_add(1);
-            if cursor.run != ResidentReplayRun::Empty {
-                *segment_inspections = segment_inspections.saturating_add(1);
-            }
-        }
         Some(())
     }
 

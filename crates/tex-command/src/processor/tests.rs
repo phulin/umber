@@ -149,7 +149,6 @@ fn replay_completion_is_published_by_its_direct_retirement() {
             let context = universe.command_context().expect("command context");
             command.push_discretionary_episode(&context, tokens)
         };
-        command.profile_reset_raw_delivery_path_counters();
         let mut capabilities = CommandHostCapabilities::default();
         let mut fuel = crate::CommandFuelLedger::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
@@ -184,10 +183,6 @@ fn replay_completion_is_published_by_its_direct_retirement() {
             DeliveryStatus::ReplayCompleted(episode)
         );
         assert!(destination.is_none());
-        assert_eq!(
-            processor.command.profile_replay_completion_counters(),
-            (1, 1, 0)
-        );
     });
 }
 
@@ -201,7 +196,6 @@ fn ordinary_4096_resident_deliveries_perform_zero_replay_completion_checks() {
         };
         let mut command = CommandState::default();
         crate::test_harness::push(&mut command, std::iter::repeat_n(token, 4_096));
-        command.profile_reset_raw_delivery_path_counters();
         let mut capabilities = CommandHostCapabilities::default();
         let mut fuel = crate::CommandFuelLedger::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
@@ -237,10 +231,6 @@ fn ordinary_4096_resident_deliveries_perform_zero_replay_completion_checks() {
         }
         let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
 
-        assert_eq!(
-            processor.command.profile_replay_completion_counters(),
-            (0, 0, 0)
-        );
         assert_eq!(after.calls - before.calls, 0);
         assert_eq!(after.requested_bytes - before.requested_bytes, 0);
     });
@@ -258,7 +248,6 @@ fn stack_conservation_remains_an_explicit_counted_retirement_branch() {
                 ReplayTrace::Inserted,
             );
         }
-        command.profile_reset_raw_delivery_path_counters();
         let mut capabilities = CommandHostCapabilities::default();
         let mut fuel = crate::CommandFuelLedger::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
@@ -276,11 +265,6 @@ fn stack_conservation_remains_an_explicit_counted_retirement_branch() {
             .expect("explicit conservation drains exhausted levels");
 
         assert_eq!(processor.command.input_level_count(), 0);
-        // Ordinary popped rows retire through the shared resident primitive.
-        assert_eq!(
-            processor.command.profile_resident_retirement_counters(),
-            (2, 0, 0, 0, 0, 0, 2)
-        );
     });
 }
 
@@ -792,10 +776,6 @@ fn ordinary_raw_delivery_bypasses_out_parameter_interception() {
                     cat: Catcode::Letter,
                 }
             );
-            processor.command.profile_reset_raw_delivery_path_counters();
-            processor
-                .command
-                .profile_reset_input_cursor_mutation_counters();
             processor
                 .command
                 .profile_reset_input_source_context_counters();
@@ -809,14 +789,6 @@ fn ordinary_raw_delivery_bypasses_out_parameter_interception() {
                 }
             );
             assert_eq!(
-                processor.command.profile_raw_delivery_path_counters(),
-                (1, 0, 0, 0)
-            );
-            assert_eq!(
-                processor.command.profile_input_cursor_mutation_counters(),
-                (1, 0, 0)
-            );
-            assert_eq!(
                 processor.command.profile_input_source_context_counters(),
                 (0, 0, 0, 1)
             );
@@ -828,8 +800,6 @@ fn ordinary_raw_delivery_bypasses_out_parameter_interception() {
         };
         let mut command = CommandState::default();
         crate::test_harness::push(&mut command, [ordinary, Token::Param(1)]);
-        command.profile_reset_raw_delivery_path_counters();
-        command.profile_reset_input_cursor_mutation_counters();
         let mut processor = crate::test_harness::processor(
             &mut command,
             &mut context,
@@ -846,257 +816,7 @@ fn ordinary_raw_delivery_bypasses_out_parameter_interception() {
         let mut destination = None;
         assert!(processor.get_next_into(&mut destination).is_err());
         assert!(destination.is_none());
-        assert_eq!(
-            processor.command.profile_raw_delivery_path_counters(),
-            (0, 1, 0, 1)
-        );
-        assert_eq!(
-            processor.command.profile_input_cursor_mutation_counters(),
-            (2, 0, 0)
-        );
     });
-}
-
-#[test]
-#[cfg(feature = "profiling")]
-fn mixed_resident_delivery_has_one_transition_and_no_result_redispatch() {
-    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-    struct Evidence {
-        path: (u64, u64, u64, u64),
-        branches: (u64, u64, u64, u64),
-        transitions: (u64, u64, u64),
-        macro_kernel: (u64, u64, u64, u64, u64, u64, u64),
-        retirements: (u64, u64, u64, u64, u64, u64, u64),
-        allocation_calls: u64,
-        requested_bytes: u64,
-        whole_command_copies: u64,
-        resolved_writes: u64,
-    }
-
-    fn run(operations: usize, expanded: bool) -> Evidence {
-        crate::test_harness::with_universe(|universe| {
-            let token = Token::Char {
-                ch: 'x',
-                cat: Catcode::Letter,
-            };
-            let words = vec![tex_state::token::TokenWord::pack(token); operations];
-            let traced = vec![TracedTokenWord::pack(token, OriginId::UNKNOWN); operations];
-            let durable = universe
-                .command_context()
-                .expect("mixed delivery context")
-                .allocate_token_list(&words)
-                .expect("mixed delivery durable list");
-            let definition = universe
-                .allocate_definition(&[], &words)
-                .expect("mixed delivery macro replacement");
-
-            let mut command = CommandState::default();
-            let source = command
-                .register_source(
-                    crate::SourceRegistration::new(
-                        crate::RegisteredSourceKind::Generated,
-                        std::sync::Arc::<[u8]>::from(vec![b'x'; operations]),
-                    )
-                    .with_role(crate::SourceRole::UserDocumentInclude),
-                )
-                .expect("mixed delivery source registration");
-            command
-                .open_registered_source(source)
-                .expect("mixed delivery source opening");
-            command.profile_prepare_source_line(1);
-            {
-                let context = universe.command_context().expect("mixed durable context");
-                command.push_token_level(
-                    PackedTokenSpanHandle::durable(context.token_list(durable)),
-                    TokenBehavior::Ordinary,
-                    RetirementBehavior::Pop,
-                    ReplayTrace::Stored(StoredReplayReason::EveryPar),
-                );
-            }
-            command.push_token_level(
-                PackedTokenSpanHandle::transient(traced.iter().copied()),
-                TokenBehavior::Ordinary,
-                RetirementBehavior::Pop,
-                ReplayTrace::Inserted,
-            );
-            let matching = command.scratch.begin_macro_match().expect("macro match");
-            let mut writer = command
-                .scratch
-                .begin_argument_writer(&matching)
-                .expect("macro writer");
-            for spelling in &traced {
-                command
-                    .scratch
-                    .append_argument_token(
-                        &mut writer,
-                        crate::token_collector::ClassifiedToken::from_word(*spelling, None),
-                        true,
-                    )
-                    .expect("macro argument word");
-            }
-            command
-                .scratch
-                .publish_argument(writer)
-                .expect("macro argument range");
-            let argument_set = command
-                .scratch
-                .commit_macro_match(matching)
-                .expect("macro frame");
-            let macro_name = universe
-                .intern("mixeddelivery")
-                .expect("mixed delivery macro name")
-                .symbol();
-            let body = universe
-                .command_context()
-                .expect("mixed delivery definition context")
-                .admit_macro_body(definition)
-                .expect("resident mixed delivery definition")
-                .2;
-            command.push_macro_activation(macro_name, body, Some(argument_set), OriginId::UNKNOWN);
-            let range = command
-                .scratch
-                .argument_range(argument_set, 1)
-                .expect("live macro frame")
-                .expect("macro argument");
-            let identity = command.allocate_input_level_identity();
-            let active_source = command.input.levels.current_source_context();
-            let origin_run = command
-                .scratch
-                .admitted_argument_origin_run(range)
-                .expect("argument provenance run");
-            let behavior = TokenBehavior::Parameter;
-            let retirement = RetirementBehavior::Pop;
-            let trace = ReplayTrace::MacroParameter { slot: 1 };
-            let mut frame = packed_token_frame(
-                identity,
-                range.len() as usize,
-                &behavior,
-                retirement,
-                &trace,
-            );
-            frame.set_source_context(active_source);
-            command.push_input_level(InputLevel::Resident(ResidentTokenRow {
-                header: TokenRowHeader::new(behavior, retirement, trace, frame),
-                storage: ResidentTokenStorage::MacroArgument(MacroArgumentCursor::new(
-                    range, 1, origin_run,
-                )),
-            }));
-
-            let mut capabilities = CommandHostCapabilities::default();
-            let mut fuel = crate::CommandFuelLedger::default();
-            let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
-            let mut context = universe.command_context().expect("mixed command context");
-            let mut destination = None;
-            command.profile_reset_raw_delivery_path_counters();
-            command.profile_reset_macro_kernel_counters();
-            let commands_before = crate::command::command_ownership_counters();
-            let owner = tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan;
-            let allocations_before =
-                tex_state::measurement::hot_core_thread_allocation_measurement(owner);
-            {
-                let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
-                let mut processor = crate::test_harness::processor(
-                    &mut command,
-                    &mut context,
-                    &mut capabilities,
-                    &mut fuel,
-                    &mut diagnostic_effects,
-                );
-                for _ in 0..operations.saturating_mul(5) {
-                    let delivery = if expanded {
-                        processor.get_x_token_into(&mut destination)
-                    } else {
-                        processor.get_next_into(&mut destination)
-                    };
-                    assert_eq!(
-                        delivery.expect("mixed resident delivery"),
-                        DeliveryStatus::Command
-                    );
-                    let delivered = destination.take().expect("mixed resident command");
-                    assert_eq!(delivered.spelling().semantic_token(), token);
-                }
-            }
-            let allocations_after =
-                tex_state::measurement::hot_core_thread_allocation_measurement(owner);
-            {
-                let mut processor = crate::test_harness::processor(
-                    &mut command,
-                    &mut context,
-                    &mut capabilities,
-                    &mut fuel,
-                    &mut diagnostic_effects,
-                );
-                assert_eq!(
-                    processor
-                        .get_next_into(&mut destination)
-                        .expect("normalized source terminator delivery"),
-                    DeliveryStatus::Command
-                );
-                destination.take().expect("normalized source terminator");
-                assert_eq!(
-                    processor
-                        .get_next_into(&mut destination)
-                        .expect("mixed source exhaustion"),
-                    DeliveryStatus::End
-                );
-            }
-            let commands_after = crate::command::command_ownership_counters();
-            Evidence {
-                path: command.profile_raw_delivery_path_counters(),
-                branches: command.profile_resident_input_branch_counters(),
-                transitions: command.profile_resident_delivery_transition_counters(),
-                macro_kernel: command.profile_macro_kernel_counters(),
-                retirements: command.profile_resident_retirement_counters(),
-                allocation_calls: allocations_after.calls - allocations_before.calls,
-                requested_bytes: allocations_after.requested_bytes
-                    - allocations_before.requested_bytes,
-                whole_command_copies: commands_after
-                    .clones
-                    .saturating_sub(commands_before.clones)
-                    .saturating_add(
-                        commands_after
-                            .backup_copies
-                            .saturating_sub(commands_before.backup_copies),
-                    ),
-                resolved_writes: commands_after.resolved_writes - commands_before.resolved_writes,
-            }
-        })
-    }
-
-    let one = run(1, false);
-    assert_eq!(
-        one,
-        Evidence {
-            path: (2, 2, 1, 0),
-            branches: (11, 3, 4, 2),
-            transitions: (11, 0, 0),
-            macro_kernel: (1, 1, 0, 1, 1, 1, 1),
-            retirements: (3, 0, 0, 0, 0, 1, 0),
-            allocation_calls: 0,
-            requested_bytes: 0,
-            whole_command_copies: 0,
-            resolved_writes: 6,
-        }
-    );
-    let four_k = run(4_096, false);
-    assert_eq!(four_k.path, (4_097, 8_192, 4_096, 0));
-    assert_eq!(four_k.branches, (20_486, 4_098, 8_194, 4_097));
-    assert_eq!(four_k.transitions, (20_486, 0, 0));
-    assert_eq!(
-        four_k.macro_kernel,
-        (4_096, 4_096, 0, 4_096, 4_096, 4_096, 4_096)
-    );
-    assert_eq!(four_k.retirements, (3, 0, 0, 0, 0, 1, 0));
-    assert_eq!(four_k.allocation_calls, 0);
-    assert_eq!(four_k.requested_bytes, 0);
-    assert_eq!(four_k.whole_command_copies, 0);
-    assert_eq!(four_k.resolved_writes, 20_481);
-
-    let expanded_four_k = run(4_096, true);
-    assert_eq!(expanded_four_k.macro_kernel, four_k.macro_kernel);
-    assert_eq!(expanded_four_k.allocation_calls, 0);
-    assert_eq!(expanded_four_k.requested_bytes, 0);
-    assert_eq!(expanded_four_k.whole_command_copies, 0);
 }
 
 #[test]

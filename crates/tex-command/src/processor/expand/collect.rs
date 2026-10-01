@@ -99,7 +99,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             if exceptional {
                 let meaning = meaning.unwrap_or_else(|| self.resolve_read(&word).0);
                 let mut command = word.materialize(&meaning);
-                self.admit_materialized_read(&word);
                 self.settle_hot_delivery_in::<OBSERVED>(&mut command, literal)?;
                 if matches!(
                     command.alignment_adjustment(),
@@ -142,7 +141,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                     meaning.unwrap_or_else(|| processor.resolve_read(&word).0);
                 let mut command: HotCommand<G> = word.materialize(&meaning);
                 command.set_alignment_adjustment(adjustment);
-                processor.admit_materialized_read(&word);
                 processor.back_input_hot(command)
             })? {
                 return Ok(());

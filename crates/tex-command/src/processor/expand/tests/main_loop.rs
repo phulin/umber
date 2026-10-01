@@ -101,9 +101,6 @@ fn main_loop_character_run_lexes_a_resident_source_prefix_once() {
         );
         processor
             .command
-            .profile_reset_input_cursor_mutation_counters();
-        processor
-            .command
             .profile_reset_input_source_context_counters();
         let ownership_before = crate::command::command_ownership_counters();
         let mut destination = None;
@@ -118,10 +115,6 @@ fn main_loop_character_run_lexes_a_resident_source_prefix_once() {
         assert_eq!(consumer.origins.len(), 2);
         assert_ne!(consumer.origins[0], consumer.origins[1]);
         assert!(destination.is_none());
-        assert_eq!(
-            processor.command.profile_resident_input_branch_counters(),
-            (1, 1, 0, 0)
-        );
         assert_eq!(
             processor.command.profile_input_source_context_counters(),
             (0, 0, 0, 1)

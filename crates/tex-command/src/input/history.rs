@@ -28,26 +28,6 @@ pub(crate) struct InputSourceContextCounters {
     pub(crate) source_lex_slot_borrows: u64,
 }
 
-/// Profiling proof for the unified resident-input cursor mutation boundary.
-///
-/// Cursor advancement performs one typed top-row access and no rollback work.
-/// Checkpoint and exposure transitions capture the sole mutable row before a
-/// delivery can reach it. The resident transition has no callback dispatch.
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct InputCursorMutationCounters {
-    pub(crate) typed_top_accesses: u64,
-    pub(crate) source_branch_entries: u64,
-    pub(crate) stored_token_branch_entries: u64,
-    pub(crate) macro_argument_branch_entries: u64,
-    pub(crate) replay_domain_dispatches: u64,
-    pub(crate) durable_domain_dispatches: u64,
-    pub(crate) attempt_domain_dispatches: u64,
-    pub(crate) macro_body_domain_dispatches: u64,
-    pub(crate) exposure_captures: u64,
-    pub(crate) closure_dispatches: u64,
-}
-
 enum SourceOwnerTransition {
     Cursor,
     EveryEof,
@@ -571,8 +551,6 @@ pub(crate) struct InputStack<G> {
     active_macro_parameters: usize,
     row_admissions: u64,
     source_owner_swaps: u64,
-    #[cfg(test)]
-    pub(crate) cursor_mutations: InputCursorMutationCounters,
 }
 
 impl<G> Default for InputStack<G> {
@@ -584,8 +562,6 @@ impl<G> Default for InputStack<G> {
             active_macro_parameters: 0,
             row_admissions: 0,
             source_owner_swaps: 0,
-            #[cfg(test)]
-            cursor_mutations: InputCursorMutationCounters::default(),
         }
     }
 }
@@ -694,8 +670,6 @@ impl<G> InputStack<G> {
             active_macro_parameters: 0,
             row_admissions: 0,
             source_owner_swaps: 0,
-            #[cfg(test)]
-            cursor_mutations: InputCursorMutationCounters::default(),
         }
     }
 
@@ -1001,7 +975,7 @@ impl<G> crate::CommandState<G> {
             }
             _ => return Ok(ResidentRun::default()),
         };
-        #[cfg(not(any(test, feature = "profiling")))]
+        #[cfg(not(feature = "profiling"))]
         let _ = argument_source;
         if consumed == 0 {
             return Ok(ResidentRun {
@@ -1032,28 +1006,6 @@ impl<G> crate::CommandState<G> {
             },
             consumed,
         );
-        #[cfg(test)]
-        {
-            if argument_source {
-                self.macro_kernel_counters.argument_words = self
-                    .macro_kernel_counters
-                    .argument_words
-                    .saturating_add(u64::from(consumed));
-                self.macro_kernel_counters.argument_cursor_advances = self
-                    .macro_kernel_counters
-                    .argument_cursor_advances
-                    .saturating_add(1);
-            } else {
-                self.macro_kernel_counters.body_words = self
-                    .macro_kernel_counters
-                    .body_words
-                    .saturating_add(u64::from(consumed));
-                self.macro_kernel_counters.body_frame_advances = self
-                    .macro_kernel_counters
-                    .body_frame_advances
-                    .saturating_add(1);
-            }
-        }
         Ok(ResidentRun {
             consumed,
             at_transition: parameter_next || exhausted,
@@ -1439,16 +1391,6 @@ impl<G> InputStack<G> {
                 .capacity()
                 .saturating_mul(std::mem::size_of::<InputLevel<G>>()),
         )
-    }
-
-    #[cfg(test)]
-    pub(crate) const fn cursor_mutation_counters(&self) -> InputCursorMutationCounters {
-        self.cursor_mutations
-    }
-
-    #[cfg(test)]
-    pub(crate) fn reset_cursor_mutation_counters(&mut self) {
-        self.cursor_mutations = InputCursorMutationCounters::default();
     }
 
     fn replace_source_buffer_slots(&mut self, prior: usize, current: usize) {

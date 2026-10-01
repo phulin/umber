@@ -1,7 +1,5 @@
 //! Source reading and cold transitions of the shared semantic input stack.
 
-#[cfg(test)]
-use super::ResidentStorageKind;
 use super::{InputFrameTransition, ReadSite, ResidentColdOutcome, ResidentWord};
 use crate::input::{
     InputLevel, ResidentBoundary, ResidentSourceAdvance, ResidentSourceCharacterRun,
@@ -29,21 +27,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         let state = &mut *self.state;
         let profile = command_state.roots.profile;
         let force_eof_requested = command_state.roots.input.force_eof;
-        #[cfg(test)]
-        {
-            command_state
-                .roots
-                .input
-                .levels
-                .cursor_mutations
-                .source_branch_entries = command_state
-                .roots
-                .input
-                .levels
-                .cursor_mutations
-                .source_branch_entries
-                .saturating_add(1);
-        }
         let InputLevel::Source(source) = &mut command_state.roots.input.levels.rows[resident_index]
         else {
             return Err(CommandError::input_invariant());
@@ -64,20 +47,11 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .as_ref()
                     .map(|line| u32::try_from(line.physical.number()).unwrap_or(u32::MAX));
                 self.pending_diagnostic_location = top.diagnostic_location(location);
-                #[cfg(test)]
-                {
-                    command_state.raw_delivery_path_counters.source_direct = command_state
-                        .raw_delivery_path_counters
-                        .source_direct
-                        .saturating_add(1);
-                }
                 Ok(ResidentColdOutcome::Word(ResidentWord {
                     word,
                     origin,
                     suppress_expandable: false,
                     site: ReadSite::Source(direct_source_line),
-                    #[cfg(test)]
-                    storage_kind: ResidentStorageKind::Source,
                     #[cfg(feature = "profiling")]
                     raw_kind: crate::fuel::RawDeliveryKind::Source,
                 }))
@@ -274,16 +248,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 arguments,
                 active_source,
             } => {
-                #[cfg(test)]
-                {
-                    self.command
-                        .raw_delivery_path_counters
-                        .out_parameter_interceptions = self
-                        .command
-                        .raw_delivery_path_counters
-                        .out_parameter_interceptions
-                        .saturating_add(1);
-                }
                 self.command
                     .push_resident_parameter_cursor(
                         slot,
@@ -335,16 +299,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
             }
             ResidentBoundary::SourceExhausted(identity) => {
-                #[cfg(test)]
-                {
-                    self.command
-                        .raw_delivery_path_counters
-                        .cold_source_retirements = self
-                        .command
-                        .raw_delivery_path_counters
-                        .cold_source_retirements
-                        .saturating_add(1);
-                }
                 if matches!(
                     self.finish_exhausted_source(identity)?,
                     SourceExhaustionStatus::End
@@ -355,16 +309,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
             }
             ResidentBoundary::TokenExhausted { identity, .. } => {
-                #[cfg(test)]
-                {
-                    self.command
-                        .raw_delivery_path_counters
-                        .exhaustion_status_relays = self
-                        .command
-                        .raw_delivery_path_counters
-                        .exhaustion_status_relays
-                        .saturating_add(1);
-                }
                 if !self
                     .command
                     .input
@@ -391,8 +335,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                         origin: OriginId::UNKNOWN,
                         suppress_expandable: false,
                         site: ReadSite::Synthetic,
-                        #[cfg(test)]
-                        storage_kind: ResidentStorageKind::Synthetic,
                         #[cfg(feature = "profiling")]
                         raw_kind: crate::fuel::RawDeliveryKind::SyntheticEndV,
                     })),

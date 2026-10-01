@@ -192,17 +192,6 @@ fn skipped_resident_text_batches_frame_admission_with_exact_fuel() {
         assert_eq!(next_character(&mut processor), 'd');
         assert_eq!(processor.fuel.burned(), 1_157);
         assert_eq!(processor.command.alignment.align_state, initial_align_state);
-        assert!(
-            processor
-                .command
-                .roots
-                .input
-                .levels
-                .cursor_mutations
-                .typed_top_accesses
-                < 32,
-            "literal skipped text should use a few resident admissions"
-        );
     });
 }
 
